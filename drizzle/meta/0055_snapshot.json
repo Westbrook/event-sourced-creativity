@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "98ae71b4-9900-4dc4-b40b-0591aead14c8",
-  "prevId": "aac61656-87fe-482e-ac09-c62b75691a37",
+  "id": "aac61656-87fe-482e-ac09-c62b75691a37",
+  "prevId": "2d616f1a-af63-4767-a8fe-cabdfc5a722d",
   "tables": {
     "artifact_revisions": {
       "name": "artifact_revisions",
@@ -13579,151 +13579,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "project_containment": {
-      "name": "project_containment",
-      "columns": {
-        "owner_user_id": {
-          "name": "owner_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "declaration_ref": {
-          "name": "declaration_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "parent_project_id": {
-          "name": "parent_project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "parent_declaration_ref": {
-          "name": "parent_declaration_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_project_containment_parent": {
-          "name": "idx_project_containment_parent",
-          "columns": [
-            "owner_user_id",
-            "parent_project_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "project_containment_owner_user_id_users_user_id_fk": {
-          "name": "project_containment_owner_user_id_users_user_id_fk",
-          "tableFrom": "project_containment",
-          "tableTo": "users",
-          "columnsFrom": [
-            "owner_user_id"
-          ],
-          "columnsTo": [
-            "user_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "project_containment_declaration_ref_events_event_id_fk": {
-          "name": "project_containment_declaration_ref_events_event_id_fk",
-          "tableFrom": "project_containment",
-          "tableTo": "events",
-          "columnsFrom": [
-            "declaration_ref"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "project_containment_parent_declaration_ref_events_event_id_fk": {
-          "name": "project_containment_parent_declaration_ref_events_event_id_fk",
-          "tableFrom": "project_containment",
-          "tableTo": "events",
-          "columnsFrom": [
-            "parent_declaration_ref"
-          ],
-          "columnsTo": [
-            "event_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "project_containment_organization_id_organizations_organization_id_fk": {
-          "name": "project_containment_organization_id_organizations_organization_id_fk",
-          "tableFrom": "project_containment",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "organization_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "project_containment_owner_user_id_project_id_pk": {
-          "columns": [
-            "owner_user_id",
-            "project_id"
-          ],
-          "name": "project_containment_owner_user_id_project_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "project_containment_parent_pair": {
-          "name": "project_containment_parent_pair",
-          "value": "(\"project_containment\".\"parent_project_id\" IS NULL) = (\"project_containment\".\"parent_declaration_ref\" IS NULL)"
-        },
-        "project_containment_no_self": {
-          "name": "project_containment_no_self",
-          "value": "\"project_containment\".\"parent_project_id\" IS NULL OR \"project_containment\".\"parent_project_id\" <> \"project_containment\".\"project_id\""
-        }
-      }
-    },
     "project_context_package_bindings": {
       "name": "project_context_package_bindings",
       "columns": {
@@ -15607,61 +15462,39 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "users": {
-      "name": "users",
+    "still_history_cache": {
+      "name": "still_history_cache",
       "columns": {
-        "user_id": {
-          "name": "user_id",
+        "cache_key": {
+          "name": "cache_key",
           "type": "text",
           "primaryKey": true,
           "notNull": true,
           "autoincrement": false
         },
-        "email": {
-          "name": "email",
+        "owner_id": {
+          "name": "owner_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "display_name": {
-          "name": "display_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "role": {
-          "name": "role",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'creator'"
-        },
-        "consent_version": {
-          "name": "consent_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "consented_at": {
-          "name": "consented_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "text",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "updated_at": {
-          "name": "updated_at",
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -15669,17 +15502,18 @@
         }
       },
       "indexes": {
-        "idx_users_email": {
-          "name": "idx_users_email",
+        "idx_still_history_cache_expiry": {
+          "name": "idx_still_history_cache_expiry",
           "columns": [
-            "email"
+            "expires_at"
           ],
-          "isUnique": true
+          "isUnique": false
         },
-        "idx_users_role": {
-          "name": "idx_users_role",
+        "idx_still_history_cache_owner": {
+          "name": "idx_still_history_cache_owner",
           "columns": [
-            "role"
+            "owner_id",
+            "created_at"
           ],
           "isUnique": false
         }
@@ -15822,6 +15656,88 @@
           "name": "idx_still_panel_expiry",
           "columns": [
             "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "users": {
+      "name": "users",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'creator'"
+        },
+        "consent_version": {
+          "name": "consent_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "consented_at": {
+          "name": "consented_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_users_email": {
+          "name": "idx_users_email",
+          "columns": [
+            "email"
+          ],
+          "isUnique": true
+        },
+        "idx_users_role": {
+          "name": "idx_users_role",
+          "columns": [
+            "role"
           ],
           "isUnique": false
         }

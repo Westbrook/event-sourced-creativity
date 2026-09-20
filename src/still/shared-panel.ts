@@ -16,6 +16,7 @@ export function startSharedPanel(){
     for(const key of ['scope','context','applied','received','pending','controls'] as const){if(JSON.stringify(panel[key])!==JSON.stringify(snapshot[key]))Object.assign(panel,{[key]:snapshot[key]});}
     panel.hostVisible=snapshot.shared.visible;
   },(message,live)=>{status.textContent=message;panel.hidden=!live;panel.inert=!live;});
+  panel.addEventListener('developer-next-best',e=>void viewer.command('next-best',(e as CustomEvent).detail.value));
   panel.addEventListener('developer-flags',e=>void viewer.command('flags',(e as CustomEvent).detail.value));
   panel.addEventListener('developer-density',e=>void viewer.command('density',(e as CustomEvent).detail.value));
   panel.addEventListener('developer-visibility',e=>void viewer.command('visibility',(e as CustomEvent).detail.value));

@@ -2725,3 +2725,8 @@ export const memoryDerivationConsumerContents=sqliteTable('memory_derivation_con
  role:text('role').notNull(),
 },t=>[index('idx_memory_derivation_consumer_content_origin').on(t.originId),
  check('memory_consumer_content_role',sql.raw("role IN('consent','response','result','answer')"))]);
+/** Compressed derived history; never an authority or a creative record. */
+export const stillHistoryCache = sqliteTable('still_history_cache', {
+  cacheKey:text('cache_key').primaryKey(), ownerId:text('owner_id').notNull(),
+  createdAt:integer('created_at').notNull(), expiresAt:integer('expires_at').notNull(), body:text('body').notNull(),
+},table=>[index('idx_still_history_cache_expiry').on(table.expiresAt),index('idx_still_history_cache_owner').on(table.ownerId,table.createdAt)]);

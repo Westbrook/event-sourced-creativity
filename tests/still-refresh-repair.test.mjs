@@ -5,7 +5,7 @@ import {createSceneCostFixture} from './helpers/scene-cost-fixture.mjs';
 import {readStillHistoryPage,STILL_REPLAY_TYPES} from '../worker/still-history-read.ts';
 import {jevRequestState,decisionTiming} from '../src/still/decision-timing.ts';
 import {appendAuditEvent} from '../worker/runtime.ts';
-const migrate=f=>{for(const file of ['0038_scene_source_generations.sql','0041_still_decision_cache.sql'])f.sqlite.exec(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'));};
+const migrate=f=>{for(const file of ['0038_scene_source_generations.sql','0041_still_decision_cache.sql','0044_still_history_cache.sql'])f.sqlite.exec(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'));};
 const answers={fit_image:{type:'score',score:3,confidence:.9}};
 
 test('history keeps all reducer input types exact and transport memory bounded',async()=>{
@@ -81,4 +81,27 @@ test('bounded history windows preserve full-history counts and focused evidence'
   const bounded=buildDecisionState(compact,position,abilities,12000,{},f.projection).state.history;
   assert.deepEqual(bounded,full);
  }finally{await f.drainBackground();f.close();}
+});
+
+
+test('timings retain original preparation and charge cache persistence to the server',async()=>{
+ const f=await createSceneCostFixture(1,'visual'),saved=globalThis.fetch,realNow=Date.now;let clock=realNow()+20_000_000;
+ migrate(f);Date.now=()=>clock;f.env.JEV_API_KEY='fixture';
+ f.controls.beforeRead=s=>{if(s.sql.includes('WITH page AS MATERIALIZED'))clock+=100;};
+ f.controls.beforeBatch=statements=>{if(statements.some(s=>s.sql.includes('INSERT OR REPLACE INTO still_decision_cache')))clock+=700;};
+ globalThis.fetch=async()=>{clock+=250;return Response.json({model:'fixture',answers});};
+ const input={view:'choose-format',projectId:f.projectId,documentId:f.documentId,developer:true};
+ try{
+  const first=await(await f.request('/api/still/decision',f.json(input))).json();
+  assert.equal(first.delivery.cacheWriteMs,700);assert.ok(first.delivery.serverMs>=first.preparation.totalMs+950);
+  assert.equal(first.cache.originalLatencyMs,first.originalTiming.delivery.serverMs);
+  f.env.DB={...f.env.DB};
+  const cached=await(await f.request('/api/still/decision',f.json(input))).json();
+  assert.equal(cached.cache.status,'hit');assert.equal(cached.preparation.source,'decision-cache');
+  assert.deepEqual(cached.originalTiming.preparation,first.preparation);
+  assert.equal(cached.delivery.serverMs,0);assert.equal(cached.cache.originalLatencyMs,first.cache.originalLatencyMs);
+  const timing=decisionTiming({...cached,trace:cached.diagnostics,requestElapsedMs:50});
+  assert.ok(timing.steps.some(s=>s.label==='Original preparation'&&s.value==='100 ms'));
+  assert.ok(timing.steps.some(s=>s.label==='Original Jev calls'&&s.value==='250 ms'));
+ }finally{Date.now=realNow;globalThis.fetch=saved;await f.drainBackground();f.close();}
 });

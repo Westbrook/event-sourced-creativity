@@ -705,29 +705,33 @@ test("main170 source metadata is NOT deployment certification: recorded history 
 });
 
 test('Memory main reconciliation preserves the upstream Still journal/snapshot and every following snapshot includes its tables',()=>{
- const entries=actualMigrations(),entry=entries[39],upstream=main170MetadataSnapshot(39);
+ const entries=actualMigrations(),entry=entries[39],upstream=main170MetadataSnapshot(40);
  assert.equal(entry.tag,'0043_still_panel_relay');assert.equal(entry.when,1789761110511);
  assert.equal(main170MetadataHash(entry.sql),'adac5ec6ad6348933c030f427f52193e1f8c13ddee08f45b353f263d841903c8');
  assert.equal(main170MetadataHash(readFileSync(new URL('meta/0039_snapshot.json',migrationDirectory))),'96b860fb7466daac7bbabb752e86a1b4f0fd3ca9edf7023448150ad5968f41a1');
- assert.equal(entries[40].tag,'0043_memory_derivation_purpose_grants');
- for(let index=40;index<entries.length;index++){
+ assert.equal(entries[40].tag,'0044_still_history_cache');assert.equal(entries[40].when,1789928794240);
+ assert.equal(main170MetadataHash(entries[40].sql),'e8fbd1806a73b850cdd4e760b21a8e59ada315b578349866a033ccd8d484758c');
+ assert.equal(main170MetadataHash(readFileSync(new URL('meta/0040_snapshot.json',migrationDirectory))),'3122424da9e8450695a7c4edd366ef1fb5cbd3021f39a1fb27502f7783e8f77d');
+ assert.equal(entries[41].tag,'0043_memory_derivation_purpose_grants');
+ for(let index=41;index<entries.length;index++){
   assert.ok(entries[index].when>entries[index-1].when,'Unpublished work cannot be skipped behind a published timestamp');
   const current=main170MetadataSnapshot(index);assert.equal(current.prevId,main170MetadataSnapshot(index-1).id);
-  for(const table of ['still_panel_commands','still_panel_sessions'])assert.deepEqual(current.tables[table],upstream.tables[table]);
+  for(const table of ['still_panel_commands','still_panel_sessions','still_history_cache'])assert.deepEqual(current.tables[table],upstream.tables[table]);
  }
 });
 test('Memory main reconciliation upgrades populated Still using the installed timestamp-based migrator without skipping grants or changing upstream rows',()=>{
  const sqlite=database(),history=main170MetadataHistory();
  try{
-  main170MetadataMigrate(sqlite,history.slice(0,40));
+  main170MetadataMigrate(sqlite,history.slice(0,41));
+  sqlite.prepare('INSERT INTO still_history_cache VALUES(?,?,?,?,?)').run('synthetic-cache','synthetic-owner',123,9999999999999,'opaque-synthetic-cache');
   sqlite.prepare('INSERT INTO still_panel_sessions VALUES(?,?,?,?,?,?,?,?)').run('synthetic-session','synthetic-owner','synthetic-hash',9999999999999,123,'synthetic-scope',1,'opaque-synthetic-envelope');
   sqlite.prepare('INSERT INTO still_panel_commands(session_id,type,value,scope,created_at) VALUES(?,?,?,?,?)').run('synthetic-session','command','opaque-synthetic-command','synthetic-scope',123);
-  const before=Object.fromEntries(['still_panel_commands','still_panel_sessions'].map(table=>[table,sqlite.prepare('SELECT * FROM '+table).all()])),receipts=main170MetadataReceipts(sqlite);
+  const before=Object.fromEntries(['still_panel_commands','still_panel_sessions','still_history_cache'].map(table=>[table,sqlite.prepare('SELECT * FROM '+table).all()])),receipts=main170MetadataReceipts(sqlite);
   main170MetadataMigrate(sqlite,history);
   assert.deepEqual(main170MetadataReceipts(sqlite),main170MetadataExpectedReceipts(history));
-  assert.deepEqual(main170MetadataReceipts(sqlite).slice(0,40),receipts);
+  assert.deepEqual(main170MetadataReceipts(sqlite).slice(0,41),receipts);
   for(const [table,rows]of Object.entries(before))assert.deepEqual(sqlite.prepare('SELECT * FROM '+table).all(),rows);
-  for(const name of ['memory_derivation_grants','memory_derivation_contexts'])assert.ok(main170MetadataExists(sqlite,name));
+  for(const name of ['memory_derivation_grants','memory_derivation_contexts','memory_derivation_consumers','memory_derivation_consumer_contents'])assert.ok(main170MetadataExists(sqlite,name));
   const completed=main170MetadataReceipts(sqlite);main170MetadataMigrate(sqlite,history);assert.deepEqual(main170MetadataReceipts(sqlite),completed);
   assert.deepEqual(sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
  }finally{sqlite.close();}

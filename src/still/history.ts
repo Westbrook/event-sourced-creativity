@@ -47,13 +47,16 @@ export type HistorySummary={useful:CreativeEvent[];creative:CreativeEvent[];coun
 const summaries=new WeakMap<CreativeEvent[],HistorySummary>();
 export function installHistorySummary(events:CreativeEvent[],summary:HistorySummary){summaries.set(events,summary);}
 export function historySummary(events:CreativeEvent[]){return summaries.get(events);}
+export type HistoryCheckpoint={accessibleEvents:number;creativeEvents:number;forgotten:number;oldest?:string;newest?:string;counts:Record<string,number>;recent:CreativeEvent[];focused:CreativeEvent[];creative:CreativeEvent[];milestones:CreativeEvent[];attention:CreativeEvent[];focusedAttention:CreativeEvent[];attentionSequences:number[]};
 /** Exact counts and bounded evidence windows, without retaining unused raw bodies. */
-export function createHistoryCollector(position:{documentId?:string;blockId?:string;outputId?:string}){
- let accessibleEvents=0,creativeEvents=0,forgotten=0,oldest:string|undefined,newest:string|undefined;
- const counts:Record<string,number>={},recent:CreativeEvent[]=[],focused:CreativeEvent[]=[],creative:CreativeEvent[]=[],milestones:CreativeEvent[]=[],attention:CreativeEvent[]=[],focusedAttention:CreativeEvent[]=[],attentionSequences:number[]=[];
+export function createHistoryCollector(position:{documentId?:string;blockId?:string;outputId?:string},seed?:HistoryCheckpoint){
+ const state:HistoryCheckpoint=seed?structuredClone(seed):{accessibleEvents:0,creativeEvents:0,forgotten:0,counts:{},recent:[],focused:[],creative:[],milestones:[],attention:[],focusedAttention:[],attentionSequences:[]};
+ let {accessibleEvents,creativeEvents,forgotten,oldest,newest}=state;
+ const {counts,recent,focused,creative,milestones,attention,focusedAttention,attentionSequences}=state;
  const push=(list:CreativeEvent[],e:CreativeEvent,n:number)=>{list.push(e);if(list.length>n)list.shift();};
  const isFocused=(e:CreativeEvent)=>!!(position.documentId&&e.payload.document_id===position.documentId||position.blockId&&e.payload.block_id===position.blockId||position.outputId&&(e.payload.object_id===position.outputId||e.payload.artifact_id===position.outputId||Array.isArray(e.payload.object_ids)&&e.payload.object_ids.includes(position.outputId)));
  return {
+  checkpoint():HistoryCheckpoint{return structuredClone({...state,accessibleEvents,creativeEvents,forgotten,oldest,newest});},
   accept(e:CreativeEvent){
    accessibleEvents++;oldest??=e.occurredAt;newest=e.occurredAt;
    if(e.type==='AttentionSignalsForgotten'){forgotten=Math.max(forgotten,Number(e.payload.before_sequence)||e.sequence);return;}
@@ -63,7 +66,7 @@ export function createHistoryCollector(position:{documentId?:string;blockId?:str
    if(/Preference|Intent|Critique|Pinned|Saved|Condition|Rejected|Failed/.test(e.type))push(milestones,e,40);
   },
   finish():HistorySummary{
-   const attentionCount=attentionSequences.filter(n=>n>forgotten).length;if(attentionCount)counts.AttentionEpisodeObserved=attentionCount;
+   const attentionCount=attentionSequences.filter(n=>n>forgotten).length;if(attentionCount)counts.AttentionEpisodeObserved=attentionCount;else delete counts.AttentionEpisodeObserved;
    const useful=[...new Map([...recent,...focused,...creative,...milestones,...attention.filter(e=>e.sequence>forgotten),...focusedAttention.filter(e=>e.sequence>forgotten)].map(e=>[e.sequence,e])).values()].sort((a,b)=>a.sequence-b.sequence);
    return {useful,creative,counts,forgotten,accessibleEvents,summarizedEvents:Object.values(counts).reduce((a,b)=>a+b,0),creativeEvents,oldest,newest};
   },

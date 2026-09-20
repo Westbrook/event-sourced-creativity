@@ -22,14 +22,20 @@ export function decisionTiming(received:ReceivedDecision|undefined,pending=false
   if(received.cache)detail.push(`${received.cache.layer} cache: ${received.cache.status}. Original computation: ${format(received.cache.originalLatencyMs)}.`);
   if(cached&&received.cache?.layer==='browser')detail[0]=`Local cache delivery: ${label}. No new network request for a hit.`;
   if(cached)detail.push('The following timings describe the original decision, not a new Jev call.');
-  if(received.preparation)detail.push(`Preparation: ${format(received.preparation.totalMs)}; session ${format(received.preparation.sessionMs)}, history ${format(received.preparation.elapsedMs)} (${received.preparation.source}, ${received.preparation.eventsRead} events read), selected content ${format(received.preparation.selectedContentMs)}.`);
+  const preparation=cached&&received.originalTiming?received.originalTiming.preparation:received.preparation;
+  if(preparation)detail.push(`Preparation: ${format(preparation.totalMs)}; session ${format(preparation.sessionMs)}, history ${format(preparation.elapsedMs)} (${preparation.source}, ${preparation.eventsRead} events read), selected content ${format(preparation.selectedContentMs)}.`);
   if(duration(phase))detail.push(`Decision phase: ${format(phase)}.`);
   if(calls.length&&calls.every(p=>duration(p.elapsedMs)))detail.push(`Jev calls: ${format(calls.reduce((sum,p)=>sum+p.elapsedMs,0))} across ${calls.length} ${calls.length===1?'call':'calls'}.`);
   const steps:Array<{label:string;value:string}>=[];
-  if(cached)steps.push({label:'Delivery',value:format(received.requestElapsedMs)},{label:'Original computation',value:format(received.cache!.originalLatencyMs)});
+  if(cached){
+    steps.push({label:'Delivery',value:format(received.requestElapsedMs)},{label:'Original computation',value:format(received.cache!.originalLatencyMs)});
+    if(preparation)steps.push({label:'Original preparation',value:format(preparation.totalMs)});
+    if(calls.length)steps.push({label:'Original Jev calls',value:format(calls.reduce((sum,p)=>sum+p.elapsedMs,0))});
+  }
   else{
     if(received.preparation)steps.push({label:'Preparation',value:format(received.preparation.totalMs)});
     for(const pass of calls)steps.push({label:pass.id==='assessment'?'Jev assessment':'Enrichment',value:format(pass.elapsedMs)});
+    if(duration(received.delivery?.cacheWriteMs))steps.push({label:'Cache persistence',value:format(received.delivery!.cacheWriteMs!)});
     if(duration(received.delivery?.serverMs))steps.push({label:'Transport / client',value:format(Math.max(0,received.requestElapsedMs-received.delivery!.serverMs))});
     if(duration(received.firstResponseMs))steps.push({label:'First usable',value:format(received.firstResponseMs)});
     steps.push({label:jevRequestState(received)==='Failed'?'Failed':received.delivery?.stage==='initial'?'Elapsed':'Complete',value:format(received.requestElapsedMs)});

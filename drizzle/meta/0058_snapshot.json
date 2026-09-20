@@ -1,8 +1,6 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "88e2227d-d47a-42e2-9003-521d49bde025",
-  "prevId": "02182561-f668-4bf7-b2f7-484b03be724e",
   "tables": {
     "artifact_revisions": {
       "name": "artifact_revisions",
@@ -2910,212 +2908,6 @@
         "memory_derivation_completion_time": {
           "name": "memory_derivation_completion_time",
           "value": "length(completed_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',completed_at) IS completed_at"
-        }
-      }
-    },
-    "memory_derivation_consumer_contents": {
-      "name": "memory_derivation_consumer_contents",
-      "columns": {
-        "content_id": {
-          "name": "content_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "origin_id": {
-          "name": "origin_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "role": {
-          "name": "role",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_memory_derivation_consumer_content_origin": {
-          "name": "idx_memory_derivation_consumer_content_origin",
-          "columns": [
-            "origin_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "memory_derivation_consumer_contents_origin_id_memory_derivation_consumers_origin_id_fk": {
-          "name": "memory_derivation_consumer_contents_origin_id_memory_derivation_consumers_origin_id_fk",
-          "tableFrom": "memory_derivation_consumer_contents",
-          "tableTo": "memory_derivation_consumers",
-          "columnsFrom": [
-            "origin_id"
-          ],
-          "columnsTo": [
-            "origin_id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_consumer_content_role": {
-          "name": "memory_consumer_content_role",
-          "value": "role IN('consent','response','result','answer')"
-        }
-      }
-    },
-    "memory_derivation_consumers": {
-      "name": "memory_derivation_consumers",
-      "columns": {
-        "origin_id": {
-          "name": "origin_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "actor_user_id": {
-          "name": "actor_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_enrollment_id": {
-          "name": "target_enrollment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "context_revision": {
-          "name": "context_revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "job_id": {
-          "name": "job_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "output_sha256": {
-          "name": "output_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "scope_key": {
-          "name": "scope_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "turn_id": {
-          "name": "turn_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "execution_id": {
-          "name": "execution_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "retired_at": {
-          "name": "retired_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_memory_derivation_consumer_execution": {
-          "name": "idx_memory_derivation_consumer_execution",
-          "columns": [
-            "execution_id"
-          ],
-          "isUnique": true
-        },
-        "idx_memory_derivation_consumer_source": {
-          "name": "idx_memory_derivation_consumer_source",
-          "columns": [
-            "job_id",
-            "state"
-          ],
-          "isUnique": false
-        },
-        "idx_memory_derivation_consumer_context": {
-          "name": "idx_memory_derivation_consumer_context",
-          "columns": [
-            "target_enrollment_id",
-            "context_revision",
-            "state"
-          ],
-          "isUnique": false
-        },
-        "idx_memory_derivation_consumer_turn": {
-          "name": "idx_memory_derivation_consumer_turn",
-          "columns": [
-            "actor_user_id",
-            "scope_key",
-            "turn_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_consumer_state": {
-          "name": "memory_consumer_state",
-          "value": "(state='active' AND retired_at IS NULL) OR (state='retired' AND retired_at IS NOT NULL)"
-        },
-        "memory_consumer_identity": {
-          "name": "memory_consumer_identity",
-          "value": "length(origin_id)=36 AND length(context_revision)=36 AND length(output_sha256)=64 AND output_sha256 NOT GLOB '*[^0-9a-f]*'"
-        },
-        "memory_consumer_time": {
-          "name": "memory_consumer_time",
-          "value": "length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at AND (retired_at IS NULL OR length(retired_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',retired_at) IS retired_at AND retired_at>=created_at)"
         }
       }
     },
@@ -16046,6 +15838,67 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "still_history_cache": {
+      "name": "still_history_cache",
+      "columns": {
+        "cache_key": {
+          "name": "cache_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_still_history_cache_expiry": {
+          "name": "idx_still_history_cache_expiry",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        },
+        "idx_still_history_cache_owner": {
+          "name": "idx_still_history_cache_owner",
+          "columns": [
+            "owner_id",
+            "created_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "still_panel_commands": {
       "name": "still_panel_commands",
       "columns": {
@@ -16274,7 +16127,6 @@
   "views": {},
   "enums": {},
   "_meta": {
-    "schemas": {},
     "tables": {},
     "columns": {}
   },
@@ -16288,5 +16140,7 @@
         }
       }
     }
-  }
+  },
+  "id": "02182561-f668-4bf7-b2f7-484b03be724e",
+  "prevId": "754a038f-87bf-4b52-a3bd-e2f40d83bb92"
 }

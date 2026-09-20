@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "754a038f-87bf-4b52-a3bd-e2f40d83bb92",
-  "prevId": "98ae71b4-9900-4dc4-b40b-0591aead14c8",
+  "id": "98ae71b4-9900-4dc4-b40b-0591aead14c8",
+  "prevId": "aac61656-87fe-482e-ac09-c62b75691a37",
   "tables": {
     "artifact_revisions": {
       "name": "artifact_revisions",
@@ -7501,82 +7501,6 @@
         "memory_native_answer_origins_check_6": {
           "name": "memory_native_answer_origins_check_6",
           "value": "status='active' AND withdrawn_at IS NULL AND withdrawal_reason IS NULL OR status='withdrawn' AND withdrawn_at IS NOT NULL AND withdrawal_reason IS NOT NULL"
-        }
-      }
-    },
-    "memory_recall_boundaries": {
-      "name": "memory_recall_boundaries",
-      "columns": {
-        "enrollment_id": {
-          "name": "enrollment_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "enrollment_revision": {
-          "name": "enrollment_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "boundary": {
-          "name": "boundary",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "consented_at": {
-          "name": "consented_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "memory_recall_boundaries_enrollment_id_memory_live_enrollments_enrollment_id_fk": {
-          "name": "memory_recall_boundaries_enrollment_id_memory_live_enrollments_enrollment_id_fk",
-          "tableFrom": "memory_recall_boundaries",
-          "tableTo": "memory_live_enrollments",
-          "columnsFrom": [
-            "enrollment_id"
-          ],
-          "columnsTo": [
-            "enrollment_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_recall_boundary_kind": {
-          "name": "memory_recall_boundary_kind",
-          "value": "boundary IN('document','project','project-tree','partition')"
-        },
-        "memory_recall_boundary_parent": {
-          "name": "memory_recall_boundary_parent",
-          "value": "typeof(enrollment_revision)='integer' AND enrollment_revision>=1"
-        },
-        "memory_recall_boundary_revision": {
-          "name": "memory_recall_boundary_revision",
-          "value": "length(revision)=36"
-        },
-        "memory_recall_boundary_time": {
-          "name": "memory_recall_boundary_time",
-          "value": "length(consented_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',consented_at) IS consented_at"
         }
       }
     },
@@ -15683,61 +15607,39 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "users": {
-      "name": "users",
+    "still_history_cache": {
+      "name": "still_history_cache",
       "columns": {
-        "user_id": {
-          "name": "user_id",
+        "cache_key": {
+          "name": "cache_key",
           "type": "text",
           "primaryKey": true,
           "notNull": true,
           "autoincrement": false
         },
-        "email": {
-          "name": "email",
+        "owner_id": {
+          "name": "owner_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "display_name": {
-          "name": "display_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "role": {
-          "name": "role",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'creator'"
-        },
-        "consent_version": {
-          "name": "consent_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "consented_at": {
-          "name": "consented_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "text",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "updated_at": {
-          "name": "updated_at",
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -15745,17 +15647,18 @@
         }
       },
       "indexes": {
-        "idx_users_email": {
-          "name": "idx_users_email",
+        "idx_still_history_cache_expiry": {
+          "name": "idx_still_history_cache_expiry",
           "columns": [
-            "email"
+            "expires_at"
           ],
-          "isUnique": true
+          "isUnique": false
         },
-        "idx_users_role": {
-          "name": "idx_users_role",
+        "idx_still_history_cache_owner": {
+          "name": "idx_still_history_cache_owner",
           "columns": [
-            "role"
+            "owner_id",
+            "created_at"
           ],
           "isUnique": false
         }
@@ -15898,6 +15801,88 @@
           "name": "idx_still_panel_expiry",
           "columns": [
             "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "users": {
+      "name": "users",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'creator'"
+        },
+        "consent_version": {
+          "name": "consent_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "consented_at": {
+          "name": "consented_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_users_email": {
+          "name": "idx_users_email",
+          "columns": [
+            "email"
+          ],
+          "isUnique": true
+        },
+        "idx_users_role": {
+          "name": "idx_users_role",
+          "columns": [
+            "role"
           ],
           "isUnique": false
         }

@@ -1,6 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
+  "id": "754a038f-87bf-4b52-a3bd-e2f40d83bb92",
+  "prevId": "98ae71b4-9900-4dc4-b40b-0591aead14c8",
   "tables": {
     "artifact_revisions": {
       "name": "artifact_revisions",
@@ -2908,163 +2910,6 @@
         "memory_derivation_completion_time": {
           "name": "memory_derivation_completion_time",
           "value": "length(completed_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',completed_at) IS completed_at"
-        }
-      }
-    },
-    "memory_derivation_contexts": {
-      "name": "memory_derivation_contexts",
-      "columns": {
-        "target_enrollment_id": {
-          "name": "target_enrollment_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "actor_user_id": {
-          "name": "actor_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_revision": {
-          "name": "target_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "job_id": {
-          "name": "job_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "output_sha256": {
-          "name": "output_sha256",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_enrollment_id": {
-          "name": "source_enrollment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "source_revision": {
-          "name": "source_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "boundary_revision": {
-          "name": "boundary_revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "hierarchy_revision": {
-          "name": "hierarchy_revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_memory_derivation_contexts_source": {
-          "name": "idx_memory_derivation_contexts_source",
-          "columns": [
-            "job_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "memory_derivation_contexts_target_enrollment_id_memory_live_enrollments_enrollment_id_fk": {
-          "name": "memory_derivation_contexts_target_enrollment_id_memory_live_enrollments_enrollment_id_fk",
-          "tableFrom": "memory_derivation_contexts",
-          "tableTo": "memory_live_enrollments",
-          "columnsFrom": [
-            "target_enrollment_id"
-          ],
-          "columnsTo": [
-            "enrollment_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "memory_derivation_contexts_job_id_memory_derivation_jobs_job_id_fk": {
-          "name": "memory_derivation_contexts_job_id_memory_derivation_jobs_job_id_fk",
-          "tableFrom": "memory_derivation_contexts",
-          "tableTo": "memory_derivation_jobs",
-          "columnsFrom": [
-            "job_id"
-          ],
-          "columnsTo": [
-            "job_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_context_revisions": {
-          "name": "memory_context_revisions",
-          "value": "typeof(target_revision)='integer' AND target_revision>=1 AND typeof(source_revision)='integer' AND source_revision>=1 AND length(revision)=36"
-        },
-        "memory_context_output": {
-          "name": "memory_context_output",
-          "value": "length(output_sha256)=64 AND output_sha256 NOT GLOB '*[^0-9a-f]*'"
-        },
-        "memory_context_state": {
-          "name": "memory_context_state",
-          "value": "state IN('accepted','dismissed')"
-        },
-        "memory_context_time": {
-          "name": "memory_context_time",
-          "value": "length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at"
-        },
-        "memory_context_scope": {
-          "name": "memory_context_scope",
-          "value": "(target_enrollment_id=source_enrollment_id AND boundary_revision IS NULL AND hierarchy_revision IS NULL) OR (target_enrollment_id<>source_enrollment_id AND length(boundary_revision)=36 AND length(hierarchy_revision)=71)"
         }
       }
     },
@@ -15838,61 +15683,39 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "users": {
-      "name": "users",
+    "still_history_cache": {
+      "name": "still_history_cache",
       "columns": {
-        "user_id": {
-          "name": "user_id",
+        "cache_key": {
+          "name": "cache_key",
           "type": "text",
           "primaryKey": true,
           "notNull": true,
           "autoincrement": false
         },
-        "email": {
-          "name": "email",
+        "owner_id": {
+          "name": "owner_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "display_name": {
-          "name": "display_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "role": {
-          "name": "role",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'creator'"
-        },
-        "consent_version": {
-          "name": "consent_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "consented_at": {
-          "name": "consented_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "text",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "updated_at": {
-          "name": "updated_at",
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -15900,17 +15723,18 @@
         }
       },
       "indexes": {
-        "idx_users_email": {
-          "name": "idx_users_email",
+        "idx_still_history_cache_expiry": {
+          "name": "idx_still_history_cache_expiry",
           "columns": [
-            "email"
+            "expires_at"
           ],
-          "isUnique": true
+          "isUnique": false
         },
-        "idx_users_role": {
-          "name": "idx_users_role",
+        "idx_still_history_cache_owner": {
+          "name": "idx_still_history_cache_owner",
           "columns": [
-            "role"
+            "owner_id",
+            "created_at"
           ],
           "isUnique": false
         }
@@ -16061,11 +15885,94 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "users": {
+      "name": "users",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'creator'"
+        },
+        "consent_version": {
+          "name": "consent_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "consented_at": {
+          "name": "consented_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_users_email": {
+          "name": "idx_users_email",
+          "columns": [
+            "email"
+          ],
+          "isUnique": true
+        },
+        "idx_users_role": {
+          "name": "idx_users_role",
+          "columns": [
+            "role"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     }
   },
   "views": {},
   "enums": {},
   "_meta": {
+    "schemas": {},
     "tables": {},
     "columns": {}
   },
@@ -16079,7 +15986,5 @@
         }
       }
     }
-  },
-  "id": "02182561-f668-4bf7-b2f7-484b03be724e",
-  "prevId": "754a038f-87bf-4b52-a3bd-e2f40d83bb92"
+  }
 }

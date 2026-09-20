@@ -3890,7 +3890,7 @@
             "consent_id",
             "after_sequence"
           ],
-          "isUnique": false
+          "isUnique": true
         }
       },
       "foreignKeys": {
@@ -4050,165 +4050,6 @@
         "memory_derivation_no_dispatch_check_4": {
           "name": "memory_derivation_no_dispatch_check_4",
           "value": "length(recorded_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',recorded_at) IS recorded_at"
-        }
-      }
-    },
-    "memory_derivation_producer_cursors": {
-      "name": "memory_derivation_producer_cursors",
-      "columns": {
-        "consent_id": {
-          "name": "consent_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "registered_through_sequence": {
-          "name": "registered_through_sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "completed_through_sequence": {
-          "name": "completed_through_sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "generation": {
-          "name": "generation",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "memory_derivation_producer_cursors_consent_id_memory_derivation_cursors_consent_id_fk": {
-          "name": "memory_derivation_producer_cursors_consent_id_memory_derivation_cursors_consent_id_fk",
-          "tableFrom": "memory_derivation_producer_cursors",
-          "tableTo": "memory_derivation_cursors",
-          "columnsFrom": [
-            "consent_id"
-          ],
-          "columnsTo": [
-            "consent_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_producer_registered": {
-          "name": "memory_producer_registered",
-          "value": "typeof(registered_through_sequence)='integer' AND registered_through_sequence BETWEEN 0 AND 9007199254740991"
-        },
-        "memory_producer_completed": {
-          "name": "memory_producer_completed",
-          "value": "typeof(completed_through_sequence)='integer' AND completed_through_sequence BETWEEN 0 AND registered_through_sequence"
-        },
-        "memory_producer_generation": {
-          "name": "memory_producer_generation",
-          "value": "typeof(generation)='integer' AND generation BETWEEN 0 AND 9007199254740991"
-        },
-        "memory_producer_time": {
-          "name": "memory_producer_time",
-          "value": "length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at"
-        }
-      }
-    },
-    "memory_derivation_producer_jobs": {
-      "name": "memory_derivation_producer_jobs",
-      "columns": {
-        "job_id": {
-          "name": "job_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "consent_id": {
-          "name": "consent_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "after_sequence": {
-          "name": "after_sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "through_sequence": {
-          "name": "through_sequence",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "memory_derivation_producer_jobs_consent_id_after_sequence_unique": {
-          "name": "memory_derivation_producer_jobs_consent_id_after_sequence_unique",
-          "columns": [
-            "consent_id",
-            "after_sequence"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "memory_derivation_producer_jobs_job_id_memory_derivation_jobs_job_id_fk": {
-          "name": "memory_derivation_producer_jobs_job_id_memory_derivation_jobs_job_id_fk",
-          "tableFrom": "memory_derivation_producer_jobs",
-          "tableTo": "memory_derivation_jobs",
-          "columnsFrom": [
-            "job_id"
-          ],
-          "columnsTo": [
-            "job_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "memory_derivation_producer_jobs_consent_id_memory_derivation_producer_cursors_consent_id_fk": {
-          "name": "memory_derivation_producer_jobs_consent_id_memory_derivation_producer_cursors_consent_id_fk",
-          "tableFrom": "memory_derivation_producer_jobs",
-          "tableTo": "memory_derivation_producer_cursors",
-          "columnsFrom": [
-            "consent_id"
-          ],
-          "columnsTo": [
-            "consent_id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "memory_producer_job_id": {
-          "name": "memory_producer_job_id",
-          "value": "length(job_id)=64 AND job_id NOT GLOB '*[^0-9a-f]*'"
-        },
-        "memory_producer_job_range": {
-          "name": "memory_producer_job_range",
-          "value": "typeof(after_sequence)='integer' AND typeof(through_sequence)='integer' AND after_sequence>=0 AND through_sequence>after_sequence AND through_sequence<=9007199254740991"
         }
       }
     },
@@ -15221,61 +15062,39 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "users": {
-      "name": "users",
+    "still_history_cache": {
+      "name": "still_history_cache",
       "columns": {
-        "user_id": {
-          "name": "user_id",
+        "cache_key": {
+          "name": "cache_key",
           "type": "text",
           "primaryKey": true,
           "notNull": true,
           "autoincrement": false
         },
-        "email": {
-          "name": "email",
+        "owner_id": {
+          "name": "owner_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "display_name": {
-          "name": "display_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "role": {
-          "name": "role",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'creator'"
-        },
-        "consent_version": {
-          "name": "consent_version",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "consented_at": {
-          "name": "consented_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "created_at": {
           "name": "created_at",
-          "type": "text",
+          "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "updated_at": {
-          "name": "updated_at",
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "body": {
+          "name": "body",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -15283,17 +15102,18 @@
         }
       },
       "indexes": {
-        "idx_users_email": {
-          "name": "idx_users_email",
+        "idx_still_history_cache_expiry": {
+          "name": "idx_still_history_cache_expiry",
           "columns": [
-            "email"
+            "expires_at"
           ],
-          "isUnique": true
+          "isUnique": false
         },
-        "idx_users_role": {
-          "name": "idx_users_role",
+        "idx_still_history_cache_owner": {
+          "name": "idx_still_history_cache_owner",
           "columns": [
-            "role"
+            "owner_id",
+            "created_at"
           ],
           "isUnique": false
         }
@@ -15444,6 +15264,88 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "users": {
+      "name": "users",
+      "columns": {
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'creator'"
+        },
+        "consent_version": {
+          "name": "consent_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "consented_at": {
+          "name": "consented_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_users_email": {
+          "name": "idx_users_email",
+          "columns": [
+            "email"
+          ],
+          "isUnique": true
+        },
+        "idx_users_role": {
+          "name": "idx_users_role",
+          "columns": [
+            "role"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     }
   },
   "views": {},
@@ -15463,6 +15365,6 @@
       }
     }
   },
-  "id": "b7a3415e-0f7a-4de8-8f13-3e10a189b79f",
-  "prevId": "eea0366d-9ce8-4477-99fe-ba2f1ceec808"
+  "id": "eea0366d-9ce8-4477-99fe-ba2f1ceec808",
+  "prevId": "0b59737a-3d11-47d1-9c45-a4c1d4912150"
 }

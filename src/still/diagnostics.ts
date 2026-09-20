@@ -74,10 +74,11 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
   };
 }
 export type DecisionDiagnostics = ReturnType<typeof decisionDiagnostics>;
-export type PreparationTiming={source:string;eventsRead:number;head:number;elapsedMs:number;sessionMs:number;selectedContentMs:number;totalMs:number};
-export type DecisionDelivery={stage:"initial"|"complete";serverMs:number;firstAssessmentMs?:number;enrichmentMs?:number;enrichment?:"pending"|"complete"|"interrupted"};
-export type DecisionResponse = { delivery?:DecisionDelivery; preparation?:PreparationTiming; cache?:DecisionCacheInfo; source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; paletteActions?:{id:string}[]; formats?:string[]; rankedFormats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
-export type ReceivedDecision = { firstResponseMs?:number; delivery?:DecisionDelivery; preparation?:PreparationTiming; receivedAt?:number; cache?:DecisionCacheInfo; at:string; requestElapsedMs?:number; disposition:string; trace?:DecisionDiagnostics; source:string; reason?:string; recommended:string[] };
+export type PreparationTiming={source:string;eventsRead:number;head:number;elapsedMs:number;readPages?:number;readMs?:number;cacheReadMs?:number;cacheWriteMs?:number;focusedReadMs?:number;focusedEventsRead?:number;persisted?:boolean;sessionMs:number;selectedContentMs:number;totalMs:number};
+export type DecisionDelivery={stage:"initial"|"complete";serverMs:number;cacheWriteMs?:number;firstAssessmentMs?:number;enrichmentMs?:number;enrichment?:"pending"|"complete"|"interrupted"};
+export type OriginalTiming={preparation?:PreparationTiming;delivery?:DecisionDelivery};
+export type DecisionResponse = { nextBest?:import('./next-best.ts').NextBestAnswer; delivery?:DecisionDelivery; originalTiming?:OriginalTiming; preparation?:PreparationTiming; cache?:DecisionCacheInfo; source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; paletteActions?:{id:string}[]; formats?:string[]; rankedFormats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
+export type ReceivedDecision = { firstResponseMs?:number; delivery?:DecisionDelivery; originalTiming?:OriginalTiming; preparation?:PreparationTiming; receivedAt?:number; cache?:DecisionCacheInfo; at:string; requestElapsedMs?:number; disposition:string; trace?:DecisionDiagnostics; source:string; reason?:string; recommended:string[] };
 
 export function responseDisposition(result: DecisionResponse, state: { stale:boolean; focused?:boolean; touched?:boolean; head:number; headChanged?:boolean; formats?:boolean }) {
   if(state.stale)return 'Ignored: position, scope, or mode changed';

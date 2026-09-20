@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { foldEvents } from '../src/model/events.ts';
-import { evaluateEligibility, eligibleActions, buildDecisionState, questionsFor, selectActions, rankFormats, CREATIVE_QUESTIONS } from '../src/still/decisions.ts';
+import { evaluateEligibility, eligibleActions, buildDecisionState, questionsFor, comprehensiveQuestionsFor, selectActions, rankFormats, CREATIVE_QUESTIONS } from '../src/still/decisions.ts';
 import { nextToolbarActions } from '../src/still/finder.ts';
 import { operationJournal } from '../src/still/operation-journal.ts';
 import { StillClient } from '../src/still/client.ts';
@@ -31,7 +31,7 @@ test('permission eligibility and rendering budget remain deterministic under arb
 test('question bank is expansive, typed, and names each action in its instructions',()=>{
   assert.ok(Object.keys(CREATIVE_QUESTIONS).length>=60);
   const candidates=eligibleActions(foldEvents(events,Infinity,'d','p'),position,abilities), questions=questionsFor(candidates);
-  for(const candidate of candidates) assert.ok(questions[`use_${candidate.id}`].instructions.includes(candidate.label));
+  for(const candidate of candidates) {if(candidate.id==='intent'){assert.equal(questions.use_intent,undefined);continue;}assert.ok(questions[`use_${candidate.id}`].instructions.includes(candidate.label));}
   for(const q of Object.values(questions)) assert.ok(['noul','choice','score'].includes(q.type)&&q.instructions.length>15);
 });
 test('history aggregation retains old activity, removes forgotten attention and does not forward linked credentials',()=>{
@@ -46,13 +46,13 @@ test('canonical context creation and 3D adaptation retain exclusions',()=>{
 });
 test('an interrupted generation admission is reconciled without a second purchase',async()=>{
   const c=client(), original=globalThis.fetch;let admissions=0;
-  globalThis.fetch=async url=>{if(url==='/api/session')return json(session);if(url==='/api/document-jobs'){admissions++;throw new Error('connection lost');}if(url==='/api/document-jobs/still-reconcile')throw new Error('Generation check unconfirmed');throw new Error(`Unexpected ${url}`);};
+  globalThis.fetch=async url=>{if(url==='/api/session?profile=still')return json(session);if(url==='/api/document-jobs'){admissions++;throw new Error('connection lost');}if(url==='/api/document-jobs/still-reconcile')throw new Error('Generation check unconfirmed');throw new Error(`Unexpected ${url}`);};
   const draft={format:'model3d',prompt:'A bronze bowl',itemCount:1,tone:'',audience:'',requestId:'request',sourceHead:4,documentId:'d',scopeKey:c.scopeKey};
   try {await assert.rejects(c.generate(draft),/connection lost/);assert.equal(draft.attempted,true);await assert.rejects(c.generate(draft),/[Gg]eneration check unconfirmed/);assert.equal(admissions,1);}finally{globalThis.fetch=original;}
 });
 test('a definitive budget gate does not count as a purchased generation',async()=>{
   const c=client(), original=globalThis.fetch;
-  globalThis.fetch=async url=>url==='/api/session'?json(session):json({error:'generation_budget_acknowledgement_required'},428);
+  globalThis.fetch=async url=>url==='/api/session?profile=still'?json(session):json({error:'generation_budget_acknowledgement_required'},428);
   const draft={format:'image',prompt:'',itemCount:1,tone:'',audience:'',requestId:'request',sourceHead:4,documentId:'d',scopeKey:c.scopeKey};
   try {await assert.rejects(c.generate(draft));assert.equal(draft.attempted,false);}finally{globalThis.fetch=original;}
 });
@@ -60,7 +60,7 @@ test('recovering an accepted queued image resumes its original job without anoth
   const c=client(),saved=globalThis.fetch,key='still:d:4:original';let admissions=0,runs=[];
   operationJournal.saveGeneration('test:personal',{documentId:'d',format:'image',requestKey:key});
   globalThis.fetch=async url=>{
-    if(url==='/api/session')return json(session);
+    if(url==='/api/session?profile=still')return json(session);
     if(url==='/api/document-jobs/still-reconcile')return json({documentId:'d',requestKey:key,status:'found',job:{jobId:'accepted',documentId:'d',requestKey:key,kind:'generate',status:'queued'}});
     if(url==='/api/document-jobs'){admissions++;throw new Error('Unexpected new purchase');}
     if(url==='/api/document-jobs/accepted/run'){runs.push(url);return json({});}
@@ -71,7 +71,7 @@ test('recovering an accepted queued image resumes its original job without anoth
 test('an admission closed during submission opens explicit review instead of retrying the closed key',async()=>{
   const c=client(),saved=globalThis.fetch;let posts=0;
   const draft={format:'image',prompt:'',itemCount:1,tone:'',audience:'',requestId:'closed',sourceHead:4,documentId:'d',scopeKey:c.scopeKey};
-  globalThis.fetch=async url=>{if(url==='/api/session')return json(session);posts++;return json({error:'generation_request_closed'},409);};
+  globalThis.fetch=async url=>{if(url==='/api/session?profile=still')return json(session);posts++;return json({error:'generation_request_closed'},409);};
   try{await assert.rejects(c.generate(draft));assert.equal(draft.recoveryClosed,true);assert.equal(c.pendingGeneration.closed,true);const fresh=c.reviewNewGeneration(draft);assert.notEqual(fresh.requestId,draft.requestId);assert.equal(fresh.previousUnconfirmed,true);assert.equal(posts,1);}finally{globalThis.fetch=saved;}
 });
 test('a changed account scope retires all previously rendered private content',async()=>{
@@ -86,7 +86,7 @@ test('artifact edits retain the original edit revision rather than overwriting n
 });
 test('partial or unrelated event acknowledgments never claim a successful save',async()=>{
   const c=client(), original=globalThis.fetch;let writes=0;
-  globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);if(init?.method==='POST'){writes++;return json({appended:[input('BlockCreated',{block_id:'another'},5)],head:5});}return json({events:[],head:4,nextAfter:4,hasMore:false,content:{}});};
+  globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);if(init?.method==='POST'){writes++;return json({appended:[input('BlockCreated',{block_id:'another'},5)],head:5});}return json({events:[],head:4,nextAfter:4,hasMore:false,content:{}});};
   try{await assert.rejects(c.append([c.blockEvent('Test','Direction')]),/not fully confirmed/);await assert.rejects(c.append([c.blockEvent('Test','Direction')]),/still unconfirmed/);assert.equal(writes,1);}finally{globalThis.fetch=original;}
 });
 
@@ -105,19 +105,19 @@ test('large multilingual histories retain the selected block in a bounded state'
 });
 test('a lost export receipt never authorizes a different artifact',async()=>{
   const c=client(), original=globalThis.fetch;let committed=[], posts=0;
-  globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);if(init?.method==='POST'){posts++;const body=JSON.parse(init.body);committed=[{...input(body.event.type,body.event.payload,5),correlationId:body.correlationId}];throw new Error('connection lost');}return json({events:committed,head:5,nextAfter:5,hasMore:false,content:{}});};
+  globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);if(init?.method==='POST'){posts++;const body=JSON.parse(init.body);committed=[{...input(body.event.type,body.event.payload,5),correlationId:body.correlationId}];throw new Error('connection lost');}return json({events:committed,head:5,nextAfter:5,hasMore:false,content:{}});};
   try {await assert.rejects(c.append([{type:'DocumentArtifactExported',payload:{artifact_id:'A',document_id:'d',artifact_revision:1,content_sha256:'A'}}]));await assert.rejects(c.append([{type:'DocumentArtifactExported',payload:{artifact_id:'B',document_id:'d',artifact_revision:1,content_sha256:'B'}}]),/earlier save was confirmed/);assert.equal(posts,1);}finally{globalThis.fetch=original;}
 });
 test('generation recovery survives constructing a fresh client and request',async()=>{
   const c=client(), original=globalThis.fetch;let posts=0;
-  globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);if(url==='/api/document-jobs/still-reconcile')throw new Error('Generation check unconfirmed');if(init?.method==='POST'){posts++;throw new Error('lost');}return json({jobs:[]});};
+  globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);if(url==='/api/document-jobs/still-reconcile')throw new Error('Generation check unconfirmed');if(init?.method==='POST'){posts++;throw new Error('lost');}return json({jobs:[]});};
   const draft={format:'image',prompt:'',itemCount:1,tone:'',audience:'',requestId:'request',sourceHead:4,documentId:'d',scopeKey:c.scopeKey};
   try {await assert.rejects(c.generate(draft));const reopened=new StillClient();reopened.session=structuredClone(session);reopened.position={...position};await assert.rejects(reopened.generate({...draft,attempted:false,requestId:'different'}),/[Gg]eneration check unconfirmed/);assert.equal(posts,1);}finally{globalThis.fetch=original;}
 });
 test('a stale personal save is refreshed but never automatically resubmitted',async()=>{
   const c=client(), original=globalThis.fetch;let posts=0;
   const changed=input('BlockPropertyEdited',{block_id:'b',property_path:'text',old_value:'A ceramic observatory on a brass tripod',new_value:'Collaborator text'},5);
-  globalThis.fetch=async(url,init)=>{if(url==='/api/session')return json(session);if(init?.method==='POST'){posts++;return json({error:'stale_sequence'},409);}return json({events:[changed],head:5,nextAfter:5,hasMore:false,content:{}});};
+  globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);if(init?.method==='POST'){posts++;return json({error:'stale_sequence'},409);}return json({events:[changed],head:5,nextAfter:5,hasMore:false,content:{}});};
   const write={type:'BlockPropertyEdited',payload:{block_id:'b',property_path:'text',old_value:'A ceramic observatory on a brass tripod',new_value:'My obsolete text'}};
   try {await assert.rejects(c.append([write]),/workspace changed/);await assert.rejects(c.append([write]),/changed while you were writing/);assert.equal(posts,1);assert.equal(c.projection.blocks.find(b=>b.id==='b').properties.text,'Collaborator text');}finally{globalThis.fetch=original;}
 });
@@ -147,7 +147,8 @@ test('specific creation suggestions require current intent and explicit format e
   const specific=selectActions(candidates,{...pos,intent:'Create an image'}, {...answers,requested_image:{type:'noul',noul:1}});
   assert.deepEqual(specific.map(a=>a.id),['image']);
   const viewed=questionsFor(candidates,{...position,view:'artifact'},'short_story');
-  assert.ok(viewed.protagonist);assert.equal(viewed.use_short_story,undefined);
+  assert.equal(viewed.protagonist,undefined);assert.equal(viewed.use_short_story,undefined);
+  assert.ok(comprehensiveQuestionsFor(candidates,{...position,view:'artifact'},'short_story').protagonist);
 });
 test('choosing and changing formats is local and resets request-specific approval state',()=>{
   const c=client(), before=JSON.stringify(c.events);
@@ -185,7 +186,7 @@ test('format suitability is ranked separately from intent and capped at three av
   assert.ok(!selectActions(candidates,position,answers).some(a=>abilities.formats.includes(a.id)));
   const questions=questionsFor(candidates,{...position,view:'choose-format'});
   assert.ok(questions.fit_image);assert.equal(questions.use_image,undefined);assert.equal(questions.requested_image,undefined);
-  assert.equal(Object.keys(questions).length,6);
+  assert.equal(Object.keys(questions).length,7);
   for (const bad of [score(NaN),score(Infinity),score(-1),score(4),score(2,.49),score(3,2),score('3'),{type:'noul',noul:1}]) assert.deepEqual(rankFormats(candidates,{fit_image:bad}),[]);
   assert.deepEqual(rankFormats(candidates),[]);
 });

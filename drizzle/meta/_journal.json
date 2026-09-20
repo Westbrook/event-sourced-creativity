@@ -285,131 +285,138 @@
     {
       "idx": 40,
       "version": "6",
-      "when": 1789761110512,
-      "tag": "0043_memory_derivation_purpose_grants",
+      "when": 1789928794240,
+      "tag": "0044_still_history_cache",
       "breakpoints": true
     },
     {
       "idx": 41,
       "version": "6",
-      "when": 1789761110513,
-      "tag": "0044_memory_derivation_reference_jobs",
+      "when": 1789928794241,
+      "tag": "0043_memory_derivation_purpose_grants",
       "breakpoints": true
     },
     {
       "idx": 42,
       "version": "6",
-      "when": 1789763145007,
-      "tag": "0045_memory_derivation_finance",
+      "when": 1789928794242,
+      "tag": "0044_memory_derivation_reference_jobs",
       "breakpoints": true
     },
     {
       "idx": 43,
       "version": "6",
-      "when": 1789766489847,
-      "tag": "0046_memory_derivation_recovery_cursor",
+      "when": 1789928794243,
+      "tag": "0045_memory_derivation_finance",
       "breakpoints": true
     },
     {
       "idx": 44,
       "version": "6",
-      "when": 1789772570016,
-      "tag": "0047_memory_derivation_results",
+      "when": 1789928794244,
+      "tag": "0046_memory_derivation_recovery_cursor",
       "breakpoints": true
     },
     {
       "idx": 45,
       "version": "6",
-      "when": 1789774150091,
-      "tag": "0048_memory_derivation_user_controls",
+      "when": 1789928794245,
+      "tag": "0047_memory_derivation_results",
       "breakpoints": true
     },
     {
       "idx": 46,
       "version": "6",
-      "when": 1789774667536,
-      "tag": "0049_memory_derivation_completion",
+      "when": 1789928794246,
+      "tag": "0048_memory_derivation_user_controls",
       "breakpoints": true
     },
     {
       "idx": 47,
       "version": "6",
-      "when": 1789777471504,
-      "tag": "0050_memory_derivation_lifecycle",
+      "when": 1789928794247,
+      "tag": "0049_memory_derivation_completion",
       "breakpoints": true
     },
     {
       "idx": 48,
       "version": "6",
-      "when": 1789778642448,
-      "tag": "0051_memory_derivation_split",
+      "when": 1789928794248,
+      "tag": "0050_memory_derivation_lifecycle",
       "breakpoints": true
     },
     {
       "idx": 49,
       "version": "6",
-      "when": 1789827451367,
-      "tag": "0052_memory_derivation_history_privacy",
+      "when": 1789928794249,
+      "tag": "0051_memory_derivation_split",
       "breakpoints": true
     },
     {
       "idx": 50,
       "version": "6",
-      "when": 1789836886129,
-      "tag": "0053_memory_derivation_producers",
+      "when": 1789928794250,
+      "tag": "0052_memory_derivation_history_privacy",
       "breakpoints": true
     },
     {
       "idx": 51,
       "version": "6",
-      "when": 1789839049314,
-      "tag": "0054_memory_derivation_index_intents",
+      "when": 1789928794251,
+      "tag": "0053_memory_derivation_producers",
       "breakpoints": true
     },
     {
       "idx": 52,
       "version": "6",
-      "when": 1789842357428,
-      "tag": "0055_memory_derivation_relation_lifecycle",
+      "when": 1789928794252,
+      "tag": "0054_memory_derivation_index_intents",
       "breakpoints": true
     },
     {
       "idx": 53,
       "version": "6",
-      "when": 1789844809481,
-      "tag": "0056_memory_derivation_reuse_lifecycle",
+      "when": 1789928794253,
+      "tag": "0055_memory_derivation_relation_lifecycle",
       "breakpoints": true
     },
     {
       "idx": 54,
       "version": "6",
-      "when": 1789855885198,
-      "tag": "0057_memory_derivation_observation_controls",
+      "when": 1789928794254,
+      "tag": "0056_memory_derivation_reuse_lifecycle",
       "breakpoints": true
     },
     {
       "idx": 55,
       "version": "6",
-      "when": 1789861750080,
-      "tag": "0058_project_containment",
+      "when": 1789928794255,
+      "tag": "0057_memory_derivation_observation_controls",
       "breakpoints": true
     },
     {
       "idx": 56,
       "version": "6",
-      "when": 1789864283244,
-      "tag": "0059_memory_recall_boundaries",
+      "when": 1789928794256,
+      "tag": "0058_project_containment",
       "breakpoints": true
     },
     {
       "idx": 57,
       "version": "6",
-      "when": 1789912264781,
-      "tag": "0060_memory_derivation_contexts",
+      "when": 1789928794257,
+      "tag": "0059_memory_recall_boundaries",
       "breakpoints": true
     },
     {
       "idx": 58,
+      "version": "6",
+      "when": 1789928794258,
+      "tag": "0060_memory_derivation_contexts",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
       "version": "6",
       "when": 1789929248486,
       "tag": "0061_memory_derivation_consumers",

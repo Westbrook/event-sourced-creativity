@@ -9,10 +9,10 @@ import {appendAuditEvent} from '../worker/runtime.ts';
 const pos={view:'projects',projectId:'',documentId:'',blockId:'',outputId:'',intent:'',recentActions:[]};
 const abilities={author:true,generate:true,projectCreate:true,formats:['image','video','audio','model3d','scene','short_story','slides','storyboard']};
 
-test('Projects asks three relevant questions; pruned answers preserve ranking and constraint penalties',()=>{
+test('Projects adds one comparative choice to the three relevant questions; pruned answers preserve ranking and constraint penalties',()=>{
  const built=buildDecisionState([],pos,abilities,0);
- assert.equal(Object.keys(comprehensiveQuestionsFor(built.candidates,pos)).length,70);
- assert.deepEqual(Object.keys(questionsFor(built.candidates,pos)),['stage','first_step','use_new-project']);
+ assert.equal(Object.keys(comprehensiveQuestionsFor(built.candidates,pos)).length,71);
+ assert.deepEqual(Object.keys(questionsFor(built.candidates,pos)),['next_best_action','stage','first_step','use_new-project']);
  let random=1234;const value=()=>{random=(random*1664525+1013904223)>>>0;return random/2**32;};
  for(const position of [pos,{...pos,view:'document',blockId:'b'},{...pos,view:'artifact',outputId:'a'},{...pos,view:'document',intent:'Make an image'}]){
   for(let n=0;n<80;n++){
@@ -68,7 +68,8 @@ test('warm personal history uses constant-size revision proof; private edits and
   await request();let queries=[];f.controls.beforeRead=s=>queries.push(s.sql);f.controls.beforeBatch=ss=>queries.push(...ss.map(s=>s.sql));
   const warm=await request();assert.equal(warm.preparation.source,'snapshot');assert.equal(warm.cache.status,'hit');
   assert.ok(queries.some(sql=>sql.includes('AS generation')&&sql.includes('scene_source_generations')));
-  assert.ok(!queries.some(sql=>sql.includes('ORDER BY event.sequence')&&sql.includes('secret.private_json')),'No full witness');
+  assert.ok(!queries.some(sql=>sql.includes('AS private_json')&&sql.includes('secret.redacted_at')),'No full witness');
+  assert.ok(!queries.some(sql=>sql.includes('WITH page AS MATERIALIZED')),'No global history replay');
   assert.ok(!queries.some(sql=>sql.includes('SELECT * FROM events LEFT JOIN')),'No event page for unchanged history');
   const row=f.sqlite.prepare("SELECT secret.private_event_id,secret.private_json FROM event_private_payloads secret JOIN events event ON event.event_id=secret.private_event_id WHERE secret.document_id=? AND event.type='BlockCreated' LIMIT 1").get(f.documentId);
   assert.ok(row);const payload=JSON.parse(row.private_json);payload.properties={...payload.properties,text:'PRIVATE ALTERED DIRECTION'};

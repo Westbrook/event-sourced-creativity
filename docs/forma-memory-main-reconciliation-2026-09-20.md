@@ -1,7 +1,7 @@
 # Memory reconciliation with main — 2026-09-20
 
 The Memory feature branch incorporates local `main` at
-`80ed2618ac57fee8f77aef316dacd478308ac72f`. This is source integration, not a
+`58b0d153`. The earlier reconciliation below incorporated `80ed2618`. This is source integration, not a
 production deployment or completion of the remaining Memory plan.
 
 ## Migration history
@@ -55,3 +55,23 @@ records the regression and its focused scheduled-entry checks.
 The synthetic D1 snapshot helper now preserves native AUTOINCREMENT sequence
 state, including deleted high-water marks introduced by the actual Still schema.
 This is local test infrastructure only, not a live database migration/repair.
+
+## Subsequent Still history integration
+
+The semantic-consumer checkpoint `f642ac62` is reconciled with local main
+`58b0d153`, including the upstream Still history cache and next-best toolbar work.
+Main's journal prefix 0–40 and snapshot 0040 remain exact. The 19 unpublished
+Memory migrations follow at indexes 41–59; their snapshots include the Still
+history table and have recomposed ancestry. The first 18 Memory timestamps now
+follow main's `1789928794240` monotonically (`1789928794241`–`1789928794258`);
+the last consumer migration already had a later timestamp. All SQL files remain
+byte-unchanged. No live receipt ledger or database was modified.
+
+Verification on the combined tree: 149 migration/Still tests and 38 native
+semantic-consumer/D1/source tests pass, as do TypeScript and the production build.
+The installed migrator upgrades a populated main prefix while preserving both
+Still relay/history rows and original receipts. Tests distinguish the full
+creative-question bank from the intentionally reduced toolbar questions and use
+the actual Still session endpoint; production policy was not weakened.
+
+This remains feature-branch source integration, not a push to main or production.
