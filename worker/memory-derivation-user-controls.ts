@@ -1,3 +1,4 @@
+import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import type { WorkerEnv } from './runtime.ts';
 import { memoryCanonical, type MemorySqlGuard } from './memory-sql.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
@@ -71,6 +72,7 @@ export async function controlNativeDerivationResult(env:WorkerEnv,read:NativeDer
     previous.push(prior);next.push(row);
   }
   const retiring=await retirement(env,target.enrollmentId,target.purpose,target.actorUserId,schema.indexPresent);
+  const contexts=await prepareMemoryContextRetirement(env,{kind:'purpose',actorUserId:target.actorUserId,enrollmentId:target.enrollmentId,purpose:target.purpose},schema);
   const statements=[...nativeDerivationResultStatements(env,read),derivationAssertion(env,schema.guard),retiring.guard,
     ...next.map((row,i)=>snapshot(env,String(row.control_id),previous[i],kinds[i])),
     ...(schema.observationControlsPresent?[derivationAssertion(env,{condition:`(SELECT COUNT(*) FROM ${derivationControlRelation(true)} WHERE enrollment_id=?)+?<=1024`,bindings:[target.enrollmentId,next.filter(row=>row.revision===1).length]})]:[]),...(authorizationGuard?[derivationAssertion(env,authorizationGuard)]:[])];
@@ -83,8 +85,9 @@ export async function controlNativeDerivationResult(env:WorkerEnv,read:NativeDer
     statements.push(derivationAssertion(env,{condition:'changes()=1',bindings:[]}),snapshot(env,String(row.control_id),row,kind));
   }
   if(env.DB!==db)throw Error('memory-user-control-unavailable');
-  const results=structuredClone(await db.batch<Record<string,unknown>>(statements));
-  if(env.DB!==db||!derivationResults(results,statements.length)||!results.every((row,index)=>{
+  const all=structuredClone(await db.batch<Record<string,unknown>>([...contexts.assertions,...statements,...contexts.statements]));
+  const results=all.slice(contexts.assertions.length,contexts.assertions.length+statements.length);
+  if(env.DB!==db||!contexts.acknowledge(all.slice(0,contexts.assertions.length),all.slice(contexts.assertions.length+statements.length))||!derivationResults(results,statements.length)||!results.every((row,index)=>{
     const i=writes.indexOf(index);return i>=0?derivationChanged(row,1,i===0?retiring.changes:0):derivationVerified(row)||row.results.length===1&&row.results[0]?.context_source_asserted===1;
   }))throw Error('memory-user-control-commit-unconfirmed');
   return next.map(view);
@@ -103,14 +106,16 @@ export async function reviseNativeDerivationUserControl(env:WorkerEnv,actorUserI
     if(prior&&observation)throw Error('memory-user-control-unavailable');if(observation){prior=observation;kind='observation';}}
   if(!prior||prior.revision!==revision||String(prior.expires_at)<=new Date().toISOString())throw Error('memory-user-control-revision-changed');
   const next={...prior,revision:revision+1,action,correction_text:correction,updated_at:new Date().toISOString()},retiring=await retirement(env,String(prior.enrollment_id),String(prior.purpose),actorUserId,schema.indexPresent);
+  const contexts=await prepareMemoryContextRetirement(env,{kind:'purpose',actorUserId,enrollmentId:String(prior.enrollment_id),purpose:String(prior.purpose)},schema);
   const statements=[derivationAssertion(env,schema.guard),snapshot(env,controlId,prior,kind),retiring.guard,
     db.prepare(`UPDATE ${table(kind)} SET revision=?,action=?,correction_text=?,updated_at=? WHERE control_id=? AND actor_user_id=? AND revision=?`)
       .bind(revision+1,action,correction,next.updated_at,controlId,actorUserId,revision),
     derivationAssertion(env,{condition:'changes()=1',bindings:[]}),snapshot(env,controlId,next,kind),
     ...(authorizationGuard?[derivationAssertion(env,authorizationGuard)]:[])];
   if(env.DB!==db)throw Error('memory-user-control-unavailable');
-  const result=structuredClone(await db.batch<Record<string,unknown>>(statements));
-  if(env.DB!==db||!derivationResults(result,statements.length)||authorizationGuard&&!derivationVerified(result[6]!)||![0,1,2,4,5].every(i=>derivationVerified(result[i]!))||!derivationChanged(result[3]!,1,retiring.changes))throw Error('memory-user-control-commit-unconfirmed');
+  const all=structuredClone(await db.batch<Record<string,unknown>>([...contexts.assertions,...statements,...contexts.statements]));
+  const result=all.slice(contexts.assertions.length,contexts.assertions.length+statements.length);
+  if(env.DB!==db||!contexts.acknowledge(all.slice(0,contexts.assertions.length),all.slice(contexts.assertions.length+statements.length))||!derivationResults(result,statements.length)||authorizationGuard&&!derivationVerified(result[6]!)||![0,1,2,4,5].every(i=>derivationVerified(result[i]!))||!derivationChanged(result[3]!,1,retiring.changes))throw Error('memory-user-control-commit-unconfirmed');
   return {controlId,revision:revision+1,action,expiresAt:prior.expires_at};
 }
 

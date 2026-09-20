@@ -1,3 +1,4 @@
+import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import { html, nothing } from 'lit';
 import { FormaElement } from './forma-element.ts';
 import { createAssistantMemoryContextClient, type AssistantMemoryContextView } from '../state/memory-assistant-context-client.ts';
@@ -20,8 +21,8 @@ export class MemoryAssistantContext extends FormaElement{
  #show=()=>{if(this.ownerDocument.visibilityState==='visible'){this.#suspended=false;this.#refresh();}};
  #visibility=()=>{if(this.ownerDocument.visibilityState==='hidden')this.#hide();else this.#show();};
  #changed=()=>this.#refresh();
- override connectedCallback(){super.connectedCallback();this.ownerDocument.addEventListener('visibilitychange',this.#visibility);window.addEventListener('pagehide',this.#hide);window.addEventListener('blur',this.#hide);window.addEventListener('pageshow',this.#show);window.addEventListener('focus',this.#show);window.addEventListener('forma-memory-assistant-context-changed',this.#changed);}
- override disconnectedCallback(){this.#clear();this.ownerDocument.removeEventListener('visibilitychange',this.#visibility);window.removeEventListener('pagehide',this.#hide);window.removeEventListener('blur',this.#hide);window.removeEventListener('pageshow',this.#show);window.removeEventListener('focus',this.#show);window.removeEventListener('forma-memory-assistant-context-changed',this.#changed);super.disconnectedCallback();}
+ override connectedCallback(){super.connectedCallback();this.ownerDocument.addEventListener('visibilitychange',this.#visibility);window.addEventListener('pagehide',this.#hide);window.addEventListener('blur',this.#hide);window.addEventListener('pageshow',this.#show);window.addEventListener('focus',this.#show);window.addEventListener('forma-memory-privacy-mutation',this.#refresh);window.addEventListener('forma-memory-assistant-context-changed',this.#changed);}
+ override disconnectedCallback(){this.#clear();this.ownerDocument.removeEventListener('visibilitychange',this.#visibility);window.removeEventListener('pagehide',this.#hide);window.removeEventListener('blur',this.#hide);window.removeEventListener('pageshow',this.#show);window.removeEventListener('focus',this.#show);window.removeEventListener('forma-memory-privacy-mutation',this.#refresh);window.removeEventListener('forma-memory-assistant-context-changed',this.#changed);super.disconnectedCallback();}
  protected override updated(){this.#sync();}
  #scope(){
   const session=this.store.session.get(),p=this.store.projection.get(),context=session?.projectContext;
@@ -33,11 +34,11 @@ export class MemoryAssistantContext extends FormaElement{
   return custody&&document?{projectId:p.projectId,documentId:p.documentId,stamp:JSON.stringify([custody,document.createdSequence,document.sourceEvents])}:null;
  }
  #sync(){
-  if(this.#owner?.current())return;this.#clear();if(!this.isConnected||this.#suspended||this.ownerDocument.visibilityState!=='visible')return;
+  if(this.#owner?.current())return;this.#clear();if(!this.isConnected||this.#suspended||memoryPrivacyMutationActive()||this.ownerDocument.visibilityState!=='visible')return;
   const store=this.store,session=store.session.get(),auth=store.captureAuthorizationScope(),source=store.captureSourceOwnership(),selected=this.#scope();
   if(!session||!auth||!selected||!store.sourceOwnershipActive(source))return;
   const route=store.route.get(),locale=this.i18n.locale,stamp=JSON.stringify(selected),candidate=this.candidateJobId,controller=new AbortController();
-  const owner:Owner={scope:selected,controller,current:()=>this.#owner===owner&&!controller.signal.aborted&&this.isConnected&&!this.#suspended&&this.ownerDocument.visibilityState==='visible'
+  const owner:Owner={scope:selected,controller,current:()=>this.#owner===owner&&!memoryPrivacyMutationActive()&&!controller.signal.aborted&&this.isConnected&&!this.#suspended&&this.ownerDocument.visibilityState==='visible'
    &&this.store===store&&store.session.get()?.user.userId===session.user.userId&&!store.session.get()?.impersonation&&store.authorizationScopeActive(auth)&&store.sourceOwnershipActive(source)
    &&store.route.get()===route&&this.i18n.locale===locale&&JSON.stringify(this.#scope())===stamp&&this.candidateJobId===candidate};
   this.#owner=owner;if(!candidate)void this.#load(owner);
@@ -58,7 +59,9 @@ export class MemoryAssistantContext extends FormaElement{
  async #act(action:'accept'|'dismiss'){
   const owner=this.#owner;if(!owner?.current()||this.#busy)return;
   const jobId=this.candidateJobId||this.#view?.context?.jobId;if(action==='accept'&&!jobId)return;
-  this.#busy=true;this.#notice='';this.requestUpdate();
+  this.#busy=true;this.#notice='';
+  if(action==='dismiss'){this.#view=null;this.#clock?.retire();clearTimeout(this.#timer);this.#timer=undefined;}
+  this.requestUpdate();
   try{
    const client=this.#client(owner),control=await client.read(owner.scope,owner.controller.signal,true);if(!owner.current())return;
    if(action==='accept')await client.accept(owner.scope,control,jobId!,owner.controller.signal);else await client.dismiss(owner.scope,control,owner.controller.signal);

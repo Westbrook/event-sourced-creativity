@@ -159,3 +159,12 @@ The complete Memory plan remains open; no production activation is implied.
 ## Memory saved-context and page continuation — 2026-09-20
 
 [Saved assistant references and canonical document pages](forma-memory-saved-context-pages-2026-09-20.md) implement private native selection controls, reference retirement, localized review, genuine governed page encounters and exact per-view derivation provenance. Migration0060 is unapplied. Automatic prompt/answer integration, field autocomplete, long-term reconciliation and the broader native scopes remain planned implementation, not external-service blockers. No production activation occurred.
+
+
+[Transactional saved-reference retirement](forma-memory-saved-context-pages-2026-09-20.md#transactional-reference-retirement-and-immediate-ui-clearing)
+now covers boundary/hierarchy changes, result withdrawal and claim controls,
+with immediate browser privacy invalidation. This is local branch work, not a
+release. Broader automatic assistant/autocomplete, long-term reconciliation,
+Library/Canvas/cross-owner scopes and integration qualification remain tracked
+in the native continuation; external scheduling/provider/index qualification
+and enrollment remain separate gates.

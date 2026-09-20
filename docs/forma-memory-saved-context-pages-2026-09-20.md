@@ -36,3 +36,37 @@ Compatibility and UI checks: 692 client/control tests, 8 browser regressions,
 and two additional in-view visual checks (English desktop and Arabic 320 px)
 passed. Eight late-source/permission tests refuse publication. Typecheck, scoped
 lint and build passed. All 575 selected native Memory regressions passed, including the actual isolated-D1 page read and its complete HTTP-request budget assertion (at most 50 operations).
+
+## Transactional reference retirement and immediate UI clearing
+
+Boundary changes/resets, project hierarchy revisions, source-result withdrawal,
+and claim correction/suppression now delete affected saved references in the
+same native transaction. Boundary and hierarchy changes preserve same-document
+references and the independently retained source result. Claim controls retire
+all references for their affected source enrollment and purpose. Exact schema,
+inventory, direct-write and terminal-absence assertions prevent partial success;
+an acknowledgement lost after commit is reported as unknown, never retried.
+Removal uses metadata only and does not hydrate source bodies, charge allowance,
+or require Memory to be enabled. Native authentication still applies.
+
+The browser invalidates automatic briefs, saved-context presentation and other
+open cross-scope previews when a privacy-affecting request starts. Concurrent
+requests keep that barrier closed until all settle; stale reads cannot repopulate
+notes. Automatic consumers then obtain fresh native proofs, while explicit
+inspectors require another deliberate read. Remove also clears its own saved
+notes before waiting for the response. The barrier is a UI lifetime mechanism,
+not authorization, cross-device notification or a replacement for server checks.
+
+These changes need no additional migration. Other source/access changes still
+have native read-time rejection and bounded maintenance; this checkpoint does
+not claim universal synchronous deletion, generated-answer provenance or field
+autocomplete implementation.
+
+Retirement verification: 594 selected native regressions passed. After the
+whole-request budget correction, 29 focused native checks and one actual isolated
+D1 acceptance/reset check passed. The four personal/shared and free/paid rich
+history cases use 36–50 complete HTTP database operations without reducing their
+admitted history. Another 322 client/component/containment checks, eight
+purpose/brief browser regressions, four saved-context pending-dismissal checks,
+and four cross-scope browser checks passed. Typecheck, scoped lint and build pass;
+the build retains existing chunk warnings. All data was isolated and synthetic.

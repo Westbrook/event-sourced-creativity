@@ -1,3 +1,4 @@
+import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import './memory-recall-boundary.css';
 import { html, nothing } from 'lit';
 import { FormaElement } from './forma-element.ts';
@@ -24,11 +25,12 @@ export class MemoryRecallBoundaryControl extends FormaElement {
   #consent = false;
   #busy = false;
   #status = '';
-  #lease: { current: () => boolean; controller: AbortController; until: number } | null = null;
+  #lease: { mutation: boolean; current: () => boolean; controller: AbortController; until: number } | null = null;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #t(key: string) { return personalMemoryMessage(this.i18n.locale, 'memory.live.' + key); }
   #clear = () => { this.#lease?.controller.abort(); this.#lease = null; clearTimeout(this.#timer); this.#timer = undefined;
     this.#view = null; this.#sources = []; this.#preview = null; this.#source = ''; this.#consent = false; this.#busy = false; this.requestUpdate(); };
+  #privacy = () => { if (!this.#lease?.mutation && memoryPrivacyMutationActive()) this.#hide(); };
   #hide = () => { this.#status = this.#busy ? 'recallBoundaryUncertain' : 'briefExpired'; this.#clear(); };
   #expire = () => {
     const focused = this.ownerDocument.activeElement, stamp = JSON.stringify(this.enrollment);
@@ -41,19 +43,19 @@ export class MemoryRecallBoundaryControl extends FormaElement {
     });
   };
   #visibility = () => { if (this.ownerDocument.visibilityState !== 'visible') this.#hide(); };
-  override connectedCallback() { super.connectedCallback(); window.addEventListener('pagehide', this.#hide); window.addEventListener('blur', this.#hide); this.ownerDocument.addEventListener('visibilitychange', this.#visibility); }
-  override disconnectedCallback() { this.#clear(); window.removeEventListener('pagehide', this.#hide); window.removeEventListener('blur', this.#hide); this.ownerDocument.removeEventListener('visibilitychange', this.#visibility); super.disconnectedCallback(); }
+  override connectedCallback() { super.connectedCallback(); window.addEventListener('pagehide', this.#hide); window.addEventListener('blur', this.#hide); window.addEventListener('forma-memory-privacy-mutation', this.#privacy); this.ownerDocument.addEventListener('visibilitychange', this.#visibility); }
+  override disconnectedCallback() { this.#clear(); window.removeEventListener('pagehide', this.#hide); window.removeEventListener('blur', this.#hide); window.removeEventListener('forma-memory-privacy-mutation', this.#privacy); this.ownerDocument.removeEventListener('visibilitychange', this.#visibility); super.disconnectedCallback(); }
   protected override updated() { if (this.#lease && !this.#lease.current()) this.#hide(); }
   #active() { if (this.#lease && !this.#lease.current()) { this.#hide(); return false; } return Boolean(this.#lease); }
   async #run(action: 'load' | 'save' | 'reset' | 'sources' | 'inspect') {
-    if (this.#busy || !this.enrollment || !this.currentCheck?.() || this.ownerDocument.visibilityState !== 'visible') return;
+    if (this.#busy || memoryPrivacyMutationActive() || !this.enrollment || !this.currentCheck?.() || this.ownerDocument.visibilityState !== 'visible') return;
     const row = this.enrollment, scope = { projectId: row.projectId, documentId: row.documentId }, view = this.#view,
       boundary = this.#boundary, chosen = this.#sources.find(s => s.enrollmentId === this.#source), purpose = this.#purpose;
     if (action === 'save' && (!this.#active() || !view || !this.#consent) || action === 'inspect' && (!this.#active() || !chosen)) return;
     this.#clear(); this.#busy = true; this.#status = '';
     const store = this.store, auth = store.captureAuthorizationScope(), source = store.captureSourceOwnership(), route = store.route.get(),
       locale = this.i18n.locale, stamp = JSON.stringify(row), started = Date.now(), elapsed = createMemoryElapsed({ wall: started, monotonic: performance.now() }), controller = new AbortController();
-    const owner = { controller, until: started + 30000, current: () => this.#lease === owner && !controller.signal.aborted && this.isConnected
+    const owner = { mutation: action === 'save' || action === 'reset', controller, until: started + 30000, current: () => this.#lease === owner && (owner.mutation || !memoryPrivacyMutationActive()) && !controller.signal.aborted && this.isConnected
       && this.ownerDocument.visibilityState === 'visible' && this.currentCheck?.() === true && this.store === store && this.i18n.locale === locale
       && store.route.get() === route && store.authorizationScopeActive(auth) && store.sourceOwnershipActive(source)
       && JSON.stringify(this.enrollment) === stamp && Date.now() < owner.until && elapsed.elapsed({ wall: Date.now(), monotonic: performance.now() }) < owner.until - started };

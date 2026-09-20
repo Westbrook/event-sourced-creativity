@@ -1,3 +1,4 @@
+import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import { projectContainmentId as id, projectContainmentForest, reparentProjectForest, visibleProjectAncestors, PROJECT_CONTAINMENT_LIMIT,
   type ProjectContainmentNode, type ProjectContainmentView } from '../src/model/project-containment.ts';
 import { PRINCIPAL_WITH_ACCESS_SQL } from './access-policy.ts';
@@ -165,7 +166,10 @@ export async function handleProjectContainment(request: Request, env: WorkerEnv)
       .bind(owner,projectId,state.access.get(projectId)!.declaration,parentId,parentId === null ? null : state.access.get(parentId)!.declaration,node.organizationId,revision,updatedAt);
     const check = db.prepare(`SELECT CASE WHEN EXISTS(SELECT 1 FROM project_containment WHERE owner_user_id=? AND project_id=? AND revision=?)
       THEN 1 ELSE json('containment_commit_missing') END AS verified`).bind(owner,projectId,revision);
-    const result = await db.batch([...assertions,mutation,assertions[0],check]);
+    const retired=await prepareMemoryContextRetirement(env,{kind:'hierarchy',ownerUserId:owner});
+    const all=await db.batch([...retired.assertions,...assertions,mutation,assertions[0],check,...retired.statements]);
+    if(!retired.acknowledge(all.slice(0,retired.assertions.length),all.slice(retired.assertions.length+assertions.length+3)))throw Error('containment_retirement_unconfirmed');
+    const result=all.slice(retired.assertions.length,retired.assertions.length+assertions.length+3);
     if (env.DB !== db || !verified(result) || result.length !== assertions.length+3
       || result.filter((_,i) => i !== assertions.length).some(r => r.results.length !== 1 || r.results[0].verified !== 1)) throw new Error('containment_unconfirmed');
     return reply({version:'project-containment-v1',saved:true,refreshRequired:true});

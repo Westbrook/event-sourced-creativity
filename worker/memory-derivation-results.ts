@@ -1,3 +1,4 @@
+import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import { parseMemoryBehavioralResult, type ParsedMemoryBehavioralDerivation } from './memory-behavioral-result.ts';
 import { prepareNativeDerivationCompletion } from "./memory-derivation-completion.ts";
 import type { WorkerEnv } from './runtime.ts';
@@ -223,7 +224,10 @@ export async function withdrawNativeDerivationResult(env: WorkerEnv, actorUserId
     derivationAssertion(env, { condition: 'changes()=?', bindings: [change] }), derivationAssertion(env, {
       condition: `EXISTS(SELECT 1 FROM memory_derivation_results WHERE job_id=? AND state='withdrawn' AND raw_json IS NULL AND manifest_json IS NULL)
         AND NOT EXISTS(SELECT 1 FROM memory_derivation_result_dependencies WHERE job_id=?)`, bindings: [jobId, jobId] }), ...(authorizationGuard ? [derivationAssertion(env,authorizationGuard)] : [])];
-  const result = structuredClone(await db.batch<Record<string, unknown>>(statements));
+  const retired=await prepareMemoryContextRetirement(env,{kind:'result',actorUserId,jobId},schema);
+  const all=structuredClone(await db.batch<Record<string,unknown>>([...retired.assertions,...statements,...retired.statements]));
+  if(!retired.acknowledge(all.slice(0,retired.assertions.length),all.slice(retired.assertions.length+statements.length)))throw Error('memory-result-withdrawal-unconfirmed');
+  const result=all.slice(retired.assertions.length,retired.assertions.length+statements.length);
   if (env.DB !== db || !derivationResults(result, statements.length) || authorizationGuard && !derivationVerified(result[5]!) || ![0, 1, 3, 4].every(index => derivationVerified(result[index]!))
     || !derivationChanged(result[2]!, change, row.dependencies)) throw Error('memory-result-withdrawal-unconfirmed');
   return true;

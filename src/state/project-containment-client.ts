@@ -1,3 +1,4 @@
+import { beginMemoryPrivacyMutation } from './memory-privacy-mutation.ts';
 import { projectContainmentId as id, type ProjectContainmentView, PROJECT_CONTAINMENT_DEPTH, PROJECT_CONTAINMENT_LIMIT } from '../model/project-containment';
 const endpoint='/api/projects/containment';
 export function parseProjectContainment(value:unknown,projectId:string):ProjectContainmentView|null {
@@ -23,8 +24,12 @@ export async function readProjectContainment(projectId:string,signal:AbortSignal
 }
 export async function saveProjectContainment(view:ProjectContainmentView,parentId:string|null,signal:AbortSignal):Promise<void>{
  if(!parseProjectContainment(view,view.projectId)||!view.canReparent||parentId!==null&&!view.candidates.includes(parentId))throw new Error('containment_unavailable');
+ if(signal.aborted)throw new Error('containment_unavailable');
+ const finishMutation=beginMemoryPrivacyMutation();
+ try{
  const response=await fetch(endpoint,{method:'PATCH',credentials:'same-origin',cache:'no-store',redirect:'error',signal,
  headers:{'content-type':'application/json'},body:JSON.stringify({projectId:view.projectId,parentId,revision:view.revision})});
  const result=await body(response);
  if(signal.aborted||!result||Object.keys(result).sort().join(',')!=='refreshRequired,saved,version'||result.version!=='project-containment-v1'||result.saved!==true||result.refreshRequired!==true)throw new Error('containment_unconfirmed');
+ }finally{finishMutation();}
 }

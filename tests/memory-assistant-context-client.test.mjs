@@ -1,3 +1,5 @@
+import {beginMemoryPrivacyMutation,memoryPrivacyMutationActive} from '../src/state/memory-privacy-mutation.ts';
+import {createMemoryPrivateRequest} from '../src/state/memory-private-request.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createAssistantMemoryContextClient} from '../src/state/memory-assistant-context-client.ts';
@@ -26,4 +28,26 @@ test('pre-aborted acceptance never dispatches and lost acknowledgement never ret
  let calls=0;const client=createAssistantMemoryContextClient(async()=>{calls++;throw Error('lost');}),controller=new AbortController();controller.abort();
  await assert.rejects(client.accept(scope,base(),jobId,controller.signal));assert.equal(calls,0);
  await assert.rejects(client.accept(scope,base(),jobId,signal()));assert.equal(calls,1);
+});
+
+test('privacy barrier is identifier-free, overlap-safe and release is idempotent',t=>{
+ const window=new EventTarget(),events=[];const previous=Object.getOwnPropertyDescriptor(globalThis,'window');Object.defineProperty(globalThis,'window',{configurable:true,value:window});t.after(()=>{if(previous)Object.defineProperty(globalThis,'window',previous);else delete globalThis.window;});
+ window.addEventListener('forma-memory-privacy-mutation',event=>events.push({active:memoryPrivacyMutationActive(),detail:event.detail}));
+ const first=beginMemoryPrivacyMutation(),second=beginMemoryPrivacyMutation();t.after(()=>{first();second();});
+ assert.equal(memoryPrivacyMutationActive(),true);first();first();assert.equal(memoryPrivacyMutationActive(),true);
+ second();second();assert.equal(memoryPrivacyMutationActive(),false);
+ assert.deepEqual(events,[{active:true,detail:undefined},{active:true,detail:undefined},{active:false,detail:undefined}]);
+});
+for(const mode of ['success','error','abort'])test('boundary transport holds privacy barrier through '+mode,async()=>{
+ let resolve,calls=0;const controller=new AbortController();
+ const request=createMemoryPrivateRequest(()=>{calls++;assert.equal(memoryPrivacyMutationActive(),true);return new Promise(done=>{resolve=done;});},'test');
+ const pending=request(scope,'recall-boundary',controller.signal,'DELETE');assert.equal(memoryPrivacyMutationActive(),true);
+ if(mode==='abort')controller.abort();else resolve(Response.json({version:'test'},{status:mode==='error'?503:200}));
+ if(mode==='success')await pending;else await assert.rejects(pending);
+ assert.equal(memoryPrivacyMutationActive(),false);assert.equal(calls,1);
+ if(mode==='abort')resolve(Response.json({version:'test'}));
+});
+test('read and explicit context-selection requests do not invalidate their sending consumer',async()=>{
+ const request=createMemoryPrivateRequest(async()=>{assert.equal(memoryPrivacyMutationActive(),false);return Response.json({version:'test'});},'test');
+ await request(scope,'recall-boundary',signal());await request(scope,'assistant-context',signal(),'PUT');
 });

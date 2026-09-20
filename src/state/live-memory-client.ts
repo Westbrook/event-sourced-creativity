@@ -1,3 +1,4 @@
+import { beginMemoryPrivacyMutation } from './memory-privacy-mutation.ts';
 /** Pure HTTP boundary. No server imports, persistence, enrollment side effects, or retries. */
 import { parseMemoryCustody, type MemoryCustody } from "../model/memory-custody.ts";
 import { createMemoryElapsed, memoryTimestamp, parseMemoryLifetime, type MemoryClockSample,
@@ -480,33 +481,38 @@ export function createLiveMemoryClient(transport: Transport = fetch,
   async function request<T>(path: string, method: "GET" | "PUT" | "DELETE", body: unknown,
     signal: AbortSignal | undefined, parse: (value: unknown) => T, observe?: () => void, byteLimit = RESPONSE_BYTE_LIMIT): Promise<T> {
     const mutation = method !== "GET";
-    let response: Response;
+    if (signal?.aborted) throw new MemoryClientError("memory_request_cancelled");
+    const finishMutation = mutation ? beginMemoryPrivacyMutation() : undefined;
     try {
-      response = await transport(path, { method, credentials: "same-origin", mode: "same-origin", cache: "no-store", redirect: "error", signal,
-        headers: { accept: "application/json", ...(mutation ? { "content-type": "application/json" } : {}) },
-        ...(mutation ? { body: JSON.stringify(body) } : {}) });
-    } catch {
-      throw new MemoryClientError(signal?.aborted ? "memory_request_cancelled" : "memory_request_failed", null, mutation);
-    }
-    if (!response.ok) {
-      let code = "memory_request_rejected", knownRejection = false;
+      let response: Response;
       try {
-        const value = object(await readJson(response, signal, undefined, byteLimit));
-        if (typeof value.error === "string" && ERROR_CODES.has(value.error)) { code = value.error; knownRejection = true; }
-        if (value.error === "memory_write_unconfirmed") code = "memory_write_unconfirmed";
-        // A failure body carrying success or pending claims is not a confirmed rejection.
-        // Only the exact HTTP 200 Forget contract above can acknowledge withdrawal.
-        if (["erased", "memoryWithdrawn", "physicalCleanupPending", "reEnrollmentRequired", "otherDevicesAndBackupsPurged",
-          "enrollment", "priorMemoryCleared", "structuredCleanup"].some(key => Object.hasOwn(value, key))) knownRejection = false;
-      } catch { /* Never expose a raw server body, parser error or arbitrary server message. */ }
-      if (signal?.aborted) throw new MemoryClientError("memory_request_cancelled", response.status, mutation);
-      throw new MemoryClientError(code, response.status, mutation && (response.status >= 500 || !knownRejection));
-    }
-    try {
-      if (response.status !== 200) { cancelBody(response.body); throw new Error("invalid-memory-status"); }
-      const value = await readJson(response, signal, observe, byteLimit); check(!signal?.aborted); return parse(value);
-    } catch { throw new MemoryClientError(signal?.aborted ? "memory_request_cancelled" : "memory_response_invalid", response.status, mutation); }
+        response = await transport(path, { method, credentials: "same-origin", mode: "same-origin", cache: "no-store", redirect: "error", signal,
+          headers: { accept: "application/json", ...(mutation ? { "content-type": "application/json" } : {}) },
+          ...(mutation ? { body: JSON.stringify(body) } : {}) });
+      } catch {
+        throw new MemoryClientError(signal?.aborted ? "memory_request_cancelled" : "memory_request_failed", null, mutation);
+      }
+      if (!response.ok) {
+        let code = "memory_request_rejected", knownRejection = false;
+        try {
+          const value = object(await readJson(response, signal, undefined, byteLimit));
+          if (typeof value.error === "string" && ERROR_CODES.has(value.error)) { code = value.error; knownRejection = true; }
+          if (value.error === "memory_write_unconfirmed") code = "memory_write_unconfirmed";
+          // A failure body carrying success or pending claims is not a confirmed rejection.
+          // Only the exact HTTP 200 Forget contract above can acknowledge withdrawal.
+          if (["erased", "memoryWithdrawn", "physicalCleanupPending", "reEnrollmentRequired", "otherDevicesAndBackupsPurged",
+            "enrollment", "priorMemoryCleared", "structuredCleanup"].some(key => Object.hasOwn(value, key))) knownRejection = false;
+        } catch { /* Never expose a raw server body, parser error or arbitrary server message. */ }
+        if (signal?.aborted) throw new MemoryClientError("memory_request_cancelled", response.status, mutation);
+        throw new MemoryClientError(code, response.status, mutation && (response.status >= 500 || !knownRejection));
+      }
+      try {
+        if (response.status !== 200) { cancelBody(response.body); throw new Error("invalid-memory-status"); }
+        const value = await readJson(response, signal, observe, byteLimit); check(!signal?.aborted); return parse(value);
+      } catch { throw new MemoryClientError(signal?.aborted ? "memory_request_cancelled" : "memory_response_invalid", response.status, mutation); }
+    } finally { finishMutation?.(); }
   }
+
   return {
     async settings(after?: string, signal?: AbortSignal): Promise<MemorySettings> {
       const cursor = after === undefined ? undefined : input(() => id(after));

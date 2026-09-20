@@ -7,7 +7,7 @@ import { derivationAssertion, derivationResults, derivationVerified, memoryDeriv
 import { derivationExact, derivationHash, derivationId } from './memory-derivation-policy.ts';
 import { readNativeDerivationResult, nativeDerivationResultBinding, nativeDerivationResultInputs, nativeDerivationResultStatements } from './memory-derivation-results.ts';
 import { readNativeProjectContainment } from './project-containment-api.ts';
-import { packRecallGuards, readNativeRecallBoundarySchema } from './memory-recall-boundary-api.ts';
+import { packRecallGuards, readNativeRecallBoundarySnapshot } from './memory-recall-boundary-api.ts';
 import { memoryRecallBoundary, memoryRecallRelation } from '../src/model/memory-recall-boundary.ts';
 import { nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery } from './memory-native-deadlines.ts';
 import { memoryCanonical, type MemorySqlGuard } from './memory-sql.ts';
@@ -106,10 +106,9 @@ export async function handleMemoryAssistantContext(request:Request,env:WorkerEnv
     let boundaryRevision:string|null=null,hierarchyRevision:string|null=null;
     let relation:{zoom:string;distance:number;weight:number}={zoom:'document',distance:0,weight:1};
     if(source.enrollment_id!==target.enrollment_id){
-      guards.push(await readNativeRecallBoundarySchema(env));
-      const bq='SELECT enrollment_revision,boundary,revision FROM memory_recall_boundaries WHERE enrollment_id=?',br=await read(env,bq,[source.enrollment_id]),boundary=br[0];
-      if(br.length!==1||boundary.enrollment_revision!==source.revision||!memoryRecallBoundary(boundary.boundary))throw Error('context_boundary');
-      guards.push(snapshot(bq,[source.enrollment_id],br,['enrollment_revision','boundary','revision']));
+      const recalled=await readNativeRecallBoundarySnapshot(env,source.enrollment_id),boundary=recalled.boundary;
+      if(!boundary||boundary.enrollment_revision!==source.revision||!memoryRecallBoundary(boundary.boundary))throw Error('context_boundary');
+      guards.push(...recalled.guards);
       const tree=await readNativeProjectContainment(env,target.owner_user_id,true);
       const readable=new Set([...tree.forest.values()].filter(node=>{const access=tree.access.get(node.id)!;return access.active&&(node.organizationId===null?target.owner_user_id===actor.userId:hasCapability(actor,'project.read',{organizationId:node.organizationId,projectAccessId:access.accessId}));}).map(node=>node.id));
       const related=memoryRecallRelation(identity(source),identity(target),boundary.boundary,tree.forest,readable);if(!related)throw Error('context_ancestry');

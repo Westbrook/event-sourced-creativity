@@ -1,3 +1,4 @@
+import {memoryPrivacyMutationActive} from '../src/state/memory-privacy-mutation.ts';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createHash} from 'node:crypto';
@@ -47,7 +48,7 @@ test('purpose client snapshots before await and rejects stale settings',async()=
 test('purpose client pre-abort never dispatches; in-flight mutation abort is unknown',async()=>{
   const f=fixture(),controller=new AbortController();let calls=0;controller.abort();const client=createMemoryDerivationClient(()=>{calls++;return new Promise(()=>{});});
   await assert.rejects(client.enable(f.input,controller.signal),error=>!error.mutationUnknown);assert.equal(calls,0);
-  const active=new AbortController(),pending=client.enable(f.input,active.signal);active.abort();await assert.rejects(pending,error=>error.mutationUnknown);assert.equal(calls,1);
+  const active=new AbortController(),pending=client.enable(f.input,active.signal);assert.equal(memoryPrivacyMutationActive(),true);active.abort();await assert.rejects(pending,error=>error.mutationUnknown);assert.equal(calls,1);assert.equal(memoryPrivacyMutationActive(),false);
 });
 for(const fault of ['wrong-type','overflow','invalid-utf8'])test('purpose client cancels '+fault+' response without waiting for cancellation',async()=>{
   const f=fixture();let cancelled=0;const body=new ReadableStream({start(controller){controller.enqueue(fault==='invalid-utf8'?new Uint8Array([0xc0,0xaf]):new TextEncoder().encode('x'.repeat(fault==='overflow'?524289:1)));},cancel(){cancelled++;return new Promise(()=>{});}});

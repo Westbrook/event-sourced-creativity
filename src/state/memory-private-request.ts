@@ -1,3 +1,4 @@
+import { beginMemoryPrivacyMutation } from './memory-privacy-mutation.ts';
 import { createMemoryElapsed } from '../model/memory-lifetime.ts';
 import { derivationId } from '../model/memory-derivation-policy.ts';
 type Scope={projectId:string;documentId:string};
@@ -16,8 +17,10 @@ export function createMemoryPrivateRequest(transport:typeof fetch,version:string
     const cancel=()=>{controller.abort();void reader?.cancel().catch(()=>{});rejectInterrupted(Error('memory-recall-expired'));};
     const active=()=>check(!signal.aborted&&!controller.signal.aborted&&elapsed.elapsed({wall:Date.now(),monotonic:performance.now()})<30000);
     const timer=setTimeout(cancel,30000);signal.addEventListener('abort',cancel,{once:true});
+    let finishMutation:(()=>void)|undefined;
     try {
       active();
+      if(route==='recall-boundary'&&method!=='GET')finishMutation=beginMemoryPrivacyMutation();
       response=await Promise.race([transport(url,{method,credentials:'same-origin',cache:'no-store',redirect:'error',signal:controller.signal,
         headers:body?{'content-type':'application/json'}:{},...(body?{body:JSON.stringify(body)}:{})}).then(value=>{
           if(controller.signal.aborted){void value.body?.cancel().catch(()=>{});throw Error('memory-recall-expired');}return value;
@@ -29,6 +32,7 @@ export function createMemoryPrivateRequest(transport:typeof fetch,version:string
         check(bytes<=524288);text+=decoder.decode(part.value,{stream:true});}
       text+=decoder.decode();active();const value=JSON.parse(text);check(value?.version===version);return value;
     }finally{
+      finishMutation?.();
       clearTimeout(timer);signal.removeEventListener('abort',cancel);controller.abort();
       if(reader){void reader.cancel().catch(()=>{});reader.releaseLock();}else if(response?.body)void response.body.cancel().catch(()=>{});
     }

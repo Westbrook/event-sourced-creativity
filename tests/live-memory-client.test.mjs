@@ -1,3 +1,4 @@
+import {memoryPrivacyMutationActive} from '../src/state/memory-privacy-mutation.ts';
 // SOURCE-ONLY DRAFT. Isolated fake HTTP contracts; not native Worker, access, scheduling or production qualification.
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -754,7 +755,8 @@ test("isolated client marks transport and server failures as uncertain mutations
   const read = fakeTransport(() => { throw new Error("synthetic failure"); });
   await assert.rejects(read.client.settings(), isClientError("memory_request_failed", false, null));
   const controller = new AbortController(); controller.abort();
-  await assert.rejects(transport.client.forget(enrollment(), controller.signal), isClientError("memory_request_cancelled", true, null));
+  await assert.rejects(transport.client.forget(enrollment(), controller.signal), isClientError("memory_request_cancelled", false, null));
+  assert.equal(transport.calls.length, 1, "pre-aborted deletion never dispatches");
   const server = fakeTransport(() => new Response("unavailable", { status: 500 }));
   await assert.rejects(server.client.save(draft), isClientError("memory_request_rejected", true, 500));
 });
@@ -1886,4 +1888,12 @@ for(const fault of ['view','url','kind','document','extra','getter','expired','m
  if(fault==='getter')Object.defineProperty(target,'view',{enumerable:true,get(){evaluated++;return 'editor';}});
  if(fault==='expired')f.p.sources[0].validUntil='2000-01-01T00:00:00.000Z';if(fault==='meaning')f.p.inferredPreferences=true;if(fault==='sourceIndex')f.p.episodes[0].observations[0].sourceIndex=1;
  assert.equal(parseMemoryConsumptionV6(...f.input()),null);assert.equal(evaluated,0);
+});
+
+test('live settings mutation invalidation covers the response body and unknown failure',async()=>{
+ let release;
+ const {client,calls}=fakeTransport(()=>{assert.equal(memoryPrivacyMutationActive(),true);return new Promise(resolve=>{release=resolve;});});
+ const pending=client.save(preferences());assert.equal(memoryPrivacyMutationActive(),true);
+ release(Response.json({error:'synthetic'},{status:503}));await assert.rejects(pending,error=>error.mutationUnknown);
+ assert.equal(memoryPrivacyMutationActive(),false);assert.equal(calls.length,1);
 });

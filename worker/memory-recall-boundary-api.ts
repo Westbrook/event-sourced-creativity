@@ -1,3 +1,4 @@
+import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import { bodyOf, parentColumns, readScope } from './memory-derivation-api.ts';
 import { nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery } from './memory-native-deadlines.ts';
 import { requireUser, hasCapability } from './pilot-policy.ts';
@@ -34,12 +35,27 @@ function inventory(sql: string, bindings: readonly (string | number | null)[], f
   return { condition: `(SELECT json_group_array(json_array(${keys.map(key => '"' + key + '"').join(',')})) FROM (${sql}))=?`,
     bindings: [...bindings, JSON.stringify(found.map(row => keys.map(key => row[key])))] };
 }
-export async function readNativeRecallBoundarySchema(env: WorkerEnv) {
-  const found = await rows(env, schemaQuery), explicit = found.filter(row => row.sql !== null);
+async function certifyRecallBoundarySchema(found: Row[]) {
+  const explicit = found.filter(row => row.sql !== null);
   if (found.length !== profile.count + 1 || explicit.length !== profile.count
     || found.some(row => row.sql === null && row.name !== profile.automaticIndexes[0])
     || 'sha256:' + await memoryDigest(memoryCanonical(explicit.map(row => ({ ...row, sql: String(row.sql).trim().replace(/;$/u, '').replace(/\bIF\s+NOT\s+EXISTS\s+/giu, '') })))) !== profile.digest) throw Error('recall_schema');
   return inventory(schemaQuery, [], found, ['name', 'sql', 'table', 'type']);
+}
+export async function readNativeRecallBoundarySchema(env: WorkerEnv) {
+  return certifyRecallBoundarySchema(await rows(env, schemaQuery));
+}
+/** One source-free read for independently certified schema and exact consent.
+ * The returned data is not access authority; consumers replay both guards with
+ * native source/target permission and ancestry proofs before publication. */
+export async function readNativeRecallBoundarySnapshot(env: WorkerEnv, enrollmentId: string) {
+  if(!derivationId(enrollmentId))throw Error('recall_enrollment');
+  const db=env.DB,query=`SELECT ${columns.join(',')} FROM memory_recall_boundaries WHERE enrollment_id=? LIMIT 2`;
+  const results=structuredClone(await db.batch<Row>([db.prepare(schemaQuery),db.prepare(query).bind(enrollmentId)]));
+  if(env.DB!==db||!derivationResults(results,2))throw Error('recall_read');
+  const schema=await certifyRecallBoundarySchema(results[0]!.results),found=results[1]!.results;
+  if(env.DB!==db||found.length>1||found.some(row=>!derivationExact(row,columns)))throw Error('recall_boundary');
+  return {boundary:found[0]??null,guards:[schema,inventory(query,[enrollmentId],found,columns)]};
 }
 /** Keep each assertion's expression tree separate and below native bind limits. */
 export function packRecallGuards(guards: readonly MemorySqlGuard[]): MemorySqlGuard[] {
@@ -82,7 +98,10 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
       const snapshot = actor.authorizationSnapshot; if (!snapshot) return reply({ error: 'principal_account_required' }, 403);
       guards.push({ condition: "EXISTS(SELECT 1 FROM users WHERE user_id=? AND role=? AND COALESCE(updated_at,'')=?)", bindings: [actor.userId, actor.role, snapshot.updatedAt] });
       const checks = packRecallGuards(guards).map(g => derivationAssertion(env, g));
-      const result = await db.batch([...checks, db.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id IN(SELECT enrollment_id FROM memory_live_enrollments WHERE actor_user_id=? AND project_id=? AND document_id=?)').bind(actor.userId, projectId, documentId)]);
+      const retired=await prepareMemoryContextRetirement(env,{kind:'boundary',actorUserId:actor.userId,projectId,documentId});
+      const all=await db.batch([...retired.assertions,...checks, db.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id IN(SELECT enrollment_id FROM memory_live_enrollments WHERE actor_user_id=? AND project_id=? AND document_id=?)').bind(actor.userId, projectId, documentId),...retired.statements]);
+      if(!retired.acknowledge(all.slice(0,retired.assertions.length),all.slice(retired.assertions.length+checks.length+1)))throw Error('recall_retirement_unconfirmed');
+      const result=all.slice(retired.assertions.length,retired.assertions.length+checks.length+1);
       if (!current() || !derivationResults(result, checks.length + 1) || !result.slice(0, checks.length).every(derivationVerified)) throw Error('recall_unconfirmed');
       return reply({ saved: true, refreshRequired: true });
     }
@@ -121,10 +140,13 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
           || body.confirmation !== 'CHANGE_RECALL_BOUNDARY') return reply({ error: 'explicit_recall_boundary_required' }, 400);
         if (body.revision !== (boundary?.revision ?? null)) return reply({ error: 'recall_boundary_changed' }, 409);
         const revision = crypto.randomUUID(), checks = packRecallGuards(guards).map(g => derivationAssertion(env, g));
-        const result = await db.batch([...checks, db.prepare(`INSERT INTO memory_recall_boundaries(${columns.join(',')}) VALUES(?,?,?,?,?)
+        const retired=await prepareMemoryContextRetirement(env,{kind:'boundary',actorUserId:actor.userId,projectId,documentId});
+        const all = await db.batch([...retired.assertions,...checks, db.prepare(`INSERT INTO memory_recall_boundaries(${columns.join(',')}) VALUES(?,?,?,?,?)
           ON CONFLICT(enrollment_id) DO UPDATE SET enrollment_revision=excluded.enrollment_revision,boundary=excluded.boundary,revision=excluded.revision,consented_at=excluded.consented_at`)
           .bind(parent.enrollment_id, parent.revision, body.boundary, revision, new Date().toISOString()),
-          derivationAssertion(env, { condition: 'EXISTS(SELECT 1 FROM memory_recall_boundaries WHERE enrollment_id=? AND revision=?)', bindings: [parent.enrollment_id, revision] })]);
+          derivationAssertion(env, { condition: 'EXISTS(SELECT 1 FROM memory_recall_boundaries WHERE enrollment_id=? AND revision=?)', bindings: [parent.enrollment_id, revision] }),...retired.statements]);
+        if(!retired.acknowledge(all.slice(0,retired.assertions.length),all.slice(retired.assertions.length+checks.length+2)))throw Error('recall_retirement_unconfirmed');
+        const result=all.slice(retired.assertions.length,retired.assertions.length+checks.length+2);
         if (!current() || !derivationResults(result, checks.length + 2) || !result.slice(0, checks.length).every(derivationVerified) || !derivationVerified(result.at(-1)!)) throw Error('recall_unconfirmed');
         return reply({ saved: true, refreshRequired: true });
       }

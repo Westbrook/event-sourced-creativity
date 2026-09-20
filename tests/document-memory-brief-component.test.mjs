@@ -17,6 +17,7 @@ const savedCompiled=ts.transpileModule(savedDeclaration.getText(savedSource).rep
 const flatten=value=>typeof value==='string'?value:Array.isArray(value)?value.map(flatten).join(''):value?.strings?value.strings.map((part,i)=>part+flatten(value.values[i])).join(''):'';
 const flush=async()=>{for(let i=0;i<4;i++)await Promise.resolve();};
 function fixture(t,{deferred=false,shared=false,saved=false}={}){
+  let privacyPending=false;
   const window=new EventTarget(),document=new EventTarget();document.visibilityState='visible';document.activeElement=null;
   let session={user:{userId:'actor'},projects:[],impersonation:null},route='/document/doc/doc',authorization='auth',generation=1,sourceActive=true;
   let projection={projectId:'project',documentId:'doc',documents:[{id:'doc',projectId:'project',createdSequence:1,sourceEvents:['original']}]};
@@ -31,10 +32,10 @@ function fixture(t,{deferred=false,shared=false,saved=false}={}){
       sections:[{purpose:'rolling-summary',jobId:'job',corrections:[],items:[{text:'Private native candidate',citationStatus:'support-cited',supports:[{text:'Original quotation'}],counterevidence:[]}]}]};
     const lease={current:()=>!retired&&current()?value:null,retire:()=>{retired=true;}};calls.push({selection,current,signal,resolve:()=>resolve(lease),retired:()=>retired});if(!deferred)resolve(lease);});
   const savedClient=()=>({read:(scope,signal)=>new Promise(resolve=>{calls.push({scope,signal,resolve:()=>resolve({validUntil:new Date(Date.now()+25000).toISOString(),context:{state:'accepted',source:{documentId:'doc',zoom:'document'}},presentation:{items:[{text:'Private native candidate'}]}})});if(!deferred)calls.at(-1).resolve();})});
-  const Component=saved?new Function('FormaElement','html','nothing','createAssistantMemoryContextClient','parseMemoryCustody','personalMemoryMessage','createMemoryElapsed','window','setTimeout','clearTimeout',savedCompiled+'\nreturn MemoryAssistantContext;')(Base,html,nothing,savedClient,parseMemoryCustody,personalMemoryMessage,createMemoryElapsed,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id)):new Function('FormaElement','html','nothing','readDocumentMemoryBrief','parseMemoryCustody','personalMemoryMessage','window','setTimeout','clearTimeout',compiled+'\nreturn DocumentMemoryBrief;')(
-    Base,html,nothing,capture,parseMemoryCustody,personalMemoryMessage,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id));
+  const Component=saved?new Function('memoryPrivacyMutationActive','FormaElement','html','nothing','createAssistantMemoryContextClient','parseMemoryCustody','personalMemoryMessage','createMemoryElapsed','window','setTimeout','clearTimeout',savedCompiled+'\nreturn MemoryAssistantContext;')(()=>privacyPending,Base,html,nothing,savedClient,parseMemoryCustody,personalMemoryMessage,createMemoryElapsed,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id)):new Function('memoryPrivacyMutationActive','FormaElement','html','nothing','readDocumentMemoryBrief','parseMemoryCustody','personalMemoryMessage','window','setTimeout','clearTimeout',compiled+'\nreturn DocumentMemoryBrief;')(
+    ()=>privacyPending,Base,html,nothing,capture,parseMemoryCustody,personalMemoryMessage,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id));
   const element=new Component();element.connectedCallback();element.updated();t.after(()=>{element.isConnected=false;element.disconnectedCallback();});
-  return {element,calls,document,window,timers,refresh,text:()=>flatten(element.render()),focused:()=>focused,
+  return {privacy:(value)=>{privacyPending=value;window.dispatchEvent(new Event('forma-memory-privacy-mutation'));},element,calls,document,window,timers,refresh,text:()=>flatten(element.render()),focused:()=>focused,
     change:(kind)=>{if(kind==='route')route='/elsewhere';if(kind==='actor')session={...session,user:{userId:'another'}};
       if(kind==='auth')authorization='changed';if(kind==='source')generation++;if(kind==='retired-source')sourceActive=false;
       if(kind==='impersonation')session={...session,impersonation:{userId:'other'}};if(kind==='locale')element.i18n.locale='ar';
@@ -80,4 +81,16 @@ test('saved semantic context rejects late old-scope data and retires on expiry w
  const f=fixture(t,{saved:true,deferred:true});f.change('route');f.element.updated();f.calls[0].resolve();await flush();assert.doesNotMatch(f.text(),/Private native candidate/);
  f.calls[1].resolve();await flush();assert.match(f.text(),/Private native candidate/);f.document.activeElement={inside:true};[...f.timers.values()][0]();await flush();
  assert.doesNotMatch(f.text(),/Private native candidate/);assert.equal(f.focused(),1);f.element.updated();assert.equal(f.calls.length,2);
+});
+
+for(const saved of [false,true])test('privacy mutation clears displayed notes and reads only after settlement saved='+saved,async t=>{
+ const f=fixture(t,{saved});await flush();assert.match(f.text(),/Private native candidate/);
+ f.privacy(true);assert.doesNotMatch(f.text(),/Private native candidate/);assert.equal(f.calls[0].signal.aborted,true);assert.equal(f.timers.size,0);
+ f.element.updated();f.window.dispatchEvent(new Event('focus'));assert.equal(f.calls.length,1);
+ f.privacy(false);await flush();assert.equal(f.calls.length,2);assert.match(f.text(),/Private native candidate/);
+});
+for(const saved of [false,true])test('privacy mutation rejects a late read and cannot reopen a hidden consumer saved='+saved,async t=>{
+ const f=fixture(t,{saved,deferred:true});f.privacy(true);f.calls[0].resolve();await flush();assert.doesNotMatch(f.text(),/Private native candidate/);
+ f.window.dispatchEvent(new Event('blur'));f.privacy(false);f.element.updated();assert.equal(f.calls.length,1);
+ f.window.dispatchEvent(new Event('focus'));assert.equal(f.calls.length,2);f.calls[1].resolve();await flush();assert.match(f.text(),/Private native candidate/);
 });

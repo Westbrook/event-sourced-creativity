@@ -1,3 +1,4 @@
+import { beginMemoryPrivacyMutation } from './memory-privacy-mutation.ts';
 import { createMemoryElapsed } from "../model/memory-lifetime.ts";
 /** Explicit consent transport only. No storage, enrollment, processing or retry. */
 import { parseMemoryCustody, type MemoryCustody } from "../model/memory-custody.ts";
@@ -212,6 +213,7 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
     let reject: (error: Error) => void = () => undefined;
     const interrupted = new Promise<never>((_resolve, no) => { reject = no; }); void interrupted.catch(() => undefined);
     const abort = () => reject(new Error("cancelled")); signal?.addEventListener("abort", abort, { once: true });
+    const finishMutation = mutation ? beginMemoryPrivacyMutation() : undefined;
     try {
       dispatched = true;
       const pending = transport(path + query, { method, signal, credentials: "same-origin", mode: "same-origin", cache: "no-store", redirect: "error",
@@ -220,7 +222,7 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
       if (response.status !== 200) { cancel(response.body); throw new MemoryDerivationClientError(mutation && (response.status < 400 || response.status >= 500), response.status); }
       const raw = await read(response, signal), value = await Promise.race([Promise.resolve(parse(raw)), interrupted]); check(revision === epoch && !signal?.aborted); return value;
     } catch (error) { if (error instanceof MemoryDerivationClientError) throw error; cancel(response?.body ?? null); throw new MemoryDerivationClientError(mutation && dispatched, response?.status ?? null); }
-    finally { signal?.removeEventListener("abort", abort); }
+    finally { signal?.removeEventListener("abort", abort); finishMutation?.(); }
   }
   return {
     async results(value:DerivationScopeRequest,after:string|null=null,signal?:AbortSignal,purpose:MemoryDerivationPurpose|null=null,latest=false){

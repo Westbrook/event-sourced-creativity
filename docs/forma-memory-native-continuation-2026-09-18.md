@@ -183,3 +183,12 @@ qualification and enrollment remain separate operational gates.
 [Explicit source recall boundaries and hierarchy-backed consumers](forma-memory-cross-scope-recall-2026-09-19.md) now implement document-only defaults, independent target/source authorization, bounded project/tree/partition relevance, fresh native result verification, localized explicit controls and automatic nearest-source document briefs. Latest-purpose reads do not revive withdrawn newer results. Additive migration0059 is unapplied. These presentation reads do not issue durable answer/edit capabilities. All still-planned native and external work above remains tracked; the full plan is not complete.
 
 [Canonical-page consumption review](forma-memory-saved-context-pages-2026-09-20.md#page-consumption-continuation) now adds explicitly negotiated v6 page targets and localized 7/30-day per-view counts, retaining older contracts and final privacy replay. This is descriptive, bounded observation coverage, not inferred preference or lifetime history. Broader native implementation remains in scope.
+
+
+[Transactional saved-reference retirement](forma-memory-saved-context-pages-2026-09-20.md#transactional-reference-retirement-and-immediate-ui-clearing)
+now covers boundary/hierarchy changes, result withdrawal and claim controls,
+with immediate browser privacy invalidation. This is local branch work, not a
+release. Broader automatic assistant/autocomplete, long-term reconciliation,
+Library/Canvas/cross-owner scopes and integration qualification remain tracked
+in the native continuation; external scheduling/provider/index qualification
+and enrollment remain separate gates.

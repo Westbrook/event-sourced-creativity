@@ -16167,8 +16167,8 @@ for(const shared of [false,true])test('native automatic scoped brief: target rec
  lease.retire();assert.equal(lease.current(),null);
 });
 
-async function semanticAssistantContextFixture(t,{shared=false,crossScope=false}={}){
- const state=crossScope?await nativeCrossScopeRecallFixture(t,{shared}):await nativeDerivationResultFixture(t,{shared,userControls:true,lifecycle:true,indexIntents:true});
+async function semanticAssistantContextFixture(t,{shared=false,crossScope=false,seed=null}={}){
+ const state=crossScope?await nativeCrossScopeRecallFixture(t,{shared,seed}):await nativeDerivationResultFixture(t,{shared,userControls:true,lifecycle:true,indexIntents:true});
  if(!crossScope)assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0060_memory_derivation_contexts.sql',import.meta.url),'utf8'));
  const {handleMemoryAssistantContext}=await import('../worker/memory-assistant-context-api.ts');
@@ -16197,8 +16197,9 @@ for(const shared of [false,true])test('semantic assistant context: cross-scope b
  await state.widen();view=await state.contextGet();const accepted=await state.contextAccept(view);assert.equal(accepted.status,200,await accepted.clone().text()+' '+state.controls.lastDatabaseError);
  view=await state.contextGet();assert.equal(view.context.source.zoom,'project');
  await state.recallRequest('recall-boundary',state.recallSource.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});
- assert.equal((await state.contextRequest()).status,503);
- assert.equal((await state.contextRequest('DELETE',{revision:view.context.revision,confirmation:'DISMISS_ASSISTANT_CONTEXT'})).status,200);
+ assert.equal((await state.contextGet()).context,null);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n,0);
+ assert.equal((await state.contextRequest('DELETE',{revision:view.context.revision,confirmation:'DISMISS_ASSISTANT_CONTEXT'})).status,409);
 });
 for(const fault of ['result','source','target','feature','schema','foreign-keys'])test('semantic assistant context: closed after '+fault,async t=>{
  const state=await semanticAssistantContextFixture(t);const initial=await state.contextGet();assert.equal((await state.contextAccept(initial)).status,200);const view=await state.contextGet();
@@ -16208,7 +16209,7 @@ for(const fault of ['result','source','target','feature','schema','foreign-keys'
  if(fault==='feature')state.env.FORMA_MEMORY_ENABLED='false';
  if(fault==='schema')state.sqlite.exec('CREATE INDEX idx_memory_derivation_contexts_unqualified ON memory_derivation_contexts(actor_user_id)');
  if(fault==='foreign-keys')state.sqlite.exec('PRAGMA foreign_keys=OFF');
- const response=await state.contextRequest();assert.ok(response.status>=400);assert.equal(JSON.stringify(await response.json()).includes('model-derived-unverified'),false);
+ const response=await state.contextRequest();if(fault==='result'){assert.equal(response.status,200);assert.equal((await response.clone().json()).context,null);}else assert.ok(response.status>=400);assert.equal(JSON.stringify(await response.json()).includes('model-derived-unverified'),false);
  if(['feature'].includes(fault))assert.equal((await state.contextRequest('DELETE',{revision:view.context.revision,confirmation:'DISMISS_ASSISTANT_CONTEXT'})).status,200);
 });
 for(const shared of [false,true])test('semantic assistant context: Forget clears target-only references without a paid grant '+shared,async t=>{
@@ -16254,9 +16255,9 @@ for(const shared of [false,true])test('semantic assistant context: native query 
  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};
  try{for(const request of [()=>state.contextAccept(view),()=>state.contextRequest()]){operations=0;const r=await request();assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);assert.ok(operations<=50,String(operations));t.diagnostic('native operations '+operations);}}finally{db.prepare=prepare;db.batch=batch;}
 });
-test('semantic assistant context: source-free retirement removes withdrawn references',async t=>{
+test('semantic assistant context: source-free retirement removes expired references',async t=>{
  const state=await semanticAssistantContextFixture(t),view=await state.contextGet();assert.equal((await state.contextAccept(view)).status,200);
- assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ const clock=consequentialDbClock(state);t.after(()=>clock.close());clock.set(state.sqlite.prepare('SELECT expires_at FROM memory_derivation_contexts').get().expires_at);
  const {sweepAssistantMemoryContexts}=await import('../worker/memory-assistant-context-api.ts');assert.equal(await sweepAssistantMemoryContexts(state.env),1);assert.equal(await sweepAssistantMemoryContexts(state.env),0);
 });
 for(const shared of [false,true])test('native memory page bindings: genuine canonical document views remain distinct '+shared,async t=>{
@@ -16276,7 +16277,7 @@ for(const shared of [false,true])test('native memory page bindings: genuine cano
   assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);const projection=(await r.json()).consumptionEpisodes;
   const visits=projection.sources.filter(row=>row.type==='DocumentViewVisited');assert.equal(visits.length,3);
   assert.ok(visits.every(row=>row.target.kind===(version===6?'page':'document')));
-  if(version===6)assert.deepEqual(visits.map(row=>row.target.view),['chat','editor','chat']);else assert.ok(visits.every(row=>!Object.hasOwn(row.target,'view')));
+  if(version===6)assert.deepEqual(new Map(visits.map(row=>[row.eventId,row.target.view])),new Map(pages.entries.map(row=>[row.eventId,row.view])));else assert.ok(visits.every(row=>!Object.hasOwn(row.target,'view')));
  }
  const store=await import('../worker/memory-derivation-results.ts');assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id));
  state.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(pages.entries[0].eventId);
@@ -16348,4 +16349,88 @@ test('native page consumption: isolated D1 and complete HTTP request budget',{ti
  state.env.DB={prepare:sql=>wrap(actual.prepare(sql)),batch:inputs=>{operations++;return actual.batch(inputs.map(input=>originals.get(input)??input));}};
  const response=await state.request('/api/memory/recall?id='+state.current().enrollment_id+'&consumptionEpisodes=memory-consumption-episodes-v6',{headers:state.owner});
  assert.equal(response.status,200,await response.clone().text());const view=await response.json();assert.equal(view.consumptionEpisodes.sources.find(row=>row.type==='DocumentViewVisited').target.view,'editor');assert.ok(operations<=50,'whole-request operations '+operations);t.diagnostic(JSON.stringify({operations}));
+});
+
+for(const shared of [false,true])for(const action of ['boundary-change','boundary-reset','hierarchy','result'])test('semantic context retirement: atomic native '+shared+'/'+action,async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ const {handleMemoryAssistantContext}=await import('../worker/memory-assistant-context-api.ts'),source=state.recallSource;
+ const localUrl='http://localhost/api/memory/assistant-context?'+new URLSearchParams({projectId:source.project_id,documentId:source.document_id});
+ const local=await(await handleMemoryAssistantContext(new Request(localUrl,{headers:state.owner}),state.env)).json();
+ assert.equal((await handleMemoryAssistantContext(new Request(localUrl,{...json({jobId:state.executionJob.job_id,revision:null,targetEnrollmentId:local.targetEnrollmentId,targetRevision:local.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'},{...state.owner,origin:'http://localhost'}),method:'PUT'}),state.env)).status,200);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n,2);const financial=adaptiveReentryFinancialState(state);
+ if(action==='boundary-change')await state.widen('partition');
+ if(action==='boundary-reset'){state.env.FORMA_MEMORY_ENABLED='false';const {PRINCIPAL_WITH_ACCESS_SQL}=await import('../worker/access-policy.ts');const db=state.env.DB,prepare=db.prepare;let bodyRead='';db.prepare=function(sql){if(sql.trim()!==PRINCIPAL_WITH_ACCESS_SQL.trim()&&/\b(?:FROM|JOIN)\s+private_content\b|secret\.private_json/iu.test(sql)){bodyRead=sql;throw Error('reset_source_body');}return prepare.call(this,sql);};try{const r=await state.recallRequest('recall-boundary',source.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});assert.equal(r.status,200,await r.clone().text()+' BODY READ: '+bodyRead);}finally{db.prepare=prepare;state.env.FORMA_MEMORY_ENABLED='true';}}
+ if(action==='hierarchy'){
+  const {handleProjectContainment}=await import('../worker/project-containment-api.ts'),url='http://localhost/api/projects/containment';
+  const view=await(await handleProjectContainment(new Request(url+'?projectId='+source.project_id,{headers:state.owner}),state.env)).json();
+  const r=await handleProjectContainment(new Request(url,{...json({projectId:source.project_id,parentId:null,revision:view.revision},{...state.owner,origin:'http://localhost'}),method:'PATCH'}),state.env);assert.equal(r.status,200,await r.clone().text());
+ }
+ if(action==='result')assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,source.actor_user_id,state.executionJob.job_id),true);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n,action==='result'?0:1);
+ assert.equal((await state.contextGet()).context,null);assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+ if(action!=='result'){assert.ok(await state.readResult(),'independent document source is not withdrawn by changing recall scope');const r=await handleMemoryAssistantContext(new Request(localUrl,{headers:state.owner}),state.env);assert.equal(r.status,200);assert.equal((await r.json()).context.state,'accepted');}
+});
+for(const fault of ['rollback','missing-delete','inventory','schema','lost-ack'])test('semantic context retirement: final atomic reset '+fault,async t=>{
+ const state=await semanticAssistantContextFixture(t,{crossScope:true});await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ const before=state.sqlite.prepare('SELECT revision FROM memory_recall_boundaries').get().revision,db=state.env.DB,batch=db.batch;let hit=false;
+ db.batch=async function(statements){if(!hit&&statements.some(s=>String(s.sql??'').startsWith('DELETE FROM memory_derivation_contexts'))){hit=true;
+  if(fault==='rollback')throw Error('isolated rollback');
+  if(fault==='missing-delete')return batch.call(this,statements.filter(s=>!String(s.sql??'').startsWith('DELETE FROM memory_derivation_contexts')));
+  if(fault==='inventory')state.sqlite.exec('DELETE FROM memory_derivation_contexts');
+  if(fault==='schema')state.sqlite.exec('DROP INDEX idx_memory_derivation_contexts_source');
+  if(fault==='lost-ack'){await batch.call(this,statements);return[];}
+ }return batch.call(this,statements);};
+ let r;try{r=await state.recallRequest('recall-boundary',state.recallSource.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});}finally{db.batch=batch;}
+ assert.equal(hit,true);assert.equal(r.status,503,await r.clone().text());assert.equal(state.sqlite.prepare('SELECT revision FROM memory_recall_boundaries').get()?.revision,fault==='lost-ack'?undefined:before);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n,['inventory','lost-ack'].includes(fault)?0:1);
+});
+
+for(const shared of [false,true])for(const action of ['corrected','suppressed'])test('semantic context retirement: explicit native '+action+' retires cross-scope reference '+shared,async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ const before=adaptiveReentryFinancialState(state),read=await state.readResult(),item=state.resultStore.nativeDerivationResultInputs(state.env,read).candidate.items[0];
+ const controls=await(await import('../worker/memory-derivation-user-controls.ts')).controlNativeDerivationResult(state.env,read,item.claimKey,action,action==='corrected'?'Explicit user correction.':null,Object.fromEntries(item.lineageIds.map(id=>[id,0])));
+ assert.equal(controls.length,item.lineageIds.length);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n,0);
+ assert.equal((await state.contextGet()).context,null);assert.equal(await state.readResult(),null);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+for(const fault of ['rollback','lost-ack'])test('semantic context retirement: correction and reference share '+fault+' transaction',async t=>{
+ const state=await semanticAssistantContextFixture(t,{crossScope:true});await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ const read=await state.readResult(),item=state.resultStore.nativeDerivationResultInputs(state.env,read).candidate.items[0],db=state.env.DB,batch=db.batch;let hit=false;
+ db.batch=async function(statements){if(!statements.some(s=>/^DELETE FROM memory_derivation_contexts/iu.test(s.sql)))return batch.call(this,statements);hit=true;
+  if(fault==='rollback')return batch.call(this,[...statements,db.prepare('SELECT absent_context_retirement_assertion()')]);
+  await batch.call(this,statements);throw Error('lost_acknowledgement');};
+ try{await assert.rejects((await import('../worker/memory-derivation-user-controls.ts')).controlNativeDerivationResult(state.env,read,item.claimKey,'corrected','Explicit user correction.',Object.fromEntries(item.lineageIds.map(id=>[id,0]))));}finally{db.batch=batch;}
+ assert.equal(hit,true);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n,fault==='rollback'?1:0);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_user_controls').get().n,fault==='rollback'?0:item.lineageIds.length);
+ assert.equal(Boolean(await state.readResult()),fault==='rollback');
+});
+
+for(const shared of [false,true])for(const paid of [false,true])test('semantic assistant context: complete resource-rich HTTP request budget '+shared+'/'+paid,async t=>{
+ let state;await nativeDerivationRollingFixture(t,{shared,paid,windows:3,termOverrides:{recipeVersion:'memory-derivation-candidates-v2'},beforeWindow:async(seed,index)=>{
+  if(index===0)state=await semanticAssistantContextFixture(t,{shared,crossScope:true,seed});await appendMixedProducerResources(seed,index,true);
+ }});await state.widen();const prior=await state.contextGet();
+ const latest=state.sqlite.prepare('SELECT r.job_id,r.manifest_json FROM memory_derivation_results r JOIN memory_derivation_jobs j USING(job_id) ORDER BY j.through_sequence DESC LIMIT 1').get();
+ const admittedWindows=(JSON.parse(latest.manifest_json).history?.windowJobIds.length??0)+1;
+ const path='/api/memory/assistant-context?'+new URLSearchParams({projectId:state.recallTarget.projectId,documentId:state.recallTarget.documentId});
+ const db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
+ const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+ db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};
+ try{for(const method of ['PUT','GET']){operations=0;const response=await state.request(path,{method,headers:{...state.owner,origin:'http://localhost','content-type':'application/json'},...(method==='PUT'?{body:JSON.stringify({jobId:latest.job_id,revision:null,targetEnrollmentId:prior.targetEnrollmentId,targetRevision:prior.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'})}:{})});
+  assert.equal(response.status,200,await response.clone().text()+' '+state.controls.lastDatabaseError);const view=await response.json();
+  if(method==='GET'){assert.equal(view.presentation.history.windowCount,admittedWindows);assert.equal(view.presentation.candidate.version,'memory-derivation-candidates-v2');}
+  t.diagnostic(JSON.stringify({shared,paid,method,operations,admittedWindows}));assert.ok(operations<=50,'Complete native request '+operations);
+ }}finally{db.prepare=prepare;db.batch=batch;}
+});
+
+test('semantic context retirement: actual isolated D1 acceptance and atomic boundary reset',{timeout:180000},async t=>{
+ const state=await semanticAssistantContextFixture(t,{shared:true,crossScope:true});await state.widen();
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+ const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['SavedMemory'],
+  script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('No external network');}});
+ t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const actual=await mf.getD1Database('SavedMemory');await install(actual,exportSynthetic(state.sqlite));state.env.DB=actual;
+ const view=await state.contextGet();const accepted=await state.contextAccept(view);assert.equal(accepted.status,200,await accepted.clone().text());
+ assert.equal((await state.contextGet()).context.state,'accepted');
+ const reset=await state.recallRequest('recall-boundary',state.recallSource.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});
+ assert.equal(reset.status,200,await reset.clone().text());assert.equal((await actual.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').first()).n,0);
+ assert.equal((await state.contextGet()).context,null);assert.equal((await actual.prepare('SELECT state FROM memory_derivation_results WHERE job_id=?').bind(state.executionJob.job_id).first()).state,'active');
 });
