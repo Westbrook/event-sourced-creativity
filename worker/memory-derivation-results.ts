@@ -1,3 +1,4 @@
+import { MEMORY_EVIDENCE_RESOURCES, type MemoryResourceCitation } from '../src/model/memory-evidence-resource.ts';
 import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import { parseMemoryBehavioralResult, type ParsedMemoryBehavioralDerivation } from './memory-behavioral-result.ts';
 import { prepareNativeDerivationCompletion } from "./memory-derivation-completion.ts";
@@ -180,6 +181,34 @@ export function nativeDerivationResultInputs(env: WorkerEnv, handle: NativeDeriv
   const history=nativeDerivationSourceInputs(env,read.capture).history;
   return { jobId: String(read.row.job_id), expiresAt: String(read.row.expires_at), candidate: structuredClone(read.candidate),
     ...(history?{history:{windowCount:history.windowJobIds.length+1,originalPairs:history.originalPairs,boundary:history.boundary,afterSequence:history.afterSequence,throughSequence:history.throughSequence}}:{}) };
+}
+/** Explicitly negotiated, original-backed evidence location. The result and
+ * entire manifest have already been independently revalidated. No provider
+ * labels, arbitrary block pointers, URI parsing or additional authority. */
+export function nativeDerivationResultResources(env: WorkerEnv, handle: NativeDerivationResultRead) {
+  const read = currentRead(env, handle), source = nativeDerivationSourceInputs(env, read.capture);
+  const claims = read.candidate.items.map(item => {
+    const citations: MemoryResourceCitation[] = [];
+    for (const index of new Set([...item.supports, ...item.counterevidence].map(row => row.sourceIndex))) {
+      const original = source.originals[index];
+      if (!original || original.scopeKey !== source.scopeKey) throw Error('memory-resource-source');
+      citations.push({ source: 'original', index, resource: { zoom: 'document', scopeKey: source.scopeKey } });
+    }
+    if ('observationCitations' in item) for (const cited of item.observationCitations) {
+      const observed = source.behavioralSources?.[cited.observationIndex];
+      if (!observed) throw Error('memory-resource-observation');
+      const pages = source.provenance.pageBindings?.entries.filter(row => row.eventId === observed.sourceId) ?? [];
+      const blocks = source.provenance.blockBindings?.entries.filter(row => row.eventId === observed.sourceId) ?? [];
+      if (pages.length + blocks.length > 1) throw Error('memory-resource-ambiguous');
+      const page = pages[0], block = blocks[0];
+      citations.push({ source: 'observation', index: cited.observationIndex, resource: page
+        ? { zoom: 'page', scopeKey: page.scopeKey, view: page.view }
+        : block ? { zoom: 'block', scopeKey: block.scopeKey, blockId: block.blockId, revision: block.revision }
+        : { zoom: 'document', scopeKey: source.scopeKey } });
+    }
+    return { claimKey: item.claimKey, citations };
+  });
+  return { version: MEMORY_EVIDENCE_RESOURCES, complete: false as const, claims };
 }
 /** Native source identity for a reference-only consumer. This is data, not a
  * publication capability; carry the opaque handle's statements into the write. */

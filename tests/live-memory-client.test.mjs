@@ -7,7 +7,7 @@ import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-cu
 import { createMemoryElapsed, memoryTimestamp, parseMemoryLifetime, MEMORY_RECALL_LIFETIME, MEMORY_RECALL_MAX_AGE_MS } from "../src/model/memory-lifetime.ts";
 import { rollingLiveMemoryConsumption } from "../src/model/memory-observations.ts";
 import { createDocumentJobMemoryClient, DocumentJobMemoryError, DOCUMENT_JOB_MEMORY_VERSION } from "../src/state/document-job-memory-client.ts";
-import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, MEMORY_CONSUMPTION_V4, MEMORY_CONSUMPTION_V5, parseMemoryConsumptionV2, parseMemoryConsumptionV3, parseMemoryConsumptionV4, parseMemoryConsumptionV5, memoryConsumptionWindows } from "../src/model/memory-consumption-v2.ts";
+import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, MEMORY_CONSUMPTION_V4, MEMORY_CONSUMPTION_V5, parseMemoryConsumptionV2, parseMemoryConsumptionV3, parseMemoryConsumptionV4, parseMemoryConsumptionV5, memoryConsumptionExtendedWindows, memoryConsumptionWindows } from "../src/model/memory-consumption-v2.ts";
 
 const fixtureId = value => value.toString(16).padStart(64, "0");
 const now = () => new Date().toISOString();
@@ -1896,4 +1896,16 @@ test('live settings mutation invalidation covers the response body and unknown f
  const pending=client.save(preferences());assert.equal(memoryPrivacyMutationActive(),true);
  release(Response.json({error:'synthetic'},{status:503}));await assert.rejects(pending,error=>error.mutationUnknown);
  assert.equal(memoryPrivacyMutationActive(),false);assert.equal(calls.length,1);
+});
+
+
+test('extended consumption windows retain old projection and add bounded day and quarter views',()=>{
+ const f=pageConsumptionRecall(),old=memoryConsumptionWindows(...f.input()),view=memoryConsumptionExtendedWindows(...f.input());
+ assert.deepEqual(view.windows.map(row=>row.days),[1,7,30,90]);assert.deepEqual(view.windows.slice(1,3),old.windows);
+ assert.deepEqual(view.windows[0].sourceIndexes,[0,3]);assert.deepEqual(view.windows[0].pageVisits,[{view:'editor',count:1}]);
+ assert.equal(view.windows[3].since,f.body.coverage.since);assert.deepEqual(view.windows[3].sourceIndexes,view.windows[2].sourceIndexes);
+ assert.equal(view.completeHistory,false);assert.equal(view.validUntil,old.validUntil);
+});
+test('extended consumption windows refuse unverified sources instead of manufacturing longer history',()=>{
+ const f=pageConsumptionRecall();f.p.sources[0].target.documentId='foreign';assert.equal(memoryConsumptionExtendedWindows(...f.input()),null);
 });

@@ -532,3 +532,12 @@ test("isolated failures expose only safe codes and ambiguous mutations require r
     await assert.rejects(invoke(client), errorIs("document_profile_request_failed", mutation, null)); assert.equal(calls.length, 1);
   }
 });
+
+const {memoryPrivacyMutationActive}=await import('../src/state/memory-privacy-mutation.ts');
+for(const outcome of ['success','failure','abort'])test('palette privacy mutation holds the shared barrier through '+outcome,async()=>{
+ let done;const f=fake(()=>{assert.equal(memoryPrivacyMutationActive(),true);return new Promise(resolve=>{done=resolve;});}),controller=new AbortController();
+ const pending=f.client.enable(draft(),controller.signal);assert.equal(memoryPrivacyMutationActive(),true);
+ if(outcome==='abort')controller.abort();else done(Response.json(outcome==='success'?enabled():{error:'unavailable'},{status:outcome==='success'?200:503}));
+ if(outcome==='success')await pending;else await assert.rejects(pending);
+ assert.equal(memoryPrivacyMutationActive(),false);assert.equal(f.calls.length,1);if(outcome==='abort')done(Response.json(enabled()));
+});

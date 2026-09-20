@@ -1,4 +1,5 @@
 import './memory-recall-boundary.ts';
+import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import { html, nothing } from "lit";
 import { FormaElement } from "./forma-element";
 import { requestDialogConfirmation } from "./modal-dialog.ts";
@@ -6,7 +7,7 @@ import { navigateInApp, type CommandDeparture } from "./command-departure";
 import { captureOutputNavigationFocus, type OutputNavigationFocusLease } from "./output-navigation-focus.ts";
 import { parseMemoryCustody, type MemoryCustody } from "../model/memory-custody.ts";
 import { createMemoryElapsed } from "../model/memory-lifetime.ts";
-import { memoryConsumptionWindows } from "../model/memory-consumption-v2.ts";
+import { memoryConsumptionExtendedWindows } from "../model/memory-consumption-v2.ts";
 import { liveConversationDigest } from "../model/memory-conversation.ts";
 import { personalMemoryMessage } from "./design-system/locales/personal-memory-messages.ts";
 import { createLiveMemoryClient, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT,
@@ -117,6 +118,17 @@ export class FormaPersonalMemory extends FormaElement {
   #fieldPrefix = "memory-field-" + crypto.randomUUID();
   #changed = () => { this.#syncOwner(); this.#retireRecall(); this.#scheduleDeadline(); this.requestUpdate(); };
   #retired = () => { this.#reset(); this.#syncOwner(); this.requestUpdate(); };
+  #privacyChanged = () => {
+    if (memoryPrivacyMutationActive()) {
+      this.#retireInspect(); this.#retireExport(); this.#clearRecall();
+      // Preserve an already-dispatched mutation's exact validation state. It
+      // clears its own presentation on settlement; aborting it here would turn
+      // the component's own privacy action into an uncertain write.
+      if (!this.#profileRequest || ['settings','inspect'].includes(this.#profileRequest.kind)) this.#closeProfile();
+      if (!this.#purposeRequest || ['settings','review'].includes(this.#purposeRequest.kind)) this.#closePurposes();
+    }
+    this.#scheduleDeadline(); this.requestUpdate();
+  };
 
   #t(key: string, values?: Record<string, string | number>) { return personalMemoryMessage(this.i18n.locale, "memory.live." + key, values); }
   #emptyDraft(): MemoryDraft {
@@ -134,6 +146,7 @@ export class FormaPersonalMemory extends FormaElement {
       window.addEventListener(name, this.#retired);
     document.addEventListener("visibilitychange", this.#changed);
     window.addEventListener("focus", this.#changed);
+    window.addEventListener('forma-memory-privacy-mutation', this.#privacyChanged);
     this.#syncOwner();
   }
   override disconnectedCallback() {
@@ -142,6 +155,7 @@ export class FormaPersonalMemory extends FormaElement {
       window.removeEventListener(name, this.#retired);
     document.removeEventListener("visibilitychange", this.#changed);
     window.removeEventListener("focus", this.#changed);
+    window.removeEventListener('forma-memory-privacy-mutation', this.#privacyChanged);
     this.#reset(); super.disconnectedCallback();
   }
 
@@ -1286,7 +1300,7 @@ export class FormaPersonalMemory extends FormaElement {
     </div>`;
     const visits = value.consumptionEpisodes;
     if (!visits) return html`<p data-memory-visits-unavailable>${this.#t("visitsUnavailable")}</p>`;
-    const windows=(visits.version==='memory-consumption-episodes-v5'||visits.version==='memory-consumption-episodes-v6')?memoryConsumptionWindows(visits,value.lifetime,row.documentId,
+    const windows=(visits.version==='memory-consumption-episodes-v5'||visits.version==='memory-consumption-episodes-v6')?memoryConsumptionExtendedWindows(visits,value.lifetime,row.documentId,
       {since:value.coverage.since,expiresAt:row.expiresAt}):null;
     // Detail remains inside the same parent receipt. Artifact projections have their own source map;
     // it does not renumber assistant/outcome evidence or create a display lease.
@@ -1366,6 +1380,7 @@ export class FormaPersonalMemory extends FormaElement {
 
   override render() {
     if (this.#presentationSuspended) return nothing;
+    if (memoryPrivacyMutationActive()) return html`<section class="creator-settings-card personal-memory-card" aria-busy="true" aria-label=${this.#t('heading')}><p role="status">${this.#t('busy')}</p></section>`;
     this.#syncOwner();
     this.#retireRecall();
     const owner = this.#owner, session = this.store.session.get(), selected = this.#selected();

@@ -1,3 +1,5 @@
+import { MEMORY_EVIDENCE_RESOURCES, type MemoryResourceCitation } from '../model/memory-evidence-resource.ts';
+import { DOCUMENT_VIEWS } from '../model/document-view-signals.ts';
 import { beginMemoryPrivacyMutation } from './memory-privacy-mutation.ts';
 import { createMemoryElapsed } from "../model/memory-lifetime.ts";
 /** Explicit consent transport only. No storage, enrollment, processing or retry. */
@@ -126,7 +128,7 @@ export type DerivationCitation = {sourceIndex:number;start:number;end:number;tex
 export const DERIVATION_OBSERVED_ACTIONS=['encounter','inspect','compare','edit','commit','reuse','remove','restore','critique','request','accept','reject','defer'] as const;
 export type DerivationObservedCitation={observationIndex:number;action:typeof DERIVATION_OBSERVED_ACTIONS[number];recordedAt:string;role:'support'|'counterevidence'};
 export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[];
-  citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[];observationCitations?:readonly DerivationObservedCitation[]};
+  citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[];observationCitations?:readonly DerivationObservedCitation[];resourceCitations?:readonly MemoryResourceCitation[]};
 export type DerivationHistory = {windowCount:number;originalPairs:number;boundary:'consent'|'bounded'|'capacity';afterSequence:number;throughSequence:number};
 export type DerivationResultView = DerivationResultEntry & {validUntil:string;items:readonly DerivationResultItem[];history?:DerivationHistory;controlRevisions:Readonly<Record<string,number>>};
 export type DerivationControl = {controlId:string;claimKey:string;lineageId:string;revision:number;action:'corrected'|'suppressed'|'released';correctionText:string|null;expiresAt:string;purpose:MemoryDerivationPurpose;textAvailable:boolean};
@@ -136,9 +138,9 @@ function resultEntry(value:unknown):DerivationResultEntry{
   check(derivationHash(row.jobId)&&MEMORY_DERIVATION_PURPOSES.includes(row.purpose as MemoryDerivationPurpose)&&reviewText(row.scopeKey,8192)&&derivationTime(row.expiresAt)&&Date.parse(row.expiresAt)>Date.now());
   return frozen({...row} as DerivationResultEntry);
 }
-function resultView(value:unknown,expected:DerivationResultEntry,withControls=true):DerivationResultView{
+function resultView(value:unknown,expected:DerivationResultEntry,withControls=true,withResources=false):DerivationResultView{
   const hasHistory=!!value&&typeof value==='object'&&Object.hasOwn(value,'history');
-  const row=own(value,['version','jobId','expiresAt','candidate',...(withControls?['controlRevisions']:[]),...(hasHistory?['history']:[])]),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
+  const row=own(value,['version','jobId','expiresAt','candidate',...(withControls?['controlRevisions']:[]),...(hasHistory?['history']:[]),...(withResources?['resourceEvidence']:[])]),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
   check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&['memory-derivation-candidates-v1','memory-derivation-candidates-v2'].includes(String(candidate.version))
     &&candidate.purpose===expected.purpose&&candidate.scopeKey===expected.scopeKey&&candidate.semanticAuthority==='model-derived-unverified'
     &&candidate.manifestId===expected.jobId&&candidate.manifestRevision===1
@@ -146,7 +148,7 @@ function resultView(value:unknown,expected:DerivationResultEntry,withControls=tr
     &&Date.parse(candidate.validUntil)<=Date.now()+60000&&candidate.validUntil<=row.expiresAt
     &&Date.parse(row.expiresAt as string)>Date.now()&&Array.isArray(candidate.items)&&candidate.items.length<=16);
   const behavioral=candidate.version==='memory-derivation-candidates-v2';
-  const items=candidate.items.map(raw=>{
+  const items:DerivationResultItem[]=candidate.items.map(raw=>{
     const item=own(raw,['operation','target','category','text','supports','counterevidence','claimKey','lineageIds','sourceBindings','validUntil','citationStatus',...(behavioral?['observationSupports','observationCounterevidence','observationCitations']:[])]);
     check(item.operation==='assert'&&item.target===null&&reviewText(item.claimKey,240)&&reviewText(item.category,120)&&reviewText(item.text)
       &&Array.isArray(item.lineageIds)&&item.lineageIds.length>0&&item.lineageIds.length<=128&&item.lineageIds.every(derivationHash)
@@ -182,6 +184,28 @@ function resultView(value:unknown,expected:DerivationResultEntry,withControls=tr
       citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence,...(observationCitations?{observationCitations}:{})};
   });
   check(new Set(items.map(item=>item.claimKey)).size===items.length);
+  if(withResources){
+    const evidence=own(row.resourceEvidence,['version','complete','claims']);
+    check(evidence.version===MEMORY_EVIDENCE_RESOURCES&&evidence.complete===false&&Array.isArray(evidence.claims)&&evidence.claims.length===items.length);
+    for(const [index,item] of items.entries()){
+      const claim=own(evidence.claims[index],['claimKey','citations']);
+      const expectedCitations=[...[...new Set([...item.supports,...item.counterevidence].map(row=>row.sourceIndex))].map(index=>({source:'original',index})),
+        ...(item.observationCitations??[]).map(row=>({source:'observation',index:row.observationIndex}))];
+      check(claim.claimKey===item.claimKey&&Array.isArray(claim.citations)&&claim.citations.length===expectedCitations.length);
+      item.resourceCitations=claim.citations.map((raw,offset)=>{
+        const citation=own(raw,['source','index','resource']),expectedCitation=expectedCitations[offset]!;
+        check(citation.source===expectedCitation.source&&citation.index===expectedCitation.index);
+        const r=citation.resource as Record<string,unknown>,zoom=r&&Object.getOwnPropertyDescriptor(r,'zoom')?.value;
+        check(zoom==='document'||zoom==='page'||zoom==='block');
+        const resource=own(r,['zoom','scopeKey',...(zoom==='page'?['view']:zoom==='block'?['blockId','revision']:[])]);
+        check(reviewText(resource.scopeKey,8192)&&(zoom==='document'?resource.scopeKey===expected.scopeKey:resource.scopeKey!==expected.scopeKey)
+          &&(citation.source==='observation'||zoom==='document'));
+        if(zoom==='page')check(DOCUMENT_VIEWS.includes(resource.view as typeof DOCUMENT_VIEWS[number]));
+        if(zoom==='block')check(derivationId(resource.blockId)&&derivationInteger(resource.revision,1));
+        return {source:citation.source,index:citation.index,resource:{...resource}} as MemoryResourceCitation;
+      });
+    }
+  }
   const ids=[...new Set(items.flatMap(item=>item.lineageIds))],revisions=withControls?own(row.controlRevisions,ids):{};check(Object.values(revisions).every(value=>derivationInteger(value)));
   let history:DerivationHistory|undefined;
   if(hasHistory){const h=own(row.history,['windowCount','originalPairs','boundary','afterSequence','throughSequence']);
@@ -246,6 +270,9 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
         const results=row.results.map(resultEntry);check(new Set(results.map(item=>item.jobId)).size===results.length&&results.every(item=>item.jobId!==after&&(purpose===null||item.purpose===purpose))&&(!row.next||row.next===results.at(-1)?.jobId));
         return frozen({results,next:row.next as string|null,progress,checkedAt:row.checkedAt});
       },signal,'/api/memory/derivation/results');
+    },
+    async inspectResultResources(value:DerivationResultEntry,signal?:AbortSignal){
+      const expected=resultEntry(value);return request('GET','?jobId='+expected.jobId+'&resources=1',undefined,raw=>resultView(raw,expected,true,true),signal,'/api/memory/derivation/result');
     },
     async inspectResult(value:DerivationResultEntry,signal?:AbortSignal){
       const expected=resultEntry(value);return request('GET','?jobId='+expected.jobId,undefined,raw=>resultView(raw,expected),signal,'/api/memory/derivation/result');

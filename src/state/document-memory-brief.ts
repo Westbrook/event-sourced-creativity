@@ -1,15 +1,19 @@
+import { memoryEvidenceProximity } from '../model/memory-evidence-resource.ts';
+import type { DocumentView } from '../model/routes.ts';
 import { createLiveMemoryClient, MEMORY_POLICY } from './live-memory-client.ts';
 import { createMemoryDerivationClient, type DerivationControl, type DerivationHistory, type DerivationResultItem, type DerivationScopeRequest } from './memory-derivation-client.ts';
 import { createMemoryElapsed } from '../model/memory-lifetime.ts';
 import { MEMORY_DERIVATION_PURPOSES, type MemoryDerivationPurpose } from '../model/memory-derivation-policy.ts';
 import { parseMemoryCustody, type MemoryCustody } from '../model/memory-custody.ts';
 import { createRecallBoundaryClient, type RecallSource } from './memory-recall-boundary-client.ts';
+import { reconcileMemoryProfile, type ReconciledProfileItem } from './memory-profile-reconciliation.ts';
 
 export type DocumentMemoryBrief = Readonly<{ projectId:string;documentId:string;validUntil:string;
   completeHistory:false;independentEvidence:false;sections:readonly Readonly<{purpose:MemoryDerivationPurpose;
-    corrections:readonly DerivationControl[];items:readonly DerivationResultItem[];jobId:string|null;history?:DerivationHistory;source?:RecallSource}>[] }>;
+    corrections:readonly DerivationControl[];items:readonly (DerivationResultItem|ReconciledProfileItem)[];jobId:string|null;history?:DerivationHistory;source?:RecallSource;
+    retainedProfile?:{results:number;complete:false}}>[] }>;
 export type DocumentMemoryBriefLease = Readonly<{current:()=>DocumentMemoryBrief|null;retire:()=>void}>;
-type Selection={projectId:string;documentId:string;custody:MemoryCustody};
+type Selection={projectId:string;documentId:string;custody:MemoryCustody;view?:DocumentView|null;blockId?:string|null};
 const sample=()=>({monotonic:performance.now(),wall:Date.now()});
 
 /** Automatic presentation only. Each private result is freshly checked by its
@@ -26,6 +30,7 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
   const guarded:typeof fetch=(input,init)=>{check();const headers=new Headers(init?.headers);
     headers.set('x-forma-memory-consumer','document-brief-v1');return transport(input,{...init,headers});};
   const base=createLiveMemoryClient(guarded),client=createMemoryDerivationClient(guarded);
+  const inspect=selected.view?client.inspectResultResources:client.inspectResult;
   let cursor:string|undefined,enrollment:Awaited<ReturnType<typeof base.settings>>['enrollments'][number]|undefined;
   const cursors=new Set<string>();
   // Metadata only: don't scan an unbounded account to populate a small document card.
@@ -49,9 +54,23 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
     const listing=await client.results(scope,null,signal,purpose,true);check();deadlines.push(Date.parse(listing.checkedAt)+60000);
     const entry=listing.results[0];
     // No older fallback when the newest native result becomes unavailable.
-    const view=entry?await client.inspectResult(entry,signal):null;check();
+    const view=entry?await inspect(entry,signal):null;check();
     if(view)deadlines.push(Date.parse(view.validUntil),Date.parse(view.expiresAt));
-    sections.push({purpose,corrections:[],items:view?.items??[],jobId:view?.jobId??null,...(view?.history?{history:view.history}:{})});
+    if(purpose==='profile'&&view){
+      // Always establish the latest result first. A withdrawn newest result
+      // must never resurrect an older profile. Historical review is capped at
+      // four separately authenticated requests, not an unbounded account scan.
+      const retained=await client.results(scope,null,signal,purpose);check();
+      deadlines.push(Date.parse(retained.checkedAt)+60000);
+      if(retained.results[0]?.jobId!==view.jobId)throw Error('memory-profile-changed');
+      const views=[view];
+      for(const older of retained.results.slice(1,4)){
+        const prior=await inspect(older,signal);check();
+        deadlines.push(Date.parse(prior.validUntil),Date.parse(prior.expiresAt));views.push(prior);
+      }
+      const profile=reconcileMemoryProfile(views);
+      sections.push({purpose,corrections:[],items:profile.items,jobId:null,retainedProfile:{results:profile.results,complete:false},...(view.history?{history:view.history}:{})});
+    }else sections.push({purpose,corrections:[],items:view?.items??[],jobId:view?.jobId??null,...(view?.history?{history:view.history}:{})});
   }
   const controls=purposes.length?await client.controls(scope,null,signal):{controls:[],next:null,validUntil:new Date(started.wall+60000).toISOString()};check();
   if(controls.next!==null)throw Error('memory-brief-controls-incomplete');
@@ -61,27 +80,34 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
     const blocked=new Set(applicable.map(row=>row.lineageId));
     const corrections=[...new Map(applicable.filter(row=>row.action==='corrected'&&row.textAvailable&&row.correctionText!==null)
       .map(row=>[JSON.stringify([row.claimKey,row.correctionText]),row])).values()];
-    return {...section,corrections,items:section.items.filter(item=>!item.lineageIds.some(lineage=>blocked.has(lineage)))};
+    const items=section.items.filter(item=>!item.lineageIds.some(lineage=>blocked.has(lineage)));
+    const rank=(item:DerivationResultItem)=>({block:0,page:1,document:2})[memoryEvidenceProximity(item.resourceCitations,selected)];
+    items.sort((a,b)=>rank(a)-rank(b));
+    return {...section,corrections,items};
   });
-  // One nearest independently eligible source, never an account-wide fan-out.
-  // Existing grants remain document-only. Missing optional native schema or a
-  // failed source read does not suppress an otherwise certified local brief.
+  // One independently eligible source per relevance band, at most three.
+  // These are separate facets, not fallback evidence or a blended personality.
+  // Source boundaries and access are proved again for every actual result.
   const related:DocumentMemoryBrief['sections'][number][]=[];
   try {
     const recall=createRecallBoundaryClient(guarded),catalog=await recall.sources(selected,signal);check();
-    const nearest=catalog.sources[0],relatedDeadlines=[Date.parse(catalog.validUntil)];
-    if(nearest){
-      // Source purpose consent governs these reads; receiving an already-derived
-      // note does not require enrolling the target in paid/background processing.
+    const bands=new Set<string>(),chosen=catalog.sources.filter(source=>{
+      if(bands.has(source.zoom))return false;bands.add(source.zoom);return true;
+    });
+    if(chosen.length>3)throw Error('memory-brief-source-capacity');
+    const relatedDeadlines=[Date.parse(catalog.validUntil)];
+    for(const source of chosen){
+      // The source's existing purpose consent governs presentation. This does
+      // not enroll the target in processing or silently widen any boundary.
       for(const purpose of MEMORY_DERIVATION_PURPOSES){
         try {
-          const view=await recall.inspect(selected,nearest,purpose,signal);check();
+          const view=await recall.inspect(selected,source,purpose,signal);check();
           relatedDeadlines.push(Date.parse(view.validUntil));
           related.push({purpose,corrections:[],items:view.items,jobId:view.jobId,...(view.history?{history:view.history}:{}),source:view.source});
-        } catch { check(); } // A missing facet does not revoke other independently verified purposes.
+        } catch { check(); } // No alternate source in this band after failure.
       }
-      if(related.length)deadlines.push(...relatedDeadlines);
     }
+    if(related.length)deadlines.push(...relatedDeadlines);
   } catch { check();related.length=0; }
   if(!resolved.length&&!related.length)return null;
   const until=Math.min(...deadlines),duration=until-started.wall;

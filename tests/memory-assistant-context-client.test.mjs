@@ -51,3 +51,32 @@ test('read and explicit context-selection requests do not invalidate their sendi
  const request=createMemoryPrivateRequest(async()=>{assert.equal(memoryPrivacyMutationActive(),false);return Response.json({version:'test'});},'test');
  await request(scope,'recall-boundary',signal());await request(scope,'assistant-context',signal(),'PUT');
 });
+
+const {createMemoryPrivacyPeers}=await import('../src/state/memory-privacy-mutation.ts');
+function peerFixture(){
+ let now=100,id=0;const timers=new Map(),notices=[];
+ const peer=createMemoryPrivacyPeers({notify:()=>notices.push(peer.active()),now:()=>now,schedule:(fn,ms)=>{timers.set(++id,{fn,ms});return id;},cancel:id=>timers.delete(id)});
+ return {peer,timers,notices,at:value=>{now=value;},expire:()=>{const entry=timers.entries().next().value;timers.delete(entry[0]);entry[1].fn();}};
+}
+const notice=(operation=revision,phase='begin')=>({version:1,operation,phase});
+test('cross-tab privacy messages overlap, cannot renew on replay, and crash leases clear without retaining identifiers',()=>{
+ const f=peerFixture(),second='22345678-1234-1234-1234-123456789abc';
+ f.peer.receive(notice());f.at(1100);f.peer.receive(notice());assert.equal(f.timers.values().next().value.ms,120000,'duplicate did not reschedule');
+ f.peer.receive(notice(second));f.peer.receive(notice(revision,'end'));assert.equal(f.peer.active(),true);
+ f.at(121100);f.expire();assert.equal(f.peer.active(),false);assert.equal(f.timers.size,0);
+ assert.deepEqual(f.notices,[true,true,true,false]);f.peer.dispose();
+});
+test('cross-tab privacy state is bounded and overflow cannot be cleared by an unrelated acknowledgement',()=>{
+ const f=peerFixture();for(let i=0;i<80;i++)f.peer.receive(notice(i.toString(16).padStart(8,'0')+'-1234-1234-1234-123456789abc'));
+ assert.equal(f.timers.size,1);for(let i=0;i<80;i++)f.peer.receive(notice(i.toString(16).padStart(8,'0')+'-1234-1234-1234-123456789abc','end'));
+ assert.equal(f.peer.active(),true);f.at(120100);f.expire();assert.equal(f.peer.active(),false);f.peer.dispose();
+});
+test('cross-tab messages reject private payloads, unsupported fields, getters and malformed tokens',()=>{
+ const f=peerFixture();let invoked=0;
+ const accessor={operation:revision,phase:'begin'};Object.defineProperty(accessor,'version',{enumerable:true,get(){invoked++;return 1;}});
+ for(const value of [null,[],{...notice(),text:'private'},notice('actor-id'),{...notice(),version:2},notice(revision,'unknown'),accessor])f.peer.receive(value);
+ assert.equal(f.peer.active(),false);assert.equal(f.timers.size,0);assert.equal(invoked,0);assert.deepEqual(f.notices,[]);f.peer.dispose();
+});
+test('cross-tab lease cleanup survives clock rollback and never retains a hanging timer',()=>{
+ const f=peerFixture();f.peer.receive(notice());f.at(1);f.expire();assert.equal(f.peer.active(),false);assert.equal(f.timers.size,0);assert.deepEqual(f.notices,[true,false]);f.peer.dispose();
+});

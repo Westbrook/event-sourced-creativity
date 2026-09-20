@@ -115,7 +115,7 @@ export function parseMemoryConsumptionV6(...input: ConsumptionParseInput): Memor
 
 export type MemoryConsumptionWindows = {
   basis: "selected-certified-observations"; completeHistory: false; validUntil: string;
-  windows: { days: 7 | 30; since: string; sourceIndexes: number[]; documentVisits: number;
+  windows: { days: 1 | 7 | 30 | 90; since: string; sourceIndexes: number[]; documentVisits: number;
     artifactOpenings: number; blockOpenings: number; distinctArtifacts: number; distinctBlocks: number; pageVisits?:{view:DocumentView;count:number}[] }[];
 };
 /** Pure descriptive projection, never a new source, session, preference or access
@@ -123,12 +123,21 @@ export type MemoryConsumptionWindows = {
  * openings remain observations; distinct resources coalesce revisions, not visits.
  * The two windows overlap and inherit the exact parent's display deadline. */
 export function memoryConsumptionWindows(...input: ConsumptionParseInput): MemoryConsumptionWindows | null {
+  return consumptionWindows(input, [7,30]);
+}
+/** Expanded UI-only windows use the identical certified source selection and
+ * retention bounds. No extra history is fetched or inferred. Keep the existing
+ * two-window projection stable for earlier consumers. */
+export function memoryConsumptionExtendedWindows(...input: ConsumptionParseInput): MemoryConsumptionWindows | null {
+  return consumptionWindows(input, [1,7,30,90]);
+}
+function consumptionWindows(input: ConsumptionParseInput, days: readonly (1|7|30|90)[]): MemoryConsumptionWindows | null {
   try{input=snapshotMemoryConsumptionInput(input) as ConsumptionParseInput;}catch{return null;}
   const projection=parseMemoryConsumptionV5(...input)??parseMemoryConsumptionV6(...input);if(!projection)return null;
   const checked=memoryTimestamp(input[1].checkedAt),enrolled=memoryTimestamp(input[3].since);
   if(checked===null||enrolled===null)return null;
   return {basis:"selected-certified-observations",completeHistory:false,validUntil:projection.validUntil,
-    windows:([7,30] as const).map(days=>{
+    windows:days.map(days=>{
       const since=Math.max(enrolled,checked-days*86400000),sourceIndexes=projection.sources.flatMap((source,index)=>Date.parse(source.recordedAt)>=since?[index]:[]);
       let documentVisits=0,artifactOpenings=0,blockOpenings=0;const artifacts=new Set<string>(),blocks=new Set<string>(),pages=new Map<DocumentView,number>();
       for(const index of sourceIndexes){const target=projection.sources[index]!.target;

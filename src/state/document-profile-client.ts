@@ -1,3 +1,4 @@
+import { beginMemoryPrivacyMutation } from './memory-privacy-mutation.ts';
 /** Browser HTTP boundary only: explicit calls, no enrollment, persistence, retries or background work. */
 import { parseMemoryCustody, type MemoryCustody } from "../model/memory-custody.ts";
 import { createMemoryElapsed, memoryTimestamp, MEMORY_RECALL_MAX_AGE_MS, type MemoryClockSample } from "../model/memory-lifetime.ts";
@@ -301,6 +302,8 @@ export function createDocumentProfileClient(transport: Transport = fetch,
     parse: (value: unknown) => T, observe?: () => void): Promise<T> {
     if (signal?.aborted) throw new DocumentProfileClientError("document_profile_request_cancelled");
     const mutation = method !== "GET"; let response: Response;
+    const release = mutation ? beginMemoryPrivacyMutation() : () => undefined;
+    try {
     let rejectAbort: (error: Error) => void = () => undefined;
     const interrupted = new Promise<never>((_resolve, reject) => { rejectAbort = reject; }); void interrupted.catch(() => undefined);
     const abort = () => rejectAbort(new Error("document-profile-request-cancelled"));
@@ -328,6 +331,7 @@ export function createDocumentProfileClient(transport: Transport = fetch,
       const raw = await readJson(response, signal, observe); check(!signal?.aborted);
       const result = parse(raw); observe?.(); check(!signal?.aborted); return result;
     } catch { throw new DocumentProfileClientError(signal?.aborted ? "document_profile_request_cancelled" : "document_profile_response_invalid", response.status, mutation); }
+    } finally { release(); }
   }
   return {
     async settings(value: DocumentProfileScopeRequest, signal?: AbortSignal): Promise<DocumentProfileSettings> {

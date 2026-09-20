@@ -1,6 +1,6 @@
 import { readProjectRequestContext, resolveOwnerExecutionScope } from './project-access.ts';
 import { nativeMemoryDocumentIdentity, observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
-import { readNativeDerivationResult,nativeDerivationResultInputs,nativeDerivationResultStatements,withdrawNativeDerivationResult } from "./memory-derivation-results.ts";
+import { readNativeDerivationResult,nativeDerivationResultInputs,nativeDerivationResultResources,nativeDerivationResultStatements,withdrawNativeDerivationResult } from "./memory-derivation-results.ts";
 import { controlNativeDerivationResult,reviseNativeDerivationUserControl } from "./memory-derivation-user-controls.ts";
 import { DERIVATION_USER_CONTROL_COLUMNS, derivationControlRelation } from "./memory-derivation-user-control-schema.ts";
 import { memoryDerivationFinanceView, memoryDerivationFinanceViewStatement } from "./memory-derivation-finance-view.ts";
@@ -283,7 +283,9 @@ export async function handleMemoryDerivationResult(request:Request,env:WorkerEnv
   if(actor.fictional||!identity)return deny('principal_account_required',403);
   if(!['GET','POST','DELETE'].includes(request.method))return deny('method_not_allowed',405);
   if(request.method!=='GET'&&!sameOrigin(request))return deny('same_origin_required',403);
-  if(!derivationHash(jobId)||url.searchParams.getAll('jobId').length!==1||[...url.searchParams.keys()].some(key=>key!=='jobId'))return deny('memory_result_request_invalid');
+  if(!derivationHash(jobId)||url.searchParams.getAll('jobId').length!==1||[...url.searchParams.keys()].some(key=>!['jobId','resources'].includes(key)))return deny('memory_result_request_invalid');
+  const resources=url.searchParams.get('resources');
+  if(resources!==null&&(resources!=='1'||request.method!=='GET'||url.searchParams.getAll('resources').length!==1))return deny('memory_result_request_invalid');
   const current=()=>env.DB===db&&Date.now()-started<60000&&settingsKey(env)===configuration;
   try{
     if(request.method==='DELETE'){
@@ -313,7 +315,7 @@ export async function handleMemoryDerivationResult(request:Request,env:WorkerEnv
     const statements=[derivationAssertion(env,identity),...nativeDerivationResultStatements(env,read),...(schema.userControlsPresent?[derivationAssertion(env,{condition:`(SELECT json_group_array(json_array(lineage_id,revision)) FROM (${controlQuery}))=?`,bindings:[...controlBindings,JSON.stringify(controls.map(row=>[row.lineage_id,row.revision]))]})]:[])];
     const checked=structuredClone(await db.batch<Record<string,unknown>>(statements));
     if(!current()||!derivationResults(checked,statements.length)||!checked.every(row=>derivationVerified(row)||row.results.length===1&&row.results[0]?.context_source_asserted===1))return deny('memory_result_unavailable',503);
-    nativeDerivationResultInputs(env,read);return reply({...input,controlRevisions});
+    nativeDerivationResultInputs(env,read);return reply({...input,controlRevisions,...(resources==='1'?{resourceEvidence:nativeDerivationResultResources(env,read)}:{})});
   }catch{return request.method==='GET'?deny('memory_result_unavailable',503):failure();}
 }
 

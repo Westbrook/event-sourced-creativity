@@ -183,7 +183,7 @@ test('automatic brief keeps three purpose facets separate and counterevidence vi
   let currentPurpose;
   const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');
     assert.equal(new Headers(init.headers).get('x-forma-memory-consumer'),'document-brief-v1');
-    if(url.pathname.endsWith('/results')){currentPurpose=url.searchParams.get('purpose');return Response.json({...f.listing,purpose:currentPurpose,results:[{...f.entry,purpose:currentPurpose,jobId:hash(currentPurpose)}]});}
+    if(url.pathname.endsWith('/results')){currentPurpose=url.searchParams.get('purpose');const listing={...f.listing,purpose:currentPurpose,results:[{...f.entry,purpose:currentPurpose,jobId:hash(currentPurpose)}]};if(!url.searchParams.has('latest'))delete listing.latest;return Response.json(listing);}
     if(url.pathname.endsWith('/result'))return Response.json({...f.result,jobId:hash(currentPurpose),candidate:{...f.result.candidate,purpose:currentPurpose,manifestId:hash(currentPurpose),items:[{...f.item,
       counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],citationStatus:'conflicting-citations'}]}});
     return f.transport(input,init);};
@@ -261,7 +261,7 @@ test('automatic brief appends nearest consented scope separately and never recei
  assert.equal(f.recalls[1].url.searchParams.get('source'),f.source.enrollmentId);lease.retire();assert.equal(lease.current(),null);
 });
 for(const fault of ['schema','unavailable-source','incomplete-catalog','bad-rank'])test('automatic brief retains local notes without an older-source fallback on '+fault,async()=>{
- const f=relatedBriefFixture();f.catalog.sources.push({...f.source,enrollmentId:hash('other-older'),projectId:'far-project',documentId:'far-document',zoom:'partition',distance:0,weight:.01});
+ const f=relatedBriefFixture();f.catalog.sources.push({...f.source,enrollmentId:hash('other-older'),projectId:'far-project',documentId:'far-document',zoom:'project-tree',distance:3,weight:.125});
  if(fault==='incomplete-catalog')f.catalog.complete=false;if(fault==='bad-rank')f.catalog.sources.reverse();
  const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');
   if(url.pathname==='/api/memory/recall-scopes'&&(fault==='schema'||fault==='unavailable-source'&&url.searchParams.has('source')))return Response.json({error:'unavailable'},{status:503});
@@ -289,4 +289,110 @@ test('latest-only inventory must be explicitly acknowledged and cannot contain h
   if(fault==='multiple')f.listing.results.push({...f.entry,jobId:hash('older')});if(fault==='cursor')f.listing.next=f.entry.jobId;
   await assert.rejects(readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal));
  }
+});
+
+const {reconcileMemoryProfile}=await import('../src/state/memory-profile-reconciliation.ts');
+function profileView(job,text='One tentative interpretation',lineage='lineage'){
+ return {jobId:job,purpose:'profile',scopeKey:'exact-private-scope',expiresAt:new Date(Date.now()+60000).toISOString(),validUntil:new Date(Date.now()+30000).toISOString(),controlRevisions:{},items:[{
+  claimKey:'claim',category:'workflow-hypothesis',text,lineageIds:[lineage],citationStatus:'support-cited',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[]} ]};
+}
+test('retained profile collapses exact repeats without laundering them into independent evidence',()=>{
+ const input=[profileView('new'),profileView('old')],result=reconcileMemoryProfile(input);
+ assert.equal(result.items.length,1);assert.equal(result.items[0].profileOrigin.jobId,'new');assert.equal(result.items[0].profileOrigin.repeatedIn,2);
+ assert.equal(result.items[0].profileOrigin.state,'latest');assert.equal(result.complete,false);assert.equal(result.results,2);
+ result.items[0].supports[0].text='changed';assert.equal(input[0].items[0].supports[0].text,'Original');
+});
+test('retained profile keeps changed interpretations and earlier-only facets historical, with overlapping support disclosed',()=>{
+ const result=reconcileMemoryProfile([profileView('new','New interpretation'),profileView('old','Prior interpretation'),profileView('oldest','Earlier-only facet','other')]);
+ assert.deepEqual(result.items.map(row=>row.profileOrigin.state),['latest','historical','historical']);
+ assert.deepEqual(result.items.map(row=>row.profileOrigin.sharedEvidence),[true,true,false]);assert.equal(result.items[1].text,'Prior interpretation');
+});
+for(const invalid of [[],[profileView('duplicate'),profileView('duplicate')],Array.from({length:5},(_,i)=>profileView(String(i))),[profileView('a'),{...profileView('b'),scopeKey:'foreign'}],[{...profileView('a'),purpose:'suggestion'}]])
+ test('retained profile rejects an incoherent or oversized collection '+JSON.stringify(invalid.map(row=>row.jobId)),()=>assert.throws(()=>reconcileMemoryProfile(invalid)));
+function profileBriefFixture(){
+ const f=briefFixture();f.grant.purpose='profile';f.entry.purpose='profile';f.listing.purpose='profile';f.result.candidate.purpose='profile';f.item.category='preference-hypothesis';
+ const oldJob=hash('old-profile'),oldEntry={...f.entry,jobId:oldJob},oldResult={...structuredClone(f.result),jobId:oldJob};
+ oldResult.candidate.manifestId=oldJob;oldResult.candidate.items[0].text='An earlier interpretation';
+ const history={...f.listing,results:[f.entry,oldEntry]};delete history.latest;
+ const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');
+  if(url.pathname.endsWith('/results')&&!url.searchParams.has('latest'))return Response.json(history);
+  if(url.pathname.endsWith('/result')&&url.searchParams.get('jobId')===oldJob)return Response.json(oldResult);
+  return f.transport(input,init);};
+ return {...f,oldEntry,oldResult,history,transport};
+}
+test('automatic profile reconciles freshly read historical facets and binds each to its actual result',async()=>{
+ const f=profileBriefFixture(),lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal),section=lease.current().sections[0];
+ assert.equal(section.jobId,null);assert.equal(section.retainedProfile.results,2);
+ assert.deepEqual(section.items.map(row=>row.profileOrigin.jobId),[f.entry.jobId,f.oldEntry.jobId]);
+ assert.equal(section.items[1].profileOrigin.state,'historical');assert.ok(section.items.every(row=>row.profileOrigin.sharedEvidence));lease.retire();
+});
+for(const fault of ['newest-changed','older-withdrawn','older-expired','late-ownership','suppressed'])test('automatic profile respects '+fault,async()=>{
+ const f=profileBriefFixture();if(fault==='newest-changed')f.history.results.reverse();
+ if(fault==='older-expired')f.oldResult.candidate.validUntil=new Date(Date.now()-1000).toISOString();
+ if(fault==='suppressed')f.controls.controls=[{controlId:hash('control'),claimKey:f.item.claimKey,lineageId:f.lineage,revision:1,action:'suppressed',correctionText:null,expiresAt:f.grant.expiresAt,purpose:'profile',textAvailable:true}];
+ const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');
+  if(url.pathname.endsWith('/result')&&url.searchParams.get('jobId')===f.oldEntry.jobId){if(fault==='older-withdrawn')return Response.json({error:'withdrawn'},{status:404});if(fault==='late-ownership')f.deactivate();}
+  return f.transport(input,init);};
+ const promise=readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal);
+ if(fault==='suppressed'){const lease=await promise;assert.equal(lease.current().sections[0].items.length,0);lease.retire();}else await assert.rejects(promise);
+});
+
+function resourceFixture(){
+  const f=briefFixture();f.selection.view='editor';f.selection.blockId='block';
+  f.result.candidate.version='memory-derivation-candidates-v2';
+  f.item.category='proposal';f.item.observationSupports=[0];f.item.observationCounterevidence=[];
+  f.item.observationCitations=[{observationIndex:0,action:'inspect',recordedAt:new Date(Date.now()-1000).toISOString(),role:'support'}];
+  f.result.resourceEvidence={version:'memory-evidence-resources-v1',complete:false,claims:[{claimKey:f.item.claimKey,citations:[
+    {source:'original',index:0,resource:{zoom:'document',scopeKey:f.entry.scopeKey}},
+    {source:'observation',index:0,resource:{zoom:'block',blockId:'block',revision:9,scopeKey:'native-block-scope'}}]}]};
+  return f;
+}
+test('resource evidence is explicitly negotiated, source-index bound, read-only and deeply immutable',async()=>{
+  const f=resourceFixture(),client=createMemoryDerivationClient(f.transport),view=await client.inspectResultResources(f.entry);
+  assert.equal(f.calls[0].url.searchParams.get('resources'),'1');assert.deepEqual(view.items[0].resourceCitations,f.result.resourceEvidence.claims[0].citations);
+  assert.ok(Object.isFrozen(view.items[0].resourceCitations[1].resource));assert.equal(view.items[0].observationCitations[0].action,'inspect');
+  await assert.rejects(createMemoryDerivationClient(f.transport).inspectResult(f.entry),MemoryDerivationClientError,'Legacy parser must not silently accept a changed protocol');
+  delete f.result.resourceEvidence;await assert.rejects(createMemoryDerivationClient(f.transport).inspectResultResources(f.entry),MemoryDerivationClientError);
+});
+for(const fault of ['version','complete','extra','missing-claim','foreign-claim','missing-citation','reordered','invented-index','original-block','foreign-document','unknown-page','invalid-revision','extra-resource','duplicate-citation'])test('resource evidence rejects '+fault,async()=>{
+  const f=resourceFixture(),e=f.result.resourceEvidence,c=e.claims[0],row=c.citations[1];
+  if(fault==='version')e.version='later';if(fault==='complete')e.complete=true;if(fault==='extra')e.authority=true;
+  if(fault==='missing-claim')e.claims=[];if(fault==='foreign-claim')c.claimKey='different';if(fault==='missing-citation')c.citations.pop();
+  if(fault==='reordered')c.citations.reverse();if(fault==='invented-index')row.index=127;if(fault==='original-block')c.citations[0].resource=row.resource;
+  if(fault==='foreign-document')row.resource={zoom:'document',scopeKey:'another-document'};
+  if(fault==='unknown-page')row.resource={zoom:'page',scopeKey:'page',view:'library'};if(fault==='invalid-revision')row.resource.revision=0;
+  if(fault==='extra-resource')row.resource.draft='not allowed';if(fault==='duplicate-citation')c.citations.push(row);
+  await assert.rejects(createMemoryDerivationClient(f.transport).inspectResultResources(f.entry),MemoryDerivationClientError);
+});
+test('current block then page evidence orders a brief without dropping counterevidence or claiming broader applicability',async()=>{
+  const f=resourceFixture(),base=f.result.resourceEvidence.claims[0];
+  f.result.candidate.items=['document','page','block'].map((zoom,index)=>({...structuredClone(f.item),claimKey:'claim-'+index,text:'Note '+zoom}));
+  f.result.resourceEvidence.claims=f.result.candidate.items.map((item,index)=>({claimKey:item.claimKey,citations:[base.citations[0],{source:'observation',index:0,resource:index===0?{zoom:'document',scopeKey:f.entry.scopeKey}:index===1?{zoom:'page',scopeKey:'page-editor',view:'editor'}:base.citations[1].resource}]}));
+  const lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);assert.ok(lease);
+  assert.deepEqual(lease.current().sections[0].items.map(row=>row.text),['Note block','Note page','Note document']);
+  assert.ok(lease.current().sections[0].items.every(row=>row.supports[0].text==='Original'&&row.observationCitations[0].role==='support'));
+  f.controller.abort();assert.equal(lease.current(),null);
+});
+
+for(const failNear of [false,true])test('automatic brief retains distinct project/tree/partition facets without same-band fallbacks '+failNear,async()=>{
+ const f=relatedBriefFixture(),project={enrollmentId:hash('project-near'),projectId:'project',documentId:'project-note',zoom:'project',distance:0,weight:.7},
+  farther={...f.source,enrollmentId:hash('tree-farther'),documentId:'tree-farther',distance:3,weight:.125},
+  world={enrollmentId:hash('world-note'),projectId:'separate-project',documentId:'world-document',zoom:'partition',distance:0,weight:.01};
+ f.catalog.sources=[project,f.source,farther,world];const calls=[];
+ const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid'),id=url.searchParams.get('source');
+  if(url.pathname==='/api/memory/recall-scopes'&&id){
+   calls.push(id);assert.notEqual(id,farther.enrollmentId);assert.equal(init.method,'GET');
+   if(failNear&&id===project.enrollmentId)return Response.json({error:'withdrawn'},{status:404});
+   const selected=f.catalog.sources.find(row=>row.enrollmentId===id),body=structuredClone(f.recalled);body.source=selected;
+   body.presentation.candidate.purpose=url.searchParams.get('purpose');
+   if(body.presentation.candidate.purpose==='profile')body.presentation.candidate.items[0].category='preference-hypothesis';
+   body.presentation.candidate.items[0].text='Private '+selected.zoom+' '+body.presentation.candidate.purpose;
+   return Response.json(body);
+  }return f.transport(input,init);
+ };
+ const lease=await readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal);assert.ok(lease);
+ const view=lease.current();assert.equal(calls.length,9);assert.equal(view.sections[0].source,undefined);
+ assert.deepEqual(view.sections.slice(1).map(row=>row.source.zoom),[...(failNear?[]:Array(3).fill('project')),...Array(3).fill('project-tree'),...Array(3).fill('partition')]);
+ assert.ok(view.sections.slice(1).every(row=>row.jobId&&row.corrections.length===0));assert.ok(view.validUntil<=f.catalog.validUntil);
+ lease.retire();assert.equal(lease.current(),null);
 });

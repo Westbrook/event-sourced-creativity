@@ -168,3 +168,7 @@ release. Broader automatic assistant/autocomplete, long-term reconciliation,
 Library/Canvas/cross-owner scopes and integration qualification remain tracked
 in the native continuation; external scheduling/provider/index qualification
 and enrollment remain separate gates.
+
+## MEM-003 contextual profile and consumer privacy — 2026-09-20
+
+**In progress — Memory implementation task.** [Contextual retained profiles, native resource evidence and privacy integration](forma-memory-contextual-profile-2026-09-20.md) add original-backed page/block differentiation, bounded retained-profile review, separately weighted project/tree/partition notes, 1/7/30/90-day consumption and cross-tab/assistant-transcript privacy clearing. Locally verified feature-branch work; no deployment or enrollment. Continue the explicit native implementation list in that record. Hosted/external work remains in the capability To Do and non-implementation checklist; it is not a reason to defer the remaining native code.

@@ -1,3 +1,4 @@
+import { documentViewFromRoute, documentContextBlockFromRoute } from '../model/routes.ts';
 import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import './memory-assistant-context.ts';
 import { html, nothing } from 'lit';
@@ -34,7 +35,7 @@ export class DocumentMemoryBrief extends FormaElement {
       ||matches[0]!.projectAccessId!==context.projectAccessId):matches.length!==0)return null;
     const custody=parseMemoryCustody(context?{kind:'organization',organizationId:context.organizationId,projectAccessId:context.projectAccessId,ownerUserId:context.ownerUserId}:{kind:'personal'});
     const document=p.documents.find(row=>row.id===p.documentId&&row.projectId===p.projectId);
-    return custody&&document?{projectId:p.projectId,documentId:p.documentId,custody,stamp:JSON.stringify([document.createdSequence,document.sourceEvents])}:null;
+    return custody&&document?{projectId:p.projectId,documentId:p.documentId,custody,view:documentViewFromRoute(this.store.route.get()),blockId:documentContextBlockFromRoute(this.store.route.get()),stamp:JSON.stringify([document.createdSequence,document.sourceEvents])}:null;
   }
   #sync(){
     if(this.#owner?.current())return;
@@ -71,10 +72,16 @@ export class DocumentMemoryBrief extends FormaElement {
         ${value.sections.filter(section=>section.items.length||section.corrections.length).map(section=>html`<section>
           <h3>${this.#t('purpose.'+section.purpose)}</h3>
           ${section.jobId&&section.items.length?html`<forma-memory-assistant-context .candidateJobId=${section.jobId}></forma-memory-assistant-context>`:nothing}
-          ${section.source?html`<p>${section.source.documentId} · ${this.#t('recallBoundary.'+section.source.zoom)}</p><p class="memory-brief-disclosure">${this.#t('recallBoundaryPreview')}</p>`:nothing}
+          ${section.source?html`<p>${section.source.documentId} · ${this.#t('recallBoundary.'+section.source.zoom)}</p><p class="memory-brief-disclosure">${this.#t('recallBoundaryPreview')} ${this.#t('briefSourceWeight',{weight:Math.round(section.source.weight*1000)/1000})}</p>`:nothing}
           ${section.corrections.map(control=>html`<p class="memory-brief-correction"><strong>${this.#t('reviewAction.corrected')}</strong> ${control.correctionText}</p>`)}
-          <ul>${section.items.map(item=>html`<li><p>${item.text}</p>${item.citationStatus==='conflicting-citations'?html`<strong>${this.#t('briefConflict')}</strong>`:nothing}
+          ${section.retainedProfile?html`<p class="memory-brief-disclosure">${this.#t('profileRetained',{count:section.retainedProfile.results})}</p>`:nothing}
+          <ul>${section.items.map((item,index)=>html`<li><p>${item.text}</p>${item.citationStatus==='conflicting-citations'?html`<strong>${this.#t('briefConflict')}</strong>`:nothing}
+            ${'profileOrigin' in item?html`<p class="memory-brief-disclosure">${this.#t(item.profileOrigin.state==='latest'?'profileLatest':'profileHistorical')}
+              ${item.profileOrigin.repeatedIn>1?this.#t('profileRepeated',{count:item.profileOrigin.repeatedIn}):nothing}
+              ${item.profileOrigin.sharedEvidence?this.#t('profileSharedEvidence'):nothing}</p>
+              ${index===section.items.findIndex(candidate=>'profileOrigin' in candidate&&candidate.profileOrigin.jobId===item.profileOrigin.jobId)?html`<forma-memory-assistant-context .candidateJobId=${item.profileOrigin.jobId}></forma-memory-assistant-context>`:nothing}`:nothing}
             <details><summary>${this.#t(item.observationCitations?.length?'behavioralEvidence':'briefEvidence')}</summary>
+              ${item.resourceCitations?.length?html`<p class="memory-brief-disclosure">${this.#t('resourceEvidenceDisclosure')}</p><ul data-memory-evidence-resources>${[...new Map(item.resourceCitations.map(row=>[JSON.stringify(row.resource),row.resource])).values()].map(resource=>html`<li>${resource.zoom==='page'?this.#t('resourceEvidencePage',{view:this.#t('visitsPage.'+resource.view)}):resource.zoom==='block'?this.#t('resourceEvidenceBlock',{block:resource.blockId,revision:resource.revision}):this.#t('resourceEvidenceDocument')}</li>`)}</ul>`:nothing}
               ${item.observationCitations?.length?html`<p>${this.#t('behavioralDisclosure')}</p><ul>${item.observationCitations.map(cited=>html`<li>${this.#t('behavioralRole.'+cited.role)}: ${this.#t('behavioralAction.'+cited.action)} · <time datetime=${cited.recordedAt}>${this.i18n.date(new Date(cited.recordedAt),{dateStyle:'medium',timeStyle:'short'})}</time></li>`)}</ul>`:nothing}
               ${item.supports.map(quote=>html`<blockquote>${quote.text}</blockquote>`)}
               ${item.counterevidence.length?html`<p>${this.#t('briefCounterevidence')}</p>${item.counterevidence.map(quote=>html`<blockquote>${quote.text}</blockquote>`)}`:nothing}

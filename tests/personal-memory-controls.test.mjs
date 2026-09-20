@@ -17,7 +17,7 @@ import { parseMemoryAnswerPresentation } from "../src/model/memory-answer.ts";
 import { createMemoryElapsed } from "../src/model/memory-lifetime.ts";
 import { ASSISTANT_CONTEXT_LIMITS } from "../src/model/conversation-context.ts";
 import { parseMemoryCustody } from "../src/model/memory-custody.ts";
-import { memoryConsumptionWindows } from "../src/model/memory-consumption-v2.ts";
+import { memoryConsumptionExtendedWindows } from "../src/model/memory-consumption-v2.ts";
 import { liveConversationDigest } from "../src/model/memory-conversation.ts";
 import { rollingLiveMemoryConsumption, memoryEventAction } from "../src/model/memory-observations.ts";
 import { FORMA_PERSONAL_MEMORY_MESSAGES, personalMemoryMessage } from "../src/components/design-system/locales/personal-memory-messages.ts";
@@ -254,6 +254,7 @@ function fixture(t, { initial = settings(), route = "/memory", session: initialS
       return response;
     },
   };
+  let privacyPending = false;
   const windowPort = {
     addEventListener(name, callback) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(callback); },
     removeEventListener(name, callback) { listeners.get(name)?.delete(callback); },
@@ -301,7 +302,7 @@ function fixture(t, { initial = settings(), route = "/memory", session: initialS
     if (response instanceof Error) throw response;
     return response instanceof Response ? response : Response.json(response);
   }
-  const ports = { FormaElement, html, nothing, createMemoryDerivationClient, MemoryDerivationClientError, MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, createMemoryElapsed, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION, DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT, parseMemoryCustody, liveConversationDigest, memoryConsumptionWindows,
+  const ports = { memoryPrivacyMutationActive: () => privacyPending, FormaElement, html, nothing, createMemoryDerivationClient, MemoryDerivationClientError, MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, createMemoryElapsed, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION, DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT, parseMemoryCustody, liveConversationDigest, memoryConsumptionExtendedWindows,
     personalMemoryMessage: localized ? personalMemoryMessage
       : (_locale, key, values = {}) => key + Object.values(values).map(value => ` [${value}]`).join(""),
     window: windowPort, document: documentPort, Date: FixtureDate, performance: { now: () => clock.monotonic },
@@ -453,6 +454,8 @@ function fixture(t, { initial = settings(), route = "/memory", session: initialS
     timers, clock, advance: milliseconds => { clock.now += milliseconds; clock.monotonic += milliseconds; },
     fireTimer(id = timers.keys().next().value) { const timer = timers.get(id); assert.ok(timer, "an owned timer exists"); timers.delete(id); timer.callback(); },
     notify() { for (const callback of subscriptions) callback(); },
+    privacyActive: () => privacyPending,
+    privacy(value) { privacyPending = value; for (const callback of listeners.get('forma-memory-privacy-mutation') ?? []) callback(); },
     dispatchWindow(name, detail) { for (const callback of listeners.get(name) ?? []) callback({ detail }); },
     visibility(value = "visible") { documentPort.visibilityState = value; for (const callback of documentListeners.get("visibilitychange") ?? []) callback(); },
     enqueue: response => responses.push(response), text: () => templateText(render()),
@@ -540,7 +543,7 @@ function hostFixture(t, options = {}) {
       return h.component.isConnected ? [h.component] : [];
     }
   }
-  const ports = { FormaElement: HostElement, html, nothing, keyed, assistantInteractionForSurface, assistantSurfaceForRoute,
+  const ports = { memoryPrivacyMutationActive: h.privacyActive, FormaElement: HostElement, html, nothing, keyed, assistantInteractionForSurface, assistantSurfaceForRoute,
     personalMemoryMessage, parseMemoryAnswerPresentation, createMemoryElapsed, ASSISTANT_CONTEXT_LIMITS,
     Date: h.DatePort, performance: { now: () => h.clock.monotonic },
     document: h.documentPort, window: h.windowPort, location: { origin: "https://forma.invalid" },
@@ -3584,4 +3587,33 @@ for(const clockChange of ['rollback','monotonic-only'])test('manual review read 
   if(clockChange==='rollback')h.clock.now-=1000;else h.clock.monotonic+=61000;
   h.fireTimer();await flush();assert.equal(delayed.cancellations,1);delayed.release();await pending;
   assert.doesNotMatch(h.text(),/Private tentative memory proposal|memory.live.purposeUnknown/);assert.equal(h.mutations().length,0);
+});
+
+
+test('external privacy mutation retires manual review and does not reload or revive on settlement',async t=>{
+ const {h}=await inspectDerivedReview(t),stale=profileAction(h,'reviewExport'),before=h.calls.length;
+ assert.match(h.text(),/Private tentative memory proposal/);h.privacy(true);
+ assert.doesNotMatch(h.text(),/Private tentative memory proposal/);assert.match(h.text(),/memory.live.busy/);
+ await h.invoke(stale,'@click').result;assert.equal(h.calls.length,before);
+ h.privacy(false);assert.doesNotMatch(h.text(),/Private tentative memory proposal/);assert.equal(h.calls.length,before);assert.equal(h.downloads.length,0);
+});
+test('external privacy mutation cancels a stalled manual review and discards late text',async t=>{
+ const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item);h.enqueue(data.list);await profileClick(h,'reviewLoad');
+ const delayed=delayedJson(data.result);h.enqueue(delayed.response);const pending=profileClick(h,'reviewInspect');await flush();
+ h.privacy(true);await flush();assert.equal(delayed.cancellations,1);delayed.release();await pending;
+ h.privacy(false);assert.doesNotMatch(h.text(),/Private tentative memory proposal|memory.live.purposeUnknown/);assert.equal(h.mutations().length,0);
+});
+
+
+test('assistant privacy invalidation retires remembered answers while preserving the consent-control host',async t=>{
+ const h=hostFixture(t);await openRecall(h);h.assistantPost(call=>answerPayload(h,call,'Private recalled source'));h.recallRequest();await flush();
+ assert.match(hostText(h),/Private recalled source/);const posts=assistantPosts(h).length;
+ h.privacy(true);h.commit();assert.doesNotMatch(hostText(h),/Private recalled source/);assert.equal(h.memoryMarkup(),true);
+ h.privacy(false);h.commit();assert.doesNotMatch(hostText(h),/Private recalled source/);assert.equal(assistantPosts(h).length,posts);
+ assert.equal(h.resolutions.length,0);assert.equal(h.mutations().length,0);
+});
+test('assistant privacy invalidation aborts a pending recall and rejects its late response',async t=>{
+ const h=hostFixture(t);await openRecall(h);const gate=deferred();h.assistantPost(async call=>{await gate.promise;return answerPayload(h,call,'Late private recalled source');});
+ h.recallRequest();await flush();const post=assistantPosts(h)[0];h.privacy(true);assert.equal(post.init.signal.aborted,true);
+ gate.resolve();await flush();h.privacy(false);h.commit();assert.doesNotMatch(hostText(h),/Late private recalled source/);assert.equal(assistantPosts(h).length,1);
 });

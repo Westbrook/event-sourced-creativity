@@ -138,7 +138,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   const blockOpened=visits.getByText(message(locale,'visitsBlockOpened'),{exact:true});await blockOpened.scrollIntoViewIfNeeded();await expect(blockOpened).toBeInViewport();
   await captureViewport(page,info,'memory-block-views-'+locale,{assertStable:false});
   const windows=visits.locator('[data-memory-consumption-windows]');await windows.locator(':scope > summary').click();
-  await expect(windows.locator('[data-memory-consumption-window]')).toHaveCount(2);const counts=windows.locator('[data-memory-consumption-window="7"]');await counts.scrollIntoViewIfNeeded();await expect(counts).toBeInViewport();
+  await expect(windows.locator('[data-memory-consumption-window]')).toHaveCount(4);const counts=windows.locator('[data-memory-consumption-window="7"]');await counts.scrollIntoViewIfNeeded();await expect(counts).toBeInViewport();
   const pageCounts=counts.locator('[data-memory-page-counts]');await expect(pageCounts).toContainText(message(locale,'visitsPage.editor'));await pageCounts.scrollIntoViewIfNeeded();await expect(pageCounts).toBeInViewport();
   await captureViewport(page,info,'memory-consumption-windows-'+locale,{assertStable:false});
   // A real inspector control clears private content BEFORE its response settles.
@@ -160,12 +160,26 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   await expect(section.getByText(message(locale,locale==='ar'?'purposeUnknown':'reviewChanged'),{exact:true})).toBeVisible();
   await expect(section.locator('[data-memory-derived-content]')).toHaveCount(0);
   expect(calls.filter(call=>call.method!=='GET')).toHaveLength(1);expect(errors).toEqual([]);
+  if(locale==='en'){
+    // Separate same-origin browser tab, identifier-free native BroadcastChannel.
+    await section.getByRole('button',{name:message(locale,'purposeLoad'),exact:true}).click();
+    await section.getByRole('button',{name:message(locale,'reviewLatest.rolling-summary'),exact:true}).click();
+    await expect(section.locator('[data-memory-derived-content]')).toContainText('Synthetic private proposal');
+    await context.route(origin+'/memory-privacy-peer-fixture',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Isolated privacy peer</title>'}));
+    const peer=await context.newPage();await peer.goto(origin+'/memory-privacy-peer-fixture');await page.bringToFront();
+    await peer.evaluate(()=>{window.memoryPeer=new BroadcastChannel('forma-memory-privacy-v1');window.memoryPeer.postMessage({version:1,operation:'12345678-1234-1234-1234-123456789abc',phase:'begin'});});
+    await expect(panel).not.toContainText('Synthetic private proposal');await expect(panel.locator('[aria-busy="true"]')).toBeVisible();
+    await peer.evaluate(()=>window.memoryPeer.postMessage({version:1,operation:'12345678-1234-1234-1234-123456789abc',phase:'end'}));
+    await expect(panel.locator('[aria-busy="true"]')).toHaveCount(0);
+    await expect(panel).not.toContainText('Synthetic private proposal');await peer.close();
+    expect(calls.filter(call=>call.method!=='GET')).toHaveLength(1);expect(errors).toEqual([]);
+  }
   await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:1,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});
 });
 
 });
 
-for(const behavioral of [false,true])for(const locale of ['en','ar'])test.describe('Automatic document memory '+locale+(behavioral?' behavioral':'' ),()=>{
+for(const purpose of ['rolling-summary','profile'])for(const behavioral of [false,true])for(const locale of ['en','ar'])test.describe('Automatic document memory '+purpose+' '+locale+(behavioral?' behavioral':'' ),()=>{
   test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
   test('current read-only brief, evidence and visibility withdrawal',async({page,context,baseURL},info)=>{
     expect(syntheticNetworkEnabled(baseURL)).toBe(true);
@@ -174,10 +188,10 @@ for(const behavioral of [false,true])for(const locale of ['en','ar'])test.descri
     const enrollment={id:parent,projectId:scope.projectId,documentId:scope.documentId,organizationId:null,revision:1,learn:true,recall:true,background:true,
       retentionDays:30,timeZone:'UTC',expiresAt,policyVersion:'personal-memory-v2',lastAdmittedAt:null,throughSequence:24,cutoffSequence:null,backlog:false,nextDueAt:new Date().toISOString(),attempts:0,status:'ready'};
     const base={enabled:true,policyVersion:'personal-memory-v2',writeContractVersion:'memory-settings-custody-v1',reviewContract:{timing:'daily-with-daytime-catch-up',preferredLocalWindow:{startHour:1,endHour:5},freshDaytimeCatchUpAllowed:true,savedPagesMayContinueOutsideWindow:true,strictlyOvernight:false,deliverySlaVerified:false},enrollments:[enrollment],nextAfter:null};
-    const grant={scope,grantId:'d'.repeat(64),revision:1,consentId:'11111111-1111-4111-8111-111111111111',purpose:'rolling-summary',enrollmentId:parent,enrollmentRevision:1,
+    const grant={scope,grantId:'d'.repeat(64),revision:1,consentId:'11111111-1111-4111-8111-111111111111',purpose,enrollmentId:parent,enrollmentRevision:1,
       qualificationId:'synthetic-qualified',termsSha256:'e'.repeat(64),monthlyCapMicroUsd:100000,sourceAfterSequence:1,background:true,retentionDays:30,
       consentedAt:new Date(Date.now()-1000).toISOString(),expiresAt,revokedAt:null};
-    const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Synthetic browser fixture only.',retentionPolicyId:'fixture-policy',evidence:Object.fromEntries(DERIVATION_EVIDENCE.map(key=>[key,'f'.repeat(64)]))};
+    const terms={version:'memory-derivation-terms-v1',purpose,recipeVersion:behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Synthetic browser fixture only.',retentionPolicyId:'fixture-policy',evidence:Object.fromEntries(DERIVATION_EVIDENCE.map(key=>[key,'f'.repeat(64)]))};
     grant.termsSha256=createHash('sha256').update(derivationCanonical(terms)).digest('hex');
     const offer={qualificationId:grant.qualificationId,termsSha256:grant.termsSha256,expiresAt,terms};
     const settings={version,enabled:true,available:true,reason:null,policyVersion:'personal-memory-derivation-v1',scope,enrollmentId:parent,enrollmentRevision:1,
@@ -197,33 +211,57 @@ for(const behavioral of [false,true])for(const locale of ['en','ar'])test.descri
       const validUntil=new Date(Date.now()+45000).toISOString();
       if(url.pathname==='/api/memory/settings')return route.fulfill({json:base});
       if(url.pathname.endsWith('/derivation/settings'))return route.fulfill({json:settings});
-      if(url.pathname.endsWith('/results'))return route.fulfill({json:{version,scope,enrollmentId:parent,enrollmentRevision:1,purpose:'rolling-summary',latest:true,
-        checkedAt:new Date().toISOString(),progress:[],results:[{jobId,purpose:'rolling-summary',scopeKey:'synthetic-scope',expiresAt}],next:null}});
+      if(url.pathname.endsWith('/results'))return route.fulfill({json:{version,scope,enrollmentId:parent,enrollmentRevision:1,purpose,...(url.searchParams.has('latest')?{latest:true}:{}),
+        checkedAt:new Date().toISOString(),progress:[],results:[{jobId,purpose,scopeKey:'synthetic-scope',expiresAt},...(!url.searchParams.has('latest')?[{jobId:'9'.repeat(64),purpose,scopeKey:'synthetic-scope',expiresAt}]:[])],next:null}});
       if(url.pathname.endsWith('/result')){
+        const selectedJob=url.searchParams.get('jobId'),historical=selectedJob!==jobId;
         if(denied)return route.fulfill({status:404,json:{error:'memory_result_unavailable'}});
-        return route.fulfill({json:{version,jobId,expiresAt,controlRevisions:{[lineage]:0},history:{windowCount:3,originalPairs:6,boundary:'bounded',afterSequence:1,throughSequence:24},
-          candidate:{version:behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',purpose:'rolling-summary',scopeKey:'synthetic-scope',manifestId:jobId,manifestRevision:1,validUntil,
-            semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:'proposal',
-              text:'Synthetic private brief <script>not code</script>.',...(behavioral?{observationSupports:[0],observationCounterevidence:[],observationCitations:[{observationIndex:0,action:'inspect',recordedAt:new Date(Date.now()-1000).toISOString(),role:'support'}]}:{}),supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],
-              claimKey:'derived:'+jobId,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'conflicting-citations'}]}}});
+        expect(url.searchParams.get('resources')).toBe('1');
+        return route.fulfill({json:{version,jobId:selectedJob,expiresAt,resourceEvidence:{version:'memory-evidence-resources-v1',complete:false,claims:[{claimKey:'derived:'+selectedJob,citations:[...[0,1].map(index=>({source:'original',index,resource:{zoom:'document',scopeKey:'synthetic-scope'}})),...(behavioral?[{source:'observation',index:0,resource:{zoom:'page',scopeKey:'synthetic-page',view:'document'}}]:[])]}]},controlRevisions:{[lineage]:0},history:{windowCount:3,originalPairs:6,boundary:'bounded',afterSequence:1,throughSequence:24},
+          candidate:{version:behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',purpose,scopeKey:'synthetic-scope',manifestId:selectedJob,manifestRevision:1,validUntil,
+            semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:purpose==='profile'?'workflow-hypothesis':'proposal',
+              text:historical?'Historical private profile hypothesis.':'Synthetic private brief <script>not code</script>.',...(behavioral?{observationSupports:[0],observationCounterevidence:[],observationCitations:[{observationIndex:0,action:'inspect',recordedAt:new Date(Date.now()-1000).toISOString(),role:'support'}]}:{}),supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],
+              claimKey:'derived:'+selectedJob,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'conflicting-citations'}]}}});
       }
       if(url.pathname.endsWith('/controls'))return route.fulfill({json:{version,available:true,scope,enrollmentId:parent,enrollmentRevision:1,validUntil,controls:[],next:null}});
-      if(url.pathname==='/api/memory/recall-scopes')return route.fulfill({json:{version:'memory-scope-recall-v1',sources:[],complete:true,validUntil:new Date(Date.now()+25000).toISOString()}});
+      if(url.pathname==='/api/memory/recall-scopes'){
+        const sources=purpose==='profile'&&!behavioral?[
+          {enrollmentId:'1'.repeat(64),projectId:scope.projectId,documentId:'project-context',zoom:'project',distance:0,weight:.7},
+          {enrollmentId:'2'.repeat(64),projectId:'related-project',documentId:'tree-context',zoom:'project-tree',distance:2,weight:.5/3},
+          {enrollmentId:'3'.repeat(64),projectId:'distant-project',documentId:'broader-context',zoom:'partition',distance:0,weight:.01}]:[];
+        const until=new Date(Date.now()+25000).toISOString(),id=url.searchParams.get('source');
+        if(!id)return route.fulfill({json:{version:'memory-scope-recall-v1',sources,complete:true,validUntil:until}});
+        if(url.searchParams.get('purpose')!=='profile')return route.fulfill({status:404,json:{error:'no_result'}});
+        const source=sources.find(row=>row.enrollmentId===id);expect(source).toBeTruthy();
+        return route.fulfill({json:{version:'memory-scope-recall-v1',source,validUntil:until,independentEvidence:false,completeHistory:false,presentationOnly:true,
+          presentation:{jobId:id,expiresAt,candidate:{version:'memory-derivation-candidates-v1',purpose:'profile',scopeKey:source.zoom+'-scope',manifestId:id,manifestRevision:1,validUntil,
+            semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:'preference-hypothesis',text:'Private '+source.zoom+' profile context',
+              supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[],claimKey:'derived:'+id,lineageIds:[lineage],sourceBindings:[{sourceId:'original-'+source.zoom,revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'support-cited'}]}}}});
+      }
       throw Error('Undeclared automatic Memory route');
     });
     await page.goto(path);const brief=page.locator('[data-memory-document-brief]');
     await expect(brief).toBeVisible();await expect(brief).toContainText('Synthetic private brief <script>not code</script>.');
     await expect(brief.locator('script')).toHaveCount(0);await expect(brief).toContainText(message(locale,'briefConflict'));
-    await brief.getByText(message(locale,behavioral?'behavioralEvidence':'briefEvidence'),{exact:true}).click();await expect(brief.getByText('Original',{exact:true})).toBeVisible();
-    await expect(brief.getByText('Opposed',{exact:true})).toBeVisible();
+    await brief.getByText(message(locale,behavioral?'behavioralEvidence':'briefEvidence'),{exact:true}).first().click();await expect(brief.getByText('Original',{exact:true}).first()).toBeVisible();
+    await expect(brief.getByText('Opposed',{exact:true}).first()).toBeVisible();
     await expect(brief).not.toContainText('memory.live.');
+    await expect(brief.locator('[data-memory-evidence-resources]').first()).toContainText(message(locale,'resourceEvidenceDocument'));
+    if(behavioral)await expect(brief.locator('[data-memory-evidence-resources]').first()).toContainText(message(locale,'resourceEvidencePage').replace('{view}',message(locale,'visitsPage.document')));
     if(behavioral){await expect(brief).toContainText(message(locale,'behavioralDisclosure'));await expect(brief).toContainText(message(locale,'behavioralAction.inspect'));}
     expect(await brief.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);
-    await captureViewport(page,info,'automatic-document-memory-'+locale+(behavioral?'-behavioral':''),{assertStable:false});
-    if(behavioral){await brief.getByRole('button',{name:message(locale,'assistantContextAccept'),exact:true}).click();await expect(brief.getByRole('status')).toHaveText(message(locale,'assistantContextSaved'));expect(contextWrites).toHaveLength(1);}
+    await captureViewport(page,info,'automatic-document-memory-'+purpose+'-'+locale+(behavioral?'-behavioral':''),{assertStable:false});
+    if(purpose==='profile'&&!behavioral){
+      for(const zoom of ['project','project-tree','partition'])await expect(brief).toContainText('Private '+zoom+' profile context');
+      const broad=brief.getByText('Private partition profile context',{exact:true});await broad.scrollIntoViewIfNeeded();await expect(broad).toBeInViewport();
+      await expect(brief).toContainText(message(locale,'briefSourceWeight').replace('{weight}','0.01'));
+      await captureViewport(page,info,'automatic-document-memory-scopes-'+locale,{assertStable:false});
+    }
+    if(purpose==='profile'){await expect(brief).toContainText('Historical private profile hypothesis.');await expect(brief).toContainText(message(locale,'profileHistorical'));await expect(brief).toContainText(message(locale,'profileSharedEvidence'));}
+    if(behavioral){await brief.getByRole('button',{name:message(locale,'assistantContextAccept'),exact:true}).first().click();await expect(brief.getByRole('status')).toHaveText(message(locale,'assistantContextSaved'));expect(contextWrites).toHaveLength(1);}
     await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(brief).toHaveCount(0);
     denied=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
-    await expect.poll(()=>calls.filter(call=>call.path.endsWith('/result')).length).toBe(2);
+    await expect.poll(()=>calls.filter(call=>call.path.endsWith('/result')).length).toBe(purpose==='profile'?3:2);
     await expect(brief).toHaveCount(0);expect(calls.filter(call=>call.method!=='GET')).toHaveLength(behavioral?1:0);expect(errors).toEqual([]);
   });
 });

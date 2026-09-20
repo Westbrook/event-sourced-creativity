@@ -1,3 +1,4 @@
+import {documentViewFromRoute,documentContextBlockFromRoute} from '../src/model/routes.ts';
 // Actual component class and real Lit templates, finite Store/visibility/lease
 // ports. Browser rendering is separately exercised by forma-memory-purposes.
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ const savedDeclaration=savedSource.statements.find(node=>ts.isClassDeclaration(n
 const savedCompiled=ts.transpileModule(savedDeclaration.getText(savedSource).replace(/^export /u,''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,useDefineForClassFields:false}}).outputText;
 const flatten=value=>typeof value==='string'?value:Array.isArray(value)?value.map(flatten).join(''):value?.strings?value.strings.map((part,i)=>part+flatten(value.values[i])).join(''):'';
 const flush=async()=>{for(let i=0;i<4;i++)await Promise.resolve();};
-function fixture(t,{deferred=false,shared=false,saved=false}={}){
+function fixture(t,{deferred=false,shared=false,saved=false,profile=false}={}){
   let privacyPending=false;
   const window=new EventTarget(),document=new EventTarget();document.visibilityState='visible';document.activeElement=null;
   let session={user:{userId:'actor'},projects:[],impersonation:null},route='/document/doc/doc',authorization='auth',generation=1,sourceActive=true;
@@ -30,10 +31,11 @@ function fixture(t,{deferred=false,shared=false,saved=false}={}){
   const calls=[];const capture=(selection,transport,current,signal)=>new Promise(resolve=>{let retired=false;
     const value={projectId:'project',documentId:'doc',validUntil:new Date(Date.now()+45000).toISOString(),completeHistory:false,independentEvidence:false,
       sections:[{purpose:'rolling-summary',jobId:'job',corrections:[],items:[{text:'Private native candidate',citationStatus:'support-cited',supports:[{text:'Original quotation'}],counterevidence:[]}]}]};
+    if(profile)value.sections=[{purpose:'profile',jobId:null,corrections:[],items:Array.from({length:64},(_,index)=>({text:'Profile note '+index,citationStatus:'support-cited',supports:[],counterevidence:[],profileOrigin:{jobId:'result-'+Math.floor(index/16),state:index<16?'latest':'historical',repeatedIn:1,sharedEvidence:false}}))}];
     const lease={current:()=>!retired&&current()?value:null,retire:()=>{retired=true;}};calls.push({selection,current,signal,resolve:()=>resolve(lease),retired:()=>retired});if(!deferred)resolve(lease);});
   const savedClient=()=>({read:(scope,signal)=>new Promise(resolve=>{calls.push({scope,signal,resolve:()=>resolve({validUntil:new Date(Date.now()+25000).toISOString(),context:{state:'accepted',source:{documentId:'doc',zoom:'document'}},presentation:{items:[{text:'Private native candidate'}]}})});if(!deferred)calls.at(-1).resolve();})});
-  const Component=saved?new Function('memoryPrivacyMutationActive','FormaElement','html','nothing','createAssistantMemoryContextClient','parseMemoryCustody','personalMemoryMessage','createMemoryElapsed','window','setTimeout','clearTimeout',savedCompiled+'\nreturn MemoryAssistantContext;')(()=>privacyPending,Base,html,nothing,savedClient,parseMemoryCustody,personalMemoryMessage,createMemoryElapsed,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id)):new Function('memoryPrivacyMutationActive','FormaElement','html','nothing','readDocumentMemoryBrief','parseMemoryCustody','personalMemoryMessage','window','setTimeout','clearTimeout',compiled+'\nreturn DocumentMemoryBrief;')(
-    ()=>privacyPending,Base,html,nothing,capture,parseMemoryCustody,personalMemoryMessage,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id));
+  const Component=saved?new Function('memoryPrivacyMutationActive','FormaElement','html','nothing','createAssistantMemoryContextClient','parseMemoryCustody','personalMemoryMessage','createMemoryElapsed','window','setTimeout','clearTimeout',savedCompiled+'\nreturn MemoryAssistantContext;')(()=>privacyPending,Base,html,nothing,savedClient,parseMemoryCustody,personalMemoryMessage,createMemoryElapsed,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id)):new Function('documentViewFromRoute','documentContextBlockFromRoute','memoryPrivacyMutationActive','FormaElement','html','nothing','readDocumentMemoryBrief','parseMemoryCustody','personalMemoryMessage','window','setTimeout','clearTimeout',compiled+'\nreturn DocumentMemoryBrief;')(
+    documentViewFromRoute,documentContextBlockFromRoute,()=>privacyPending,Base,html,nothing,capture,parseMemoryCustody,personalMemoryMessage,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id));
   const element=new Component();element.connectedCallback();element.updated();t.after(()=>{element.isConnected=false;element.disconnectedCallback();});
   return {privacy:(value)=>{privacyPending=value;window.dispatchEvent(new Event('forma-memory-privacy-mutation'));},element,calls,document,window,timers,refresh,text:()=>flatten(element.render()),focused:()=>focused,
     change:(kind)=>{if(kind==='route')route='/elsewhere';if(kind==='actor')session={...session,user:{userId:'another'}};
@@ -93,4 +95,10 @@ for(const saved of [false,true])test('privacy mutation rejects a late read and c
  const f=fixture(t,{saved,deferred:true});f.privacy(true);f.calls[0].resolve();await flush();assert.doesNotMatch(f.text(),/Private native candidate/);
  f.window.dispatchEvent(new Event('blur'));f.privacy(false);f.element.updated();assert.equal(f.calls.length,1);
  f.window.dispatchEvent(new Event('focus'));assert.equal(f.calls.length,2);f.calls[1].resolve();await flush();assert.match(f.text(),/Private native candidate/);
+});
+
+test('retained profile mounts one reference control per source result, not one per repeated claim',async t=>{
+ const f=fixture(t,{profile:true});await flush();
+ assert.equal((f.text().match(/<forma-memory-assistant-context /gu)??[]).length,4);
+ for(const i of [0,15,16,31,32,47,48,63])assert.match(f.text(),new RegExp('Profile note '+i));
 });

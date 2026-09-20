@@ -1,4 +1,5 @@
 import './memory-assistant-context.ts';
+import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import { html, nothing } from "lit";
 import { keyed } from "lit/directives/keyed.js";
 import { navigateInApp, navigationPresentationClosing, type CommandDeparture } from "./command-departure";
@@ -59,6 +60,13 @@ export class FormaCreativeAssistant extends FormaElement {
   #memoryFocus = () => { this.#pruneMemoryAnswers(); this.requestUpdate(); };
   #memoryDisconnect?: () => void;
   #memoryInvalidated = () => { this.#closeMemory(); this.requestUpdate(); };
+  #memoryPrivacyChanged = () => {
+    // Retire derived answers and pending recall without unmounting the child
+    // that may be executing the user's privacy mutation. Ordinary chat and
+    // unsent drafts remain untouched. Settlement never automatically recalls.
+    if (memoryPrivacyMutationActive()) this.#closeMemoryRecall();
+    this.requestUpdate();
+  };
   #memoryVisibility = () => {
     if (document.visibilityState !== "visible") this.#closeMemory();
     this.requestUpdate();
@@ -115,6 +123,7 @@ export class FormaCreativeAssistant extends FormaElement {
       window.addEventListener(name, this.#memoryInvalidated);
     document.addEventListener("visibilitychange", this.#memoryVisibility);
     window.addEventListener("focus", this.#memoryFocus);
+    window.addEventListener('forma-memory-privacy-mutation', this.#memoryPrivacyChanged);
     const unsubscribeMemory = this.store.subscribe(() => {
       if (this.#memoryOpen && (this.#memoryScope !== this.#memoryContext(this.#scope())
         || !this.store.sourceOwnershipActive(this.store.captureSourceOwnership()))) this.#closeMemory();
@@ -125,6 +134,7 @@ export class FormaCreativeAssistant extends FormaElement {
         window.removeEventListener(name, this.#memoryInvalidated);
       document.removeEventListener("visibilitychange", this.#memoryVisibility);
       window.removeEventListener("focus", this.#memoryFocus);
+      window.removeEventListener('forma-memory-privacy-mutation', this.#memoryPrivacyChanged);
       unsubscribeMemory();
     };
   }
@@ -150,7 +160,7 @@ export class FormaCreativeAssistant extends FormaElement {
 
   #canRecallDocument() {
     const surface = assistantSurfaceForRoute(this.store.route.get()), projection = this.store.projection.get();
-    return Boolean(this.isConnected && this.#open && this.#memoryOpen && document.visibilityState === "visible"
+    return Boolean(!memoryPrivacyMutationActive() && this.isConnected && this.#open && this.#memoryOpen && document.visibilityState === "visible"
       && !this.store.session.get()?.impersonation && surface.documentId && !surface.canvasId
       && surface.documentId === projection.documentId && projection.projectId === this.#projectId()
       && this.store.sourceOwnershipActive(this.store.captureSourceOwnership()));

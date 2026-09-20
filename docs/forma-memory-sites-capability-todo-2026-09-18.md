@@ -206,3 +206,7 @@ release. Broader automatic assistant/autocomplete, long-term reconciliation,
 Library/Canvas/cross-owner scopes and integration qualification remain tracked
 in the native continuation; external scheduling/provider/index qualification
 and enrollment remain separate gates.
+
+## Contextual profile and privacy continuation — 2026-09-20
+
+[Contextual retained profiles, native resource evidence and privacy integration](forma-memory-contextual-profile-2026-09-20.md) implement bounded retained-profile reconciliation, explicitly negotiated native page/block citation locations, nearest-per-band project/tree/partition context, extended consumption windows and source-free cross-tab privacy invalidation. This is branch work with local evidence, not whole-plan completion or release. Automatic prompt/answer publication, exact-field autocomplete/undo provenance, longer-term semantic consolidation and broader native resource/owner scopes remain implementation work. External and operational gates above are unchanged.

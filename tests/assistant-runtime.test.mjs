@@ -15480,10 +15480,10 @@ test('native derivation source consent batch: aggregate over-cap prose is reject
   finally{db.batch=batch;}
 });
 
-for(const shared of [false,true])for(const paid of [false,true])test('native derivation automatic brief: original-backed HTTP bundle and correction priority shared='+shared+' paid='+paid,{timeout:120000},async t=>{
-  const state=await nativeDerivationRollingFixture(t,{windows:3,shared,paid}),api=await import('../worker/memory-derivation-api.ts'),
+for(const shared of [false,true])for(const paid of [false,true])for(const purpose of ['rolling-summary','profile'])test('native derivation automatic brief: original-backed HTTP bundle and correction priority shared='+shared+' paid='+paid+' purpose='+purpose,{timeout:120000},async t=>{
+  const state=await nativeDerivationRollingFixture(t,{windows:3,shared,paid,termOverrides:{purpose}}),api=await import('../worker/memory-derivation-api.ts'),
     {handleLiveMemory}=await import('../worker/memory-live-api.ts'),{readDocumentMemoryBrief}=await import('../src/state/document-memory-brief.ts');
-  const parent=state.current(),scope={projectId:parent.project_id,documentId:parent.document_id,custody:state.preferences.expectedCustody};
+  const parent=state.current(),scope={projectId:parent.project_id,documentId:parent.document_id,custody:state.preferences.expectedCustody,view:'document'};
   const usage=state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),providerCalls=state.rollingRequests.length,calls=[];
   const readState=()=>Object.fromEntries(['events','event_private_payloads','project_resource_scopes','project_event_scopes','project_migration_states','memory_derivation_results','memory_derivation_result_dependencies'].map(table=>[table,state.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]));
   const unchanged=readState(),db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
@@ -15498,10 +15498,12 @@ for(const shared of [false,true])for(const paid of [false,true])test('native der
     assert.ok(operations-before<50,url.pathname+' D1 calls: '+(operations-before));if(response.status!==200)t.diagnostic(url.pathname+' '+response.status+' '+await response.clone().text());return response;
   };
   const controller=new AbortController(),lease=await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal);assert.ok(lease);
-  const value=lease.current();assert.equal(value.sections.length,1);assert.equal(value.sections[0].history.windowCount,3);assert.equal(value.sections[0].items.length,1);
-  assert.equal(value.sections[0].items[0].supports[0].text,'Original');assert.equal(calls.length,6);assert.equal(calls.at(-1),'/api/memory/recall-scopes');assert.deepEqual(readState(),unchanged,'Automatic presentation must not repair custody, mutate sources or retire results');lease.retire();
+  const retainedCount=unchanged.memory_derivation_results.filter(row=>row.state==='active').length;
+  const value=lease.current();assert.equal(value.sections.length,1);assert.equal(value.sections[0].history.windowCount,3);assert.equal(value.sections[0].items.length,purpose==='profile'?retainedCount:1);
+  if(purpose==='profile'){assert.equal(value.sections[0].retainedProfile.results,retainedCount);assert.deepEqual(value.sections[0].items.map(item=>item.profileOrigin.state),['latest',...Array(retainedCount-1).fill('historical')]);assert.ok(value.sections[0].items.every(item=>item.profileOrigin.sharedEvidence===(retainedCount>1)));}
+  assert.equal(value.sections[0].items[0].supports[0].text,'Original');assert.equal(calls.length,purpose==='profile'?6+retainedCount:6);assert.equal(calls.at(-1),'/api/memory/recall-scopes');assert.deepEqual(readState(),unchanged,'Automatic presentation must not repair custody, mutate sources or retire results');lease.retire();
   const store=await import('../worker/memory-derivation-results.ts'),controls=await import('../worker/memory-derivation-user-controls.ts');
-  const read=await store.readNativeDerivationResult(state.env,parent.actor_user_id,value.sections[0].jobId),item=store.nativeDerivationResultInputs(state.env,read).candidate.items[0],
+  const read=await store.readNativeDerivationResult(state.env,parent.actor_user_id,value.sections[0].jobId??value.sections[0].items[0].profileOrigin.jobId),item=store.nativeDerivationResultInputs(state.env,read).candidate.items[0],
     target=store.nativeDerivationResultControlTarget(state.env,read,item.claimKey);
   await controls.controlNativeDerivationResult(state.env,read,item.claimKey,'corrected','Explicit native user correction.',Object.fromEntries(target.lineages.map(row=>[row.lineageId,0])));
   const corrected=await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal);assert.equal(corrected.current().sections[0].items.length,0);
@@ -15818,6 +15820,12 @@ for(const shared of [false,true])for(const hosted of [false,true])test('native b
   assert.equal(response.status,200,await response.clone().text());const body=await response.json();
   const client=(await import('../src/state/memory-derivation-client.ts')).createMemoryDerivationClient(async()=>Response.json(body));
   const viewed=await client.inspectResult({jobId:input.jobId,purpose:input.candidate.purpose,scopeKey:input.candidate.scopeKey,expiresAt:input.expiresAt});assert.equal(viewed.items[0].observationCitations[0].action,'inspect');
+  const resourceResponse=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+state.executionJob.job_id+'&resources=1',{headers:state.owner}),state.env);
+  assert.equal(resourceResponse.status,200,await resourceResponse.clone().text());const resourceBody=await resourceResponse.json();
+  const resourceView=await(await import('../src/state/memory-derivation-client.ts')).createMemoryDerivationClient(async()=>Response.json(resourceBody)).inspectResultResources({jobId:input.jobId,purpose:input.candidate.purpose,scopeKey:input.candidate.scopeKey,expiresAt:input.expiresAt});
+  assert.equal(resourceView.items[0].resourceCitations.length,1);const nativeBlock=manifest.provenance.blockBindings.entries.find(row=>row.eventId===manifest.behavioralSources[item.observationCitations[0].observationIndex].sourceId);
+  assert.deepEqual(resourceView.items[0].resourceCitations[0].resource,{zoom:'block',scopeKey:nativeBlock.scopeKey,blockId:nativeBlock.blockId,revision:nativeBlock.revision});
+  assert.equal(Object.hasOwn(body,'resourceEvidence'),false,'Legacy result shape must stay unchanged');
   const controls=await import('../worker/memory-derivation-user-controls.ts');
   const saved=await controls.controlNativeDerivationResult(state.env,read,item.claimKey,'corrected','This was an incidental inspection, not a workflow preference.',Object.fromEntries(item.lineageIds.map(id=>[id,0])));
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM memory_derivation_observation_controls').first()).n,1);
@@ -15998,6 +16006,11 @@ for(const shared of [false,true])test('native cross-scope recall: default isolat
  view=await response.json();assert.equal(response.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);
  assert.equal(view.presentationOnly,true);assert.equal(view.independentEvidence,false);assert.equal(view.presentation.candidate.items.length,1);assert.ok(!Object.hasOwn(view.presentation,'controlRevisions'));
  t.diagnostic(JSON.stringify({operations,statements}));assert.ok(operations<50,'Complete cross-scope request: '+operations);
+ const {readDocumentMemoryBrief}=await import('../src/state/document-memory-brief.ts');
+ const bundleCalls=[],transport=async(path,init)=>{bundleCalls.push(String(path));return worker.fetch(new Request(state.derivationOrigin+path,{...init,headers:{...Object.fromEntries(new Headers(init.headers)),...state.owner}}),state.env,{waitUntil(){}});};
+ const bundle=await readDocumentMemoryBrief({projectId:state.recallTarget.projectId,documentId:state.recallTarget.documentId,custody:state.preferences.expectedCustody,view:'document'},transport,()=>true,new AbortController().signal);
+ assert.ok(bundle);assert.equal(bundle.current().sections.length,1);assert.equal(bundle.current().sections[0].source.zoom,'project');
+ assert.equal(bundle.current().sections[0].source.weight,.7);assert.equal(bundleCalls.filter(path=>path.includes('source=')).length,3);bundle.retire();
  assert.deepEqual(adaptiveReentryFinancialState(state),before);
  await state.recallRequest('recall-boundary',state.recallSource.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});
  assert.equal((await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}})).status,404);
@@ -16279,7 +16292,11 @@ for(const shared of [false,true])test('native memory page bindings: genuine cano
   assert.ok(visits.every(row=>row.target.kind===(version===6?'page':'document')));
   if(version===6)assert.deepEqual(new Map(visits.map(row=>[row.eventId,row.target.view])),new Map(pages.entries.map(row=>[row.eventId,row.view])));else assert.ok(visits.every(row=>!Object.hasOwn(row.target,'view')));
  }
- const store=await import('../worker/memory-derivation-results.ts');assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id));
+ const store=await import('../worker/memory-derivation-results.ts');const pageHandle=await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id);assert.ok(pageHandle);
+ const nativeResources=store.nativeDerivationResultResources(state.env,pageHandle),resource=nativeResources.claims[0].citations.find(row=>row.source==='observation').resource;
+ assert.deepEqual(resource,{zoom:'page',view:'chat',scopeKey:pages.entries[0].scopeKey});
+ const response=await state.request('/api/memory/derivation/result?jobId='+job.job_id+'&resources=1',{headers:state.owner});assert.equal(response.status,200,await response.clone().text());
+ assert.deepEqual((await response.json()).resourceEvidence,nativeResources);
  state.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(pages.entries[0].eventId);
  assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id),null);
  assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_results WHERE job_id=?').get(job.job_id).state,'withdrawn');
