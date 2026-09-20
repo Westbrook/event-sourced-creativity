@@ -16270,6 +16270,14 @@ for(const shared of [false,true])test('native memory page bindings: genuine cano
  assert.equal(observations[0].resourceKey,observations[2].resourceKey);assert.notEqual(observations[0].resourceKey,observations[1].resourceKey);
  const request=state.rollingRequests[0].observations.filter(row=>row.action==='encounter');assert.equal(request[0].resourceGroup,request[2].resourceGroup);assert.notEqual(request[0].resourceGroup,request[1].resourceGroup);
  assert.ok(request.every(row=>!Object.hasOwn(row,'scopeKey')&&!Object.hasOwn(row,'view')&&!Object.hasOwn(row,'focused')),'Only opaque resource grouping goes to the model');
+ const {enforceD1ExpressionDepth}=await import('./helpers/d1-expression-depth.mjs'),depth=enforceD1ExpressionDepth(state,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});t.after(()=>depth.restore());
+ for(const version of [5,6]){
+  const r=await state.request('/api/memory/recall?id='+state.current().enrollment_id+'&consumptionEpisodes=memory-consumption-episodes-v'+version,{headers:state.owner});
+  assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);const projection=(await r.json()).consumptionEpisodes;
+  const visits=projection.sources.filter(row=>row.type==='DocumentViewVisited');assert.equal(visits.length,3);
+  assert.ok(visits.every(row=>row.target.kind===(version===6?'page':'document')));
+  if(version===6)assert.deepEqual(visits.map(row=>row.target.view),['chat','editor','chat']);else assert.ok(visits.every(row=>!Object.hasOwn(row.target,'view')));
+ }
  const store=await import('../worker/memory-derivation-results.ts');assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id));
  state.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(pages.entries[0].eventId);
  assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id),null);
@@ -16311,4 +16319,33 @@ for(const fault of ['none','cross-site','extra-field','wrong-document','late-ses
   assert.equal(item.type,visible?'DocumentViewVisited':'ProjectResourceRestricted');
   if(!visible){assert.equal(item.actor,'private');assert.deepEqual(item.payload,{restricted:true});}
  }
+});
+
+for(const shared of [false,true])for(const fault of ['private-erasure','view-changed','enrollment','principal'])test('native page consumption: final publication retires '+shared+'/'+fault,async t=>{
+ let eventId;
+ const state=await nativeDerivationRollingFixture(t,{shared,windows:1,termOverrides:{recipeVersion:'memory-derivation-candidates-v2'},beforeWindow:async seed=>{
+  const e=seed.current(),r=await seed.request('/api/events/hot',json({action:'hot',event:{type:'DocumentViewVisited',payload:{project_id:e.project_id,document_id:e.document_id,view:'editor',focused:false,route_family:'document',source_surface:'document-view-navigation'}}},{...seed.owner,origin:'http://localhost'}));assert.equal(r.status,200);eventId=(await r.json()).appended[0].eventId;
+ }});
+ const db=state.env.DB,batch=db.batch;let hit=false;
+ db.batch=async function(statements){if(!hit&&statements.length>2&&statements.some(row=>String(row.sql??'').includes('AS payload_json'))){hit=true;
+  if(fault==='private-erasure')state.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(eventId);
+  if(fault==='view-changed')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.view','chat') WHERE private_event_id=?").run(eventId);
+  if(fault==='enrollment')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.current().enrollment_id);
+  if(fault==='principal')state.sqlite.prepare("UPDATE users SET consent_version='' WHERE user_id=?").run(state.current().actor_user_id);
+ }return batch.call(this,statements);};
+ let r;try{r=await state.request('/api/memory/recall?id='+state.current().enrollment_id+'&consumptionEpisodes=memory-consumption-episodes-v6',{headers:state.owner});}finally{db.batch=batch;}
+ assert.equal(hit,true);assert.ok(r.status>=400,await r.clone().text());assert.equal(JSON.stringify(await r.json()).includes(eventId),false);
+});
+
+test('native page consumption: isolated D1 and complete HTTP request budget',{timeout:180000},async t=>{
+ const state=await nativeDerivationRollingFixture(t,{shared:true,windows:1,termOverrides:{recipeVersion:'memory-derivation-candidates-v2'},beforeWindow:async seed=>{
+  const e=seed.current(),r=await seed.request('/api/events/hot',json({action:'hot',event:{type:'DocumentViewVisited',payload:{project_id:e.project_id,document_id:e.document_id,view:'editor',focused:false,route_family:'document',source_surface:'document-view-navigation'}}},{...seed.owner,origin:'http://localhost'}));assert.equal(r.status,200);
+ }});
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['PageRecall'],script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('No external network');}});
+ t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const actual=await mf.getD1Database('PageRecall');await install(actual,exportSynthetic(state.sqlite));
+ let operations=0;const originals=new WeakMap(),wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+ state.env.DB={prepare:sql=>wrap(actual.prepare(sql)),batch:inputs=>{operations++;return actual.batch(inputs.map(input=>originals.get(input)??input));}};
+ const response=await state.request('/api/memory/recall?id='+state.current().enrollment_id+'&consumptionEpisodes=memory-consumption-episodes-v6',{headers:state.owner});
+ assert.equal(response.status,200,await response.clone().text());const view=await response.json();assert.equal(view.consumptionEpisodes.sources.find(row=>row.type==='DocumentViewVisited').target.view,'editor');assert.ok(operations<=50,'whole-request operations '+operations);t.diagnostic(JSON.stringify({operations}));
 });

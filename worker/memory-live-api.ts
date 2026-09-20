@@ -2,7 +2,7 @@ import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { MEMORY_ASSISTED_OUTCOMES_VERSION } from "../src/model/memory-assisted-outcomes.ts";
 import { MEMORY_SAVED_OUTPUTS_VERSION } from "../src/model/memory-saved-outputs.ts";
 import { MEMORY_CONSUMPTION_EPISODES_VERSION } from "../src/model/memory-consumption-episodes.ts";
-import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, MEMORY_CONSUMPTION_V4, MEMORY_CONSUMPTION_V5 } from "../src/model/memory-consumption-v2.ts";
+import { MEMORY_CONSUMPTION_V2, MEMORY_CONSUMPTION_V3, MEMORY_CONSUMPTION_V4, MEMORY_CONSUMPTION_V5, MEMORY_CONSUMPTION_V6 } from "../src/model/memory-consumption-v2.ts";
 import { MEMORY_WRITE_CONTRACT, memoryCustodyMatches, parseMemoryCustody } from "../src/model/memory-custody.ts";
 import { requireUser, requireConsent } from "./pilot-policy.ts";
 import { prepareDocumentAuthority } from "./context-authoring-authority.ts";
@@ -66,7 +66,7 @@ export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"
     const savedOutputs=operation==="recall"?url.searchParams.get("savedOutputs"):null;
     if(savedOutputs!==null&&savedOutputs!==MEMORY_SAVED_OUTPUTS_VERSION)return reply({error:"memory_saved_outputs_version_unsupported"},400);
     const consumptionEpisodes=operation==="recall"?url.searchParams.getAll("consumptionEpisodes"):[];
-    if(consumptionEpisodes.length>1||consumptionEpisodes.length===1&&![MEMORY_CONSUMPTION_EPISODES_VERSION,MEMORY_CONSUMPTION_V2,MEMORY_CONSUMPTION_V3,MEMORY_CONSUMPTION_V4,MEMORY_CONSUMPTION_V5].some(version=>version===consumptionEpisodes[0]))
+    if(consumptionEpisodes.length>1||consumptionEpisodes.length===1&&![MEMORY_CONSUMPTION_EPISODES_VERSION,MEMORY_CONSUMPTION_V2,MEMORY_CONSUMPTION_V3,MEMORY_CONSUMPTION_V4,MEMORY_CONSUMPTION_V5,MEMORY_CONSUMPTION_V6].some(version=>version===consumptionEpisodes[0]))
       return reply({error:"memory_consumption_version_unsupported"},400);
     const revision=operation==="export"?url.searchParams.get("revision"):null;
     if(operation==="export"&&(!revision||!/^\d+$/u.test(revision)||!Number.isSafeInteger(Number(revision))||Number(revision)<1))return reply({error:"memory_revision_required"},400);
@@ -85,7 +85,7 @@ export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"
       try{return await exportLiveMemory(env,e,actor);}catch{return reply({error:"memory_export_unavailable"},403);}
     }
     try{return await recallLiveMemoryResponse(env,e,actor,{assistedOutcomes:outcomes===MEMORY_ASSISTED_OUTCOMES_VERSION,
-      savedOutputs:savedOutputs===MEMORY_SAVED_OUTPUTS_VERSION,consumptionEpisodes:consumptionEpisodes[0]===MEMORY_CONSUMPTION_V5?MEMORY_CONSUMPTION_V5:consumptionEpisodes[0]===MEMORY_CONSUMPTION_V4?MEMORY_CONSUMPTION_V4:consumptionEpisodes[0]===MEMORY_CONSUMPTION_V3?MEMORY_CONSUMPTION_V3:consumptionEpisodes[0]===MEMORY_CONSUMPTION_V2?MEMORY_CONSUMPTION_V2:consumptionEpisodes.length===1});}catch{return reply({error:"memory_unavailable"},403);}
+      savedOutputs:savedOutputs===MEMORY_SAVED_OUTPUTS_VERSION,consumptionEpisodes:consumptionEpisodes[0]===MEMORY_CONSUMPTION_V6?MEMORY_CONSUMPTION_V6:consumptionEpisodes[0]===MEMORY_CONSUMPTION_V5?MEMORY_CONSUMPTION_V5:consumptionEpisodes[0]===MEMORY_CONSUMPTION_V4?MEMORY_CONSUMPTION_V4:consumptionEpisodes[0]===MEMORY_CONSUMPTION_V3?MEMORY_CONSUMPTION_V3:consumptionEpisodes[0]===MEMORY_CONSUMPTION_V2?MEMORY_CONSUMPTION_V2:consumptionEpisodes.length===1});}catch{return reply({error:"memory_unavailable"},403);}
   }
   if(operation!=="settings"||request.method!=="PUT"&&request.method!=="DELETE")return reply({error:"method_not_allowed"},405);
   const origin=request.headers.get("origin");if(origin&&origin!==url.origin)return reply({error:"same_origin_required"},403);

@@ -21,3 +21,18 @@ Isolated native fixtures and synthetic local browser fixtures only. No live prov
 Saved reference review is **not** automatic prompt insertion, a generated semantic answer, or field autocomplete. Those consumers still need durable source-bound publication and exact target edit/undo provenance. Canonical document pages do not establish Library/Canvas-native resource identity or unsupported block histories. Longer-term semantic reconciliation, cross-owner project containment, independent original recall across reuse, immediate persisted ancestry/index retirement and full integration/privacy/request-budget qualification remain tracked in the [native continuation](forma-memory-native-continuation-2026-09-18.md#remaining-native-implementation--still-in-scope).
 
 Provider/adapter qualification, hosted schedule registration, deployment and enrollment remain separate [operational gates](forma-memory-sites-capability-todo-2026-09-18.md#capabilities-not-available-directly-through-the-inspected-sites-tools).
+
+## Page-consumption continuation
+
+The private inspector now explicitly negotiates `memory-consumption-episodes-v6`.
+It returns canonical document-page targets and localized per-view counts in the
+existing overlapping 7/30-day windows. Older v1–v5 response shapes remain unchanged.
+Counts use only the selected, certified, retained observations; they are not a
+complete usage ledger, reading-time measurement, preference or independent evidence.
+No extra source query, provider request, schedule, stored draft, URL or database
+migration is introduced. Final native witness replay covers each page label.
+
+Compatibility and UI checks: 692 client/control tests, 8 browser regressions,
+and two additional in-view visual checks (English desktop and Arabic 320 px)
+passed. Eight late-source/permission tests refuse publication. Typecheck, scoped
+lint and build passed. All 575 selected native Memory regressions passed, including the actual isolated-D1 page read and its complete HTTP-request budget assertion (at most 50 operations).

@@ -2809,8 +2809,8 @@ function visitsRecall(item, { checkedAt = now(), leaseMs = 60_000, empty = false
   })));
   body.consumption.encounter = 3; body.coverage.sourceCount = body.sources.length;
   const indexes = empty ? [] : [1, 3];
-  body.consumptionEpisodes = { version: "memory-consumption-episodes-v5", treatment: "descriptive-consumption", validUntil: until,
-    sources:indexes.map(sourceIndex=>{const {eventId,type,recordedAt,validUntil}=body.sources[sourceIndex];return{eventId,type,recordedAt,validUntil,target:{kind:"document",documentId:item.documentId}};}),
+  body.consumptionEpisodes = { version: "memory-consumption-episodes-v6", treatment: "descriptive-consumption", validUntil: until,
+    sources:indexes.map(sourceIndex=>{const {eventId,type,recordedAt,validUntil}=body.sources[sourceIndex];return{eventId,type,recordedAt,validUntil,target:{kind:"page",documentId:item.documentId,view:"editor"}};}),
     episodes: indexes.map((_sourceIndex,sourceIndex) => ({ episodeId: null,
       observations: [{ sourceIndex, kind: "visit" }],
       firstRecordedAt: checkedAt, lastRecordedAt: checkedAt, validUntil: until, independentEvidence: false })),
@@ -2848,7 +2848,7 @@ test("recorded visits: explicit action replaces the complete receipt and shows o
   assert.ok(oldReceipt.retireCalls > 0); assert.equal(h.text().includes("Prior parent conversation"), false);
   assert.equal(h.text().includes("personal-memory-excerpts"), false);
   assert.equal(h.calls.at(-1).url, "/api/memory/recall?id=" + row.id
-    + "&outcomes=native-assisted-outcomes-v1&savedOutputs=native-saved-outputs-v1&consumptionEpisodes=memory-consumption-episodes-v5");
+    + "&outcomes=native-assisted-outcomes-v1&savedOutputs=native-saved-outputs-v1&consumptionEpisodes=memory-consumption-episodes-v6");
   assert.equal(h.focusLeases.length, 1); assert.equal(h.focusLeases[0].disposed, false);
   delayed.release(); await pending;
   const root = h.render(), section = [...templates(root)].find(value => value.strings.some(part => part.includes("data-memory-visits>")));
@@ -3015,7 +3015,7 @@ test("recorded visits: every supported locale has matching descriptive labels an
   const selected = dictionary => Object.keys(dictionary).filter(key => key.startsWith("memory.live.visits")).sort();
   const english = FORMA_PERSONAL_MEMORY_MESSAGES.en, keys = selected(english);
   const placeholders = value => [...value.matchAll(/\{(\w+)\}/gu)].map(match => match[1]).sort();
-  assert.equal(keys.length, 22);
+  assert.equal(keys.length, 29);
   for (const dictionary of Object.values(FORMA_PERSONAL_MEMORY_MESSAGES)) {
     assert.deepEqual(selected(dictionary), keys);
     for (const key of keys) { assert.ok(dictionary[key].trim()); assert.deepEqual(placeholders(dictionary[key]), placeholders(english[key])); }

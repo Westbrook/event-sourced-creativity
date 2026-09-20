@@ -1870,3 +1870,20 @@ for(const fault of ['foreign-scope','unsupported-version','future','duplicate','
   if(fault==='getter')Object.defineProperty(f.body.lifetime,'checkedAt',{enumerable:true,get(){invoked++;return new Date().toISOString();}});
   assert.equal(memoryConsumptionWindows(...f.input()),null);assert.equal(invoked,0);
 });
+
+const {MEMORY_CONSUMPTION_V6,parseMemoryConsumptionV6}=await import('../src/model/memory-consumption-v2.ts');
+function pageConsumptionRecall(){const f=consumptionWindowFixture();f.p.version=MEMORY_CONSUMPTION_V6;f.p.sources[0].target={kind:'page',documentId:f.item.documentId,view:'editor'};return f;}
+test('consumption v6 negotiates canonical pages and preserves the old v5 shape',async()=>{
+ const f=pageConsumptionRecall(),{client,calls}=fakeTransport(()=>Response.json(f.body));
+ const result=await client.recall(f.item,undefined,{consumptionEpisodes:MEMORY_CONSUMPTION_V6});assert.deepEqual(result.value.consumptionEpisodes,f.p);assert.ok(calls[0].url.endsWith('&consumptionEpisodes='+MEMORY_CONSUMPTION_V6));
+ assert.equal(parseMemoryConsumptionV5(...f.input()),null);assert.equal(parseMemoryConsumptionV6(...consumptionWindowFixture().input()),null);
+ const windows=memoryConsumptionWindows(...f.input());assert.ok(windows);assert.equal(windows.windows[0].documentVisits,1);assert.deepEqual(windows.windows[0].pageVisits,[{view:'editor',count:1}]);
+ assert.equal(Object.hasOwn(memoryConsumptionWindows(...consumptionWindowFixture().input()).windows[0],'pageVisits'),false);
+});
+for(const fault of ['view','url','kind','document','extra','getter','expired','meaning','sourceIndex'])test('consumption v6 refuses '+fault,()=>{
+ const f=pageConsumptionRecall(),target=f.p.sources[0].target;let evaluated=0;
+ if(fault==='view')target.view='unknown';if(fault==='url')target.view='/document/private?draft=secret';if(fault==='kind')target.kind='document';if(fault==='document')target.documentId='another';if(fault==='extra')target.focused=true;
+ if(fault==='getter')Object.defineProperty(target,'view',{enumerable:true,get(){evaluated++;return 'editor';}});
+ if(fault==='expired')f.p.sources[0].validUntil='2000-01-01T00:00:00.000Z';if(fault==='meaning')f.p.inferredPreferences=true;if(fault==='sourceIndex')f.p.episodes[0].observations[0].sourceIndex=1;
+ assert.equal(parseMemoryConsumptionV6(...f.input()),null);assert.equal(evaluated,0);
+});

@@ -39,14 +39,14 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
         sources:[{eventId:'synthetic-original',type:'AssistantReasoned',blockId:null,recordedAt:checkedAt,validUntil:until}],
         note:'Observed actions are not inferred preferences; excerpts are truncated and access-filtered.'};
       if(url.searchParams.has('consumptionEpisodes')){
-        expect(url.searchParams.get('consumptionEpisodes')).toBe('memory-consumption-episodes-v5');
-        body.consumptionEpisodes={version:'memory-consumption-episodes-v5',treatment:'descriptive-consumption',validUntil:until,
+        expect(url.searchParams.get('consumptionEpisodes')).toBe('memory-consumption-episodes-v6');
+        body.consumptionEpisodes={version:'memory-consumption-episodes-v6',treatment:'descriptive-consumption',validUntil:until,
           sources:[{eventId:'synthetic-old-view',type:'DocumentArtifactViewed',recordedAt,validUntil:until,target:{kind:'artifact',documentId:item.documentId,artifactId:'synthetic-artifact',artifactKind:'slides',revision:0,contentSha256:'a'.repeat(64)}}],
           episodes:[{episodeId:null,observations:[{sourceIndex:0,kind:'viewer-open'}],firstRecordedAt:recordedAt,lastRecordedAt:recordedAt,validUntil:until,independentEvidence:false}],
           coverage:{eligibleSourceCount:1,observationCount:1,unavailableArtifactSourceCount:0,unavailableBlockSourceCount:0,completeHistory:false,bounded:true,truncated:false},attention:'not-measured',comprehension:'not-measured',inferredPreferences:false};
       }
-      if(body.consumptionEpisodes){const p=body.consumptionEpisodes;p.sources.push({eventId:'synthetic-block-inspection',type:'BlockInspected',recordedAt,validUntil:until,target:{kind:'block',documentId:item.documentId,blockId:'private-block',revision:3,stateSha256:'b'.repeat(64)}});
-        p.episodes.push({episodeId:null,observations:[{sourceIndex:1,kind:'inspector-open'}],firstRecordedAt:recordedAt,lastRecordedAt:recordedAt,validUntil:until,independentEvidence:false});p.coverage.eligibleSourceCount=2;p.coverage.observationCount=2;}
+      if(body.consumptionEpisodes){const p=body.consumptionEpisodes;p.sources.push({eventId:'synthetic-page-visit',type:'DocumentViewVisited',recordedAt,validUntil:until,target:{kind:'page',documentId:item.documentId,view:'editor'}});p.episodes.push({episodeId:null,observations:[{sourceIndex:1,kind:'visit'}],firstRecordedAt:recordedAt,lastRecordedAt:recordedAt,validUntil:until,independentEvidence:false});p.sources.push({eventId:'synthetic-block-inspection',type:'BlockInspected',recordedAt,validUntil:until,target:{kind:'block',documentId:item.documentId,blockId:'private-block',revision:3,stateSha256:'b'.repeat(64)}});
+        p.episodes.push({episodeId:null,observations:[{sourceIndex:2,kind:'inspector-open'}],firstRecordedAt:recordedAt,lastRecordedAt:recordedAt,validUntil:until,independentEvidence:false});p.coverage.eligibleSourceCount=3;p.coverage.observationCount=3;}
       return route.fulfill({json:body});
     }
 
@@ -132,13 +132,14 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   const opened=visits.getByText(message(locale,'visitsArtifactOpened'),{exact:true});
   await opened.scrollIntoViewIfNeeded();await expect(opened).toBeInViewport();
   await expect(visits.getByText(message(locale,'visitsBlockOpened'),{exact:true})).toBeVisible();
-  expect(calls.filter(call=>call.query.includes('consumptionEpisodes=memory-consumption-episodes-v5'))).toHaveLength(1);
+  expect(calls.filter(call=>call.query.includes('consumptionEpisodes=memory-consumption-episodes-v6'))).toHaveLength(1);
   expect(calls.every(call=>call.method==='GET')).toBe(true);expect(errors).toEqual([]);
   await captureViewport(page,info,'memory-historical-views-'+locale,{assertStable:false});
   const blockOpened=visits.getByText(message(locale,'visitsBlockOpened'),{exact:true});await blockOpened.scrollIntoViewIfNeeded();await expect(blockOpened).toBeInViewport();
   await captureViewport(page,info,'memory-block-views-'+locale,{assertStable:false});
   const windows=visits.locator('[data-memory-consumption-windows]');await windows.locator(':scope > summary').click();
   await expect(windows.locator('[data-memory-consumption-window]')).toHaveCount(2);const counts=windows.locator('[data-memory-consumption-window="7"]');await counts.scrollIntoViewIfNeeded();await expect(counts).toBeInViewport();
+  const pageCounts=counts.locator('[data-memory-page-counts]');await expect(pageCounts).toContainText(message(locale,'visitsPage.editor'));await pageCounts.scrollIntoViewIfNeeded();await expect(pageCounts).toBeInViewport();
   await captureViewport(page,info,'memory-consumption-windows-'+locale,{assertStable:false});
   await info.attach('declared-memory-transport',{body:JSON.stringify({syntheticOnly:true,production:false,providerCalls:0,mutations:0,calls,session:JSON.parse(syntheticReadBody('/api/session')).user.userId},null,2),contentType:'application/json'});
 });

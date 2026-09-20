@@ -1,3 +1,5 @@
+import { DOCUMENT_VIEWS } from './document-view-signals.ts';
+import type { DocumentView } from './routes.ts';
 import { DOCUMENT_ARTIFACT_KINDS } from "./document-artifacts.ts";
 import { memoryTimestamp, parseMemoryLifetime, type MemoryRecallLifetime } from "./memory-lifetime.ts";
 import { snapshotMemoryConsumptionInput } from "./memory-consumption-episodes.ts";
@@ -9,8 +11,10 @@ export const MEMORY_CONSUMPTION_V3 = "memory-consumption-episodes-v3" as const;
 export const MEMORY_CONSUMPTION_V4 = "memory-consumption-episodes-v4" as const;
 /** Explicit native document-block inspector receipts; earlier contracts stay unchanged. */
 export const MEMORY_CONSUMPTION_V5 = "memory-consumption-episodes-v5" as const;
-export type MemoryArtifactConsumptionVersion = typeof MEMORY_CONSUMPTION_V2 | typeof MEMORY_CONSUMPTION_V3 | typeof MEMORY_CONSUMPTION_V4 | typeof MEMORY_CONSUMPTION_V5;
-export type MemoryConsumptionTarget = { kind: "document"; documentId: string } | {
+/** Explicit canonical document-page targets; earlier projections keep document-only visits. */
+export const MEMORY_CONSUMPTION_V6 = "memory-consumption-episodes-v6" as const;
+export type MemoryArtifactConsumptionVersion = typeof MEMORY_CONSUMPTION_V2 | typeof MEMORY_CONSUMPTION_V3 | typeof MEMORY_CONSUMPTION_V4 | typeof MEMORY_CONSUMPTION_V5 | typeof MEMORY_CONSUMPTION_V6;
+export type MemoryConsumptionTarget = {kind:"page";documentId:string;view:DocumentView} | { kind: "document"; documentId: string } | {
   kind: "artifact"; documentId: string; artifactId: string; artifactKind: string; revision: number; contentSha256: string;
 } | { kind: "block"; documentId: string; blockId: string; revision: number; stateSha256: string };
 export type MemoryConsumptionV2Source = { eventId: string; type: "DocumentViewVisited" | "DocumentArtifactViewed" | "BlockInspected";
@@ -53,9 +57,12 @@ function parseArtifactConsumption(original: unknown, originalLifetime: MemoryRec
         && at(source.validUntil) >= until && at(source.validUntil) <= expires && at(source.validUntil) > at(source.recordedAt)); seen.add(source.eventId);
       const target = source.target as Row;
       check(target && target.documentId === input.documentId);
-      if (source.type === "DocumentViewVisited") { row(target, ["kind", "documentId"]); check(target.kind === "document"); }
+      if (source.type === "DocumentViewVisited") {
+        if(expectedVersion===MEMORY_CONSUMPTION_V6){row(target,["kind","documentId","view"]);check(target.kind==='page'&&DOCUMENT_VIEWS.includes(target.view as DocumentView));}
+        else{row(target, ["kind", "documentId"]); check(target.kind === "document");}
+      }
       else if (source.type === "BlockInspected") {
-        check(expectedVersion === MEMORY_CONSUMPTION_V5); row(target, ["kind", "documentId", "blockId", "revision", "stateSha256"]);
+        check((expectedVersion === MEMORY_CONSUMPTION_V5 || expectedVersion === MEMORY_CONSUMPTION_V6)); row(target, ["kind", "documentId", "blockId", "revision", "stateSha256"]);
         check(target.kind === "block" && id(target.blockId) && Number.isSafeInteger(target.revision) && Number(target.revision) >= 1
           && typeof target.stateSha256 === "string" && /^[a-f0-9]{64}$/u.test(target.stateSha256));
       } else {
@@ -75,11 +82,11 @@ function parseArtifactConsumption(original: unknown, originalLifetime: MemoryRec
       check(observation.sourceIndex === index && observation.kind === (source.type === "DocumentViewVisited" ? "visit" : source.type === "BlockInspected" ? "inspector-open" : "viewer-open"));
       return episode as unknown as MemoryConsumptionV2["episodes"][number];
     });
-    const coverage = row(value.coverage, ["eligibleSourceCount", "observationCount", "unavailableArtifactSourceCount", "completeHistory", "bounded", "truncated", ...(expectedVersion === MEMORY_CONSUMPTION_V5 ? ["unavailableBlockSourceCount"] : [])]);
+    const coverage = row(value.coverage, ["eligibleSourceCount", "observationCount", "unavailableArtifactSourceCount", "completeHistory", "bounded", "truncated", ...((expectedVersion === MEMORY_CONSUMPTION_V5 || expectedVersion === MEMORY_CONSUMPTION_V6) ? ["unavailableBlockSourceCount"] : [])]);
     check(coverage.eligibleSourceCount === sources.length && coverage.observationCount === episodes.length && coverage.completeHistory === false
       && coverage.bounded === true && typeof coverage.truncated === "boolean" && Number.isSafeInteger(coverage.unavailableArtifactSourceCount)
       && Number(coverage.unavailableArtifactSourceCount) >= 0 && Number(coverage.unavailableArtifactSourceCount) <= 32);
-    if(expectedVersion === MEMORY_CONSUMPTION_V5)check(Number.isSafeInteger(coverage.unavailableBlockSourceCount)
+    if((expectedVersion === MEMORY_CONSUMPTION_V5 || expectedVersion === MEMORY_CONSUMPTION_V6))check(Number.isSafeInteger(coverage.unavailableBlockSourceCount)
       && Number(coverage.unavailableBlockSourceCount)>=0 && Number(coverage.unavailableBlockSourceCount)<=32);
     check(new TextEncoder().encode(JSON.stringify(value)).byteLength <= 65_536);
     return { ...value, sources, episodes } as MemoryConsumptionV2;
@@ -102,10 +109,14 @@ export function parseMemoryConsumptionV5(...input: ConsumptionParseInput): Memor
   return parseArtifactConsumption(...input, MEMORY_CONSUMPTION_V5);
 }
 
+export function parseMemoryConsumptionV6(...input: ConsumptionParseInput): MemoryConsumptionV2 | null {
+  return parseArtifactConsumption(...input, MEMORY_CONSUMPTION_V6);
+}
+
 export type MemoryConsumptionWindows = {
   basis: "selected-certified-observations"; completeHistory: false; validUntil: string;
   windows: { days: 7 | 30; since: string; sourceIndexes: number[]; documentVisits: number;
-    artifactOpenings: number; blockOpenings: number; distinctArtifacts: number; distinctBlocks: number }[];
+    artifactOpenings: number; blockOpenings: number; distinctArtifacts: number; distinctBlocks: number; pageVisits?:{view:DocumentView;count:number}[] }[];
 };
 /** Pure descriptive projection, never a new source, session, preference or access
  * grant. Counts use only the explicitly negotiated inspector source map. Repeated
@@ -113,18 +124,19 @@ export type MemoryConsumptionWindows = {
  * The two windows overlap and inherit the exact parent's display deadline. */
 export function memoryConsumptionWindows(...input: ConsumptionParseInput): MemoryConsumptionWindows | null {
   try{input=snapshotMemoryConsumptionInput(input) as ConsumptionParseInput;}catch{return null;}
-  const projection=parseMemoryConsumptionV5(...input);if(!projection)return null;
+  const projection=parseMemoryConsumptionV5(...input)??parseMemoryConsumptionV6(...input);if(!projection)return null;
   const checked=memoryTimestamp(input[1].checkedAt),enrolled=memoryTimestamp(input[3].since);
   if(checked===null||enrolled===null)return null;
   return {basis:"selected-certified-observations",completeHistory:false,validUntil:projection.validUntil,
     windows:([7,30] as const).map(days=>{
       const since=Math.max(enrolled,checked-days*86400000),sourceIndexes=projection.sources.flatMap((source,index)=>Date.parse(source.recordedAt)>=since?[index]:[]);
-      let documentVisits=0,artifactOpenings=0,blockOpenings=0;const artifacts=new Set<string>(),blocks=new Set<string>();
+      let documentVisits=0,artifactOpenings=0,blockOpenings=0;const artifacts=new Set<string>(),blocks=new Set<string>(),pages=new Map<DocumentView,number>();
       for(const index of sourceIndexes){const target=projection.sources[index]!.target;
-        if(target.kind==='document')documentVisits++;
+        if(target.kind==='document'||target.kind==='page')documentVisits++;
+        if(target.kind==='page')pages.set(target.view,(pages.get(target.view)??0)+1);
         if(target.kind==='artifact'){artifactOpenings++;artifacts.add(target.artifactId);}
         if(target.kind==='block'){blockOpenings++;blocks.add(target.blockId);}
       }
-      return {days,since:new Date(since).toISOString(),sourceIndexes,documentVisits,artifactOpenings,blockOpenings,distinctArtifacts:artifacts.size,distinctBlocks:blocks.size};
+      return {days,since:new Date(since).toISOString(),sourceIndexes,documentVisits,artifactOpenings,blockOpenings,distinctArtifacts:artifacts.size,distinctBlocks:blocks.size,...(projection.version===MEMORY_CONSUMPTION_V6?{pageVisits:DOCUMENT_VIEWS.filter(view=>pages.has(view)).map(view=>({view,count:pages.get(view)!}))}:{})};
     })};
 }

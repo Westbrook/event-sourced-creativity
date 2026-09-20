@@ -573,7 +573,7 @@ export class FormaPersonalMemory extends FormaElement {
     const current = () => sourceCurrent() && Date.parse(row.expiresAt) > Date.now();
     this.#busy = "recall"; this.#error = ""; this.#notice = ""; this.requestUpdate();
     try {
-      const lease = await (consumptionEpisodesRequested ? this.#client.recall(row, controller.signal, { consumptionEpisodes: "memory-consumption-episodes-v5" })
+      const lease = await (consumptionEpisodesRequested ? this.#client.recall(row, controller.signal, { consumptionEpisodes: "memory-consumption-episodes-v6" })
         : this.#client.recall(row, controller.signal));
       if (requestCurrent() && current() && lease.remaining() > 0) {
         this.#revealed = { id: row.id, lease, sourceCurrent, current: () => current() && lease.remaining() > 0, consumptionEpisodesRequested };
@@ -1282,7 +1282,7 @@ export class FormaPersonalMemory extends FormaElement {
     </div>`;
     const visits = value.consumptionEpisodes;
     if (!visits) return html`<p data-memory-visits-unavailable>${this.#t("visitsUnavailable")}</p>`;
-    const windows=visits.version==='memory-consumption-episodes-v5'?memoryConsumptionWindows(visits,value.lifetime,row.documentId,
+    const windows=(visits.version==='memory-consumption-episodes-v5'||visits.version==='memory-consumption-episodes-v6')?memoryConsumptionWindows(visits,value.lifetime,row.documentId,
       {since:value.coverage.since,expiresAt:row.expiresAt}):null;
     // Detail remains inside the same parent receipt. Artifact projections have their own source map;
     // it does not renumber assistant/outcome evidence or create a display lease.
@@ -1294,9 +1294,9 @@ export class FormaPersonalMemory extends FormaElement {
       <p>${this.#t("visitsMeaning")}</p>
       <p>${this.#t("visitsLineage")}</p>
       <p>${this.#t("visitsLimits")}</p>
-      ${(visits.version === "memory-consumption-episodes-v2" || visits.version === "memory-consumption-episodes-v3" || visits.version === "memory-consumption-episodes-v4" || visits.version === "memory-consumption-episodes-v5") && visits.coverage.unavailableArtifactSourceCount
+      ${(visits.version === "memory-consumption-episodes-v2" || visits.version === "memory-consumption-episodes-v3" || visits.version === "memory-consumption-episodes-v4" || (visits.version === "memory-consumption-episodes-v5" || visits.version === "memory-consumption-episodes-v6")) && visits.coverage.unavailableArtifactSourceCount
         ? html`<p>${this.#t("visitsArtifactUnavailable", { count: this.i18n.number(visits.coverage.unavailableArtifactSourceCount) })}</p>` : nothing}
-      ${visits.version === "memory-consumption-episodes-v5" && visits.coverage.unavailableBlockSourceCount
+      ${(visits.version === "memory-consumption-episodes-v5" || visits.version === "memory-consumption-episodes-v6") && visits.coverage.unavailableBlockSourceCount
         ? html`<p>${this.#t("visitsBlockUnavailable", {count:this.i18n.number(visits.coverage.unavailableBlockSourceCount)})}</p>` : nothing}
       ${windows?html`<details data-memory-consumption-windows>
         <summary>${this.#t("visitsWindows")}</summary><p>${this.#t("visitsWindowBasis")}</p>
@@ -1307,17 +1307,18 @@ export class FormaPersonalMemory extends FormaElement {
             <dt>${this.#t("visitsDocumentCount")}</dt><dd>${this.i18n.number(window.documentVisits)}</dd>
             <dt>${this.#t("visitsArtifactCount")}</dt><dd>${this.i18n.number(window.artifactOpenings)}</dd>
             <dt>${this.#t("visitsBlockCount")}</dt><dd>${this.i18n.number(window.blockOpenings)}</dd>
-          </dl><p>${this.#t("visitsDistinctResources",{artifacts:this.i18n.number(window.distinctArtifacts),blocks:this.i18n.number(window.distinctBlocks)})}</p>
+          </dl>${window.pageVisits?.length?html`<ul data-memory-page-counts>${window.pageVisits.map(page=>html`<li>${this.#t("visitsPage."+page.view)}: ${this.i18n.number(page.count)}</li>`)}</ul>`:nothing}<p>${this.#t("visitsDistinctResources",{artifacts:this.i18n.number(window.distinctArtifacts),blocks:this.i18n.number(window.distinctBlocks)})}</p>
         </section>`)}
       </details>`:nothing}
       ${visits.episodes.length ? html`<details data-memory-visit-references>
         <summary>${this.#t("visitsDetails", { count: this.i18n.number(visits.episodes.length) })}</summary>
         <ol>${visits.episodes.map(episode => html`<li><article data-memory-visit>
           <p>${this.#t("visitsSource", { index: this.i18n.number(episode.observations[0].sourceIndex + 1) })}</p>
-          ${(visits.version === "memory-consumption-episodes-v2" || visits.version === "memory-consumption-episodes-v3" || visits.version === "memory-consumption-episodes-v4" || visits.version === "memory-consumption-episodes-v5") && episode.observations[0].kind === "viewer-open"
+          ${(visits.version === "memory-consumption-episodes-v2" || visits.version === "memory-consumption-episodes-v3" || visits.version === "memory-consumption-episodes-v4" || (visits.version === "memory-consumption-episodes-v5" || visits.version === "memory-consumption-episodes-v6")) && episode.observations[0].kind === "viewer-open"
             ? html`<p>${this.#t("visitsArtifactOpened")}</p>` : nothing}
-          ${visits.version === "memory-consumption-episodes-v5" && episode.observations[0].kind === "inspector-open"
+          ${(visits.version === "memory-consumption-episodes-v5" || visits.version === "memory-consumption-episodes-v6") && episode.observations[0].kind === "inspector-open"
             ? html`<p>${this.#t("visitsBlockOpened")}</p>` : nothing}
+          ${visits.version==='memory-consumption-episodes-v6'&&episode.observations[0].kind==='visit'?html`<p data-memory-page-visit>${this.#t('visitsPage.'+(visits.sources[episode.observations[0].sourceIndex]?.target as {view:string}).view)}</p>`:nothing}
           <time datetime=${episode.firstRecordedAt}>${this.#t("visitsRecorded", {
             at: "\u2068" + this.i18n.date(new Date(episode.firstRecordedAt), { dateStyle: "medium", timeStyle: "short" }) + "\u2069",
           })}</time>
