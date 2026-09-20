@@ -396,3 +396,32 @@ for(const failNear of [false,true])test('automatic brief retains distinct projec
  assert.ok(view.sections.slice(1).every(row=>row.jobId&&row.corrections.length===0));assert.ok(view.validUntil<=f.catalog.validUntil);
  lease.retire();assert.equal(lease.current(),null);
 });
+
+const {MEMORY_DERIVATION_HEALTH,parseMemoryDerivationHealth}=await import('../src/model/memory-derivation-health.ts');
+function healthFixture(){
+ const at=new Date(Date.now()-1000).toISOString();
+ return {version:MEMORY_DERIVATION_HEALTH,ready:1,deferred:2,leased:3,recovery:0,expired:4,oldestPendingAt:at,lastCompletedAt:at,lastRetainedAt:at,
+  completionLatencySeconds:{samples:2,total:9,maximum:7}};
+}
+for(const fault of ['none','unsolicited','missing-version','wrong-version','missing-health','extra','negative','overflow','wrong-total','future','missing-time','noncanonical-time','latency-samples','latency-total','latency-maximum','latency-extra'])test('purpose client processing diagnostics '+fault,async()=>{
+ const f=fixture(),checkedAt=new Date().toISOString(),health=healthFixture(),p={purpose:'rolling-summary',pending:10,completed:2,retained:1,uncertain:1,registeredThrough:20,completedThrough:10,health};
+ const body={version,scope:f.settings.scope,enrollmentId:f.expected.enrollmentId,enrollmentRevision:f.expected.enrollmentRevision,results:[],next:null,checkedAt,progress:[p],diagnostics:MEMORY_DERIVATION_HEALTH};
+ if(fault==='missing-version')delete body.diagnostics;if(fault==='wrong-version')body.diagnostics='future-health';if(fault==='missing-health')delete p.health;
+ if(fault==='extra')health.text='private content';if(fault==='negative')health.ready=-1;if(fault==='overflow')health.ready=Number.MAX_SAFE_INTEGER+1;
+ if(fault==='wrong-total')health.ready++;if(fault==='future')health.lastCompletedAt=new Date(Date.now()+10000).toISOString();
+ if(fault==='missing-time')health.oldestPendingAt=null;if(fault==='noncanonical-time')health.lastRetainedAt='2026-02-30T00:00:00.000Z';
+ if(fault==='latency-samples')health.completionLatencySeconds.samples=3;if(fault==='latency-total')health.completionLatencySeconds.total=3;
+ if(fault==='latency-maximum')health.completionLatencySeconds.maximum=4;if(fault==='latency-extra')health.completionLatencySeconds.provider='secret';
+ let path;const client=createMemoryDerivationClient(async url=>{path=url;return Response.json(body);});
+ const result=client.results(f.expected,null,undefined,null,false,fault!=='unsolicited');
+ if(fault==='none'){const page=await result;assert.deepEqual(page.progress[0].health,health);assert.ok(Object.isFrozen(page.progress[0].health.completionLatencySeconds));assert.ok(path.endsWith('&diagnostics=1'));}
+ else await assert.rejects(result,error=>error instanceof MemoryDerivationClientError&&!error.mutationUnknown);
+});
+test('processing diagnostics reject getters and distinguish empty from unknown',()=>{
+ const at=new Date().toISOString(),counts={pending:10,completed:2,retained:1};let invoked=false;const health=healthFixture();
+ Object.defineProperty(health,'ready',{enumerable:true,get(){invoked=true;return 1;}});assert.throws(()=>parseMemoryDerivationHealth(health,counts,at));assert.equal(invoked,false);
+ const empty={version:MEMORY_DERIVATION_HEALTH,ready:0,deferred:0,leased:0,recovery:0,expired:0,oldestPendingAt:null,lastCompletedAt:null,lastRetainedAt:null,completionLatencySeconds:{samples:0,total:0,maximum:0}};
+ assert.deepEqual(parseMemoryDerivationHealth(empty,{pending:0,completed:0,retained:0},at),empty);
+ for(const key of ['oldestPendingAt','lastCompletedAt','lastRetainedAt'])assert.throws(()=>parseMemoryDerivationHealth({...empty,[key]:at},{pending:0,completed:0,retained:0},at));
+ assert.throws(()=>parseMemoryDerivationHealth(undefined,{pending:0,completed:0,retained:0},at));
+});

@@ -64,6 +64,8 @@ export class FormaPersonalMemory extends FormaElement {
   #reviewLoaded = false;
   #reviewPurpose: DerivationResultEntry["purpose"] | null = null;
   #reviewProgress: readonly DerivationProgress[] = [];
+  #reviewProgressRemaining: (() => number) | null = null;
+  #reviewCheckedAt: string | null = null;
   #controlsLoaded = false;
   #controlsValidUntil: string | null = null;
   #controlsRemaining: (() => number) | null = null;
@@ -349,7 +351,7 @@ export class FormaPersonalMemory extends FormaElement {
       if (profileRequestRemaining > 0) delays.push(profileRequestRemaining);
       else this.#retireProfile();
     }
-    for(const remaining of [this.#reviewRemaining,this.#controlsRemaining,this.#purposeRequest?.remaining]){
+    for(const remaining of [this.#reviewProgressRemaining,this.#reviewRemaining,this.#controlsRemaining,this.#purposeRequest?.remaining]){
       if(!remaining)continue;const delay=remaining();
       if(delay>0)delays.push(delay);else this.#retirePurposes();
     }
@@ -939,6 +941,7 @@ export class FormaPersonalMemory extends FormaElement {
   #retirePurposes() {
     if (this.#purposeOpen && !this.#purposeScope?.current()) { this.#closePurposes(); return; }
     if(this.#controlsValidUntil&&(!this.#controlsRemaining||this.#controlsRemaining()<=0)){this.#clearReviewControls();}
+    if(this.#reviewProgressRemaining&&this.#reviewProgressRemaining()<=0){this.#reviewProgress=[];this.#reviewProgressRemaining=null;this.#reviewCheckedAt=null;}
     if(this.#reviewView&&!this.#reviewCurrent(this.#reviewView)){this.#setReviewView(null);this.#reviewCorrection='';}
     this.#reviewResults=this.#reviewResults.filter(item=>Date.parse(item.expiresAt)>Date.now());
     this.#reviewControls=this.#reviewControls.filter(item=>Date.parse(item.expiresAt)>Date.now());
@@ -1041,28 +1044,47 @@ export class FormaPersonalMemory extends FormaElement {
     const budget=Math.max(0,Math.min(60000,Date.parse(validUntil)-wall));
     return ()=>Math.max(0,budget-elapsed.elapsed({wall:Date.now(),monotonic:performance.now()}));
   }
+  #setReviewProgress(page:{progress:readonly DerivationProgress[];checkedAt:string}){
+    this.#reviewProgress=page.progress;this.#reviewCheckedAt=page.checkedAt;
+    this.#reviewProgressRemaining=this.#purposeLifetime(new Date(Date.parse(page.checkedAt)+60000).toISOString());
+  }
+  #renderReviewHealth(progress:DerivationProgress){
+    const health=progress.health,checkedAt=this.#reviewCheckedAt;
+    if(!health||!checkedAt||!this.#reviewProgressRemaining||this.#reviewProgressRemaining()<=0)return nothing;
+    const age=(at:string)=>this.i18n.number(Math.max(0,Math.floor((Date.parse(checkedAt)-Date.parse(at))/60000)));
+    const latency=health.completionLatencySeconds;
+    return html`<details data-memory-processing-health><summary>${this.#t('reviewHealthHeading')}</summary>
+      <p>${this.#t('reviewHealthScope')}</p>
+      <p>${this.#t('reviewHealthQueue',{ready:this.i18n.number(health.ready),deferred:this.i18n.number(health.deferred),leased:this.i18n.number(health.leased),recovery:this.i18n.number(health.recovery),expired:this.i18n.number(health.expired)})}</p>
+      ${health.oldestPendingAt?html`<p>${this.#t('reviewHealthOldest',{minutes:age(health.oldestPendingAt)})}</p>`:nothing}
+      <p>${health.lastCompletedAt?this.#t('reviewHealthCompleted',{minutes:age(health.lastCompletedAt)}):this.#t('reviewHealthNoCompletion')}</p>
+      <p>${health.lastRetainedAt?this.#t('reviewHealthRetained',{minutes:age(health.lastRetainedAt)}):this.#t('reviewHealthNoResult')}</p>
+      ${latency.samples?html`<p>${this.#t('reviewHealthLatency',{samples:this.i18n.number(latency.samples),average:this.i18n.number(Math.floor(latency.total/latency.samples)),maximum:this.i18n.number(latency.maximum)})}</p>`:nothing}
+      <time datetime=${checkedAt}>${this.#t('reviewHealthAt',{at:'\u2068'+this.i18n.date(new Date(checkedAt),{dateStyle:'medium',timeStyle:'short'})+'\u2069'})}</time>
+    </details>`;
+  }
   #setReviewView(view:DerivationResultView|null){
     this.#reviewView=view;this.#reviewRemaining=view?this.#purposeLifetime(view.validUntil):null;
   }
   #reviewCurrent(view:DerivationResultView){return this.#reviewView===view&&Boolean(this.#reviewRemaining&&this.#reviewRemaining()>0);}
   #clearReviewControls(){this.#reviewControls=[];this.#controlsLoaded=false;this.#controlsValidUntil=null;this.#controlsRemaining=null;this.#controlNext=null;}
-  #clearReview(){this.#reviewPurpose=null;this.#reviewProgress=[];this.#reviewResults=[];this.#reviewNext=null;this.#reviewLoaded=false;this.#setReviewView(null);this.#reviewCorrection='';}
+  #clearReview(){this.#reviewPurpose=null;this.#reviewProgress=[];this.#reviewProgressRemaining=null;this.#reviewCheckedAt=null;this.#reviewResults=[];this.#reviewNext=null;this.#reviewLoaded=false;this.#setReviewView(null);this.#reviewCorrection='';}
   #reviewScope(){const row=this.#purposeScope?.row,custody=this.#owner?.expectedCustody;
     return row&&custody?{projectId:row.projectId,documentId:row.documentId,expectedCustody:custody,enrollmentId:row.id,enrollmentRevision:row.revision}:null;}
   #loadReview(event:Event,next=false){const scope=this.#reviewScope();if(!scope||next&&!this.#reviewNext)return;
     const after=next?this.#reviewNext:null,purpose=next?this.#reviewPurpose:null;this.#setReviewView(null);this.#reviewCorrection='';
-    return this.#runPurpose(event,'review',signal=>this.#purposeClient.results(scope,after,signal,purpose),page=>{
-      this.#reviewPurpose=purpose;this.#reviewProgress=page.progress;this.#reviewResults=page.results;this.#reviewNext=page.next;this.#reviewLoaded=true;this.#purposeNeedsReload=false;});}
+    return this.#runPurpose(event,'review',signal=>this.#purposeClient.results(scope,after,signal,purpose,false,true),page=>{
+      this.#reviewPurpose=purpose;this.#setReviewProgress(page);this.#reviewResults=page.results;this.#reviewNext=page.next;this.#reviewLoaded=true;this.#purposeNeedsReload=false;});}
   #loadLatestReview(event:Event,purpose:DerivationResultEntry['purpose']){
     const scope=this.#reviewScope();if(!scope)return;
     this.#clearReview();
     return this.#runPurpose(event,'review',async signal=>{
-      const page=await this.#purposeClient.results(scope,null,signal,purpose,true);
+      const page=await this.#purposeClient.results(scope,null,signal,purpose,true,true);
       const latest=page.results[0];
       const view=latest?await this.#purposeClient.inspectResult(latest,signal):null;
       return {page,view};
     },({page,view})=>{
-      this.#reviewPurpose=purpose;this.#reviewProgress=page.progress;this.#reviewResults=page.results;
+      this.#reviewPurpose=purpose;this.#setReviewProgress(page);this.#reviewResults=page.results;
       this.#reviewNext=page.next;this.#reviewLoaded=true;this.#setReviewView(view);this.#purposeNeedsReload=false;
     });
   }
@@ -1111,7 +1133,7 @@ export class FormaPersonalMemory extends FormaElement {
       <h4>${this.#t('reviewHeading')}</h4><p>${this.#t('reviewDisclosure')}</p>
       <button type="button" class="button secondary" ?disabled=${disabled} @click=${(e:Event)=>captured(e,()=>this.#loadReview(e))}>${this.#t('reviewLoad')}</button>
       ${(['rolling-summary','profile','suggestion'] as const).map(purpose=>html`<button type="button" class="button secondary" ?disabled=${disabled} @click=${(e:Event)=>captured(e,()=>this.#loadLatestReview(e,purpose))}>${this.#t('reviewLatest.'+purpose)}</button>`)}
-      ${this.#reviewProgress.map(progress=>html`<p>${this.#t('reviewProgress',{purpose:this.#t('purpose.'+progress.purpose),pending:this.i18n.number(progress.pending),completed:this.i18n.number(progress.completed),retained:this.i18n.number(progress.retained),uncertain:this.i18n.number(progress.uncertain)})}</p>`)}
+      ${(!mutating&&this.#reviewProgressRemaining&&this.#reviewProgressRemaining()>0?this.#reviewProgress:[]).map(progress=>html`<p>${this.#t('reviewProgress',{purpose:this.#t('purpose.'+progress.purpose),pending:this.i18n.number(progress.pending),completed:this.i18n.number(progress.completed),retained:this.i18n.number(progress.retained),uncertain:this.i18n.number(progress.uncertain)})}</p>${this.#renderReviewHealth(progress)}`)}
       ${this.#reviewLoaded&&!this.#reviewResults.length?html`<p>${this.#t('reviewEmpty')}</p>`:nothing}
       ${this.#reviewResults.map(entry=>html`<div><span>${this.#t('purpose.'+entry.purpose)}</span>
         <button type="button" class="button secondary" ?disabled=${disabled} @click=${(e:Event)=>captured(e,()=>this.#inspectReview(e,entry))}>${this.#t('reviewInspect')}</button>

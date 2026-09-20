@@ -1,3 +1,4 @@
+import { MEMORY_DERIVATION_HEALTH, parseMemoryDerivationHealth, type MemoryDerivationHealth } from '../model/memory-derivation-health.ts';
 import { MEMORY_EVIDENCE_RESOURCES, type MemoryResourceCitation } from '../model/memory-evidence-resource.ts';
 import { DOCUMENT_VIEWS } from '../model/document-view-signals.ts';
 import { beginMemoryPrivacyMutation } from './memory-privacy-mutation.ts';
@@ -122,7 +123,7 @@ async function read(response: Response, signal?: AbortSignal): Promise<unknown> 
   } catch (error) { cancel(reader); throw error; }
   finally { signal?.removeEventListener("abort", abort); try { reader.releaseLock(); } catch { /* cancelled read may settle */ } }
 }
-export type DerivationProgress = {purpose:MemoryDerivationPurpose;pending:number;completed:number;retained:number;uncertain:number;registeredThrough:number|null;completedThrough:number|null;producers?:ReadonlyArray<{producer:"creator"|"chat-studio";registeredThrough:number;completedThrough:number}>};
+export type DerivationProgress = {health?:MemoryDerivationHealth;purpose:MemoryDerivationPurpose;pending:number;completed:number;retained:number;uncertain:number;registeredThrough:number|null;completedThrough:number|null;producers?:ReadonlyArray<{producer:"creator"|"chat-studio";registeredThrough:number;completedThrough:number}>};
 export type DerivationResultEntry = {jobId:string;purpose:MemoryDerivationPurpose;scopeKey:string;expiresAt:string};
 export type DerivationCitation = {sourceIndex:number;start:number;end:number;text:string};
 export const DERIVATION_OBSERVED_ACTIONS=['encounter','inspect','compare','edit','commit','reuse','remove','restore','critique','request','accept','reject','defer'] as const;
@@ -249,21 +250,22 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
     finally { signal?.removeEventListener("abort", abort); finishMutation?.(); }
   }
   return {
-    async results(value:DerivationScopeRequest,after:string|null=null,signal?:AbortSignal,purpose:MemoryDerivationPurpose|null=null,latest=false){
-      const expected=requestScope(value);check(typeof latest==='boolean'&&(!latest||purpose!==null&&after===null));check((after===null||derivationHash(after))&&(purpose===null||MEMORY_DERIVATION_PURPOSES.includes(purpose)));
-      return request('GET','?projectId='+encodeURIComponent(expected.projectId)+'&documentId='+encodeURIComponent(expected.documentId)+(after?'&after='+after:'')+(purpose?'&purpose='+encodeURIComponent(purpose):'')+(latest?'&latest=1':''),undefined,raw=>{
-        const row=own(raw,['version','scope','enrollmentId','enrollmentRevision','results','next','checkedAt','progress',...(purpose?['purpose']:[]),...(latest?['latest']:[])]);
+    async results(value:DerivationScopeRequest,after:string|null=null,signal?:AbortSignal,purpose:MemoryDerivationPurpose|null=null,latest=false,diagnostics=false){
+      const expected=requestScope(value);check(typeof latest==='boolean'&&typeof diagnostics==='boolean'&&(!latest||purpose!==null&&after===null));check((after===null||derivationHash(after))&&(purpose===null||MEMORY_DERIVATION_PURPOSES.includes(purpose)));
+      return request('GET','?projectId='+encodeURIComponent(expected.projectId)+'&documentId='+encodeURIComponent(expected.documentId)+(after?'&after='+after:'')+(purpose?'&purpose='+encodeURIComponent(purpose):'')+(latest?'&latest=1':'')+(diagnostics?'&diagnostics=1':''),undefined,raw=>{
+        const row=own(raw,['version','scope','enrollmentId','enrollmentRevision','results','next','checkedAt','progress',...(purpose?['purpose']:[]),...(latest?['latest']:[]),...(diagnostics?['diagnostics']:[])]);
+        check(!diagnostics||row.diagnostics===MEMORY_DERIVATION_HEALTH);
         check(purpose===null||row.purpose===purpose);check(!latest||row.latest===true&&Array.isArray(row.results)&&row.results.length<=1&&row.next===null);
         check(derivationTime(row.checkedAt)&&Date.parse(row.checkedAt)<=Date.now()+5000&&Date.now()-Date.parse(row.checkedAt)<60000&&Array.isArray(row.progress)&&row.progress.length<=3);
         const progress=row.progress.map(value=>{const hasProducers=!!value&&typeof value==='object'&&Object.hasOwn(value,'producers');
-          const p=own(value,['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough',...(hasProducers?['producers']:[])]);
+          const p=own(value,['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough',...(hasProducers?['producers']:[]),...(diagnostics?['health']:[])]);
           if(hasProducers){check(Array.isArray(p.producers)&&p.producers.length===2);
             const producers=p.producers.map((entry,index)=>{const row=own(entry,['producer','registeredThrough','completedThrough']);
               check(row.producer===(index===0?'creator':'chat-studio')&&derivationInteger(row.registeredThrough)&&derivationInteger(row.completedThrough,0,Number(row.registeredThrough)));return row;});
             check(p.registeredThrough===Math.min(...producers.map(row=>Number(row.registeredThrough)))&&p.completedThrough===Math.min(...producers.map(row=>Number(row.completedThrough))));
           }
           check(MEMORY_DERIVATION_PURPOSES.includes(p.purpose as MemoryDerivationPurpose)&&['pending','completed','retained','uncertain'].every(key=>derivationInteger(p[key]))
-            &&['registeredThrough','completedThrough'].every(key=>p[key]===null||derivationInteger(p[key]))&&(p.completedThrough===null||p.registeredThrough!==null&&Number(p.completedThrough)<=Number(p.registeredThrough)));return {...p} as DerivationProgress;});
+            &&['registeredThrough','completedThrough'].every(key=>p[key]===null||derivationInteger(p[key]))&&(p.completedThrough===null||p.registeredThrough!==null&&Number(p.completedThrough)<=Number(p.registeredThrough)));return {...p,...(diagnostics?{health:parseMemoryDerivationHealth(p.health,{pending:Number(p.pending),completed:Number(p.completed),retained:Number(p.retained)},String(row.checkedAt))}:{})} as DerivationProgress;});
         check(new Set(progress.map(p=>p.purpose)).size===progress.length&&progress.every(p=>purpose===null||p.purpose===purpose));
         check(row.version===MEMORY_DERIVATION_CONTROL&&sameScope(scope(row.scope),{projectId:expected.projectId,documentId:expected.documentId,custody:expected.expectedCustody})
           &&row.enrollmentId===expected.enrollmentId&&row.enrollmentRevision===expected.enrollmentRevision&&Array.isArray(row.results)&&row.results.length<=8&&(row.next===null||derivationHash(row.next)));

@@ -3423,7 +3423,7 @@ for(const locale of ['en','fr','ar','ja'])test('derived purpose controls disclos
 function derivedReviewFixture(item){
   const scope={projectId:item.projectId,documentId:item.documentId,custody:{kind:'personal'}},jobId='1'.repeat(64),lineage='2'.repeat(64),claimKey='3'.repeat(64),scopeKey='isolated-private-native-scope';
   const validUntil=new Date(Date.now()+30_000).toISOString(),entry={jobId,purpose:'rolling-summary',scopeKey,expiresAt:item.expiresAt};
-  return {entry,lineage,claimKey,list:{version:MEMORY_DERIVATION_CONTROL,scope,enrollmentId:item.id,enrollmentRevision:item.revision,results:[entry],next:null,checkedAt:new Date().toISOString(),progress:[]},
+  return {entry,lineage,claimKey,list:{version:MEMORY_DERIVATION_CONTROL,diagnostics:'memory-derivation-health-v1',scope,enrollmentId:item.id,enrollmentRevision:item.revision,results:[entry],next:null,checkedAt:new Date().toISOString(),progress:[]},
     result:{version:MEMORY_DERIVATION_CONTROL,jobId,expiresAt:item.expiresAt,controlRevisions:{[lineage]:0},candidate:{version:'memory-derivation-candidates-v1',purpose:'rolling-summary',scopeKey,manifestId:jobId,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,
       items:[{operation:'assert',target:null,category:'proposal',text:'Private tentative memory proposal.',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[],claimKey,lineageIds:[lineage],sourceBindings:[{sourceId:'fixture-original',revision:1,contentHash:fixtureId(901)}],validUntil,citationStatus:'support-cited'}]}}};
 }
@@ -3473,7 +3473,7 @@ for(const purpose of ['rolling-summary','profile','suggestion'])test('latest der
   const {h,item}=await purposeFixture(t),data=derivedReviewFixture(item);
   data.entry.purpose=purpose;data.result.candidate.purpose=purpose;data.list.purpose=purpose;data.list.latest=true;
   const before=purposeActions(h).length;h.enqueue(data.list);h.enqueue(data.result);await profileClick(h,'reviewLatest.'+purpose);
-  assert.equal(purposeActions(h).length,before+2);assert.ok(purposeActions(h).at(-2).url.endsWith('&purpose='+purpose+'&latest=1'));
+  assert.equal(purposeActions(h).length,before+2);assert.ok(purposeActions(h).at(-2).url.endsWith('&purpose='+purpose+'&latest=1&diagnostics=1'));
   assert.match(h.text(),/Private tentative memory proposal/);assert.equal(h.mutations().length,0);
   h.visibility('hidden');h.visibility('visible');assert.doesNotMatch(h.text(),/Private tentative memory proposal/);
 });
@@ -3616,4 +3616,30 @@ test('assistant privacy invalidation aborts a pending recall and rejects its lat
  const h=hostFixture(t);await openRecall(h);const gate=deferred();h.assistantPost(async call=>{await gate.promise;return answerPayload(h,call,'Late private recalled source');});
  h.recallRequest();await flush();const post=assistantPosts(h)[0];h.privacy(true);assert.equal(post.init.signal.aborted,true);
  gate.resolve();await flush();h.privacy(false);h.commit();assert.doesNotMatch(hostText(h),/Late private recalled source/);assert.equal(assistantPosts(h).length,1);
+});
+
+function reviewedHealth(data){
+ const at=data.list.checkedAt,health={version:'memory-derivation-health-v1',ready:1,deferred:1,leased:1,recovery:0,expired:1,
+  oldestPendingAt:new Date(Date.parse(at)-600000).toISOString(),lastCompletedAt:at,lastRetainedAt:at,completionLatencySeconds:{samples:2,total:9,maximum:7}};
+ data.list.progress=[{purpose:'rolling-summary',pending:4,completed:2,retained:1,uncertain:0,registeredThrough:20,completedThrough:10,health}];return data;
+}
+for(const locale of ['en','fr','ar','ja'])test('processing health is explicit, localized and read-only '+locale,async t=>{
+ const {h,item}=await purposeFixture(t,{locale,localized:true}),data=reviewedHealth(derivedReviewFixture(item));
+ h.enqueue(data.list);await profileClick(h,'reviewLoad');
+ assert.ok(h.calls.at(-1).url.endsWith('&diagnostics=1'));assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.reviewHealthScope')));
+ assert.ok(h.text().includes(personalMemoryMessage(locale,'memory.live.reviewHealthHeading')));assert.doesNotMatch(h.text(),/memory\.live\.reviewHealth/);
+ assert.equal(h.mutations().length,0);assert.doesNotMatch(h.text(),/Private tentative memory proposal/);
+});
+for(const transition of ['expiry','rollback','monotonic-only','visibility','close','navigation','privacy'])test('processing health retires without polling on '+transition,async t=>{
+ const {h,item}=await purposeFixture(t),data=reviewedHealth(derivedReviewFixture(item));h.enqueue(data.list);await profileClick(h,'reviewLoad');
+ assert.match(h.text(),/memory.live.reviewHealthHeading/);const before=h.calls.length;
+ if(transition==='expiry')h.clock.now+=61000;
+ if(transition==='rollback')h.clock.now-=1000;
+ if(transition==='monotonic-only')h.clock.monotonic+=61000;
+ if(transition==='visibility')h.visibility('hidden');
+ if(transition==='close')purposeToggle(h,false);
+ if(transition==='navigation'){h.enqueue(settings([item]));h.move({route:'/library'});await flush();}
+ if(transition==='privacy')h.privacy(true);
+ assert.doesNotMatch(h.text(),/memory.live.reviewHealthHeading|memory.live.reviewProgress/);
+ assert.equal(h.calls.length,before+(transition==='navigation'?1:0));assert.equal(h.mutations().length,0);
 });

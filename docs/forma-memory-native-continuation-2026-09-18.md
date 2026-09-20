@@ -201,3 +201,5 @@ now supplies the shared opaque source preparation and transactional replay used
 by the existing authenticated reference reader. This is not generated-answer or
 edit publication. The [consolidated completion matrix](forma-memory-completion-matrix-2026-09-20.md)
 keeps every remaining native workstream distinct from external/operational gates.
+
+[Private processing diagnostics](forma-memory-processing-health-2026-09-20.md) now expose retained-job backlog/recovery classes, publication age and registration-to-completion timing in actual localized review controls. This is native implementation, not scheduler qualification or full-plan completion. See the [completion matrix](forma-memory-completion-matrix-2026-09-20.md) for the remaining work.

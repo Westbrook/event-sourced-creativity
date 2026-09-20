@@ -15521,7 +15521,7 @@ for(const shared of [false,true])for(const paid of [false,true])for(const purpos
   assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),usage);assert.equal(state.rollingRequests.length,providerCalls);
 });
 
-for(const fault of ['document-removed','session-revoked','principal-changed','custody-changed','false-proof','database-swap'])test('native derivation read-only inventory: final '+fault+' withholds scoped metadata',{timeout:120000},async t=>{
+for(const diagnostics of [false,true])for(const fault of ['document-removed','session-revoked','principal-changed','custody-changed','false-proof','database-swap'])test('native derivation read-only inventory: final '+fault+' withholds scoped metadata diagnostics='+diagnostics,{timeout:120000},async t=>{
   const state=await nativeDerivationRollingFixture(t,{windows:1,shared:true,paid:true}),api=await import('../worker/memory-derivation-api.ts'),
     {appendAuditEvent}=await import('../worker/runtime.ts'),parent=state.current(),db=state.env.DB,batch=db.batch;let injected=false;
   db.batch=async statements=>{
@@ -15537,7 +15537,7 @@ for(const fault of ['document-removed','session-revoked','principal-changed','cu
     if(final&&fault==='database-swap')state.env.DB={prepare:db.prepare.bind(db),batch:db.batch.bind(db)};
     return results;
   };t.after(()=>{db.batch=batch;state.env.DB=db;});
-  const response=await api.handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?projectId='+parent.project_id+'&documentId='+parent.document_id,{headers:state.owner}),state.env);
+  const response=await api.handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?projectId='+parent.project_id+'&documentId='+parent.document_id+(diagnostics?'&diagnostics=1':''),{headers:state.owner}),state.env);
   assert.equal(injected,true);assert.equal(response.status,503);assert.equal(Object.hasOwn(await response.json(),'results'),false);
 });
 
@@ -16548,4 +16548,97 @@ test('native derivation schema: main Still autoincrement history survives isolat
  await db.prepare("INSERT INTO still_panel_commands(session_id,type,value,scope,created_at) VALUES('synthetic-panel','setting','next','',2)").run();
  assert.deepEqual((await db.prepare('SELECT seq FROM still_panel_commands ORDER BY seq').all()).results.map(row=>row.seq),[7,1001]);
  assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+
+for(const shared of [false,true])test('native processing health: actual queue transitions and opt-in metadata '+shared,{timeout:120000},async t=>{
+ const state=await nativeDerivationWorkerFixture(t,{shared,skipOriginal:true}),api=await import('../worker/memory-derivation-api.ts');
+ const parent=state.current(),url=state.derivationOrigin+'/api/memory/derivation/results?'+new URLSearchParams({projectId:parent.project_id,documentId:parent.document_id});
+ const get=async(extra='&diagnostics=1')=>{const response=await api.handleMemoryDerivationResults(new Request(url+extra,{headers:state.owner}),state.env);
+  assert.equal(response.status,200,await response.clone().text()+' '+state.controls.lastDatabaseError);assert.equal(response.headers.get('cache-control'),'private, no-store');return response.json();};
+ const empty=await get();assert.equal(empty.diagnostics,'memory-derivation-health-v1');assert.equal(empty.progress[0].pending,0);assert.equal(empty.progress[0].health.oldestPendingAt,null);
+ assert.equal(Object.hasOwn(await get(''),'diagnostics'),false);assert.equal(Object.hasOwn((await get('')).progress[0],'health'),false);
+ const sequence=state.derivationRows()[0].source_after_sequence+1,expiry=new Date(Date.now()+30000).toISOString();state.pointer(sequence,'isolated-health-pointer',expiry);await state.register(sequence);
+ const job=state.queue().jobs[0],read=async()=>{const b=await get();assert.equal(b.progress[0].pending,1);return b.progress[0].health;};
+ let health=await read();assert.equal(health.ready,1);assert.equal(health.oldestPendingAt,job.created_at);assert.deepEqual(health.completionLatencySeconds,{samples:0,total:0,maximum:0});
+ const lease=await(await import('../worker/memory-derivation-admission.ts')).claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease);health=await read();assert.equal(health.leased,1);assert.equal(health.ready,0);
+ state.sqlite.prepare("UPDATE memory_derivation_jobs SET state='waiting',lease_token=NULL,lease_expires_at=NULL,not_before=? WHERE job_id=?").run(new Date(Date.now()+20000).toISOString(),job.job_id);
+ health=await read();assert.equal(health.deferred,1);assert.equal(health.leased,0);
+ const clock=consequentialDbClock(state);t.after(()=>clock.close());const wall=Date.now();
+ t.mock.timers.enable({apis:['Date'],now:wall+21000});clock.set(new Date().toISOString());health=await read();assert.equal(health.ready,1);assert.equal(health.deferred,0);
+ t.mock.timers.setTime(wall+31000);clock.set(new Date().toISOString());health=await read();assert.equal(health.expired,1);assert.equal(health.ready,0);
+ t.mock.timers.reset();
+ for(const query of ['&diagnostics=0','&diagnostics=1&diagnostics=1','&diagnostics=unknown'])assert.equal((await api.handleMemoryDerivationResults(new Request(url+query,{headers:state.owner}),state.env)).status,400);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);assert.equal(state.calls.length,0);
+});
+
+for(const shared of [false,true])test('native processing health: retained completion, withdrawal and whole-request budget '+shared,{timeout:120000},async t=>{
+ const state=await nativeDerivationResultFixture(t,{shared,userControls:true,completion:true});assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+ const {handleMemoryDerivationResults}=await import('../worker/memory-derivation-api.ts'),{createMemoryDerivationClient}=await import('../src/state/memory-derivation-client.ts');
+ const parent=state.current(),expected={projectId:parent.project_id,documentId:parent.document_id,enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,
+  expectedCustody:shared?{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}:{kind:'personal'}};
+ const {enforceD1ExpressionDepth}=await import('./helpers/d1-expression-depth.mjs'),depth=enforceD1ExpressionDepth(state,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});t.after(()=>depth.restore());
+ const db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
+ const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+ db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};t.after(()=>{db.prepare=prepare;db.batch=batch;});
+ let responseBytes=0;const client=createMemoryDerivationClient(async(path,init)=>{const r=await handleMemoryDerivationResults(new Request(state.derivationOrigin+path,{...init,headers:{...init.headers,...state.owner}}),state.env);responseBytes=(await r.clone().arrayBuffer()).byteLength;return r;});
+ operations=0;const legacy=await client.results(expected),legacyOperations=operations;
+ operations=0;const page=await client.results(expected,null,undefined,null,false,true);assert.equal(operations,legacyOperations);assert.ok(operations<=50);assert.ok(responseBytes<8192);t.diagnostic('Health native operations '+operations+'; response bytes '+responseBytes);
+ assert.equal(Object.hasOwn(legacy.progress[0],'health'),false);const health=page.progress[0].health;
+ const native=state.sqlite.prepare('SELECT j.created_at,c.completed_at,r.published_at FROM memory_derivation_jobs j JOIN memory_derivation_completions c ON c.job_id=j.job_id JOIN memory_derivation_results r ON r.job_id=j.job_id').get();
+ assert.equal(health.lastCompletedAt,native.completed_at);assert.equal(health.lastRetainedAt,native.published_at);assert.equal(health.oldestPendingAt,null);
+ const latency=Math.floor(Date.parse(native.completed_at)/1000)-Math.floor(Date.parse(native.created_at)/1000);assert.deepEqual(health.completionLatencySeconds,{samples:1,total:latency,maximum:latency});
+ assert.doesNotMatch(JSON.stringify(health),/tentative|original request|sourceId|financeId|actorId|jobId/);
+ const usage=state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all();
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,parent.actor_user_id,state.executionJob.job_id),true);
+ const retired=await client.results(expected,null,undefined,null,false,true);assert.equal(retired.progress[0].retained,0);assert.equal(retired.progress[0].health.lastRetainedAt,null);assert.equal(retired.progress[0].completed,1);
+ assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),usage);depth.assertVerified();
+});
+
+test('native processing health: metadata changes between aggregate and final replay fail closed',async t=>{
+ const state=await nativeDerivationWorkerFixture(t,{skipOriginal:true}),api=await import('../worker/memory-derivation-api.ts'),parent=state.current();
+ const sequence=state.derivationRows()[0].source_after_sequence+1;state.pointer(sequence);await state.register(sequence);
+ const db=state.env.DB,prepare=db.prepare;let changed=false;
+ db.prepare=function(sql){const statement=prepare.call(this,sql),bind=statement.bind;
+  statement.bind=function(...args){const bound=bind.apply(this,args),all=bound.all;
+   bound.all=async function(...rest){const result=await all.apply(this,rest);
+    if(!changed&&sql.startsWith('SELECT g.purpose,')&&sql.includes('AS health_json')){changed=true;state.sqlite.prepare('UPDATE memory_derivation_jobs SET not_before=?').run(new Date(Date.now()+60000).toISOString());}
+    return result;};return bound;};return statement;};t.after(()=>{db.prepare=prepare;});
+ const r=await api.handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?'+new URLSearchParams({projectId:parent.project_id,documentId:parent.document_id,diagnostics:'1'}),{headers:state.owner}),state.env);
+ assert.equal(changed,true);assert.equal(r.status,503);assert.equal(Object.hasOwn(await r.json(),'progress'),false);
+});
+
+test('native processing health: actual D1 mixed producers and scope retirement',{timeout:180000},async t=>{
+ const state=await nativeMixedProducerFixture(t,{shared:true}),api=await import('../worker/memory-derivation-api.ts'),parent=state.current();
+ const url=state.derivationOrigin+'/api/memory/derivation/results?'+new URLSearchParams({projectId:parent.project_id,documentId:parent.document_id,diagnostics:'1'});
+ const request=()=>api.handleMemoryDerivationResults(new Request(url,{headers:state.owner}),state.env);
+ const before=await request();assert.equal(before.status,200,await before.clone().text());const expected=(await before.json()).progress;
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+ const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryHealth'],script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('No external network');}});
+ t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('MemoryHealth');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+ const r=await request();assert.equal(r.status,200,await r.clone().text());assert.deepEqual((await r.json()).progress,expected);
+ assert.equal(expected[0].health.completionLatencySeconds.samples,3);assert.equal(expected[0].producers.length,2);
+ await db.prepare("UPDATE organization_projects SET status='paused' WHERE project_access_id=?").bind(parent.project_access_id).run();
+ const retired=await request();assert.notEqual(retired.status,200);assert.equal(Object.hasOwn(await retired.json(),'progress'),false);
+});
+
+test('native processing health: expired lease requires recovery, never ready or resubmitted',async t=>{
+ const state=await nativeDerivationWorkerFixture(t),parent=state.current(),job=state.queue().jobs[0],api=await import('../worker/memory-derivation-api.ts');
+ assert.ok(await(await import('../worker/memory-derivation-admission.ts')).claimNativeDerivationJob(state.env,job.job_id));
+ const held=state.queue().jobs[0],clock=consequentialDbClock(state);t.after(()=>clock.close());
+ t.mock.timers.enable({apis:['Date'],now:Date.parse(held.lease_expires_at)+1});clock.set(new Date().toISOString());
+ const r=await api.handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?'+new URLSearchParams({projectId:parent.project_id,documentId:parent.document_id,diagnostics:'1'}),{headers:state.owner}),state.env);
+ assert.equal(r.status,200,await r.clone().text());const health=(await r.json()).progress[0].health;
+ assert.equal(health.recovery,1);assert.equal(health.ready,0);assert.equal(health.leased,0);assert.equal(health.expired,0);
+ assert.deepEqual(state.queue().jobs[0],held);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
+});
+for(const fault of ['wall-rollback','monotonic-deadline','nonfinite'])test('native processing health: final clock '+fault+' denies metadata',async t=>{
+ const state=await nativeDerivationWorkerFixture(t,{skipOriginal:true}),parent=state.current(),api=await import('../worker/memory-derivation-api.ts'),db=state.env.DB,batch=db.batch;
+ let injected=false;db.batch=async statements=>{const result=await batch.call(db,statements);
+  if(!injected&&statements.some(s=>s.sql.includes('AS health_json'))){injected=true;
+   if(fault==='wall-rollback')t.mock.timers.enable({apis:['Date'],now:Date.now()-1000});
+   else {const next=fault==='nonfinite'?NaN:performance.now()+61000;t.mock.method(performance,'now',()=>next);}
+  }return result;};t.after(()=>{db.batch=batch;});
+ const r=await api.handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?'+new URLSearchParams({projectId:parent.project_id,documentId:parent.document_id,diagnostics:'1'}),{headers:state.owner}),state.env);
+ assert.equal(injected,true);assert.equal(r.status,503);assert.equal(Object.hasOwn(await r.json(),'progress'),false);
 });

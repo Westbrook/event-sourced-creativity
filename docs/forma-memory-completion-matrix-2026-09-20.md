@@ -16,7 +16,7 @@ not close an end-to-end consumer.
 | Unified evolving profile | Qualified derivation, rolling original-backed windows, private controls, four-result retained profile and explicit broader bands | Longer-term source-backed consolidation, supersession and contradiction handling beyond the bounded retained projection; scope-specific promotion with independent support; consumer integration and lifecycle tests. |
 | Complete native resource/zoom coverage | Document/page/block identities and inspection; artifact revisions; same-owner nesting; certified approved-copy outcomes | Library/Canvas resource identity and history, remaining unsupported block histories, cross-owner nesting with independent permissions, and original-source recall across reuse relationships. Nesting must not grant access. |
 | Durable downstream lifecycle | Native result/index-intent retirement and saved-reference retirement | Persisted ancestry-dependent generated-answer/edit/output/index invalidation, restore/rebuild negative provenance and non-resurrection tests for the new consumers/resources. |
-| Integrated qualification and operations | Native source-free diagnostics, budget/finance/recovery tests and migration reconciliation | End-to-end journeys across the above consumers, privacy races, request/byte bounds, latency and source-free backlog/freshness diagnostics; reconcile all failures and update deployment/handoff evidence. |
+| Integrated qualification and operations | [Private retained-job diagnostics](forma-memory-processing-health-2026-09-20.md), budget/finance/recovery tests and migration reconciliation | End-to-end journeys across the above consumers, expanded privacy/request/byte bounds, consumer latency and source-evidence freshness qualification; reconcile all failures and update deployment/handoff evidence. |
 
 These are code/integration tasks. **They are not blocked merely because external
 services or hosted scheduling are not yet available.** They remain on this task;
@@ -51,3 +51,11 @@ The review handoff to **Assemble Forma specialist team**
 No message was delivered, no task was unarchived and no replacement production
 owner was assumed. Owner integration/deployment remains pending; this does not
 block the native implementation work above.
+
+## Latest native implementation
+
+[Private processing diagnostics](forma-memory-processing-health-2026-09-20.md) now
+connect retained queue age, disjoint job/recovery state, publication age and
+registration-to-completion timing to the actual localized Memory review controls.
+This closes that diagnostic slice, not the six end-to-end workstreams above.
+No migration, deployment, new service, polling or enrollment was added.

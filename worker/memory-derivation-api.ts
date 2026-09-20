@@ -1,3 +1,5 @@
+import { createMemoryElapsed } from '../src/model/memory-lifetime.ts';
+import { MEMORY_DERIVATION_HEALTH, parseMemoryDerivationHealth } from '../src/model/memory-derivation-health.ts';
 import { readProjectRequestContext, resolveOwnerExecutionScope } from './project-access.ts';
 import { nativeMemoryDocumentIdentity, observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { readNativeDerivationResult,nativeDerivationResultInputs,nativeDerivationResultResources,nativeDerivationResultStatements,withdrawNativeDerivationResult } from "./memory-derivation-results.ts";
@@ -364,16 +366,18 @@ export async function handleMemoryDerivationUserControls(request:Request,env:Wor
  * result read, never by this inventory or an arbitrary client scope key. */
 export async function handleMemoryDerivationResults(request:Request,env:WorkerEnv):Promise<Response>{
   const db=env.DB,started=Date.now(),configuration=settingsKey(env),url=new URL(request.url);
+  const elapsed=createMemoryElapsed({wall:started,monotonic:performance.now()});
   const auth=await requireUser(request,env,'viewer',{account:'principal'});
   if(auth.response||!auth.user)return privateResponse(auth.response??deny('authentication_required',401));
   const actor=auth.user,identity=principalGuard(actor);
   if(actor.fictional||!identity)return deny('principal_account_required',403);
   if(request.method!=='GET')return deny('method_not_allowed',405);
-  const projectId=url.searchParams.get('projectId'),documentId=url.searchParams.get('documentId'),after=url.searchParams.get('after')??'',purpose=url.searchParams.get('purpose'),latest=url.searchParams.get('latest');
+  const projectId=url.searchParams.get('projectId'),documentId=url.searchParams.get('documentId'),after=url.searchParams.get('after')??'',purpose=url.searchParams.get('purpose'),latest=url.searchParams.get('latest'),diagnostics=url.searchParams.get('diagnostics');
   if(!derivationId(projectId)||!derivationId(documentId)||after!==''&&!derivationHash(after)
     ||latest!==null&&(latest!=='1'||purpose===null||after!=='')
+    ||diagnostics!==null&&diagnostics!=='1'
     ||purpose!==null&&!MEMORY_DERIVATION_PURPOSES.includes(purpose as MemoryDerivationPurpose)
-    ||[...url.searchParams.keys()].some(key=>!['projectId','documentId','after','purpose','latest'].includes(key)||url.searchParams.getAll(key).length!==1))return deny('memory_result_scope_required');
+    ||[...url.searchParams.keys()].some(key=>!['projectId','documentId','after','purpose','latest','diagnostics'].includes(key)||url.searchParams.getAll(key).length!==1))return deny('memory_result_scope_required');
   try{
     const schema=await memoryDerivationSchema(env),selected=await scope(request,env,actor,projectId,documentId);
     if(selected instanceof Response)return selected;
@@ -406,6 +410,21 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
     const columns=['job_id','purpose','scope_key','expires_at'];
     if(found.length>9||found.some(row=>!derivationExact(row,columns)))return deny('memory_result_unavailable',503);
     const guard:MemorySqlGuard={condition:`(SELECT json_group_array(json_array(${columns.join(',')})) FROM (${query}))=?`,bindings:[...bindings,JSON.stringify(found.map(row=>columns.map(key=>row[key])))]};
+    // Reuse the same indexed aggregate and exact final replay. Opt-in diagnostics
+    // do not hydrate source prose, add per-job requests, or widen old clients.
+    const pending='j.job_id IS NOT NULL AND done.job_id IS NULL';
+    const liveLease="j.state='leased' AND j.lease_expires_at>clock.checked_at";
+    const latency="CAST(strftime('%s',done.completed_at) AS INTEGER)-CAST(strftime('%s',j.created_at) AS INTEGER)";
+    const healthSql=diagnostics?`,json_object('version','${MEMORY_DERIVATION_HEALTH}',
+      'ready',SUM(CASE WHEN ${pending} AND j.expires_at>clock.checked_at AND j.state='waiting' AND j.not_before<=clock.checked_at THEN 1 ELSE 0 END),
+      'deferred',SUM(CASE WHEN ${pending} AND j.expires_at>clock.checked_at AND j.state='waiting' AND j.not_before>clock.checked_at THEN 1 ELSE 0 END),
+      'leased',SUM(CASE WHEN ${pending} AND j.expires_at>clock.checked_at AND ${liveLease} THEN 1 ELSE 0 END),
+      'recovery',SUM(CASE WHEN ${pending} AND j.expires_at>clock.checked_at AND j.state='leased' AND j.lease_expires_at<=clock.checked_at THEN 1 ELSE 0 END),
+      'expired',SUM(CASE WHEN ${pending} AND j.expires_at<=clock.checked_at THEN 1 ELSE 0 END),
+      'oldestPendingAt',MIN(CASE WHEN ${pending} THEN j.created_at END),
+      'lastCompletedAt',MAX(done.completed_at),
+      'lastRetainedAt',MAX(CASE WHEN r.state='active' AND r.expires_at>clock.checked_at THEN r.published_at END),
+      'completionLatencySeconds',json_object('samples',COUNT(done.job_id),'total',COALESCE(SUM(${latency}),0),'maximum',COALESCE(MAX(${latency}),0))) AS health_json`:'';
     const progressQuery=`SELECT g.purpose,
       SUM(CASE WHEN j.job_id IS NOT NULL AND done.job_id IS NULL THEN 1 ELSE 0 END) AS pending,
       COUNT(done.job_id) AS completed,
@@ -422,21 +441,26 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
           'completedThrough',COALESCE((SELECT through_sequence FROM memory_derivation_completion_cursors WHERE consent_id=g.consent_id),g.source_after_sequence)),
         json_object('producer','chat-studio','registeredThrough',COALESCE((SELECT registered_through_sequence FROM memory_derivation_producer_cursors WHERE consent_id=g.consent_id),g.source_after_sequence),
           'completedThrough',COALESCE((SELECT completed_through_sequence FROM memory_derivation_producer_cursors WHERE consent_id=g.consent_id),g.source_after_sequence))) AS producers_json`:''}
+      ${healthSql}
       FROM memory_derivation_grants g LEFT JOIN memory_derivation_jobs j ON j.consent_id=g.consent_id
       LEFT JOIN memory_derivation_completions done ON done.job_id=j.job_id LEFT JOIN memory_derivation_results r ON r.job_id=j.job_id
       LEFT JOIN memory_derivation_job_finance link ON link.job_id=j.job_id LEFT JOIN memory_derivation_finance f ON f.finance_id=link.finance_id
       LEFT JOIN memory_derivation_usage usage ON usage.finance_id=f.finance_id
+      ${diagnostics?'CROSS JOIN (SELECT ? AS checked_at) clock':''}
       WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>?${purpose?' AND g.purpose=?':''} GROUP BY g.consent_id ORDER BY g.purpose LIMIT 4`;
-    const progressBindings=[now,selected.parent.enrollment_id,actor.userId,now,...(purpose?[purpose]:[])],progressColumns=['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough',...(schema.producersPresent?['producers_json']:[])];
+    const progressBindings=[now,...(diagnostics?[now]:[]),selected.parent.enrollment_id,actor.userId,now,...(purpose?[purpose]:[])],progressColumns=['purpose','pending','completed','retained','uncertain','registeredThrough','completedThrough',...(schema.producersPresent?['producers_json']:[]),...(diagnostics?['health_json']:[])];
     const progress=schema.completionPresent?await rows(env,progressQuery,progressBindings):[];
     if(progress.length>3||progress.some(row=>!derivationExact(row,progressColumns)))return deny('memory_result_status_unavailable',503);
+    const presentedProgress=progress.map(({producers_json,health_json,...row})=>({...row,
+      ...(schema.producersPresent?{producers:JSON.parse(String(producers_json))}:{}),
+      ...(diagnostics?{health:parseMemoryDerivationHealth(JSON.parse(String(health_json)),{pending:Number(row.pending),completed:Number(row.completed),retained:Number(row.retained)},now)}:{})}));
     const guards=[schema.guard,identity,...selected.guards,...cursorGuards,guard,clock(new Date(started+60000).toISOString()),...(schema.completionPresent?[{condition:`(SELECT json_group_array(json_array(${progressColumns.join(',')})) FROM (${progressQuery}))=?`,bindings:[...progressBindings,JSON.stringify(progress.map(row=>progressColumns.map(key=>row[key])))]}]:[])];
     const checked=await db.batch(guards.map(value=>derivationAssertion(env,value)));
-    if(env.DB!==db||settingsKey(env)!==configuration||Date.now()-started>=60000||found.some(row=>String(row.expires_at)<=new Date().toISOString())
+    if(env.DB!==db||settingsKey(env)!==configuration||elapsed.elapsed({wall:Date.now(),monotonic:performance.now()})>=60000||found.some(row=>String(row.expires_at)<=new Date().toISOString())
       ||!derivationResults(checked,guards.length)||!checked.every(derivationVerified))return deny('memory_result_unavailable',503);
     const parent=selected.parent;
     return reply({scope:{projectId,documentId,custody:parent.organization_id===null?{kind:'personal'}:{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}},
       enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,
-      checkedAt:now,progress:progress.map(({producers_json,...row})=>({...row,...(schema.producersPresent?{producers:JSON.parse(String(producers_json))}:{})})),...(purpose?{purpose}:{}),...(latest?{latest:true}:{}),results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
+      checkedAt:now,progress:presentedProgress,...(diagnostics?{diagnostics:MEMORY_DERIVATION_HEALTH}:{}),...(purpose?{purpose}:{}),...(latest?{latest:true}:{}),results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
   }catch{return deny('memory_result_unavailable',503);}
 }
