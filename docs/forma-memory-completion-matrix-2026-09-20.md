@@ -72,3 +72,9 @@ immutable private-copy provenance and historical/privacy UI. It preserves
 current-source precedence and suppresses untracked document actions. The first
 row remains open for request capacity, semantic follow-up conversation history
 and Chat Studio; the other workstreams remain required. This is not deployment.
+
+[Consumer conversation lifecycle](forma-memory-conversation-lifecycle-2026-09-20.md)
+closes original input-turn/body retirement for the semantic specialist consumer,
+including in-flight erasure and the complete three-turn native D1 window. This
+does not close generated-answer follow-up, document/edit/output ancestry, broader
+resource coverage or whole-invocation capacity.

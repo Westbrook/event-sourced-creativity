@@ -69,7 +69,11 @@ export async function quoteConsequentialExecution(env:WorkerEnv,user:PilotUser,b
   if(additional){
     // Native guarded quote: private input, execution and planned steps either
     // publish together or roll back before retaining any copied provider bytes.
-    const content=await preparePrivateContent(env,user.userId,"execution-consent",JSON.stringify({binding,preview}),binding.scope??undefined,undefined,guard);
+    // Source assertions bracket this entire atomic batch. Repeating their
+    // bindings inside the private INSERT can exceed D1's per-statement limit
+    // for shared multi-turn context; it adds no separate transaction boundary.
+    // Native custody/retention checks remain on the private INSERT itself.
+    const content=await preparePrivateContent(env,user.userId,"execution-consent",JSON.stringify({binding,preview}),binding.scope??undefined);
     const rows=await env.DB.batch([
       env.DB.prepare(`SELECT CASE WHEN (${guard.sql}) THEN 1 ELSE json('context_quote_source_changed') END AS verified`).bind(...guard.bindings),
       ...content.statements,...publication(content),...(publicationEvidence?.(executionId,content.contentId)??[]),
@@ -111,10 +115,15 @@ export async function claimConsequentialExecution(env:WorkerEnv,user:PilotUser,b
   const now=new Date().toISOString();
   if(row.expires_at<=now||binding.period!==now.slice(0,7))return{error:"context_consent_expired",status:409};
   const guard=executionAdmissionGuard(user,binding,sourceHead,true);
+  const split=9+guard.bindings.length+additional.bindings.length>100;
+  const inline=split?{sql:'1',bindings:[]}:additional;
   const statement=env.DB.prepare(`UPDATE consequential_executions SET status='reserved',updated_at=? WHERE execution_id=? AND actor_user_id=? AND status='quoted' AND binding_hash=? AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ?=strftime('%Y-%m','now')
-    AND NOT EXISTS(SELECT 1 FROM consequential_executions other WHERE other.actor_user_id=? AND other.intent_hash=? AND other.execution_id!=? AND ${reusableExecutionSql("other")}) AND ${guard.sql} AND (${additional.sql})`)
-    .bind(now,id,user.userId,hash,now,binding.period,user.userId,binding.intentHash,id,...guard.bindings,...additional.bindings);
-  const changed=admissionStatements.length?(await env.DB.batch([statement,...admissionStatements]))[0]!:await statement.run();
+    AND NOT EXISTS(SELECT 1 FROM consequential_executions other WHERE other.actor_user_id=? AND other.intent_hash=? AND other.execution_id!=? AND ${reusableExecutionSql("other")}) AND ${guard.sql} AND (${inline.sql})`)
+    .bind(now,id,user.userId,hash,now,binding.period,user.userId,binding.intentHash,id,...guard.bindings,...inline.bindings);
+  const checks=split?[env.DB.prepare(`SELECT CASE WHEN (${additional.sql}) THEN 1 ELSE json('context_authorization_changed') END AS verified`).bind(...additional.bindings)]:[];
+  // All admission assertions, the CAS and dependent task writes still execute
+  // in one atomic transaction; only their per-statement bindings are separated.
+  const changed=admissionStatements.length||split?(await env.DB.batch([...checks,statement,...admissionStatements]))[checks.length]!:await statement.run();
   if(Number(changed.meta.changes??0)!==1){
     const existing=await env.DB.prepare(`SELECT * FROM consequential_executions WHERE actor_user_id=? AND intent_hash=? AND ${reusableExecutionSql("consequential_executions")} AND ${guard.sql} LIMIT 1`).bind(user.userId,binding.intentHash,...guard.bindings).first<ExecutionRow>();
     return existing?{row:existing,reused:true}:{error:"context_consent_changed",status:409};
@@ -139,8 +148,16 @@ export async function reserveConsequentialSteps(env:WorkerEnv,user:PilotUser,bin
     const quoted=guarded(consequentialReservationGuard(user.userId,binding,id,index,hash,"quoted"));
     const claimed=await env.DB.prepare(`UPDATE consequential_execution_steps SET status='reserved',updated_at=? WHERE execution_id=? AND step_index=? AND status='quoted' AND ${quoted.sql}`).bind(new Date().toISOString(),id,index,...quoted.bindings).run();
     if(Number(claimed.meta.changes??0)!==1)throw new Error("context_execution_not_active");
-    const reservationGuard=guarded(consequentialReservationGuard(user.userId,binding,id,index,hash));
-    const context={streamId:binding.streamId,correlationId,operation,period:binding.period,reservationGuard,...(binding.scope?{projectScope:binding.scope}:{})};
+    const nativeReservation=consequentialReservationGuard(user.userId,binding,id,index,hash);
+    const reservationGuard=guarded(nativeReservation);
+    // Budget admissions already support native same-transaction assertions.
+    // Reserve room for shared custody and pilot counters in their INSERTs;
+    // the complete source proof stays inside each reservation transaction.
+    const splitReservation=reservationGuard.bindings.length>60;
+    const context={streamId:binding.streamId,correlationId,operation,period:binding.period,
+      reservationGuard:splitReservation?nativeReservation:reservationGuard,
+      ...(splitReservation?{reservationAssertions:[additional]}:{}),
+      ...(binding.scope?{projectScope:binding.scope}:{})};
     const token=await reserveBudget(env,user.userId,step.inputTokens+step.outputTokens,{...context,reservationId:tokenId});
     if(!token.ok)throw new Error(token.scope==="authorization"?"context_execution_not_active":"context_token_budget_unavailable");
     const cost=await reserveCostBudget(env,user.userId,step.maximumMicrousd,{...context,reservationId:costId,maximumMicrousd:step.maximumMicrousd,allowUserOverage:false});
@@ -238,12 +255,15 @@ export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUse
     AND(SELECT COUNT(*) FROM consequential_execution_steps step WHERE step.execution_id=execution.execution_id)=?
     AND NOT EXISTS(SELECT 1 FROM consequential_execution_steps step WHERE step.execution_id=execution.execution_id AND step.status NOT IN('usage-recorded','settled'))) AND ${authority.sql} AND (${proof.sql})`,bindings:[id,user.userId,hash,binding.steps.length,...authority.bindings,...proof.bindings]};
   const serialized=JSON.stringify(result),custody=executionContentCustodyGuard(binding);
-  const complete=(contentId:string)=>env.DB.prepare(`UPDATE consequential_executions SET status='completed',result_ref=?,error_code=NULL,updated_at=? WHERE execution_id=? AND actor_user_id=? AND ${accounted.sql}
+  const complete=(contentId:string,atomic=false)=>env.DB.prepare(`UPDATE consequential_executions SET status='completed',result_ref=?,error_code=NULL,updated_at=? WHERE execution_id=? AND actor_user_id=? AND ${atomic?"result_ref IS NULL AND status IN('reserved','uncertain','failed')":accounted.sql}
     AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='context-proposal' AND content=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${custody.sql})`)
-    .bind(contentId,new Date().toISOString(),id,user.userId,...accounted.bindings,contentId,user.userId,serialized,...custody.bindings);
+    .bind(contentId,new Date().toISOString(),id,user.userId,...(atomic?[]:accounted.bindings),contentId,user.userId,serialized,...custody.bindings);
   if(evidence){
-    const content=await preparePrivateContent(env,user.userId,'context-proposal',serialized,binding.scope??undefined,undefined,accounted);
-    const rows=await env.DB.batch([...evidence.precommit(),...content.statements,...evidence.publish(content.contentId),complete(content.contentId),
+    const content=await preparePrivateContent(env,user.userId,'context-proposal',serialized,binding.scope??undefined);
+    // Retain the entire accounting/source proof immediately before completion,
+    // in the same atomic transaction as the copy and its inverse registration.
+    const verified=env.DB.prepare(`SELECT CASE WHEN (${accounted.sql}) THEN 1 ELSE json('context_result_not_retained') END AS verified`).bind(...accounted.bindings);
+    const rows=await env.DB.batch([...evidence.precommit(),...content.statements,...evidence.publish(content.contentId),verified,complete(content.contentId,true),
       env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_result_not_retained') END AS verified")]);
     if(rows.some(row=>!row.success)||(rows.at(-1)?.results[0] as Record<string,unknown>)?.verified!==1)throw new Error('context_result_not_retained');
   }else{

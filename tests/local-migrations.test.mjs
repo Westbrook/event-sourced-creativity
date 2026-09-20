@@ -857,6 +857,7 @@ for(const [tag,statementCount,tables] of [
   ['0057_memory_derivation_observation_controls',19,['memory_derivation_observation_controls']],
   ['0060_memory_derivation_contexts',2,['memory_derivation_contexts']],
   ['0061_memory_derivation_consumers',21,['memory_derivation_consumers','memory_derivation_consumer_contents']],
+  ['0062_memory_derivation_consumer_sources',12,['memory_derivation_consumer_sources']],
 ])test('Memory additive controls/completion migration '+tag+' preserves rows and reruns exactly',t=>{
   const target=actualMigrations.find(m=>m.tag===tag);assert.ok(target);const sqlite=database(t);
   migrateLocalDatabase(sqlite,{migrations:actualMigrations.slice(0,actualMigrations.indexOf(target))});

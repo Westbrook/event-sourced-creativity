@@ -200,3 +200,10 @@ mark the [full completion matrix](forma-memory-completion-matrix-2026-09-20.md)
 complete or merge-ready based on this slice. No production deployment or real
 enrollment occurred. External/operational items stay in the linked capability
 and non-implementation To Do documents.
+
+### Memory original-conversation lifecycle
+
+[Implemented input erasure and multi-turn D1 integration](forma-memory-conversation-lifecycle-2026-09-20.md)
+records the additive migration, completed privacy checks and rollout transition.
+Remaining native implementation stays in the Memory completion matrix; external
+services, qualification and enrollment remain in the Sites capability checklist.

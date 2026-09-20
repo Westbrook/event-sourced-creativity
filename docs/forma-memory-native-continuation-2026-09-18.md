@@ -213,3 +213,8 @@ adds actual prompt consumption, exact paid approval, durable generated-result
 inverses and historical privacy clearing. It retains the separate native
 capacity and follow-up-conversation gaps; no hosted qualification, deployment or
 real enrollment is inferred from local tests.
+
+The [original-conversation lifecycle checkpoint](forma-memory-conversation-lifecycle-2026-09-20.md)
+adds immutable source-reference registration and copy retirement, with full-window
+personal/shared D1 verification. Existing unregistered origins fail closed and
+are swept; no live database was migrated. Continue the complete native matrix.

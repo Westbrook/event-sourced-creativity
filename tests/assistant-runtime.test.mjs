@@ -24,7 +24,7 @@ function database() {
     failPlatformPrivacyErase: false, beforePlatformCommit: null, beforeDeletionClaim: null, beforeConsequentialClaim:null, beforeConsequentialSubmit:null,beforeConsequentialResultRead:null,failAfterConsequentialComplete:false,failNextConsequentialPrincipalRead:false, beforeAuthoringCommit:null,failAuthoringCommit:false,failAuthoringEventAt:0, skipAssistantTaskClaimOnce: false, lastDatabaseError: "" };
   class Statement {
     constructor(sql, values = []) { this.sql = sql; this.values = values; }
-    bind(...values) { assert.ok(values.length <= 100); return new Statement(this.sql, values); }
+    bind(...values) { if(values.length>100)controls.lastDatabaseError="D1 binding limit: "+values.length+" "+this.sql.slice(0,180); assert.ok(values.length <= 100,controls.lastDatabaseError); return new Statement(this.sql, values); }
     execute(kind) {
       if(controls.requestQueryLimit&&++controls.requestQueryCount>controls.requestQueryLimit){controls.queryLimitSql ||= this.sql.slice(0,220);throw new Error("D1 request query limit exceeded");}
       if(/^\s*INSERT INTO authoring_commits/iu.test(this.sql)){
@@ -16688,6 +16688,7 @@ function semanticConsumerOperationCounter(state){
 for(const shared of [false,true])test('semantic assistant consumer: native paid quote binds accepted source without a provider call '+shared,async t=>{
  const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0061_memory_derivation_consumers.sql',import.meta.url),'utf8'));
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0062_memory_derivation_consumer_sources.sql',import.meta.url),'utf8'));
  await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
  const options={route:'/document/'+state.recallTarget.documentId,project:state.current().project_id};
  const turn=await specialistFreeTurn(state,'semantic-consumer-quote-turn','What should I do next?',options);
@@ -16709,6 +16710,7 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});
  state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=state.current().actor_user_id;state.env.OPENAI_API_KEY='fixture-provider-key';
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0061_memory_derivation_consumers.sql',import.meta.url),'utf8'));
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0062_memory_derivation_consumer_sources.sql',import.meta.url),'utf8'));
  await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
  const options={route:'/document/'+state.recallTarget.documentId,project:state.current().project_id};
  const turn=await specialistFreeTurn(state,'semantic-consumer-execute-turn','What should I do next?',options);
@@ -16734,12 +16736,14 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  const replay=await specialistRetrieve(state,review,options);assert.equal(replay.status,404);assert.equal(calls.length,1);
 });
 
-async function semanticPaidConsumerFixture(t,{shared=false}={}){
+async function semanticPaidConsumerFixture(t,{shared=false,prior=false}={}){
  const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});
  state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=state.current().actor_user_id;state.env.OPENAI_API_KEY='fixture-provider-key';
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0061_memory_derivation_consumers.sql',import.meta.url),'utf8'));
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0062_memory_derivation_consumer_sources.sql',import.meta.url),'utf8'));
  await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
  const options={route:'/document/'+state.recallTarget.documentId,project:state.current().project_id};
+ for(let i=0;i<Number(prior);i++)await specialistFreeTurn(state,'semantic-original-prior-turn'+(i?'-'+i:''),'Keep the original constraints.',options);
  const turn=await specialistFreeTurn(state,'semantic-consumer-privacy-turn','What should I do next?',options);
  const quote=async()=>{const response=await specialistProtocolRequest(state,{action:'quote',turnId:turn.id,memory:'saved'},options);return {response,body:await response.json()};};
  return Object.assign(state,{semanticOptions:options,semanticTurn:turn,semanticQuote:quote});
@@ -16870,4 +16874,95 @@ for(const fault of ['truncated','missing-references','reference-change','qualifi
  t.after(()=>{state.env.DB=db;db.batch=batch;});
  let handle=null;try{handle=await admission.observeNativeDerivationJob(state.env,state.current().actor_user_id,state.executionJob.job_id);}catch{}
  assert.equal(injected,true);assert.equal(handle,null);
+});
+
+for(const shared of [false,true])for(const fault of ['prior-user-change','prior-answer-delete','own-turn-delete','own-metadata-change','result-retype','source-expired'])test('semantic original lifecycle: '+shared+'/'+fault+' retires every copied body',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared,prior:true}),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200,JSON.stringify(review)+' SQL '+state.controls.lastDatabaseError);
+ const original=globalThis.fetch;let calls=0;globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ const executed=await specialistExecute(state,review,state.semanticOptions);assert.equal(executed.status,202,await executed.clone().text()+' SQL '+state.controls.lastDatabaseError);await state.drainBackground();
+ const retrieved=await specialistRetrieve(state,review,state.semanticOptions),result=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(result));assert.equal(result.result?.sourceStatus,'semantic-memory-assisted',JSON.stringify(result)+' SQL '+state.controls.lastDatabaseError);
+ const sources=state.sqlite.prepare('SELECT * FROM memory_derivation_consumer_sources ORDER BY turn_id').all();assert.equal(sources.length,2);
+ const prior=sources.find(r=>r.turn_id==='semantic-original-prior-turn'),own=sources.find(r=>r.turn_id===state.semanticTurn.id);
+ const copies=state.sqlite.prepare('SELECT content_id,role FROM memory_derivation_consumer_contents').all();assert.equal(copies.length,3);
+ const balances=consequentialBalances(state,state.current().actor_user_id);
+ if(fault==='prior-user-change')state.sqlite.prepare("UPDATE private_content SET content=content||' changed' WHERE content_id=?").run(prior.user_ref);
+ if(fault==='prior-answer-delete')state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(prior.answer_ref);
+ if(fault==='own-turn-delete')state.sqlite.prepare('DELETE FROM assistant_turns WHERE turn_id=?').run(own.turn_id);
+ if(fault==='own-metadata-change')state.sqlite.prepare("UPDATE assistant_turns SET request_json=json_set(request_json,'$.locale','fr') WHERE turn_id=?").run(own.turn_id);
+ if(fault==='result-retype')state.sqlite.prepare("UPDATE private_content SET kind='chat-assistant',content='forged original' WHERE content_id=?").run(copies.find(r=>r.role==='result').content_id);
+ if(fault==='source-expired')state.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id=?").run(prior.user_ref);
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_consumers').get().state,'retired');
+ for(const copy of copies){const row=state.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').get(copy.content_id);assert.equal(row.content,'');assert.ok(row.redacted_at);}
+ assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_derivation_consumer_sources ORDER BY turn_id').all(),sources);
+ assert.throws(()=>state.sqlite.exec('DELETE FROM memory_derivation_consumer_sources'),/immutable/);
+ assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);assert.equal(calls,1);
+ assert.deepEqual(consequentialBalances(state,state.current().actor_user_id),balances);
+ assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,1300);
+});
+
+test('semantic original lifecycle: unchanged original writes and unrelated erasure do not retire a quote',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{prior:true}),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200);
+ const source=state.sqlite.prepare('SELECT * FROM memory_derivation_consumer_sources LIMIT 1').get();
+ state.sqlite.prepare('UPDATE private_content SET content=content,kind=kind WHERE content_id=?').run(source.user_ref);
+ state.sqlite.prepare('UPDATE assistant_turns SET request_json=request_json WHERE turn_id=?').run(source.turn_id);
+ state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run('unrelated-no-such-content');
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_consumers').get().state,'active');
+ assert.equal((await(await import('../worker/memory-assistant-consumer.ts')).sweepSemanticAssistantMemory(state.env)),0);
+ assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,200);
+});
+
+test('semantic original lifecycle: legacy unregistered copies fail closed and sweep without rewriting accounting',async t=>{
+ const state=await semanticPaidConsumerFixture(t),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200);
+ const {memoryDerivationConsumerSourceSchemaProfile:profile}=await import('../worker/memory-derivation-consumer-source-schema.ts');
+ for(const name of profile.names.filter(n=>n!=='memory_derivation_consumer_sources'&&!n.startsWith('idx_')))state.sqlite.exec('DROP TRIGGER '+name);
+ state.sqlite.exec('DROP TABLE memory_derivation_consumer_sources');
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0062_memory_derivation_consumer_sources.sql',import.meta.url),'utf8'));
+ const before=adaptiveReentryFinancialState(state);
+ assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);
+ const {sweepSemanticAssistantMemory}=await import('../worker/memory-assistant-consumer.ts');
+ assert.equal(await sweepSemanticAssistantMemory(state.env),1);assert.equal(await sweepSemanticAssistantMemory(state.env),0);
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_consumers').get().state,'retired');
+ assert.equal(state.sqlite.prepare("SELECT content FROM private_content WHERE kind='execution-consent' AND content_id IN(SELECT content_id FROM memory_derivation_consumer_contents)").get().content,'');
+ assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const shared of [false,true])for(const erasure of ['original','turn','result'])test('semantic original D1: full conversation window and '+erasure+' retirement '+shared,{timeout:120000},async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared,prior:2}),{createRequire}=await import('node:module');
+ const {Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+ const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryOriginalLifecycle'],script:"export default {fetch(){return new Response('Synthetic only',{status:404});}}",outboundService(){throw Error('No external network');}});
+ t.after(()=>mf.dispose());const db=await mf.getD1Database('MemoryOriginalLifecycle');await install(db,exportSynthetic(state.sqlite));
+ const originals=new WeakMap();
+ const track=(raw,sql)=>{const wrapper={bind:(...values)=>track(raw.bind(...values),sql)};
+  for(const key of ['first','all','run','raw'])wrapper[key]=async(...args)=>{try{return await raw[key](...args);}catch(error){state.controls.lastDatabaseError=String(error)+' '+sql.slice(0,400);throw error;}};
+  originals.set(wrapper,{raw,sql});return wrapper;};
+ state.env.DB={prepare:sql=>track(db.prepare(sql),sql),batch:async statements=>{try{return await db.batch(statements.map(s=>originals.get(s)?.raw??s));}
+  catch(error){state.controls.lastDatabaseError=String(error)+' BATCH '+statements.map(s=>originals.get(s)?.sql.slice(0,130)).join(' | ');throw error;}}};
+ const {response,body:review}=await state.semanticQuote();assert.equal(response.status,200,JSON.stringify(review));
+ const original=globalThis.fetch;let calls=0;globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ assert.equal((await specialistExecute(state,review,state.semanticOptions)).status,202);await state.drainBackground();
+ const retrieved=await specialistRetrieve(state,review,state.semanticOptions),body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body));assert.equal(body.result?.sourceStatus,'semantic-memory-assisted',JSON.stringify({task:body.task,recoveryError:body.recoveryError})+' SQL '+state.controls.lastDatabaseError);
+ const sources=(await db.prepare('SELECT * FROM memory_derivation_consumer_sources ORDER BY turn_id').all()).results;assert.equal(sources.length,3);
+ const copies=(await db.prepare('SELECT content_id,role FROM memory_derivation_consumer_contents').all()).results;assert.equal(copies.length,3);
+ const before=await db.prepare('SELECT verified_tokens,verified_microusd,provider_request_id FROM consequential_execution_steps WHERE execution_id=?').bind(review.executionId).first();
+ if(erasure==='original')await db.prepare('DELETE FROM private_content WHERE content_id=?').bind(sources[0].user_ref).run();
+ if(erasure==='turn')await db.prepare('DELETE FROM assistant_turns WHERE turn_id=?').bind(sources[0].turn_id).run();
+ if(erasure==='result')await db.prepare("UPDATE private_content SET kind='chat-assistant',content='Not an original' WHERE content_id=?").bind(copies.find(r=>r.role==='result').content_id).run();
+ assert.equal((await db.prepare('SELECT state FROM memory_derivation_consumers').first()).state,'retired');
+ for(const copy of copies)assert.equal((await db.prepare('SELECT content FROM private_content WHERE content_id=?').bind(copy.content_id).first()).content,'');
+ assert.deepEqual((await db.prepare('SELECT * FROM memory_derivation_consumer_sources ORDER BY turn_id').all()).results,sources);
+ assert.deepEqual(await db.prepare('SELECT verified_tokens,verified_microusd,provider_request_id FROM consequential_execution_steps WHERE execution_id=?').bind(review.executionId).first(),before);
+ assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);assert.equal(calls,1);
+ assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+
+for(const shared of [false,true])test('semantic original lifecycle: original erased during dispatch retains accounting but no private response '+shared,async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared,prior:true}),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200);
+ const source=state.sqlite.prepare("SELECT user_ref FROM memory_derivation_consumer_sources WHERE turn_id='semantic-original-prior-turn'").get();
+ const original=globalThis.fetch;let calls=0;globalThis.fetch=async(_url,init)=>{calls++;state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(source.user_ref);return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ assert.equal((await specialistExecute(state,review,state.semanticOptions)).status,202);await state.drainBackground();
+ assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,1300);
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_consumers').get().state,'retired');
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content WHERE content_id IN(SELECT content_id FROM memory_derivation_consumer_contents) AND content<>''").get().n,0);
+ assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);assert.equal(calls,1);
 });

@@ -2730,3 +2730,12 @@ export const stillHistoryCache = sqliteTable('still_history_cache', {
   cacheKey:text('cache_key').primaryKey(), ownerId:text('owner_id').notNull(),
   createdAt:integer('created_at').notNull(), expiresAt:integer('expires_at').notNull(), body:text('body').notNull(),
 },table=>[index('idx_still_history_cache_expiry').on(table.expiresAt),index('idx_still_history_cache_owner').on(table.ownerId,table.createdAt)]);
+
+/** Immutable original-conversation dependencies, without copied source text. */
+export const memoryDerivationConsumerSources=sqliteTable('memory_derivation_consumer_sources',{
+ originId:text('origin_id').notNull().references(()=>memoryDerivationConsumers.originId),turnId:text('turn_id').notNull(),
+ userRef:text('user_ref').notNull(),answerRef:text('answer_ref').notNull(),
+},t=>[primaryKey({columns:[t.originId,t.turnId]}),
+ index('idx_memory_derivation_consumer_original_user').on(t.userRef),
+ index('idx_memory_derivation_consumer_original_answer').on(t.answerRef),
+ index('idx_memory_derivation_consumer_original_turn').on(t.turnId,t.originId)]);

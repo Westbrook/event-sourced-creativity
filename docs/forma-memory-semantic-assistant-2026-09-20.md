@@ -83,3 +83,8 @@ reconciliation rather than a cached success.
 Verified: 574 native Memory runtime checks, 200 finance/specialist checks, eight
 new metadata/settlement fault cases, TypeScript and changed-file lint. These
 reduce database work but do not yet close whole-invocation capacity qualification.
+
+[Original-conversation lifecycle](forma-memory-conversation-lifecycle-2026-09-20.md)
+now retains immutable input-reference inverses and retires all dependent private
+copies when an input turn or body is erased or rebound. Full three-turn D1
+journeys also fix binding/expression limits without removing atomic assertions.

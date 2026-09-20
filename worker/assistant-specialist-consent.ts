@@ -887,8 +887,8 @@ async function displayTask(env:WorkerEnv,actor:SpecialistActor,host:AssistantSpe
     &&(scope?hasCapability(actor.principal,"project.output.request",scope):actor.principal.access.capabilities.includes("project.output.request"))
     &&actor.principal.access.permissionEpoch===retained.binding.permissionEpoch
     &&!modelEligibility(env,actor,host,retained.request.taskKind,retained.binding.steps[0]!.model as AssistantModel,retained.request.explicitModel).length;
-  const proof=join(retentionProof(task,retained),executionAdmissionGuard(actor.principal,retained.binding,null,true),deadline(retained.request.sourceRightsValidUntil));
-  const current=await env.DB.prepare(`SELECT task.status,task.error_code,step.status AS submission,
+  const proof=join(retentionProof(task,retained,!retained.request.memory),executionAdmissionGuard(actor.principal,retained.binding,null,true),deadline(retained.request.sourceRightsValidUntil));
+  const statement=env.DB.prepare(`SELECT task.status,task.error_code,step.status AS submission,
     CASE WHEN ?=1 AND execution.status='reserved' AND execution.result_ref IS NULL AND execution.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ?=strftime('%Y-%m','now')
       AND step.status IN('quoted','reserved') AND step.verified_tokens IS NULL AND step.verified_microusd IS NULL AND step.provider_request_id IS NULL
       AND task.provider_submitted=0 AND(task.status='queued' OR task.status='running' AND task.lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -896,7 +896,18 @@ async function displayTask(env:WorkerEnv,actor:SpecialistActor,host:AssistantSpe
       AND ${proof.sql} THEN 1 ELSE 0 END AS can_execute
     FROM assistant_specialist_tasks task LEFT JOIN consequential_executions execution ON execution.execution_id=task.task_id AND execution.actor_user_id=task.actor_user_id
     LEFT JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id AND step.step_index=0 WHERE task.task_id=? AND task.actor_user_id=?`)
-    .bind(Number(eligible),retained.binding.period,...proof.bindings,task.task_id,actor.principal.userId).first<{status:string;error_code:string|null;submission:string|null;can_execute:number}>();
+    .bind(Number(eligible),retained.binding.period,...proof.bindings,task.task_id,actor.principal.userId);
+  type Current={status:string;error_code:string|null;submission:string|null;can_execute:number};
+  let current:Current|null;
+  if(retained.request.memory){
+    // Keep the complete negative ancestry tree separate from readiness CASEs.
+    // Both reads share one native snapshot; neither is an execute capability.
+    const negative=noMemoryProof(retained.request),checked=await env.DB.batch<Current&{negative:number}>([statement,
+      env.DB.prepare(`SELECT CASE WHEN (${negative.sql}) THEN 1 ELSE 0 END AS negative`).bind(...negative.bindings)]);
+    if(checked.length!==2||checked.some(r=>!r.success))fail('assistant_task_unavailable');
+    current=checked[0]!.results[0]??null;
+    if(current&&checked[1]!.results[0]?.negative!==1)current={...current,can_execute:0};
+  }else current=await statement.first<Current>();
   const submission=assistantSubmissionStatus(current?.submission);
   return{id:task.task_id,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:task.turn_id,kind:task.task_kind,model:task.selected_model,status:current?.status??task.status,error:current?.error_code??task.error_code,estimatedMicrousd:Number(task.estimated_microusd),submission,canExecute:current?.can_execute===1};
 }
@@ -1025,15 +1036,18 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
     const marked=await env.DB.prepare("UPDATE assistant_specialist_tasks SET provider_submitted=1,updated_at=? WHERE task_id=? AND actor_user_id=? AND status='running' AND json_extract(result_json,'$.leaseToken')=?").bind(new Date().toISOString(),taskId,currentActor.principal.userId,leaseToken).run();if(Number(marked.meta.changes??0)!==1)fail("assistant_dispatch_authorization_changed");
     const finalAuthority=executionAdmissionGuard(currentActor.principal,retained.binding,current.sourceHead,true);
     const readyProof=join(current.proof,join(taskRetention,lease,finalAuthority));
+    const splitReady=Boolean(retained.request.memory)||6+readyProof.bindings.length>100;
+    const inlineReady=splitReady?join(taskRetention,lease,finalAuthority):readyProof;
+    const readyChecks=splitReady?[env.DB.prepare(`SELECT CASE WHEN (${current.proof.sql}) THEN 1 ELSE json('assistant_dispatch_authorization_changed') END AS verified`).bind(...current.proof.bindings)]:[];
     const readyStatement=env.DB.prepare(`SELECT MIN(execution.expires_at,task.lease_expires_at,COALESCE(?,'9999-12-31T23:59:59.999Z'),
       COALESCE((SELECT expires_at FROM project_context_sessions WHERE context_id=?),'9999-12-31T23:59:59.999Z'),
       COALESCE((SELECT ends_at FROM pilot_cohorts WHERE cohort_id=?),'9999-12-31T23:59:59.999Z')) AS deadline
       FROM consequential_executions execution JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id AND step.step_index=0
       JOIN assistant_specialist_tasks task ON task.task_id=execution.execution_id WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.status='reserved' AND execution.result_ref IS NULL AND execution.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND step.status='submitting'
-        AND ?=strftime('%Y-%m','now') AND ${readyProof.sql}`)
-      .bind(current.sourceRightsValidUntil,retained.binding.contextSessionId,retained.binding.pilotCohortId,taskId,currentActor.principal.userId,retained.binding.period,...readyProof.bindings);
+        AND ?=strftime('%Y-%m','now') AND ${inlineReady.sql}`)
+      .bind(current.sourceRightsValidUntil,retained.binding.contextSessionId,retained.binding.pilotCohortId,taskId,currentActor.principal.userId,retained.binding.period,...inlineReady.bindings);
     const memory=semanticMemory(env,retained.request);
-    const ready=memory?(await env.DB.batch<{deadline:string}>([...semanticAssistantMemoryStatements(env,memory),readyStatement])).at(-1)?.results[0]
+    const ready=memory||splitReady?(await env.DB.batch<{deadline:string}>([...(memory?semanticAssistantMemoryStatements(env,memory):[]),...readyChecks,readyStatement])).at(-1)?.results[0]
       :await readyStatement.first<{deadline:string}>();
     if(!ready||!Number.isFinite(Date.parse(ready.deadline))||Date.now()>=Date.parse(ready.deadline)||new Date().toISOString().slice(0,7)!==retained.binding.period||!env.OPENAI_API_KEY||modelEligibility(env,currentActor,host,retained.request.taskKind,retained.binding.steps[0]!.model as AssistantModel,retained.request.explicitModel).length){await assertNoPaidMemory(env,noMemoryProof(retained.request));fail("assistant_dispatch_authorization_changed");}
     const started=Date.now();providerInvoked=true;

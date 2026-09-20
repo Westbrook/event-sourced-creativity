@@ -69,13 +69,40 @@ export function semanticAssistantMemoryContentStatements(env:WorkerEnv,handle:Se
  const c=current(env,handle);
  return [env.DB.prepare('INSERT INTO memory_derivation_consumer_contents(content_id,origin_id,role) VALUES(?,?,?)').bind(contentId,c.binding.originId,role)];
 }
+/** Exact original conversation inventory, not a cached access decision. The
+ * source table stores identities only; the existing private consent owns bytes.
+ * Missing pre-upgrade registration fails closed until the source-free sweeper
+ * retires that old origin. No migration fabricates source authority. */
+const originalsCurrent=`EXISTS(SELECT 1 FROM consequential_executions execution
+ JOIN private_content consent ON consent.content_id=execution.consent_ref AND consent.owner_id=consumer.actor_user_id
+ WHERE execution.execution_id=consumer.execution_id AND execution.actor_user_id=consumer.actor_user_id
+  AND consent.kind='execution-consent' AND consent.redacted_at IS NULL AND consent.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  AND json_type(consent.content,'$.binding.request.conversation')='array'
+  AND json_array_length(consent.content,'$.binding.request.conversation') BETWEEN 1 AND 16
+  AND json_array_length(consent.content,'$.binding.request.conversation')=(SELECT COUNT(*) FROM memory_derivation_consumer_sources WHERE origin_id=consumer.origin_id)
+  AND EXISTS(SELECT 1 FROM memory_derivation_consumer_sources WHERE origin_id=consumer.origin_id AND turn_id=consumer.turn_id)
+  AND NOT EXISTS(SELECT 1 FROM json_each(consent.content,'$.binding.request.conversation') expected
+   LEFT JOIN memory_derivation_consumer_sources source ON source.origin_id=consumer.origin_id AND source.turn_id=json_extract(expected.value,'$.turnId')
+    AND source.user_ref=json_extract(expected.value,'$.userRef') AND source.answer_ref=json_extract(expected.value,'$.answerRef')
+   LEFT JOIN assistant_turns turn ON turn.actor_user_id=consumer.actor_user_id AND turn.scope_key=consumer.scope_key
+    AND turn.turn_id=source.turn_id AND turn.user_content_ref=source.user_ref AND turn.assistant_content_ref=source.answer_ref
+   LEFT JOIN private_content authored ON authored.content_id=source.user_ref AND authored.owner_id=consumer.actor_user_id
+    AND authored.kind='chat-user' AND authored.redacted_at IS NULL AND authored.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    AND authored.content=json_extract(expected.value,'$.user')
+   LEFT JOIN private_content answer ON answer.content_id=source.answer_ref AND answer.owner_id=consumer.actor_user_id
+    AND answer.kind='chat-assistant' AND answer.redacted_at IS NULL AND answer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    AND answer.content=json_extract(expected.value,'$.assistant')
+   WHERE source.origin_id IS NULL OR turn.turn_id IS NULL OR authored.content_id IS NULL OR answer.content_id IS NULL))
+ AND NOT EXISTS(SELECT 1 FROM memory_derivation_consumer_contents registered LEFT JOIN private_content copy ON copy.content_id=registered.content_id
+  WHERE registered.origin_id=consumer.origin_id AND (copy.content_id IS NULL OR copy.owner_id<>consumer.actor_user_id OR copy.redacted_at IS NOT NULL
+    OR copy.expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now'))) `;
 /** Source-free expiry retirement: retains negative ancestry, never replays or
  * enrolls a user, and never removes usage/accounting or permits a repurchase. */
 export async function sweepSemanticAssistantMemory(env:WorkerEnv){
- const schema=await memoryDerivationSchema(env);if(!schema.consumersPresent)return 0;
+ const schema=await memoryDerivationSchema(env);if(!schema.consumersPresent||!schema.consumerSourcesPresent)return 0;
  const result=await env.DB.batch([derivationAssertion(env,schema.guard),env.DB.prepare(`UPDATE memory_derivation_consumers
   SET state='retired',retired_at=MAX(created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  WHERE origin_id IN(SELECT origin_id FROM memory_derivation_consumers WHERE state='active' AND expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY expires_at,origin_id LIMIT 16)`),env.DB.prepare('SELECT changes() AS retired')]);
+  WHERE origin_id IN(SELECT origin_id FROM memory_derivation_consumers consumer WHERE state='active' AND (expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') OR (${originalsCurrent}) IS NOT TRUE) ORDER BY expires_at,origin_id LIMIT 16)`),env.DB.prepare('SELECT changes() AS retired')]);
  if(!derivationResults(result,3)||!derivationVerified(result[0]!)||result[2]!.results.length!==1||!Number.isInteger(result[2]!.results[0]!.retired)||Number(result[2]!.results[0]!.retired)<0||Number(result[2]!.results[0]!.retired)>16)throw Error('assistant_memory_retirement_unconfirmed');
  return Number(result[2]!.results[0]!.retired);
 }
@@ -91,5 +118,6 @@ export function semanticAssistantMemoryRetentionGuard(env:WorkerEnv,handle:Seman
     consumer.scope_key,consumer.turn_id,consumer.execution_id,consumer.expires_at)=?
    AND consumer.state='active' AND consumer.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
    AND context.revision=consumer.context_revision AND context.state='accepted' AND context.actor_user_id=consumer.actor_user_id
-   AND context.job_id=consumer.job_id AND context.output_sha256=consumer.output_sha256 AND result.state='active' AND result.output_sha256=consumer.output_sha256)`,bindings:[expected]};
+   AND context.job_id=consumer.job_id AND context.output_sha256=consumer.output_sha256 AND result.state='active' AND result.output_sha256=consumer.output_sha256
+   AND ${originalsCurrent})`,bindings:[expected]};
 }
