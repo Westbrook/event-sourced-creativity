@@ -14492,6 +14492,63 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/memory-recall-boundary.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "MemoryRecallBoundaryControl",
+          "tagName": "forma-memory-recall-boundary",
+          "customElement": true,
+          "summary": "Memory recall boundary application interface.",
+          "description": "Application-connected memory recall boundary interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "currentCheck",
+              "type": {
+                "text": "(() => boolean) | undefined"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "enrollment",
+              "type": {
+                "text": "MemoryEnrollment | undefined"
+              }
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-memory-recall-boundary",
+          "declaration": {
+            "name": "MemoryRecallBoundaryControl",
+            "module": "src/components/memory-recall-boundary.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "MemoryRecallBoundaryControl",
+          "declaration": {
+            "name": "MemoryRecallBoundaryControl",
+            "module": "src/components/memory-recall-boundary.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/model3d-geometry-editor.ts",
       "declarations": [
         {

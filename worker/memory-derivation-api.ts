@@ -8,7 +8,7 @@ import { requireUser, requireConsent, type PilotUser } from "./pilot-policy.ts";
 import { prepareDocumentAuthority } from "./context-authoring-authority.ts";
 import { executionAdmissionGuard } from "./consequential-consent.ts";
 import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-custody.ts";
-import { liveMemoryAuthority, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
+import { liveMemoryAuthority, liveMemoryAuthorityFromPrincipal, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import { memoryCanonical, type MemorySqlGuard } from "./memory-sql.ts";
 import { MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, MEMORY_DERIVATION_PURPOSES, DERIVATION_QUALIFICATION_COLUMNS,
   derivationExact, derivationConsentId, derivationHash, derivationId, derivationInteger, derivationTime, parseMemoryDerivationQualification,
@@ -30,7 +30,7 @@ const reply = (value: Row, status = 200) => {
 const deny = (error: string, status = 400) => reply({ error }, status);
 const privateResponse = (response: Response) => new Response(response.body, { status: response.status, headers: { ...Object.fromEntries(response.headers), ...headers } });
 const failure = () => deny("memory_derivation_commit_delivery_unconfirmed", 503);
-const parentColumns = ["enrollment_id", "actor_user_id", "owner_user_id", "organization_id", "project_access_id", "project_id", "document_id",
+export const parentColumns = ["enrollment_id", "actor_user_id", "owner_user_id", "organization_id", "project_access_id", "project_id", "document_id",
   "permission_epoch", "policy_version", "revision", "learn_enabled", "recall_enabled", "background_enabled", "retention_days", "time_zone",
   "enrolled_at", "expires_at", "cursor_sequence", "cutoff_sequence", "last_local_day", "last_admitted_at", "next_due_at", "lease_token", "lease_expires_at", "attempts", "failure_code"] as const;
 const clock = (before: string): MemorySqlGuard => ({ condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now')", bindings: [before] });
@@ -56,7 +56,7 @@ function inventoryGuard(table: "memory_derivation_grants" | "memory_derivation_q
   return { condition: `(SELECT json_group_array(json_array(${columns.join(",")})) FROM
     (SELECT ${columns.join(",")} FROM ${table} WHERE ${where} ORDER BY ${order}))=?`, bindings: [...bindings, value] };
 }
-async function bodyOf(request: Request, maximumBytes = 4096): Promise<Row | null> {
+export async function bodyOf(request: Request, maximumBytes = 4096): Promise<Row | null> {
   if (!request.body || request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return null;
   const reader = request.body.getReader(), decoder = new TextDecoder("utf-8", { fatal: true });
   let text = "", length = 0;
@@ -101,7 +101,7 @@ async function scope(request: Request, env: WorkerEnv, actor: PilotUser, project
 /** Read-only inventory/control authority. Source identities and current custody
  * are proved natively; a presentation GET never hydrates the whole project or
  * rebuilds its index (which can retire otherwise valid retained results). */
-async function readScope(request:Request,env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string){
+export async function readScope(request:Request,env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string){
   const db=env.DB,consent=requireConsent(actor);if(consent)return privateResponse(consent);
   if(actor.projectExecution||actor.billingUserId&&actor.billingUserId!==actor.userId)return deny('memory_derivation_self_payer_required',403);
   const selected=await readProjectRequestContext(request,env,actor);if(selected.response)return privateResponse(selected.response);
@@ -117,7 +117,7 @@ async function readScope(request:Request,env:WorkerEnv,actor:PilotUser,projectId
   if(parent.policy_version!=='personal-memory-v2'||parent.permission_epoch!==actor.access.permissionEpoch||parent.learn_enabled!==1
     ||!derivationTime(parent.expires_at)||parent.expires_at<=new Date().toISOString()
     ||['forgotten','erased','access-changed','revoked'].includes(parent.failure_code??''))return deny('memory_derivation_parent_unavailable',409);
-  const authority=await liveMemoryAuthority(env,parent);if(!authority)return deny('memory_derivation_authority_unavailable',403);
+  const authority=liveMemoryAuthorityFromPrincipal(env,parent,actor);if(!authority)return deny('memory_derivation_authority_unavailable',403);
   const binding={...authority.binding,contextSessionId:context?.contextId??null},admission=executionAdmissionGuard(actor,binding,null);
   const guards:MemorySqlGuard[]=[{condition:admission.sql,bindings:admission.bindings},authority.guard,liveMemoryEnrollmentGuard(parent,'learn'),
     derivationRowGuard('memory_live_enrollments',parentColumns,parent)];
@@ -128,7 +128,7 @@ async function readScope(request:Request,env:WorkerEnv,actor:PilotUser,projectId
       bindings:[...query.bindings,JSON.stringify(results[0]!.results.map(row=>[row.declaration,row.lifecycle,row.custody]))]});
   }});
   if(!identity||env.DB!==db)return deny('memory_derivation_scope_unavailable',403);
-  return {parent,prepared:{principal:actor,binding,sourceHead:null},guards};
+  return {parent,prepared:{principal:actor,binding,sourceHead:null},guards,accessDeadline:context?.expiresAt??null};
 }
 
 /** Original actors may inspect their own consent metadata to withdraw it even
@@ -391,6 +391,13 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
       JOIN memory_derivation_jobs j ON j.job_id=r.job_id JOIN memory_derivation_grants g ON g.consent_id=j.consent_id
       WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>?
         AND r.state='active' AND r.expires_at>?${purpose?' AND g.purpose=?':''} AND (j.through_sequence<? OR j.through_sequence=? AND j.job_id>?)
+        ${purpose&&!after?`AND NOT EXISTS(SELECT 1 FROM memory_derivation_results newer
+          JOIN memory_derivation_jobs newer_job ON newer_job.job_id=newer.job_id
+          JOIN memory_derivation_grants newer_grant ON newer_grant.consent_id=newer_job.consent_id
+          WHERE newer_grant.enrollment_id=g.enrollment_id AND newer_grant.actor_user_id=g.actor_user_id
+            AND newer_grant.purpose=g.purpose AND newer_grant.revoked_at IS NULL
+            AND newer_grant.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            AND (newer_job.through_sequence>j.through_sequence OR newer_job.through_sequence=j.through_sequence AND newer_job.job_id<j.job_id))`:''}
       ORDER BY j.through_sequence DESC,j.job_id LIMIT 9`;
     const bindings=[scopeKey,selected.parent.enrollment_id,actor.userId,now,now,...(purpose?[purpose]:[]),afterSequence,afterSequence,after],found=await rows(env,query,bindings);
     const columns=['job_id','purpose','scope_key','expires_at'];

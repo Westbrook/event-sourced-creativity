@@ -15945,3 +15945,181 @@ for(const shared of [false,true])test('native behavioral reuse: one approved out
   assert.equal(source.behavioralSources.some(row=>row.action==='reuse'),false);assert.equal(source.observations.filter(row=>row.action==='reuse').length,2);
   assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_live_enrollments').get().n,1,'Copy does not enroll the original source document');
 });
+
+for (const shared of [false,true]) test('native recall boundary: explicit consent, revision fencing and enrollment inverse '+shared,async t=>{
+ const state=await nativeMemoryJobFixture(t,{shared}),{readFile}=await import('node:fs/promises');
+ state.sqlite.exec(await readFile(new URL('../drizzle/0059_memory_recall_boundaries.sql',import.meta.url),'utf8'));
+ const {handleMemoryRecallBoundary}=await import('../worker/memory-recall-boundary-api.ts');
+ const path='http://localhost/api/memory/recall-boundary?projectId=project-atmosphere&documentId=doc-atmosphere';
+ const request=(method='GET',body)=>handleMemoryRecallBoundary(new Request(path,{method,headers:{...state.owner,origin:'http://localhost',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),state.env);
+ let response=await request(),view=await response.json();assert.equal(response.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);
+ assert.equal(view.boundary,'document');assert.equal(view.revision,null);
+ const command={version:'memory-scope-recall-v1',enrollmentId:view.enrollmentId,enrollmentRevision:view.enrollmentRevision,boundary:'project-tree',revision:null,confirmation:'CHANGE_RECALL_BOUNDARY'};
+ response=await request('PUT',command);assert.equal(response.status,200,await response.clone().text()+' '+state.controls.lastDatabaseError);
+ assert.equal((await request('PUT',command)).status,409);
+ view=await(await request()).json();assert.equal(view.boundary,'project-tree');assert.ok(view.revision);
+ state.sqlite.prepare('UPDATE memory_live_enrollments SET cursor_sequence=cursor_sequence+1 WHERE enrollment_id=?').run(view.enrollmentId);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_recall_boundaries').get().n,1);
+ state.sqlite.prepare('UPDATE memory_live_enrollments SET revision=revision+1 WHERE enrollment_id=?').run(view.enrollmentId);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_recall_boundaries').get().n,0);
+ assert.equal((await request('DELETE',{confirmation:'RESET_RECALL_BOUNDARY'})).status,200);
+});
+
+async function nativeCrossScopeRecallFixture(t,{shared=false,seed=null,targetProjectId=null}={}){
+ const state=seed??await nativeDerivationResultFixture(t,{shared,userControls:true,lifecycle:true,indexIntents:true});
+ if(!seed)assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+ const {readFile}=await import('node:fs/promises');
+ for(const name of ['0058_project_containment.sql','0059_memory_recall_boundaries.sql'])state.sqlite.exec(await readFile(new URL('../drizzle/'+name,import.meta.url),'utf8'));
+ const source=state.current(),targetDocument='recall-target-document',targetProject=targetProjectId??source.project_id;
+
+ if(targetProjectId){const created=await state.request('/api/events',json({action:'append',event:{type:'ProjectCreated',payload:{project_id:targetProject,name:'Isolated target project'}}},state.owner));assert.equal(created.status,200,await created.clone().text());}
+ const created=await state.request('/api/events',json({action:'append',event:{type:'DocumentCreated',payload:{project_id:targetProject,document_id:targetDocument,title:'Isolated target',slug:targetDocument}}},state.owner));
+ assert.equal(created.status,200,await created.clone().text());
+ const enrolled=await state.handleLiveMemory(state.settingsRequest({...state.preferences,projectId:targetProject,documentId:targetDocument,revision:0}),state.env,'settings');
+ assert.equal(enrolled.status,200,await enrolled.clone().text());
+ const target=(await enrolled.json()).enrollment;
+ const {handleMemoryRecallBoundary}=await import('../worker/memory-recall-boundary-api.ts');
+ const request=(route='recall-scopes',documentId=targetDocument,{method='GET',body,query={}}={})=>handleMemoryRecallBoundary(new Request('http://localhost/api/memory/'+route+'?'+new URLSearchParams({projectId:documentId===source.document_id?source.project_id:targetProject,documentId,...query}),
+  {method,headers:{...state.owner,origin:'http://localhost',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),state.env);
+ const widen=async(boundary='project')=>{const view=await(await request('recall-boundary',source.document_id)).json();const response=await request('recall-boundary',source.document_id,{method:'PUT',body:{version:'memory-scope-recall-v1',enrollmentId:source.enrollment_id,enrollmentRevision:source.revision,boundary,revision:view.revision,confirmation:'CHANGE_RECALL_BOUNDARY'}});assert.equal(response.status,200,await response.clone().text());};
+ return Object.assign(state,{recallRequest:request,widen,recallSource:source,recallTarget:target});
+}
+for(const shared of [false,true])test('native cross-scope recall: default isolation and independently authorized preview '+shared,async t=>{
+ const state=await nativeCrossScopeRecallFixture(t,{shared}),before=adaptiveReentryFinancialState(state);
+ let response=await state.recallRequest(),view=await response.json();assert.equal(response.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);assert.deepEqual(view.sources,[]);
+ await state.widen();response=await state.recallRequest();view=await response.json();assert.equal(response.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);
+ assert.equal(view.sources.length,1);assert.equal(view.sources[0].zoom,'project');assert.equal(view.sources[0].weight,.7);
+ const db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0,statements=0;
+ const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;statements++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+ db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;statements+=inputs.length;return batch.call(this,inputs.map(input=>originals.get(input)??input));};
+ try{response=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}});}finally{db.prepare=prepare;db.batch=batch;}
+ view=await response.json();assert.equal(response.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);
+ assert.equal(view.presentationOnly,true);assert.equal(view.independentEvidence,false);assert.equal(view.presentation.candidate.items.length,1);assert.ok(!Object.hasOwn(view.presentation,'controlRevisions'));
+ t.diagnostic(JSON.stringify({operations,statements}));assert.ok(operations<50,'Complete cross-scope request: '+operations);
+ assert.deepEqual(adaptiveReentryFinancialState(state),before);
+ await state.recallRequest('recall-boundary',state.recallSource.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});
+ assert.equal((await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}})).status,404);
+});
+
+for(const fault of ['source-consent','target-consent','source-content','hierarchy','schema','target-removed','lost-ack'])test('native cross-scope recall: late '+fault+' denies stale presentation',async t=>{
+ const state=await nativeCrossScopeRecallFixture(t);await state.widen();const db=state.env.DB,batch=db.batch;let fired=false;
+ const financial=adaptiveReentryFinancialState(state);
+ db.batch=async function(statements){
+  const relevant=statements.some(s=>s.sql.includes('memory_recall_boundaries'))&&statements.some(s=>s.sql.includes('memory_derivation_results'));
+  if(!fired&&relevant){fired=true;
+   if(fault==='source-consent')state.sqlite.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').run(state.recallSource.enrollment_id);
+   if(fault==='target-consent')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.recallTarget.id);
+   if(fault==='source-content'){const ref=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture).originalBacking[0].contentRef;state.sqlite.prepare('UPDATE private_content SET content=content||? WHERE content_id=?').run(' changed',ref);}
+   if(fault==='hierarchy')state.sqlite.prepare("INSERT INTO project_containment VALUES(?,?,?,NULL,NULL,NULL,? ,?)").run(state.recallSource.owner_user_id,state.recallSource.project_id,state.sqlite.prepare("SELECT event_id FROM events WHERE type='ProjectCreated' AND json_extract(payload,'$.project_id')=?").get(state.recallSource.project_id).event_id,crypto.randomUUID(),new Date().toISOString());
+   if(fault==='schema')state.sqlite.exec('DROP TRIGGER memory_recall_boundaries_parent_change');
+   if(fault==='target-removed')await(await import('../worker/runtime.ts')).appendAuditEvent(state.env,'creative:'+state.recallSource.owner_user_id,'user:'+state.recallSource.actor_user_id,'DocumentRemoved',{project_id:state.recallSource.project_id,document_id:state.recallTarget.documentId});
+   if(fault==='lost-ack'){await batch.call(this,statements);return[];}
+  }
+  return batch.call(this,statements);
+ };
+ let response;try{response=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}});}finally{db.batch=batch;}
+ assert.equal(fired,true);assert.equal(response.status,503,await response.clone().text());assert.ok(!Object.hasOwn(await response.json(),'presentation'));
+ assert.deepEqual(adaptiveReentryFinancialState(state),financial);
+});
+
+test('native cross-scope recall: query compilation stays within native D1 limits',async t=>{
+ const state=await nativeCrossScopeRecallFixture(t);await state.widen();
+ const {enforceD1ExpressionDepth}=await import('./helpers/d1-expression-depth.mjs');
+ const depth=enforceD1ExpressionDepth(state,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});t.after(()=>depth.restore());
+ for(const args of [[],['recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}}]]){
+  const response=await state.recallRequest(...args);assert.equal(response.status,200,await response.clone().text()+' '+state.controls.lastDatabaseError);
+ }
+ assert.ok(depth.records.length>0);
+});
+
+for(const shared of [false,true])for(const paid of [false,true])test('native cross-scope recall: resource-rich three-window budget '+shared+'/'+paid,async t=>{
+ let state;await nativeDerivationRollingFixture(t,{shared,paid,windows:3,termOverrides:{recipeVersion:'memory-derivation-candidates-v2'},beforeWindow:async(seed,index)=>{
+  if(index===0)state=await nativeCrossScopeRecallFixture(t,{shared,seed});await appendMixedProducerResources(seed,index,true);
+ }});await state.widen();
+ const latest=state.sqlite.prepare('SELECT r.manifest_json FROM memory_derivation_results r JOIN memory_derivation_jobs j USING(job_id) ORDER BY j.through_sequence DESC LIMIT 1').get();
+ const admittedWindows=(JSON.parse(latest.manifest_json).history?.windowJobIds.length??0)+1;
+ const db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0,statements=0,maximumBatch=0;
+ const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;statements++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+ db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;statements+=inputs.length;maximumBatch=Math.max(maximumBatch,inputs.length);return batch.call(this,inputs.map(input=>originals.get(input)??input));};
+ let response;try{response=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}});}finally{db.prepare=prepare;db.batch=batch;}
+ const view=await response.json();assert.equal(response.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);
+ assert.equal(view.presentation.history.windowCount,admittedWindows);assert.equal(view.presentation.candidate.version,'memory-derivation-candidates-v2');assert.ok(view.presentation.candidate.items[0].observationCitations.length);
+ t.diagnostic(JSON.stringify({operations,statements,maximumBatch,admittedWindows}));assert.ok(operations<50,'Full three-window cross-scope request: '+operations);assert.ok(maximumBatch<=100);
+});
+
+test('native cross-scope recall: nested project relevance changes after actual reparenting',async t=>{
+ const state=await nativeCrossScopeRecallFixture(t,{targetProjectId:'recall-target-project'}),{handleProjectContainment}=await import('../worker/project-containment-api.ts');
+ const create=await state.request('/api/events',json({action:'append',event:{type:'ProjectCreated',payload:{project_id:'recall-root-project',name:'Isolated parent'}}},state.owner));assert.equal(create.status,200);
+ const move=async(projectId,parentId)=>{
+  const view=await(await handleProjectContainment(new Request('http://localhost/api/projects/containment?projectId='+projectId,{headers:state.owner}),state.env)).json();
+  const response=await handleProjectContainment(new Request('http://localhost/api/projects/containment',{...json({projectId,parentId,revision:view.revision},{...state.owner,origin:'http://localhost'}),method:'PATCH'}),state.env);
+  assert.equal(response.status,200,await response.clone().text());
+ };
+ await move(state.recallSource.project_id,'recall-root-project');await move('recall-target-project','recall-root-project');
+ await state.widen('project');assert.deepEqual((await(await state.recallRequest()).json()).sources,[]);
+ await state.widen('project-tree');let response=await state.recallRequest(),view=await response.json();assert.equal(response.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);
+ assert.equal(view.sources[0].zoom,'project-tree');assert.equal(view.sources[0].distance,2);assert.equal(view.sources[0].weight,.5/3);
+ response=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}});assert.equal(response.status,200,await response.clone().text());
+ await move('recall-target-project',null);assert.deepEqual((await(await state.recallRequest()).json()).sources,[]);
+ assert.ok(await state.readResult(),'Reparenting does not erase independently valid document-local memory');
+ await state.widen('partition');view=await(await state.recallRequest()).json();assert.equal(view.sources[0].zoom,'partition');assert.equal(view.sources[0].weight,.01);
+});
+
+test('native cross-scope recall: withdrawing newest result never revives an older result',async t=>{
+ let state;await nativeDerivationRollingFixture(t,{windows:2,beforeWindow:async(seed,index)=>{if(!index)state=await nativeCrossScopeRecallFixture(t,{seed});}});await state.widen();
+ const store=await import('../worker/memory-derivation-results.ts'),jobs=state.queue().jobs.sort((a,b)=>a.through_sequence-b.through_sequence);
+ assert.equal(await store.withdrawNativeDerivationResult(state.env,state.recallSource.actor_user_id,jobs.at(-1).job_id),true);
+ assert.ok(await store.readNativeDerivationResult(state.env,state.recallSource.actor_user_id,jobs[0].job_id));
+ const {handleMemoryDerivationResults}=await import('../worker/memory-derivation-api.ts');
+ const latest=await handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?'+new URLSearchParams({projectId:state.recallSource.project_id,documentId:state.recallSource.document_id,purpose:'rolling-summary'}),{headers:state.owner}),state.env);
+ assert.equal(latest.status,200,await latest.clone().text());assert.deepEqual((await latest.json()).results,[],'Automatic latest-purpose reads must not revive older active results');
+
+ const response=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}});
+ assert.equal(response.status,503);assert.ok(!Object.hasOwn(await response.json(),'presentation'));
+});
+
+test('native cross-scope recall: three admitted original windows survive the additional scope proof',async t=>{
+ let state;await nativeDerivationRollingFixture(t,{windows:3,beforeWindow:async(seed,index)=>{if(!index)state=await nativeCrossScopeRecallFixture(t,{seed});}});await state.widen();
+ const response=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}}),view=await response.json();
+ assert.equal(response.status,200,JSON.stringify(view));assert.equal(view.presentation.history.windowCount,3);assert.equal(view.presentation.history.originalPairs,3);
+});
+
+test('native cross-scope recall: newly indexed original custody retires source Memory without fallback',async t=>{
+ const seed=await nativeDerivationRollingFixture(t,{shared:true,paid:true,windows:3,termOverrides:{recipeVersion:'memory-derivation-candidates-v2'},beforeWindow:(state,index)=>appendMixedProducerResources(state,index,true)});
+ const latest=seed.sqlite.prepare('SELECT r.job_id,r.state FROM memory_derivation_results r JOIN memory_derivation_jobs j USING(job_id) ORDER BY j.through_sequence DESC LIMIT 1').get();assert.equal(latest.state,'active');
+
+ const state=await nativeCrossScopeRecallFixture(t,{shared:true,seed});await state.widen();
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_results WHERE job_id=?').get(latest.job_id).state,'withdrawn');
+ const response=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}});assert.equal(response.status,503,await response.clone().text());assert.ok(!Object.hasOwn(await response.json(),'presentation'));
+});
+
+test('native cross-scope recall: isolated actual D1 enforces the same consent and privacy boundary',{timeout:180000},async t=>{
+ const state=await nativeCrossScopeRecallFixture(t,{shared:true});await state.widen();
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+ const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['ScopedRecall'],
+  script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('No external network');}});
+ t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const actual=await mf.getD1Database('ScopedRecall');await install(actual,exportSynthetic(state.sqlite));state.env.DB=actual;
+ const response=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}});
+ assert.equal(response.status,200,await response.clone().text());assert.equal((await response.json()).presentationOnly,true);
+ await actual.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').bind(state.recallSource.enrollment_id).run();
+ assert.equal((await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}})).status,404);
+});
+
+for(const fault of ['foreign-keys','checks'])test('native recall boundary: disabled database protection refuses consent '+fault,async t=>{
+ const state=await nativeMemoryJobFixture(t),{readFile}=await import('node:fs/promises');state.sqlite.exec(await readFile(new URL('../drizzle/0059_memory_recall_boundaries.sql',import.meta.url),'utf8'));
+ const {handleMemoryRecallBoundary}=await import('../worker/memory-recall-boundary-api.ts');state.sqlite.exec(fault==='foreign-keys'?'PRAGMA foreign_keys=OFF':'PRAGMA ignore_check_constraints=ON');
+ const response=await handleMemoryRecallBoundary(new Request('http://localhost/api/memory/recall-boundary?projectId=project-atmosphere&documentId=doc-atmosphere',{...json({version:'memory-scope-recall-v1',enrollmentId:state.current().enrollment_id,enrollmentRevision:state.current().revision,boundary:'partition',revision:null,confirmation:'CHANGE_RECALL_BOUNDARY'},{...state.owner,origin:'http://localhost'}),method:'PUT'}),state.env);
+ assert.equal(response.status,503);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_recall_boundaries').get().n,0);
+});
+
+for(const kind of ['grant','selected-session'])test('native recall boundary: presentation ends at original '+kind+' deadline',async t=>{
+ const expiry=new Date(Date.now()+15000).toISOString(),state=await nativeMemoryJobFixture(t,{shared:kind==='selected-session',beforeEnrollment:async state=>{
+  if(kind==='grant'){const user=state.owner['oai-authenticated-user-id'],now=new Date().toISOString();state.sqlite.prepare(`INSERT INTO capability_grants(grant_id,user_id,capability,scope_type,status,granted_by_user_id,created_at,updated_at,expires_at) VALUES('short-recall-grant',?,'product.delivery.read','platform','active',?,?,?,?)`).run(user,user,now,now,expiry);}
+ }});
+ if(kind==='selected-session')state.sqlite.prepare('UPDATE project_context_sessions SET expires_at=?').run(expiry);
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0059_memory_recall_boundaries.sql',import.meta.url),'utf8'));
+ const {handleMemoryRecallBoundary}=await import('../worker/memory-recall-boundary-api.ts');
+ const response=await handleMemoryRecallBoundary(new Request('http://localhost/api/memory/recall-boundary?projectId=project-atmosphere&documentId=doc-atmosphere',{headers:state.owner}),state.env);
+ assert.equal(response.status,200,await response.clone().text());assert.equal((await response.json()).validUntil,expiry);
+});

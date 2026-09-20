@@ -26,6 +26,7 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
   const calls=[],errors=[];page.on('pageerror',error=>errors.push(error.message));
   await context.route('**/api/memory/**',async route=>{const request=route.request(),url=new URL(request.url());calls.push({method:request.method(),path:url.pathname,query:url.search,automatic:request.headers()['x-forma-memory-consumer']==='document-brief-v1'});
     expect(url.origin).toBe(origin);expect(request.method()).toBe('GET');
+    if(url.pathname==='/api/memory/recall-scopes')return route.fulfill({json:{version:'memory-scope-recall-v1',sources:[],validUntil:new Date(Date.now()+25000).toISOString(),complete:true}});
     if(url.pathname==='/api/memory/settings'&&!url.search)return route.fulfill({json:settings});
     if(url.pathname==='/api/memory/recall'){
       expect(url.searchParams.get('id')).toBe(item.id);

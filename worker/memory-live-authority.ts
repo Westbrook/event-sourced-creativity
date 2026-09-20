@@ -45,7 +45,7 @@ export async function liveMemoryAuthority(env:WorkerEnv,e:LiveMemoryEnrollment):
   return liveMemoryAuthorityFromPrincipal(env,e,principal);
 }
 
-function liveMemoryAuthorityFromPrincipal(env:WorkerEnv,e:LiveMemoryEnrollment,principal:PilotUser|null):LiveMemoryAuthority|null {
+export function liveMemoryAuthorityFromPrincipal(env:WorkerEnv,e:LiveMemoryEnrollment,principal:PilotUser|null):LiveMemoryAuthority|null {
   if(!principal || principal.access.permissionEpoch!==e.permission_epoch || e.policy_version!==LIVE_MEMORY_POLICY)return null;
   const scope=e.organization_id&&e.project_access_id?{organizationId:e.organization_id,projectAccessId:e.project_access_id,
     projectId:e.project_id,ownerUserId:e.owner_user_id,actorUserId:e.actor_user_id}:null;

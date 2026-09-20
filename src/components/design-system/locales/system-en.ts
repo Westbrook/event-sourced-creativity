@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.bz37n4.45": "Memory recall boundary application interface.",
+  "system.auto.140i2bg.141": "Application-connected memory recall boundary interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
   "system.auto.1hqj2xr.42": "Project containment application interface.",
   "system.auto.hchofh.79": "Explicit, short-lived structure editing. Never writes grants or enrolls Memory.",
   "system.auto.1m1532o.44": "Document memory brief application interface.",

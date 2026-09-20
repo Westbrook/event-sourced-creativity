@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.bz37n4.45": "メモリ想起範囲のアプリケーションインターフェース。",
+  "system.auto.140i2bg.141": "アプリケーションに接続されたメモリ想起範囲のインターフェースです。構成する前に実際の属性、JavaScript プロパティ、イベントを確認してください。",
   "system.auto.1hqj2xr.42": "プロジェクト階層のアプリケーションインターフェース。",
   "system.auto.hchofh.79": "明示的で有効期限の短い構造編集。権限の付与やメモリの登録は行いません。",
   "system.auto.1m1532o.44": "ドキュメントのメモリ概要用インターフェース。",

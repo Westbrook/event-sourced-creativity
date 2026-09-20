@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.bz37n4.45": "Interface de portée du rappel de mémoire.",
+  "system.auto.140i2bg.141": "Interface de portée du rappel de mémoire connectée à l’application. Vérifiez ses attributs, propriétés JavaScript et événements réels avant de la composer.",
   "system.auto.1hqj2xr.42": "Interface de hiérarchie des projets.",
   "system.auto.hchofh.79": "Modification explicite et temporaire de la structure. Ne modifie jamais les droits et n’active pas la mémoire.",
   "system.auto.1m1532o.44": "Interface applicative du résumé de mémoire du document.",

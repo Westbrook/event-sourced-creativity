@@ -1,3 +1,4 @@
+import './memory-recall-boundary.ts';
 import { html, nothing } from "lit";
 import { FormaElement } from "./forma-element";
 import { requestDialogConfirmation } from "./modal-dialog.ts";
@@ -1449,7 +1450,7 @@ export class FormaPersonalMemory extends FormaElement {
           ${row === selected && row.recall ? html`<p>${this.#t("inspectHelp")}</p>` : nothing}
           ${row === selected && row.recall ? html`<p>${this.#t("exportHelp")}</p>` : nothing}
           ${this.#revealed?.id === row.id && this.#revealed.current() ? this.#recallView(this.#revealed.lease.value, row) : nothing}
-          ${row === selected && owner.sourceCurrent() ? html`${this.#renderProfile(row)}${this.#renderPurposes(row)}` : nothing}
+          ${row === selected && owner.sourceCurrent() ? html`<forma-memory-recall-boundary .enrollment=${row} .currentCheck=${owner.sourceCurrent}></forma-memory-recall-boundary>${this.#renderProfile(row)}${this.#renderPurposes(row)}` : nothing}
         </article>`)}</div>
       ` : nothing}
     </section>`;

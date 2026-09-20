@@ -86,3 +86,7 @@ Hosted adapters/scheduling/provider qualification, benchmark cap and explicit us
 enrollment remain separate operational gates. See the current
 [native continuation](forma-memory-native-continuation-2026-09-18.md) and
 [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
+
+## Subsequent integration
+
+[Native cross-scope recall](forma-memory-cross-scope-recall-2026-09-19.md) now consumes this hierarchy with separate source-side consent and independent source/target access. These bounded views do not confer durable publication authority or erase independently valid document-local results when projects move.

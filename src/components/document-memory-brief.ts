@@ -68,6 +68,7 @@ export class DocumentMemoryBrief extends FormaElement {
       ${value?html`<p class="memory-brief-disclosure">${this.#t('briefDisclosure')}</p>
         ${value.sections.filter(section=>section.items.length||section.corrections.length).map(section=>html`<section>
           <h3>${this.#t('purpose.'+section.purpose)}</h3>
+          ${section.source?html`<p>${section.source.documentId} · ${this.#t('recallBoundary.'+section.source.zoom)}</p><p class="memory-brief-disclosure">${this.#t('recallBoundaryPreview')}</p>`:nothing}
           ${section.corrections.map(control=>html`<p class="memory-brief-correction"><strong>${this.#t('reviewAction.corrected')}</strong> ${control.correctionText}</p>`)}
           <ul>${section.items.map(item=>html`<li><p>${item.text}</p>${item.citationStatus==='conflicting-citations'?html`<strong>${this.#t('briefConflict')}</strong>`:nothing}
             <details><summary>${this.#t(item.observationCitations?.length?'behavioralEvidence':'briefEvidence')}</summary>

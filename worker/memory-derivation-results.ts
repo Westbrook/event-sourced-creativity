@@ -128,11 +128,16 @@ const reads = new WeakMap<NativeDerivationResultRead, { env: WorkerEnv; db: Work
 
 /** actorUserId comes from the authenticated native principal, never request JSON.
  * No result body is read before that actor's current scope/purpose proof. */
-export async function readNativeDerivationResult(env: WorkerEnv, actorUserId: string, jobId: string): Promise<NativeDerivationResultRead | null> {
+async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
+  consumer?: { enrollmentId: string; enrollmentRevision: number; guards: readonly MemorySqlGuard[] }): Promise<NativeDerivationResultRead | null> {
   try {
     if (!derivationHash(jobId)) return null;
     const db = env.DB, evidence = await observeNativeDerivationJob(env, actorUserId, jobId);
     if (!evidence || !nativeDerivationEvidenceInputs(env,evidence).resultsPresent || env.DB !== db) return null;
+    if (consumer) {
+      const parent = nativeDerivationEvidenceInputs(env, evidence).enrollment;
+      if (!parent || parent.enrollment_id !== consumer.enrollmentId || parent.revision !== consumer.enrollmentRevision || !consumer.guards.length) return null;
+    }
     const row = await resultRow(env, jobId);
     if (!row || row.state !== 'active' || typeof row.raw_json !== 'string' || typeof row.manifest_json !== 'string'
       || typeof row.expires_at !== 'string' || row.expires_at <= new Date().toISOString()
@@ -149,10 +154,20 @@ export async function readNativeDerivationResult(env: WorkerEnv, actorUserId: st
     if (!candidate) return null;
     const handle = Object.freeze({}) as NativeDerivationResultRead;
     reads.set(handle, { env, db, row, capture: captured.capture, manifest, candidate, dependencies: expected });
-    const proof = nativeDerivationResultStatements(env, handle), checked = structuredClone(await db.batch<Record<string, unknown>>(proof));
+    const proof = [...nativeDerivationResultStatements(env, handle), ...(consumer?.guards.map(guard => derivationAssertion(env, guard)) ?? [])],
+      checked = structuredClone(await db.batch<Record<string, unknown>>(proof));
     if (env.DB !== db || !derivationResults(checked, proof.length) || !checked.every(validProof)) { reads.delete(handle); return null; }
     nativeDerivationResultInputs(env, handle); return handle;
   } catch { return null; }
+}
+export const readNativeDerivationResult = (env: WorkerEnv, actorUserId: string, jobId: string) => readResult(env, actorUserId, jobId);
+
+/** Ephemeral presentation only. Never returns a publication handle: a future
+ * saved consumer needs its own durable destination/boundary dependencies. */
+export async function readNativeDerivationPresentation(env: WorkerEnv, actorUserId: string, jobId: string,
+  consumer: { enrollmentId: string; enrollmentRevision: number; guards: readonly MemorySqlGuard[] }) {
+  const read = await readResult(env, actorUserId, jobId, structuredClone(consumer));
+  return read ? nativeDerivationResultInputs(env, read) : null;
 }
 function currentRead(env: WorkerEnv, handle: NativeDerivationResultRead) {
   const read = reads.get(handle);

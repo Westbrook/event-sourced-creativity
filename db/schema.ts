@@ -2645,6 +2645,20 @@ export const memoryDerivationIndexIntents = sqliteTable('memory_derivation_index
  check('memory_index_time',sql.raw("length(updated_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',updated_at) IS updated_at AND (expires_at IS NULL OR length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND updated_at<expires_at)")),
 ]);
 
+/** Explicit source recall limits. Absence means document-only. */
+export const memoryRecallBoundaries = sqliteTable('memory_recall_boundaries', {
+  enrollmentId: text('enrollment_id').primaryKey().notNull().references(() => memoryLiveEnrollments.enrollmentId, { onDelete: 'cascade' }),
+  enrollmentRevision: integer('enrollment_revision').notNull(),
+  boundary: text('boundary').notNull(),
+  revision: text('revision').notNull(),
+  consentedAt: text('consented_at').notNull(),
+}, () => [
+  check('memory_recall_boundary_kind', sql.raw("boundary IN('document','project','project-tree','partition')")),
+  check('memory_recall_boundary_parent', sql.raw("typeof(enrollment_revision)='integer' AND enrollment_revision>=1")),
+  check('memory_recall_boundary_revision', sql.raw('length(revision)=36')),
+  check('memory_recall_boundary_time', sql.raw("length(consented_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',consented_at) IS consented_at")),
+]);
+
 /** Native containment is structure, never an inherited permission or Memory consent. */
 export const projectContainment = sqliteTable("project_containment", {
   ownerUserId: text("owner_user_id").notNull().references(() => users.userId, { onDelete: "cascade" }),

@@ -135,9 +135,9 @@ function resultEntry(value:unknown):DerivationResultEntry{
   check(derivationHash(row.jobId)&&MEMORY_DERIVATION_PURPOSES.includes(row.purpose as MemoryDerivationPurpose)&&reviewText(row.scopeKey,8192)&&derivationTime(row.expiresAt)&&Date.parse(row.expiresAt)>Date.now());
   return frozen({...row} as DerivationResultEntry);
 }
-function resultView(value:unknown,expected:DerivationResultEntry):DerivationResultView{
+function resultView(value:unknown,expected:DerivationResultEntry,withControls=true):DerivationResultView{
   const hasHistory=!!value&&typeof value==='object'&&Object.hasOwn(value,'history');
-  const row=own(value,['version','jobId','expiresAt','candidate','controlRevisions',...(hasHistory?['history']:[])]),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
+  const row=own(value,['version','jobId','expiresAt','candidate',...(withControls?['controlRevisions']:[]),...(hasHistory?['history']:[])]),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
   check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&['memory-derivation-candidates-v1','memory-derivation-candidates-v2'].includes(String(candidate.version))
     &&candidate.purpose===expected.purpose&&candidate.scopeKey===expected.scopeKey&&candidate.semanticAuthority==='model-derived-unverified'
     &&candidate.manifestId===expected.jobId&&candidate.manifestRevision===1
@@ -181,12 +181,17 @@ function resultView(value:unknown,expected:DerivationResultEntry):DerivationResu
       citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence,...(observationCitations?{observationCitations}:{})};
   });
   check(new Set(items.map(item=>item.claimKey)).size===items.length);
-  const ids=[...new Set(items.flatMap(item=>item.lineageIds))],revisions=own(row.controlRevisions,ids);check(Object.values(revisions).every(value=>derivationInteger(value)));
+  const ids=[...new Set(items.flatMap(item=>item.lineageIds))],revisions=withControls?own(row.controlRevisions,ids):{};check(Object.values(revisions).every(value=>derivationInteger(value)));
   let history:DerivationHistory|undefined;
   if(hasHistory){const h=own(row.history,['windowCount','originalPairs','boundary','afterSequence','throughSequence']);
     check(derivationInteger(h.windowCount,1,3)&&derivationInteger(h.originalPairs,0,64)&&['consent','bounded','capacity'].includes(String(h.boundary))
       &&derivationInteger(h.afterSequence)&&derivationInteger(h.throughSequence,Number(h.afterSequence)+1));history={...h} as DerivationHistory;}
   return frozen({...expected,validUntil:candidate.validUntil,items,...(history?{history}:{}),controlRevisions:{...revisions} as Record<string,number>});
+}
+/** Read-only parser deliberately omits mutation/control revision authority. */
+export function parseMemoryDerivationPresentation(value:unknown,expected:DerivationResultEntry){
+  const {controlRevisions:_controls,...presentation}=resultView(value,expected,false);
+  return presentation;
 }
 function controlPage(raw:unknown,expected:DerivationScopeRequest){
   const row=own(raw,['version','available','controls','next','scope','enrollmentId','enrollmentRevision','validUntil']);

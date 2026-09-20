@@ -134,14 +134,25 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
   if ((chat!==0&&chat!==1)||!jobShape(job)) return null;
   const now = new Date().toISOString();
   if (job.expires_at <= now || (mode === "execute" ? job.state !== "waiting" || job.not_before > now : job.state !== "leased")) return null;
-  const grants = await read(`SELECT ${DERIVATION_GRANT_COLUMNS.join(",")} FROM memory_derivation_grants WHERE consent_id=? LIMIT 2`, [job.consent_id]);
-  if (grants.length !== 1 || !memoryDerivationGrantShape(grants[0])) return null;
-  const grant = grants[0];
+  // Read-only admission binds grant and parent metadata in one native snapshot.
+  // Both exact row guards below still replay in every final source transaction.
+  const bundle = mode === 'read' ? `,(SELECT json_group_array(json_array(${DERIVATION_PARENT_COLUMNS.join(',')}))
+    FROM (SELECT ${DERIVATION_PARENT_COLUMNS.join(',')} FROM memory_live_enrollments
+      WHERE enrollment_id=memory_derivation_grants.enrollment_id LIMIT 2)) AS parent_rows` : '';
+  const grants = await read(`SELECT ${DERIVATION_GRANT_COLUMNS.join(',')}${bundle} FROM memory_derivation_grants WHERE consent_id=?${mode === 'read' ? ' AND actor_user_id=?' : ''} LIMIT 2`,
+    [job.consent_id,...(mode === 'read' ? [readActorId!] : [])]);
+  if (grants.length !== 1) return null;
+  const {parent_rows:parentRows,...unbundled} = grants[0]!;
+  const grant = mode === 'read' ? unbundled : grants[0]!;
+  if (!memoryDerivationGrantShape(grant)) return null;
   if (mode === "read" && grant.actor_user_id !== readActorId) return null;
   if (!memoryDerivationEnabled(env, grant.actor_user_id) || grant.revoked_at !== null || grant.background_enabled !== 1
     || grant.purpose !== job.purpose || job.after_sequence < grant.source_after_sequence || grant.expires_at < job.expires_at
     || grant.consented_at > job.created_at) return null;
-  const parents = await read(`SELECT ${DERIVATION_PARENT_COLUMNS.join(",")} FROM memory_live_enrollments WHERE enrollment_id=? LIMIT 2`, [grant.enrollment_id]);
+  const packed: unknown = mode === 'read' && typeof parentRows === 'string' ? JSON.parse(parentRows) : null;
+  if (mode === 'read' && (!Array.isArray(packed) || packed.length !== 1 || !Array.isArray(packed[0]) || packed[0].length !== DERIVATION_PARENT_COLUMNS.length)) return null;
+  const parents = mode === 'read' ? [Object.fromEntries(DERIVATION_PARENT_COLUMNS.map((key,index)=>[key,(packed as unknown[][])[0]![index]]))]
+    : await read(`SELECT ${DERIVATION_PARENT_COLUMNS.join(",")} FROM memory_live_enrollments WHERE enrollment_id=? LIMIT 2`, [grant.enrollment_id]);
   if (parents.length !== 1 || !derivationExact(parents[0], DERIVATION_PARENT_COLUMNS)) return null;
   const e = parents[0] as unknown as LiveMemoryEnrollment;
   if (e.revision !== grant.enrollment_revision || e.actor_user_id !== grant.actor_user_id || e.owner_user_id !== grant.owner_user_id

@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.bz37n4.45": "واجهة نطاق استرجاع الذاكرة.",
+  "system.auto.140i2bg.141": "واجهة نطاق استرجاع الذاكرة المتصلة بالتطبيق. افحص سماتها وخصائص JavaScript وأحداثها الفعلية قبل تركيبها.",
   "system.auto.1hqj2xr.42": "واجهة تسلسل المشاريع.",
   "system.auto.hchofh.79": "تحرير صريح ومحدود المدة للبنية. لا يغيّر الصلاحيات ولا يفعّل الذاكرة.",
   "system.auto.1m1532o.44": "واجهة ملخص ذاكرة المستند.",

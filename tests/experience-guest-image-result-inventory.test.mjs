@@ -928,3 +928,13 @@ test('guest inventory accepts exact optional native project containment without 
  const guard=guardInventory(f,t);try{const cap=await inspect(f);await assertOriginalManifest(f,guestImageResultInventoryData(f.request,f.env,cap));guard.assertUntouched();}finally{guard.close();}
  f.sqlite.exec('DROP TRIGGER project_containment_compensation');await denied(f,t);
 });
+
+for(const fault of ['none','missing-inverse','inbound-view'])test('guest inventory preserves optional Memory recall boundary isolation '+fault,async t=>{
+ const f=await completedResultFixture(t,{memory:true});
+ installQualifiedMigration(f,'0025_memory_live_base.sql');
+ f.sqlite.exec(readFileSync(new URL('../drizzle/0059_memory_recall_boundaries.sql',import.meta.url),'utf8'));
+ if(fault==='missing-inverse')f.sqlite.exec('DROP TRIGGER memory_recall_boundaries_parent_change');
+ if(fault==='inbound-view')f.sqlite.exec('CREATE VIEW unqualified_recall_boundary AS SELECT boundary FROM memory_recall_boundaries');
+ if(fault!=='none')return denied(f,t);
+ const guard=guardInventory(f,t);try{const cap=await inspect(f);await assertOriginalManifest(f,guestImageResultInventoryData(f.request,f.env,cap));guard.assertUntouched();}finally{guard.close();}
+});

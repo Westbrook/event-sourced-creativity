@@ -3,10 +3,11 @@ import { createMemoryDerivationClient, type DerivationControl, type DerivationHi
 import { createMemoryElapsed } from '../model/memory-lifetime.ts';
 import { MEMORY_DERIVATION_PURPOSES, type MemoryDerivationPurpose } from '../model/memory-derivation-policy.ts';
 import { parseMemoryCustody, type MemoryCustody } from '../model/memory-custody.ts';
+import { createRecallBoundaryClient, type RecallSource } from './memory-recall-boundary-client.ts';
 
 export type DocumentMemoryBrief = Readonly<{ projectId:string;documentId:string;validUntil:string;
   completeHistory:false;independentEvidence:false;sections:readonly Readonly<{purpose:MemoryDerivationPurpose;
-    corrections:readonly DerivationControl[];items:readonly DerivationResultItem[];jobId:string|null;history?:DerivationHistory}>[] }>;
+    corrections:readonly DerivationControl[];items:readonly DerivationResultItem[];jobId:string|null;history?:DerivationHistory;source?:RecallSource}>[] }>;
 export type DocumentMemoryBriefLease = Readonly<{current:()=>DocumentMemoryBrief|null;retire:()=>void}>;
 type Selection={projectId:string;documentId:string;custody:MemoryCustody};
 const sample=()=>({monotonic:performance.now(),wall:Date.now()});
@@ -63,10 +64,26 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
       .map(row=>[JSON.stringify([row.claimKey,row.correctionText]),row])).values()];
     return {...section,corrections,items:section.items.filter(item=>!item.lineageIds.some(lineage=>blocked.has(lineage)))};
   });
+  // One nearest independently eligible source, never an account-wide fan-out.
+  // Existing grants remain document-only. Missing optional native schema or a
+  // failed source read does not suppress an otherwise certified local brief.
+  const related:DocumentMemoryBrief['sections'][number][]=[];
+  try {
+    const recall=createRecallBoundaryClient(guarded),catalog=await recall.sources(selected,signal);check();
+    const nearest=catalog.sources[0],relatedDeadlines=[Date.parse(catalog.validUntil)];
+    if(nearest){
+      for(const purpose of purposes){
+        const view=await recall.inspect(selected,nearest,purpose,signal);check();
+        relatedDeadlines.push(Date.parse(view.validUntil));
+        related.push({purpose,corrections:[],items:view.items,jobId:view.jobId,...(view.history?{history:view.history}:{}),source:view.source});
+      }
+      if(related.length)deadlines.push(...relatedDeadlines);
+    }
+  } catch { check();related.length=0; }
   const until=Math.min(...deadlines),duration=until-started.wall;
   if(!Number.isFinite(until)||duration<=0||elapsed.elapsed(sample())>=duration)throw Error('memory-brief-expired');
   const value:DocumentMemoryBrief={projectId:selected.projectId,documentId:selected.documentId,validUntil:new Date(until).toISOString(),
-    completeHistory:false,independentEvidence:false,sections:resolved};
+    completeHistory:false,independentEvidence:false,sections:[...resolved,...related]};
   let retired=false;
   const retire=()=>{retired=true;elapsed.retire();signal.removeEventListener('abort',retire);};
   signal.addEventListener('abort',retire,{once:true});

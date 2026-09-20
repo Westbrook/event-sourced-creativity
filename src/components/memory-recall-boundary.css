@@ -1,0 +1,6 @@
+forma-memory-recall-boundary { display: block; min-inline-size: 0; overflow-wrap: anywhere; }
+forma-memory-recall-boundary label { display: block; margin-block: .75rem; }
+forma-memory-recall-boundary select { display: block; inline-size: 100%; max-inline-size: 100%; }
+forma-memory-recall-boundary button { max-inline-size: 100%; white-space: normal; }
+forma-memory-recall-boundary .memory-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+forma-memory-recall-boundary blockquote { margin-inline: .5rem; overflow-wrap: anywhere; }

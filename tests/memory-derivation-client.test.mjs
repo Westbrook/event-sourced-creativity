@@ -126,14 +126,14 @@ function briefFixture(){
   const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');calls.push({url,init});
     assert.equal(init.method,'GET');assert.equal(init.cache,'no-store');assert.equal(init.credentials,'same-origin');
     const payload=url.pathname==='/api/memory/settings'?base:url.pathname.endsWith('/derivation/settings')?f.settings
-      :url.pathname.endsWith('/results')?listing:url.pathname.endsWith('/result')?result:url.pathname.endsWith('/controls')?controls:null;
+      :url.pathname.endsWith('/recall-scopes')?{version:'memory-scope-recall-v1',sources:[],validUntil:new Date(Date.now()+25000).toISOString(),complete:true}:url.pathname.endsWith('/results')?listing:url.pathname.endsWith('/result')?result:url.pathname.endsWith('/controls')?controls:null;
     assert.ok(payload,url.pathname);return Response.json(payload);};
   return {...f,selection,base,enrollment,lineage,entry,item,result,listing,controls,calls,controller,transport,
     current:()=>active,deactivate:()=>{active=false;}};
 }
 test('automatic document brief uses current native reads without mutations and preserves evidence/history',async()=>{
   const f=briefFixture(),lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);
-  assert.equal(f.calls.length,5);const value=lease.current();assert.equal(value.completeHistory,false);assert.equal(value.independentEvidence,false);
+  assert.equal(f.calls.length,6);const value=lease.current();assert.equal(value.completeHistory,false);assert.equal(value.independentEvidence,false);
   assert.equal(value.sections[0].items[0].supports[0].text,'Original');assert.equal(value.sections[0].history.windowCount,3);
   value.sections[0].items[0].text='tampered';assert.equal(lease.current().sections[0].items[0].text,'Tentative goal');
   lease.retire();assert.equal(lease.current(),null);
@@ -238,4 +238,39 @@ test('result export refuses arbitrary display objects, pre-abort and malformed r
   await assert.rejects(client.exportResult({...f.entry,items:[]}));assert.equal(calls,0);
   const controller=new AbortController();controller.abort();await assert.rejects(client.exportResult(f.entry,controller.signal));assert.equal(calls,0);
   await assert.rejects(client.exportResult(f.entry));assert.equal(calls,1);
+});
+
+function relatedBriefFixture(){
+ const f=briefFixture(),until=new Date(Date.now()+20000).toISOString(),source={enrollmentId:hash('related'),projectId:'other-project',documentId:'other-document',zoom:'project-tree',distance:2,weight:.5/3};
+ const {version:_version,controlRevisions:_controls,...presentation}=structuredClone(f.result);
+ presentation.candidate.scopeKey='other-native-scope';presentation.candidate.items[0].text='Other document tentative context';
+ const catalog={version:'memory-scope-recall-v1',sources:[source],validUntil:until,complete:true};
+ const recalled={version:'memory-scope-recall-v1',source,presentation,validUntil:until,independentEvidence:false,completeHistory:false,presentationOnly:true};
+ const recalls=[];const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');
+  if(url.pathname==='/api/memory/recall-scopes'){recalls.push({url,init});return Response.json(url.searchParams.has('source')?recalled:catalog);}
+  return f.transport(input,init);
+ };
+ return {...f,source,catalog,recalled,transport,recalls};
+}
+test('automatic brief appends nearest consented scope separately and never receives control authority',async()=>{
+ const f=relatedBriefFixture(),lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal),view=lease.current();
+ assert.equal(view.sections.length,2);assert.equal(view.sections[0].items[0].text,'Tentative goal');assert.equal(view.sections[1].items[0].text,'Other document tentative context');
+ assert.deepEqual(view.sections[1].source,f.source);assert.deepEqual(view.sections[1].corrections,[]);assert.ok(!Object.hasOwn(view.sections[1],'controlRevisions'));
+ assert.ok(view.validUntil<=f.recalled.validUntil);assert.equal(f.recalls.length,2);assert.ok(f.recalls.every(c=>c.init.method==='GET'));
+ assert.equal(f.recalls[1].url.searchParams.get('source'),f.source.enrollmentId);lease.retire();assert.equal(lease.current(),null);
+});
+for(const fault of ['schema','unavailable-source','incomplete-catalog','bad-rank'])test('automatic brief retains local notes without an older-source fallback on '+fault,async()=>{
+ const f=relatedBriefFixture();f.catalog.sources.push({...f.source,enrollmentId:hash('other-older'),projectId:'far-project',documentId:'far-document',zoom:'partition',distance:0,weight:.01});
+ if(fault==='incomplete-catalog')f.catalog.complete=false;if(fault==='bad-rank')f.catalog.sources.reverse();
+ const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');
+  if(url.pathname==='/api/memory/recall-scopes'&&(fault==='schema'||fault==='unavailable-source'&&url.searchParams.has('source')))return Response.json({error:'unavailable'},{status:503});
+  return f.transport(input,init);
+ };
+ const lease=await readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal);assert.equal(lease.current().sections.length,1);assert.equal(lease.current().sections[0].items[0].text,'Tentative goal');
+ assert.ok(f.recalls.every(c=>!c.url.searchParams.has('source')||c.url.searchParams.get('source')===f.source.enrollmentId));
+});
+test('automatic cross-scope reply arriving after target ownership changes is discarded',async()=>{
+ const f=relatedBriefFixture(),transport=async(input,init)=>{const result=await f.transport(input,init);
+  if(new URL(String(input),'https://fixture.invalid').searchParams.has('source'))f.deactivate();return result;};
+ await assert.rejects(readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal));
 });

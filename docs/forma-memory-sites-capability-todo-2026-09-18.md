@@ -185,3 +185,7 @@ qualification and enrollment remain separate operational gates.
 [Native project containment](forma-memory-project-containment-2026-09-19.md) now implements same-owner nesting, reparenting/detach, independent parent access, transactional stale-edit rejection, schema/privacy inverses and localized Projects controls. Additive migration0058 is unapplied; no deployment or enrollment occurred.
 
 Still native implementation: ancestry-backed semantic recall and its durable move/erasure inverses, cross-owner hierarchy, broader resource identities/history, cross-document/long-term reconciliation and durable assistant/autocomplete consumers. Existing document-only Memory contracts are not broadened by this feature. External adapters/scheduling and operational qualification remain separately tracked; the full plan is not complete.
+
+## Native cross-scope recall checkpoint — 2026-09-19
+
+[Consent-gated cross-scope recall](forma-memory-cross-scope-recall-2026-09-19.md) is implemented locally with hierarchy/source/target proofs, optional automatic nearest-source briefs and explicit localized controls. Its additive migration0059, source changes and qualification evidence require integration review before rollout. No external service is required for this bounded native presentation path. No external adapter, schedule, budget, deployment, enrollment or production setting was changed. Durable semantic answer/edit consumers, broader resource learning and long-term reconciliation remain native implementation; do not classify them as capabilities missing from Sites.

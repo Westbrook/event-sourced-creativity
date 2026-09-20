@@ -39,18 +39,24 @@ async function read(env: WorkerEnv, query: Query): Promise<Row[]> {
   return result.results;
 }
 
+async function readBatch(env: WorkerEnv, queries: Query[]): Promise<Row[][]> {
+  const db=env.DB,result=structuredClone(await db.batch(queries.map(query=>db.prepare(query.sql).bind(...query.bindings))));
+  if(env.DB!==db||!verified(result)||result.length!==queries.length)throw Error('containment_read');
+  return result.map(value=>value.results);
+}
+
 /** Server-only witness. IDs carry no authority; replay its queries in the consuming transaction. */
-export async function readNativeProjectContainment(env: WorkerEnv, owner: string) {
-  const schema = { sql: schemaQuery, bindings: [] }, schemaRows = await read(env, schema);
-  const explicit = schemaRows.filter(row => row.sql !== null);
-  if (schemaRows.length !== projectContainmentSchemaProfile.count + 1 || explicit.length !== projectContainmentSchemaProfile.count
-    || 'sha256:' + await memoryDigest(memoryCanonical(explicit.map(row => ({ ...row, sql: String(row.sql).trim().replace(/;$/u,'').replace(/\bIF\s+NOT\s+EXISTS\s+/giu,'') })))) !== projectContainmentSchemaProfile.digest
-    || schemaRows.some(row => row.sql === null && row.name !== 'sqlite_autoindex_project_containment_1')) throw new Error('containment_schema');
+export async function readNativeProjectContainment(env: WorkerEnv, owner: string, batched = false) {
   const size: Query = { sql: `SELECT COUNT(*) AS count,COALESCE(SUM(bytes),0) AS bytes FROM (
     SELECT length(CAST(event.payload AS BLOB)) AS bytes FROM events event WHERE event.stream_id=? AND event.type='ProjectCreated'
       AND NOT EXISTS(SELECT 1 FROM events compensation WHERE compensation.stream_id=event.stream_id AND compensation.compensates_event_id=event.event_id)
     ORDER BY event.sequence LIMIT ${PROJECT_CONTAINMENT_LIMIT + 1})`, bindings: ['creative:' + owner] };
-  const measured = await read(env,size);
+  const schema = { sql: schemaQuery, bindings: [] };
+  const [schemaRows, measured] = batched ? await readBatch(env, [schema,size]) : [await read(env,schema),await read(env,size)];
+  const explicit = schemaRows.filter(row => row.sql !== null);
+  if (schemaRows.length !== projectContainmentSchemaProfile.count + 1 || explicit.length !== projectContainmentSchemaProfile.count
+    || 'sha256:' + await memoryDigest(memoryCanonical(explicit.map(row => ({ ...row, sql: String(row.sql).trim().replace(/;$/u,'').replace(/\bIF\s+NOT\s+EXISTS\s+/giu,'') })))) !== projectContainmentSchemaProfile.digest
+    || schemaRows.some(row => row.sql === null && row.name !== 'sqlite_autoindex_project_containment_1')) throw new Error('containment_schema');
   if (measured.length !== 1 || !Number.isSafeInteger(measured[0].count) || !Number.isSafeInteger(measured[0].bytes)
     || Number(measured[0].count) > PROJECT_CONTAINMENT_LIMIT || Number(measured[0].bytes) > 1_048_576) throw new Error('containment_capacity');
   const declarations: Query = { sql: `SELECT event.event_id AS declaration,event.payload,event.sequence,
@@ -65,7 +71,7 @@ export async function readNativeProjectContainment(env: WorkerEnv, owner: string
   // Repeat the measured bound in the body query so late growth is not hydrated.
   const boundedDeclarations: Query = {sql:`SELECT * FROM (${declarations.sql}) WHERE (?,?)=(SELECT count,bytes FROM (${size.sql}))`,
     bindings:[...declarations.bindings,Number(measured[0].count),Number(measured[0].bytes),...size.bindings]};
-  const [declared, links] = await Promise.all([read(env,boundedDeclarations),read(env,edges)]);
+  const [declared, links] = batched ? await readBatch(env,[boundedDeclarations,edges]) : await Promise.all([read(env,boundedDeclarations),read(env,edges)]);
   if (declared.length !== measured[0].count) throw new Error('containment_declaration_changed');
   if (declared.length > PROJECT_CONTAINMENT_LIMIT || links.length > PROJECT_CONTAINMENT_LIMIT || new TextEncoder().encode(JSON.stringify([declared,links])).byteLength > 1_048_576) throw new Error('containment_capacity');
   const nodes: ProjectContainmentNode[] = [], access = new Map<string, { declaration: string; accessId: string | null; active: boolean }>();
