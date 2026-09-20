@@ -667,3 +667,8 @@ forma-assistant-panel[data-embedded="true"] .forma-assistant-transcript {
   overflow: auto;
   overscroll-behavior: contain;
 }
+
+.forma-assistant-memory-edit-review article { border-block-start: 1px solid var(--forma-color-border, currentColor); padding-block: .75rem; }
+.forma-assistant-memory-edit-review :is(h4, dd) { overflow-wrap: anywhere; }
+.forma-assistant-memory-edit-review dd { margin-inline-start: 0; white-space: pre-wrap; }
+.forma-assistant-memory-edit-review dt { font-weight: 600; margin-block-start: .5rem; }

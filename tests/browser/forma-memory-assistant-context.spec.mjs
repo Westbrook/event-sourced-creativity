@@ -47,9 +47,12 @@ for(const surface of ['document','chat'])for(const locale of ['en','ar'])for(con
   const documentPath='/document/doc-atmosphere/atmosphere-studies',routePath=documentPath+(surface==='chat'?'/view/chat':''),query=new URLSearchParams({route:documentPath,projectId:'project-atmosphere'}),errors=[],calls=[];
   if(surface==='chat')await context.route('**/api/session',request=>{const body=JSON.parse(syntheticReadBody('/api/session'));body.provider.plannerConfigured=true;return request.fulfill({json:body});});
   page.on('pageerror',error=>errors.push(error.message));
-  const originalRequest={turnId:'synthetic-semantic-turn',route:routePath,projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,selectedItemIds:[],locale,model:'gpt-5.6-luna',taskKind:'clarify',sourceHash:'synthetic-hash',conversationTurnIds:['synthetic-semantic-turn']};
-  const quote={executionId:'synthetic-semantic-execution',bindingHash:'synthetic-binding',operation:'assistant-specialist',status:'completed',actorLabel:'Synthetic principal',workspaceId:null,period:'2026-09',projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,blockId:'',sourceHash:'synthetic-hash',provider:'openai',models:['gpt-5.6-luna'],maximumMicrousd:15000,maximumTokens:1600,providerCalls:1,searchCalls:0,publicQuery:'',privateInput:{source:'Synthetic private approved Memory context'},expiresAt:new Date(Date.now()+600000).toISOString(),providerAvailable:false,canExecute:false};
-  const result={reply:'Synthetic retained Memory guidance <script>not executable</script>',sourceStatus:'semantic-memory-assisted'};
+  const originalRequest={turnId:'synthetic-semantic-turn',route:routePath,projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,selectedItemIds:[],locale,model:'gpt-5.6-luna',taskKind:'clarify',sourceHash:'a'.repeat(64),conversationTurnIds:['synthetic-semantic-turn']};
+  const quote={executionId:'synthetic-semantic-execution',bindingHash:'synthetic-binding',operation:'assistant-specialist',status:'completed',actorLabel:'Synthetic principal',workspaceId:null,period:'2026-09',projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,blockId:'',sourceHash:'a'.repeat(64),provider:'openai',models:['gpt-5.6-luna'],maximumMicrousd:15000,maximumTokens:1600,providerCalls:1,searchCalls:0,publicQuery:'',privateInput:{source:'Synthetic private approved Memory context'},expiresAt:new Date(Date.now()+600000).toISOString(),providerAvailable:false,canExecute:false};
+  const result={reply:'Synthetic retained Memory guidance <script>not executable</script>',sourceStatus:'semantic-memory-assisted',
+   editReview:{version:'memory-edit-review-v1',executionId:quote.executionId,turnId:originalRequest.turnId,projectId:originalRequest.projectId,
+    documentId:originalRequest.documentId,sourceHash:originalRequest.sourceHash,locale,mode:'review-only',independentEvidence:false,
+    edits:[{blockId:'synthetic-block',field:'text',revision:3,beforeExcerpt:'Synthetic approved field excerpt',suggestedText:'Synthetic edit suggestion <script>not executable</script> اقتراح 日本語'}]}};
   let validUntil='';const presentation=()=>({version:'semantic-memory-answer-v1',validUntil,independentEvidence:false});
   const task=()=>({id:quote.executionId,executionId:quote.executionId,turnId:originalRequest.turnId,bindingHash:quote.bindingHash,kind:'clarify',model:'gpt-5.6-luna',status:'completed',submission:'settled',canExecute:false,certifiedCompleted:true,completedReview:{turnId:originalRequest.turnId,executionId:quote.executionId,quote,originalRequest,result,memory:presentation()}});
   await context.route('**/api/assistant?*',async request=>{
@@ -88,10 +91,13 @@ for(const surface of ['document','chat'])for(const locale of ['en','ar'])for(con
   }
   await owner.locator('[data-assistant-execution-id="synthetic-semantic-execution"]').click();
   const dialog=owner.locator('dialog.forma-assistant-specialist');await expect(dialog).toBeVisible();await expect(dialog).toContainText(result.reply);await expect(dialog.locator('script')).toHaveCount(0);
+  const editReview=dialog.locator('.forma-assistant-memory-edit-review');await expect(editReview).toContainText(result.editReview.edits[0].suggestedText);
+  await expect(editReview.locator('button,input,textarea,select,a')).toHaveCount(0);await editReview.scrollIntoViewIfNeeded();
+  await page.screenshot({path:'.wrangler/memory-edit-review-'+surface+'-'+locale+'-'+boundary+'.png'});
   await dialog.locator('.forma-assistant-specialist-result').scrollIntoViewIfNeeded();expect(await dialog.evaluate(el=>el.scrollWidth>el.clientWidth+1)).toBe(false);
   await page.screenshot({path:'.wrangler/memory-semantic-result-'+surface+'-'+locale+'-'+boundary+'.png'});
   if(boundary==='blur')await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
-  await expect(dialog).not.toContainText(result.reply,{timeout:15000});await expect(dialog).not.toContainText('Synthetic private approved Memory context');
+  await expect(dialog).not.toContainText(result.reply,{timeout:15000});await expect(dialog).not.toContainText('Synthetic private approved Memory context');await expect(dialog).not.toContainText(result.editReview.edits[0].suggestedText);await expect(dialog).not.toContainText(result.editReview.edits[0].beforeExcerpt);
   await page.keyboard.press('Escape');await expect(draft).toHaveValue('Unsent local draft');
   if(surface==='chat'){
    await draft.fill('');await page.locator('[data-chat-guidance-mode]').click();

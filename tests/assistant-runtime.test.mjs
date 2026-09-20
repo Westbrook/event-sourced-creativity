@@ -17287,3 +17287,59 @@ test('Memory control parser: split multibyte UTF-8 and exact byte bound preserve
  const request=new Request('http://localhost/control',{method:'POST',body,duplex:'half',headers:{'content-type':'application/json'}});
  assert.deepEqual(await bodyOf(request,encoded.length),expected);assert.equal(request.body.locked,false);
 });
+
+for(const shared of [false,true])for(const native of [false,true])for(const fault of ['withdrawal','corruption'])test('semantic edit review: real paid consumer retains source-bound private suggestions, never authors '+shared+'/'+native+'/'+fault,{timeout:120000},async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),projectId=state.current().project_id,documentId=state.recallTarget.documentId,blockId='memory-edit-target';
+ const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:projectId,document_id:documentId,
+  block_id:blockId,scope:'document',type:'direction',properties:{text:'ORIGINAL_FIELD_EXCERPT'}}}},state.owner));
+ assert.equal(created.status,200,await created.clone().text());
+ if(native){
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+  const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryEdit'],
+   script:"export default {fetch(){return new Response('Synthetic only',{status:404});}};",outboundService(){throw Error('No external requests');}});
+  t.after(()=>mf.dispose());const db=await mf.getD1Database('MemoryEdit');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+ }
+ const db=state.env.DB;
+ const {response,body:review}=await state.semanticQuote();assert.equal(response.status,200,JSON.stringify(review));
+ const before=(await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,proposals=(await db.prepare('SELECT COUNT(*) AS n FROM assistant_action_proposals').first()).n;
+ const original=globalThis.fetch;let calls=0;
+ globalThis.fetch=async(url,init)=>{
+  if(native&&String(url)!=='https://api.openai.com/v1/responses')return original(url,init);
+  assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;
+  const request=JSON.parse(init.body),input=JSON.parse(request.input),alias=input.blocks.find(b=>b.text==='ORIGINAL_FIELD_EXCERPT')?.id;
+  assert.ok(alias,JSON.stringify(input));
+  const actions=[{kind:'context.edit',block_type:'direction',target_block_id:alias,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:'MEMORY_EDIT_PREVIEW <script>literal</script>'}];
+  return specialistRawResponse(request,{output:[{type:'message',id:'edit-message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Consider this change.',actions})}]}]});
+ };t.after(()=>{globalThis.fetch=original;});
+ const executed=await specialistExecute(state,review,state.semanticOptions);assert.equal(executed.status,202,await executed.clone().text());await state.drainBackground();
+ const read=await specialistRetrieve(state,review,state.semanticOptions),body=await read.json();assert.equal(read.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
+ assert.equal(calls,1);assert.equal(body.materializationPending,false,JSON.stringify(body));
+ assert.deepEqual(body.result.actions,[]);assert.deepEqual(body.result.providerResult.actions,[]);
+ assert.deepEqual(body.result.editReview,{version:'memory-edit-review-v1',executionId:review.executionId,turnId:review.turnId,projectId,documentId,
+  sourceHash:review.quote.sourceHash,locale:'en',mode:'review-only',independentEvidence:false,
+  edits:[{blockId,field:'text',revision:1,beforeExcerpt:'ORIGINAL_FIELD_EXCERPT',suggestedText:'MEMORY_EDIT_PREVIEW <script>literal</script>'}]});
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,before);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM assistant_action_proposals').first()).n,proposals);
+ const feed=await state.request(endpoint(state.semanticOptions.route,projectId),{headers:state.owner??{}}),history=await feed.json();
+ assert.equal(feed.status,200,JSON.stringify(history));assert.deepEqual(history.tasks.find(task=>task.executionId===review.executionId)?.completedReview?.result.editReview,body.result.editReview);
+ const receipt=await db.prepare("SELECT p.content_id,p.content FROM consequential_executions e JOIN private_content p ON p.content_id=e.result_ref WHERE e.execution_id=?").bind(review.executionId).first();
+ if(fault==='corruption'){
+ const corrupt=JSON.parse(receipt.content);corrupt.editReview.edits[0].blockId='foreign-block';
+ await db.prepare('UPDATE private_content SET content=? WHERE content_id=?').bind(JSON.stringify(corrupt),receipt.content_id).run();
+ const denied=await specialistRetrieve(state,review,state.semanticOptions),deniedBody=await denied.json();
+ assert.equal(deniedBody.result,undefined);assert.doesNotMatch(JSON.stringify(deniedBody),/MEMORY_EDIT_PREVIEW/u);
+ }
+ const ids=(await db.prepare('SELECT content_id FROM memory_derivation_consumer_contents').all()).results.map(r=>r.content_id);
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ for(const id of ids)assert.equal((await db.prepare('SELECT content FROM private_content WHERE content_id=?').bind(id).first()).content,'');
+ const withdrawn=await specialistRetrieve(state,review,state.semanticOptions);assert.equal(withdrawn.status,404);assert.doesNotMatch(await withdrawn.text(),/MEMORY_EDIT_PREVIEW|ORIGINAL_FIELD_EXCERPT/u);
+ if(fault==='corruption'){
+  // Simulate a restore that incorrectly copies old bytes back. Durable negative
+  // ancestry and redaction still deny all reads; this is not a supported writer.
+  await db.prepare('UPDATE private_content SET content=? WHERE content_id=?').bind(receipt.content,receipt.content_id).run();
+  const restored=await specialistRetrieve(state,review,state.semanticOptions);assert.equal(restored.status,404);assert.doesNotMatch(await restored.text(),/MEMORY_EDIT_PREVIEW|ORIGINAL_FIELD_EXCERPT/u);
+ }
+ assert.equal((await db.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').bind(review.executionId).first()).verified_tokens,1300);
+ assert.equal(calls,1);
+});

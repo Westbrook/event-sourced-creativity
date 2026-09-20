@@ -1,3 +1,5 @@
+import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
+import { parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { libraryBlockEditorFromRoute } from '../src/model/routes.ts';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -99,6 +101,8 @@ function fixture(locale = "en", nativeWindow = { addEventListener() {}, removeEv
   const previewExports = {};
   new Function("require", "exports", previewCode)(name => { assert.equal(name, "lit"); return lit; }, previewExports);
   const dependencies = {
+    "../../model/memory-edit-review.ts": {parseMemoryEditReview},
+    "../../model/memory-answer.ts": {parseSemanticMemoryAnswerPresentation},
     lit, "lit/directives/keyed.js": { keyed }, "../../model/conversation-context.ts": { ASSISTANT_CONTEXT_LIMITS },
     "../../model/context-consent-state.ts": { contextConsentAction },
     "../../model/routes.ts": {libraryBlockEditorFromRoute},
@@ -3809,4 +3813,27 @@ for (const change of ['main-replacement', 'owner-replacement', 'owner-withdrawal
   assert.deepEqual(x.focuses, []); assert.deepEqual(x.scrolls, []); assert.deepEqual(x.f.emitted, []);
   if (replacement) assert.equal(replacement.style.getPropertyValue(x.property), 'replacement-owned');
   x.assertLeaseDisposed();
+});
+
+for(const locale of ['en','fr','ar','ja'])test('Memory edit preview: localized historical diff is inert and escapes content '+locale,()=>{
+ const f=fixture(locale),state=review('retrieve');state.originalRequest.sourceHash=state.quote.sourceHash='a'.repeat(64);
+ state.resultSource='semantic-memory-assisted';state.semanticMemory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false};
+ state.editReview={version:'memory-edit-review-v1',executionId:state.executionId,turnId:state.turnId,projectId:state.originalRequest.projectId,
+  documentId:state.originalRequest.documentId,sourceHash:state.originalRequest.sourceHash,locale:'en',mode:'review-only',independentEvidence:false,
+  edits:[{blockId:'block-أ',field:'text',revision:2,beforeExcerpt:'Approved <b>excerpt</b>',suggestedText:'UNAPPLIED_PREVIEW <script>alert(1)</script> 日本語'}]};
+ f.setReview(state);const baseline=f.render(),buttons=baseline.buttons.map(b=>b.label);assert.match(baseline.markup,/UNAPPLIED_PREVIEW &lt;script&gt;/u);
+ assert.ok(baseline.markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.editReviewDetail']));
+ assert.match(baseline.markup,/<dd dir="auto">/u);assert.doesNotMatch(baseline.markup,/<script>/u);
+ for(const fault of ['target','field','ordinary','no-lease','expired','independence','pending']){
+  const changed=structuredClone(state);
+  if(fault==='target')changed.editReview.documentId='other';
+  if(fault==='field')changed.editReview.edits[0].field='private-credentials';
+  if(fault==='ordinary')changed.resultSource='original-approved-source';
+  if(fault==='no-lease')changed.semanticMemory=undefined;
+  if(fault==='expired')changed.semanticMemory.validUntil=new Date(Date.now()-1).toISOString();
+  if(fault==='independence')changed.semanticMemory.independentEvidence=true;
+  if(fault==='pending')changed.quote.status='reserved';
+  f.setReview(changed);assert.doesNotMatch(f.render().markup,/UNAPPLIED_PREVIEW/u);
+ }
+ f.setReview({...state,editReview:undefined});assert.deepEqual(f.render().buttons.map(b=>b.label),buttons,'Review does not add Apply, copy, generation, or approval controls');
 });

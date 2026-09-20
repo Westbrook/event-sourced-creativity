@@ -1,3 +1,4 @@
+import { parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { personalMemoryMessage } from '../src/components/design-system/locales/personal-memory-messages.ts';
 import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
 import { createMemoryElapsed } from '../src/model/memory-lifetime.ts';
@@ -163,7 +164,7 @@ function fixture(t, locale = "en") {
   // Direct eval runs the actual production source in this lexical fixture scope.
   // Keep its otherwise implicit dependencies explicit without calling them.
   void [
-    assistantInteractionForSurface, withDocumentInRoute, contextConsentAction, ensureNativeModalDialog,
+    parseMemoryEditReview, personalMemoryMessage, createMemoryElapsed, memoryPrivacyMutationActive, assistantInteractionForSurface, withDocumentInRoute, contextConsentAction, ensureNativeModalDialog,
     document, location, requestAnimationFrame, cancelAnimationFrame, matchMedia, icon,
     consequentialPreview, assistantApprovedRequestCanRun, assistantApprovedRequestCanStop, Base,
     nextActionFacts, creativeNextActions, renderLifecycleNextActionCards, openCreativeNextActionDestination,
@@ -3076,21 +3077,27 @@ for(const locale of ['en','fr','ar','ja'])test('semantic Memory review: explicit
  const changing=f.host.requestForTest('quote','gpt-5.6-luna',true),call=await f.take();
  assert.deepEqual(call.body,{action:'quote',turnId:'turn-a',model:'gpt-5.6-luna',memory:'saved'});
  const memory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false};
- await f.reply(call,specialistResponse(preview(),{memory}));await changing;
+ await f.reply(call,specialistResponse(preview({sourceHash:'a'.repeat(64)}),{memory}));await changing;
  assert.equal(f.host.snapshotForTest().specialist.semanticMemory?.version,memory.version);
  assert.equal(f.calls.some(c=>c.body?.action==='execute'),false);
+ const editReview={version:'memory-edit-review-v1',executionId:'approval-a',turnId:'turn-a',projectId:'project-a',documentId:'doc-a',sourceHash:'a'.repeat(64),locale:'en',mode:'review-only',independentEvidence:false,
+  edits:[{blockId:'block-a',field:'text',revision:3,beforeExcerpt:'PRIVATE_BEFORE_EXCERPT',suggestedText:'PRIVATE_EDIT_PREVIEW <script>literal</script>'}]};
  const reading=f.host.requestForTest('retrieve'),get=await f.take();
- await f.reply(get,specialistResponse(preview({status:'completed',canExecute:false}),{
-  memory,result:{reply:'Tentative derived guidance',sourceStatus:'semantic-memory-assisted'},
+ await f.reply(get,specialistResponse(preview({status:'completed',canExecute:false,sourceHash:'a'.repeat(64)}),{
+  memory,result:{reply:'Tentative derived guidance',sourceStatus:'semantic-memory-assisted',editReview},
   task:savedTask({status:'completed',submission:'settled',canExecute:false}),
  }));await reading;
  assert.equal(f.host.snapshotForTest().specialist.resultSource,'semantic-memory-assisted');
  assert.match(f.render().markup,/Tentative derived guidance/u);
+ assert.deepEqual(f.host.snapshotForTest().specialist.editReview,editReview);
+ assert.match(f.render().markup,/PRIVATE_EDIT_PREVIEW/u);
+ assert.ok(f.render().markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.editReviewDetail']));
  f.host.retireSemanticForTest();
  assert.equal(f.host.snapshotForTest().specialist.resultReply,null);
  assert.equal(f.host.snapshotForTest().specialist.quote,null);
+ assert.equal(f.host.snapshotForTest().specialist.editReview,undefined);
  assert.equal(f.panel.draftForTest,'Unsent original draft remains local');
- assert.doesNotMatch(f.render().markup,/Tentative derived guidance|Complete original source/u);
+ assert.doesNotMatch(f.render().markup,/Tentative derived guidance|Complete original source|PRIVATE_EDIT_PREVIEW|PRIVATE_BEFORE_EXCERPT/u);
  const count=f.calls.length;await f.host.requestForTest('execute');assert.equal(f.calls.length,count);
 });
 
@@ -3120,4 +3127,33 @@ for(const clock of ['elapsed','rollback','nonfinite'])test('semantic Memory life
  else t.mock.method(performance,'now',()=>clock==='nonfinite'?NaN:1000000000000);
  f.host.pruneSemanticForTest();assert.equal(f.host.snapshotForTest().specialist.quote,null);assert.equal(f.host.snapshotForTest().specialist.resultReply,null);
  assert.equal(f.calls.some(c=>c.body?.action==='execute'),false);
+});
+
+for(const fault of ['projectId','documentId','locale','sourceHash','turnId','executionId','late-private-result'])test('Memory edit review host: '+fault+' cannot publish preview bytes',async t=>{
+ const f=fixture(t);await f.open();await review(f,{sourceHash:'a'.repeat(64)});
+ const read=f.host.requestForTest('retrieve'),call=await f.take();
+ const response=specialistResponse(preview({status:'completed',canExecute:false,sourceHash:'a'.repeat(64)}),{
+  memory:{version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false},
+  task:savedTask({status:'completed',submission:'settled',canExecute:false}),
+  result:{reply:'PRIVATE_EDIT_REPLY',sourceStatus:'semantic-memory-assisted',editReview:{version:'memory-edit-review-v1',
+   executionId:'approval-a',turnId:'turn-a',projectId:'project-a',documentId:'doc-a',sourceHash:'a'.repeat(64),locale:'en',mode:'review-only',independentEvidence:false,
+   edits:[{blockId:'block-a',field:'text',revision:1,beforeExcerpt:'PRIVATE_OLD_FIELD',suggestedText:'PRIVATE_NEW_FIELD'}]}}});
+ if(fault==='late-private-result')f.host.retireSemanticForTest();else response.result.editReview[fault]='other';
+ await f.reply(call,response);await read;
+ assert.equal(f.host.snapshotForTest().specialist.editReview,undefined);assert.doesNotMatch(f.render().markup,/PRIVATE_EDIT_REPLY|PRIVATE_OLD_FIELD|PRIVATE_NEW_FIELD/u);
+ assert.equal(f.calls.some(c=>c.body?.action==='execute'),false);
+});
+
+test('Memory edit review host: an unclassified historical feed cannot repopulate private reviews after blur',async t=>{
+ const f=fixture(t);await f.open();f.panel.draftForTest='Retained local draft';
+ const loading=f.host.loadForTest(),call=await f.take();
+ const response=specialistResponse(preview({status:'completed',canExecute:false,sourceHash:'a'.repeat(64)}),{
+  memory:{version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false},
+  result:{reply:'PRIVATE_LATE_FEED',sourceStatus:'semantic-memory-assisted',editReview:{version:'memory-edit-review-v1',
+   executionId:'approval-a',turnId:'turn-a',projectId:'project-a',documentId:'doc-a',sourceHash:'a'.repeat(64),locale:'en',mode:'review-only',independentEvidence:false,
+   edits:[{blockId:'block-a',field:'text',revision:1,beforeExcerpt:'PRIVATE_FEED_BEFORE',suggestedText:'PRIVATE_FEED_AFTER'}]}}});
+ f.host.retireSemanticForTest();
+ await f.reply(call,{context:f.context,turns:[sampleTurn()],tasks:[savedTask({status:'completed',submission:'settled',canExecute:false,certifiedCompleted:true,completedReview:response})]});await loading;
+ assert.deepEqual(f.host.snapshotForTest().tasks,[]);assert.doesNotMatch(JSON.stringify(f.host.snapshotForTest()),/PRIVATE_LATE_FEED|PRIVATE_FEED_BEFORE|PRIVATE_FEED_AFTER/u);
+ assert.equal(f.panel.draftForTest,'Retained local draft');assert.equal(f.calls.some(c=>c.body?.action==='execute'),false);
 });

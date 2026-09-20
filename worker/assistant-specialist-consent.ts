@@ -1,3 +1,5 @@
+import { memoryAssistantEditReview } from './memory-assistant-edits.ts';
+import { parseMemoryEditReview,type MemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { bodyOf as readMemoryControlBody } from './memory-derivation-api.ts';
 import type { SemanticAssistantParent } from './memory-assistant-parents.ts';
 import { prepareSemanticAssistantMemory,semanticAssistantMemoryLeaseCurrent,semanticAssistantMemoryRetentionGuard,semanticAssistantMemoryInputs,semanticAssistantMemoryStatements,semanticAssistantMemoryQuoteStatements,semanticAssistantMemoryContentStatements,type SemanticAssistantMemory,type SemanticAssistantMemoryBinding } from './memory-assistant-consumer.ts';
@@ -148,7 +150,7 @@ async function rememberPaidMemoryProof(env:WorkerEnv,binding:ConsequentialBindin
   paidMemoryProofs.set(request,proof);return proof;
 }
 type RawReceipt={schema:1;executionId:string;bindingHash:string;providerRequestHash:string;httpStatus:number;responseBody:string;receivedAt:string;latencyMs:number};
-type CanonicalResult={schema:1;executionId:string;bindingHash:string;turnId:string;reply:string;actions:AssistantProviderResult["actions"];providerResult:AssistantProviderResult;sourceStatus:"original-approved-source"|"semantic-memory-assisted";sourceHash:string;maximumMicrousd:number;accountedMicrousd:number;billingStatus:"settled"|"pending";noAutomaticRetry:true};
+type CanonicalResult={editReview?:MemoryEditReview;schema:1;executionId:string;bindingHash:string;turnId:string;reply:string;actions:AssistantProviderResult["actions"];providerResult:AssistantProviderResult;sourceStatus:"original-approved-source"|"semantic-memory-assisted";sourceHash:string;maximumMicrousd:number;accountedMicrousd:number;billingStatus:"settled"|"pending";noAutomaticRetry:true};
 export type AssistantSpecialistHost={
   ensure:(env:WorkerEnv)=>Promise<void>;
   authorize:(request:Request,env:WorkerEnv)=>Promise<{authorized:SpecialistActor|null;response:Response|null}>;
@@ -522,6 +524,16 @@ async function canonicalResult(env:WorkerEnv,actor:SpecialistActor,task:Speciali
     .bind(row.result_ref,actor.principal.userId,...authority.bindings,...base.bindings,...contained.bindings).first<{content:string}>();if(!saved)return null;
   let result:CanonicalResult;try{result=JSON.parse(saved.content);}catch{fail("assistant_result_invalid");}
   if(result.schema!==1||result.executionId!==task.task_id||result.bindingHash!==retained.row.binding_hash||result.turnId!==retained.request.turnId||result.sourceHash!==retained.binding.sourceHash||result.providerResult?.model!==retained.binding.steps[0]!.model||result.reply!==result.providerResult.reply||result.sourceStatus!==(retained.request.memory?"semantic-memory-assisted":"original-approved-source"))fail("assistant_result_invalid");
+  if(result.editReview!==undefined&&(!retained.request.memory||!parseMemoryEditReview(result.editReview,{
+    executionId:task.task_id,turnId:retained.request.turnId,projectId:retained.binding.projectId,documentId:retained.binding.documentId,
+    sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale})))fail("assistant_result_invalid");
+  if(retained.request.memory&&(!Array.isArray(result.actions)||result.actions.length||!Array.isArray(result.providerResult.actions)||result.providerResult.actions.length))fail("assistant_result_invalid");
+  if(result.editReview){
+    const review=result.editReview,rebuilt=memoryAssistantEditReview({...result.providerResult,actions:review.edits.map(edit=>({kind:'context.edit',
+      target_block_id:edit.blockId,block_type:'direction',text:edit.suggestedText,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include'}))},retained.request.context,
+      {executionId:task.task_id,turnId:retained.request.turnId,projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale});
+    if(canonicalConsent(rebuilt)!==canonicalConsent(review))fail("assistant_result_invalid");
+  }
   const exact:BudgetReservationGuard={sql:`EXISTS(SELECT 1 FROM consequential_executions execution JOIN private_content content ON content.content_id=execution.result_ref AND content.owner_id=execution.actor_user_id WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.status='completed' AND content.content_id=? AND content.kind='context-proposal' AND content.content=? AND content.redacted_at IS NULL AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${contained.sql})`,bindings:[task.task_id,actor.principal.userId,retained.row.binding_hash,row.result_ref,saved.content,...contained.bindings]};
   return{result,proof:join(base,exact)};
 }
@@ -533,7 +545,7 @@ export type AssistantTaskFeedEntry={
 type AssistantCompletedReview={
   turnId:string;executionId:string;quote:ConsequentialPreview&{providerAvailable:boolean;canExecute:false};
   originalRequest:SpecialistOriginalRequest&{model:string;taskKind:AssistantTask;sourceHash:string;conversationTurnIds:string[]};
-  result:{reply:string;sourceStatus:"original-approved-source"|"semantic-memory-assisted"};
+  result:{reply:string;editReview?:MemoryEditReview;sourceStatus:"original-approved-source"|"semantic-memory-assisted"};
   memory?:{version:"semantic-memory-answer-v1";validUntil:string;independentEvidence:false};
 };
 
@@ -689,7 +701,7 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
               quote:{...retained.preview,status:"completed",providerAvailable:Boolean(env.OPENAI_API_KEY),canExecute:false},
               originalRequest:{...retained.request.originalRequest,model,taskKind:retained.request.taskKind,
                 sourceHash:retained.binding.sourceHash,conversationTurnIds:retained.request.conversation.map(item=>item.turnId)},
-              result:{reply:saved.result.reply,sourceStatus:saved.result.sourceStatus},
+              result:{reply:saved.result.reply,sourceStatus:saved.result.sourceStatus,...(saved.result.editReview?{editReview:saved.result.editReview}:{})},
               ...(semantic?{memory:{version:'semantic-memory-answer-v1' as const,validUntil:semanticAssistantMemoryInputs(env,semantic).validUntil,independentEvidence:false as const}}:{})};
           }
         }
@@ -858,7 +870,9 @@ async function recoverResult(env:WorkerEnv,actor:SpecialistActor,host:AssistantS
     if(paid.cost>limit.maximumMicrousd)fail("assistant_provider_budget_exceeded");
     const decoded=decodeAssistantProviderResult(paid.body,{model:limit.model as AssistantModel,maximumInputTokens:limit.inputTokens,maximumOutputTokens:limit.outputTokens,aliases:retained.request.aliases});
     const memory=semanticMemory(env,retained.request),result=memory?{...decoded,actions:[]}:decoded;
-    const canonical:CanonicalResult={schema:1,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:retained.request.turnId,reply:result.reply,actions:result.actions,providerResult:result,sourceStatus:memory?"semantic-memory-assisted":"original-approved-source",sourceHash:retained.binding.sourceHash,maximumMicrousd:limit.maximumMicrousd,accountedMicrousd:paid.cost,billingStatus:paid.billingPending?"pending":"settled",noAutomaticRetry:true};
+    const editReview=memory?memoryAssistantEditReview(decoded,retained.request.context,{executionId:task.task_id,turnId:retained.request.turnId,
+      projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale}):null;
+    const canonical:CanonicalResult={...(editReview?{editReview}:{}),schema:1,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:retained.request.turnId,reply:result.reply,actions:result.actions,providerResult:result,sourceStatus:memory?"semantic-memory-assisted":"original-approved-source",sourceHash:retained.binding.sourceHash,maximumMicrousd:limit.maximumMicrousd,accountedMicrousd:paid.cost,billingStatus:paid.billingPending?"pending":"settled",noAutomaticRetry:true};
     await completeConsequentialExecution(env,actor.principal,retained.binding,task.task_id,canonical,raw.proof,memory?{
       precommit:()=>semanticAssistantMemoryStatements(env,memory),
       publish:ref=>semanticAssistantMemoryContentStatements(env,memory,ref,'result'),

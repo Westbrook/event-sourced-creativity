@@ -135,3 +135,45 @@ test("relationship proposals reject unsupported edge kinds and cycles in the kno
   assert.deepEqual(assistantActionEvents({ kind: "context.relation.add", fromBlockId: "a", toBlockId: "c", relationKind: "invented_unrestricted_edge" }, graph,
     { blockId: "block", relationId: "ac", turnId: "turn" }), []);
 });
+
+// Same action model, separate read-only Memory consumer: no authored event.
+const {memoryAssistantEditReview}=await import('../worker/memory-assistant-edits.ts');
+const {parseMemoryEditReview}=await import('../src/model/memory-edit-review.ts');
+const memoryEditTarget={executionId:'execution-a',turnId:'turn-a',projectId:'project-a',documentId:'document-a',sourceHash:'a'.repeat(64),locale:'en'};
+const memoryEditContext={...context,decisionAtoms:[{...context.decisionAtoms[0],version:4,intent:'include',providerEligible:true,providerVisibility:'editable'}]};
+const memoryEditResult={actions:[{kind:'context.edit',target_block_id:'direction-a',text:'Suggested <script>literal</script> 🌱'}]};
+test('Memory edit review binds a historical field excerpt and never creates an action capability',()=>{
+ const review=memoryAssistantEditReview(memoryEditResult,memoryEditContext,memoryEditTarget);
+ assert.deepEqual(review,{version:'memory-edit-review-v1',...memoryEditTarget,mode:'review-only',independentEvidence:false,
+  edits:[{blockId:'direction-a',field:'text',revision:4,beforeExcerpt:'Current direction',suggestedText:memoryEditResult.actions[0].text}]});
+ assert.deepEqual(parseMemoryEditReview(review,memoryEditTarget),review);
+ const copy=parseMemoryEditReview(review,memoryEditTarget);copy.edits[0].suggestedText='changed';assert.notEqual(review.edits[0].suggestedText,'changed');
+});
+for(const fault of ['locked','immutable','protected','ineligible','restricted','prohibit','reference','revision','duplicate-target','duplicate-action','no-op','other-scope'])test('Memory edit review rejects '+fault,()=>{
+ const c=structuredClone(memoryEditContext),r=structuredClone(memoryEditResult),block=c.decisionAtoms[0];
+ if(['locked','immutable','protected'].includes(fault))block[fault]=true;
+ if(fault==='ineligible')block.providerEligible=false;
+ if(fault==='restricted')block.providerVisibility='restricted';
+ if(fault==='prohibit')block.intent='prohibit';
+ if(fault==='reference')block.type='reference';
+ if(fault==='revision')block.version=0;
+ if(fault==='duplicate-target')c.decisionAtoms.push({...block});
+ if(fault==='duplicate-action')r.actions.push({...r.actions[0],text:'Conflicting suggestion'});
+ if(fault==='no-op')r.actions[0].text=block.text;
+ if(fault==='other-scope')c.scope={...c.scope,documentId:'other'};
+ assert.equal(memoryAssistantEditReview(r,c,memoryEditTarget),null);
+});
+for(const fault of ['documentId','projectId','sourceHash','locale','executionId','turnId','field','mode','independence','extra','duplicate','oversized','accessor','array-accessor','hidden'])test('Memory edit review decoder denies '+fault,()=>{
+ const r=memoryAssistantEditReview(memoryEditResult,memoryEditContext,memoryEditTarget);
+ if(Object.hasOwn(memoryEditTarget,fault))r[fault]='other';
+ if(fault==='field')r.edits[0].field='rights';
+ if(fault==='mode')r.mode='apply';
+ if(fault==='independence')r.independentEvidence=true;
+ if(fault==='extra')r.action='accept';
+ if(fault==='duplicate')r.edits.push({...r.edits[0]});
+ if(fault==='oversized')r.edits[0].suggestedText='x'.repeat(601);
+ if(fault==='accessor')Object.defineProperty(r,'locale',{enumerable:true,get(){return assert.fail('getter must not execute');}});
+ if(fault==='array-accessor')Object.defineProperty(r.edits,'0',{enumerable:true,get(){return assert.fail('getter must not execute');}});
+ if(fault==='hidden')Object.defineProperty(r,'execute',{value:true});
+ assert.equal(parseMemoryEditReview(r,memoryEditTarget),null);
+});

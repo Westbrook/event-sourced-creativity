@@ -1,3 +1,4 @@
+import { parseMemoryEditReview } from '../model/memory-edit-review.ts';
 import './memory-assistant-context.ts';
 import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import { html, nothing } from "lit";
@@ -92,9 +93,14 @@ export class FormaCreativeAssistant extends FormaElement {
     for(const id of ids)this.#retentionVersions.set('withdrawal:execution:'+id,++this.#withdrawalRevision);
     this.#tasks=this.#tasks.map(task=>task.executionId&&ids.has(task.executionId)?this.#taskReference(task):task);
     const active=this.#specialist;
-    const activeRetired=Boolean(active&&(active.semanticMemory||active.memoryRequested||ids.has(active.executionId)));
+    // A pending exact read/quote can discover a retained Memory execution even
+    // before this host knows its provenance. Retire that presentation epoch on
+    // privacy changes too; a late response must not reveal it after blur.
+    // This cancels presentation, not a submitted provider operation or its bill.
+    const activeRetired=Boolean(active&&(active.semanticMemory||active.memoryRequested||active.working&&!active.stopping||ids.has(active.executionId)));
     if(active&&activeRetired)this.#withdrawSpecialist(active);
-    if(ids.size)this.#readRevision++;
+    // Also invalidate an in-flight feed whose Memory provenance is not known yet.
+    this.#readRevision++;
     if(ids.size||activeRetired)this.requestUpdate();
   }
   #memoryFocus = () => { this.#pruneMemoryAnswers(); this.#pruneSemanticReceipts(); this.requestUpdate(); };
@@ -148,7 +154,7 @@ export class FormaCreativeAssistant extends FormaElement {
     this.#retentionVersions.set("withdrawal:scope", ++this.#withdrawalRevision);
     this.#context = null; this.#turns = []; this.#messages = []; this.#localToolMessages = []; this.#proposals = [];
     if (this.#guidance) this.#guidance = { ...this.#guidance, message: "", sourceRetired: true, status: "uncertain" };
-    if (active) this.#specialist = { ...active, quote: null, originalRequest: null, resultReply: null, unusedExecution: false,
+    if (active) this.#specialist = { ...active, quote: null, originalRequest: null, editReview:undefined,resultReply: null, unusedExecution: false,
       task: this.#tasks.find(task => task.executionId === active.executionId) ?? null, working: false, stopping: false,
       retrievalOnly: true, notice: "unavailable" };
     this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.clearConversationDrafts();
@@ -531,7 +537,10 @@ export class FormaCreativeAssistant extends FormaElement {
     const memory=review.memory?parseSemanticMemoryAnswerPresentation(review.memory):null;
     if(review.result.sourceStatus==='semantic-memory-assisted'&&(!memory||!this.#retainSemanticReceipt(review.executionId,memory))
       ||review.result.sourceStatus==='original-approved-source'&&review.memory)return null;
-    return { quote, original, reply: review.result.reply,memory:memory??undefined,sourceStatus:review.result.sourceStatus };
+    const editReview=review.result.editReview===undefined?null:parseMemoryEditReview(review.result.editReview,{executionId:review.executionId,
+      turnId:task.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
+    if(review.result.editReview!==undefined&&(!memory||!editReview))return null;
+    return { quote, original, reply: review.result.reply,editReview:editReview??undefined,memory:memory??undefined,sourceStatus:review.result.sourceStatus };
   }
 
   async #load() {
@@ -560,7 +569,7 @@ export class FormaCreativeAssistant extends FormaElement {
         && this.#negativeReadCurrent(task.turnId, task.executionId, withdrawalRevision)) {
         const active = this.#specialist?.turnId === task.turnId ? this.#specialist : null;
         this.#withdrawSpecialist({ id: active?.id ?? "", scope, turnId: task.turnId, executionId: task.executionId,
-          quote: null, originalRequest: null, task, working: false, stopping: false, retrievalOnly: true, notice: "unavailable", resultReply: null }, false, withdrawalRevision);
+          quote: null, originalRequest: null, task, working: false, stopping: false, retrievalOnly: true, notice: "unavailable", editReview:undefined,resultReply: null }, false, withdrawalRevision);
       }
       if (!canMerge) return;
       // Page context has a separate source proof from retained conversation and
@@ -596,7 +605,7 @@ export class FormaCreativeAssistant extends FormaElement {
         // resume must not restore its receipt after this currently retained result.
         this.#invalidateSpecialistReceipt(active.turnId, active.executionId);
         this.#specialist = { ...active, task: { ...latest, canExecute: false }, quote: completed.quote,
-          originalRequest: completed.original, resultReply: completed.reply,semanticMemory:completed.memory,resultSource:completed.sourceStatus, working: false, stopping: false,
+          originalRequest: completed.original, resultReply: completed.reply,editReview:completed.editReview,semanticMemory:completed.memory,resultSource:completed.sourceStatus, working: false, stopping: false,
           retrievalOnly: true, notice: "" };
       } else if (active && latest && !this.#retentionUnavailable(latest) && latest.turnId === active.turnId
         && latest.bindingHash === activeHash && active.quote?.status !== "completed"
@@ -831,7 +840,7 @@ export class FormaCreativeAssistant extends FormaElement {
         if (!preservePending) this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.clearConversationDrafts();
       }
       this.#specialist = { ...active, executionId: state.executionId || active.executionId,
-        quote: null, originalRequest: null, resultReply: null, unusedExecution: false,
+        quote: null, originalRequest: null, editReview:undefined,resultReply: null, unusedExecution: false,
         task: this.#tasks.find((task) => task.executionId === state.executionId) ?? null,
         working: preservePending, stopping: false, retrievalOnly: true, notice: "unavailable" };
     }
@@ -871,7 +880,7 @@ export class FormaCreativeAssistant extends FormaElement {
     this.#specialistUrl = url.href;
     this.#specialist = { id: crypto.randomUUID(), scope, turnId: detail.turnId, executionId: existing?.executionId ?? "",
       task: existing ?? null, quote: null, originalRequest: null, working: false, stopping: false, retrievalOnly: Boolean(existing),
-      notice: "", resultReply: null };
+      notice: "", editReview:undefined,resultReply: null };
     this.requestUpdate();
     await this.#requestSpecialist(existing ? "resume" : "quote");
   }
@@ -937,7 +946,7 @@ export class FormaCreativeAssistant extends FormaElement {
       ...(action === "execute" || action === "retrieve" ? { approvedBindingHash: approvedHash } : {}) };
     if (action === "execute" || refreshUnused) this.#rememberSpecialistExecution(state);
     this.#specialist = { ...state, working: true, stopping: action === "stop", notice: "",
-      ...(action === "quote" ? { quote: null, originalRequest: null,memoryRequested,semanticMemory:undefined,resultSource:undefined,resultReply:null,
+      ...(action === "quote" ? { quote: null, originalRequest: null,memoryRequested,semanticMemory:undefined,resultSource:undefined,editReview:undefined,resultReply:null,
         executionId: refreshUnused ? state.executionId : "",
         task: refreshUnused ? this.#tasks.find((task) => task.executionId === state.executionId) ?? null : null,
         selectedModel: model, unusedExecution: false } : {}),
@@ -1036,7 +1045,7 @@ export class FormaCreativeAssistant extends FormaElement {
         const active = this.#specialist;
         if (active?.id === state.id && (revision === this.#reviewRevision || !active.working && !active.quote)) this.#specialist = { ...active,
           executionId: quote.executionId, task: retained, working: false,
-          originalRequest: null, resultReply: null, quote: null, unusedExecution: false, stopping: false, retrievalOnly: true, notice: "unavailable" };
+          originalRequest: null, editReview:undefined,resultReply: null, quote: null, unusedExecution: false, stopping: false, retrievalOnly: true, notice: "unavailable" };
         return;
       }
       const canonicalCompletion = quote.status === "completed" && Boolean(payload.result&&["original-approved-source","semantic-memory-assisted"].includes(payload.result.sourceStatus));
@@ -1050,6 +1059,9 @@ export class FormaCreativeAssistant extends FormaElement {
         ||payload.result?.sourceStatus==='original-approved-source'&&semantic
         ||action==='quote'&&memoryRequested&&!reusedQuote&&!semantic)throw new Error('assistant_memory_unavailable');
       if(semantic&&!this.#retainSemanticReceipt(quote.executionId,semantic))throw new Error('assistant_memory_unavailable');
+      const editReview=payload.result?.editReview===undefined?null:parseMemoryEditReview(payload.result.editReview,{executionId:quote.executionId,
+        turnId:state.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
+      if(payload.result?.editReview!==undefined&&(!semantic||!editReview))throw new Error('assistant_memory_unavailable');
       const latestTask = this.#tasks.find((task) => task.executionId === quote.executionId);
       const certifiedTask = [latestTask, this.#specialist?.task].find((task) => task?.executionId === quote.executionId
         && task.turnId === state.turnId && task.bindingHash === quote.bindingHash && this.#certifiedSpecialistCompletion(task));
@@ -1081,7 +1093,7 @@ export class FormaCreativeAssistant extends FormaElement {
         this.#invalidateSpecialistReceipt(state.turnId, quote.executionId);
       }
       this.#readRevision += 1; // An older positive GET cannot replace this response.
-      this.#specialist = { ...this.#specialist!,semanticMemory:certificate?.memory??semantic??undefined,resultSource:certificate?.sourceStatus??payload.result?.sourceStatus, quote: currentQuote, originalRequest: certificate?.original ?? original, executionId: quote.executionId,
+      this.#specialist = { ...this.#specialist!,editReview:certificate?.editReview??editReview??undefined,semanticMemory:certificate?.memory??semantic??undefined,resultSource:certificate?.sourceStatus??payload.result?.sourceStatus, quote: currentQuote, originalRequest: certificate?.original ?? original, executionId: quote.executionId,
         task: task ? reusedQuote ? { ...task, canExecute: false } : task : null, working: false, stopping: false,
         unusedExecution, retrievalOnly: action === "quote" && !reusedQuote ? quote.status !== "quoted" || Boolean(payload.task)
           : this.#specialist!.retrievalOnly || redirected || reusedQuote || quote.status !== "quoted" || Boolean(payload.task),
@@ -1101,7 +1113,7 @@ export class FormaCreativeAssistant extends FormaElement {
       if (exactRead && this.#retentionVersions.get("pending-read:" + readKey) === withdrawalRevision) this.#retentionVersions.delete("pending-read:" + readKey);
       if (receiptScope() && revision === this.#reviewRevision && !this.store.sourceOwnershipActive(source) && this.#specialist) {
         this.#specialist = { ...this.#specialist, working: false, stopping: false, quote: null, originalRequest: null,
-          resultReply: null, unusedExecution: false, retrievalOnly: true, notice: "unavailable" };
+          editReview:undefined,resultReply: null, unusedExecution: false, retrievalOnly: true, notice: "unavailable" };
       }
       if (state.scope === this.#scope()) this.requestUpdate();
     }

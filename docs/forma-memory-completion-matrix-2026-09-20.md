@@ -11,7 +11,7 @@ not close an end-to-end consumer.
 
 | Workstream | Implemented foundation | Work required before closing it |
 | --- | --- | --- |
-| Assistant and Chat Studio consumption | Actual consent-bound specialist and embedded Chat guidance prompts; bounded follow-up ancestry; historical readers, source/target replay and withdrawal/erasure; browser privacy coverage | Memory-assisted creative edit/output integration; conservative whole-invocation capacity and broader latency/freshness qualification. Read-only guidance is not the legacy creative-edit/live-preview consumer. |
+| Assistant and Chat Studio consumption | Actual consent-bound specialist and embedded Chat guidance prompts; bounded follow-up ancestry; historical readers, source/target replay and withdrawal/erasure; private historical text-edit review; browser privacy coverage | Memory-assisted creative edit/output integration; conservative whole-invocation capacity and broader latency/freshness qualification. Read-only guidance is not the legacy creative-edit/live-preview consumer. |
 | Exact-field autocomplete | Native versioned block history, source proofs and suggestion results | Bind completion to exact field/revision/language; cancellable nonblocking presentation and IME/keyboard behavior; explicit accept/reject/edit/undo; retain assisted ancestry through later edits and independently authorized reuse; do not persist unsent drafts. |
 | Unified evolving profile | Qualified derivation, rolling original-backed windows, private controls, paginated retained profile with claim-revision/counterevidence review and explicit broader bands | Longer-term source-backed consolidation, supersession and contradiction handling beyond the bounded retained projection; scope-specific promotion with independent support; consumer integration and lifecycle tests. |
 | Complete native resource/zoom coverage | Document/page/block identities and inspection; artifact revisions; same-owner nesting; certified approved-copy outcomes | Library/Canvas resource identity and history, remaining unsupported block histories, cross-owner nesting with independent permissions, and original-source recall across reuse relationships. Nesting must not grant access. |
@@ -110,3 +110,16 @@ block-removal restoration gap is also fixed with a bounded same-author historica
 proof and exact atomic source/write receipts. Six isolated D1 histories and the
 full 294-test native suite verify restoration, capture and late erasure. The
 remaining six native workstreams above are not closed by these specific fixes.
+
+## Private text-edit review continuation
+
+[Memory-assisted text-edit review](forma-memory-edit-review-2026-09-20.md) now retains
+validated historical field suggestions inside the existing consent/result ancestry
+and presents them in Document Assistant and Chat Studio. The preview binds the
+exact execution/resource/source/language and block revision, clears on privacy
+withdrawal and cannot publish an authoring event or actionable proposal. A late
+read that discovers Memory provenance after blur can no longer restore private
+review bytes. **Acceptance, current-field revalidation, durable accepted-edit and
+output ancestry, autocomplete and the other native workstreams remain required.**
+This is a completed review slice, not completed creative-edit integration,
+main integration, deployment or enrollment.
