@@ -185,7 +185,7 @@ test('format suitability is ranked separately from intent and capped at three av
   assert.ok(!selectActions(candidates,position,answers).some(a=>abilities.formats.includes(a.id)));
   const questions=questionsFor(candidates,{...position,view:'choose-format'});
   assert.ok(questions.fit_image);assert.equal(questions.use_image,undefined);assert.equal(questions.requested_image,undefined);
-  assert.equal(Object.keys(questions).length,6);
+  assert.equal(Object.keys(questions).length,7);
   for (const bad of [score(NaN),score(Infinity),score(-1),score(4),score(2,.49),score(3,2),score('3'),{type:'noul',noul:1}]) assert.deepEqual(rankFormats(candidates,{fit_image:bad}),[]);
   assert.deepEqual(rankFormats(candidates),[]);
 });

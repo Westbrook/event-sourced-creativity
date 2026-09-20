@@ -1,3 +1,4 @@
+import { assessNextBest, nextBestOrder, readNextBestFlag, type NextBestAnswer } from './next-best.ts';
 import { stillImage, stillVideo } from './media.ts';
 import { fitToolbarLimit } from './toolbar-fit.ts';
 import { generationDecisionContext } from './generation-decision.ts';
@@ -168,6 +169,19 @@ export class StillApp extends LitElement {
   private dockTouched=false;
   private moreOpen=false;
   private toolbarHelpEpoch=0;
+  private nextBestEnabled=true;
+  private nextBest?:NextBestAnswer;
+  private setNextBest=(e:CustomEvent<{value:boolean}>)=>{
+    this.nextBestEnabled=e.detail.value===true;
+    try{localStorage.setItem('still:flag:next-best',String(this.nextBestEnabled));}catch{}
+    this.moreOpen=false;this.changed();
+  };
+  private nextBestAssessment(){
+    const formats=this.mode==='generate'&&!this.generation;
+    const ids=formats?this.formatSuggestions:this.rankedActions.filter(a=>this.candidates().some(c=>c.id===a.id)).map(a=>a.id);
+    return assessNextBest(this.nextBest,ids,formats?this.formatEmphasis:this.emphasis,this.nextBestEnabled,this.secondaryOnly());
+  }
+  private preferredSuggestions(){return nextBestOrder(this.suggestions,this.rankedActions,this.nextBestAssessment());}
   private onboarding=false;
   private onboardingDecisionPending=false;
   private onboardingHelp=new OnboardingController(input=>api<OnboardingResult>('/api/still/onboarding',input,'POST',8000),()=>this.changed());
@@ -247,6 +261,7 @@ export class StillApp extends LitElement {
       const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
       if(inspector?.context)inspector.context={...inspector.context,attention:snapshot};
     });
+    try{this.nextBestEnabled=readNextBestFlag(localStorage);}catch{}
     try{this.onboarding=readOnboardingFlag(location.href,localStorage);}catch{this.onboarding=new URL(location.href).searchParams.has('onboarding');}
     this.client.onChange = () => { this.retireChangedDecisions(); if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
     this.desktop.addEventListener('change', this.developerViewportChanged);
@@ -278,7 +293,7 @@ export class StillApp extends LitElement {
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
-      inspector.context={toolbarFit:this.dockFit,generation:this.decisionPosition().generation,onboarding:this.onboarding,onboardingText:this.onboardingHelp.status,historyComplete:this.client.historyComplete,canRefreshDecision:!this.loading&&!this.busy&&(this.paletteOpen||this.mode==='generate'&&!this.generation||!this.mode&&!this.isInlineGeneration()&&!this.canAcknowledgeSafety(this.selectedGeneration())),attention:this.attention?.summary.snapshot(),view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
+      inspector.context={nextBest:this.nextBestAssessment(),nextBestAnswer:this.nextBest,toolbarFit:this.dockFit,generation:this.decisionPosition().generation,onboarding:this.onboarding,onboardingText:this.onboardingHelp.status,historyComplete:this.client.historyComplete,canRefreshDecision:!this.loading&&!this.busy&&(this.paletteOpen||this.mode==='generate'&&!this.generation||!this.mode&&!this.isInlineGeneration()&&!this.canAcknowledgeSafety(this.selectedGeneration())),attention:this.attention?.summary.snapshot(),view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
       inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy||this.paletteRefreshing;
       inspector.scope=this.diagnosticScope();inspector.hostVisible=this.developerVisible;
     }
@@ -391,7 +406,7 @@ export class StillApp extends LitElement {
     }
     this.activeAddress=url;
   }
-  private resetStep(){this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
+  private resetStep(){this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
     this.resetStep();this.page = 0; this.itemIndex = 0; this.error = '';this.routeError='';this.notice='';
     const changedDocument = ids.documentId !== undefined && ids.documentId !== this.client.position.documentId || ids.projectId !== undefined && ids.projectId !== this.client.position.projectId;
@@ -420,7 +435,7 @@ export class StillApp extends LitElement {
     if(this.mode){clearTimeout(this.decisionTimer);if(this.mode==='generate'&&!this.generation){++this.decisionTicket;this.suggestFormats(bypass);}return;}
     clearTimeout(this.decisionTimer); const ticket = ++this.decisionTicket;
     this.lastGenerationDecision=JSON.stringify(this.decisionPosition().generation);
-    const candidates = this.candidates(); if(this.dockTouched)return;this.suggestions = selectActions(candidates, this.decisionPosition(),{},this.client.projection);this.rankedActions=evaluateActions(candidates,this.decisionPosition(),{},this.client.projection).ranked;this.moreOpen=false;this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.decisionSource = 'fallback'; this.changed();
+    const candidates = this.candidates(); if(this.dockTouched)return;this.suggestions = selectActions(candidates, this.decisionPosition(),{},this.client.projection);this.rankedActions=evaluateActions(candidates,this.decisionPosition(),{},this.client.projection).ranked;this.moreOpen=false;this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.nextBest=undefined; this.decisionSource = 'fallback'; this.changed();
     if(this.developer){this.developerScope=this.diagnosticScope();this.developerApplied=this.localDiagnostics('Local policy');this.developerReceived=undefined;this.developerPending=false;}
     if (!this.client.session?.policy.accepted || this.mode) return;
     this.onboardingDecisionPending=true;
@@ -434,7 +449,7 @@ export class StillApp extends LitElement {
         firstResponseMs??=Math.max(0,performance.now()-started);
         const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.decisionPosition())||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:this.dockTouched||!!this.querySelector('.action-dock')?.contains(document.activeElement)});
         this.recordDecision(result,disposition,diagnosticScope,started,firstResponseMs);
-        if(disposition==='Applied'){const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
+        if(disposition==='Applied'){this.nextBest=result.nextBest;const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
         if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}
         };
         const result=await this.requestDecision(this.decisionBody(),bypass,undefined,applyResult);
@@ -457,7 +472,7 @@ export class StillApp extends LitElement {
         this.recordDecision(result,disposition,diagnosticScope,started);
         if (disposition==='Applied') {
           const allowed = new Set(this.candidates().filter(a=>!!FORMATS[a.id]).map(a=>a.id));
-          this.formatSuggestions = [...new Set(result.rankedFormats ?? result.formats!)].filter(id=>allowed.has(id));this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
+          this.nextBest=result.nextBest;this.formatSuggestions = [...new Set(result.rankedFormats ?? result.formats!)].filter(id=>allowed.has(id));this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
         }
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local format order',diagnosticScope,started); }
       finally {if(ticket===this.decisionTicket){this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}}
@@ -484,7 +499,8 @@ export class StillApp extends LitElement {
     }, 2000);
   }
   private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button id=${this.dockId("still-help-"+a.id)} data-action-id=${a.id} data-tier=${e.tier} data-action-source=${this.decisionSource==='jev'&&e.score!==undefined?'Jev ranking':'Local fallback'} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.startGeneration(a.id):this.choose(a.id)}>${a.label}</en-button>${this.help("still-help-"+a.id,a.label)}`;}
-  private toolbarPolicy(){return {view:this.client.position.view,more:this.moreOpen,secondaryOnly:['refresh-generation',...(this.decisionPosition().generation?.mayDuplicateCharge?['generate-again','create',...Object.keys(FORMATS)]:[])]};}
+  private secondaryOnly(){return ['refresh-generation',...(this.decisionPosition().generation?.mayDuplicateCharge?['generate-again','create',...Object.keys(FORMATS)]:[])];}
+  private toolbarPolicy(){const choice=this.nextBestAssessment();return {view:this.client.position.view,more:this.moreOpen,secondaryOnly:this.secondaryOnly(),nextBest:choice.accepted?choice.choice:undefined};}
   private toolbarSuggestions(actions:Action[]){const emphasis=presentToolbar(actions.map(a=>a.id),this.emphasis,this.toolbarPolicy());return actions.map(a=>this.suggestedButton(a,false,emphasis));}
   private paletteShortcut=(event:KeyboardEvent)=>{
     if(event.isComposing||event.keyCode===229)return;
@@ -626,7 +642,7 @@ export class StillApp extends LitElement {
       void this.run(async () => { const b = this.client.projection.blocks.find(x => x.id === this.client.position.blockId); if (!b) return; await this.client.append([{ type: id === 'toggle-context' ? 'BlockWeightSet' : id === 'lock' ? 'BlockLocked' : 'BlockUnlocked', payload: { block_id: b.id, ...(id === 'toggle-context' ? { weight: Number(b.properties.weight ?? 1) > 0 ? 0 : .8, previous_weight: b.properties.weight ?? 1 } : {}) } }]); this.notice = 'Updated.';this.closeMode(); }); return;
     }
     if (id === 'create' || FORMATS[id]) {
-      this.generation = null; this.generationGate = null; this.formatSuggestions = []; this.formatTouched = false;
+      this.generation = null; this.generationGate = null; this.formatSuggestions = []; this.nextBest=undefined; this.formatTouched = false;
       try {
         const format = this.client.pendingGeneration?.format ?? (id === 'create' ? '' : id);
         if (format && (id==='create'||this.client.pendingGeneration)) this.generation = this.client.prepareGeneration(format);
@@ -898,9 +914,10 @@ export class StillApp extends LitElement {
   private renderGenerationDock() {
     const g=this.directGeneration?null:this.generation;
     const formats=this.candidates().filter(a=>!!FORMATS[a.id]);
-    const ordered=[...new Set([...this.formatSuggestions,...rankAllFormats(formats,{}, {projection:this.client.projection,position:this.decisionPosition()})])].filter(id=>formats.some(a=>a.id===id));
+    const formatOrder=nextBestOrder(this.formatSuggestions.map(id=>({id})),[],this.nextBestAssessment(),this.formatSuggestions.length).map(a=>a.id);
+    const ordered=[...new Set([...formatOrder,...rankAllFormats(formats,{}, {projection:this.client.projection,position:this.decisionPosition()})])].filter(id=>formats.some(a=>a.id===id));
     if(this.toolbarLimit<3){
-      const emphasis=presentToolbar(ordered.slice(0,3),this.formatEmphasis);
+      const emphasis=presentToolbar(ordered.slice(0,3),this.formatEmphasis,this.toolbarPolicy());
     const choices=g?[{id:'ui:generate',label:g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'I understand the risks':'Blocked'):'Generate',run:()=>void this.run(()=>this.generate()),variant:'primary' as const,disabled:!!this.generationGate&&!this.generationGate.key}]:ordered.map(id=>({id,label:FORMATS[id],run:()=>{this.formatTouched=true;void this.startGeneration(id);},variant:emphasis[id]?.variant??'secondary' as const}));
       return this.compactDock([...choices,{id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'}],g?'Menu':'Other outputs');
     }
@@ -909,7 +926,7 @@ export class StillApp extends LitElement {
     return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()} @pointerdown=${()=>{this.formatTouched=true;}} @focusin=${()=>{this.formatTouched=true;}}>
       <en-toolbar label="Your next step" keyboard-navigation="tab">
         ${g?this.button(g.recoveryClosed?'Review another':g.attempted?'Check generation':g.format==='scene'&&!g.scenePreview?'Check cost':this.generationGate?(this.generationGate.key?'I understand the risks':'Blocked'):'Generate',()=>void this.run(()=>this.generate()),true,!!this.generationGate&&!this.generationGate.key):html`
-          ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentToolbar(suggested,this.formatEmphasis)))}
+          ${suggested.map(id=>this.suggestedButton({...ACTIONS.find(a=>a.id===id)!,label:FORMATS[id]},true,presentToolbar(suggested,this.formatEmphasis,this.toolbarPolicy())))}
           ${remaining.length?html`<en-button id=${this.dockId("still-format-menu")} variant="ghost" size="medium" ?disabled=${this.busy||this.composing}>Other outputs</en-button>${this.help("still-format-menu","Other outputs")}`:nothing}
         `}
         ${this.button('Back',()=>this.closeMode())}
@@ -926,7 +943,8 @@ export class StillApp extends LitElement {
     if(view==='generation'&&(this.isInlineGeneration()||this.canAcknowledgeSafety(this.selectedGeneration())))return this.renderGenerationStatusDock();
     const limit=this.toolbarLimit,firstLimit=this.moreOpen?this.firstDockLimit:limit,eligible=this.candidates(),job=view==='generation'?this.selectedGeneration():undefined;
     const generationProgress=job&&generationActive(job)?generationStatus(job):'';
-    const pool=[...this.suggestions,...(firstLimit>5&&this.decisionSource==='jev'?this.rankedActions.filter(a=>!this.suggestions.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
+    const selected=this.preferredSuggestions();
+    const pool=[...selected,...(firstLimit>5&&this.decisionSource==='jev'?this.rankedActions.filter(a=>!selected.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
     const a=p.artifacts.find(x=>x.id===c.position.outputId);
     const slides=view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1;
     const browsing=['projects','documents','results'].includes(view);
@@ -1031,7 +1049,7 @@ export class StillApp extends LitElement {
   render() {
     const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
     const failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId && j.jobId !== displayedGeneration);
-    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
+    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

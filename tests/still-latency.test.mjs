@@ -9,10 +9,10 @@ import {appendAuditEvent} from '../worker/runtime.ts';
 const pos={view:'projects',projectId:'',documentId:'',blockId:'',outputId:'',intent:'',recentActions:[]};
 const abilities={author:true,generate:true,projectCreate:true,formats:['image','video','audio','model3d','scene','short_story','slides','storyboard']};
 
-test('Projects asks three relevant questions; pruned answers preserve ranking and constraint penalties',()=>{
+test('Projects adds one comparative choice to the three relevant questions; pruned answers preserve ranking and constraint penalties',()=>{
  const built=buildDecisionState([],pos,abilities,0);
- assert.equal(Object.keys(comprehensiveQuestionsFor(built.candidates,pos)).length,70);
- assert.deepEqual(Object.keys(questionsFor(built.candidates,pos)),['stage','first_step','use_new-project']);
+ assert.equal(Object.keys(comprehensiveQuestionsFor(built.candidates,pos)).length,71);
+ assert.deepEqual(Object.keys(questionsFor(built.candidates,pos)),['next_best_action','stage','first_step','use_new-project']);
  let random=1234;const value=()=>{random=(random*1664525+1013904223)>>>0;return random/2**32;};
  for(const position of [pos,{...pos,view:'document',blockId:'b'},{...pos,view:'artifact',outputId:'a'},{...pos,view:'document',intent:'Make an image'}]){
   for(let n=0;n<80;n++){

@@ -155,10 +155,10 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   let target:typeof evidence.destinations[number]|undefined;
   const resultBody=()=>{
     recommended=choosingFormat?formats:actions.map(a=>a.id);
-    const availablePresentation=choosingFormat?{}:presentActions(evaluateActions(built.candidates,position,answers).ranked.map(a=>a.id),answers);
+    const availablePresentation=presentActions(choosingFormat?rankedFormats:evaluateActions(built.candidates,position,answers).ranked.map(a=>a.id),answers,choosingFormat?'fit_':'use_');
     for(const row of Object.values(availablePresentation))Object.assign(row,{variant:'secondary',size:'medium',tier:'peer',reason:'Not in initial menu; evaluated when shown'});
     presentation={...availablePresentation,...presentActions(recommended,answers,choosingFormat?'fit_':'use_')};
-    return {source:'jev',model:first.model,policy:POLICY_VERSION,head,actions,rankedActions:choosingFormat?[]:evaluateActions(built.candidates,position,answers).ranked.map(a=>({id:a.id})),formats,rankedFormats,presentation,...(target?{targets:{'use-in':target.id}}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)};
+    return {source:'jev',model:first.model,policy:POLICY_VERSION,head,nextBest:questions.next_best_action?inspectAnswer(questions.next_best_action,answers.next_best_action):undefined,actions,rankedActions:choosingFormat?[]:evaluateActions(built.candidates,position,answers).ranked.map(a=>({id:a.id})),formats,rankedFormats,presentation,...(target?{targets:{'use-in':target.id}}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)};
   };
   if(shouldEnrich(position,answers,evidence.destinations.length)&&deadline-Date.now()>=1200){
     emitInitial?.({...resultBody(),preparation,delivery:delivery('initial')});
