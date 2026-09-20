@@ -89,3 +89,50 @@ test('identical in-flight onboarding batches share one provider request',async()
   const values=await Promise.all([first,second].map(async p=>(await p).json()));assert.equal(calls,1);assert.deepEqual(values.map(v=>v.cache.status).sort(),['miss','shared']);
  }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
 });
+
+test('context keeps useful observations and strips free-form state and telemetry',()=>{
+ const result=onboardingInput({...input,context:{surface:'more',historyComplete:false,basis:{'new-project':'next-best',projects:'alternative',invented:'next-best'},available:{projects:2000,documents:-1,results:Infinity,ideas:2,secret:'text'},selectedIdea:{kind:'subject',active:true,locked:false,text:'private'},recentActions:['invented','new-project','completed:new-project','ui:more'],hoverMs:900,secret:'private'}});
+ assert.deepEqual(result.context,{surface:'more',historyComplete:false,basis:{'new-project':'next-best',projects:'alternative'},available:{projects:1000,ideas:2},selectedIdea:{kind:'subject',active:true,locked:false},recentActions:['new-project','completed:new-project','ui:more']});
+ assert.deepEqual(onboardingInput({...input,context:{selectedIdea:{kind:'invented'},recentActions:Array(100).fill('new-project')}}).context,{selectedIdea:{},recentActions:Array(4).fill('new-project')});
+});
+
+test('provider gets grounded why-now instructions and sanitized context; telemetry cannot invalidate its cache',async()=>{
+ const f=await createSceneCostFixture(),saved=globalThis.fetch;let calls=0;
+ const context={surface:'main',historyComplete:false,basis:{'new-project':'page-default',projects:'local'},available:{projects:3},recentActions:['completed:new-project']};
+ try{
+  globalThis.fetch=async(_url,init)=>{
+   calls++;const b=JSON.parse(init.body),sent=JSON.parse(b.input);
+   assert.match(b.instructions,/why it is useful here, now/);assert.match(b.instructions,/selections, not successful outcomes/);assert.match(b.instructions,/do not invent a personal motive/);
+   assert.deepEqual(sent.context,context);assert.ok(!init.body.includes('private creative text'));return valid(b.model);
+  };
+  const first=await(await f.request('/api/still/onboarding',f.json({...input,context:{...context,text:'private creative text',hoverMs:100}}))).json();
+  assert.equal(first.source,'model');
+  const second=await(await f.request('/api/still/onboarding',f.json({...input,context:{...context,text:'different private creative text',hoverMs:2000}}))).json();
+  assert.equal(second.cache.status,'hit');assert.equal(calls,1);
+  const changed=await(await f.request('/api/still/onboarding',f.json({...input,context:{...context,available:{projects:4}}}))).json();
+  assert.notEqual(changed.cache.status,'hit');assert.equal(changed.source,'local'); // Existing provider cooldown still applies.
+ }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
+});
+
+test('same-account route revisits restore help synchronously; different contexts and accounts cannot reuse it',async()=>{
+ let calls=0;
+ const c=new OnboardingController(async()=>{calls++;return{source:'model',tips:{projects:'Browse your three projects.'}};},()=>{},0);
+ const original={...input,context:{available:{projects:3}}};
+ c.update('route-one',original,'account-one');await pause();await pause();assert.equal(calls,1);
+ c.update('route-two',null,'account-one');
+ c.update('route-one',original,'account-one');
+ assert.equal(c.help('route-one','projects'),'Browse your three projects.');assert.equal(c.status.cache.status,'hit');assert.equal(c.status.elapsedMs,0);assert.equal(calls,1);
+ c.update('route-one',{...original,context:{available:{projects:4}}},'account-one');assert.equal(c.help('route-one','projects'),undefined);await pause();await pause();assert.equal(calls,2);
+ c.update('route-one',original,'account-two');assert.equal(c.help('route-one','projects'),undefined);await pause();await pause();assert.equal(calls,3);
+ c.dispose();
+});
+
+test('context changes fence late model wording and unchanged context does not resubmit',async()=>{
+ const pending=[];const c=new OnboardingController(value=>new Promise(resolve=>pending.push({value,resolve})),()=>{},0);
+ c.update('route',{...input,context:{available:{projects:1}}});await pause();
+ c.update('route',{...input,context:{available:{projects:2}}});await pause();
+ pending[0].resolve({source:'model',tips:{projects:'Old context'}});await pause();assert.equal(c.help('route','projects'),undefined);
+ pending[1].resolve({source:'model',tips:{projects:'Current context'}});await pause();assert.equal(c.help('route','projects'),'Current context');
+ c.update('route',{...input,context:{available:{projects:2},hoverMs:50000}});await pause();assert.equal(pending.length,2);
+ c.dispose();
+});

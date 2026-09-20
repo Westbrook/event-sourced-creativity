@@ -4,7 +4,7 @@ import { fitToolbarLimit } from './toolbar-fit.ts';
 import { generationDecisionContext } from './generation-decision.ts';
 import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { fetchDecision } from './decision-transport.ts';
-import { actionHelp, readOnboardingFlag, ONBOARDING_VIEWS, type OnboardingResult } from './onboarding.ts';
+import { actionHelp, readOnboardingFlag, ONBOARDING_VIEWS, type OnboardingContext, type OnboardingResult } from './onboarding.ts';
 import { OnboardingController } from './onboarding-client.ts';
 import './vendor/elements/define/tooltip.js';
 import { DecisionMemo, stableDecisionKey } from './decision-cache.ts';
@@ -186,6 +186,18 @@ export class StillApp extends LitElement {
   private onboardingDecisionPending=false;
   private onboardingHelp=new OnboardingController(input=>api<OnboardingResult>('/api/still/onboarding',input,'POST',8000),()=>this.changed());
   private onboardingScope(){return this.interactionScope()+'/'+this.client.position.view+'/'+this.mode+'/'+this.client.position.blockId+'/'+this.client.position.outputId;}
+  private onboardingContext(ids:string[]):OnboardingContext{
+    const p=this.client.projection,pos=this.client.position,formats=this.mode==='generate'&&!this.generation;
+    const evidence=formats?this.formatEmphasis:this.emphasis,choice=this.nextBestAssessment();
+    const ideas=pos.documentId?p.blocks.filter(b=>!b.removed):[],selected=ideas.find(b=>b.id===pos.blockId);
+    return {
+      surface:formats?'formats':this.moreOpen?'more':this.mode?'workflow':'main',
+      basis:Object.fromEntries(ids.map(id=>[id,this.moreOpen?'alternative':choice.accepted&&choice.choice===id?'next-best':evidence[id]?.score!==undefined?'model-ranked':pos.view==='projects'&&id==='new-project'?'page-default':'local'])),
+      available:{...(pos.view==='projects'?{projects:p.projects.length}:{}),...(pos.view==='documents'?{documents:p.documents.filter(d=>!d.removed).length}:{}),...(pos.documentId?{ideas:ideas.length,activeIdeas:ideas.filter(b=>Number(b.properties.weight??1)>0).length,results:p.outputs.length+p.artifacts.length}:{})},
+      ...(selected?{selectedIdea:{kind:selected.type,active:Number(selected.properties.weight??1)>0,locked:selected.locked}}:{}),
+      recentActions:pos.recentActions,historyComplete:this.client.historyComplete,
+    };
+  }
   private setOnboarding=(e:CustomEvent<{value:boolean}>)=>{this.onboarding=e.detail.value===true;try{localStorage.setItem('still:flag:onboarding',String(this.onboarding));}catch{}const url=new URL(location.href);url.searchParams.delete('onboarding');url.searchParams.delete('onbaording');history.replaceState(history.state,'',url);this.activeAddress=this.address();this.changed();};
   private help(id:string,label:string){return this.onboarding&&!this.measuringDock?keyed(this.toolbarHelpEpoch,html`<en-tooltip for=${id} inline="center" block="start" warmup-group="still-onboarding" show-delay="250"><span slot="content">${this.onboardingHelp.help(this.onboardingScope(),id.replace('still-help-',''))??actionHelp(id.replace('still-help-',''),label)}</span></en-tooltip>`):nothing;}
   private density=5;
@@ -284,7 +296,7 @@ export class StillApp extends LitElement {
     const actionIds=[...new Set([...this.querySelectorAll<HTMLElement>('.action-dock en-button')].map(button=>button.dataset.actionId||button.id.replace('still-help-','')).filter(id=>ACTIONS.some(a=>a.id===id)))].slice(0,7);
     const helpView=this.mode==='generate'?'choose-format':ONBOARDING_VIEWS.includes(this.client.position.view)?this.client.position.view:'other';
     const helpEnabled=this.onboarding&&!this.loading&&!this.busy&&!this.startupFailed&&!this.paletteOpen&&!this.onboardingDecisionPending&&!!this.client.session?.policy.accepted;
-    this.onboardingHelp.update(this.onboardingScope(),helpEnabled?{enabled:true,actions:actionIds,view:helpView,locale:document.documentElement.lang||'en'}:null);
+    this.onboardingHelp.update(this.onboardingScope(),helpEnabled?{enabled:true,actions:actionIds,view:helpView,locale:document.documentElement.lang||'en',context:this.onboardingContext(actionIds)}:null,`${this.client.epoch}/${this.client.scopeKey}`);
     const attentionPage=location.pathname;
     const attentionEnabled=!this.loading&&!this.startupFailed&&!!this.client.session?.policy.accepted;
     this.attention?.refresh(`${this.client.epoch}/${this.client.scopeKey}`,attentionEnabled?attentionPage:'',attentionEnabled,this.paletteOpen);
@@ -450,7 +462,8 @@ export class StillApp extends LitElement {
         const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.decisionPosition())||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:this.dockTouched||!!this.querySelector('.action-dock')?.contains(document.activeElement)});
         this.recordDecision(result,disposition,diagnosticScope,started,firstResponseMs);
         if(disposition==='Applied'){this.nextBest=result.nextBest;const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
-        if(ticket===this.decisionTicket){this.developerPending=false;this.changed();}
+        // Start help from the first usable ranking while optional connection enrichment continues.
+        if(ticket===this.decisionTicket){this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}
         };
         const result=await this.requestDecision(this.decisionBody(),bypass,undefined,applyResult);
         applyResult(result);
