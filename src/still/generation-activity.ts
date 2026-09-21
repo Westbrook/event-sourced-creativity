@@ -35,7 +35,9 @@ export class GenerationActivity {
     while (this.watching.size > 120) this.watching.delete(this.watching.values().next().value!);
   }
   consume(job: DocumentJob) {
-    this.pending.delete(job.jobId); this.seen.add(generationNoticeKey(job));
+    const pending=this.pending.get(job.jobId);
+    if(pending&&generationNoticeKey(pending)===generationNoticeKey(job))this.pending.delete(job.jobId);
+    this.seen.add(generationNoticeKey(job));
     while (this.seen.size > 200) this.seen.delete(this.seen.values().next().value!);
   }
 }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { failureNotification, canContinueReview } from '../src/still/notifications.ts';
 import { generationReview } from '../src/still/generation-review.ts';
 import { createSceneCostFixture } from './helpers/scene-cost-fixture.mjs';
+import { generationNoticeKey } from '../src/still/generation-activity.ts';
 import { StillClient } from '../src/still/client.ts';
 
 test('generation status renders terminal errors only once and replaces stale progress',async()=>{
@@ -34,20 +35,31 @@ test('safety failures lead to context review; only acknowledgeable admission war
  assert.notEqual(failureNotification(job).key,failureNotification({...job,attemptCount:2}).key);
 });
 
-test('dismissing a failed generation persists existing dismissal metadata without retrying or changing its failure',async()=>{
+for(const status of ['failed','partial','completed','canceled'])test(`dismissing a ${status} generation persists across reload without changing the attempt`,async()=>{
  const f=await createSceneCostFixture(1,'visual'),saved=globalThis.fetch;
  globalThis.fetch=async(url,init)=>{assert.ok(String(url).startsWith('/'),'No provider calls');return f.request(url,init);};
  try {
   const now=new Date().toISOString(),expires=new Date(Date.now()+86400000).toISOString(),id='toast-failure';
   f.sqlite.prepare(`INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,requested_at,completed_at,expires_at,updated_at)
-   VALUES(?,?,?,?,'generate','failed','still',?,1,'{}',?,?,?,?,?)`).run(id,f.owner,f.streamId,f.documentId,id,JSON.stringify({stage:'failed',errorDetail:{code:'safety_preflight_flagged',category:'safety',action:'edit_request',message:'Review context.',retryable:false}}),now,now,expires,now);
+   VALUES(?,?,?,?,'generate',?,'still',?,1,'{}',?,?,?,?,?)`).run(id,f.owner,f.streamId,f.documentId,status,id,JSON.stringify({stage:'failed',errorDetail:{code:'safety_preflight_flagged',category:'safety',action:'edit_request',message:'Review context.',retryable:false}}),now,now,expires,now);
   const client=new StillClient();await client.load();client.position={...client.position,documentId:f.documentId,projectId:f.projectId,view:'document'};await client.pollJobs();
   const job=client.jobs.find(j=>j.jobId===id);assert.ok(job);const before=f.counts();
   await client.dismissJob(job);assert.ok(client.jobs.find(j=>j.jobId===id).dismissedAt);
   await client.pollJobs();assert.ok(client.jobs.find(j=>j.jobId===id).dismissedAt);
   const row=f.sqlite.prepare('SELECT status,attempt_count,result_json FROM document_jobs WHERE job_id=?').get(id);
-  assert.equal(row.status,'failed');assert.equal(row.attempt_count,0);assert.equal(JSON.parse(row.result_json).errorDetail.code,'safety_preflight_flagged');
+  assert.equal(row.status,status);assert.equal(row.attempt_count,0);assert.equal(JSON.parse(row.result_json).errorDetail.code,'safety_preflight_flagged');
   assert.deepEqual(f.counts(),before);
+  const fresh=new StillClient();await fresh.load();fresh.position={...fresh.position,documentId:f.documentId,projectId:f.projectId,view:'document'};await fresh.pollJobs();
+  assert.ok(fresh.jobs.find(j=>j.jobId===id).dismissedAt,'Fresh page reads the durable dismissal');
+  // A stale gesture from this attempt must not dismiss a newer retry, even if it has already finished.
+  f.sqlite.prepare("UPDATE document_jobs SET attempt_count=attempt_count+1,result_json=json_remove(result_json,'$.dismissedAt') WHERE job_id=?").run(id);
+  await assert.rejects(client.dismissJob(job),/could not be dismissed/i);
+  assert.equal(JSON.parse(f.sqlite.prepare('SELECT result_json FROM document_jobs WHERE job_id=?').get(id).result_json).dismissedAt,undefined);
+  // Also preserve the exact-attempt fence if the retry races the dismissal UPDATE.
+  await fresh.pollJobs();const retry=fresh.jobs.find(j=>j.jobId===id);
+  f.controls.beforeRun=statement=>{if(statement.sql.includes("SET result_json=json_set(COALESCE(result_json")){f.controls.beforeRun=null;f.sqlite.prepare('UPDATE document_jobs SET attempt_count=attempt_count+1 WHERE job_id=?').run(id);}};
+  await assert.rejects(fresh.dismissJob(retry),/could not be dismissed/i);
+  assert.equal(JSON.parse(f.sqlite.prepare('SELECT result_json FROM document_jobs WHERE job_id=?').get(id).result_json).dismissedAt,undefined);
  } finally {globalThis.fetch=saved;await f.drainBackground();f.close();}
 });
 
@@ -58,7 +70,7 @@ test('Review generation opens the original job even without generation permissio
  const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
  const method=app.members.find(n=>n.name?.getText(source)==='renderNotifications');
  const code=ts.transpileModule(`function renderNotifications(failed) ${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
- const render=new Function('html','nothing','failureNotification','canContinueReview','generationFormat',`${code};return renderNotifications;`)(()=>null,null,failureNotification,canContinueReview,generationFormat);
+ const render=new Function('html','nothing','failureNotification','canContinueReview','generationFormat','generationNoticeKey',`${code};return renderNotifications;`)(()=>null,null,failureNotification,canContinueReview,generationFormat,generationNoticeKey);
  for(const formats of [[],['image','video']])for(const job of [{kind:'generate'},{kind:'render_document',result:{artifactKind:'video'}}]){
   const failed={...job,jobId:'original-failed-job',documentId:'original-document',status:'failed',attemptCount:1,errorDetail:{category:'network',action:'retry',code:'provider_network_error',message:'Unavailable.'}};
   let review;const navigations=[];

@@ -58,7 +58,7 @@ test('scope changes and stale page responses never publish a previous workspace 
 
 const source=ts.createSourceFile('app.ts',readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
 const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
-const methods=['generationIsVisible','reconcileGenerationNotices','renderGenerationCompletions','openGenerationNotice'];
+const methods=['dismissGenerationNotice','generationIsVisible','reconcileGenerationNotices','renderGenerationCompletions','openGenerationNotice'];
 const code=ts.transpileModule(`class View {${app.members.filter(n=>methods.includes(n.name?.getText(source))).map(n=>n.getText(source)).join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 const View=new Function('generationResult','generationCompletion','generationNoticeKey',`${code};return View;`)(generationResult,generationCompletion,generationNoticeKey);
 function viewFixture(){
@@ -85,4 +85,36 @@ test('header and finished-result strip no longer render transient generation pro
  assert.doesNotMatch(render,/working-status|feedback-strip|progressMessage/);
  const status=app.members.find(n=>n.name?.getText(source)==='renderGeneration').getText(source);
  assert.doesNotMatch(status,/job.progressMessage/);
+});
+
+test('consuming an older attempt never hides a newer terminal notice',()=>{
+ const activity=new GenerationActivity();activity.observe([job()]);activity.observe([done()]);
+ activity.observe([job({attemptCount:2})]);const latest=done({attemptCount:2});activity.observe([latest]);
+ activity.consume(done());assert.deepEqual(activity.notices,[latest]);assert.equal(activity.hasSeen(latest),false);
+});
+test('live notices use saved dismissal; save failure is explicit and remains hidden only in this session',async()=>{
+ for(const fails of [false,true]){
+  const {view,toasts,activity}=viewFixture();let saved,changed=0;
+  view.changed=()=>changed++;view.client.dismissJob=async value=>{saved=value;if(fails)throw new Error('offline');};
+  view.renderGenerationCompletions();assert.equal(toasts[0].key,`generation:${generationNoticeKey(done())}`);
+  toasts[0].dismiss();await new Promise(resolve=>setTimeout(resolve,0));
+  assert.deepEqual(saved,done());assert.deepEqual(activity.notices,[]);assert.equal(activity.hasSeen(done()),true);
+  assert.equal(view.error,fails?'Message hidden here. Dismissal could not be saved.':undefined);assert.equal(changed,fails?1:0);
+ }
+});
+test('a saved dismissal fences a pending stale feed and does not overwrite a newer in-memory attempt',async()=>{
+ const c=new StillClient();c.session=structuredClone(session);c.position.documentId='doc';
+ const original=done(),newer=done({attemptCount:2});c.jobs=[original];
+ let release,started;const blocked=new Promise(resolve=>release=resolve),reading=new Promise(resolve=>started=resolve);
+ await network(async(url,init)=>{
+  if(url==='/api/session?profile=still')return json(session);
+  if(String(url).endsWith('/dismiss')){
+   assert.deepEqual(JSON.parse(init.body).attempt,{documentId:'doc',attemptCount:1,status:'completed',completedAt:'now'});
+   c.jobs=[newer];return json({job:{...original,dismissedAt:'saved'}});
+  }
+  started();await blocked;return json({jobs:[original]});
+ },async()=>{
+  const poll=c.pollJobs();await reading;await c.dismissJob(original);release();await poll;
+  assert.deepEqual(c.jobs,[newer]);assert.equal(c.generationActivity.hasSeen(original),true);
+ });
 });

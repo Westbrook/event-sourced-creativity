@@ -3613,7 +3613,20 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const conflict = () => Response.json({ error: "Generation issue could not be dismissed" }, { status: 409, headers });
     const target = await readJob(env, user.userId, jobId);
     if (!target || target.stream_id !== user.streamId) return notFound();
-    if (target.status !== "failed" && target.status !== "partial") return Response.json({ error: "terminal_failure_required" }, { status: 409, headers });
+    if (!["failed", "partial", "completed", "canceled"].includes(target.status)) return Response.json({ error: "terminal_job_required" }, { status: 409, headers });
+    // Still supplies the displayed attempt, so a late gesture cannot dismiss a retry.
+    // Existing Forma callers without an attempt retain the server-snapshot contract.
+    let input: unknown;
+    try { const body = await request.text(); input = body ? JSON.parse(body) : {}; }
+    catch { return Response.json({ error: "invalid_dismissal" }, { status: 400, headers }); }
+    if (!input || typeof input !== "object" || Array.isArray(input)) return conflict();
+    if (Object.hasOwn(input, "attempt")) {
+      const attempt = (input as { attempt: unknown }).attempt;
+      if (!attempt || typeof attempt !== "object" || Array.isArray(attempt)) return conflict();
+      const observed = attempt as Record<string, unknown>;
+      if (observed.documentId !== target.document_id || observed.attemptCount !== target.attempt_count
+        || observed.status !== target.status || observed.completedAt !== target.completed_at) return conflict();
+    }
     // SQL NULL is an absent checkpoint; malformed or non-object retained data is not.
     const readDismissedAt = (row: DocumentJobRow): string | null | undefined => {
       if (row.result_json === null) return null;
@@ -3634,7 +3647,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       AND selection.organization_id=? AND selection.project_access_id=? AND selection.revoked_at IS NULL
       AND selection.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))` : "";
     const scopeBindings = [...(authority?.bindings ?? []), ...(project ? [project.contextId, user.userId, project.organizationId, project.projectAccessId] : [])];
-    // Change only dismissal metadata on the exact observed failed attempt.
+    // Change only dismissal metadata on the exact observed terminal attempt.
     const changed = originalDismissal === null ? await env.DB.prepare(`UPDATE document_jobs
       SET result_json=json_set(COALESCE(result_json,'{}'),'$.dismissedAt',strftime('%Y-%m-%dT%H:%M:%fZ','now')),
         updated_at=MAX(updated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'))

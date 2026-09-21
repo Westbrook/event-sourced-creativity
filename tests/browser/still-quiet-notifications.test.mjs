@@ -13,7 +13,7 @@ test('quiet notifications retain review, dismissal and responsive toolbar separa
    const style=document.createElement('style');style.textContent=(await import('/src/still/style.css?raw')).default.replaceAll('still-app','notification-fixture');document.head.append(style);
    class Fixture extends StillApp{
     connectedCallback(){LitElement.prototype.connectedCallback.call(this);}updated(){this.dockObserver.observe(this.querySelector('.dock-stack'));this.scheduleDockFit();}focusContent(){window.focusReturned=true;}
-    render(){return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell"><main><h1>A quiet scene.</h1><p>The content stays in place.</p></main><div class="dock-stack"><en-toast-region class="generation-notifications" max="2" label="Notifications">${this.notification('review',window.message,'warning',[{label:'Acknowledge & send',run:()=>window.sent++}])}${this.showSaved?this.notification('saved','Saved.','success',[]):null}${this.showThird?this.notification('third','Another update.','info',[]):null}</en-toast-region><footer class="action-dock"><en-toolbar label="Your next step"><en-button variant="secondary">Edit idea</en-button><en-button variant="ghost">More actions</en-button></en-toolbar></footer></div></div></div>`;}
+    render(){if(this.generationTest)return html`<main>Content</main><div class="dock-stack">${this.renderNotifications(this.failed)}</div>`;return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell"><main><h1>A quiet scene.</h1><p>The content stays in place.</p></main><div class="dock-stack"><en-toast-region class="generation-notifications" max="2" label="Notifications">${this.notification('review',window.message,'warning',[{label:'Acknowledge & send',run:()=>window.sent++}])}${this.showSaved?this.notification('saved','Saved.','success',[]):null}${this.showThird?this.notification('third','Another update.','info',[]):null}</en-toast-region><footer class="action-dock"><en-toolbar label="Your next step"><en-button variant="secondary">Edit idea</en-button><en-button variant="ghost">More actions</en-button></en-toolbar></footer></div></div></div>`;}
    }
    customElements.define('notification-fixture',Fixture);window.message='Some ideas may prevent this generation. Review the flagged context and the exact prompt before continuing.';window.sent=0;window.app=new Fixture();window.app.client={scopeKey:'test',position:{documentId:'d'}};document.body.append(window.app);
   });
@@ -38,5 +38,27 @@ test('quiet notifications retain review, dismissal and responsive toolbar separa
   await review.click();await region.getByRole('button',{name:'Acknowledge & send'}).click();assert.equal(await page.evaluate(()=>window.sent),1);assert.equal(await page.locator('en-toast').count(),0);
   await page.evaluate(()=>{window.app.showSaved=true;window.app.showThird=true;window.app.changed();});await region.getByText('Saved.',{exact:true}).waitFor();
   assert.equal(await page.locator('en-toast[swipe]').count(),2);await region.getByRole('button',{name:'Dismiss message'}).first().click();await page.waitForFunction(()=>document.querySelectorAll('en-toast').length===1);assert.equal(await region.getByText('Another update.',{exact:true}).isVisible(),true);
+  // Exercise actual En Reve close and pointer-swipe events through both Still notice paths.
+  for(const path of ['historical','live'])for(const gesture of ['close','swipe']){
+   await page.evaluate(async({path,gesture})=>{
+    const {GenerationActivity}=await import('/src/still/generation-activity.ts');
+    const activity=new GenerationActivity(),job={jobId:`${path}-${gesture}`,documentId:'d',kind:'generate',status:'failed',attemptCount:2,completedAt:'2026-09-21T00:00:00.000Z',error:'We couldn’t confirm the original request.',errorDetail:null};
+    window.dismissed=[];window.app.client={scopeKey:'test',position:{view:'projects',documentId:''},generationActivity:activity,dismissJob:async saved=>{window.dismissed.push(saved);},projection:{},events:[]};
+    window.app.generationTest=true;window.app.error='';window.app.notice='';window.app.loading=false;window.app.failed=path==='historical'?job:undefined;
+    if(path==='live'){activity.observe([{...job,status:'running'}]);activity.observe([job]);}
+    window.app.changed();
+   },{path,gesture});
+   const toast=page.locator('en-toast');await toast.waitFor();
+   if(gesture==='close')await toast.getByRole('button',{name:'Dismiss message'}).click();
+   else{
+    await page.locator('main').click();
+    const bounds=await toast.locator('.notification-summary').boundingBox();
+    const x=bounds.x+10,y=bounds.y+bounds.height/2;
+    await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+150,y,{steps:8});await page.mouse.up();
+   }
+   await page.waitForFunction(()=>window.dismissed.length===1);
+   assert.deepEqual(await page.evaluate(()=>window.dismissed.map(j=>[j.jobId,j.attemptCount])),[[`${path}-${gesture}`,2]]);
+   assert.equal(await toast.count(),0);
+  }
  }finally{await browser?.close();await server.close();}
 });

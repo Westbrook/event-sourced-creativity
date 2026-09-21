@@ -1,6 +1,6 @@
 import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { generationResult } from './results.ts';
-import { GenerationActivity } from './generation-activity.ts';
+import { GenerationActivity, generationNoticeKey } from './generation-activity.ts';
 import { foldEvents, type CreativeEvent, type EventInput } from '../model/events.ts';
 import { documentArtifactRevision } from '../model/document-artifacts.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
@@ -430,9 +430,12 @@ export class StillClient {
   }
   async dismissJob(job: DocumentJob) {
     const check = await this.verifyScope();
-    const result = await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(job.jobId)}/dismiss`, {}); check();
-    if (result.job?.jobId !== job.jobId || result.job.documentId !== job.documentId || !result.job.dismissedAt) throw new Error('Dismissal could not be confirmed.');
-    this.jobs = this.jobs.map(current => current.jobId === job.jobId ? result.job : current); this.onChange();
+    const result = await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(job.jobId)}/dismiss`, {attempt:{documentId:job.documentId,attemptCount:job.attemptCount,status:job.status,completedAt:job.completedAt}}); check();
+    if (result.job?.jobId !== job.jobId || result.job.documentId !== job.documentId || generationNoticeKey(result.job) !== generationNoticeKey(job) || !result.job.dismissedAt) throw new Error('Dismissal could not be confirmed.');
+    // A feed already in flight must not restore the pre-dismissal snapshot.
+    ++this.jobRead;
+    this.generationActivity.consume(job);
+    this.jobs = this.jobs.map(current => generationNoticeKey(current) === generationNoticeKey(job) ? result.job : current); this.onChange();
   }
   async pollJobs() {
     const document = this.position.documentId, key = this.jobsKey;

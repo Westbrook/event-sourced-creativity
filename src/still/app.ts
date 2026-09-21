@@ -1118,16 +1118,27 @@ export class StillApp extends LitElement {
         {label:'Review ideas',run:()=>this.reviewContext()},
         ...(canContinueReview(review)?[{label:'Acknowledge & send',run:()=>void this.run(()=>this.generate())}]:[]),
       ]):nothing}
-      ${!this.mode&&failed&&failure&&!this.client.generationActivity.hasSeen(failed)&&!this.client.generationActivity.notices.some(job=>job.jobId===failed.jobId)?this.notification(`job:${failure.key}`,failure.message,failed.errorDetail?.category==='safety'?'warning':'danger',[
+      ${!this.mode&&failed&&!failed.dismissedAt&&failure&&!this.client.generationActivity.hasSeen(failed)&&!this.client.generationActivity.notices.some(job=>job.jobId===failed.jobId)?this.notification(`generation:${generationNoticeKey(failed)}`,failure.message,failed.errorDetail?.category==='safety'?'warning':'danger',[
         ...(this.canAcknowledgeSafety(failed)?[{label:'Acknowledge & send',run:()=>this.acknowledgeSafety(failed)}]:[]),
         {label:failure.label,run:()=>{
           if(failure.action==='context')this.reviewContext(failed);
           else if(failure.action==='generation'&&generationFormat(failed))this.navigate('generation',{outputId:failed.jobId});
           else this.navigate('results');
         }},
-      ],()=>{void this.client.dismissJob(failed).catch(()=>{this.error='Message hidden here. Dismissal could not be saved.';this.changed();});}):nothing}
+      ],()=>void this.dismissGenerationNotice(failed)):nothing}
       ${this.notice?this.notification(`notice:${this.noticeVersion}`,this.notice,'success',[],()=>{this.notice='';}):nothing}
     </en-toast-region>`;
+  }
+  private async dismissGenerationNotice(job:DocumentJob) {
+    const c=this.client,scope=c.scopeKey;
+    // Hide this attempt in every local notification path while saving its dismissal.
+    c.generationActivity.consume(job);
+    try { await c.dismissJob(job); }
+    catch {
+      if(c.scopeKey!==scope)return;
+      this.error='Message hidden here. Dismissal could not be saved.';
+      this.changed();
+    }
   }
   private generationIsVisible(job:DocumentJob) {
     const c=this.client,p=c.position;
@@ -1140,7 +1151,7 @@ export class StillApp extends LitElement {
     const c=this.client;
     return c.generationActivity.notices.filter(job=>!this.generationIsVisible(job)).map(job=>{
       const notice=generationCompletion(job);
-      return this.notification(`completion:${generationNoticeKey(job)}`,notice.message,notice.variant,[{label:notice.label,disabled:this.preventsRouteChange(),run:()=>void this.openGenerationNotice(job)}],()=>c.generationActivity.consume(job),job.documentId);
+      return this.notification(`generation:${generationNoticeKey(job)}`,notice.message,notice.variant,[{label:notice.label,disabled:this.preventsRouteChange(),run:()=>void this.openGenerationNotice(job)}],()=>void this.dismissGenerationNotice(job),job.documentId);
     });
   }
   private async openGenerationNotice(job:DocumentJob) {
