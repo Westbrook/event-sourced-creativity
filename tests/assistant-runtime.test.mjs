@@ -19788,9 +19788,9 @@ for(const fault of ['result','original','boundary','enrollment','dismiss','repla
  if(!['erase','enrollment'].includes(fault))assert.deepEqual(adaptiveReentryFinancialState(state),before);
 });
 
-for(const shared of [false,true])test('native profile aggregate: isolated D1 dispatch, bounded reads and non-resurrection '+shared,{timeout:120000},async t=>{
- const state=await semanticProfileAggregateFixture(t,{shared});
- assert.equal((await state.saveProfileAggregate(await state.contextGet())).status,200);
+for(const shared of [false,true])for(const maximum of [false,true])test('native profile aggregate: isolated D1 dispatch, bounded reads and non-resurrection '+shared+'/'+maximum,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t,{shared}),third=maximum?await appendAggregateThirdProfile(state):null;
+ assert.equal((await state.saveProfileAggregate(await state.contextGet(),[state.profileJob,...(third?[third]:[])])).status,200);
  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['AggregateProfile'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());
  const db=await mf.getD1Database('AggregateProfile');await install(db,exportSynthetic(state.sqlite));state.env.DB={prepare:sql=>db.prepare(sql),batch:async statements=>{try{return await db.batch(statements);}catch(error){state.controls.lastDatabaseError=String(error);throw error;}}};
@@ -19799,7 +19799,7 @@ for(const shared of [false,true])test('native profile aggregate: isolated D1 dis
  const original=globalThis.fetch,calls=[];globalThis.fetch=async(_url,init)=>{const request=JSON.parse(init.body);calls.push(request);assert.ok(JSON.stringify(request).includes('profileSources'));return specialistRawResponse(request);};t.after(()=>{globalThis.fetch=original;});
  const response=await specialistExecute(state,quoted.body,state.semanticOptions);assert.equal(response.status,202,await response.clone().text()+' '+state.controls.lastDatabaseError);await state.drainBackground();
  const executionCalls=counter.read();counter.reset();const retrieved=await specialistRetrieve(state,quoted.body,state.semanticOptions),body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');assert.equal(calls.length,1);
- const retrieveCalls=counter.read();t.diagnostic(JSON.stringify({shared,quoteCalls,executionCalls,retrieveCalls,elapsedMs:performance.now()-start}));
+ const retrieveCalls=counter.read();t.diagnostic(JSON.stringify({shared,maximum,quoteCalls,executionCalls,retrieveCalls,elapsedMs:performance.now()-start}));
  assert.ok(quoteCalls<=85&&executionCalls<=90&&retrieveCalls<=70,'bounded three-source staging is synthetic qualification, not a hosted SLA');
  const retained=(await db.prepare('SELECT p.* FROM private_content p JOIN memory_derivation_consumer_contents c ON c.content_id=p.content_id').all()).results;
  assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.profileJob),true);

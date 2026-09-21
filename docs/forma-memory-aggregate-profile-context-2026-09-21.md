@@ -75,3 +75,30 @@ Production-owner review must include0068 and the recovered snapshot chain.
 Qualified hosted scheduling, supported remote embedding/index transport, real
 recipe/pricing/retention checks, deployment and affirmative enrollment remain in
 the [separate capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
+
+## Request-local read multiplexing
+
+Aggregate source capture now coalesces independent native reads without caching
+rows, permissions, schema qualification or positive source decisions. Every
+original query still executes; every source's native predicates still replay
+atomically at writes and disclosure. Caller batches remain indivisible, with
+256-statement and 100-binding limits. Partial, failed, malformed, expired,
+database-replaced or throwing-authority responses fail the whole capture. Each
+caller owns its returned rows. No single-source behavior changes.
+
+28 unit and98 integrated native checks pass, including real local D1 maximum
+three-source execution and non-resurrection. TypeScript, scoped lint and the
+Sites production build pass (existing chunk-size warnings only). These are
+synthetic/local measurements, not hosted qualification:
+
+| Sources | Partition | Quote calls | Execution calls | Retrieve calls | Execution elapsed |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 2 | personal | 54 | 63 | 47 | 2.08 s |
+| 2 | shared | 55 | 64 | 45 | 2.07 s |
+| 3 | personal | 56 | 65 | 50 | 2.50 s |
+| 3 | shared | 57 | 66 | 48 | 2.56 s |
+
+The aggregate execution still exceeds the previous conservative50-call local
+target. That target is not silently waived or described as a verified Sites
+limit. The separate full run of preceding commit a2523f8b does not qualify this
+subsequent batching change. No deployment, migration, enrollment or provider call.

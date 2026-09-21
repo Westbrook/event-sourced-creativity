@@ -381,3 +381,10 @@ D1, client and browser checks cover execution and non-resurrection. Missing
 migration snapshots are reconciled. Aggregate capacity, semantic/resource
 consolidation and private Output/live-preview remain implementation work on this
 task; no external provisioning is needed to continue that work.
+
+[Aggregate read multiplexing](forma-memory-aggregate-profile-context-2026-09-21.md#request-local-read-multiplexing)
+now coalesces independent source staging without reusing access decisions or
+splitting atomic caller reads. Maximum-three-source real local D1 execution and
+privacy retirement pass. The63–66-call execution still exceeds the conservative
+local50-call target; this does not close aggregate capacity or the other native
+workstreams.

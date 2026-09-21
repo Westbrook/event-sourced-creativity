@@ -498,3 +498,11 @@ retires dependent private copies on source loss; restored bodies cannot revive
 an approved execution. Missing generated snapshots63–65 and new66 are included.
 Aggregate capacity, broader semantic/resource integration and direct private
 Output remain assigned, not external-service excuses. No deployment or enrollment.
+
+## MEM-042 — Bounded aggregate read multiplexing
+
+Implemented locally: [request-local aggregate reads](forma-memory-aggregate-profile-context-2026-09-21.md#request-local-read-multiplexing).
+28 unit and98 integrated native checks pass, including maximum-three-source
+local D1 execution. No positive-access cache or source-proof removal. Actual
+aggregate execution63–66calls remains above the conservative50-call target;
+capacity and the other completion-matrix rows stay assigned. No deployment.
