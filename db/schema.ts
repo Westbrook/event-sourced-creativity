@@ -2867,3 +2867,19 @@ export const memoryResourceContexts=sqliteTable('memory_resource_contexts',{
  check('memory_resource_context_created',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),
  check('memory_resource_context_expiry',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at")),
  check('memory_resource_context_retirement',sql.raw("(state='active' AND snapshot_json IS NOT NULL AND retired_at IS NULL) OR (state='retired' AND snapshot_json IS NULL AND retired_at>=created_at)"))]);
+
+/** Private resource assistant ancestry, kept after context erasure. */
+export const memoryResourceAssistantRuns=sqliteTable('memory_resource_assistant_runs',{
+ executionId:text('execution_id').primaryKey().notNull().references(()=>consequentialExecutions.executionId,{onDelete:'cascade'}),
+ actorUserId:text('actor_user_id').notNull().references(()=>users.userId,{onDelete:'cascade'}),contextId:text('context_id').notNull(),resourceKey:text('resource_key').notNull(),snapshotSha256:text('snapshot_sha256').notNull(),state:text('state').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),retiredAt:text('retired_at'),
+},t=>[index('idx_memory_resource_assistant_context').on(t.contextId,t.state),
+ check('memory_resource_assistant_resource',sql.raw("json_valid(resource_key) AND json_array_length(resource_key)=7 AND json_extract(resource_key,'$[0]')='memory-resource-v1'")),
+ check('memory_resource_assistant_context_id',sql.raw('length(context_id)=36')),
+ check('memory_resource_assistant_hash',sql.raw("length(snapshot_sha256)=64 AND snapshot_sha256 NOT GLOB '*[^a-f0-9]*'")),
+ check('memory_resource_assistant_state',sql.raw("state IN('active','retired')")),
+ check('memory_resource_assistant_created',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),
+ check('memory_resource_assistant_expiry',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at")),
+ check('memory_resource_assistant_retirement',sql.raw("(state='active' AND retired_at IS NULL) OR (state='retired' AND retired_at>=created_at)"))]);
+export const memoryResourceAssistantContents=sqliteTable('memory_resource_assistant_contents',{
+ contentId:text('content_id').primaryKey().notNull(),executionId:text('execution_id').notNull().references(()=>memoryResourceAssistantRuns.executionId,{onDelete:'cascade'}),role:text('role').notNull(),
+},t=>[unique().on(t.executionId,t.role),check('memory_resource_assistant_role',sql.raw("role IN('consent','response','result')"))]);

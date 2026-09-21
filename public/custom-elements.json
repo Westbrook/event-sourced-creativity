@@ -14804,6 +14804,119 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/memory-resource-assistant-controls.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "MemoryResourceAssistantControls",
+          "tagName": "forma-memory-resource-assistant-controls",
+          "customElement": true,
+          "summary": "Memory resource assistant controls application interface.",
+          "description": "Read-only native resource consumer. Selection, quotation and purchase are\nseparate actions. Private drafts/answers do not survive ownership or visibility.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "contextId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "contextid"
+            },
+            {
+              "kind": "field",
+              "name": "kind",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "kind"
+            },
+            {
+              "kind": "field",
+              "name": "projectId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "projectid"
+            },
+            {
+              "kind": "field",
+              "name": "resourceId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "resourceid"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "contextid",
+              "fieldName": "contextId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "kind",
+              "fieldName": "kind",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "projectid",
+              "fieldName": "projectId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "resourceid",
+              "fieldName": "resourceId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-memory-resource-assistant-controls",
+          "declaration": {
+            "name": "MemoryResourceAssistantControls",
+            "module": "src/components/memory-resource-assistant-controls.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "MemoryResourceAssistantControls",
+          "declaration": {
+            "name": "MemoryResourceAssistantControls",
+            "module": "src/components/memory-resource-assistant-controls.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/memory-resource-controls.ts",
       "declarations": [
         {

@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1qiljrp.57": "Memory resource assistant controls application interface.",
+  "system.auto.1aoksce.154": "Read-only native resource consumer. Selection, quotation and purchase are separate actions. Private drafts/answers do not survive ownership or visibility.",
   "system.auto.49pzob.48": "Memory resource inventory application interface.",
   "system.auto.nedhwo.102": "Source-free resource consent inventory. Forgetting never requires renewed source access or enrollment.",
   "system.auto.1bblc11.47": "Memory resource controls application interface.",

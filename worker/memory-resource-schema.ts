@@ -3,3 +3,5 @@ export const memoryResourceLegacySchemaDigest="a0d5ff8e29c96f72caf487b6a868cd07d
 export const memoryResourceSchemaDigest="6ec457d2c84495cd006aa30087c95b81c59782fd9b95b0f7fa862f04cc57e227";
 
 export const memoryResourceContextSchemaDigest="fb80f003d6fac809fafc0e9e92a83d031d7d5d57e47f1fef454bc6bf68163d48";
+
+export const memoryResourceAssistantSchemaDigest="8dccbf5eb5f71c9281712f63a8e1cf515efb43774d9463be3c558ce929ca179b";

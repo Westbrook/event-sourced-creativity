@@ -20085,8 +20085,8 @@ for(const fault of ['unknown-alias','duplicate','too-little-evidence','category'
  assert.equal(calls,1);assert.deepEqual(adaptiveReentryFinancialState(state),financial);
 });
 
-async function nativeResourceSnapshotFixture(t,shared=false){
- const state=await nativeResourceHistoryFixture(t,{shared,kind:'canvas'});assert.equal((await state.resourceHistory('POST')).status,200);
+async function nativeResourceSnapshotFixture(t,shared=false,kind='canvas'){
+ const state=await nativeResourceHistoryFixture(t,{shared,kind});assert.equal((await state.resourceHistory('POST')).status,200);
  const port=await import('../worker/memory-resource-history.ts'),{prepareNativeMemoryResourceAuthority}=await import('../worker/memory-resource-authority.ts');
  const authority=()=>prepareNativeMemoryResourceAuthority(new Request('http://localhost'+state.resourceUrl,{headers:state.owner}),state.env,state.resourceSelector);
  const open=()=>state.request(state.resourceUrl.replace('resource-scope','resource-opening'),json({openingId:crypto.randomUUID()},{...state.owner,origin:'http://localhost'}));assert.equal((await(await open()).json()).recorded,true);
@@ -20133,7 +20133,7 @@ test('native resource frozen snapshot: accessors and sparse arrays are rejected 
 });
 
 async function nativeResourceContextFixture(t,options={}){
- const state=await nativeResourceSnapshotFixture(t,options.shared??false),{readFile}=await import('node:fs/promises');state.sqlite.exec(await readFile(new URL('../drizzle/0070_memory_resource_contexts.sql',import.meta.url),'utf8'));
+ const state=await nativeResourceSnapshotFixture(t,options.shared??false,options.kind??'canvas'),{readFile}=await import('node:fs/promises');state.sqlite.exec(await readFile(new URL('../drizzle/0070_memory_resource_contexts.sql',import.meta.url),'utf8'));
  const contextRequest=(method='GET',body,headers=state.owner,view='')=>state.request(state.resourceUrl.replace('resource-scope','resource-assistant-context')+(view?'&view='+view:''),body?{...json(body,{...headers,origin:'http://localhost'}),method}:{method,headers});
  const preview=await contextRequest();const value=await preview.json();assert.equal(preview.status,200,JSON.stringify(value)+' '+state.controls.lastDatabaseError);
  const input={confirmation:'USE_RESOURCE_ACTIVITY_IN_ASSISTANT',snapshot:value.snapshot,snapshotSha256:value.snapshotSha256,expectedContextId:value.expectedContextId};
@@ -20192,4 +20192,170 @@ for(const fault of ['late-source','late-consent','late-schema','missing-ack'])te
  const response=await state.resourceContext('PUT',state.resourceContextInput);assert.equal(hit,true);assert.equal(response.status,409);
  assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_contexts').get().n,fault==='missing-ack'?1:0);
  if(fault==='missing-ack'){assert.equal((await state.resourceContext('PUT',state.resourceContextInput)).status,409);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_contexts').get().n,1);}
+});
+
+async function nativeResourceAssistantRunFixture(t,shared=false,beforeRead){
+ const state=await nativeResourceContextFixture(t,{shared}),{readFile}=await import('node:fs/promises');state.sqlite.exec(await readFile(new URL('../drizzle/0071_memory_resource_assistant_runs.sql',import.meta.url),'utf8'));
+ const saved=await(await state.resourceContext('PUT',state.resourceContextInput)).json();assert.ok(saved.contextId,JSON.stringify(saved));
+ if(beforeRead)await beforeRead(state);
+ const authority=await state.resourceAuthority(),context=await state.resourceContextPort.prepareNativeResourceAssistantContext(state.env,authority,saved.contextId),input=state.resourceContextPort.nativeResourceAssistantContextInputs(state.env,context),{nativeMemoryResourceScopeInputs}=await import('../worker/memory-resource-authority.ts'),scope=nativeMemoryResourceScopeInputs(state.env,authority),principal=(await nativeMemoryPrepare(state)).principal;
+ const port=await import('../worker/memory-resource-assistant-store.ts'),consent=await import('../worker/consequential-consent.ts'),identity=input.history.scope;
+ const binding={version:'resource-memory-assistant-v1',intentHash:'e'.repeat(64),operation:'assistant-specialist',actorUserId:principal.userId,permissionEpoch:principal.access.permissionEpoch,streamId:'creative:'+identity.ownerUserId,projectId:identity.projectId,documentId:'',canvasId:identity.kind==='canvas'?identity.resourceId:null,blockId:'',sourceHash:input.snapshotSha256,period:new Date().toISOString().slice(0,7),scope:identity.organizationId?{organizationId:identity.organizationId,projectAccessId:identity.projectAccessId,projectId:identity.projectId,ownerUserId:identity.ownerUserId,actorUserId:principal.userId}:null,contextSessionId:null,pilotCohortId:null,steps:[{name:'resource-guidance',provider:'OpenAI',model:'gpt-5.6-luna',inputTokens:100,outputTokens:100,maximumMicrousd:100,toolCalls:0}],publicQuery:'',request:{contextId:input.contextId,snapshotSha256:input.snapshotSha256}};
+ const quote=await consent.quoteConsequentialExecution(state.env,principal,binding,{history:input.history},scope.sourceHead,Infinity,{sql:'1',bindings:[]},(id,ref)=>port.nativeResourceAssistantQuoteStatements(state.env,context,id,ref));
+ const handle=await port.prepareNativeResourceAssistantRun(state.env,context,quote.executionId);
+ return Object.assign(state,{resourceRunPort:port,resourceRun:handle,resourceRunQuote:quote,resourceRunContext:context,resourceRunBinding:binding});
+}
+for(const shared of [false,true])test('native resource assistant run: native quote retains independent resource ancestry without purchase '+shared,async t=>{
+ const state=await nativeResourceAssistantRunFixture(t,shared),port=state.resourceRunPort,view=port.nativeResourceAssistantRunInputs(state.env,state.resourceRun);
+ assert.equal(state.resourceRunQuote.documentId,'');assert.equal(view.history.scope.kind,'canvas');assert.equal(view.history.linkedContentRead,false);assert.equal(await port.replayNativeResourceAssistantRun(state.env,state.resourceRun),true);
+ const row=state.sqlite.prepare('SELECT * FROM memory_resource_assistant_runs').get(),content=state.sqlite.prepare('SELECT content.* FROM private_content content JOIN memory_resource_assistant_contents link ON link.content_id=content.content_id').get();
+ assert.equal(row.context_id,view.contextId);assert.equal(content.kind,'execution-consent');assert.ok(content.expires_at<=row.expires_at);assert.doesNotMatch(content.content,/Private resource content must never/);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM budget_reservations').get().n,0);assert.equal(state.calls.length,0);
+});
+for(const fault of ['forget','source','opening','enrollment','execution','expiry'])test('native resource assistant run: '+fault+' retires private bytes without authored erasure',async t=>{
+ const state=await nativeResourceAssistantRunFixture(t),port=state.resourceRunPort,id=state.resourceRunQuote.executionId,content=state.sqlite.prepare('SELECT content.* FROM private_content content JOIN memory_resource_assistant_contents link ON link.content_id=content.content_id').get();
+ if(fault==='forget')assert.equal((await state.resourceContext('DELETE',{contextId:port.nativeResourceAssistantRunInputs(state.env,state.resourceRun).contextId,confirmation:'FORGET_RESOURCE_ASSISTANT_CONTEXT'})).status,200);
+ if(fault==='source')state.sqlite.prepare('DELETE FROM memory_resource_history').run();if(fault==='opening')state.sqlite.prepare('DELETE FROM memory_resource_openings').run();if(fault==='enrollment')state.sqlite.prepare('DELETE FROM memory_resource_enrollments').run();if(fault==='execution')state.sqlite.prepare('DELETE FROM consequential_executions WHERE execution_id=?').run(id);
+ if(fault==='expiry'){state.sqlite.exec('DROP TRIGGER memory_resource_context_immutable');state.sqlite.prepare("UPDATE memory_resource_contexts SET created_at=?,expires_at=? WHERE state='active'").run(new Date(Date.now()-2000).toISOString(),new Date(Date.now()-1000).toISOString());/* Schema tampering is only to age this synthetic fixture, then restore exact DDL. */const {readFile}=await import('node:fs/promises'),sql=await readFile(new URL('../drizzle/0070_memory_resource_contexts.sql',import.meta.url),'utf8');state.sqlite.exec(sql.split('--> statement-breakpoint').find(s=>s.includes('CREATE TRIGGER memory_resource_context_immutable')));await(await import('../worker/memory-resource-history.ts')).sweepResourceMemory(state.env);}
+ assert.equal(await port.replayNativeResourceAssistantRun(state.env,state.resourceRun),false);const retained=state.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(content.content_id);assert.equal(retained.content,'');assert.ok(retained.redacted_at);
+ if(fault!=='execution')assert.throws(()=>state.sqlite.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').run(content.content,content.content_id),/retired/);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM events WHERE event_id=?').get(state.resourceAuthored.eventId).n,1);
+});
+
+for(const shared of [false,true])test('native resource assistant run: actual D1 quote and publication retires all private roles '+shared,{timeout:120000},async t=>{
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['ResourceRun'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());const db=await mf.getD1Database('ResourceRun');
+ const state=await nativeResourceAssistantRunFixture(t,shared,async state=>{await install(db,exportSynthetic(state.sqlite));state.env.DB=db;}),port=state.resourceRunPort,{preparePrivateContent}=await import('../worker/pilot-policy.ts'),{derivationAssertion}=await import('../worker/memory-derivation-store.ts');
+ for(const [role,kind] of [['response','provider-response'],['result','context-proposal']]){
+  const value=await preparePrivateContent(state.env,state.resourceRunBinding.actorUserId,kind,'RESOURCE_PRIVATE_'+role,state.resourceRunBinding.scope??undefined);
+  const checked=await db.batch([...port.nativeResourceAssistantRunGuards(state.env,state.resourceRun).map(g=>derivationAssertion(state.env,g)),...value.statements,...port.nativeResourceAssistantContentStatements(state.env,state.resourceRun,value.contentId,role)]);assert.ok(checked.every(r=>r.success));
+ }
+ assert.equal((await db.prepare('SELECT COUNT(*) n FROM memory_resource_assistant_contents').first()).n,3);
+ const content=await db.prepare('SELECT content.* FROM private_content content JOIN memory_resource_assistant_contents link ON link.content_id=content.content_id ORDER BY link.role').all();assert.equal(content.results.length,3);
+ await db.prepare('DELETE FROM memory_resource_enrollments').run();assert.equal(await port.replayNativeResourceAssistantRun(state.env,state.resourceRun),false);
+ const after=await db.prepare('SELECT content,redacted_at FROM private_content WHERE content_id IN(SELECT content_id FROM memory_resource_assistant_contents)').all();assert.equal(after.results.length,3);assert.ok(after.results.every(r=>r.content===''&&r.redacted_at));
+ assert.equal((await db.prepare("SELECT state FROM memory_resource_assistant_runs").first()).state,'retired');assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+ const restore=content.results[0];await assert.rejects(()=>db.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').bind(restore.content,restore.content_id).run(),/retired/);
+ await db.prepare('DELETE FROM private_content WHERE content_id=?').bind(restore.content_id).run();await assert.rejects(()=>db.prepare('INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)').bind(restore.content_id,restore.owner_id,restore.kind,restore.content,restore.created_at,restore.expires_at).run(),/retired/);
+});
+for(const fault of ['authored-kind','duplicate-role','late-retirement','expiry-extension','foreign-owner','mutated-origin'])test('native resource assistant run: '+fault+' cannot register private descendant bytes',async t=>{
+ const state=await nativeResourceAssistantRunFixture(t),port=state.resourceRunPort,{preparePrivateContent}=await import('../worker/pilot-policy.ts'),{derivationAssertion}=await import('../worker/memory-derivation-store.ts'),scope=state.resourceRunBinding.scope??undefined;
+ const value=await preparePrivateContent(state.env,state.resourceRunBinding.actorUserId,fault==='authored-kind'?'chat-user':'provider-response','PRIVATE_TEST_BYTES',scope),statements=[...port.nativeResourceAssistantRunGuards(state.env,state.resourceRun).map(g=>derivationAssertion(state.env,g)),...value.statements,...port.nativeResourceAssistantContentStatements(state.env,state.resourceRun,value.contentId,'response')];
+ if(fault==='duplicate-role'){await state.env.DB.batch(statements);await assert.rejects(()=>state.env.DB.batch(statements));return;}
+ if(fault==='late-retirement')await state.resourceContext('DELETE',{contextId:port.nativeResourceAssistantRunInputs(state.env,state.resourceRun).contextId,confirmation:'FORGET_RESOURCE_ASSISTANT_CONTEXT'});
+ if(fault==='mutated-origin'){assert.throws(()=>state.sqlite.prepare("UPDATE memory_resource_assistant_runs SET context_id=?").run(crypto.randomUUID()),/immutable/);return;}
+ if(fault==='expiry-extension'||fault==='foreign-owner'){
+  await state.env.DB.batch(value.statements);
+  if(fault==='expiry-extension')state.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run('9999-12-31T23:59:59.999Z',value.contentId);
+  if(fault==='foreign-owner'){const actor=state.sqlite.prepare("SELECT user_id FROM users WHERE user_id<>? LIMIT 1").get(state.resourceRunBinding.actorUserId);assert.ok(actor);state.sqlite.prepare('UPDATE private_content SET owner_id=? WHERE content_id=?').run(actor.user_id,value.contentId);}
+  assert.throws(()=>state.sqlite.prepare("INSERT INTO memory_resource_assistant_contents(content_id,execution_id,role) VALUES(?,?,'response')").run(value.contentId,state.resourceRunQuote.executionId),/private_content_required/);return;
+ }
+ await assert.rejects(()=>state.env.DB.batch(statements));assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM private_content WHERE content_id=?').get(value.contentId).n,0);
+});
+
+for(const shared of [false,true])test('native resource principal authority: fresh interactive custody needs no document or background grant '+shared,async t=>{
+ const state=await nativeResourceAssistantRunFixture(t,shared),principal=(await nativeMemoryPrepare(state)).principal,{prepareNativeMemoryResourceAuthorityForPrincipal,nativeMemoryResourceScopeInputs}=await import('../worker/memory-resource-authority.ts');
+ state.env.FORMA_MEMORY_SCHEDULING_ENABLED='false';state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0,learn_enabled=0').run();
+ const authority=await prepareNativeMemoryResourceAuthorityForPrincipal(state.env,principal,state.resourceSelector,state.resourceRunBinding.scope);assert.equal(nativeMemoryResourceScopeInputs(state.env,authority).identity.resourceId,state.resourceSelector.resourceId);
+});
+for(const fault of ['fictional','project-execution','stale-principal','foreign-project','foreign-owner','foreign-actor'])test('native resource principal authority: '+fault+' cannot substitute a serialized principal',async t=>{
+ const state=await nativeResourceAssistantRunFixture(t,true),principal=structuredClone((await nativeMemoryPrepare(state)).principal),scope=structuredClone(state.resourceRunBinding.scope),{prepareNativeMemoryResourceAuthorityForPrincipal}=await import('../worker/memory-resource-authority.ts');
+ if(fault==='fictional')principal.fictional=true;if(fault==='project-execution')principal.projectExecution={};if(fault==='stale-principal')principal.access.permissionEpoch='0'.repeat(64);if(fault==='foreign-project')scope.projectId='foreign';if(fault==='foreign-owner')scope.ownerUserId='foreign';if(fault==='foreign-actor')scope.actorUserId='foreign';
+ await assert.rejects(()=>prepareNativeMemoryResourceAuthorityForPrincipal(state.env,principal,state.resourceSelector,scope));
+});
+
+async function nativeResourceSemanticFixture(t,options={}){
+ const state=await nativeResourceContextFixture(t,options),{readFile}=await import('node:fs/promises');state.sqlite.exec(await readFile(new URL('../drizzle/0071_memory_resource_assistant_runs.sql',import.meta.url),'utf8'));
+ const saved=await(await state.resourceContext('PUT',state.resourceContextInput)).json();assert.ok(saved.contextId,JSON.stringify(saved));const actor=state.current().actor_user_id;
+ Object.assign(state.env,{OPENAI_API_KEY:'fixture-resource-provider-key',FORMA_ASSISTANT_INTERNAL_USER_IDS:actor,FORMA_ASSISTANT_PROVIDER_USER_IDS:actor});
+ const providerRequests=[];globalThis.fetch=async(_url,init)=>{const payload=JSON.parse(init.body);providerRequests.push(payload);return options.respond?options.respond(payload,state):specialistRawResponse(payload);};
+ const call=body=>state.request(state.resourceUrl.replace('resource-scope','resource-assistant'),json(body,{...state.owner,origin:'http://localhost'}));
+ const quote=async()=>{const response=await call({action:'quote',contextId:saved.contextId,question:'What might this activity suggest about my next step?',locale:'en'});const body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);return body;};
+ return Object.assign(state,{resourceAssistant:call,resourceAssistantQuote:quote,resourceAssistantContextId:saved.contextId,resourceProviderRequests:providerRequests});
+}
+for(const shared of [false,true])for(const kind of ['library','canvas'])test('native resource semantic assistant: explicit approved '+kind+' request uses only frozen activity '+shared,async t=>{
+ const state=await nativeResourceSemanticFixture(t,{shared,kind}),source=state.current(),authored=state.sqlite.prepare('SELECT COUNT(*) n FROM events').get().n;
+ state.sqlite.prepare('DELETE FROM memory_live_enrollments').run();const quote=await state.resourceAssistantQuote();assert.equal(quote.quote.canExecute,true);assert.equal(quote.quote.documentId,'');assert.equal(state.resourceProviderRequests.length,0);
+ const response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.status,'completed');assert.equal(body.result.mode,'private-review');assert.equal(body.result.independentEvidence,false);assert.equal(state.resourceProviderRequests.length,1);
+ const sent=state.resourceProviderRequests[0],input=JSON.parse(sent.input);assert.equal(input.resource_activity.kind,kind);assert.deepEqual(input.resource_activity.windows[0].counts,{edit:1});assert.equal(input.resource_activity.windows[0].resourceOpenings,1);assert.equal(input.memory_evidence.independentEvidence,false);assert.equal(sent.store,false);assert.deepEqual(sent.tools,[]);assert.doesNotMatch(JSON.stringify(sent),/Private resource content|doc-atmosphere|memory-independent-board|event_id|enrollmentId/);
+ const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.execution.status,'completed');assert.equal(receipt.steps[0].status,'settled');assert.ok(receipt.steps[0].verified_microusd>0);assert.equal(receipt.cost[0].used_microusd,receipt.steps[0].verified_microusd);
+ for(const action of ['retrieve','execute','resume']){const repeat=await state.resourceAssistant({action,executionId:quote.executionId,...(action==='execute'?{approvedBindingHash:quote.quote.bindingHash}:{})});assert.equal(repeat.status,200,await repeat.clone().text());assert.equal((await repeat.json()).result.reply,body.result.reply);}
+ assert.equal(state.resourceProviderRequests.length,1);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM events').get().n,authored);assert.equal(state.sqlite.prepare('SELECT actor_user_id FROM memory_resource_assistant_runs').get().actor_user_id,source.actor_user_id);
+});
+
+for(const shared of [false,true])test('native resource semantic assistant: withdrawal during provider usage settles without publishing '+shared,async t=>{
+ const state=await nativeResourceSemanticFixture(t,{shared,respond:(payload,state)=>{state.sqlite.prepare('DELETE FROM memory_resource_enrollments').run();return specialistRawResponse(payload);}}),quote=await state.resourceAssistantQuote(),authored=state.sqlite.prepare('SELECT COUNT(*) n FROM events').get().n;
+ const response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash});assert.equal(response.status,409);assert.equal(state.resourceProviderRequests.length,1);
+ const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.steps[0].status,'settled');assert.ok(receipt.steps[0].verified_microusd>0);assert.equal(receipt.cost[0].used_microusd,receipt.steps[0].verified_microusd);assert.equal(receipt.execution.result_ref,null);
+ const contents=state.sqlite.prepare('SELECT content,redacted_at FROM private_content WHERE content_id IN(SELECT content_id FROM memory_resource_assistant_contents)').all();assert.ok(contents.every(r=>r.content===''&&r.redacted_at));assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM events').get().n,authored);
+ assert.equal((await state.resourceAssistant({action:'retrieve',executionId:quote.executionId})).status,409);assert.equal(state.resourceProviderRequests.length,1);
+});
+for(const fault of ['network','unknown-usage','invalid-output','actions'])test('native resource semantic assistant: '+fault+' never causes automatic provider retry',async t=>{
+ const state=await nativeResourceSemanticFixture(t,{respond:payload=>{if(fault==='network')throw Error('synthetic_network_unknown');return specialistRawResponse(payload,fault==='unknown-usage'?{usage:{}}:fault==='invalid-output'?{output:[]}:fault==='actions'?{output:[{type:'message',id:'resource-action',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'DO_NOT_PUBLISH_ACTION',actions:[{kind:'context.create',block_type:'text',target_block_id:null,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:'Unauthorized action'}]})}]}]}:{});}}),quote=await state.resourceAssistantQuote();
+ const executed=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash});assert.equal(executed.status,409);assert.equal(state.resourceProviderRequests.length,1);
+ for(const action of ['execute','retrieve','resume']){const response=await state.resourceAssistant({action,executionId:quote.executionId,...(action==='execute'?{approvedBindingHash:quote.quote.bindingHash}:{})}),body=await response.json();assert.equal(body.result,undefined);assert.doesNotMatch(JSON.stringify(body),/DO_NOT_PUBLISH_ACTION/);}
+ const repeated=await state.resourceAssistantQuote();assert.equal(repeated.executionId,quote.executionId);assert.equal(repeated.quote.canExecute,false);assert.equal(state.resourceProviderRequests.length,1);
+ const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.steps[0].status,['network','unknown-usage'].includes(fault)?'uncertain':'settled');assert.equal(receipt.execution.result_ref,null);
+});
+for(const fault of ['hash','extra-model','late-source','late-consent','provider-disabled'])test('native resource semantic assistant: '+fault+' never dispatches an unapproved request',async t=>{
+ const state=await nativeResourceSemanticFixture(t),quote=await state.resourceAssistantQuote(),db=state.env.DB,batch=db.batch;let hit=false;
+ if(['late-source','late-consent'].includes(fault)){db.batch=async statements=>{if(!hit&&statements.some(s=>s.sql?.includes("SET status='submitting'"))){hit=true;if(fault==='late-source')state.sqlite.prepare('DELETE FROM memory_resource_history').run();else state.sqlite.prepare('UPDATE memory_resource_enrollments SET recall_enabled=0').run();}return batch.call(db,statements);};t.after(()=>{db.batch=batch;});}
+ if(fault==='provider-disabled')state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS='';
+ const response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:fault==='hash'?'0'.repeat(64):quote.quote.bindingHash,...(fault==='extra-model'?{model:'gpt-5.6-sol'}:{})});assert.equal(response.status,409);assert.equal(state.resourceProviderRequests.length,0);if(fault.startsWith('late-'))assert.equal(hit,true);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM consequential_execution_steps WHERE provider_request_id IS NOT NULL').get().n,0);
+});
+for(const recover of ['resume','reconcile','maintenance'])test('native resource semantic assistant: interrupted billing '+recover+' recovers without purchasing twice',async t=>{
+ const state=await nativeResourceSemanticFixture(t),quote=await state.resourceAssistantQuote(),db=state.env.DB,batch=db.batch;let held=0;
+ db.batch=async statements=>{if(statements.some(s=>s.sql?.includes('AS specialist_budget_snapshot'))){held++;throw Error('synthetic_pair_interruption');}return batch.call(db,statements);};
+ const response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash});db.batch=batch;assert.equal(response.status,409);assert.ok(held>0);assert.equal(state.resourceProviderRequests.length,1);assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,'usage-recorded');
+ if(recover!=='resume'){state.sqlite.prepare('DELETE FROM memory_resource_enrollments').run();state.env.FORMA_MEMORY_ENABLED='false';state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS='';}
+ if(recover==='maintenance'){const {reconcileResourceAssistantUsage}=await import('../worker/memory-resource-assistant.ts');assert.equal(await reconcileResourceAssistantUsage(state.env),1);}else{const result=await state.resourceAssistant({action:recover,executionId:quote.executionId}),body=await result.json();assert.equal(result.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);if(recover==='resume')assert.equal(body.result.mode,'private-review');else{assert.equal(body.accountingOnly,true);assert.equal(body.result,undefined);}}
+ const final=consequentialReceipt(state,quote.executionId);assert.equal(final.steps[0].status,'settled');assert.equal(final.cost[0].used_microusd,final.steps[0].verified_microusd);assert.equal(state.resourceProviderRequests.length,1);assert.equal(await(await import('../worker/memory-resource-assistant.ts')).reconcileResourceAssistantUsage(state.env),0,'Settled executions do not consume the bounded maintenance inventory');
+});
+for(const shared of [false,true])test('native resource semantic assistant: actual D1 independent execution and privacy '+shared,{timeout:120000},async t=>{
+ const state=await nativeResourceSemanticFixture(t,{shared}),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['ResourceSemantic'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());const db=await mf.getD1Database('ResourceSemantic');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;const counter=semanticConsumerOperationCounter(state),started=performance.now();
+ const quote=await state.resourceAssistantQuote(),quoteCalls=counter.read(),quoteMs=performance.now()-started;counter.reset();const executionStart=performance.now(),response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash}),body=await response.json();const executionCalls=counter.read(),executionMs=performance.now()-executionStart;counter.reset();const retrieved=await state.resourceAssistant({action:'retrieve',executionId:quote.executionId});assert.equal(retrieved.status,200);t.diagnostic(JSON.stringify({shared,quoteCalls,executionCalls,retrieveCalls:counter.read(),quoteMs,executionMs}));assert.ok(quoteCalls<=50&&executionCalls<=50&&counter.read()<=50,'Whole native resource request exceeds its conservative 50-call target');assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.status,'completed');assert.equal(state.resourceProviderRequests.length,1);
+ await db.prepare('DELETE FROM memory_resource_history').run();const after=await state.resourceAssistant({action:'retrieve',executionId:quote.executionId});assert.equal(after.status,409);const rows=await db.prepare('SELECT content,redacted_at FROM private_content WHERE content_id IN(SELECT content_id FROM memory_resource_assistant_contents)').all();assert.equal(rows.results.length,3);assert.ok(rows.results.every(r=>r.content===''&&r.redacted_at));assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+
+for(const shared of [false,true])test('native resource semantic assistant: source-free recovery inventory survives withdrawal without hydrating prose '+shared,async t=>{
+ const state=await nativeResourceSemanticFixture(t,{shared}),quote=await state.resourceAssistantQuote();
+ const {createResourceAssistantClient}=await import('../src/state/memory-resource-assistant-client.ts'),client=createResourceAssistantClient((_url,init)=>state.resourceAssistant(JSON.parse(init.body))),selector={kind:'canvas',projectId:'project-atmosphere',resourceId:'memory-independent-board'};
+ const actual=new URL(state.resourceUrl,'http://localhost');Object.assign(selector,Object.fromEntries(actual.searchParams));
+ const parsed=await client.quote(selector,new AbortController().signal,state.resourceAssistantContextId,'What might this activity suggest about my next step?','en');assert.equal(parsed.executionId,quote.executionId);
+ const result=await client.read(selector,new AbortController().signal,'execute',quote.executionId,quote.quote.bindingHash);assert.equal(result.result.mode,'private-review');
+ state.sqlite.prepare('DELETE FROM memory_resource_enrollments').run();state.env.FORMA_MEMORY_ENABLED='false';state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS='';
+ const db=state.env.DB,prepare=db.prepare,seen=[];db.prepare=function(sql){seen.push(sql);return prepare.call(this,sql);};t.after(()=>{db.prepare=prepare;});
+ const inventory=await client.controls(selector,new AbortController().signal);assert.equal(inventory.runs.length,1);assert.equal(inventory.runs[0].execution_id,quote.executionId);assert.equal(inventory.runs[0].state,'retired');assert.equal(inventory.runs[0].owner_user_id,state.current().owner_user_id);assert.equal(inventory.more,false);
+ assert.ok(!seen.some(sql=>/SELECT[^;]*content\.content|SELECT[^;]*FROM memory_resource_history/is.test(sql)));assert.equal(state.resourceProviderRequests.length,1);
+ const elsewhere=await state.request(state.resourceUrl.replace('resource-scope','resource-assistant').replace(encodeURIComponent(selector.resourceId),'different-resource'),json({action:'controls'},{...state.owner,origin:'http://localhost'}));assert.equal(elsewhere.status,200);assert.deepEqual((await elsewhere.json()).runs,[]);
+ assert.equal(await client.reconcile(selector,new AbortController().signal,quote.executionId),'completed');assert.equal(state.resourceProviderRequests.length,1);
+ await assert.rejects(client.read(selector,new AbortController().signal,'retrieve',quote.executionId));
+});
+
+for(const surface of ['quote','retrieve'])for(const fault of ['elapsed','wall-rollback','monotonic-expiry','binding-replacement','configuration'])test('native resource semantic assistant: final '+surface+' serialization rejects '+fault,async t=>{
+ const state=await nativeResourceSemanticFixture(t),quote=surface==='retrieve'?await state.resourceAssistantQuote():null;
+ if(quote)assert.equal((await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash})).status,200);
+ const original=Response.json,wall=Date.now,monotonic=performance.now.bind(performance),db=state.env.DB,enabled=state.env.FORMA_MEMORY_ENABLED;let hit=false;
+ t.mock.method(Response,'json',(value,init)=>{const response=original.call(Response,value,init);if(value?.version==='resource-memory-assistant-v1'&&(surface==='quote'?value.quote:value.result)){hit=true;
+  if(fault==='elapsed')t.mock.method(Date,'now',()=>wall()+60000);if(fault==='wall-rollback')t.mock.method(Date,'now',()=>0);if(fault==='monotonic-expiry')t.mock.method(performance,'now',()=>monotonic()+60000);if(fault==='binding-replacement')state.env.DB={...db};if(fault==='configuration')state.env.FORMA_MEMORY_ENABLED='false';
+ }return response;});
+ try{const response=await state.resourceAssistant(quote?{action:'retrieve',executionId:quote.executionId}:{action:'quote',contextId:state.resourceAssistantContextId,question:'Private current question',locale:'en'}),body=await response.json();assert.equal(hit,true);assert.equal(response.status,409,JSON.stringify(body));assert.equal(body.quote,undefined);assert.equal(body.result,undefined);assert.equal(body.scope,undefined);assert.equal(state.resourceProviderRequests.length,quote?1:0);}
+ finally{state.env.DB=db;state.env.FORMA_MEMORY_ENABLED=enabled;t.mock.restoreAll();}
+});
+
+for(const boundary of ['dispatch','response','result'])test('native resource semantic assistant: exact retained consent rejects late '+boundary+' mutation',async t=>{
+ const state=await nativeResourceSemanticFixture(t),quote=await state.resourceAssistantQuote(),db=state.env.DB,batch=db.batch;let hit=false;
+ db.batch=async statements=>{if(!hit&&statements.some(s=>boundary==='dispatch'?s.sql?.includes("SET status='submitting'"):boundary==='response'?s.sql?.includes('INSERT INTO private_content')&&s.values?.includes('provider-response'):s.sql?.includes('INSERT INTO private_content')&&s.values?.includes('context-proposal'))){hit=true;state.sqlite.prepare("UPDATE private_content SET content=content||' ' WHERE content_id=(SELECT consent_ref FROM consequential_executions WHERE execution_id=?)").run(quote.executionId);}return batch.call(db,statements);};t.after(()=>{db.batch=batch;});
+ const response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash});assert.equal(hit,true);assert.equal(response.status,409);assert.equal(state.resourceProviderRequests.length,boundary==='dispatch'?0:1);assert.equal(consequentialReceipt(state,quote.executionId).execution.result_ref,null);if(boundary!=='dispatch')assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,'settled');
+});
+test('native resource semantic assistant: serialization cannot dispatch after the original lease expires',async t=>{
+ const state=await nativeResourceSemanticFixture(t),quote=await state.resourceAssistantQuote(),stringify=JSON.stringify,wall=Date.now;let hit=false;
+ t.mock.method(JSON,'stringify',function(value,...args){const serialized=stringify.call(this,value,...args);if(value?.model==='gpt-5.6-luna'&&value?.store===false&&typeof value.input==='string'){hit=true;t.mock.method(Date,'now',()=>wall()+60000);}return serialized;});
+ try{const response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash});assert.equal(response.status,409);assert.equal(hit,true);assert.equal(state.resourceProviderRequests.length,0);assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,'not-submitted');}finally{t.mock.restoreAll();}
+});
+test('native resource semantic assistant: ambiguous inner JSON remains billable but is never published',async t=>{
+ const state=await nativeResourceSemanticFixture(t,{respond:payload=>specialistRawResponse(payload,{output:[{type:'message',id:'ambiguous-resource',role:'assistant',status:'completed',content:[{type:'output_text',text:'{"reply":"hidden","reply":"AMBIGUOUS_PRIVATE_REPLY","actions":[]}'}]}]})}),quote=await state.resourceAssistantQuote();
+ const response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash});assert.equal(response.status,409);assert.equal(state.resourceProviderRequests.length,1);assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,'settled');assert.equal(consequentialReceipt(state,quote.executionId).execution.result_ref,null);
 });

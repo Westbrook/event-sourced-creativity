@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1qiljrp.57": "Interface de commande de l’assistant de mémoire des ressources.",
+  "system.auto.1aoksce.154": "Consommateur de ressources natif en lecture seule. La sélection, le devis et l’achat sont distincts. Les brouillons et réponses privés disparaissent lors des changements de propriété ou de visibilité.",
   "system.auto.49pzob.48": "Interface de l’inventaire de mémoire des ressources.",
   "system.auto.nedhwo.102": "Inventaire des consentements indépendant des sources. L’oubli ne nécessite jamais un nouvel accès aux sources ni une inscription.",
   "system.auto.1bblc11.47": "Interface des commandes de mémoire des ressources.",

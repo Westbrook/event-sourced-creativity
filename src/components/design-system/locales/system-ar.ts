@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1qiljrp.57": "واجهة التحكم بمساعد ذاكرة الموارد.",
+  "system.auto.1aoksce.154": "مستهلك أصلي للموارد للقراءة فقط. الاختيار وعرض التكلفة والشراء إجراءات مستقلة. تُحذف المسودات والإجابات الخاصة عند تغير الملكية أو الرؤية.",
   "system.auto.49pzob.48": "واجهة جرد ذاكرة الموارد.",
   "system.auto.nedhwo.102": "جرد موافقات مستقل عن المصادر. لا يتطلب النسيان تجديد الوصول إلى المصدر أو التسجيل.",
   "system.auto.1bblc11.47": "واجهة عناصر التحكم في ذاكرة الموارد.",

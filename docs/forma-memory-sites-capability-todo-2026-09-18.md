@@ -261,3 +261,14 @@ bounded7/30-day counts. These private observations do not assert content reading
 or preferences; forget/renewal/expiry and old-schema compatibility are verified.
 Additive0069 is local only. Semantic resource/profile consumers, direct private
 image/live-preview and integrated qualification remain assigned native work.
+
+## Resource selection and semantic execution rollout — 2026-09-21
+
+Native [resource selection](forma-memory-resource-assistant-context-2026-09-21.md)
+and [private guidance](forma-memory-resource-semantic-assistant-2026-09-21.md)
+are locally implemented. Owner review must include additive0070/0071, exact
+source-retirement/restore behavior and the source-free billing maintenance hook.
+The local50-call target is met for this consumer; that is not hosted capacity,
+model/pricing/retention qualification or schedule registration. No real provider
+calls, deployment or enrollment occurred for these slices. The native completion
+matrix remains separate from these operational gates.

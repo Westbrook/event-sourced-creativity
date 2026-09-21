@@ -1,5 +1,5 @@
 import { memoryResourceIdentity,memoryResourceSelector,type MemoryResourceSelector,type MemoryResourceIdentity } from '../src/model/memory-resource-scope.ts';
-import { requireUser,hasCapability,configuredPilotAdmissionGuard,requireConsent,type PilotUser } from './pilot-policy.ts';
+import { requireUser,hasCapability,configuredPilotAdmissionGuard,requireConsent,type PilotUser,type ProjectExecutionScope } from './pilot-policy.ts';
 import { readProjectRequestContext } from './project-request-context.ts';
 import { executionAdmissionGuard,type ConsequentialBinding } from './consequential-consent.ts';
 import { nativeMemoryGrantDeadline } from './memory-native-deadlines.ts';
@@ -37,6 +37,17 @@ export async function prepareNativeMemoryResourceAuthority(request:Request,env:W
   ||request.headers.get('cookie')?.split(';').some(c=>c.trim().startsWith('forma_impersonation=')))throw Error('resource_principal');
  const selected=await readProjectRequestContext(request,env,actor);if(selected.response||selected.context&&selected.context.projectId!==selection.projectId)throw Error('resource_project');
  return captureResourceAuthority(env,selection,actor,selected.context);
+}
+/** Native authenticated callers (including retained execution) obtain a fresh
+ * principal without forging browser headers or borrowing a background grant.
+ * The supplied identity is not sufficient: native principal/custody predicates
+ * remain mandatory in the consuming transaction. No document authority flows. */
+export async function prepareNativeMemoryResourceAuthorityForPrincipal(env:WorkerEnv,principal:PilotUser,selector:MemoryResourceSelector,scope:ProjectExecutionScope|null=null){
+ const selection=memoryResourceSelector(selector),actor=await liveMemoryPrincipal(env,principal.userId);
+ if(!selection||!actor||principal.fictional||principal.projectExecution||requireConsent(principal)||requireConsent(actor)
+  ||actor.access.permissionEpoch!==principal.access.permissionEpoch||!liveMemoryEnabled(env,actor.userId)
+  ||scope&&(scope.actorUserId!==actor.userId||scope.projectId!==selection.projectId))throw Error('resource_principal');
+ return captureResourceAuthority(env,selection,actor,scope?{...scope,contextId:null,expiresAt:new Date(Date.now()+30000).toISOString()}:null);
 }
 /** Background consent is checked from the stored actor/epoch, never forged
  * browser headers or inherited document authority. Current native access is

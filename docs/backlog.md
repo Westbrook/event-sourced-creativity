@@ -573,3 +573,13 @@ retirement.0070 is additive and local only.146 integrated native,27 final native
 287 client/migration and10 browser checks pass (native counts overlap). Actual
 paid semantic resource consumption remains assigned native implementation, not an
 external-service prerequisite or an implied model-use enrollment.
+
+## MEM-051 — Native resource semantic assistant and accounting recovery
+
+Implemented locally: [independently approved resource guidance](forma-memory-resource-semantic-assistant-2026-09-21.md).
+Library/Canvas now have actual question, exact-input/cost approval, private answer
+and source-free recovery controls, with additive0071 ancestry and native paired
+billing.148 native,3 final accounting,224 client/documentation,102 migration and
+10 browser checks pass. Personal/shared execution uses38/42 local D1 calls.
+No deployment or enrollment; automatic unified profiles, private Output and the
+remaining native matrix work continue on this task.

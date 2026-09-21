@@ -434,3 +434,13 @@ permanent source retirement and actual localized controls. This closes the
 selection boundary, not the separately required semantic execution/publication
 consumer. Resource semantics, nightly unified-profile evolution, direct private
 Output/live-preview and integrated qualification remain assigned here.
+
+[Native resource semantic guidance](forma-memory-resource-semantic-assistant-2026-09-21.md)
+now connects frozen, independently selected Library/Canvas activity to actual
+localized cost approval, a private read-only answer and retained accounting
+recovery. Additive0071 retires private descendants without erasing authored work;
+whole local execution is38/42 personal/shared D1 calls.148 native,3 final
+accounting,224 client/documentation,102 migration and10 browser checks pass.
+This closes that standalone resource consumer, not automatic unified-profile
+publication, wider autocomplete integration, direct private Output/live-preview
+or integrated qualification. These remaining native tasks stay assigned here.

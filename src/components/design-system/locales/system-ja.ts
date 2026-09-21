@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1qiljrp.57": "リソースメモリアシスタントの操作インターフェース。",
+  "system.auto.1aoksce.154": "読み取り専用のネイティブリソース機能。選択、見積もり、購入は別々の操作です。所有権や表示状態が変わると非公開の下書きと回答は消去されます。",
   "system.auto.49pzob.48": "リソースメモリ一覧のインターフェース。",
   "system.auto.nedhwo.102": "ソースを読まない同意一覧です。削除にソースへの再アクセスや再登録は必要ありません。",
   "system.auto.1bblc11.47": "リソースメモリの操作インターフェース。",

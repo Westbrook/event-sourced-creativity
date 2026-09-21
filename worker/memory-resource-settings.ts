@@ -8,7 +8,7 @@ import { requireUser } from './pilot-policy.ts';
 import { derivationAssertion,derivationResults,derivationVerified } from './memory-derivation-store.ts';
 import { prepareNativeMemoryResourceAuthority,nativeMemoryResourceScopeInputs,nativeMemoryResourceScopeGuards } from './memory-resource-authority.ts';
 import { derivationExact } from './memory-derivation-policy.ts';
-import { memoryResourceSchemaDigest,memoryResourceLegacySchemaDigest,memoryResourceContextSchemaDigest } from './memory-resource-schema.ts';
+import { memoryResourceSchemaDigest,memoryResourceLegacySchemaDigest,memoryResourceContextSchemaDigest,memoryResourceAssistantSchemaDigest } from './memory-resource-schema.ts';
 import type { WorkerEnv } from './runtime.ts';
 
 export const MEMORY_RESOURCE_POLICY='personal-resource-memory-v1';
@@ -21,12 +21,12 @@ const family=memoryResourceSchemaFamily;
 const schemaSql=`SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${family} ORDER BY name,type`;
 /** Exact source-qualified optional schema. A request never installs it. */
 export async function memoryResourceSchema(env:WorkerEnv){
- const db=env.DB,result=structuredClone(await db.prepare(schemaSql+' LIMIT 31').all<Record<string,unknown>>());
- if(env.DB!==db||!derivationResults([result],1)||![16,21,30].includes(result.results.length)||result.results.some(row=>!derivationExact(row,['name','sql','table','type'])))throw Error('memory_resource_schema');
- if(await memoryDigest(memoryCanonical(result.results))!==(result.results.length===16?memoryResourceLegacySchemaDigest:result.results.length===21?memoryResourceSchemaDigest:memoryResourceContextSchemaDigest))throw Error('memory_resource_schema');
- return {contexts:result.results.length===30,openings:result.results.length>=21,condition:`(SELECT json_group_array(json_object('name',name,'sql',sql,'table',tbl_name,'type',type)) FROM (SELECT * FROM sqlite_schema WHERE ${family} ORDER BY name,type))=?
+ const db=env.DB,result=structuredClone(await db.prepare(schemaSql+' LIMIT 47').all<Record<string,unknown>>());
+ if(env.DB!==db||!derivationResults([result],1)||![16,21,30,46].includes(result.results.length)||result.results.some(row=>!derivationExact(row,['name','sql','table','type'])))throw Error('memory_resource_schema');
+ if(await memoryDigest(memoryCanonical(result.results))!==(result.results.length===16?memoryResourceLegacySchemaDigest:result.results.length===21?memoryResourceSchemaDigest:result.results.length===30?memoryResourceContextSchemaDigest:memoryResourceAssistantSchemaDigest))throw Error('memory_resource_schema');
+ return {assistantRuns:result.results.length===46,contexts:result.results.length>=30,openings:result.results.length>=21,condition:`(SELECT json_group_array(json_object('name',name,'sql',sql,'table',tbl_name,'type',type)) FROM (SELECT * FROM sqlite_schema WHERE ${family} ORDER BY name,type))=?
    AND EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)
-   AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)`,bindings:[JSON.stringify(result.results)]} satisfies MemorySqlGuard & {openings:boolean;contexts:boolean};
+   AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)`,bindings:[JSON.stringify(result.results)]} satisfies MemorySqlGuard & {openings:boolean;contexts:boolean;assistantRuns:boolean};
 }
 const enrollmentView=(e:MemoryResourceEnrollment)=>({id:e.enrollment_id,revision:e.revision,kind:e.resource_kind,projectId:e.project_id,resourceId:e.resource_id,
  learn:e.learn_enabled===1,recall:e.recall_enabled===1,background:e.background_enabled===1,retentionDays:e.retention_days,timeZone:e.time_zone,
@@ -93,7 +93,7 @@ export async function handleMemoryResourceSettings(request:Request,env:WorkerEnv
  * erasure transaction. Authored files and organization-owned data are untouched.
  * A missing optional migration gets a witnessed absence, never an implicit DDL. */
 export async function prepareResourceMemoryPersonalErasure(env:WorkerEnv,actorUserId:string){
- const db=env.DB,inventory=structuredClone(await db.prepare(schemaSql+' LIMIT 31').all<Record<string,unknown>>());
+ const db=env.DB,inventory=structuredClone(await db.prepare(schemaSql+' LIMIT 47').all<Record<string,unknown>>());
  if(env.DB!==db||!derivationResults([inventory],1))throw Error('resource_erasure_schema');
  if(!inventory.results.length){
   const statements=[derivationAssertion(env,{condition:`NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE ${family})`,bindings:[]})];
