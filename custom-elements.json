@@ -14561,12 +14561,29 @@
               },
               "default": "''",
               "attribute": "candidate-job-id"
+            },
+            {
+              "kind": "field",
+              "name": "candidatePurpose",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "candidate-purpose"
             }
           ],
           "attributes": [
             {
               "name": "candidate-job-id",
               "fieldName": "candidateJobId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "candidate-purpose",
+              "fieldName": "candidatePurpose",
               "type": {
                 "text": "string"
               },

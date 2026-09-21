@@ -1,3 +1,4 @@
+import { memoryProfileContextBoundarySchemaProfile as profileContextBoundary } from './memory-derivation-profile-context-schema.ts';
 import { prepareNativeReuseRecall } from './memory-reuse-recall.ts';
 import { readNativeOrganizationNesting } from './organization-project-nesting.ts';
 import { qualifiedProjectKey,visibleOrganizationAncestors } from '../src/model/organization-project-nesting.ts';
@@ -31,7 +32,7 @@ const columns = ['enrollment_id', 'enrollment_revision', 'boundary', 'revision',
 const organizationColumns = ['enrollment_id','enrollment_revision','boundary_revision','actor_user_id','organization_id','consented_at'] as const;
 const family = "name LIKE 'memory_recall_boundaries%' OR tbl_name='memory_recall_boundaries' OR instr(lower(COALESCE(sql,'')),'memory_recall_boundaries')>0";
 const extendedFamily = `(${family}) OR name LIKE 'memory_recall_organization_%' OR tbl_name='memory_recall_organization_ranges' OR instr(lower(COALESCE(sql,'')),'memory_recall_organization_ranges')>0`;
-const schemaQuery = `SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${extendedFamily} ORDER BY name,type LIMIT 10`;
+const schemaQuery = `SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${extendedFamily} ORDER BY name,type LIMIT 12`;
 async function rows(env: WorkerEnv, sql: string, bindings: readonly (string | number | null)[] = []) {
   const db = env.DB, result = structuredClone(await db.prepare(sql).bind(...bindings).all<Row>());
   if (env.DB !== db || !derivationResults([result], 1)) throw Error('recall_read');
@@ -42,11 +43,11 @@ function inventory(sql: string, bindings: readonly (string | number | null)[], f
     bindings: [...bindings, JSON.stringify(found.map(row => keys.map(key => row[key])))] };
 }
 async function certifyRecallBoundarySchema(found: Row[]) {
-  const profiles=[profile,organizationProfile];
+  const profiles=[profile,organizationProfile,profileContextBoundary];
   const explicit=found.filter(row=>row.sql!==null),names:readonly string[]=profiles.flatMap(p=>[...p.names]);
   if(found.some(row=>!derivationExact(row,['name','sql','table','type'])) || explicit.some(row=>!names.includes(String(row.name))))throw Error('recall_schema');
   const organizationRangesPresent=explicit.some(row=>(organizationProfile.names as readonly string[]).includes(String(row.name)));
-  const installed=organizationRangesPresent?profiles:[profile];
+  const installed=[profile,...(organizationRangesPresent?[organizationProfile]:[]),...(explicit.some(row=>(profileContextBoundary.names as readonly string[]).includes(String(row.name)))?[profileContextBoundary]:[])];
   const automatic:readonly string[]=installed.flatMap(p=>[...p.automaticIndexes]);
   if(found.length!==installed.reduce((sum,p)=>sum+p.count+p.automaticIndexes.length,0)
     || found.some(row=>row.sql===null&&(!automatic.includes(String(row.name))||row.type!=='index')))throw Error('recall_schema');

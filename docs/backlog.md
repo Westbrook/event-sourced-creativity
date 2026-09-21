@@ -488,3 +488,13 @@ connected to real Library/Canvas and Memory-panel controls.73 native,177 client,
 shared capture/recall calls. No deployment, schedule registration or real enrollment.
 Semantic aggregate/resource consumers, direct private creative Output and integrated
 qualification stay assigned in the completion matrix.
+
+## MEM-041 — Durable multi-source profile context and snapshot reconciliation
+
+Implemented locally: [independent profile sources in actual assistant prompts](forma-memory-aggregate-profile-context-2026-09-21.md).
+Explicit localized selection retains at most two independently authorized profile
+sources beside the main note. Additive0068 binds revision/hash/range/retention and
+retires dependent private copies on source loss; restored bodies cannot revive
+an approved execution. Missing generated snapshots63–65 and new66 are included.
+Aggregate capacity, broader semantic/resource integration and direct private
+Output remain assigned, not external-service excuses. No deployment or enrollment.

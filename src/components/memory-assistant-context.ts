@@ -11,8 +11,8 @@ type Owner={controller:AbortController;current:()=>boolean;scope:{projectId:stri
 /** Private reference-only assistant context. Choosing a note neither sends a
  * prompt nor changes authored fields; saved references are revalidated natively. */
 export class MemoryAssistantContext extends FormaElement{
- static override properties={candidateJobId:{attribute:'candidate-job-id'}};
- candidateJobId='';
+ static override properties={candidateJobId:{attribute:'candidate-job-id'},candidatePurpose:{attribute:'candidate-purpose'}};
+ candidateJobId='';candidatePurpose='';
  #owner:Owner|null=null;#view:AssistantMemoryContextView|null=null;#timer:ReturnType<typeof setTimeout>|undefined;
  #clock:ReturnType<typeof createMemoryElapsed>|null=null;#duration=0;#busy=false;#notice='';#suspended=false;#shown=false;
  #t=(key:string)=>personalMemoryMessage(this.i18n.locale,'memory.live.'+key);
@@ -56,15 +56,20 @@ export class MemoryAssistantContext extends FormaElement{
   catch{if(!owner.current())return;try{const view=await this.#client(owner).read(owner.scope,owner.controller.signal,true);if(owner.current()){this.#notice='assistantContextUnavailable';this.#retain(owner,view);}}catch{if(owner.current()){this.#view=null;this.requestUpdate();}}}
  }
  #refresh=()=>{this.#clear();this.#sync();this.requestUpdate();};
- async #act(action:'accept'|'dismiss'){
+ async #act(action:'accept'|'dismiss'|'append'|'remove',removedJobId?:string){
   const owner=this.#owner;if(!owner?.current()||this.#busy)return;
   const jobId=this.candidateJobId||this.#view?.context?.jobId;if(action==='accept'&&!jobId)return;
   this.#busy=true;this.#notice='';
-  if(action==='dismiss'){this.#view=null;this.#clock?.retire();clearTimeout(this.#timer);this.#timer=undefined;}
+  if(action==='dismiss'||action==='remove'){this.#view=null;this.#clock?.retire();clearTimeout(this.#timer);this.#timer=undefined;}
   this.requestUpdate();
   try{
    const client=this.#client(owner),control=await client.read(owner.scope,owner.controller.signal,true);if(!owner.current())return;
-   if(action==='accept')await client.accept(owner.scope,control,jobId!,owner.controller.signal);else await client.dismiss(owner.scope,control,owner.controller.signal);
+   if(action==='accept')await client.accept(owner.scope,control,jobId!,owner.controller.signal);
+   else if(action==='append'||action==='remove'){
+    if(!control.context||control.context.state==='dismissed')throw Error('context_required');
+    const jobs=action==='append'?[...control.context.profileJobIds??[],this.candidateJobId]:(control.context.profileJobIds??[]).filter(id=>id!==removedJobId);
+    await client.accept(owner.scope,control,control.context.jobId,owner.controller.signal,jobs);
+   }else await client.dismiss(owner.scope,control,owner.controller.signal);
    if(!owner.current())return;
    window.dispatchEvent(new Event('forma-memory-assistant-context-changed'));
    if(this.candidateJobId){this.#notice='assistantContextSaved';this.requestUpdate();}
@@ -73,13 +78,14 @@ export class MemoryAssistantContext extends FormaElement{
  }
  override render(){
   if(!this.#owner?.current())return nothing;
-  if(this.candidateJobId)return html`<div><p class="memory-brief-disclosure">${this.#t('assistantContextChoiceHelp')}</p><button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${()=>this.#act('accept')}>${this.#t('assistantContextAccept')}</button>${this.#notice?html`<p role="status">${this.#t(this.#notice)}</p>`:nothing}</div>`;
+  if(this.candidateJobId)return html`<div><p class="memory-brief-disclosure">${this.#t('assistantContextChoiceHelp')}</p><button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${()=>this.#act('accept')}>${this.#t('assistantContextAccept')}</button>${this.candidatePurpose==='profile'?html`<p class="memory-brief-disclosure">${this.#t('assistantProfileHelp')}</p><button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${()=>this.#act('append')}>${this.#t('assistantProfileAdd')}</button>`:nothing}${this.#notice?html`<p role="status">${this.#t(this.#notice)}</p>`:nothing}</div>`;
   const view=this.#view&&this.#clock&&this.#clock.elapsed({wall:Date.now(),monotonic:performance.now()})<this.#duration&&Date.parse(this.#view.validUntil)>Date.now()?this.#view:null;
   if(!this.#shown&&!this.#notice)return nothing;
   return html`<aside class="document-memory-brief" data-memory-assistant-context aria-label=${this.#t('assistantContextHeading')}><header><h2>${this.#t('assistantContextHeading')}</h2><button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${this.#refresh}>${this.#t('briefRefresh')}</button></header>
    <p class="memory-brief-disclosure">${this.#t('assistantContextDisclosure')}</p>
    ${this.#notice?html`<p role="status">${this.#t(this.#notice)}</p>`:nothing}
    ${view?.context?.state==='accepted'?html`<p>${view.context.source.documentId}${view.context.source.ownerId?` (${view.context.source.ownerId})`:""} · ${this.#t('recallBoundary.'+view.context.source.zoom)}</p><ul>${view.presentation?.items.map(item=>html`<li>${item.text}</li>`)}</ul>`:nothing}
+   ${view?.profiles?.map(profile=>html`<section><h3>${this.#t('assistantProfileHeading')}</h3><p>${profile.source.documentId} · ${this.#t('recallBoundary.'+profile.source.zoom)}</p><ul>${profile.presentation.items.map(item=>html`<li>${item.text}</li>`)}</ul><button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${()=>this.#act('remove',profile.presentation.jobId)}>${this.#t('assistantProfileRemove')}</button></section>`)}
    ${view?.context?view.context.state==='dismissed'?html`<p>${this.#t('assistantContextDismissed')}</p><button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${()=>this.#act('accept')}>${this.#t('assistantContextUndo')}</button>`:html`<button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${()=>this.#act('dismiss')}>${this.#t('assistantContextDismiss')}</button>`:nothing}
   </aside>`;
  }

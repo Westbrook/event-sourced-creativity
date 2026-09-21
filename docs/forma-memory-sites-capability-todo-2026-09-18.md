@@ -233,3 +233,13 @@ consent is enabled. There is no automatic enrollment/backfill. Hosted registrati
 no-visitor execution, combined subsystem capacity, failure recovery and privacy
 qualification remain external/operational gates; local D1/browser checks do not
 qualify the host or authorize real user enrollment.
+
+## Aggregate profile rollout dependency — 2026-09-21
+
+[Independent aggregate profile context](forma-memory-aggregate-profile-context-2026-09-21.md)
+adds0068 and reconciles missing source snapshots63–65. The production owner's
+atomic migration review must include these exact files. Local snapshots are not
+hosted receipts; no production migration has run. Measure the integrated maximum
+source set against the actual host's request, byte, CPU and database ceilings
+before enrollment. Existing scheduler/provider/index/retention/privacy gates and
+explicit consent requirements remain unchanged.

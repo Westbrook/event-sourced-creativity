@@ -102,3 +102,10 @@ system qualification remain assigned in the
 [completion matrix](forma-memory-completion-matrix-2026-09-20.md). External service,
 rollout and explicit user-enrollment gates remain in the
 [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
+
+## Frozen full regression
+
+Commit `b2c72f14` passes the complete assistant runtime suite:2564/2564, zero
+failures,1485794.973375ms, from an immutable archived checkout. This includes the
+resource integration and preceding package-reference work, but not later
+aggregate-profile changes. It remains local synthetic evidence, not deployment.

@@ -8,7 +8,7 @@ import { derivationAssertion,derivationResults,derivationVerified,memoryDerivati
 import { packRecallGuards } from './memory-recall-boundary-api.ts';
 import { prepareNativeSavedAssistantContextForPrincipal,nativeSavedAssistantContextInputs,nativeSavedAssistantContextGuards,type NativeSavedAssistantContext } from './memory-assistant-context-api.ts';
 
-export type SemanticAssistantMemoryBinding={version:1;parents?:SemanticAssistantParent[];originId:string;targetEnrollmentId:string;contextRevision:string;
+export type SemanticAssistantMemoryBinding={version:1;parents?:SemanticAssistantParent[];profileJobIds?:string[];originId:string;targetEnrollmentId:string;contextRevision:string;
  jobId:string;outputSha256:string;expiresAt:string;projectId:string;documentId:string};
 declare const consumer:unique symbol;
 export type SemanticAssistantMemory=Readonly<{[consumer]:true}>;
@@ -28,7 +28,7 @@ export async function prepareSemanticAssistantMemory(env:WorkerEnv,actor:PilotUs
  if(!consumersPresent)throw Error('assistant_memory_schema_unavailable');
  const binding:SemanticAssistantMemoryBinding={version:1,originId:saved?.originId??crypto.randomUUID(),
   targetEnrollmentId:selection.targetEnrollmentId,contextRevision:selection.contextRevision,jobId:selection.jobId,
-  outputSha256:selection.outputSha256,expiresAt:selection.expiresAt,projectId:target.projectId,documentId:target.documentId};
+  outputSha256:selection.outputSha256,...(selection.profileJobIds?.length?{profileJobIds:[...selection.profileJobIds]}:{}),expiresAt:selection.expiresAt,projectId:target.projectId,documentId:target.documentId};
  const parents=await captureSemanticAssistantParents(env,actor,binding,target.scopeKey,target.priorTurnIds??saved?.parents?.map(p=>p.turnId)??[],target.scope);
  if(parents.parents.length)binding.parents=parents.parents;
  if(saved&&(typeof saved.originId!=='string'||!/^[-0-9a-f]{36}$/u.test(saved.originId)||memoryCanonical(binding)!==memoryCanonical(saved)))
@@ -36,8 +36,8 @@ export async function prepareSemanticAssistantMemory(env:WorkerEnv,actor:PilotUs
  // Replacing a turn that helped produce this summary would retire that very
  // source. Reject the cycle before quoting or purchasing anything.
  const cycle=await env.DB.prepare(`SELECT 1 AS cycle FROM memory_derivation_result_dependencies
-  WHERE job_id=? AND kind='turn' AND actor_user_id=? AND scope_key=? AND resource_id=? LIMIT 1`)
-  .bind(binding.jobId,actor.userId,target.scopeKey,target.turnId).first();
+  WHERE job_id IN(SELECT value FROM json_each(?)) AND kind='turn' AND actor_user_id=? AND scope_key=? AND resource_id=? LIMIT 1`)
+  .bind(JSON.stringify([binding.jobId,...selection.profileJobIds??[]]),actor.userId,target.scopeKey,target.turnId).first();
  if(env.DB!==db)throw Error('assistant_memory_unavailable');
  if(cycle)throw Error('assistant_memory_source_cycle');
  const handle=Object.freeze({}) as SemanticAssistantMemory;
@@ -55,11 +55,13 @@ export function semanticAssistantMemoryLeaseCurrent(env:WorkerEnv,handle:Semanti
  try{current(env,handle);return true;}catch{return false;}
 }
 export function semanticAssistantMemoryInputs(env:WorkerEnv,handle:SemanticAssistantMemory){
- const c=current(env,handle),{presentation,selection}=nativeSavedAssistantContextInputs(env,c.source);
+ const c=current(env,handle),{presentation,selection,profiles}=nativeSavedAssistantContextInputs(env,c.source);
  return {binding:structuredClone(c.binding),validUntil:selection.validUntil,evidence:{version:'semantic-memory-evidence-v1',treatment:'untrusted-interpretation',
   independentEvidence:false,completeHistory:false,relevance:selection.relation,
   guidance:'Use only as tentative context. Current explicit instructions and current document facts take precedence. Do not infer permission or independent corroboration from these interpretations.',
-  priorAnswersAreIndependentEvidence:false,items:presentation.candidate.items,history:presentation.history??null}};
+  priorAnswersAreIndependentEvidence:false,items:presentation.candidate.items,history:presentation.history??null,
+  ...(profiles.length?{profileSources:profiles.map(p=>({source:p.source,items:p.presentation.candidate.items,history:p.presentation.history??null})),
+    profileGuidance:'These independently authorized profile sources are tentative interpretations, not additional original evidence. Weight their scope relevance below current document facts. Do not count repeated citations or copied/reused work as independent support; retain contradictions and explicit user corrections. Do not turn cross-scope similarities into an asserted personal preference.'}: {})}};
 }
 export function semanticAssistantMemoryStatements(env:WorkerEnv,handle:SemanticAssistantMemory){
  const c=current(env,handle);

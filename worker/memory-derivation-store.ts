@@ -1,3 +1,4 @@
+import { memoryDerivationProfileContextSchemaProfile } from './memory-derivation-profile-context-schema.ts';
 import { organizationProjectNestingSchemaProfile } from './organization-project-nesting-schema.ts';
 import { memoryRecallOrganizationSchemaProfile } from './memory-recall-organization-schema.ts';
 import { memoryDerivationAssetSchemaProfile } from './memory-derivation-asset-schema.ts';
@@ -49,7 +50,7 @@ export const memoryDerivationSchemaProfile = {
 } as const;
 type Row = Record<string, unknown>;
 type Query = { sql: string; bindings: (string | number | null)[] };
-const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile, memoryDerivationFinanceSchemaProfile, memoryDerivationRecoverySchemaProfile, memoryDerivationResultsSchemaProfile, memoryDerivationUserControlSchemaProfile, memoryDerivationCompletionSchemaProfile, memoryDerivationLifecycleSchemaProfile, memoryDerivationSplitSchemaProfile, memoryDerivationHistorySchemaProfile, memoryDerivationProducerSchemaProfile, memoryDerivationIndexSchemaProfile,memoryDerivationRelationSchemaProfile,memoryDerivationReuseSchemaProfile,memoryDerivationObservationControlSchemaProfile,memoryDerivationContextSchemaProfile,memoryDerivationConsumerSchemaProfile,memoryDerivationConsumerSourceSchemaProfile,memoryDerivationConsumerParentSchemaProfile,memoryDerivationAssetSchemaProfile,memoryRecallOrganizationSchemaProfile,organizationProjectNestingSchemaProfile] as const;
+const profiles = [memoryDerivationSchemaProfile, memoryDerivationJobSchemaProfile, memoryDerivationFinanceSchemaProfile, memoryDerivationRecoverySchemaProfile, memoryDerivationResultsSchemaProfile, memoryDerivationUserControlSchemaProfile, memoryDerivationCompletionSchemaProfile, memoryDerivationLifecycleSchemaProfile, memoryDerivationSplitSchemaProfile, memoryDerivationHistorySchemaProfile, memoryDerivationProducerSchemaProfile, memoryDerivationIndexSchemaProfile,memoryDerivationRelationSchemaProfile,memoryDerivationReuseSchemaProfile,memoryDerivationObservationControlSchemaProfile,memoryDerivationContextSchemaProfile,memoryDerivationConsumerSchemaProfile,memoryDerivationConsumerSourceSchemaProfile,memoryDerivationConsumerParentSchemaProfile,memoryDerivationAssetSchemaProfile,memoryRecallOrganizationSchemaProfile,organizationProjectNestingSchemaProfile,memoryDerivationProfileContextSchemaProfile] as const;
 const schemaTables = profiles.flatMap(profile => [...profile.tables]);
 const family = "name LIKE 'memory_derivation_%' OR name LIKE 'idx_memory_derivation_%' OR "
   + schemaTables.map(table => `tbl_name='${table}' OR instr(lower(COALESCE(sql,'')),'${table}')>0`).join(" OR ");
@@ -81,7 +82,7 @@ export function derivationAssertedChange(result:D1Result<Row>,assertion:D1Result
 export function derivationVerified(result: D1Result<Row>): boolean {
   return result.results.length === 1 && derivationExact(result.results[0], ["verified"]) && result.results[0].verified === 1;
 }
-export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; recoveryPresent: boolean; resultsPresent: boolean; userControlsPresent: boolean; completionPresent: boolean; lifecyclePresent: boolean; splitPresent: boolean; historyPresent: boolean; producersPresent: boolean; indexPresent: boolean; relationsPresent: boolean; reusePresent: boolean; observationControlsPresent: boolean; contextsPresent: boolean; consumersPresent: boolean; consumerSourcesPresent: boolean; consumerParentsPresent: boolean; assetsPresent: boolean; guard: MemorySqlGuard }> {
+export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; recoveryPresent: boolean; resultsPresent: boolean; userControlsPresent: boolean; completionPresent: boolean; lifecyclePresent: boolean; splitPresent: boolean; historyPresent: boolean; producersPresent: boolean; indexPresent: boolean; relationsPresent: boolean; reusePresent: boolean; observationControlsPresent: boolean; contextsPresent: boolean; consumersPresent: boolean; consumerSourcesPresent: boolean; consumerParentsPresent: boolean; assetsPresent: boolean; profileContextsPresent: boolean; guard: MemorySqlGuard }> {
   const prepared=prepareMemoryDerivationSchemaRead(env);
   return prepared.accept(await prepared.statement.all<Row>());
 }
@@ -91,7 +92,7 @@ export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present:
  * must replay before reading/disclosing source or committing a write. */
 export function prepareMemoryDerivationSchemaRead(env:WorkerEnv) {
   const db=env.DB,statement=db.prepare(`SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${family} ORDER BY name,type LIMIT ${maximumSchemaRows + 1}`);
-  const accept=async(observed:D1Result<Row>):Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; recoveryPresent: boolean; resultsPresent: boolean; userControlsPresent: boolean; completionPresent: boolean; lifecyclePresent: boolean; splitPresent: boolean; historyPresent: boolean; producersPresent: boolean; indexPresent: boolean; relationsPresent: boolean; reusePresent: boolean; observationControlsPresent: boolean; contextsPresent: boolean; consumersPresent: boolean; consumerSourcesPresent: boolean; consumerParentsPresent: boolean; assetsPresent: boolean; guard: MemorySqlGuard }>=>{
+  const accept=async(observed:D1Result<Row>):Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; recoveryPresent: boolean; resultsPresent: boolean; userControlsPresent: boolean; completionPresent: boolean; lifecyclePresent: boolean; splitPresent: boolean; historyPresent: boolean; producersPresent: boolean; indexPresent: boolean; relationsPresent: boolean; reusePresent: boolean; observationControlsPresent: boolean; contextsPresent: boolean; consumersPresent: boolean; consumerSourcesPresent: boolean; consumerParentsPresent: boolean; assetsPresent: boolean; profileContextsPresent: boolean; guard: MemorySqlGuard }>=>{
   const result=structuredClone(observed);
   if (env.DB !== db || !derivationResults([result], 1) || result.results.length > maximumSchemaRows) fail();
   const rows = result.results;
@@ -110,8 +111,8 @@ export function prepareMemoryDerivationSchemaRead(env:WorkerEnv) {
     if (selected.length && (selected.length !== profile.count || "sha256:" + await memoryDigest(memoryCanonical(selected.map(row => ({ ...row,
       sql: (row.sql as string).trim().replace(/;$/u, "").replace(/\bIF\s+NOT\s+EXISTS\s+/giu, "") })))) !== (consumerParentsInstalled && profile === memoryDerivationConsumerSchemaProfile ? memoryDerivationConsumerParentConsumerDigest : producersInstalled && profile === memoryDerivationJobSchemaProfile ? memoryDerivationProducerJobDigest : producersInstalled && profile === memoryDerivationCompletionSchemaProfile ? memoryDerivationProducerCompletionDigest : splitInstalled && profile === memoryDerivationJobSchemaProfile ? memoryDerivationSplitJobDigest : profile.digest))) fail();
   }
-  if (installed[1] && !installed[0] || installed[2] && !installed[1] || installed[3] && !installed[2] || installed[4] && !installed[2] || installed[5] && !installed[4] || installed[6] && !installed[5] || installed[7] && !installed[4] || installed[8] && !installed[6] || installed[9] && !installed[6] || installed[10] && (!installed[8] || !installed[9]) || installed[11] && !installed[4] || installed[12] && !installed[4] || installed[13] && !installed[4] || installed[14] && !installed[5] || installed[15] && !installed[4] || installed[16] && !installed[15] || installed[17] && !installed[16] || installed[18] && !installed[17] || installed[19] && !installed[18] || installed[20] && !installed[15] || installed[21] && !installed[15] || env.DB !== db) fail();
-  return { present: installed[0]!, jobsPresent: installed[1]!, financePresent: installed[2]!, recoveryPresent: installed[3]!, resultsPresent: installed[4]!, userControlsPresent: installed[5]!, completionPresent: installed[6]!, lifecyclePresent: installed[7]!, splitPresent: installed[8]!, historyPresent: installed[9]!, producersPresent: installed[10]!, indexPresent: installed[11]!, relationsPresent: installed[12]!, reusePresent: installed[13]!, observationControlsPresent: installed[14]!, contextsPresent: installed[15]!, consumersPresent: installed[16]!, consumerSourcesPresent: installed[17]!, consumerParentsPresent: installed[18]!, assetsPresent: installed[19]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)${splitInstalled ? ' AND NOT EXISTS(SELECT 1 FROM memory_derivation_split_commands)' : ''}`,
+  if (installed[1] && !installed[0] || installed[2] && !installed[1] || installed[3] && !installed[2] || installed[4] && !installed[2] || installed[5] && !installed[4] || installed[6] && !installed[5] || installed[7] && !installed[4] || installed[8] && !installed[6] || installed[9] && !installed[6] || installed[10] && (!installed[8] || !installed[9]) || installed[11] && !installed[4] || installed[12] && !installed[4] || installed[13] && !installed[4] || installed[14] && !installed[5] || installed[15] && !installed[4] || installed[16] && !installed[15] || installed[17] && !installed[16] || installed[18] && !installed[17] || installed[19] && !installed[18] || installed[20] && !installed[15] || installed[21] && !installed[15] || installed[22] && (!installed[18] || !installed[15]) || env.DB !== db) fail();
+  return { present: installed[0]!, jobsPresent: installed[1]!, financePresent: installed[2]!, recoveryPresent: installed[3]!, resultsPresent: installed[4]!, userControlsPresent: installed[5]!, completionPresent: installed[6]!, lifecyclePresent: installed[7]!, splitPresent: installed[8]!, historyPresent: installed[9]!, producersPresent: installed[10]!, indexPresent: installed[11]!, relationsPresent: installed[12]!, reusePresent: installed[13]!, observationControlsPresent: installed[14]!, contextsPresent: installed[15]!, consumersPresent: installed[16]!, consumerSourcesPresent: installed[17]!, consumerParentsPresent: installed[18]!, assetsPresent: installed[19]!, profileContextsPresent: installed[22]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)${splitInstalled ? ' AND NOT EXISTS(SELECT 1 FROM memory_derivation_split_commands)' : ''}`,
     bindings: [JSON.stringify(rows.map(row => ({ name: row.name, sql: row.sql, table: row.table, type: row.type })))] } };
   };
   return {statement,accept};
@@ -297,7 +298,7 @@ async function prepareDerivationWithdrawalCore(env: WorkerEnv, selector: Derivat
     return { statements, terminalAssertions: [assertion(terminal)], assertionIndexes, bookkeepingWrites: 1,
       acknowledge(raw: unknown) { if (used) return false; used = true;
         return env.DB === db && memoryCanonical(selector) === original && derivationResults(raw, statements.length)
-          && assertionIndexes.every(index => derivationVerified(raw[index]!)) && derivationChanged(raw[3]!, count, cascade.count); } };
+          && assertionIndexes.every(index => derivationVerified(raw[index]!)) && (schema.profileContextsPresent?derivationAssertedChange(raw[3]!,raw[4]!,count):derivationChanged(raw[3]!, count, cascade.count)); } };
   }
   let captured: MemoryDerivationGrant[] = [];
   if (schema.present) {
@@ -328,7 +329,7 @@ async function prepareDerivationWithdrawalCore(env: WorkerEnv, selector: Derivat
   return { statements, terminalAssertions: [assertion(terminal)], assertionIndexes, bookkeepingWrites: Number(writeIndex !== null),
     acknowledge(raw: unknown) { if (used) return false; used = true;
       return env.DB === db && memoryCanonical(selector) === original && derivationResults(raw, statements.length)
-        && assertionIndexes.every(index => derivationVerified(raw[index]!)) && (writeIndex === null || derivationChanged(raw[writeIndex]!, changed, cascade.count)); } };
+        && assertionIndexes.every(index => derivationVerified(raw[index]!)) && (writeIndex === null || (schema.profileContextsPresent?derivationAssertedChange(raw[writeIndex]!,raw[writeIndex+1]!,changed):derivationChanged(raw[writeIndex]!, changed, cascade.count))); } };
 }
 /** Withdraw target-only references even when the target never had a paid
  * derivation grant. Source-linked references are already counted in the native
@@ -365,6 +366,6 @@ export async function sweepExpiredDerivationGrants(env: WorkerEnv, limit = 128):
   const result = structuredClone(await db.batch<Row>(statements)), direct = schema.present ? result[3]?.results[0]?.direct_changes : 0;
   if (env.DB !== db || !derivationResults(result, statements.length) || !derivationVerified(result[0]!) || !derivationVerified(result[1]!) || !derivationVerified(result.at(-1)!)
     || schema.present && (result[3]?.results.length !== 1 || !derivationExact(result[3].results[0], ["direct_changes"])
-      || !derivationInteger(direct, 0, limit) || !derivationChanged(result[2]!, Number(direct), cascade.count))) throw new Error("memory-derivation-cleanup-unconfirmed");
+      || !derivationInteger(direct, 0, limit) || !(schema.profileContextsPresent?result[2]!.results.length===0&&typeof result[2]!.meta.changes==='number'&&Number.isSafeInteger(result[2]!.meta.changes)&&result[2]!.meta.changes>=Number(direct):derivationChanged(result[2]!, Number(direct), cascade.count)))) throw new Error("memory-derivation-cleanup-unconfirmed");
   return Number(direct);
 }

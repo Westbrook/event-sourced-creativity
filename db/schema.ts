@@ -2826,3 +2826,17 @@ export const memoryResourceHistory=sqliteTable('memory_resource_history',{
 export const memoryResourceRetiredSources=sqliteTable('memory_resource_retired_sources',{
  enrollmentId:text('enrollment_id').notNull().references(()=>memoryResourceEnrollments.enrollmentId,{onDelete:'cascade'}),eventId:text('event_id').notNull(),
 },t=>[primaryKey({columns:[t.enrollmentId,t.eventId]})]);
+
+/** Reference-only profile supplements. SQL migration 0068 enforces bounded
+ * independent sources and retires the whole private context on source loss. */
+export const memoryDerivationProfileContexts=sqliteTable('memory_derivation_profile_contexts',{
+ targetEnrollmentId:text('target_enrollment_id').notNull().references(()=>memoryDerivationContexts.targetEnrollmentId,{onDelete:'cascade'}),
+ contextRevision:text('context_revision').notNull(),jobId:text('job_id').notNull().references(()=>memoryDerivationJobs.jobId,{onDelete:'cascade'}),
+ outputSha256:text('output_sha256').notNull(),sourceEnrollmentId:text('source_enrollment_id').notNull().references(()=>memoryLiveEnrollments.enrollmentId,{onDelete:'cascade'}),
+ sourceRevision:integer('source_revision').notNull(),boundaryRevision:text('boundary_revision'),hierarchyRevision:text('hierarchy_revision'),expiresAt:text('expires_at').notNull(),
+},table=>[primaryKey({columns:[table.targetEnrollmentId,table.jobId]}),unique().on(table.targetEnrollmentId,table.sourceEnrollmentId),index('idx_memory_derivation_profile_context_job').on(table.jobId),
+ check('memory_profile_context_identity',sql.raw("length(context_revision)=36 AND length(output_sha256)=64 AND output_sha256 NOT GLOB '*[^0-9a-f]*'")),
+ check('memory_profile_context_revision',sql.raw("typeof(source_revision)='integer' AND source_revision>=1")),
+ check('memory_profile_context_expiry',sql.raw("length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at")),
+ check('memory_profile_context_range',sql.raw("(target_enrollment_id=source_enrollment_id AND boundary_revision IS NULL AND hierarchy_revision IS NULL) OR (target_enrollment_id<>source_enrollment_id AND length(boundary_revision)=36 AND length(hierarchy_revision)=71)")),
+]);

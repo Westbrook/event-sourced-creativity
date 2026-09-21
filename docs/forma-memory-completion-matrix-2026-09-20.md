@@ -370,3 +370,14 @@ remain below50 calls. This closes the distinct-resource identity/enrollment/acti
 history requirement. Semantic resource/profile consumption, direct private Output
 and integrated qualification are not replaced by activity counts and remain
 assigned. Additive0067, scheduling and production rollout are not deployed.
+
+## Durable aggregate assistant profile consumption
+
+[Independent profile context](forma-memory-aggregate-profile-context-2026-09-21.md)
+connects explicit bounded multi-source selection to the real specialist/guidance
+prompt and durable source/privacy retirement. Every document retains its own
+consent, source proof and range; no read-side facet becomes authority. Native,
+D1, client and browser checks cover execution and non-resurrection. Missing
+migration snapshots are reconciled. Aggregate capacity, semantic/resource
+consolidation and private Output/live-preview remain implementation work on this
+task; no external provisioning is needed to continue that work.

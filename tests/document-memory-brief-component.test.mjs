@@ -17,7 +17,7 @@ const savedDeclaration=savedSource.statements.find(node=>ts.isClassDeclaration(n
 const savedCompiled=ts.transpileModule(savedDeclaration.getText(savedSource).replace(/^export /u,''),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,useDefineForClassFields:false}}).outputText;
 const flatten=value=>typeof value==='string'?value:Array.isArray(value)?value.map(flatten).join(''):value?.strings?value.strings.map((part,i)=>part+flatten(value.values[i])).join(''):'';
 const flush=async()=>{for(let i=0;i<4;i++)await Promise.resolve();};
-function fixture(t,{deferred=false,shared=false,saved=false,profile=false}={}){
+function fixture(t,{deferred=false,shared=false,saved=false,profile=false,aggregate=false,candidate=false,uncertain=false}={}){
   let privacyPending=false;
   const window=new EventTarget(),document=new EventTarget();document.visibilityState='visible';document.activeElement=null;
   let session={user:{userId:'actor'},projects:[],impersonation:null},route='/document/doc/doc',authorization='auth',generation=1,sourceActive=true;
@@ -33,11 +33,12 @@ function fixture(t,{deferred=false,shared=false,saved=false,profile=false}={}){
       sections:[{purpose:'rolling-summary',jobId:'job',corrections:[],items:[{text:'Private native candidate',citationStatus:'support-cited',supports:[{text:'Original quotation'}],counterevidence:[]}]}]};
     if(profile)value.sections=[{purpose:'profile',jobId:null,corrections:[],retainedProfile:{results:16,complete:false,nextAfter:'a'.repeat(64),historicalPage:Boolean(selection.profileAfter)},items:Array.from({length:256},(_,index)=>({text:'Profile note '+index,citationStatus:'support-cited',supports:[],counterevidence:[],profileOrigin:{jobId:'result-'+Math.floor(index/16),state:index<16?'latest':'historical',repeatedIn:1,sharedEvidence:false,interpretation:index<16?'current':'revised',newerInterpretationJobId:index<16?null:'result-0',counterevidence:index%2===0}}))}];
     const lease={current:()=>!retired&&current()?value:null,retire:()=>{retired=true;}};calls.push({selection,current,signal,resolve:()=>resolve(lease),retired:()=>retired});if(!deferred)resolve(lease);});
-  const savedClient=()=>({read:(scope,signal)=>new Promise(resolve=>{calls.push({scope,signal,resolve:()=>resolve({validUntil:new Date(Date.now()+25000).toISOString(),context:{state:'accepted',source:{documentId:'doc',zoom:'document'}},presentation:{items:[{text:'Private native candidate'}]}})});if(!deferred)calls.at(-1).resolve();})});
+  const savedWrites=[];
+  const savedClient=()=>({accept:async(...args)=>{savedWrites.push(args);if(uncertain)throw Error('uncertain');},read:(scope,signal)=>new Promise(resolve=>{calls.push({scope,signal,resolve:()=>resolve({validUntil:new Date(Date.now()+25000).toISOString(),context:{state:'accepted',jobId:'a'.repeat(64),profileJobIds:aggregate?['b'.repeat(64)]:undefined,source:{documentId:'doc',zoom:'document'}},presentation:{items:[{text:'Private native candidate'}]},...(aggregate?{profiles:[{source:{documentId:'other',zoom:'project'},presentation:{jobId:'b'.repeat(64),items:[{text:'Private profile supplement'}]}}]}:{})})});if(!deferred)calls.at(-1).resolve();})});
   const Component=saved?new Function('memoryPrivacyMutationActive','FormaElement','html','nothing','createAssistantMemoryContextClient','parseMemoryCustody','personalMemoryMessage','createMemoryElapsed','window','setTimeout','clearTimeout',savedCompiled+'\nreturn MemoryAssistantContext;')(()=>privacyPending,Base,html,nothing,savedClient,parseMemoryCustody,personalMemoryMessage,createMemoryElapsed,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id)):new Function('documentViewFromRoute','documentContextBlockFromRoute','memoryPrivacyMutationActive','FormaElement','html','nothing','readDocumentMemoryBrief','parseMemoryCustody','personalMemoryMessage','window','setTimeout','clearTimeout',compiled+'\nreturn DocumentMemoryBrief;')(
     documentViewFromRoute,documentContextBlockFromRoute,()=>privacyPending,Base,html,nothing,capture,parseMemoryCustody,personalMemoryMessage,window,callback=>{const id=++nextTimer;timers.set(id,callback);return id;},id=>timers.delete(id));
-  const element=new Component();element.connectedCallback();element.updated();t.after(()=>{element.isConnected=false;element.disconnectedCallback();});
-  return {click:(label)=>{const visit=value=>{if(Array.isArray(value))return value.some(visit);if(!value?.values)return false;if(value.values.includes(label)){const action=value.values.find(v=>typeof v==='function');if(action){action();return true;}}return value.values.some(visit);};assert.ok(visit(element.render()),'Button exists: '+label);},privacy:(value)=>{privacyPending=value;window.dispatchEvent(new Event('forma-memory-privacy-mutation'));},element,calls,document,window,timers,refresh,text:()=>flatten(element.render()),focused:()=>focused,
+  const element=new Component();if(candidate){element.candidateJobId='c'.repeat(64);element.candidatePurpose='profile';}element.connectedCallback();element.updated();t.after(()=>{element.isConnected=false;element.disconnectedCallback();});
+  return {savedWrites,click:(label)=>{const visit=value=>{if(Array.isArray(value))return value.some(visit);if(!value?.values)return false;if(value.values.includes(label)){const action=value.values.find(v=>typeof v==='function');if(action){action();return true;}}return value.values.some(visit);};assert.ok(visit(element.render()),'Button exists: '+label);},privacy:(value)=>{privacyPending=value;window.dispatchEvent(new Event('forma-memory-privacy-mutation'));},element,calls,document,window,timers,refresh,text:()=>flatten(element.render()),focused:()=>focused,
     change:(kind)=>{if(kind==='route')route='/elsewhere';if(kind==='actor')session={...session,user:{userId:'another'}};
       if(kind==='auth')authorization='changed';if(kind==='source')generation++;if(kind==='retired-source')sourceActive=false;
       if(kind==='impersonation')session={...session,impersonation:{userId:'other'}};if(kind==='locale')element.i18n.locale='ar';
@@ -123,4 +124,21 @@ test('explicit older-profile navigation discards the old lease and resets on pri
  f.change('locale');f.element.updated();await flush();assert.equal(f.calls.at(-1).selection.profileAfter,null);
  f.privacy(true);assert.doesNotMatch(f.text(),/Profile note/);
  f.privacy(false);await flush();assert.equal(f.calls.at(-1).selection.profileAfter,null);
+});
+
+for(const uncertain of [false,true])test('aggregate profile control appends identifiers only with no automatic dispatch '+uncertain,async t=>{
+ const f=fixture(t,{saved:true,aggregate:true,candidate:true,uncertain});await flush();assert.equal(f.calls.length,0);assert.equal(f.savedWrites.length,0);
+ f.click(personalMemoryMessage('en','memory.live.assistantProfileAdd'));await flush();assert.equal(f.savedWrites.length,1);
+ assert.equal(f.savedWrites[0][2],'a'.repeat(64));assert.deepEqual(f.savedWrites[0][4],['b'.repeat(64),'c'.repeat(64)]);
+ if(uncertain)assert.ok(f.text().includes(personalMemoryMessage('en','memory.live.assistantContextUncertain')));assert.equal(f.savedWrites.length,1);
+});
+for(const boundary of ['blur','pagehide','privacy','expiry','route'])test('aggregate profile control clears every source on '+boundary,async t=>{
+ const f=fixture(t,{saved:true,aggregate:true});await flush();assert.match(f.text(),/Private profile supplement/);
+ if(boundary==='privacy')f.privacy(true);else if(boundary==='expiry')[...f.timers.values()][0]();else if(boundary==='route')f.change('route');else f.window.dispatchEvent(new Event(boundary));
+ assert.doesNotMatch(f.text(),/Private profile supplement|Private native candidate/);assert.equal(f.savedWrites.length,0);
+});
+test('aggregate profile removal clears private content before acknowledgement and keeps primary identity',async t=>{
+ const f=fixture(t,{saved:true,aggregate:true,uncertain:true});await flush();
+ f.click(personalMemoryMessage('en','memory.live.assistantProfileRemove'));assert.doesNotMatch(f.text(),/Private profile supplement/);await flush();
+ assert.equal(f.savedWrites.length,1);assert.equal(f.savedWrites[0][2],'a'.repeat(64));assert.deepEqual(f.savedWrites[0][4],[]);assert.doesNotMatch(f.text(),/Private profile supplement/);
 });

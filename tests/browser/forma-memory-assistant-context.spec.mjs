@@ -222,3 +222,34 @@ for(const locale of ['en','ar'])test.describe('Fresh Memory field generation '+l
   await page.screenshot({path:'.wrangler/memory-field-generation-'+locale+'.png'});await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);expect(calls).toHaveLength(2);expect(errors).toEqual([]);
  });
 });
+
+for(const locale of ['en','ar'])for(const uncertain of [false,true])test.describe('Aggregate profile context '+locale+'/'+uncertain,()=>{
+ test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
+ test('private source removal, uncertainty and blur do not republish notes',async({page,context,baseURL})=>{
+  expect(syntheticNetworkEnabled(baseURL)).toBe(true);const errors=[],writes=[];let included=true,revision='12345678-1234-1234-1234-123456789abc',resolveWrite;
+  const jobId='a'.repeat(64),profileJob='b'.repeat(64),enrollmentId='target',expiresAt=new Date(Date.now()+86400000).toISOString();
+  page.on('pageerror',error=>errors.push(error.message));
+  await context.route('**/api/memory/settings',r=>r.fulfill({status:503,json:{error:'synthetic_unavailable'}}));
+  await context.route('**/api/memory/assistant-context?*',async route=>{
+   const request=route.request(),url=new URL(request.url());
+   if(request.method()!=='GET'){
+    const body=request.postDataJSON();writes.push(body);expect(request.method()).toBe('PUT');expect(body.jobId).toBe(jobId);expect(body.revision).toBe(revision);expect(body.profileJobIds).toBeUndefined();expect(JSON.stringify(body)).not.toContain('Private supplemental');
+    await new Promise(resolve=>{resolveWrite=resolve;});
+    if(uncertain)return route.fulfill({status:503,json:{version:'memory-assistant-context-v1',error:'assistant_context_commit_unconfirmed',noAutomaticRetry:true}});
+    included=false;revision=crypto.randomUUID();return route.fulfill({json:{version:'memory-assistant-context-v1',saved:true,refreshRequired:true}});
+   }
+   const validUntil=new Date(Date.now()+25000).toISOString(),metadata={version:'memory-assistant-context-v1',targetEnrollmentId:enrollmentId,targetRevision:1,validUntil},profileMetadata=included?{profileJobIds:[profileJob]}:{};
+   if(url.searchParams.get('controls')==='1')return route.fulfill({json:{...metadata,context:{revision,state:'unavailable',jobId,...profileMetadata},presentation:null}});
+   const presentation=(id,purpose,text)=>({jobId:id,expiresAt,candidate:{version:'memory-derivation-candidates-v1',purpose,scopeKey:'synthetic-scope',manifestId:id,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:purpose==='profile'?'preference-hypothesis':'goal',text,supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[],claimKey:'d'.repeat(64),lineageIds:['e'.repeat(64)],sourceBindings:[{sourceId:'original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'support-cited'}]}});
+   return route.fulfill({json:{...metadata,context:{revision,state:'accepted',jobId,purpose:'rolling-summary',expiresAt,...profileMetadata,source:{enrollmentId,projectId:'project-atmosphere',documentId:'doc-atmosphere',zoom:'document',distance:0,weight:1}},independentEvidence:false,completeHistory:false,presentation:presentation(jobId,'rolling-summary','Private primary note'),...(included?{profiles:[{source:{enrollmentId:'peer',projectId:'project-atmosphere',documentId:'independent-document',zoom:'project',distance:0,weight:.7},presentation:presentation(profileJob,'profile','Private supplemental profile <script>not code</script>')}]}:{})}});
+  });
+  await page.goto('/document/doc-atmosphere/atmosphere-studies');await expect(page.locator('forma-workspace')).toBeVisible();const assistant=page.locator('.application-creative > forma-creative-assistant');
+  await assistant.locator('button.forma-assistant-launcher').click();await assistant.locator('[data-assistant-memory] > summary').click();
+  const saved=assistant.locator('[data-memory-assistant-context]');await expect(saved).toContainText('Private supplemental profile');await expect(saved.locator('script')).toHaveCount(0);expect(writes).toHaveLength(0);
+  await saved.scrollIntoViewIfNeeded();expect(await saved.evaluate(e=>e.scrollWidth>e.clientWidth+1)).toBe(false);await page.screenshot({path:'.wrangler/memory-profile-aggregate-'+locale+'-'+uncertain+'.png'});
+  await saved.getByRole('button',{name:m(locale,'assistantProfileRemove'),exact:true}).click();await expect(saved).not.toContainText('Private supplemental profile');await expect.poll(()=>typeof resolveWrite).toBe('function');resolveWrite();
+  if(uncertain)await expect(saved.getByRole('status')).toHaveText(m(locale,'assistantContextUncertain'));else await expect(saved).toContainText('Private primary note');
+  await expect(saved).not.toContainText('Private supplemental profile');expect(writes).toHaveLength(1);
+  await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(saved).toHaveCount(0);expect(errors).toEqual([]);expect(writes).toHaveLength(1);
+ });
+});

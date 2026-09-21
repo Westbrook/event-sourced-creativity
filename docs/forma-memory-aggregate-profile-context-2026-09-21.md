@@ -1,0 +1,77 @@
+# Independently authorized profile context — 2026-09-21
+
+Local implementation, not deployment or enrollment.
+
+## Implemented
+
+A saved assistant context can retain its selected note plus at most two profile
+results from distinct independently enrolled documents. Each source is freshly
+checked for the same actor, compatible custody, its own recall range, current
+hierarchy, exact result/hash, original evidence, controls and retention. A source
+pointer grants no access. The shortest source lifetime bounds the whole context.
+
+The actual specialist and embedded guidance prompts receive the additional
+profile interpretations with their native scope/relevance weights. They remain
+unverified interpretations, not independent observations or new proof of a
+preference. Current instructions/document facts win; repeated/copied citations
+must not count as corroboration. This is bounded multi-source consumption, not
+a fabricated semantic-equivalence score or automatic overwrite of corrections.
+
+The existing localized profile controls offer an explicit **Add to current
+assistant context** action. The assistant displays each additional source and
+allows removal. Replacing the main note clears the extra selections. Selection
+sends identifiers only; it does not invoke a provider or spend allowance.
+Concurrent/stale changes use the same native compare-and-swap revision. An
+uncertain acknowledgement is not retried automatically.
+
+## Durable privacy and schema
+
+Additive migration `0068_memory_derivation_profile_contexts.sql` stores references,
+not private prose. It enforces distinct/bounded sources and source/target tuples.
+Source retirement, correction, expiry, scope changes, forgetting, dismissal or
+replacement retire the entire private context and downstream private copies.
+Existing negative consumer ancestry survives body restoration. Authored accepted
+work is not erased by withdrawal. Approved execution bindings retain the exact
+profile job set; dropping the optional extension cannot reinterpret an old
+approval as a single-source request.
+
+Source-free control metadata remains available without Memory being enabled.
+Both positive derivation reads and the ordinary negative-content boundary
+qualify the complete extension fingerprint. No runtime DDL, backfill, provider
+work, scheduler registration or real-user enrollment was added.
+
+Missing Drizzle snapshots at journal positions63–65 were also restored, followed
+by position66 for0068. They come from the installed Drizzle generator and the
+actual journaled table sets; the published SQL, timestamps and snapshots through
+position62 are unchanged. Snapshots are source metadata, not migration receipts.
+
+## Local verification
+
+- 30 new native aggregate checks; the adjacent integrated run passes96 checks.
+- Personal/shared isolated D1: actual quote, approved one-call synthetic provider
+  execution, retrieval, withdrawal and restored-body denial. Two-source quote
+  calls59/60, execution68/69 and retrieval52/50. Three-source quote calls68/69.
+- 90 strict client/component checks, including explicit identifier-only selection,
+  bounds, malformed authority, immediate removal, blur, expiry and late results.
+- Four real whole-app browser journeys pass in English and Arabic (320px), with
+  escaped source text, no horizontal overflow and no unconfirmed-write retries.
+- 102 migration-history checks pass after snapshot restoration. Production build,
+  typecheck and changed-source lint are checked in the continuation evidence.
+
+These synthetic measurements are not hosted capacity, provider or pricing
+qualification. Aggregate execution still exceeds the earlier conservative
+50-binding-call target; reducing this while preserving independent proofs stays
+assigned. Full regression for preceding commit `b2c72f14` passes2564/2564 and does
+not include this extension.
+
+## Remaining native and operational work
+
+The [completion matrix](forma-memory-completion-matrix-2026-09-20.md) still owns
+aggregate capacity/freshness, broader semantic consolidation/resource consumers,
+and direct private creative Output/live-preview integration. This checkpoint
+closes the bounded multi-source assistant integration, not the whole plan.
+
+Production-owner review must include0068 and the recovered snapshot chain.
+Qualified hosted scheduling, supported remote embedding/index transport, real
+recipe/pricing/retention checks, deployment and affirmative enrollment remain in
+the [separate capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).

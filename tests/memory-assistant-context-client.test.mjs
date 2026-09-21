@@ -80,3 +80,30 @@ test('cross-tab messages reject private payloads, unsupported fields, getters an
 test('cross-tab lease cleanup survives clock rollback and never retains a hanging timer',()=>{
  const f=peerFixture();f.peer.receive(notice());f.at(1);f.expire();assert.equal(f.peer.active(),false);assert.equal(f.timers.size,0);assert.deepEqual(f.notices,[true,false]);f.peer.dispose();
 });
+
+function aggregate(){
+ const validUntil=new Date(Date.now()+20000).toISOString(),expiresAt=new Date(Date.now()+86400000).toISOString(),profileJob='b'.repeat(64);
+ const presentation=(id,purpose)=>({jobId:id,expiresAt,candidate:{version:'memory-derivation-candidates-v1',purpose,scopeKey:'synthetic-scope',manifestId:id,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:purpose==='profile'?'preference-hypothesis':'goal',text:'Unverified private note',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[],claimKey:'d'.repeat(64),lineageIds:['e'.repeat(64)],sourceBindings:[{sourceId:'original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'support-cited'}]}});
+ return {...base(),validUntil,independentEvidence:false,completeHistory:false,context:{revision,state:'accepted',jobId,purpose:'rolling-summary',expiresAt,profileJobIds:[profileJob],source:{enrollmentId:'target',projectId:'project',documentId:'document',zoom:'document',distance:0,weight:1}},presentation:presentation(jobId,'rolling-summary'),profiles:[{source:{enrollmentId:'other',projectId:'project',documentId:'another',zoom:'project',distance:0,weight:.7},presentation:presentation(profileJob,'profile')}]};
+}
+test('aggregate context client validates all profiles and explicit replacement set',async()=>{
+ const value=aggregate(),calls=[],client=createAssistantMemoryContextClient(async(input,init)=>{calls.push({input,init});return Response.json(init.method==='GET'?value:{version:'memory-assistant-context-v1',saved:true,refreshRequired:true});});
+ const view=await client.read(scope,signal());assert.equal(view.profiles.length,1);assert.equal(view.profiles[0].source.weight,.7);
+ await client.accept(scope,view,jobId,signal(),view.context.profileJobIds);assert.deepEqual(JSON.parse(calls[1].init.body).profileJobIds,['b'.repeat(64)]);
+ await client.accept(scope,view,jobId,signal(),[]);assert.equal(Object.hasOwn(JSON.parse(calls[2].init.body),'profileJobIds'),false);
+});
+for(const fault of ['missing','extra','duplicate','too-many','primary','unknown-job','non-profile','weight','target-alias','same-source','expired','early-expiry','extra-key','no-metadata'])test('aggregate context client rejects '+fault,async()=>{
+ const value=aggregate(),p=value.profiles[0];
+ if(fault==='missing')delete value.profiles;if(fault==='extra')value.profiles.push(structuredClone(p));if(fault==='duplicate')value.context.profileJobIds.push(value.context.profileJobIds[0]);
+ if(fault==='too-many')value.context.profileJobIds.push('c'.repeat(64),'d'.repeat(64));if(fault==='primary')value.context.profileJobIds[0]=jobId;if(fault==='unknown-job')p.presentation.jobId='f'.repeat(64);
+ if(fault==='non-profile')p.presentation.candidate.purpose='rolling-summary';if(fault==='weight')p.source.weight=1;
+ if(fault==='target-alias')p.source.zoom='document';if(fault==='same-source')p.source.enrollmentId='target';
+ if(fault==='expired')p.presentation.candidate.validUntil=new Date(Date.now()-1).toISOString();if(fault==='early-expiry')p.presentation.expiresAt=new Date(Date.now()+1000).toISOString();
+ if(fault==='extra-key')p.authority='approved';if(fault==='no-metadata')delete value.context.profileJobIds;
+ await assert.rejects(createAssistantMemoryContextClient(async()=>Response.json(value)).read(scope,signal()));
+});
+test('aggregate context invalid selection never dispatches and uncertain selection does not retry',async()=>{
+ let calls=0;const client=createAssistantMemoryContextClient(async()=>{calls++;throw Error('uncertain');}),view=aggregate();
+ for(const jobs of [[jobId],['bad'],['b'.repeat(64),'b'.repeat(64)],['b'.repeat(64),'c'.repeat(64),'d'.repeat(64)]])await assert.rejects(client.accept(scope,view,jobId,signal(),jobs));
+ assert.equal(calls,0);await assert.rejects(client.accept(scope,view,jobId,signal(),['b'.repeat(64)]));assert.equal(calls,1);
+});

@@ -16763,8 +16763,8 @@ for(const fault of ['wall-rollback','monotonic-deadline','nonfinite'])test('nati
 
 function semanticConsumerOperationCounter(state){
  const db=state.env.DB,originals=new WeakMap(),trace=[];let count=0;
- const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{count++;trace.push(target.sql.slice(0,135));return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
- state.env.DB={prepare:sql=>wrap(db.prepare(sql)),batch:inputs=>{count++;trace.push('BATCH '+inputs.length+' '+(originals.get(inputs[0])??inputs[0]).sql.slice(0,100));return db.batch(inputs.map(input=>originals.get(input)??input));}};
+ const wrap=(raw,sql=raw.sql)=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args),sql);if(['all','first','run','raw'].includes(key))return(...args)=>{count++;trace.push(String(sql??'native').slice(0,135));return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+ state.env.DB={prepare:sql=>wrap(db.prepare(sql),sql),batch:inputs=>{count++;trace.push('BATCH '+inputs.length+' '+String((originals.get(inputs[0])??inputs[0]).sql??'native').slice(0,100));return db.batch(inputs.map(input=>originals.get(input)??input));}};
  return {read:()=>count,trace,reset:()=>{count=0;trace.length=0;}};
 }
 
@@ -19724,4 +19724,142 @@ for(const retired of [false,true])test('native resource history: ordinary Librar
 for(const kind of ['library','canvas'])test('native distinct Memory scope: shared owner cannot alias governed project as personal '+kind,async t=>{
  const state=await nativeResourceSettingsFixture(t,{shared:true,kind}),e=state.current(),owner=state.sqlite.prepare('SELECT email FROM users WHERE user_id=?').get(e.owner_user_id);state.env.FORMA_MEMORY_USER_IDS=e.owner_user_id;const headers={'oai-authenticated-user-id':e.owner_user_id,'oai-authenticated-user-email':owner.email};
  const response=await state.request(state.resourceUrl,{headers});assert.notEqual(response.status,200,await response.clone().text());const saved=await state.request(state.resourceSettingsUrl,{...json({...state.resourceInput,expectedCustody:{kind:'personal'}},{...headers,origin:'http://localhost'}),method:'PUT'});assert.notEqual(saved.status,200,await saved.clone().text());assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').get().n,0);
+});
+
+async function semanticProfileAggregateFixture(t,{shared=false}={}){
+ const seed=await nativeDerivationRollingFixture(t,{shared,windows:2,termOverrides:{purpose:'profile'},profileAllOriginals:true});
+ seed.executionJob=seed.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0];
+ seed.resultStore=await import('../worker/memory-derivation-results.ts');
+ const state=await semanticPaidConsumerFixture(t,{shared,seed}),target=state.recallTarget,source=state.recallSource;
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0068_memory_derivation_profile_contexts.sql',import.meta.url),'utf8'));
+ const consent=await state.derivationRequest('PUT',{...state.derivationInput,documentId:target.documentId,enrollmentId:target.id,enrollmentRevision:target.revision});assert.equal(consent.status,200,await consent.clone().text()+' '+state.controls.lastDatabaseError);
+ state.env.FORMA_MEMORY_ENABLED='false';await specialistFreeTurn(state,'aggregate-target-original','Distinct original human intention.',{route:'/document/'+target.documentId,project:target.projectId});state.env.FORMA_MEMORY_ENABLED='true';
+ state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z',last_local_day=NULL WHERE enrollment_id=?").run(target.id);
+ state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2999-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(source.enrollment_id);
+ assert.equal((await state.run()).status,'completed',state.controls.lastDatabaseError);assert.equal((await(await import('../worker/memory-derivation-worker.ts')).runNativeDerivationScheduled(state.env)).status,'stored',state.controls.lastDatabaseError);
+ const profileJob=state.sqlite.prepare('SELECT j.job_id FROM memory_derivation_jobs j JOIN memory_derivation_grants g ON g.consent_id=j.consent_id WHERE g.enrollment_id=? ORDER BY j.through_sequence DESC LIMIT 1').get(target.id).job_id;
+ const save=async(view,profileJobIds=[profileJob],jobId=sourceJob)=>state.contextRequest('PUT',{jobId,profileJobIds,revision:view.context?.revision??null,targetEnrollmentId:view.targetEnrollmentId,targetRevision:view.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'});
+ const sourceJob=seed.executionJob.job_id;
+ return Object.assign(state,{profileJob,saveProfileAggregate:save});
+}
+for(const shared of [false,true])test('native profile aggregate: independently checked sources reach actual assistant quote '+shared,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t,{shared}),prior=await state.contextGet(),before=adaptiveReentryFinancialState(state),calls=state.rollingRequests.length;
+ const saved=await state.saveProfileAggregate(prior);assert.equal(saved.status,200,await saved.clone().text()+' '+state.controls.lastDatabaseError);
+ const view=await state.contextGet();assert.deepEqual(view.context.profileJobIds,[state.profileJob]);assert.equal(view.profiles.length,1);assert.equal(view.profiles[0].source.zoom,'document');assert.equal(view.context.source.zoom,'project');
+ assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.rollingRequests.length,calls);
+ const {createAssistantMemoryContextClient}=await import('../src/state/memory-assistant-context-client.ts');
+ const parsed=await createAssistantMemoryContextClient(async()=>Response.json(view)).read({projectId:state.recallTarget.projectId,documentId:state.recallTarget.documentId},new AbortController().signal);
+ assert.equal(parsed.profiles.length,1);assert.equal(parsed.profiles[0].presentation.purpose,'profile');
+ const quoted=await state.semanticQuote();assert.equal(quoted.response.status,200,JSON.stringify(quoted.body)+' '+state.controls.lastDatabaseError);
+ const stored=state.sqlite.prepare("SELECT content FROM private_content WHERE kind='execution-consent' ORDER BY created_at DESC").all().map(r=>JSON.parse(r.content)).find(r=>JSON.stringify(r).includes('profileSources'));
+ assert.ok(stored,'Actual approved provider request contains both source scopes');assert.ok(JSON.stringify(stored).includes('Do not count repeated citations'));
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_consumers').get().n,1);
+ assert.equal((await state.saveProfileAggregate(prior)).status,409);
+});
+for(const fault of ['result','original','boundary','enrollment','dismiss','replace','erase','schema','late-source','lost-ack'])test('native profile aggregate: retirement and atomicity '+fault,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t),view=await state.contextGet();
+ if(fault==='late-source'||fault==='lost-ack'){
+  const db=state.env.DB,batch=db.batch;let hit=false;db.batch=async function(statements){if(!hit&&statements.some(s=>s.sql.startsWith('INSERT INTO memory_derivation_contexts'))){hit=true;
+   if(fault==='late-source')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.profileJob);
+   else{await batch.call(this,statements);return[];}
+  }return batch.call(this,statements);};
+  let response;try{response=await state.saveProfileAggregate(view);}finally{db.batch=batch;}
+  assert.equal(hit,true);assert.equal(response.status,503);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_profile_contexts').get().n,fault==='lost-ack'?1:0);return;
+ }
+ assert.equal((await state.saveProfileAggregate(view,...(fault==='boundary'?[[state.executionJob.job_id],state.profileJob]:[]))).status,200);const aggregate=await state.contextGet();
+ const quoted=await state.semanticQuote();assert.equal(quoted.response.status,200,JSON.stringify(quoted.body)+' '+state.controls.lastDatabaseError);
+ const ids=state.sqlite.prepare('SELECT content_id FROM memory_derivation_consumer_contents').all().map(r=>r.content_id),before=adaptiveReentryFinancialState(state);
+ if(fault==='result')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.profileJob);
+ if(fault==='original'){
+  const manifest=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(state.profileJob).manifest_json);
+  state.sqlite.prepare("UPDATE private_content SET content='' ,redacted_at=? WHERE content_id=?").run(new Date().toISOString(),manifest.originalBacking[0].contentRef);
+ }
+ if(fault==='boundary')state.sqlite.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').run(state.recallSource.enrollment_id);
+ if(fault==='enrollment')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.recallTarget.id);
+ if(fault==='dismiss')assert.equal((await state.contextRequest('DELETE',{revision:aggregate.context.revision,confirmation:'DISMISS_ASSISTANT_CONTEXT'})).status,200);
+ if(fault==='replace')assert.equal((await state.contextAccept(aggregate)).status,200);
+ if(fault==='erase')assert.equal((await(await import('../worker/memory-live-store.ts')).revokeLiveMemoryCounted(state.env,state.current(),'forgotten')).revoked,true);
+ if(fault==='schema')state.sqlite.exec('DROP TRIGGER memory_derivation_profile_context_result_update');
+ if(fault==='schema')assert.equal((await state.contextRequest()).status,503);else{
+  assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_consumers').get().state,'retired');
+  for(const id of ids)assert.equal(state.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(id).content,'');
+  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_profile_contexts').get().n,0);
+ }
+ if(!['erase','enrollment'].includes(fault))assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const shared of [false,true])test('native profile aggregate: isolated D1 dispatch, bounded reads and non-resurrection '+shared,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t,{shared});
+ assert.equal((await state.saveProfileAggregate(await state.contextGet())).status,200);
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['AggregateProfile'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());
+ const db=await mf.getD1Database('AggregateProfile');await install(db,exportSynthetic(state.sqlite));state.env.DB={prepare:sql=>db.prepare(sql),batch:async statements=>{try{return await db.batch(statements);}catch(error){state.controls.lastDatabaseError=String(error);throw error;}}};
+ const counter=semanticConsumerOperationCounter(state),start=performance.now();
+ const quoted=await state.semanticQuote();assert.equal(quoted.response.status,200,JSON.stringify(quoted.body)+' '+state.controls.lastDatabaseError);const quoteCalls=counter.read();counter.reset();
+ const original=globalThis.fetch,calls=[];globalThis.fetch=async(_url,init)=>{const request=JSON.parse(init.body);calls.push(request);assert.ok(JSON.stringify(request).includes('profileSources'));return specialistRawResponse(request);};t.after(()=>{globalThis.fetch=original;});
+ const response=await specialistExecute(state,quoted.body,state.semanticOptions);assert.equal(response.status,202,await response.clone().text()+' '+state.controls.lastDatabaseError);await state.drainBackground();
+ const executionCalls=counter.read();counter.reset();const retrieved=await specialistRetrieve(state,quoted.body,state.semanticOptions),body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');assert.equal(calls.length,1);
+ const retrieveCalls=counter.read();t.diagnostic(JSON.stringify({shared,quoteCalls,executionCalls,retrieveCalls,elapsedMs:performance.now()-start}));
+ assert.ok(quoteCalls<=85&&executionCalls<=90&&retrieveCalls<=70,'bounded three-source staging is synthetic qualification, not a hosted SLA');
+ const retained=(await db.prepare('SELECT p.* FROM private_content p JOIN memory_derivation_consumer_contents c ON c.content_id=p.content_id').all()).results;
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.profileJob),true);
+ assert.equal((await db.prepare('SELECT state FROM memory_derivation_consumers').first()).state,'retired');assert.equal((await specialistRetrieve(state,quoted.body,state.semanticOptions)).status,404);
+ for(const row of retained)await db.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').bind(row.content,row.content_id).run();
+ const restored=await specialistRetrieve(state,quoted.body,state.semanticOptions);assert.equal(restored.status,409);assert.equal(Object.hasOwn(await restored.json(),'result'),false);assert.equal(calls.length,1);
+ assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+for(const fault of ['duplicate','too-many','primary','unknown','same-enrollment','source-range','controls-only','revision'])test('native profile aggregate: rejects invalid selection '+fault,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t),view=await state.contextGet();let jobs=[state.profileJob];
+ if(fault==='duplicate')jobs.push(state.profileJob);if(fault==='too-many')jobs.push('c'.repeat(64),'d'.repeat(64));if(fault==='primary')jobs=[state.executionJob.job_id];if(fault==='unknown')jobs=['f'.repeat(64)];
+ if(fault==='same-enrollment')jobs=[state.queue().jobs.filter(j=>j.job_id!==state.executionJob.job_id).find(j=>j.consent_id===state.executionJob.consent_id).job_id];
+ if(fault==='source-range'){
+  await state.recallRequest('recall-boundary',state.recallSource.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});
+ }
+ if(fault==='revision')view.targetRevision++;
+ if(fault==='controls-only')state.env.FORMA_MEMORY_ENABLED='false';
+ const response=await state.saveProfileAggregate(view,jobs);assert.ok(response.status>=400,await response.clone().text());assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_profile_contexts').get().n,0);
+});
+for(const shared of [false,true])test('native profile aggregate: native boundary API retires supplementary range and forget receipts reconcile '+shared,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t,{shared}),view=await state.contextGet();
+ assert.equal((await state.saveProfileAggregate(view,[state.executionJob.job_id],state.profileJob)).status,200);
+ assert.equal((await state.semanticQuote()).response.status,200);
+ const response=await state.recallRequest('recall-boundary',state.recallSource.document_id,{method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});assert.equal(response.status,200,await response.clone().text()+' '+state.controls.lastDatabaseError);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_profile_contexts').get().n,0);assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_consumers').get().state,'retired');
+ const forgotten=await(await import('../worker/memory-live-store.ts')).revokeLiveMemoryCounted(state.env,state.current(),'forgotten');assert.equal(forgotten.revoked,true);
+});
+
+async function appendAggregateThirdProfile(state){
+ const projectId=state.recallTarget.projectId,documentId='aggregate-third-document';
+ const response=await state.request('/api/events',json({action:'append',event:{type:'DocumentCreated',payload:{project_id:projectId,document_id:documentId,title:'Third independently enrolled document',slug:documentId}}},state.owner));assert.equal(response.status,200,await response.clone().text());
+ const enrolled=await state.handleLiveMemory(state.settingsRequest({...state.preferences,projectId,documentId,revision:0}),state.env,'settings');assert.equal(enrolled.status,200,await enrolled.clone().text());const e=(await enrolled.json()).enrollment;
+ const consent=await state.derivationRequest('PUT',{...state.derivationInput,documentId,enrollmentId:e.id,enrollmentRevision:e.revision});assert.equal(consent.status,200,await consent.clone().text());
+ state.env.FORMA_MEMORY_ENABLED='false';await specialistFreeTurn(state,'aggregate-third-original','An independent human preference for this document.',{route:'/document/'+documentId,project:projectId});state.env.FORMA_MEMORY_ENABLED='true';
+ state.sqlite.exec("UPDATE memory_live_enrollments SET next_due_at='2999-01-01T00:00:00.000Z'");state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z',last_local_day=NULL WHERE enrollment_id=?").run(e.id);
+ assert.equal((await state.run()).status,'completed',state.controls.lastDatabaseError);assert.equal((await(await import('../worker/memory-derivation-worker.ts')).runNativeDerivationScheduled(state.env)).status,'stored',state.controls.lastDatabaseError);
+ const changed=await state.recallRequest('recall-boundary',documentId,{method:'PUT',body:{version:'memory-scope-recall-v1',enrollmentId:e.id,enrollmentRevision:e.revision,boundary:'project',revision:null,confirmation:'CHANGE_RECALL_BOUNDARY'}});assert.equal(changed.status,200,await changed.clone().text()+' '+state.controls.lastDatabaseError);
+ return state.sqlite.prepare('SELECT j.job_id FROM memory_derivation_jobs j JOIN memory_derivation_grants g ON g.consent_id=j.consent_id WHERE g.enrollment_id=? ORDER BY j.through_sequence DESC LIMIT 1').get(e.id).job_id;
+}
+for(const shared of [false,true])test('native profile aggregate: maximum independently enrolled source set and no implicit replacement '+shared,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t,{shared}),third=await appendAggregateThirdProfile(state),prior=await state.contextGet();
+ const saved=await state.saveProfileAggregate(prior,[third,state.profileJob]);assert.equal(saved.status,200,await saved.clone().text()+' '+state.controls.lastDatabaseError);
+ const view=await state.contextGet();assert.equal(view.profiles.length,2);assert.deepEqual(view.context.profileJobIds,[third,state.profileJob].sort());assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_profile_contexts').get().n,2);
+ const counter=semanticConsumerOperationCounter(state),quote=await state.semanticQuote();assert.equal(quote.response.status,200,JSON.stringify(quote.body)+' '+state.controls.lastDatabaseError);t.diagnostic(JSON.stringify({shared,maxSourceQuoteCalls:counter.read()}));assert.ok(counter.read()<=100);
+ const control=state.sqlite.prepare("SELECT c.content FROM private_content c JOIN consequential_executions e ON e.consent_ref=c.content_id WHERE e.execution_id=?").get(quote.body.quote.executionId);
+ const binding=JSON.parse(control.content).binding.request.memory;assert.deepEqual(binding.profileJobIds,[third,state.profileJob].sort());
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,third),true);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_contexts').get().n,0);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_profile_contexts').get().n,0);
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_consumers').get().state,'retired');assert.equal((await state.contextGet()).context,null);
+});
+for(const fault of ['source','missing-extension','trigger-drift','profile-removal'])test('native profile aggregate: approved binding cannot outlive '+fault,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t);assert.equal((await state.saveProfileAggregate(await state.contextGet())).status,200);
+ const quote=await state.semanticQuote();assert.equal(quote.response.status,200,JSON.stringify(quote.body));
+ if(fault==='source')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.profileJob);
+ if(fault==='trigger-drift')state.sqlite.exec('DROP TRIGGER memory_derivation_profile_context_result_update');
+ if(fault==='profile-removal')assert.equal((await state.contextAccept(await state.contextGet())).status,200);
+ if(fault==='missing-extension'){
+  const names=state.sqlite.prepare("SELECT name,type FROM sqlite_schema WHERE name LIKE 'memory_derivation_profile_context%' OR name LIKE 'idx_memory_derivation_profile_context%' ORDER BY type DESC").all();
+  for(const row of names.filter(row=>row.type==='trigger'))state.sqlite.exec('DROP TRIGGER '+row.name);
+  state.sqlite.exec('DROP TABLE memory_derivation_profile_contexts');
+ }
+ let calls=0;const original=globalThis.fetch;globalThis.fetch=async()=>{calls++;throw Error('Retired aggregate cannot dispatch');};t.after(()=>{globalThis.fetch=original;});
+ const response=await specialistExecute(state,quote.body,state.semanticOptions);assert.ok(response.status>=400,await response.clone().text());await state.drainBackground();assert.equal(calls,0);
 });
