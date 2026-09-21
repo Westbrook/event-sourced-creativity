@@ -107,8 +107,11 @@ still-app .media-stage h1 { font-size: 35px; margin: 24px 0; }
 still-app .media-stage p { color: var(--en-color-text-muted); font-size: 14px; }
 still-app .media-stage.audio { padding: 7vh 0; }
 still-app audio { width: min(600px, 100%); margin: 40px 0 20px; }
-still-app .sound-form { height: 180px; display: flex; align-items: center; gap: 5px; justify-content: center; }
-still-app .sound-form i { width: 3px; border-radius: 20px; background: var(--en-color-text-muted); }
+still-app still-audio-player { display: block; }
+still-app .audio-waveform { height: 180px; width: min(600px, 100%); margin-inline: auto; display: grid; place-items: center; color: var(--en-color-text-muted); font-size: 14px; }
+still-app .audio-waveform svg { display: block; width: 100%; height: 100%; }
+still-app .audio-waveform path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+still-app .audio-waveform line { stroke: currentColor; opacity: .25; vector-effect: non-scaling-stroke; }
 still-app still-model-view { display: block; height: min(65vh, 700px); width: 100%; }
 still-app still-model-view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
 still-app .progress-return { display: inline-flex; align-items: center; gap: 4px; --en-icon-size: 1em; position: fixed; left: 12px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 10; font-size: 10px; padding: 7px 9px; background: var(--en-color-canvas); color: var(--en-color-text-muted); border: 1px solid var(--en-color-line); border-radius: 20px; text-decoration: none; }

@@ -19,7 +19,7 @@ test('video sizing follows the rendered URL, never an unrelated scene',()=>{
 });
 test('loaded native dimensions correct fallback and stale metadata without altering sources',()=>{
  for(const element of [{tagName:'IMG',naturalWidth:900,naturalHeight:1600},{tagName:'VIDEO',videoWidth:720,videoHeight:1280}]){
-  Object.assign(element,{src:'/api/media/original',width:1024,height:768,dataset:{sizeSource:'fallback'}});
+  Object.assign(element,{closest:()=>null,src:'/api/media/original',width:1024,height:768,dataset:{sizeSource:'fallback'}});
   captureMediaSize({currentTarget:element});assert.equal(element.width,element.naturalWidth??element.videoWidth);assert.equal(element.height,element.naturalHeight??element.videoHeight);assert.equal(element.dataset.sizeSource,'intrinsic');assert.equal(element.src,'/api/media/original');
  }
  const failed={tagName:'IMG',naturalWidth:0,naturalHeight:0,width:1024,height:768,dataset:{sizeSource:'fallback'}};captureMediaSize({currentTarget:failed});assert.equal(failed.width,1024);assert.equal(failed.dataset.sizeSource,'fallback');
