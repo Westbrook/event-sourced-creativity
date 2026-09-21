@@ -88,3 +88,20 @@ for(const shared of [false,true])test('Memory authored acceptance joins existing
  assert.equal(store.canRedo(),true);await store.redo();assert.equal(source(),'Accepted Memory suggestion');
  assert.equal(store.events.get().at(-1).payload.memory_authored_version,1);assert.equal(store.events.get().at(-1).payload.request_id,'memory-execution');
 });
+
+for(const shared of [false,true])test('Memory authored creation joins Store Undo/Redo without private source retention '+shared,async t=>{
+ t.mock.method(globalThis,'fetch',async()=>assert.fail('No external requests'));
+ const h=await createSceneStoreHost({count:1,shared});t.after(()=>h.close());const {store,worker}=h,blockId='memory-created-block';
+ const event=makeEvent(worker.streamId,(await streamHead(worker.env,worker.streamId))+1,shared?'user:'+worker.owner:'user','web:assistant-memory','memory-creation','BlockCreated',{
+  project_id:worker.projectId,document_id:worker.documentId,block_id:blockId,type:'direction',handle:'direction/created',position:'zcreated',properties:{text:'Accepted creative block',intent:'include',weight:.7,authority:'authored'},
+  memory_authored_version:1,source_chat_turn_id:'memory-turn',request_id:'memory-creation'});
+ await appendEvents(worker.env,[event]);await store.refreshEvents();
+ const receipt={eventId:event.eventId,executionId:'memory-creation',blockId,projectId:worker.projectId,documentId:worker.documentId};
+ assert.equal(store.rememberMemoryAuthoredEdit(receipt),true);assert.equal(store.rememberMemoryAuthoredEdit(receipt),false);
+ const active=()=>store.projection.get().blocks.find(block=>block.id===blockId&&!block.removed);
+ assert.ok(active());await store.undo();assert.equal(active(),undefined);assert.equal(store.canRedo(),true);
+ await store.redo();assert.equal(active().properties.text,'Accepted creative block');
+ const history=store.events.get().filter(item=>item.payload.block_id===blockId);assert.equal(history[0].payload.memory_authored_version,1);
+ const {memoryAuthoredBlockIds}=await import('../src/model/memory-authorship.ts');
+ assert.equal(memoryAuthoredBlockIds(store.projection.get().blocks,store.events.get()).has(blockId),true);
+});

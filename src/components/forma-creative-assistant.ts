@@ -1,3 +1,4 @@
+import { memoryCreationApprovalHash,parseMemoryCreationReview } from '../model/memory-creation-review.ts';
 import { parseMemoryFieldRequest,type MemoryFieldRequest } from '../model/memory-field-request.ts';
 import type { MemoryFieldGenerationIntent } from './memory-field-completion.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview } from '../model/memory-edit-review.ts';
@@ -157,7 +158,7 @@ export class FormaCreativeAssistant extends FormaElement {
     this.#retentionVersions.set("withdrawal:scope", ++this.#withdrawalRevision);
     this.#context = null; this.#turns = []; this.#messages = []; this.#localToolMessages = []; this.#proposals = [];
     if (this.#guidance) this.#guidance = { ...this.#guidance, message: "", sourceRetired: true, status: "uncertain" };
-    if (active) this.#specialist = { ...active, quote: null, originalRequest: null, editReview:undefined,resultReply: null, unusedExecution: false,
+    if (active) this.#specialist = { ...active, quote: null, originalRequest: null, creationReview:undefined,editReview:undefined,resultReply: null, unusedExecution: false,
       task: this.#tasks.find(task => task.executionId === active.executionId) ?? null, working: false, stopping: false,
       retrievalOnly: true, notice: "unavailable" };
     this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.clearConversationDrafts();
@@ -556,7 +557,10 @@ export class FormaCreativeAssistant extends FormaElement {
     const editReview=review.result.editReview===undefined?null:parseMemoryEditReview(review.result.editReview,{executionId:review.executionId,
       turnId:task.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
     if(review.result.editReview!==undefined&&(!memory||!editReview))return null;
-    return { quote, original, reply: review.result.reply,editReview:editReview??undefined,memory:memory??undefined,sourceStatus:review.result.sourceStatus };
+    const creationReview=review.result.creationReview===undefined?null:parseMemoryCreationReview(review.result.creationReview,{executionId:review.executionId,
+      turnId:task.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
+    if(review.result.creationReview!==undefined&&(!memory||!creationReview||original.fieldTarget))return null;
+    return { quote, original, reply: review.result.reply,creationReview:creationReview??undefined,editReview:editReview??undefined,memory:memory??undefined,sourceStatus:review.result.sourceStatus };
   }
 
   async #load() {
@@ -585,7 +589,7 @@ export class FormaCreativeAssistant extends FormaElement {
         && this.#negativeReadCurrent(task.turnId, task.executionId, withdrawalRevision)) {
         const active = this.#specialist?.turnId === task.turnId ? this.#specialist : null;
         this.#withdrawSpecialist({ id: active?.id ?? "", scope, turnId: task.turnId, executionId: task.executionId,
-          quote: null, originalRequest: null, task, working: false, stopping: false, retrievalOnly: true, notice: "unavailable", editReview:undefined,resultReply: null }, false, withdrawalRevision);
+          quote: null, originalRequest: null, task, working: false, stopping: false, retrievalOnly: true, notice: "unavailable", creationReview:undefined,editReview:undefined,resultReply: null }, false, withdrawalRevision);
       }
       if (!canMerge) return;
       // Page context has a separate source proof from retained conversation and
@@ -621,7 +625,7 @@ export class FormaCreativeAssistant extends FormaElement {
         // resume must not restore its receipt after this currently retained result.
         this.#invalidateSpecialistReceipt(active.turnId, active.executionId);
         this.#specialist = { ...active, task: { ...latest, canExecute: false }, quote: completed.quote,
-          originalRequest: completed.original, resultReply: completed.reply,editReview:completed.editReview,semanticMemory:completed.memory,resultSource:completed.sourceStatus, working: false, stopping: false,
+          originalRequest: completed.original, resultReply: completed.reply,creationReview:completed.creationReview,editReview:completed.editReview,semanticMemory:completed.memory,resultSource:completed.sourceStatus, working: false, stopping: false,
           retrievalOnly: true, notice: "" };
       } else if (active && latest && !this.#retentionUnavailable(latest) && latest.turnId === active.turnId
         && latest.bindingHash === activeHash && active.quote?.status !== "completed"
@@ -860,7 +864,7 @@ export class FormaCreativeAssistant extends FormaElement {
         if (!preservePending) this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.clearConversationDrafts();
       }
       this.#specialist = { ...active, executionId: state.executionId || active.executionId,
-        quote: null, originalRequest: null, editReview:undefined,resultReply: null, unusedExecution: false,
+        quote: null, originalRequest: null, creationReview:undefined,editReview:undefined,resultReply: null, unusedExecution: false,
         task: this.#tasks.find((task) => task.executionId === state.executionId) ?? null,
         working: preservePending, stopping: false, retrievalOnly: true, notice: "unavailable" };
     }
@@ -901,7 +905,7 @@ export class FormaCreativeAssistant extends FormaElement {
     this.#specialistUrl = url.href;
     this.#specialist = { id: crypto.randomUUID(), scope, turnId: detail.turnId, executionId: existing?.executionId ?? "",
       task: existing ?? null, quote: null, originalRequest: null, working: false, stopping: false, retrievalOnly: Boolean(existing),
-      notice: "", editReview:undefined,resultReply: null };
+      notice: "", creationReview:undefined,editReview:undefined,resultReply: null };
     this.requestUpdate();
     await this.#requestSpecialist(existing ? "resume" : "quote",undefined,detail.memory);
   }
@@ -969,7 +973,7 @@ export class FormaCreativeAssistant extends FormaElement {
       ...(action === "execute" || action === "retrieve" ? { approvedBindingHash: approvedHash } : {}) };
     if (action === "execute" || refreshUnused) this.#rememberSpecialistExecution(state);
     this.#specialist = { ...state, working: true, stopping: action === "stop", notice: "",
-      ...(action === "quote" ? { quote: null, originalRequest: null,memoryRequested,semanticMemory:undefined,resultSource:undefined,editReview:undefined,resultReply:null,
+      ...(action === "quote" ? { quote: null, originalRequest: null,memoryRequested,semanticMemory:undefined,resultSource:undefined,creationReview:undefined,editReview:undefined,resultReply:null,
         executionId: refreshUnused ? state.executionId : "",
         task: refreshUnused ? this.#tasks.find((task) => task.executionId === state.executionId) ?? null : null,
         selectedModel: model, unusedExecution: false } : {}),
@@ -1068,7 +1072,7 @@ export class FormaCreativeAssistant extends FormaElement {
         const active = this.#specialist;
         if (active?.id === state.id && (revision === this.#reviewRevision || !active.working && !active.quote)) this.#specialist = { ...active,
           executionId: quote.executionId, task: retained, working: false,
-          originalRequest: null, editReview:undefined,resultReply: null, quote: null, unusedExecution: false, stopping: false, retrievalOnly: true, notice: "unavailable" };
+          originalRequest: null, creationReview:undefined,editReview:undefined,resultReply: null, quote: null, unusedExecution: false, stopping: false, retrievalOnly: true, notice: "unavailable" };
         return;
       }
       const canonicalCompletion = quote.status === "completed" && Boolean(payload.result&&["original-approved-source","semantic-memory-assisted"].includes(payload.result.sourceStatus));
@@ -1085,6 +1089,9 @@ export class FormaCreativeAssistant extends FormaElement {
       const editReview=payload.result?.editReview===undefined?null:parseMemoryEditReview(payload.result.editReview,{executionId:quote.executionId,
         turnId:state.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
       if(payload.result?.editReview!==undefined&&(!semantic||!editReview))throw new Error('assistant_memory_unavailable');
+      const creationReview=payload.result?.creationReview===undefined?null:parseMemoryCreationReview(payload.result.creationReview,{executionId:quote.executionId,
+        turnId:state.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
+      if(payload.result?.creationReview!==undefined&&(!semantic||!creationReview||original.fieldTarget))throw new Error('assistant_memory_unavailable');
       const latestTask = this.#tasks.find((task) => task.executionId === quote.executionId);
       const certifiedTask = [latestTask, this.#specialist?.task].find((task) => task?.executionId === quote.executionId
         && task.turnId === state.turnId && task.bindingHash === quote.bindingHash && this.#certifiedSpecialistCompletion(task));
@@ -1116,7 +1123,7 @@ export class FormaCreativeAssistant extends FormaElement {
         this.#invalidateSpecialistReceipt(state.turnId, quote.executionId);
       }
       this.#readRevision += 1; // An older positive GET cannot replace this response.
-      this.#specialist = { ...this.#specialist!,editReview:certificate?.editReview??editReview??undefined,semanticMemory:certificate?.memory??semantic??undefined,resultSource:certificate?.sourceStatus??payload.result?.sourceStatus, quote: currentQuote, originalRequest: certificate?.original ?? original, executionId: quote.executionId,
+      this.#specialist = { ...this.#specialist!,creationReview:certificate?.creationReview??creationReview??undefined,editReview:certificate?.editReview??editReview??undefined,semanticMemory:certificate?.memory??semantic??undefined,resultSource:certificate?.sourceStatus??payload.result?.sourceStatus, quote: currentQuote, originalRequest: certificate?.original ?? original, executionId: quote.executionId,
         task: task ? reusedQuote ? { ...task, canExecute: false } : task : null, working: false, stopping: false,
         unusedExecution, retrievalOnly: action === "quote" && !reusedQuote ? quote.status !== "quoted" || Boolean(payload.task)
           : this.#specialist!.retrievalOnly || redirected || reusedQuote || quote.status !== "quoted" || Boolean(payload.task),
@@ -1136,7 +1143,7 @@ export class FormaCreativeAssistant extends FormaElement {
       if (exactRead && this.#retentionVersions.get("pending-read:" + readKey) === withdrawalRevision) this.#retentionVersions.delete("pending-read:" + readKey);
       if (receiptScope() && revision === this.#reviewRevision && !this.store.sourceOwnershipActive(source) && this.#specialist) {
         this.#specialist = { ...this.#specialist, working: false, stopping: false, quote: null, originalRequest: null,
-          editReview:undefined,resultReply: null, unusedExecution: false, retrievalOnly: true, notice: "unavailable" };
+          creationReview:undefined,editReview:undefined,resultReply: null, unusedExecution: false, retrievalOnly: true, notice: "unavailable" };
       }
       if (state.scope === this.#scope()) this.requestUpdate();
     }
@@ -1170,11 +1177,13 @@ export class FormaCreativeAssistant extends FormaElement {
 
   async #applyMemoryEdit(control:AssistantSpecialistControl){
     this.#pruneSemanticReceipts();
-    const state=this.#specialist,source=this.store.captureSourceOwnership();
-    if(!state||state.working||!this.#open||!this.#canAuthor()||this.store.session.get()?.assistant?.phase!=='actions'
+    const state=this.#specialist,source=this.store.captureSourceOwnership(),creating=control.action==='apply-creation';
+    const review=creating?state?.creationReview:state?.editReview;
+    if(!state||!review||state.working||!this.#open||!this.#canAuthor()||this.store.session.get()?.assistant?.phase!=='actions'
       ||memoryPrivacyMutationActive()||state.scope!==this.#scope()||state.id!==control.reviewId
       ||state.executionId!==control.executionId||state.turnId!==control.turnId||state.quote?.bindingHash!==control.bindingHash
-      ||state.quote.status!=='completed'||state.resultSource!=='semantic-memory-assisted'||!state.editReview||!control.blockId
+      ||state.quote.status!=='completed'||state.resultSource!=='semantic-memory-assisted'
+      ||(creating?!control.proposalId||!state.creationReview:!control.blockId||!state.editReview)
       ||!parseSemanticMemoryAnswerPresentation(state.semanticMemory)||!this.#semanticLeases.has(state.executionId)
       ||!this.store.sourceOwnershipActive(source))return;
     const revision=++this.#reviewRevision,withdrawal=this.#withdrawalRevision;
@@ -1183,20 +1192,20 @@ export class FormaCreativeAssistant extends FormaElement {
       &&this.store.sourceOwnershipScopeActive(source)&&Boolean(parseSemanticMemoryAnswerPresentation(this.#specialist.semanticMemory));
     this.#specialist={...state,working:true,notice:''};this.requestUpdate();
     try{
-      const hash=await memoryEditApprovalHash(state.editReview,control.blockId);
-      if(!hash||hash!==control.approvedEditHash||!current()||!this.store.sourceOwnershipActive(source))return;
+      const hash=creating?await memoryCreationApprovalHash(state.creationReview!,control.proposalId!):await memoryEditApprovalHash(state.editReview!,control.blockId!);
+      if(!hash||hash!==(creating?control.approvedCreationHash:control.approvedEditHash)||!current()||!this.store.sourceOwnershipActive(source))return;
       const response=await this.store.guardedFetch(this.#specialistUrl,{method:'POST',cache:'no-store',headers:{'content-type':'application/json',accept:'application/json'},
-        body:JSON.stringify({action:'apply-edit',turnId:state.turnId,executionId:state.executionId,approvedBindingHash:control.bindingHash,
-          blockId:control.blockId,approvedEditHash:hash,publishToDocument:true})},this.i18n.t('assistant.specialist.editApply'));
+        body:JSON.stringify({action:creating?'apply-creation':'apply-edit',turnId:state.turnId,executionId:state.executionId,approvedBindingHash:control.bindingHash,
+          ...(creating?{proposalId:control.proposalId,approvedCreationHash:hash}:{blockId:control.blockId,approvedEditHash:hash}),publishToDocument:true})},this.i18n.t(creating?'assistant.specialist.creationApply':'assistant.specialist.editApply'));
       if(!current())return;
       const body=await response.json();if(!current())return;
-      if(!response.ok||body.status!=='applied'||body.executionId!==state.executionId||body.blockId!==control.blockId||typeof body.eventId!=='string'||!body.eventId)throw Error('memory-edit-unconfirmed');
+      if(!response.ok||body.status!=='applied'||body.executionId!==state.executionId||(creating?body.proposalId!==control.proposalId||typeof body.blockId!=='string'||!body.blockId:body.blockId!==control.blockId)||typeof body.eventId!=='string'||!body.eventId)throw Error('memory-edit-unconfirmed');
       this.#retireSemanticReviews();this.requestUpdate();
       await this.store.refreshEvents();
       if(state.scope===this.#scope()&&this.store.sourceOwnershipScopeActive(source)){
-        this.store.rememberMemoryAuthoredEdit({eventId:body.eventId,executionId:state.executionId,turnId:state.turnId,blockId:control.blockId,
-          projectId:state.editReview.projectId,documentId:state.editReview.documentId});
-        this.store.toast(this.i18n.t('assistant.specialist.editApplied'));
+        this.store.rememberMemoryAuthoredEdit({eventId:body.eventId,executionId:state.executionId,turnId:state.turnId,blockId:body.blockId,
+          projectId:review.projectId,documentId:review.documentId});
+        this.store.toast(this.i18n.t(creating?'assistant.specialist.creationApplied':'assistant.specialist.editApplied'));
       }
     }catch{
       if(current()){this.#retireSemanticReviews();this.store.toast(this.i18n.t('assistant.specialist.editNotConfirmed'));}
@@ -1213,7 +1222,7 @@ export class FormaCreativeAssistant extends FormaElement {
       || control.bindingHash !== (state.quote?.bindingHash ?? state.task?.bindingHash ?? "")) return;
     // A captured free Retrieve must never become approval of whichever review
     // happens to be current when the event arrives.
-    if (control.action === "apply-edit") return this.#applyMemoryEdit(control);
+    if (control.action === "apply-edit" || control.action === "apply-creation") return this.#applyMemoryEdit(control);
     if (control.action === "approve") {
       if (state.retrievalOnly || !state.quote || state.quote.status !== "quoted") return;
       return this.#requestSpecialist("execute");

@@ -7034,10 +7034,13 @@ export class FormaStore {
     if(!this.sourceOwnershipActive(owner)||projection.projectId!==receipt.projectId||projection.documentId!==receipt.documentId)return false;
     const event=this.events.get().find(item=>item.eventId===receipt.eventId),block=projection.blocks.find(item=>item.id===receipt.blockId);
     if(!event||event.actor!==this.#principalEventActor()||event.clientId!=='web:assistant-memory'||event.compensatesEventId
-      ||event.type!=='BlockPropertyEdited'||event.payload.memory_authored_version!==1||event.payload.property_path!=='text'
+      ||!['BlockCreated','BlockPropertyEdited'].includes(event.type)||event.payload.memory_authored_version!==1
       ||event.payload.request_id!==receipt.executionId||event.payload.block_id!==receipt.blockId
-      ||event.payload.project_id!==receipt.projectId||event.payload.document_id!==receipt.documentId||typeof event.payload.old_value!=='string'
-      ||typeof event.payload.new_value!=='string'||!block||block.removed||block.properties.text!==event.payload.new_value||block.sourceEvents.at(-1)!==event.eventId
+      ||event.payload.project_id!==receipt.projectId||event.payload.document_id!==receipt.documentId
+      ||!block||block.removed||block.sourceEvents.at(-1)!==event.eventId
+      ||(event.type==='BlockCreated'?typeof (event.payload.properties as Record<string,unknown>)?.text!=='string'
+        ||block.properties.text!==(event.payload.properties as Record<string,unknown>).text
+        :event.payload.property_path!=='text'||typeof event.payload.old_value!=='string'||typeof event.payload.new_value!=='string'||block.properties.text!==event.payload.new_value)
       ||this.events.get().some(item=>item.compensatesEventId===event.eventId)
       ||this.#undo.some(group=>group.some(item=>item.eventId===event.eventId)))return false;
     this.#mergeConfirmed([event],this.head.get(),true);this.notify();return true;
@@ -7073,7 +7076,18 @@ export class FormaStore {
   async redo() {
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return;
     const canvasId=canvasIdFromRoute(this.route.get())??"";const index=this.#historyIndex(this.#redo,canvasId);const source=index>=0?this.#redo.splice(index,1)[0]:null;if (!source?.length) return this.toast(canvasId?"Nothing to redo on this board.":"Nothing to redo in this session.");
-    const result = await this.appendBatchWithReceipt(source.map(redoEvent), { remember: false });
+    const inputs=source.map(event=>{
+      if(event.payload.memory_authored_version!==1||!['BlockCreated','BlockRestored'].includes(event.type))return redoEvent(event);
+      // Recreating an existing shared ID is not restoration authority. Replay
+      // the exact same-author removal through the bounded native restore path.
+      const removed=this.events.get().findLast(item=>item.type==='BlockRemoved'&&item.compensatesEventId===event.eventId
+        &&item.actor===event.actor&&item.payload.block_id===event.payload.block_id);
+      if(!removed)return null;
+      return {type:'BlockRestored',compensatesEventId:removed.eventId,payload:{block_id:event.payload.block_id,
+        project_id:event.payload.project_id,document_id:event.payload.document_id,memory_authored_version:1,request_id:event.payload.request_id}};
+    });
+    if(inputs.some(input=>input===null)){this.#redo.splice(index,0,source);return this.toast(this.#systemNotice('This exact action changed or is no longer available. Review the current document.'));}
+    const result = await this.appendBatchWithReceipt(inputs.filter((input):input is EventInput=>input!==null), { remember: false });
     if(!this.sourceOwnershipActive(sourceOwner)||result.publication!=="published")return;
     const actor=this.#principalEventActor(),redone=result.appended.filter((event)=>event.actor===actor&&Boolean(inverseEvent(event)));if(redone.length)this.#undo.push(redone);
   }

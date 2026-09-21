@@ -1,7 +1,8 @@
+import { memoryCreationApprovalHash,parseMemoryCreationReview,type MemoryCreationReview } from '../src/model/memory-creation-review.ts';
 import { configuredPilotAdmissionGuard,nonPilotExecutionGuard } from "./intake-authority.ts";
 import { parseMemoryFieldRequest,memoryFieldRequestCurrent,type MemoryFieldRequest } from '../src/model/memory-field-request.ts';
 import { prepareAuthoringSourceProof,packAuthoringSourceProof } from './context-authoring-source.ts';
-import { memoryAssistantEditReview } from './memory-assistant-edits.ts';
+import { memoryAssistantEditReview, memoryAssistantCreationReview } from './memory-assistant-edits.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview,type MemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { bodyOf as readMemoryControlBody } from './memory-derivation-api.ts';
 import type { SemanticAssistantParent } from './memory-assistant-parents.ts';
@@ -161,9 +162,10 @@ async function rememberPaidMemoryProof(env:WorkerEnv,binding:ConsequentialBindin
   paidMemoryProofs.set(request,proof);return proof;
 }
 type RawReceipt={schema:1;executionId:string;bindingHash:string;providerRequestHash:string;httpStatus:number;responseBody:string;receivedAt:string;latencyMs:number};
-type CanonicalResult={editReview?:MemoryEditReview;schema:1;executionId:string;bindingHash:string;turnId:string;reply:string;actions:AssistantProviderResult["actions"];providerResult:AssistantProviderResult;sourceStatus:"original-approved-source"|"semantic-memory-assisted";sourceHash:string;maximumMicrousd:number;accountedMicrousd:number;billingStatus:"settled"|"pending";noAutomaticRetry:true};
+type CanonicalResult={creationReview?:MemoryCreationReview;editReview?:MemoryEditReview;schema:1;executionId:string;bindingHash:string;turnId:string;reply:string;actions:AssistantProviderResult["actions"];providerResult:AssistantProviderResult;sourceStatus:"original-approved-source"|"semantic-memory-assisted";sourceHash:string;maximumMicrousd:number;accountedMicrousd:number;billingStatus:"settled"|"pending";noAutomaticRetry:true};
 export type MemoryEditPublication={review:MemoryEditReview;blockId:string;approvalHash:string;context:AssistantContext;sourceHead:number;
   preconditions:D1PreparedStatement[]};
+export type MemoryCreationPublication={review:MemoryCreationReview;proposalId:string;approvalHash:string;context:AssistantContext;sourceHead:number;preconditions:D1PreparedStatement[]};
 export type AssistantSpecialistHost={
   ensure:(env:WorkerEnv)=>Promise<void>;
   authorize:(request:Request,env:WorkerEnv)=>Promise<{authorized:SpecialistActor|null;response:Response|null}>;
@@ -173,6 +175,7 @@ export type AssistantSpecialistHost={
   providerEnrolled:(env:WorkerEnv,userId:string)=>boolean;
   solEnrolled:(env:WorkerEnv,userId:string)=>boolean;
   turn:(env:WorkerEnv,actor:SpecialistActor,turnId:string)=>Promise<SpecialistTurn|null>;
+  applyMemoryCreation?:(env:WorkerEnv,actor:SpecialistActor,publication:MemoryCreationPublication)=>Promise<Response>;
   applyMemoryEdit?:(env:WorkerEnv,actor:SpecialistActor,publication:MemoryEditPublication)=>Promise<Response>;
   commit:(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTaskRecord,result:AssistantProviderResult,context:AssistantContext,proof:BudgetReservationGuard)=>Promise<void>;
 };
@@ -605,6 +608,9 @@ async function canonicalResult(env:WorkerEnv,actor:SpecialistActor,task:Speciali
   if(result.editReview!==undefined&&(!retained.request.memory||!parseMemoryEditReview(result.editReview,{
     executionId:task.task_id,turnId:retained.request.turnId,projectId:retained.binding.projectId,documentId:retained.binding.documentId,
     sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale})))fail("assistant_result_invalid");
+  if(result.creationReview!==undefined&&(!retained.request.memory||retained.request.originalRequest.fieldTarget||!parseMemoryCreationReview(result.creationReview,{
+    executionId:task.task_id,turnId:retained.request.turnId,projectId:retained.binding.projectId,documentId:retained.binding.documentId,
+    sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale})))fail('assistant_result_invalid');
   if(retained.request.memory&&(!Array.isArray(result.actions)||result.actions.length||!Array.isArray(result.providerResult.actions)||result.providerResult.actions.length))fail("assistant_result_invalid");
   if(result.editReview){
     const review=result.editReview,rebuilt=memoryAssistantEditReview({...result.providerResult,actions:review.edits.map(edit=>({kind:'context.edit',
@@ -623,7 +629,7 @@ export type AssistantTaskFeedEntry={
 type AssistantCompletedReview={
   turnId:string;executionId:string;quote:ConsequentialPreview&{providerAvailable:boolean;canExecute:false};
   originalRequest:SpecialistOriginalRequest&{model:string;taskKind:AssistantTask;sourceHash:string;conversationTurnIds:string[]};
-  result:{reply:string;editReview?:MemoryEditReview;sourceStatus:"original-approved-source"|"semantic-memory-assisted"};
+  result:{reply:string;creationReview?:MemoryCreationReview;editReview?:MemoryEditReview;sourceStatus:"original-approved-source"|"semantic-memory-assisted"};
   memory?:{version:"semantic-memory-answer-v1";validUntil:string;independentEvidence:false};
 };
 
@@ -781,7 +787,7 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
               quote:{...retained.preview,status:"completed",providerAvailable:Boolean(env.OPENAI_API_KEY),canExecute:false},
               originalRequest:{...retained.request.originalRequest,model,taskKind:retained.request.taskKind,
                 sourceHash:retained.binding.sourceHash,conversationTurnIds:retained.request.conversation.map(item=>item.turnId)},
-              result:{reply:saved.result.reply,sourceStatus:saved.result.sourceStatus,...(saved.result.editReview?{editReview:saved.result.editReview}:{})},
+              result:{reply:saved.result.reply,sourceStatus:saved.result.sourceStatus,...(saved.result.creationReview?{creationReview:saved.result.creationReview}:{}),...(saved.result.editReview?{editReview:saved.result.editReview}:{})},
               ...(semantic?{memory:{version:'semantic-memory-answer-v1' as const,validUntil:semanticAssistantMemoryInputs(env,semantic).validUntil,independentEvidence:false as const}}:{})};
           }
         }
@@ -977,7 +983,9 @@ function canonicalProviderResult(env:WorkerEnv,task:SpecialistTaskRecord,retaine
  const memory=semanticMemory(env,retained.request),result=memory?{...decoded,actions:[]}:decoded;
  const editReview=memory?memoryAssistantEditReview(decoded,retained.request.context,{executionId:task.task_id,turnId:retained.request.turnId,
    projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale},retained.request.originalRequest.fieldTarget?.blockId):null;
- return {...(editReview?{editReview}:{}),schema:1,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:retained.request.turnId,reply:result.reply,actions:result.actions,providerResult:result,sourceStatus:memory?"semantic-memory-assisted":"original-approved-source",sourceHash:retained.binding.sourceHash,maximumMicrousd:limit.maximumMicrousd,accountedMicrousd:paid.cost,billingStatus:paid.billingPending?"pending":"settled",noAutomaticRetry:true};
+ const creationReview=memory?memoryAssistantCreationReview(decoded,retained.request.context,{executionId:task.task_id,turnId:retained.request.turnId,
+   projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale},retained.request.originalRequest.fieldTarget?.blockId):null;
+ return {...(creationReview?{creationReview}:{}),...(editReview?{editReview}:{}),schema:1,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:retained.request.turnId,reply:result.reply,actions:result.actions,providerResult:result,sourceStatus:memory?"semantic-memory-assisted":"original-approved-source",sourceHash:retained.binding.sourceHash,maximumMicrousd:limit.maximumMicrousd,accountedMicrousd:paid.cost,billingStatus:paid.billingPending?"pending":"settled",noAutomaticRetry:true};
 }
 /** Fresh Memory completion replays the exact retained raw receipt and recorded
  * accounting before atomically publishing the result, private inverse and task
@@ -1425,6 +1433,12 @@ async function applyMemoryEdit(request:Request,env:WorkerEnv,actor:SpecialistAct
   const edit=review.edits.find(item=>item.blockId===body.blockId),block=source.context.decisionAtoms.find(item=>item.id===body.blockId);
   if(!edit||!block||block.version!==edit.revision||block.text!==edit.beforeExcerpt||block.locked||block.immutable||block.protected
     ||!block.providerEligible||block.providerVisibility!=='editable'||block.intent==='prohibit')fail('assistant_memory_edit_stale');
+  const preconditions=await memoryAuthoringPreconditions(env,actor,retained,source,saved.proof);
+  return host.applyMemoryEdit(env,actor,{review,blockId:body.blockId,approvalHash:body.approvedEditHash,context:source.context,sourceHead:source.sourceHead,preconditions});
+}
+
+async function memoryAuthoringPreconditions(env:WorkerEnv,actor:SpecialistActor,retained:Retained,
+ source:Awaited<ReturnType<typeof sourcePreparation>>,savedProof:BudgetReservationGuard){
   const memory=semanticMemory(env,retained.request);if(!memory)fail('assistant_memory_edit_denied');
   // A head alone does not notice private-body erasure or custody changes.
   // Reuse the native authoring witness and replay its exact rows atomically.
@@ -1432,11 +1446,24 @@ async function applyMemoryEdit(request:Request,env:WorkerEnv,actor:SpecialistAct
   const canvas=retained.binding.canvasId?foldCanvasEvents(source.events,retained.binding.projectId,retained.binding.canvasId):null;
   const sourceHash=canvas?await consentHash({sourceHash:nativeHash,canvas:canvas.canvases.find(item=>item.id===retained.binding.canvasId)??null,items:canvas.items}):nativeHash;
   const nativeProof=packAuthoringSourceProof(await prepareAuthoringSourceProof(env,{...source,binding:{...retained.binding,sourceHash}}));
-  const proofs=[readAuthority(actor,retained),saved.proof,consentProof(retained),turnProof(retained.binding,retained.request),source.sourceProof,nativeProof,
+  const proofs=[readAuthority(actor,retained),savedProof,consentProof(retained),turnProof(retained.binding,retained.request),source.sourceProof,nativeProof,
     {sql:'(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?',bindings:[source.scope?'creative:'+source.scope.ownerUserId:actor.principal.streamId,source.sourceHead]}];
-  const preconditions=[...semanticAssistantMemoryStatements(env,memory),...proofs.map(proof=>env.DB.prepare(
+  return [...semanticAssistantMemoryStatements(env,memory),...proofs.map(proof=>env.DB.prepare(
     "SELECT CASE WHEN ("+proof.sql+") THEN 1 ELSE json('assistant_memory_edit_stale') END AS verified").bind(...proof.bindings))];
-  return host.applyMemoryEdit(env,actor,{review,blockId:body.blockId,approvalHash:body.approvedEditHash,context:source.context,sourceHead:source.sourceHead,preconditions});
+
+}
+async function applyMemoryCreation(request:Request,env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,
+ retained:Retained,task:SpecialistTaskRecord|null,body:Record<string,unknown>){
+  if(!actor.canPropose||!host.applyMemoryCreation||!task||task.task_id!==retained.row.execution_id
+    ||!retained.request.memory||retained.request.originalRequest.fieldTarget||body.publishToDocument!==true)fail('assistant_memory_creation_denied');
+  const saved=await canonicalResult(env,actor,task,retained),review=saved?.result.creationReview;
+  if(!saved||!review||saved.result.sourceStatus!=='semantic-memory-assisted'||typeof body.proposalId!=='string'
+    ||typeof body.approvedCreationHash!=='string'||await memoryCreationApprovalHash(review,body.proposalId)!==body.approvedCreationHash)fail('assistant_memory_creation_approval_required');
+  const source=await sourcePreparation(request,env,actor,retained.request.originalRequest,retained.request.conversation,retained.binding,retained.request.memory.parents);
+  if(source.sourceHash!==review.sourceHash||source.sourceRightsValidUntil!==retained.request.sourceRightsValidUntil)fail('assistant_memory_creation_stale');
+  const preconditions=await memoryAuthoringPreconditions(env,actor,retained,source,saved.proof);
+  return host.applyMemoryCreation(env,actor,{review,proposalId:body.proposalId,approvalHash:body.approvedCreationHash,
+    context:source.context,sourceHead:source.sourceHead,preconditions});
 }
 
 export async function handleAssistantSpecialistConsent(request:Request,env:WorkerEnv,execution:WorkerExecutionContext,host:AssistantSpecialistHost):Promise<Response>{
@@ -1447,8 +1474,8 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
   // quote, reservation or provider work is attempted.
   const body=await readMemoryControlBody(request,4096);if(!body)return json({error:"assistant_request_invalid"},400);
   const action=String(body.action??""),turnId=String(body.turnId??"");
-  if(!["quote","execute","retrieve","resume","apply-edit"].includes(action)||!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId))return json({error:"assistant_request_invalid"},400);
-  const fields=action==="apply-edit"?["action","turnId","executionId","approvedBindingHash","blockId","approvedEditHash","publishToDocument"]:action==="quote"?["action","turnId","model","memory"]:action==="resume"?["action","turnId","executionId"]:["action","turnId","executionId","approvedBindingHash"];
+  if(!["quote","execute","retrieve","resume","apply-edit","apply-creation"].includes(action)||!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId))return json({error:"assistant_request_invalid"},400);
+  const fields=action==="apply-creation"?["action","turnId","executionId","approvedBindingHash","proposalId","approvedCreationHash","publishToDocument"]:action==="apply-edit"?["action","turnId","executionId","approvedBindingHash","blockId","approvedEditHash","publishToDocument"]:action==="quote"?["action","turnId","model","memory"]:action==="resume"?["action","turnId","executionId"]:["action","turnId","executionId","approvedBindingHash"];
   if(Object.hasOwn(body,"memory")&&body.memory!=="saved")return json({error:"assistant_memory_mode_invalid"},400);
   if(Object.keys(body).some(key=>!fields.includes(key)))return json({error:"assistant_request_invalid"},400);
   const authorization=await host.authorize(request,env);if(authorization.response||!authorization.authorized)return authorization.response!;
@@ -1479,6 +1506,7 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
     const retained=await retainedConsent(env,actor,scopeKey,turnId,id);if(!retained)return json({error:"assistant_execution_unavailable",turnId,executionId:id,retentionUnavailable:true},404);
     if(action!=="resume"&&retained.row.binding_hash!==hash)return json({error:"assistant_consent_changed"},409);
     let task=await existingTask(env,actor,scopeKey,turnId);
+    if(action==="apply-creation")return await applyMemoryCreation(request,env,actor,host,retained,task,body);
     if(action==="apply-edit")return await applyMemoryEdit(request,env,actor,host,retained,task,body);
     if(task&&task.task_id!==id){
       const winner=await retainedConsent(env,actor,scopeKey,turnId,task.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",retentionUnavailable:true,noAutomaticRetry:true},409);return await resultResponse(env,actor,host,winner,task,id);

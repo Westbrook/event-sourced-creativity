@@ -1,3 +1,4 @@
+import { memoryCreationApprovalHash,parseMemoryCreationReview } from '../src/model/memory-creation-review.ts';
 import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { libraryBlockEditorFromRoute } from '../src/model/routes.ts';
@@ -101,6 +102,7 @@ function fixture(locale = "en", nativeWindow = { addEventListener() {}, removeEv
   const previewExports = {};
   new Function("require", "exports", previewCode)(name => { assert.equal(name, "lit"); return lit; }, previewExports);
   const dependencies = {
+    "../../model/memory-creation-review.ts": {memoryCreationApprovalHash,parseMemoryCreationReview},
     "../../model/memory-edit-review.ts": {memoryEditApprovalHash,parseMemoryEditReview},
     "../../model/memory-answer.ts": {parseSemanticMemoryAnswerPresentation},
     lit, "lit/directives/keyed.js": { keyed }, "../../model/conversation-context.ts": { ASSISTANT_CONTEXT_LIMITS },
@@ -3850,4 +3852,19 @@ for(const locale of ['en','fr','ar','ja'])test('Memory authored edit panel: disc
  await button.click();const control=f.emitted.at(-1).detail;assert.equal(control.action,'apply-edit');assert.equal(control.blockId,'block-a');
  assert.equal(control.approvedEditHash,await memoryEditApprovalHash(state.editReview,'block-a'));assert.equal(control.reviewId,state.id);
  f.panel.canMemoryEdit=false;assert.equal(f.render().buttons.some(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.editApply']),false);
+});
+
+for(const locale of ['en','fr','ar','ja'])test('Memory authored creation panel: disclosure and exact rendered approval '+locale,async()=>{
+ const f=fixture(locale),state=review('retrieve');state.originalRequest.sourceHash=state.quote.sourceHash='a'.repeat(64);
+ state.resultSource='semantic-memory-assisted';state.semanticMemory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false};
+ state.creationReview={version:'memory-creation-review-v1',executionId:state.executionId,turnId:state.turnId,projectId:state.originalRequest.projectId,
+  documentId:state.originalRequest.documentId,sourceHash:state.originalRequest.sourceHash,locale:'en',mode:'review-only',independentEvidence:false,
+  creations:[{proposalId:'create-0',blockType:'direction',intent:'include',text:'Exact new creative block <script>literal</script>'}]};
+ f.panel.canMemoryEdit=true;f.setReview(state);const shown=f.render();
+ assert.ok(shown.markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.creationDetail']));
+ assert.match(shown.markup,/&lt;script&gt;literal&lt;\/script&gt;/u);
+ const button=shown.buttons.find(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.creationApply']);assert.ok(button);assert.equal(button.disabled,false);
+ await button.click();const control=f.emitted.at(-1).detail;assert.equal(control.action,'apply-creation');assert.equal(control.proposalId,'create-0');
+ assert.equal(control.approvedCreationHash,await memoryCreationApprovalHash(state.creationReview,'create-0'));assert.equal(control.reviewId,state.id);
+ f.panel.canMemoryEdit=false;assert.equal(f.render().buttons.some(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.creationApply']),false);
 });

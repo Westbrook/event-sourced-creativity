@@ -1,3 +1,4 @@
+import { memoryCreationApprovalHash,parseMemoryCreationReview,type MemoryCreationReview } from '../../model/memory-creation-review.ts';
 import type { MemoryFieldRequest } from '../../model/memory-field-request.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview,type MemoryEditReview } from '../../model/memory-edit-review.ts';
 import { parseSemanticMemoryAnswerPresentation,type SemanticMemoryAnswerPresentation } from '../../model/memory-answer.ts';
@@ -155,7 +156,7 @@ export type AssistantSpecialistResponse = {
   turnId: string; executionId: string; quote?: AvailableConsequentialPreview; originalRequest?: AssistantSpecialistOriginalRequest;
   task?: AssistantDisplayedTask;
   turn?: { id: string; user: string; reply: SpecialistReply; proposal: AssistantDisplayedProposal | null; proposals?: AssistantDisplayedProposal[]; originalRequest?: AssistantTurnOriginalRequest };
-  result?: { editReview?:MemoryEditReview; reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
+  result?: { creationReview?:MemoryCreationReview;editReview?:MemoryEditReview; reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
   requestedExecutionId?: string; reusedExecutionId?: string; winnerExecutionId?: string; noAutomaticRetry?: boolean; reused?: boolean;
   /** Present only after an exact successful read proves no task, provider submission, or reservation exists. */
   unusedExecution?: boolean;
@@ -165,10 +166,10 @@ export type AssistantSpecialistCompletedReview = {
   memory?: SemanticMemoryAnswerPresentation;
   turnId: string; executionId: string; quote: AvailableConsequentialPreview;
   originalRequest: AssistantSpecialistOriginalRequest;
-  result: { editReview?:MemoryEditReview; reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
+  result: { creationReview?:MemoryCreationReview;editReview?:MemoryEditReview; reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
 };
 export type AssistantSpecialistReview = {
-  editReview?:MemoryEditReview; memoryRequested?: boolean; semanticMemory?: SemanticMemoryAnswerPresentation; resultSource?: "original-approved-source" | "semantic-memory-assisted";
+  creationReview?:MemoryCreationReview;editReview?:MemoryEditReview; memoryRequested?: boolean; semanticMemory?: SemanticMemoryAnswerPresentation; resultSource?: "original-approved-source" | "semantic-memory-assisted";
   id: string; scope: string; turnId: string; executionId: string; task: AssistantDisplayedTask | null;
   quote: AvailableConsequentialPreview | null; originalRequest: AssistantSpecialistOriginalRequest | null;
   working: boolean; stopping?: boolean; retrievalOnly: boolean; selectedModel?: string; unusedExecution?: boolean;
@@ -178,7 +179,7 @@ export type AssistantSpecialistReview = {
 /** A captured control is an exact user intention, never an instruction to infer the current action. */
 export type AssistantSpecialistControl = {
   reviewId: string; turnId: string; executionId: string; bindingHash: string;
-  action: "approve" | "run-approved" | "retrieve" | "resume" | "quote" | "apply-edit"; model?: string; memory?: boolean; blockId?:string; approvedEditHash?:string;
+  action: "approve" | "run-approved" | "retrieve" | "resume" | "quote" | "apply-edit" | "apply-creation"; model?: string; memory?: boolean; blockId?:string; approvedEditHash?:string;proposalId?:string;approvedCreationHash?:string;
 };
 
 /** Resume is a free read. Only a fresh, exact server proof can enable this separate user action. */
@@ -1553,11 +1554,20 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     if(approvedEditHash)this.#specialistControl({...target,action:'apply-edit',blockId,approvedEditHash});
   }
 
+  async #applyReviewedMemoryCreation(target:Omit<AssistantSpecialistControl,'action'|'model'>,review:MemoryCreationReview,proposalId:string){
+    const approvedCreationHash=await memoryCreationApprovalHash(review,proposalId);
+    if(approvedCreationHash)this.#specialistControl({...target,action:'apply-creation',proposalId,approvedCreationHash});
+  }
+
   #specialistControl(detail: AssistantSpecialistControl, modelChange = false) {
     if (!this.#specialistTargetCurrent(detail)) return;
     const state = this.specialist!, quote = state.quote;
     const purchase = Boolean(quote && !state.retrievalOnly && quote.status === "quoted");
-    const allowed = detail.action === "apply-edit" ? this.canMemoryEdit && quote?.status==='completed'
+    const allowed = detail.action === "apply-creation" ? this.canMemoryEdit && quote?.status==='completed'
+      && state.resultSource==='semantic-memory-assisted' && Boolean(parseSemanticMemoryAnswerPresentation(state.semanticMemory))
+      && typeof detail.approvedCreationHash==='string'&&/^[a-f0-9]{64}$/u.test(detail.approvedCreationHash)
+      && Boolean(state.creationReview?.creations.some(item=>item.proposalId===detail.proposalId))
+      : detail.action === "apply-edit" ? this.canMemoryEdit && quote?.status==='completed'
       && state.resultSource==='semantic-memory-assisted' && Boolean(parseSemanticMemoryAnswerPresentation(state.semanticMemory))
       && typeof detail.approvedEditHash==='string'&&/^[a-f0-9]{64}$/u.test(detail.approvedEditHash)
       && Boolean(state.editReview?.edits.some(edit=>edit.blockId===detail.blockId))
@@ -1619,6 +1629,9 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const editReview=state.resultSource==='semantic-memory-assisted'&&parseSemanticMemoryAnswerPresentation(state.semanticMemory)&&state.originalRequest&&quote?.status==='completed'
       ?parseMemoryEditReview(state.editReview,{executionId:state.executionId,turnId:state.turnId,projectId:state.originalRequest.projectId,
         documentId:state.originalRequest.documentId,sourceHash:state.originalRequest.sourceHash,locale:state.originalRequest.locale}):null;
+    const creationReview=state.resultSource==='semantic-memory-assisted'&&parseSemanticMemoryAnswerPresentation(state.semanticMemory)&&state.originalRequest&&quote?.status==='completed'
+      ?parseMemoryCreationReview(state.creationReview,{executionId:state.executionId,turnId:state.turnId,projectId:state.originalRequest.projectId,
+        documentId:state.originalRequest.documentId,sourceHash:state.originalRequest.sourceHash,locale:state.originalRequest.locale}):null;
     // Native cancel/close tasks target an element, not a render-time callback.
     // Give each review its own element even when close and reopen coalesce.
     return keyed(state.id, html`<dialog class="modal forma-assistant-specialist" aria-labelledby=${this.#specialistDialogId} aria-describedby=${this.#specialistDialogId + "-detail"}
@@ -1661,6 +1674,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
               <dt>${this.i18n.t('assistant.specialist.editReviewAfter')}</dt><dd dir="auto">${edit.suggestedText}</dd></dl>
               ${this.canMemoryEdit?html`<button type="button" class="button secondary" ?disabled=${state.working||!this.#modalReady}
                 @click=${()=>this.#applyReviewedMemoryEdit(target,editReview,edit.blockId)}>${this.i18n.t('assistant.specialist.editApply')}</button>`:nothing}</article>`)}
+        </section>`:nothing}
+        ${creationReview?html`<section class="forma-assistant-memory-creation-review" aria-label=${this.i18n.t('assistant.specialist.creationTitle')}>
+          <h3>${this.i18n.t('assistant.specialist.creationTitle')}</h3><p>${this.i18n.t('assistant.specialist.creationDetail')}</p>
+          ${creationReview.creations.map(item=>html`<article><h4>${this.i18n.system(item.blockType[0]!.toUpperCase()+item.blockType.slice(1))} · ${this.i18n.system(item.intent==='include'?'Include':'Avoid')}</h4><p dir="auto">${item.text}</p>
+            ${this.canMemoryEdit?html`<button type="button" class="button secondary" ?disabled=${state.working||!this.#modalReady}
+              @click=${()=>this.#applyReviewedMemoryCreation(target,creationReview,item.proposalId)}>${this.i18n.t('assistant.specialist.creationApply')}</button>`:nothing}</article>`)}
         </section>`:nothing}
         ${reply ? html`<section class="forma-assistant-specialist-result"><h3>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryResult":"assistant.specialist.originalResult")}</h3><p dir="auto">${reply}</p><small>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryReview":"assistant.specialist.resultReview")}</small></section>` : nothing}
         <footer>

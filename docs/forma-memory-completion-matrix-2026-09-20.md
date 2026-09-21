@@ -269,3 +269,15 @@ personal/shared calls. Raw hydration and required acknowledgement frames are
 bounded. This advances the capacity/lifecycle work; it does not close direct
 creative-output integration, independent reuse, resource enrollment or profile
 scope promotion. Those native requirements remain assigned here.
+
+## Reviewed creative creations
+
+[Memory-assisted creative-block previews](forma-memory-creative-blocks-2026-09-21.md)
+now connect the approved semantic response to actual Document/Chat review and
+explicit, exact authored creation. Original attribution survives withdrawal,
+subsequent creative Chat and repeated native Undo/Redo. Private preview bytes
+retire on blur, expiry and privacy changes. Output requirement contracts and
+image generation keep their separate authorization paths. This closes creation
+review/application and the corresponding created-block history gap, not the
+remaining private image/output, independent reuse, Library/Canvas, promotion or
+integrated qualification rows above.

@@ -56,7 +56,10 @@ export async function prepareProjectBlockUndoRestore(env:WorkerEnv,context:Proje
     ||created.payload.project_id!==context.projectId||created.payload.document_id!==documentId
     ||created.payload.scope!==undefined&&created.payload.scope!=='document'||created.payload.canvas_id||created.payload.library_block===true
     ||events.some(event=>event.type==='BlockRehomed')||!removed||removed.type!=='BlockRemoved'
-    ||removed.eventId!==input.compensatesEventId||removed.compensatesEventId!==null||removed.actor!=='user:'+principal.userId)return null;
+    ||removed.eventId!==input.compensatesEventId||removed.actor!=='user:'+principal.userId
+    ||removed.compensatesEventId!==null&&(created.payload.memory_authored_version!==1
+      ||!events.some(event=>event.eventId===removed.compensatesEventId&&['BlockCreated','BlockRestored'].includes(event.type)
+        &&event.actor===removed.actor&&event.payload.memory_authored_version===1)))return null;
   assertCurrent();witness.before(new Date(started+60_000).toISOString());witness.seal(null);
   return Object.freeze({assertCurrent,precommitStatements(){assertCurrent();return witness.precommitStatements();}});
  }catch{return null;}

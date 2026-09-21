@@ -913,9 +913,9 @@ test('native artifact frames: unrelated unindexed appends need no repair but cur
   assert.deepEqual(f.sqlite.prepare('SELECT * FROM project_migration_states WHERE project_access_id=?').get(f.sharing.projectAccessId),before,'Historical certification never repairs a project index');
 });
 
-async function nativeBlockInspectionFixture(t,{shared=false,memory=false}={}){
+async function nativeBlockInspectionFixture(t,{shared=false,memory=false,memoryAuthored=false}={}){
   const f=await (memory?memoryArtifactFixture:fixture)(t,{depth:true,...(shared?{shared:true}:{})}),blockId='genuine-inspected-block';
-  const response=await f.request('/api/events',f.json({action:'append',event:{type:'BlockCreated',payload:{project_id:f.projectId,document_id:f.documentId,scope:'document',block_id:blockId,type:'direction',properties:{text:'Original inspected native block'}}}}));
+  const response=await f.request('/api/events',f.json({action:'append',event:{type:'BlockCreated',payload:{project_id:f.projectId,document_id:f.documentId,scope:'document',block_id:blockId,type:'direction',...(memoryAuthored?{memory_authored_version:1}:{}),properties:{text:'Original inspected native block'}}}}));
   assert.equal(response.status,200,await response.clone().text());const source=(await response.json()).appended.find(row=>row.type==='BlockCreated');assert.ok(source);
   const payload={project_id:f.projectId,document_id:f.documentId,block_id:blockId,source_event_ids:[source.eventId],source_surface:'document-context-controls'};
   const inspect=(changes={},extra={})=>f.request('/api/events/hot',f.json({action:'hot',event:{type:'BlockInspected',payload:{...payload,...changes}},...extra}));
@@ -1233,4 +1233,43 @@ for(const shared of [false,true])test('native extracted block inspection: actual
  const restoredIds=[...sourceIds,removal.eventId,restoration.eventId],restoredInspection=await inspect(restoredIds);assert.equal(restoredInspection.status,200,await restoredInspection.clone().text());
  f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(sourceIds.at(-1));
  assert.equal((await inspect(restoredIds)).status,409,'Erased derived fields cannot certify an inspected block');
+});
+
+for(const shared of [false,true])test('native created-block lifecycle: explicit Memory creation Undo/Redo retains inspectable original history '+shared,async t=>{
+ const f=await nativeBlockInspectionFixture(t,{shared,memoryAuthored:true}),ids=[f.blockSource.eventId];let previous=f.blockSource;
+ const write=async(type,compensatesEventId)=>{
+  const response=await f.request('/api/events',f.json({action:'append',event:{type,compensatesEventId,payload:{project_id:f.projectId,document_id:f.documentId,block_id:f.blockId,memory_authored_version:1}}}));
+  assert.equal(response.status,200,await response.clone().text());const event=(await response.json()).appended[0];ids.push(event.eventId);return event;
+ };
+ for(let index=0;index<2;index++){
+  const removed=await write('BlockRemoved',previous.eventId);previous=await write('BlockRestored',removed.eventId);
+  if(shared)assert.equal((await f.request('/api/events?after=0&limit=2000&content=0')).status,200);
+  const inspection=await f.inspectBlock({source_event_ids:ids});assert.equal(inspection.status,200,await inspection.clone().text());
+  assert.deepEqual((await inspection.json()).appended[0].payload.source_event_ids,ids);
+ }
+});
+for(const fault of ['branch','foreign-author','non-lifecycle','erased-source','late-erasure'])test('native created-block lifecycle: denies '+fault,async t=>{
+ const f=await nativeBlockInspectionFixture(t,{shared:true,memoryAuthored:true});
+ const response=await f.request('/api/events',f.json({action:'append',event:{type:'BlockRemoved',compensatesEventId:f.blockSource.eventId,
+  payload:{project_id:f.projectId,document_id:f.documentId,block_id:f.blockId,memory_authored_version:1}}}));assert.equal(response.status,200);
+ const removed=(await response.json()).appended[0];assert.equal((await f.request('/api/events?after=0&limit=2000&content=0')).status,200);
+ if(fault==='foreign-author'||fault==='non-lifecycle'){
+  const trigger=f.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='events_block_update'").get().sql;f.sqlite.exec('DROP TRIGGER events_block_update');
+  try{if(fault==='foreign-author')f.sqlite.prepare("UPDATE events SET actor='user:other' WHERE event_id=?").run(removed.eventId);
+   else f.sqlite.prepare("UPDATE events SET type='BlockLocked' WHERE event_id=?").run(removed.eventId);
+  }finally{f.sqlite.exec(trigger);}
+ }
+ if(fault==='branch'){
+  const {makeEvent,appendEvents}=await import('../worker/runtime.ts');
+  const head=f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events WHERE stream_id=?').get(f.streamId).head;
+  const event=makeEvent(f.streamId,head+1,removed.actor,'isolated-branch',crypto.randomUUID(),'BlockRemoved',removed.payload,{compensatesEventId:f.blockSource.eventId});
+  await appendEvents(f.env,[event]);assert.equal((await f.request('/api/events?after=0&limit=2000&content=0')).status,200);
+ }
+ if(fault==='erased-source')f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.blockSource.eventId);
+ let hit=false;
+ if(fault==='late-erasure')f.controls.beforeBatch=async statements=>{if(!hit&&statements.some(statement=>statement.sql.includes('INSERT INTO event_write_stage')&&statement.values?.includes('BlockRestored'))){hit=true;f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(f.blockSource.eventId);}};
+ const restored=await f.request('/api/events',f.json({action:'append',event:{type:'BlockRestored',compensatesEventId:removed.eventId,
+  payload:{project_id:f.projectId,document_id:f.documentId,block_id:f.blockId,memory_authored_version:1}}}));
+ assert.ok([403,409].includes(restored.status),await restored.clone().text());if(fault==='late-erasure')assert.equal(hit,true);
+ assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE type='BlockRestored' AND json_extract(payload,'$.block_id')=?").get(f.blockId).n,0);
 });

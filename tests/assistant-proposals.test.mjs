@@ -177,3 +177,33 @@ for(const fault of ['documentId','projectId','sourceHash','locale','executionId'
  if(fault==='hidden')Object.defineProperty(r,'execute',{value:true});
  assert.equal(parseMemoryEditReview(r,memoryEditTarget),null);
 });
+
+const {memoryAssistantCreationReview}=await import('../worker/memory-assistant-edits.ts');
+const {parseMemoryCreationReview,memoryCreationApprovalHash}=await import('../src/model/memory-creation-review.ts');
+const memoryCreationResult={actions:[{kind:'context.create',block_type:'direction',target_block_id:null,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:'A quiet moonlit garden <script>literal</script>'}]};
+test('Memory creation preview preserves exact private text and separately hashes explicit authorship',async()=>{
+ const review=memoryAssistantCreationReview(memoryCreationResult,memoryEditContext,memoryEditTarget);
+ assert.equal(review.creations[0].text,memoryCreationResult.actions[0].text);
+ assert.deepEqual(parseMemoryCreationReview(review,memoryEditTarget),review);
+ const copy=parseMemoryCreationReview(review,memoryEditTarget);copy.creations[0].text='Other';
+ assert.notEqual(await memoryCreationApprovalHash(review,'create-0'),await memoryCreationApprovalHash(copy,'create-0'));
+ assert.equal(await memoryCreationApprovalHash(review,'create-1'),null);
+ assert.equal(memoryAssistantCreationReview(memoryCreationResult,memoryEditContext,memoryEditTarget,'direction-a'),null);
+ for(const block_type of ['reference','model3d','audio','output','brand','exclusion','accessibility'])assert.equal(memoryAssistantCreationReview({actions:[{...memoryCreationResult.actions[0],block_type}]},memoryEditContext,memoryEditTarget),null);
+});
+for(const fault of ['documentId','locale','sourceHash','executionId','extra','independence','duplicate','oversized','sparse','getter','array-getter','media','target','intent','malformed-unicode'])test('Memory creation preview rejects '+fault,()=>{
+ const r=memoryAssistantCreationReview(memoryCreationResult,memoryEditContext,memoryEditTarget);
+ if(Object.hasOwn(memoryEditTarget,fault))r[fault]='other';
+ if(fault==='extra')r.generate=true;
+ if(fault==='independence')r.independentEvidence=true;
+ if(fault==='duplicate')r.creations.push({...r.creations[0]});
+ if(fault==='oversized')r.creations[0].text='x'.repeat(601);
+ if(fault==='sparse')r.creations.length=2;
+ if(fault==='getter')Object.defineProperty(r.creations[0],'text',{enumerable:true,get(){return assert.fail('must not read getters');}});
+ if(fault==='array-getter')Object.defineProperty(r.creations,'0',{enumerable:true,get(){return assert.fail('must not read getters');}});
+ if(fault==='media')r.creations[0].blockType='reference';
+ if(fault==='target')r.creations[0].blockId='injected';
+ if(fault==='intent')r.creations[0].intent='prohibit';
+ if(fault==='malformed-unicode')r.creations[0].text=String.fromCharCode(0xd800);
+ assert.equal(parseMemoryCreationReview(r,memoryEditTarget),null);
+});

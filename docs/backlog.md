@@ -391,3 +391,16 @@ including normalized asynchronous failures and rejection of array-shaped native
 rows. Thirty quote/execute/retrieval fault cases and 135 overlapping native/D1
 checks pass; types, changed-worker lint and build pass. No new source consent, provider charge, native scope promotion or
 production activation. Other native completion-matrix requirements remain assigned.
+
+## MEM-031 — Reviewed creative creation and native Undo/Redo
+
+Implemented locally: [private creative-block previews and explicit authored
+publication](forma-memory-creative-blocks-2026-09-21.md) in Document Assistant and
+Chat Studio. Acceptance reuses native consent, custody and exact source proofs;
+withdrawal preserves authored work and its negative attribution. Shared-project
+Redo now restores a verified creation lifecycle rather than recreating its ID.
+Native, localized control, browser and history checks pass; reproduced pre-change
+panel/navigation test failures remain separately recorded. Full runtime
+verification is in progress. No production activation or enrollment. Remaining
+native work stays in the completion matrix; external gates are not relabeled as
+implementation completion.

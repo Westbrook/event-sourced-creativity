@@ -1,3 +1,4 @@
+import { memoryCreationKind } from '../src/model/memory-creation-review.ts';
 import { authoringEventProof, authoringSidecarProof } from './authoring-event-proof.ts';
 import { prepareProjectBlockUndoRestore } from './project-block-restore.ts';
 import { presentActorArtifactView } from './memory-artifact-presentation.ts';
@@ -1272,7 +1273,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   guardBindings?:Array<string|number|null>;
   expectedOwnerHead?:number;
   preserveGovernance?:true;
-  authoringOperation?:"memory-edit"|"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
+  authoringOperation?:"memory-create"|"memory-edit"|"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
   assistantAcceptance?:{proposalId:string;turnId:string;actorUserId:string;scopeKey:string;organizationId:string;projectAccessId:string;projectId:string;documentId:string};
 }){
   const action=String(body.action??"append");
@@ -1282,10 +1283,13 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     ||(atomicSidecars.authoringOperation==="canvas-arrangement"
       ? action!=="batch"||validateAtomicCanvasArrangementEvents(original,principal.userId)!==null
       : (atomicSidecars.authoringOperation==="workspace-quick-edit"?!validWorkspaceQuickEditEvents(original):original.some((event)=>!(atomicSidecars.authoringOperation==="adaptive-proposal"?["BlockCreated","BlockPropertyEdited","CanvasItemPlaced"]:["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"]).includes(String(event.type)))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
-  if(atomicSidecars?.authoringOperation==='memory-edit'&&!atomicSidecars.preconditions?.length)return Response.json({error:'invalid_authoring_operation'},{status:403});
-  if(atomicSidecars?.preconditions?.length&&(!atomicSidecars.preserveGovernance||atomicSidecars.authoringOperation!=='memory-edit'
-    ||atomicSidecars.preconditions.length>128||original.length!==1||original[0]?.type!=='BlockPropertyEdited'
-    ||original[0]?.payload?.property_path!=='text'||original[0]?.payload?.memory_authored_version!==1))
+  if(['memory-edit','memory-create'].includes(atomicSidecars?.authoringOperation??'')&&!atomicSidecars?.preconditions?.length)return Response.json({error:'invalid_authoring_operation'},{status:403});
+  if(atomicSidecars?.preconditions?.length&&(!atomicSidecars.preserveGovernance||!['memory-edit','memory-create'].includes(atomicSidecars.authoringOperation??'')
+    ||atomicSidecars.preconditions.length>128||original.length!==1||original[0]?.payload?.memory_authored_version!==1
+    ||(atomicSidecars.authoringOperation==='memory-create'
+      ?original[0]?.type!=='BlockCreated'||!memoryCreationKind(original[0]?.payload?.type)
+        ||!['include','avoid'].includes(String((original[0]?.payload?.properties as Record<string,unknown>)?.intent))
+      :original[0]?.type!=='BlockPropertyEdited'||original[0]?.payload?.property_path!=='text')))
     return Response.json({error:'invalid_authoring_operation'},{status:403});
   const assistantAcceptance=atomicSidecars?.assistantAcceptance;
   if(assistantAcceptance){

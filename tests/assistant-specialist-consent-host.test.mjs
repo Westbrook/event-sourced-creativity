@@ -1,3 +1,4 @@
+import { memoryCreationApprovalHash,parseMemoryCreationReview } from '../src/model/memory-creation-review.ts';
 import { parseMemoryFieldRequest } from '../src/model/memory-field-request.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { personalMemoryMessage } from '../src/components/design-system/locales/personal-memory-messages.ts';
@@ -166,7 +167,7 @@ function fixture(t, locale = "en") {
   // Direct eval runs the actual production source in this lexical fixture scope.
   // Keep its otherwise implicit dependencies explicit without calling them.
   void [
-    parseMemoryFieldRequest, parseMemoryEditReview, personalMemoryMessage, createMemoryElapsed, memoryPrivacyMutationActive, assistantInteractionForSurface, withDocumentInRoute, contextConsentAction, ensureNativeModalDialog,
+    parseMemoryFieldRequest, parseMemoryEditReview, parseMemoryCreationReview, personalMemoryMessage, createMemoryElapsed, memoryPrivacyMutationActive, assistantInteractionForSurface, withDocumentInRoute, contextConsentAction, ensureNativeModalDialog,
     document, location, requestAnimationFrame, cancelAnimationFrame, matchMedia, icon,
     consequentialPreview, assistantApprovedRequestCanRun, assistantApprovedRequestCanStop, Base,
     nextActionFacts, creativeNextActions, renderLifecycleNextActionCards, openCreativeNextActionDestination,
@@ -3223,4 +3224,47 @@ for(const boundary of ['draft','project','document','hidden','embedded','duplica
  if(boundary==='project')intent.projectId='other';if(boundary==='document')intent.documentId='other';if(boundary==='embedded')f.host.embedded=true;
  if(boundary==='hidden')f.host.isConnected=false;
  f.host.fieldGenerationForTest(intent);assert.equal(f.calls.length,1);assert.equal(intent.accepted,boundary==='duplicate');
+});
+
+async function retainedMemoryCreationReview(f){
+ await f.open();await review(f);
+ const changing=f.host.requestForTest('quote','gpt-5.6-luna',true),call=await f.take();
+ const memory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+20000).toISOString(),independentEvidence:false};
+ await f.reply(call,specialistResponse(preview({sourceHash:'a'.repeat(64)}),{memory}));await changing;
+ const creationReview={version:'memory-creation-review-v1',executionId:'approval-a',turnId:'turn-a',projectId:'project-a',documentId:'doc-a',sourceHash:'a'.repeat(64),locale:'en',mode:'review-only',independentEvidence:false,
+  creations:[{proposalId:'create-0',blockType:'direction',intent:'include',text:'PRIVATE_ACCEPTED_TEXT'}]};
+ const reading=f.host.requestForTest('retrieve'),get=await f.take();
+ await f.reply(get,specialistResponse(preview({status:'completed',canExecute:false,sourceHash:'a'.repeat(64)}),{
+  memory,result:{reply:'Tentative guidance',sourceStatus:'semantic-memory-assisted',creationReview},task:savedTask({status:'completed',submission:'settled',canExecute:false})}));await reading;
+ const state=f.host.snapshotForTest().specialist;
+ return {reviewId:state.id,turnId:state.turnId,executionId:state.executionId,bindingHash:state.quote.bindingHash,action:'apply-creation',proposalId:'create-0',approvedCreationHash:await memoryCreationApprovalHash(creationReview,'create-0')};
+}
+for(const locale of ['en','fr','ar','ja'])test('Memory authored creation UI: explicit publication sends only exact approval and refreshes authored state '+locale,async t=>{
+ const f=fixture(t,locale),control=await retainedMemoryCreationReview(f);let refreshes=0;f.store.refreshEvents=async()=>{refreshes++;};
+ f.panel.draftForTest='Unsent draft never transmitted';
+ const render=f.render();assert.ok(render.markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.creationDetail']));
+ assert.ok(render.buttons.some(button=>button.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.creationApply']&&!button.disabled));
+ const applying=f.host.actionForTest(control),call=await f.take();
+ assert.deepEqual(Object.keys(call.body).sort(),['action','approvedBindingHash','approvedCreationHash','proposalId','executionId','publishToDocument','turnId'].sort());
+ assert.equal(call.body.action,'apply-creation');assert.equal(call.body.publishToDocument,true);assert.match(call.body.approvedCreationHash,/^[a-f0-9]{64}$/u);
+ assert.doesNotMatch(JSON.stringify(call.body),/PRIVATE_|Unsent draft/u);
+ await f.reply(call,{status:'applied',executionId:'approval-a',proposalId:'create-0',blockId:'block-a',eventId:'authored-event'});await applying;
+ assert.equal(refreshes,1);assert.equal(f.host.snapshotForTest().specialist.creationReview,undefined);assert.equal(f.panel.draftForTest,'Unsent draft never transmitted');
+});
+for(const fault of ['blur','field','control','read-only','not-enrolled','expired','changed-review'])test('Memory authored creation UI: '+fault+' cannot dispatch acceptance',async t=>{
+ const f=fixture(t),control=await retainedMemoryCreationReview(f),count=f.calls.length;
+ if(fault==='blur')f.host.retireSemanticForTest();
+ if(fault==='field')control.proposalId='foreign';
+ if(fault==='control')control.bindingHash='different';
+ if(fault==='changed-review')f.host.snapshotForTest().specialist.creationReview.creations[0].text='Different undisplayed suggestion';
+ if(fault==='read-only')f.session.set({...f.session.get(),capabilities:['project.read']});
+ if(fault==='not-enrolled')f.session.set({...f.session.get(),assistant:{...f.session.get().assistant,phase:'guidance'}});
+ if(fault==='expired')f.host.snapshotForTest().specialist.semanticMemory.validUntil=new Date(Date.now()-1).toISOString();
+ await f.host.actionForTest(control);assert.equal(f.calls.length,count);
+});
+test('Memory authored creation UI: late success after withdrawal does not resurrect private review',async t=>{
+ const f=fixture(t),control=await retainedMemoryCreationReview(f);let refreshes=0;f.store.refreshEvents=async()=>{refreshes++;};
+ const applying=f.host.actionForTest(control),call=await f.take();f.host.retireSemanticForTest();
+ await f.reply(call,{status:'applied',executionId:'approval-a',proposalId:'create-0',blockId:'block-a',eventId:'authored-event'});await applying;
+ assert.equal(refreshes,0);assert.equal(f.host.snapshotForTest().specialist.creationReview,undefined);assert.doesNotMatch(f.render().markup,/PRIVATE_/u);
 });

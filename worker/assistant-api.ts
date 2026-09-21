@@ -36,7 +36,7 @@ import {
 } from "./pilot-policy.ts";
 import { type AssistantProviderResult } from "./assistant-provider.ts";
 import { reconcileConsequentialUsage } from "./consequential-consent.ts";
-import { assistantPaidReplyReadGuard, assistantSubmissionStatus, assistantReadAuthorityGuard, assistantMemoryPreparedDocument, certifiedAssistantTaskFeed, certifiedAssistantTurnResponse, rememberAssistantFeedTurnSource, rememberAssistantMemoryTurnSource, type AssistantTaskFeedEntry, assistantTurnContentCustody, ensureAssistantSpecialistColumns, savedAssistantRequest, handleAssistantSpecialistConsent, parkUnsignedAssistantTasks, cancelConsentedAssistantTask, type SpecialistActor, type SpecialistTaskRecord, type AssistantSpecialistHost, type MemoryEditPublication } from "./assistant-specialist-consent.ts";
+import { assistantPaidReplyReadGuard, assistantSubmissionStatus, assistantReadAuthorityGuard, assistantMemoryPreparedDocument, certifiedAssistantTaskFeed, certifiedAssistantTurnResponse, rememberAssistantFeedTurnSource, rememberAssistantMemoryTurnSource, type AssistantTaskFeedEntry, assistantTurnContentCustody, ensureAssistantSpecialistColumns, savedAssistantRequest, handleAssistantSpecialistConsent, parkUnsignedAssistantTasks, cancelConsentedAssistantTask, type SpecialistActor, type SpecialistTaskRecord, type AssistantSpecialistHost, type MemoryEditPublication, type MemoryCreationPublication } from "./assistant-specialist-consent.ts";
 import { readNativeDocumentMemory, prepareNativeStructuredConversationContext, nativeStructuredConversationContextPrecommitStatements, nativeStructuredConversationContextMatches,
   prepareNativeStructuredConversationOwnSend, nativeStructuredConversationOwnSendStatements, nativeStructuredConversationOwnSendMatches,
   type NativeDocumentMemoryContext, type PreparedNativeStructuredConversationContext } from "./memory-live-context.ts";
@@ -1688,33 +1688,42 @@ async function publishAssistantMemoryEdit(env:WorkerEnv,actor:AuthorizedAssistan
   return publishMemoryAuthoredField(env,actor,{...publication,replacement:edit.suggestedText,requestId:publication.review.executionId,
     origin:{kind:'specialist',turnId:publication.review.turnId}});
 }
+async function publishAssistantMemoryCreation(env:WorkerEnv,actor:AuthorizedAssistant,publication:MemoryCreationPublication){
+  const creation=publication.review.creations.find(item=>item.proposalId===publication.proposalId);
+  if(!creation)return json({error:'assistant_memory_creation_invalid'},409);
+  return publishMemoryAuthoredField(env,actor,{...publication,blockId:'',replacement:creation.text,requestId:publication.review.executionId,
+    creation:{proposalId:creation.proposalId,action:{kind:'context.create',blockType:creation.blockType,text:creation.text,intent:creation.intent}},
+    origin:{kind:'specialist',turnId:publication.review.turnId}});
+}
 async function publishMemoryAuthoredField(env:WorkerEnv,actor:AuthorizedAssistant,input:{blockId:string;replacement:string;requestId:string;
+ creation?:{proposalId:string;action:Extract<AssistantContextAction,{kind:'context.create'}>};
  context:MemoryEditPublication['context'];sourceHead:number;preconditions:D1PreparedStatement[];
  origin:{kind:'specialist';turnId:string}|{kind:'background';jobId:string;claimKey:string}}){
   if(!assistantActionsEnabled(env,actor))return json({error:'assistant_authoring_denied'},403);
-  const {blockId,replacement,requestId,context,sourceHead,preconditions,origin}=input;
+  const {replacement,requestId,context,sourceHead,preconditions,origin,creation}=input;
   const projection=await assistantAuthoritativeProjection(env,actor),checked=authoritativeAssistantEvents(
-    {kind:'context.edit',targetBlockId:blockId,text:replacement},context,projection,origin.kind==='specialist'?origin.turnId:'');
+    creation?.action??{kind:'context.edit',targetBlockId:input.blockId,text:replacement},context,projection,origin.kind==='specialist'?origin.turnId:'');
   if(checked.events.length!==1)return json({error:'assistant_memory_edit_invalid'},409);
   const stream=actor.project?'creative:'+actor.project.ownerUserId:actor.principal.streamId;
-  const receipt='memory-edit:'+requestId+':'+blockId,now=new Date().toISOString();
-  const mutation=checked.events[0]!;
+  const mutation=checked.events[0]!,blockId=String(mutation.payload.block_id??'');
+  if(!blockId||mutation.type!==(creation?'BlockCreated':'BlockPropertyEdited'))return json({error:'assistant_memory_edit_invalid'},409);
+  const receipt=(creation?'memory-create:':'memory-edit:')+requestId+':'+(creation?.proposalId??blockId),now=new Date().toISOString();
   delete mutation.payload.source_chat_turn_id;
   mutation.payload={...mutation.payload,memory_authored_version:1,request_id:requestId,...(origin.kind==='specialist'?{source_chat_turn_id:origin.turnId}:{source_memory_job_id:origin.jobId,source_memory_claim_key:origin.claimKey})};
   const guard={sql:'NOT EXISTS(SELECT 1 FROM event_client_receipts WHERE stream_id=? AND client_event_id=?)',bindings:[stream,receipt]};
   const assertProof=(proof:BudgetReservationGuard)=>env.DB.prepare("SELECT CASE WHEN ("+proof.sql+") THEN 1 ELSE json('assistant_memory_edit_stale') END AS verified").bind(...proof.bindings);
   const receipts=(eventId:string,sequence:number)=>[
     env.DB.prepare(`INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at)
-      SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND sequence=? AND type='BlockPropertyEdited'
+      SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND sequence=? AND type=?
         AND json_extract(payload,'$.request_id')=? AND json_extract(payload,'$.memory_authored_version')=1)`)
-      .bind(stream,receipt,eventId,sequence,now,eventId,stream,sequence,requestId),
+      .bind(stream,receipt,eventId,sequence,now,eventId,stream,sequence,mutation.type,requestId),
     env.DB.prepare("SELECT CASE WHEN EXISTS(SELECT 1 FROM event_client_receipts WHERE stream_id=? AND client_event_id=? AND event_id=?) THEN 1 ELSE json('assistant_memory_edit_stale') END AS verified")
       .bind(stream,receipt,eventId),
   ];
   let eventId:string;
   if(actor.project){
     const response=await appendProjectEvents(env,actor.project,actor.principal,{action:'batch',events:[mutation],clientId:'web:assistant-memory',correlationId:requestId},undefined,{
-      preserveGovernance:true,authoringOperation:'memory-edit',expectedOwnerHead:sourceHead,guardSql:guard.sql,guardBindings:guard.bindings,preconditions,
+      preserveGovernance:true,authoringOperation:creation?'memory-create':'memory-edit',expectedOwnerHead:sourceHead,guardSql:guard.sql,guardBindings:guard.bindings,preconditions,
       buildStatements:(lastId,proof,events)=>{if(!proof)throw Error('assistant_memory_edit_stale');return [assertProof(proof),...receipts(lastId,events!.at(-1)!.sequence)];},
     });
     if(!response.ok)return response;
@@ -1730,7 +1739,7 @@ async function publishMemoryAuthoredField(env:WorkerEnv,actor:AuthorizedAssistan
       .bind(...eventWriteBindings(event),stream,sourceHead,...authority.bindings,...guard.bindings),assertProof(authoringEventProof([event])),...receipts(event.eventId,event.sequence)]);
     if(committed.some(result=>result.success!==true)||committed.at(-1)?.results[0]?.verified!==1)throw Error('assistant_memory_edit_unconfirmed');
   }
-  return json({status:'applied',...(origin.kind==='specialist'?{executionId:requestId}:{jobId:origin.jobId,requestId}),eventId,blockId,independentEvidence:false,preservedOnMemoryWithdrawal:true});
+  return json({status:'applied',...(origin.kind==='specialist'?{executionId:requestId}:{jobId:origin.jobId,requestId}),eventId,blockId,...(creation?{proposalId:creation.proposalId}:{}),independentEvidence:false,preservedOnMemoryWithdrawal:true});
 }
 
 const assistantSpecialistHost:AssistantSpecialistHost={
@@ -1738,7 +1747,7 @@ const assistantSpecialistHost:AssistantSpecialistHost={
   kind:(message,context,turnId)=>assistantTaskKind(message,preparedAssistantActions(message,context,turnId)),
   allowedModels:assistantAllowedModels,providerEnrolled:(env,userId)=>featureUsers(env.FORMA_ASSISTANT_PROVIDER_USER_IDS).has(userId),
   solEnrolled:(env,userId)=>featureUsers(env.FORMA_ASSISTANT_SOL_USER_IDS).has(userId),
-  turn:exactAssistantTurn,commit:commitAssistantSpecialistResult,applyMemoryEdit:publishAssistantMemoryEdit,
+  turn:exactAssistantTurn,commit:commitAssistantSpecialistResult,applyMemoryEdit:publishAssistantMemoryEdit,applyMemoryCreation:publishAssistantMemoryCreation,
 };
 export async function handleAssistantSpecialist(request:Request,env:WorkerEnv,execution:WorkerExecutionContext){
   return handleAssistantSpecialistConsent(request,env,execution,assistantSpecialistHost);

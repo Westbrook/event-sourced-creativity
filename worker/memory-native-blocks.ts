@@ -48,9 +48,27 @@ export function decodeNativeMemoryResourceEvent(row:Row,e:NativeMemoryResourceSc
 function nativeFieldUndoEdges(rows:readonly Row[]):Map<string,FieldUndoEdge>{
   const events=rows.map(row=>serializeEvent(row)),byId=new Map(events.map(event=>[event.eventId,event])),edges=new Map<string,FieldUndoEdge>();
   if(byId.size!==rows.length)throw Error('memory-block-undo-identity');
+  // A created block has no prior field value. Its Undo/Redo is an exact
+  // same-author Created -> Removed -> Restored lifecycle, not a second creation.
+  // Accept only that closed linear chain; branches, foreign targets and mixed
+  // field compensation still use the strict pair rules below.
+  const creationEdges=new Set<string>();
+  for(const root of events.filter(event=>event.type==='BlockCreated'&&!event.compensatesEventId)){
+    let current=root;
+    for(;;){
+      const children=events.filter(event=>event.compensatesEventId===current.eventId);
+      if(!children.length)break;
+      if(children.length!==1)throw Error('memory-block-undo-branch');
+      const next=children[0]!;
+      if(next.type!==(current.type==='BlockRemoved'?'BlockRestored':'BlockRemoved')||next.actor!==root.actor
+        ||next.sequence<=current.sequence||next.payload.block_id!==root.payload.block_id)throw Error('memory-block-undo-creation');
+      edges.set(current.eventId,{compensated:1,target:current.compensatesEventId});
+      edges.set(next.eventId,{compensated:0,target:current.eventId});creationEdges.add(next.eventId);current=next;
+    }
+  }
   const opposites:Record<string,string>={BlockLocked:'BlockUnlocked',BlockUnlocked:'BlockLocked',BlockRemoved:'BlockRestored',BlockRestored:'BlockRemoved'};
   for(const event of events){
-    if(!event.compensatesEventId)continue;
+    if(!event.compensatesEventId||creationEdges.has(event.eventId))continue;
     const original=byId.get(event.compensatesEventId),p=event.payload,q=original?.payload;
     if(!original||!q||original.compensatesEventId||original.sequence>=event.sequence||original.actor!==event.actor
       ||p.block_id!==q.block_id||edges.has(original.eventId)||edges.has(event.eventId))throw Error('memory-block-undo-edge');

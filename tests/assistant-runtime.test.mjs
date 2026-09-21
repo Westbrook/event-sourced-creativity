@@ -17657,7 +17657,7 @@ test('native asset ancestry: Memory withdrawal cannot enroll or erase authored w
 });
 
 
-async function semanticAuthoredEditFixture(t,{shared=false,native=false}={}){
+async function semanticAuthoredEditFixture(t,{shared=false,native=false,creation=false}={}){
  const state=await semanticPaidConsumerFixture(t,{shared,assets:true}),projectId=state.current().project_id,documentId=state.recallTarget.documentId,blockId='memory-authored-target';
  state.env.FORMA_ASSISTANT_ACTION_USER_IDS=state.current().actor_user_id;
  const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:projectId,document_id:documentId,
@@ -17677,13 +17677,14 @@ async function semanticAuthoredEditFixture(t,{shared=false,native=false}={}){
   assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;
   const request=JSON.parse(init.body),alias=JSON.parse(request.input).blocks.find(b=>b.text==='Original authored direction.').id;
   return specialistRawResponse(request,{output:[{type:'message',id:'edit-message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Consider this change.',actions:[
-   {kind:'context.edit',block_type:'direction',target_block_id:alias,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:'Explicitly accepted authored direction.'}]})}]}]});
+   {kind:creation?'context.create':'context.edit',block_type:'direction',target_block_id:creation?null:alias,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:'Explicitly accepted authored direction.'}]})}]}]});
  };t.after(()=>{globalThis.fetch=original;});
  const executed=await specialistExecute(state,review,state.semanticOptions);assert.equal(executed.status,202,await executed.clone().text());await state.drainBackground();
- const read=await specialistRetrieve(state,review,state.semanticOptions),result=await read.json();assert.equal(read.status,200,JSON.stringify(result));assert.ok(result.result?.editReview,JSON.stringify(result));
+ const read=await specialistRetrieve(state,review,state.semanticOptions),result=await read.json();assert.equal(read.status,200,JSON.stringify(result));assert.ok(creation?result.result?.creationReview:result.result?.editReview,JSON.stringify(result));
  const {memoryEditApprovalHash}=await import('../src/model/memory-edit-review.ts');
- const approval={action:'apply-edit',turnId:review.turnId,executionId:review.executionId,approvedBindingHash:review.quote.bindingHash,
-  blockId,approvedEditHash:await memoryEditApprovalHash(result.result.editReview,blockId),publishToDocument:true};
+ const {memoryCreationApprovalHash}=await import('../src/model/memory-creation-review.ts');
+ const approval={action:creation?'apply-creation':'apply-edit',turnId:review.turnId,executionId:review.executionId,approvedBindingHash:review.quote.bindingHash,
+  ...(creation?{proposalId:'create-0',approvedCreationHash:await memoryCreationApprovalHash(result.result.creationReview,'create-0')}:{blockId,approvedEditHash:await memoryEditApprovalHash(result.result.editReview,blockId)}),publishToDocument:true};
  return Object.assign(state,{authoredReview:review,authoredResult:result,authoredApproval:approval,authoredBlock:blockId,providerCalls:()=>calls,
   applyAuthored:(body=approval)=>specialistProtocolRequest(state,body,state.semanticOptions)});
 }
@@ -18927,4 +18928,75 @@ for(const phase of ['quote','execute','retrieve'])for(const fault of ['missing-p
  assert.equal(hit,true);assert.ok(response.status>=400,JSON.stringify(body));assert.equal(body.quote,undefined);assert.equal(body.result,undefined);assert.equal(body.memory,undefined);
  await state.drainBackground();assert.equal(calls,phase==='quote'?0:1);db.batch=batch;
  if(phase!=='quote'){const current=await specialistRetrieve(state,review,state.semanticOptions);assert.equal(current.status,200,await current.clone().text());assert.equal(calls,1);}
+});
+
+for(const shared of [false,true])for(const native of [false,true])test('semantic authored creation: private preview promotes once and survives withdrawal '+shared+'/'+native,{timeout:120000},async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared,native,creation:true}),db=state.env.DB;
+ const before=(await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n;
+ const applied=await state.applyAuthored(),body=await applied.json();assert.equal(applied.status,200,JSON.stringify(body)+' SQL '+state.controls.lastDatabaseError);
+ assert.equal(body.proposalId,'create-0');assert.notEqual(body.blockId,state.authoredBlock);assert.equal(body.preservedOnMemoryWithdrawal,true);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,before+1);
+ const event=await db.prepare('SELECT e.event_id,e.type,e.payload,p.private_json FROM events e JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.event_id=?').bind(body.eventId).first();
+ assert.equal(event.type,'BlockCreated');assert.equal(JSON.parse(event.payload).memory_authored_version,1);
+ assert.equal(JSON.parse(event.private_json).properties.text,'Explicitly accepted authored direction.');
+ assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE target_kind='event' AND target_id=?").bind(event.event_id).first()).n,0);
+ assert.equal((await state.applyAuthored()).status,409);
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ assert.equal((await db.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').bind(body.eventId).first()).private_json,event.private_json);
+ assert.equal((await state.applyAuthored()).status,404);assert.equal(state.providerCalls(),1);
+ const undo=await state.request('/api/events',json({action:'append',event:{type:'BlockRemoved',compensatesEventId:body.eventId,payload:{
+  project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:body.blockId,memory_authored_version:1,request_id:state.authoredReview.executionId}}},state.owner));
+ assert.equal(undo.status,200,await undo.clone().text());
+ const removed=(await undo.json()).appended[0];assert.ok(removed);
+ const restored=await state.request('/api/events',json({action:'append',event:{type:'BlockRestored',compensatesEventId:removed.eventId,payload:{
+  project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:body.blockId,memory_authored_version:1,request_id:state.authoredReview.executionId}}},state.owner));
+ assert.equal(restored.status,200,await restored.clone().text());
+});
+for(const shared of [false,true])for(const fault of ['approval','destination','unknown-field','withdrawal','source-race','private-field-race','access-race'])test('semantic authored creation: denies '+fault+' before any authored change '+shared,async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared,creation:true}),db=state.env.DB,approval={...state.authoredApproval};
+ const before=(await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n;
+ if(fault==='approval')approval.approvedCreationHash='f'.repeat(64);
+ if(fault==='destination')approval.publishToDocument=false;
+ if(fault==='unknown-field')approval.text='UNAPPROVED';
+ if(fault==='withdrawal')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+ let hit=false;
+ if(['source-race','private-field-race','access-race'].includes(fault)){
+  const batch=db.batch;db.batch=async statements=>{
+   if(!hit&&statements.some(s=>s.sql?.includes('INSERT INTO event_client_receipts')&&s.values?.includes('memory-create:'+approval.executionId+':'+approval.proposalId))){
+    hit=true;
+    if(fault==='source-race')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+    if(fault==='private-field-race')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Concurrent changed field') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')=?)").run(state.authoredBlock);
+    if(fault==='access-race')state.sqlite.prepare("UPDATE users SET role='viewer',updated_at=? WHERE user_id=?").run(new Date().toISOString(),state.current().actor_user_id);
+   }
+   return batch.call(db,statements);
+  };t.after(()=>{db.batch=batch;});
+ }
+ const applied=await state.applyAuthored(approval);assert.ok(applied.status>=400,await applied.clone().text());
+ if(['source-race','private-field-race','access-race'].includes(fault))assert.equal(hit,true);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,before);assert.equal(state.providerCalls(),1);
+});
+
+for(const shared of [false,true])test('authored Memory creation downstream: creative chat retains negative attribution after withdrawal '+shared,async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared,creation:true}),applied=await state.applyAuthored();assert.equal(applied.status,200);state.authoredBlock=(await applied.json()).blockId;
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ state.env.FORMA_MEMORY_ENABLED='false';const requests=[],original=globalThis.fetch;
+ globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');const request=JSON.parse(init.body),input=JSON.parse(request.input);requests.push(input);
+  if(requests.length===1){const authored=input.blocks.find(block=>block.properties?.text==='Explicitly accepted authored direction.');assert.ok(authored);assert.equal(authored.authorship,'accepted-memory-assisted');assert.equal(authored.independent_evidence,false);}
+  else assert.ok(input.history.some(turn=>turn.role==='assistant'&&turn.authorship==='accepted-memory-assisted'&&turn.independent_evidence===false));
+  assert.doesNotMatch(JSON.stringify(input),new RegExp(state.authoredReview.executionId));
+  return Response.json({id:'synthetic-downstream-'+requests.length,model:request.model,
+   output_text:JSON.stringify({reply:'A deliberate follow-up based on the authored direction.',mutations:[{operation:'create',target_block_id:null,type:'direction',subtype:'General',instruction:'Authored follow-up '+requests.length,handle:'follow-up',reference_pixel_mode:'unchanged',image_format:null}],preview_worthy:false,preview_direction:''}),
+   usage:{input_tokens:80,output_tokens:20,total_tokens:100}});
+ };t.after(()=>{globalThis.fetch=original;});
+ for(let index=0;index<2;index++){
+  const accepted=await state.request('/api/document-jobs',json({kind:'chat',documentId:state.recallTarget.documentId,sourceSurface:'chat',payload:{message:'Refine the current creative direction.',livePreview:false}},state.owner));
+  assert.equal(accepted.status,202,await accepted.clone().text());const queued=await accepted.json();await state.drainBackground();
+  const job=state.sqlite.prepare('SELECT status,error_message FROM document_jobs WHERE job_id=?').get(queued.job.jobId);assert.equal(job.status,'completed',JSON.stringify(job));
+  const rows=state.sqlite.prepare("SELECT e.event_id,e.type,e.payload,p.private_json FROM events e LEFT JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.type IN('BlockCreated','AssistantReasoned') ORDER BY e.sequence DESC").all();
+  const created=rows.find(row=>row.type==='BlockCreated'&&JSON.parse(row.private_json??row.payload).properties?.text==='Authored follow-up '+(index+1));assert.ok(created);assert.equal(JSON.parse(created.payload).memory_authored_version,1);
+  assert.equal(JSON.parse(rows.find(row=>row.type==='AssistantReasoned').payload).memory_authored_version,1);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE target_kind='event' AND target_id=?").get(created.event_id).n,0);
+  if(index===0){for(const blockId of [state.authoredBlock,JSON.parse(created.payload).block_id]){const removed=await state.request('/api/events',json({action:'append',event:{type:'BlockRemoved',payload:{project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:blockId}}},state.owner));assert.equal(removed.status,200,await removed.clone().text());}}
+ }
+ assert.equal(requests.length,2);assert.equal(state.providerCalls(),1,'No retired Memory provider work is repeated');
 });
