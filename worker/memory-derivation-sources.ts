@@ -1,3 +1,4 @@
+import { observeNativeMemoryFieldTargets,type NativeMemoryFieldTarget } from './memory-field-targets.ts';
 import { observeNativeMemoryPageBindings, type NativeMemoryPageBindings } from './memory-native-pages.ts';
 import { behavioralSourceHash, MEMORY_BEHAVIORAL_RESULT_VERSION, type MemoryBehavioralSource } from './memory-behavioral-result.ts';
 import { observeNativeMemoryReuseBindings, type NativeMemoryReuseBindings } from './memory-native-reuse.ts';
@@ -45,7 +46,7 @@ export type NativeDerivationHistory = { version: 1 | 2; windowJobIds: string[]; 
 type CaptureData = { jobId: string; purpose: MemoryDerivationSourcePurpose; scopeKey: string; checkedAt: string; validUntil: string;
   binding: { actorUserId: string; consentId: string; grantId: string; grantRevision: number; enrollmentId: string;
     enrollmentRevision: number; termsSha256: string; afterSequence: number; throughSequence: number };
-  behavioralSources?: MemoryBehavioralSource[]; retentionCeiling: string; originals: MemoryDerivationSource[]; originalBacking: Backing[]; observations: NativeDerivationObservation[];
+  fieldTargets?: NativeMemoryFieldTarget[]; behavioralSources?: MemoryBehavioralSource[]; retentionCeiling: string; originals: MemoryDerivationSource[]; originalBacking: Backing[]; observations: NativeDerivationObservation[];
   provenance: NativeDerivationProvenance; history?: NativeDerivationHistory;
   coverage: { queuedReferences: number; originalPairs: number; typedObservations: number; excludedByUserControls?: number; allReferencesCaptured: true; semanticComplete: false } };
 type MemoryDerivationSourcePurpose = ReturnType<typeof nativeDerivationEvidenceInputs>["grant"]["purpose"];
@@ -703,8 +704,28 @@ export async function captureNativeDerivationSources(env:WorkerEnv,lease:NativeD
     // A v2 wrapper owns the final aggregate replay, including the observation
     // control absence/presence witness. Inner handles never escape this closure.
     // Avoid a duplicate full-history round trip without omitting any assertion.
-    const captured=await captureNativeDerivationOriginalSources(env,lease,options,options.deferFinalReplay===true||input.qualification.terms.recipeVersion===MEMORY_BEHAVIORAL_RESULT_VERSION);
+    const captured=await captureNativeDerivationOriginalSources(env,lease,options,options.deferFinalReplay===true||['memory-field-suggestions-v1',MEMORY_BEHAVIORAL_RESULT_VERSION].includes(input.qualification.terms.recipeVersion));
     if(captured.status!=='captured')return captured;
+    if(input.qualification.terms.recipeVersion==='memory-field-suggestions-v1'){
+      if(!input.userControlsPresent||!input.observationControlsPresent||!input.lifecyclePresent||input.grant.purpose!=='suggestion')return unavailable();
+      const db=env.DB,witness=new AssistantContextReadWitness<CaptureData>(env),data=nativeDerivationSourceInputs(env,captured.capture);
+      const lineages=await Promise.all(data.observations.map(async row=>({eventId:row.eventId,lineageId:await memoryDigest(memoryCanonical([data.scopeKey,'observation',row.outcomeKey??row.eventId]))})));
+      const query:Query={sql:`SELECT lineage_id,revision,action,expires_at FROM memory_derivation_observation_controls
+        WHERE enrollment_id=? AND actor_user_id=? AND purpose='suggestion' AND scope_key=? AND lineage_id IN(SELECT value FROM json_each(?)) ORDER BY lineage_id LIMIT 129`,
+        bindings:[data.binding.enrollmentId,data.binding.actorUserId,data.scopeKey,JSON.stringify(lineages.map(row=>row.lineageId))]};
+      const statement=db.prepare(query.sql).bind(...query.bindings),result=structuredClone(await statement.all<Row>());
+      if(env.DB!==db||!derivationResults([result],1)||result.results.length>128||result.results.some(row=>!derivationExact(row,['lineage_id','revision','action','expires_at'])
+        ||!lineages.some(source=>source.lineageId===row.lineage_id)||!derivationInteger(row.revision,1)||!derivationTime(row.expires_at)||!['suppressed','corrected','released'].includes(String(row.action))))return unavailable();
+      witness.observe([statement],[result],[query]);const blocked=new Set<string>(),deadlines=[data.validUntil];
+      for(const row of result.results)if(String(row.expires_at)>data.checkedAt){deadlines.push(String(row.expires_at));if(row.action!=='released')blocked.add(String(row.lineage_id));}
+      const eligible=data.observations.filter(row=>!blocked.has(lineages.find(lineage=>lineage.eventId===row.eventId)!.lineageId));
+      const fieldTargets=await observeNativeMemoryFieldTargets(env,input.enrollment,inspectionReferences(eligible),witness);
+      if(!nativeDerivationRequestFits(input.qualification.terms,nativeDerivationRequestBody(input.qualification.terms,data.originals,data.observations,fieldTargets)))return capacity();
+      const merged={...data,validUntil:deadlines.sort()[0]!,fieldTargets};witness.before(merged.validUntil);witness.seal(merged);
+      const handle=Object.freeze({}) as NativeDerivationSourceCapture;captures.set(handle,{env,db,lease,validUntil:merged.validUntil,witness,parts:[captured.capture]});
+      if(!options.deferFinalReplay&&!await replayNativeDerivationSources(env,handle)){captures.delete(handle);return unavailable();}
+      return {status:'captured',capture:handle} as const;
+    }
     if(input.qualification.terms.recipeVersion!==MEMORY_BEHAVIORAL_RESULT_VERSION)return captured;
     if(!input.observationControlsPresent||!input.lifecyclePresent)return unavailable();
     const db=env.DB,witness=new AssistantContextReadWitness<CaptureData>(env),seen=new Set<string>();
@@ -744,5 +765,5 @@ export async function captureNativeDerivationSources(env:WorkerEnv,lease:NativeD
     const handle=Object.freeze({}) as NativeDerivationSourceCapture;captures.set(handle,{env,db,lease,validUntil:merged.validUntil,witness,parts:[captured.capture]});
     if(!options.deferFinalReplay&&!await replayNativeDerivationSources(env,handle)){captures.delete(handle);return unavailable();}
     return {status:'captured',capture:handle} as const;
-  }catch{return unavailable();}
+  }catch(error){return error instanceof Error&&error.message==='memory_field_capacity'?capacity():unavailable();}
 }

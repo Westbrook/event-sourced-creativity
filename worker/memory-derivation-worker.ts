@@ -7,7 +7,7 @@ import { claimNativeDerivationJob,nativeDerivationLeaseInputs } from './memory-d
 import { captureNativeDerivationSources,nativeDerivationSourceInputs } from './memory-derivation-sources.ts';
 import { executeNativeDerivationProvider } from './memory-derivation-provider.ts';
 import { publishNativeDerivationResult,readNativeDerivationResult } from './memory-derivation-results.ts';
-import { completeEmptyNativeDerivation,completeRetainedNativeDerivation } from './memory-derivation-completion.ts';
+import { nativeDerivationHasEligibleInput,completeEmptyNativeDerivation,completeRetainedNativeDerivation } from './memory-derivation-completion.ts';
 
 const admitted=(env:WorkerEnv)=>env.FORMA_MEMORY_SCHEDULING_ENABLED==='true'&&env.FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED==='true';
 export type NativeDerivationWorkStatus='disabled'|'idle'|'split'|'stored'|'no-eligible-originals'|'capacity'|'unavailable'|'uncertain'|'charged-invalid';
@@ -72,7 +72,7 @@ export async function runNativeDerivationScheduled(env:WorkerEnv):Promise<{statu
   }
   if(!admitted(env))return {status:'unavailable',processed:0};
   const source=nativeDerivationSourceInputs(env,captured.capture);
-  if(!source.originals.length&&!source.behavioralSources?.length)return await completeEmptyNativeDerivation(env,captured.capture)
+  if(!nativeDerivationHasEligibleInput(source))return await completeEmptyNativeDerivation(env,captured.capture)
     ?{status:'no-eligible-originals',processed:1}:{status:'uncertain',processed:0};
   const response=await executeNativeDerivationProvider(env,lease,captured.capture);
   // Capacity is established before any reservation/dispatch. Continue the

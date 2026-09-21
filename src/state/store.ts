@@ -7029,7 +7029,7 @@ export class FormaStore {
    * pointer cannot inject text, grant authorship or revive a retired preview.
    * Shared event reads deliberately omit private Chat pointers; the canonical
    * event identity and execution receipt identify the accepted public edit. */
-  rememberMemoryAuthoredEdit(receipt:{eventId:string;executionId:string;turnId:string;blockId:string;projectId:string;documentId:string}){
+  rememberMemoryAuthoredEdit(receipt:{eventId:string;executionId:string;turnId?:string;jobId?:string;blockId:string;projectId:string;documentId:string}){
     const owner=this.captureSourceOwnership(),projection=this.projection.get();
     if(!this.sourceOwnershipActive(owner)||projection.projectId!==receipt.projectId||projection.documentId!==receipt.documentId)return false;
     const event=this.events.get().find(item=>item.eventId===receipt.eventId),block=projection.blocks.find(item=>item.id===receipt.blockId);

@@ -43,6 +43,17 @@ test('field generation binds exact saved Unicode text and clones closed target d
   assert.equal(await memoryFieldRequestCurrent({decisionAtoms:[{...atom,...patch}]},parsed),false);
  assert.equal(await memoryFieldRequestCurrent({decisionAtoms:[atom,atom]},parsed),false);
  for(const patch of [{field:'label'},{revision:0},{revision:1.1},{textHash:'invalid'},{blockId:'\ud800'},{draft:'never accepted'}])assert.equal(parseMemoryFieldRequest({...request,...patch}),null);
- const getter={...request};Object.defineProperty(getter,'blockId',{enumerable:true,get(){assert.fail('do not run getters');}});assert.equal(parseMemoryFieldRequest(getter),null);
+ const getter={...request};Object.defineProperty(getter,'blockId',{enumerable:true,get(){return assert.fail('do not run getters');}});assert.equal(parseMemoryFieldRequest(getter),null);
  await assert.rejects(memoryFieldTextHash('\ud800'));
 });
+
+const {parseMemoryBackgroundField,memoryBackgroundFieldApprovalHash}=await import('../src/model/memory-background-field.ts');
+const backgroundFixture=()=>({version:'memory-background-field-v1',jobId:'a'.repeat(64),claimKey:'derived:'+'b'.repeat(64),outputHash:'c'.repeat(64),projectId:target.projectId,documentId:target.documentId,blockId:target.blockId,revision:target.revision,sequence:17,textHash:'d'.repeat(64),beforeExcerpt:target.text,suggestedText:'候補',locale:target.locale,validUntil:new Date(Date.now()+30000).toISOString(),independentEvidence:false});
+test('background field presentation has a real job identity and exact replacement approval without a fake turn',async()=>{
+ const value=backgroundFixture(),parsed=parseMemoryBackgroundField(value,target);assert.ok(parsed);assert.notEqual(parsed,value);assert.equal(Object.hasOwn(parsed,'turnId'),false);
+ const approved=await memoryBackgroundFieldApprovalHash(value);assert.match(approved,/^[a-f0-9]{64}$/u);
+ value.suggestedText+=' changed';assert.notEqual(await memoryBackgroundFieldApprovalHash(value),approved);
+ for(const key of ['jobId','outputHash','textHash']){const revised=backgroundFixture();revised[key]='e'.repeat(64);assert.notEqual(await memoryBackgroundFieldApprovalHash(revised),approved);}
+});
+for(const [key,value]of Object.entries({jobId:'invalid',claimKey:'invalid',revision:0,sequence:0,beforeExcerpt:'UNSENT',locale:'en',suggestedText:'',independentEvidence:true,validUntil:new Date(0).toISOString(),turnId:'fake-turn',projectId:'other'}))test('background field presentation rejects '+key,()=>assert.equal(parseMemoryBackgroundField({...backgroundFixture(),[key]:value},target),null));
+test('background field presentation refuses accessors without invocation',()=>{const value=backgroundFixture();Object.defineProperty(value,'jobId',{enumerable:true,get(){return assert.fail('No getter invocation');}});assert.equal(parseMemoryBackgroundField(value,target),null);});

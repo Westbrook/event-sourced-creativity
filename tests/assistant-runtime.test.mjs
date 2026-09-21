@@ -12915,7 +12915,7 @@ async function nativeDerivationFixture(t,{shared=false,qualified=true,delivery=f
   const input={version:policy.MEMORY_DERIVATION_CONTROL,policyVersion:policy.MEMORY_DERIVATION_POLICY,purpose:terms.purpose,
     qualificationId:'isolated-qualification',termsSha256:termsHash,projectId:state.preferences.projectId,documentId:state.preferences.documentId,
     enrollmentId:state.current().enrollment_id,enrollmentRevision:state.current().revision,revision:0,expectedConsentId:null,expectedCustody:state.preferences.expectedCustody,
-    monthlyCapMicroUsd:terms.monthlyCapMicroUsd,background:true,retentionDays:1,expiresAt,sourceWindow:terms.recipeVersion==='memory-derivation-candidates-v2'?'future-originals-and-actions':'future-originals',chargeMyAiAllowance:true,confirmation:'ENABLE_DERIVED_MEMORY'};
+    monthlyCapMicroUsd:terms.monthlyCapMicroUsd,background:true,retentionDays:1,expiresAt,sourceWindow:policy.memoryDerivationSourceWindow(terms.recipeVersion),chargeMyAiAllowance:true,confirmation:'ENABLE_DERIVED_MEMORY'};
   const request=(method='GET',body=input,query=method==='GET'?'?projectId=project-atmosphere&documentId=doc-atmosphere':'')=>
     handleMemoryDerivationSettings(new Request(origin+'/api/memory/derivation/settings'+query,method==='GET'?{headers:state.owner}:
       {...json(body,{...state.owner,origin}),method}),state.env);
@@ -13701,7 +13701,7 @@ test('native derivation delivery: conversation bookkeeping keeps exact reference
   state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.deepEqual(state.queue(),before);
 });
 
-async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,originalCount=1,termOverrides={},beforeEnrollment}={}){
+async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,originalCount=1,termOverrides={},beforeEnrollment,beforeRun}={}){
   const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides,beforeEnrollment:async state=>{
     state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
     if(recovery||results)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0046_memory_derivation_recovery_cursor.sql',import.meta.url),'utf8'));
@@ -13719,6 +13719,7 @@ async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,rec
     const inspected=await state.request('/api/events/hot',json({action:'hot',event:{type:'BlockInspected',payload:{project_id:e.project_id,document_id:e.document_id,block_id:blockId,source_event_ids:[source.eventId],source_surface:'document-context-controls'}}},state.owner));
     assert.equal(inspected.status,200,await inspected.clone().text());
   }else{for(let index=0;index<originalCount;index++){const completed=await state.send('financial-execution-original'+(index?'-'+index:''));if(paid)await nativeDerivationPaidTurn(state,completed);}}
+  if(beforeRun)await beforeRun(state);
   state.due();await state.run();
   const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts'),finance=await import('../worker/memory-derivation-finance.ts');
   const job=state.queue().jobs[0];
@@ -14511,13 +14512,13 @@ test('native derivation worker: default-off path cannot touch data or dispatch',
   assert.deepEqual(await runNativeDerivationScheduled({...env,FORMA_MEMORY_SCHEDULING_ENABLED:'true',FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED:'TRUE'}),{status:'disabled',processed:0});
 });
 
-async function nativeDerivationWorkerFixture(t,{skipOriginal=false,shared=false,termOverrides={}}={}){
+async function nativeDerivationWorkerFixture(t,{skipOriginal=false,shared=false,termOverrides={},beforeRun}={}){
   const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides:{maximumInputTokens:16384,...termOverrides},beforeEnrollment:async state=>{
     for(const name of ['0045_memory_derivation_finance','0046_memory_derivation_recovery_cursor','0047_memory_derivation_results','0048_memory_derivation_user_controls','0049_memory_derivation_completion','0050_memory_derivation_lifecycle','0052_memory_derivation_history_privacy'])
       state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
-    if(termOverrides.recipeVersion==='memory-derivation-candidates-v2')for(const name of ['0054_memory_derivation_index_intents','0057_memory_derivation_observation_controls'])state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
+    if(['memory-derivation-candidates-v2','memory-field-suggestions-v1'].includes(termOverrides.recipeVersion))for(const name of ['0054_memory_derivation_index_intents','0057_memory_derivation_observation_controls'])state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
   }});
-  if(!skipOriginal){await state.send('scheduled-native-original');state.due();assert.equal((await state.run()).status,'completed');}
+  if(!skipOriginal){await state.send('scheduled-native-original');if(beforeRun)await beforeRun(state);state.due();assert.equal((await state.run()).status,'completed');}
   Object.assign(state.env,{FORMA_MEMORY_SCHEDULING_ENABLED:'true',FORMA_MEMORY_DERIVATION_PROCESSING_ENABLED:'true',OPENAI_API_KEY:'isolated-not-a-credential'});
   return state;
 }
@@ -18434,4 +18435,126 @@ for(const fault of ['partial-schema','unknown-trigger','oversized-edge','expired
   db.batch=async statements=>{const rows=await batch.call(db,statements);if(!injected&&statements.some(s=>s.sql.includes('organization_project_nesting')&&s.sql.includes('AS verified'))){injected=true;const next=performance.now()+31000;t.mock.method(performance,'now',()=>next);}return rows;};
  }
  const response=await state.nesting();assert.equal(response.status,503,await response.clone().text());const body=await response.json();assert.equal(Object.hasOwn(body,'ancestors'),false);assert.equal(Object.hasOwn(body,'candidates'),false);
+});
+
+async function appendNativeBackgroundField(seed){
+ const blockId='background-field';
+   const e=seed.current(),created=await seed.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:e.project_id,document_id:e.document_id,block_id:blockId,scope:'document',type:'direction',properties:{text:'Saved original field.'}}}},seed.owner));
+   assert.equal(created.status,200,await created.clone().text());const event=(await created.json()).appended.find(row=>row.type==='BlockCreated');
+   const inspected=await seed.request('/api/events/hot',json({action:'hot',event:{type:'BlockInspected',payload:{project_id:e.project_id,document_id:e.document_id,block_id:blockId,source_event_ids:[event.eventId],source_surface:'document-context-controls'}}},seed.owner));assert.equal(inspected.status,200,await inspected.clone().text());
+}
+async function nativeBackgroundFieldFixture(t,{shared=false,hosted=false}={}){
+ const blockId='background-field',state=await nativeDerivationExecutionFixture(t,{shared,hosted,results:true,userControls:true,lifecycle:true,completion:true,observationControls:true,
+  termOverrides:{purpose:'suggestion',recipeVersion:'memory-field-suggestions-v1',maximumInputTokens:32768},beforeRun:appendNativeBackgroundField
+  });
+ const source=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture);assert.equal(source.fieldTargets.length,1);assert.equal(source.fieldTargets[0].text,'Saved original field.');
+ const provider=await import('../worker/memory-derivation-provider.ts'),store=await import('../worker/memory-derivation-results.ts'),index=source.originals.findIndex(value=>value.role==='user'),human=source.originals[index];
+ const output={version:'memory-field-suggestions-v1',items:[{operation:'assert',target:null,category:'proposal',text:'A tentative field adjustment.',supports:[{sourceIndex:index,start:0,end:12,text:Array.from(human.text).slice(0,12).join('')}],counterevidence:[],fieldIndex:0,replacement:'Explicitly accepted background direction.',locale:'en'}]};
+ const original=globalThis.fetch;let calls=0;state.env.OPENAI_API_KEY='isolated-not-a-credential';
+ globalThis.fetch=async(url,init)=>{if(String(url)!=='https://api.openai.com/v1/responses')return original(url,init);calls++;const request=JSON.parse(init.body),input=JSON.parse(request.input);
+  assert.equal(input.fields.length,1);assert.deepEqual(Object.keys(input.fields[0]).sort(),['field','fieldIndex','independentEvidence','text']);assert.equal(input.fields[0].text,'Saved original field.');
+  return Response.json({id:'isolated-background-field',object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+   usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify(output)}]}]});};t.after(()=>{globalThis.fetch=original;});
+ const result=await provider.executeNativeDerivationProvider(state.env,state.executionLease,state.executionCapture);assert.equal(result.status,'candidate',JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+ assert.equal((await store.publishNativeDerivationResult(state.env,result.receipt)).status,'stored',state.controls.lastDatabaseError);
+ state.env.FORMA_ASSISTANT_ACTION_USER_IDS=state.current().actor_user_id;
+ const e=state.current(),path='/api/assistant/field-suggestion?'+new URLSearchParams({route:'/document/'+e.document_id,projectId:e.project_id,blockId,locale:'en'});
+ return Object.assign(state,{fieldPath:path,fieldBlock:blockId,resultStore:store,providerCalls:()=>calls});
+}
+for(const shared of [false,true])for(const hosted of [false,true])test('background Memory field: native exact review, explicit authoring and withdrawal '+shared+'/'+hosted,{timeout:180000},async t=>{
+ const state=await nativeBackgroundFieldFixture(t,{shared,hosted}),db=state.env.DB;
+ const response=await state.request(state.fieldPath,{headers:state.owner}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+ assert.equal(body.suggestion?.version,'memory-background-field-v1',JSON.stringify(body));assert.equal(body.suggestion.beforeExcerpt,'Saved original field.');
+ const {memoryBackgroundFieldApprovalHash}=await import('../src/model/memory-background-field.ts'),view=body.suggestion;
+ const approval={jobId:view.jobId,claimKey:view.claimKey,approvedEditHash:await memoryBackgroundFieldApprovalHash(view),validUntil:view.validUntil,publishToDocument:true};
+ const applied=await state.request(state.fieldPath,json(approval,state.owner)),receipt=await applied.json();assert.equal(applied.status,200,JSON.stringify(receipt)+' '+state.controls.lastDatabaseError);
+ assert.equal(receipt.preservedOnMemoryWithdrawal,true);assert.equal(receipt.jobId,view.jobId);assert.equal(Object.hasOwn(receipt,'executionId'),false);
+ const event=await db.prepare('SELECT payload FROM events WHERE event_id=?').bind(receipt.eventId).first();assert.ok(event);const payload={...JSON.parse(event.payload),...JSON.parse((await db.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').bind(receipt.eventId).first())?.private_json??'{}')};
+ assert.equal(payload.memory_authored_version,1);assert.equal(payload.source_memory_job_id,view.jobId);assert.equal(Object.hasOwn(payload,'source_chat_turn_id'),false);
+ assert.equal((await state.request(state.fieldPath,json(approval,state.owner))).status,409,'No duplicate apply');
+ const before=await db.prepare('SELECT * FROM memory_derivation_usage').all();
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,view.jobId),true);
+ assert.ok(await db.prepare('SELECT event_id FROM events WHERE event_id=?').bind(receipt.eventId).first(),'Authored work survives private withdrawal');
+ assert.deepEqual((await db.prepare('SELECT * FROM memory_derivation_usage').all()).results,before.results);
+ const after=await state.request(state.fieldPath,{headers:state.owner});assert.equal(after.status,200,await after.clone().text());assert.equal((await after.json()).suggestion,null);assert.equal(state.providerCalls(),1);
+ let compensation=receipt.eventId;
+ for(const [oldValue,newValue]of [['Explicitly accepted background direction.','Saved original field.'],['Saved original field.','Explicitly accepted background direction.']]){
+  const changed=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',compensatesEventId:compensation,payload:{project_id:view.projectId,document_id:view.documentId,block_id:view.blockId,property_path:'text',old_value:oldValue,new_value:newValue,memory_authored_version:1,request_id:receipt.requestId}}},state.owner));
+  assert.equal(changed.status,200,await changed.clone().text());compensation=(await changed.json()).appended[0].eventId;
+  const retained=await db.prepare('SELECT e.payload,p.private_json FROM events e JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.event_id=?').bind(compensation).first();
+  assert.equal(JSON.parse(retained.payload).memory_authored_version,1);assert.equal(JSON.parse(retained.private_json).new_value,newValue);
+ }
+});
+for(const shared of [false,true])test('background Memory field: missing lifecycle cannot offer or enroll saved-field recipe '+shared,async t=>{
+ const state=await nativeDerivationFixture(t,{shared,termOverrides:{purpose:'suggestion',recipeVersion:'memory-field-suggestions-v1'}});
+ const view=await(await state.derivationRequest()).json();assert.equal(view.available,false);assert.deepEqual(view.qualifications,[]);
+ assert.equal((await state.derivationRequest('PUT')).status,503);assert.equal(state.derivationRows().length,0);
+});
+
+for(const shared of [false,true])for(const fault of ['approval','replacement-injection','withdrawal','old-field','wrong-owner','source-race','field-race','access-race','expired-approval','lost-ack'])test('background Memory field: fails closed for '+fault+' '+shared,async t=>{
+ const state=await nativeBackgroundFieldFixture(t,{shared}),db=state.env.DB;
+ const response=await state.request(state.fieldPath,{headers:state.owner}),view=(await response.json()).suggestion;assert.ok(view);
+ const {memoryBackgroundFieldApprovalHash}=await import('../src/model/memory-background-field.ts'),approval={jobId:view.jobId,claimKey:view.claimKey,approvedEditHash:await memoryBackgroundFieldApprovalHash(view),validUntil:view.validUntil,publishToDocument:true};
+ if(fault==='approval')approval.approvedEditHash='f'.repeat(64);
+ if(fault==='replacement-injection')approval.replacement='UNAPPROVED';
+ if(fault==='expired-approval')approval.validUntil=new Date(0).toISOString();
+ if(fault==='withdrawal')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,view.jobId);
+ if(fault==='old-field')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','New current field') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')=?)").run(state.fieldBlock);
+ const before=state.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n;let hit=false;
+ if(fault.endsWith('-race')||fault==='lost-ack'){
+  const batch=db.batch;db.batch=async statements=>{
+   const applying=!hit&&statements.some(s=>s.sql?.includes('INSERT INTO event_client_receipts')&&s.values?.some(value=>typeof value==='string'&&value.startsWith('memory-edit:memory-field:')));
+   if(applying){hit=true;
+    if(fault==='source-race')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,view.jobId);
+    if(fault==='field-race')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Racing native field') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')=?)").run(state.fieldBlock);
+    if(fault==='access-race')state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run(state.current().actor_user_id);
+   }
+   const result=await batch.call(db,statements);if(applying&&fault==='lost-ack')throw Error('Synthetic lost commit acknowledgment');return result;
+  };t.after(()=>{db.batch=batch;});
+ }
+ const headers=fault==='wrong-owner'?{'oai-authenticated-user-id':'unrelated-user'}:state.owner;
+ const applied=await state.request(state.fieldPath,json(approval,headers));assert.ok(applied.status>=400,await applied.clone().text());
+ if(fault.endsWith('-race')||fault==='lost-ack')assert.equal(hit,true);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n,before+(fault==='lost-ack'?1:0));
+ if(fault==='lost-ack'){assert.ok((await state.request(state.fieldPath,json(approval,state.owner))).status>=400);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM events').get().n,before+1);}
+ assert.equal(state.providerCalls(),1);
+});
+
+for(const shared of [false,true])test('background Memory field: no encountered field completes without finance or provider work '+shared,async t=>{
+ const state=await nativeDerivationExecutionFixture(t,{shared,results:true,userControls:true,lifecycle:true,observationControls:true,completion:true,
+  termOverrides:{purpose:'suggestion',recipeVersion:'memory-field-suggestions-v1',maximumInputTokens:32768}});
+ const source=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture);assert.ok(source.originals.length);assert.deepEqual(source.fieldTargets,[]);
+ const completion=await import('../worker/memory-derivation-completion.ts');assert.equal(completion.nativeDerivationHasEligibleInput(source),false);
+ assert.equal(await completion.completeEmptyNativeDerivation(state.env,state.executionCapture),true);
+ assert.equal(state.sqlite.prepare('SELECT outcome FROM memory_derivation_completions').get().outcome,'no-eligible-originals');
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);assert.equal(state.calls.length,0);
+});
+for(const shared of [false,true])test('background Memory field: suppressed encountered actions cannot recur after release '+shared,async t=>{
+ const state=await nativeBackgroundFieldFixture(t,{shared}),source=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture),now=new Date().toISOString(),{memoryDigest}=await import('../src/model/scoped-memory.ts');
+ for(const original of source.observations.filter(row=>row.blockPointer===state.fieldBlock)){
+  const lineage=await memoryDigest(JSON.stringify([source.scopeKey,'observation',original.outcomeKey??original.eventId])),row={control_id:await memoryDigest('control:'+lineage),enrollment_id:source.binding.enrollmentId,actor_user_id:source.binding.actorUserId,purpose:source.purpose,scope_key:source.scopeKey,lineage_id:lineage,claim_key:'isolated-field-suppression',source_event_ref:original.eventId,revision:1,action:'suppressed',correction_text:null,created_at:now,updated_at:now,expires_at:original.expiresAt};
+  state.sqlite.prepare('INSERT INTO memory_derivation_observation_controls('+Object.keys(row).join(',')+') VALUES('+Object.keys(row).map(()=>'?').join(',')+')').run(...Object.values(row));
+ }
+ const evidence=await state.admission.observeNativeDerivationJob(state.env,state.current().actor_user_id,state.executionJob.job_id);assert.ok(evidence);
+ const capture=await state.sources.captureNativeDerivationSources(state.env,evidence);assert.equal(capture.status,'captured');assert.deepEqual(state.sources.nativeDerivationSourceInputs(state.env,capture.capture).fieldTargets,[]);
+ assert.equal(await state.resultStore.readNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),null);
+ state.sqlite.prepare("UPDATE memory_derivation_observation_controls SET revision=2,action='released',updated_at=?").run(now);
+ assert.equal(await state.resultStore.readNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),null);assert.equal(state.providerCalls(),1);
+});
+
+for(const shared of [false,true])for(const lostAck of [false,true])test('background Memory field: scheduled worker publishes once and recovers without repurchase '+shared+'/'+lostAck,async t=>{
+ const state=await nativeDerivationWorkerFixture(t,{shared,termOverrides:{purpose:'suggestion',recipeVersion:'memory-field-suggestions-v1',maximumInputTokens:32768},beforeRun:appendNativeBackgroundField});
+ const db=state.env.DB,batch=db.batch,worker=await import('../worker/memory-derivation-worker.ts'),original=globalThis.fetch;let calls=0,hit=false;
+ if(lostAck)db.batch=async statements=>{const result=await batch.call(db,statements);if(!hit&&statements.some(s=>s.sql.startsWith('INSERT INTO memory_derivation_completions('))){hit=true;throw Error('Synthetic lost publication acknowledgment');}return result;};
+ t.after(()=>{db.batch=batch;globalThis.fetch=original;});
+ globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;const input=JSON.parse(JSON.parse(init.body).input);assert.equal(input.fields.length,1);assert.deepEqual(input.observations,[]);
+  const sourceIndex=input.originals.findIndex(row=>row.role==='user'),text=Array.from(input.originals[sourceIndex].text).slice(0,12).join('');
+  const output={version:'memory-field-suggestions-v1',items:[{operation:'assert',target:null,category:'proposal',text:'A tentative scheduled adjustment.',supports:[{sourceIndex,start:0,end:12,text}],counterevidence:[],fieldIndex:0,replacement:'Background review proposal.',locale:'en'}]};
+  return Response.json({id:'isolated-scheduled-field',object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+   usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify(output)}]}]});};
+ const first=await worker.runNativeDerivationScheduled(state.env);assert.equal(first.status,lostAck?'uncertain':'stored',JSON.stringify(first)+' '+state.controls.lastDatabaseError);
+ db.batch=batch;assert.equal((await worker.runNativeDerivationScheduled(state.env)).status,'idle');assert.equal(calls,1);assert.equal(hit,lostAck);
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_results').get().state,'active');
+ const jobId=state.sqlite.prepare('SELECT job_id FROM memory_derivation_results').get().job_id,store=await import('../worker/memory-derivation-results.ts');assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,jobId));
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').get().n,1);
 });

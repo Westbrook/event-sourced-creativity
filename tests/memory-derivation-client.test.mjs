@@ -533,3 +533,17 @@ for(const fault of ['missing','self-link','duplicate','operation','scope-purpose
  if(fault==='too-many')f.item.reconciles=Array.from({length:5},()=>f.item.reconciles[0]);
  await assert.rejects(createMemoryDerivationClient(async()=>Response.json(f.result)).inspectResult(f.entry));
 });
+
+function fieldViewFixture(){const f=briefFixture();f.entry.purpose=f.result.candidate.purpose='suggestion';f.result.candidate.version='memory-field-suggestions-v1';
+ Object.assign(f.item,{category:'proposal',fieldTarget:{blockId:'block',field:'text',revision:2,sequence:17,textHash:hash('Original')},replacement:'Suggested saved field.',locale:'en'});return f;}
+test('background field client preserves exact review metadata and export without applying it',async()=>{
+ const f=fieldViewFixture(),client=createMemoryDerivationClient(async()=>Response.json(f.result));
+ const view=await client.inspectResult(f.entry);assert.deepEqual(view.items[0].fieldTarget,f.item.fieldTarget);assert.equal(view.items[0].replacement,f.item.replacement);assert.ok(Object.isFrozen(view.items[0].fieldTarget));
+ const exported=JSON.parse((await client.exportResult(f.entry)).json);assert.equal(exported.result.items[0].fieldProposal.applied,false);assert.equal(exported.result.items[0].fieldProposal.replacement,f.item.replacement);
+});
+for(const fault of ['wrong-purpose','extra-authority','invalid-hash','duplicate-field','oversize','wrong-locale'])test('background field client rejects '+fault,async()=>{
+ const f=fieldViewFixture();if(fault==='wrong-purpose')f.entry.purpose=f.result.candidate.purpose='profile';if(fault==='extra-authority')f.item.fieldTarget.apply=true;
+ if(fault==='invalid-hash')f.item.fieldTarget.textHash='invalid';if(fault==='oversize')f.item.replacement='🪴'.repeat(601);if(fault==='wrong-locale')f.item.locale='other';
+ if(fault==='duplicate-field')f.result.candidate.items.push({...structuredClone(f.item),claimKey:'derived:'+hash('duplicate-field')});
+ await assert.rejects(()=>createMemoryDerivationClient(async()=>Response.json(f.result)).inspectResult(f.entry));
+});

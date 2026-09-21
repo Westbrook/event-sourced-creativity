@@ -400,3 +400,33 @@ test('profile recipe qualification is explicit and restricted to profile without
  assert.deepEqual(request.text.format.schema.properties.version.enum,['memory-profile-consolidation-v1']);assert.ok(request.text.format.schema.properties.items.items.required.includes('reconciles'));
  assert.match(request.instructions,/ORIGINAL HUMAN/);assert.equal(request.store,false);
 });
+
+const {parseMemoryFieldResult}=await import('../worker/memory-field-result.ts');
+function fieldCandidateFixture(){
+ const f=derivationFixture('suggestion');f.body.version='memory-field-suggestions-v1';Object.assign(f.item,{fieldIndex:0,replacement:'A green direction.',locale:'en'});
+ const fields=[{blockId:'block',field:'text',revision:2,sequence:17,textHash:hashMemoryText('Original'),text:'Original',eventIds:['creation','edit']}];
+ return {...f,fields,parse:()=>parseMemoryFieldResult(JSON.stringify(f.body),f.context,fields)};
+}
+test('background field candidate binds only a native field index, original human support and immutable target',async()=>{
+ const f=fieldCandidateFixture(),result=await f.parse();assert.ok(result);assert.equal(result.items[0].fieldTarget.blockId,'block');assert.equal(result.items[0].replacement,'A green direction.');
+ assert.equal(result.independentEvidence,false);assert.ok(Object.isFrozen(result.items[0].fieldTarget));assert.match(result.items[0].claimKey,/^derived:[a-f0-9]{64}$/u);
+ const key=result.items[0].claimKey;f.fields[0].sequence++;assert.notEqual((await f.parse()).items[0].claimKey,key);
+});
+for(const fault of ['unobserved-index','duplicate-field','unchanged','oversize','invalid-unicode','unknown-locale','wrong-purpose','assistant-only','extra-authority','duplicate-json','empty-fields','bad-native-hash','native-accessor','duplicate-target'])test('background field parser rejects '+fault,async()=>{
+ const f=fieldCandidateFixture();
+ if(fault==='unobserved-index')f.item.fieldIndex=1;
+ if(fault==='duplicate-field')f.body.items.push(structuredClone(f.item));
+ if(fault==='unchanged')f.item.replacement=f.fields[0].text;
+ if(fault==='oversize')f.item.replacement='🪴'.repeat(601);
+ if(fault==='invalid-unicode')f.item.replacement='\ud800';
+ if(fault==='unknown-locale')f.item.locale='unknown';
+ if(fault==='wrong-purpose')f.context.purpose='profile';
+ if(fault==='assistant-only')f.item.supports=[f.quote(1,0,12)];
+ if(fault==='extra-authority')f.item.blockId='model-invented-id';
+ if(fault==='empty-fields')f.fields.length=0;
+ if(fault==='bad-native-hash')f.fields[0].textHash='bad';
+ if(fault==='native-accessor')Object.defineProperty(f.fields[0],'text',{enumerable:true,get(){return assert.fail('Never execute input accessors');}});
+ if(fault==='duplicate-target')f.fields.push(structuredClone(f.fields[0]));
+ const raw=fault==='duplicate-json'?JSON.stringify(f.body).replace('"fieldIndex":0','"fieldIndex":1,"fieldIndex":0'):JSON.stringify(f.body);
+ assert.equal(await parseMemoryFieldResult(raw,f.context,f.fields),null);
+});

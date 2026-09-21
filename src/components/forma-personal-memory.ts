@@ -1,3 +1,4 @@
+import { memoryDerivationSourceWindow } from "../model/memory-derivation-policy.ts";
 import './memory-recall-boundary.ts';
 import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import { html, nothing } from "lit";
@@ -1014,7 +1015,7 @@ export class FormaPersonalMemory extends FormaElement {
       qualificationId: offer.qualificationId, termsSha256: offer.termsSha256, projectId: row.projectId, documentId: row.documentId,
       enrollmentId: row.id, enrollmentRevision: row.revision, revision: prior?.revision ?? 0, expectedConsentId: prior?.consentId ?? null,
       expectedCustody: custody, monthlyCapMicroUsd: offer.terms.monthlyCapMicroUsd, background: this.#purposeDraft.background,
-      retentionDays: row.retentionDays, expiresAt, sourceWindow: offer.terms.recipeVersion==='memory-derivation-candidates-v2'?"future-originals-and-actions":"future-originals", chargeMyAiAllowance: true as const, confirmation: "ENABLE_DERIVED_MEMORY" as const };
+      retentionDays: row.retentionDays, expiresAt, sourceWindow: memoryDerivationSourceWindow(offer.terms.recipeVersion), chargeMyAiAllowance: true as const, confirmation: "ENABLE_DERIVED_MEMORY" as const };
     this.#purposeDraft = { ...this.#purposeDraft, charge: false, consent: false };
     return this.#runPurpose(event, "enable", signal => this.#purposeClient.enable(draft, signal), result => {
       this.#purposeSettings = { ...settings, grants: [...settings.grants.filter(item => item.purpose !== result.purpose), result] }; this.#purposeNotice = "purposeSaved";
@@ -1182,7 +1183,7 @@ export class FormaPersonalMemory extends FormaElement {
               <p>${this.#t("purposeBounds", { days: this.i18n.number(row.retentionDays), at: this.i18n.date(new Date(row.expiresAt < offer.expiresAt ? row.expiresAt : offer.expiresAt), { dateStyle: "medium", timeStyle: "short" }) })}</p>` : nothing}
             <label class="toggle-row"><input type="checkbox" name="memory-purpose-charge" .checked=${this.#purposeDraft.charge} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "charge"))}>${this.#t("purposeCharge")}</label>
             <label class="toggle-row"><input type="checkbox" name="memory-purpose-background" .checked=${this.#purposeDraft.background} ?disabled=${!row.background} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "background"))}>${this.#t("purposeBackground")}</label>
-            <label class="toggle-row"><input type="checkbox" name="memory-purpose-consent" .checked=${this.#purposeDraft.consent} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "consent"))}>${this.#t(offer?.terms.recipeVersion==='memory-derivation-candidates-v2'?"purposeBehavioralConsent":"purposeConsent")}</label>
+            <label class="toggle-row"><input type="checkbox" name="memory-purpose-consent" .checked=${this.#purposeDraft.consent} @change=${(event: Event) => captured(event, () => this.#editPurpose(event, "consent"))}>${this.#t(offer?.terms.recipeVersion==='memory-field-suggestions-v1'?"purposeFieldConsent":offer?.terms.recipeVersion==='memory-derivation-candidates-v2'?"purposeBehavioralConsent":"purposeConsent")}</label>
             <button type="submit" class="button primary" ?disabled=${disabled || !this.#purposeEligible() || !this.#purposeDraft.charge || !this.#purposeDraft.consent}>${this.#t("purposeEnable")}</button>
           </fieldset>
         </form>` : html`<p>${this.#t("purposeNotLoaded")}</p>`}</div>` : nothing}</details>`;

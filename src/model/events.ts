@@ -667,7 +667,10 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
     claimedProjects,claimedEditReviews,claimOrigins.retainedState,
     originalAudio,originalVideo,videoEditCounts,originalModel3d,model3dEditCounts,revisedModel3d,generationCanvas,
     documentCompiles,previewOutputByEvent,annotations,families,preferences,conditions,state];
-  return { accept, finish, measureRetainedState:(limits:{bytes:number;nodes:number;depth:number}=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
+  // A single-resource history has no document/project declarations to select.
+  // This snapshot is projection data only, never visibility or scope authority.
+  const blockSnapshot=(id:string)=>{const block=blocks.get(id);return block?structuredClone(block):null;};
+  return { accept, finish, blockSnapshot, measureRetainedState:(limits:{bytes:number;nodes:number;depth:number}=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
 }
 
 export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, "$1 $2");

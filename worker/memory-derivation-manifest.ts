@@ -14,7 +14,7 @@ export type NativeDerivationManifestData = Readonly<{
   expiresAt: string;
   originals: Omit<Capture['originals'][number], 'text'>[];
   originalBacking: Capture['originalBacking']; observations: Capture['observations'];
-  behavioralSources?: Capture['behavioralSources']; provenance: Capture['provenance']; coverage: Capture['coverage']; history?: Capture['history'];
+  fieldTargets?: Omit<NonNullable<Capture['fieldTargets']>[number],'text'>[]; behavioralSources?: Capture['behavioralSources']; provenance: Capture['provenance']; coverage: Capture['coverage']; history?: Capture['history'];
 }>;
 declare const manifestBrand: unique symbol;
 export type NativeDerivationManifest = Readonly<{ [manifestBrand]: true }>;
@@ -29,6 +29,7 @@ function serialize(source: Capture): string {
     version: NATIVE_DERIVATION_MANIFEST_VERSION, jobId: source.jobId, purpose: source.purpose,
     scopeKey: source.scopeKey, binding: source.binding, expiresAt: source.retentionCeiling,
     originals: source.originals.map(({ text: _text, ...metadata }) => metadata),
+    ...(source.fieldTargets?{fieldTargets:source.fieldTargets.map(({text:_text,...target})=>target)}:{}),
     originalBacking: source.originalBacking, observations: source.observations,
     ...(source.behavioralSources?{behavioralSources:source.behavioralSources}:{}),
     provenance: source.provenance, coverage: source.coverage, ...(source.history ? { history: source.history } : {}),

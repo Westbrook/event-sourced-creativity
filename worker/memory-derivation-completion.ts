@@ -41,8 +41,15 @@ export async function prepareNativeDerivationCompletion(env:WorkerEnv,jobId:stri
     return derivationVerified(value);
   });}};
 }
+/** A saved-field recipe requires an eligible original AND an exact current
+ * field. The legacy completion code means no originals eligible for this recipe,
+ * not a claim that the source window contained no conversation at all. */
+export function nativeDerivationHasEligibleInput(input:ReturnType<typeof nativeDerivationSourceInputs>){
+  return input.fieldTargets!==undefined?input.originals.some(row=>row.role==='user'&&row.authorship==='original-human')&&input.fieldTargets.length>0
+    :input.originals.length>0||Boolean(input.behavioralSources?.length);
+}
 export async function completeEmptyNativeDerivation(env:WorkerEnv,capture:NativeDerivationSourceCapture){
-  const input=nativeDerivationSourceInputs(env,capture);if(input.originals.length||input.behavioralSources?.length)return false;
+  const input=nativeDerivationSourceInputs(env,capture);if(nativeDerivationHasEligibleInput(input))return false;
   const prepared=await prepareNativeDerivationCompletion(env,input.jobId,'no-eligible-originals');if(!prepared)return false;
   const proof=nativeDerivationSourceStatements(env,capture),result=await env.DB.batch([...proof,...prepared.statements]);
   return derivationResults(result,proof.length+prepared.statements.length)&&result.slice(0,proof.length).every(row=>derivationVerified(row)||row.results[0]?.context_source_asserted===1)&&prepared.acknowledge(result.slice(proof.length));

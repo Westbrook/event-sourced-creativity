@@ -116,22 +116,23 @@ for(const surface of ['document','chat'])for(const locale of ['en','ar'])for(con
  });
 });
 
-for(const locale of ['en','ar'])test.describe('Inline saved Memory field '+locale,()=>{
+for(const locale of ['en','ar'])for(const background of [false,true])test.describe('Inline saved Memory field '+locale+'/'+(background?'background':'specialist'),()=>{
  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
  test('explicit read, composition, dirty draft, dismissal and late blur',async({page,context,baseURL})=>{
   expect(syntheticNetworkEnabled(baseURL)).toBe(true);
   const {syntheticReadBody}=await import('./helpers/synthetic-network.mjs');
   const original='A quiet interior that feels held between dusk and night.',suggestion='Saved suggestion <script>not executable</script> اقتراح 日本語';
-  const calls=[],errors=[];let delay=false,release;page.on('pageerror',error=>errors.push(error.message));
+  const calls=[],errors=[];let delay=false,release,applyBackground;page.on('pageerror',error=>errors.push(error.message));
   const label=key=>ASSISTANT_MESSAGES[locale]['assistant.specialist.'+key];
   await context.route('**/api/events/hot',request=>{expect(JSON.stringify(request.request().postDataJSON())).not.toMatch(/UNSENT|Saved suggestion/);return request.fulfill({status:503,json:{error:'synthetic_observation_not_saved'}});});
   await context.route('**/api/memory/settings',request=>request.fulfill({status:503,json:{error:'synthetic_memory_settings_unavailable'}}));
   await context.route('**/api/session',request=>{const body=JSON.parse(syntheticReadBody('/api/session'));body.assistant.phase='actions';return request.fulfill({json:body});});
   await context.route('**/api/assistant/field-suggestion?*',async request=>{
+   if(request.request().method()==='POST'){expect(background).toBe(true);return applyBackground(request);}
    const url=new URL(request.request().url());calls.push(url.search);expect(request.request().method()).toBe('GET');
    expect([...url.searchParams.keys()].sort()).toEqual(['blockId','locale','projectId','route']);expect(url.searchParams.get('blockId')).toBe('block-direction');
    expect(url.search).not.toContain('UNSENT');if(delay)await new Promise(resolve=>{release=resolve;});
-   await request.fulfill({json:{version:'memory-field-completion-v1',suggestion:{bindingHash:'b'.repeat(64),validUntil:new Date(Date.now()+20000).toISOString(),independentEvidence:false,
+   await request.fulfill({json:{version:'memory-field-completion-v1',suggestion:background?{version:'memory-background-field-v1',jobId:'c'.repeat(64),claimKey:'derived:'+'d'.repeat(64),outputHash:'e'.repeat(64),textHash:'f'.repeat(64),projectId:'project-atmosphere',documentId:'doc-atmosphere',blockId:'block-direction',revision:1,sequence:17,beforeExcerpt:original,suggestedText:suggestion,locale,validUntil:new Date(Date.now()+20000).toISOString(),independentEvidence:false}:{bindingHash:'b'.repeat(64),validUntil:new Date(Date.now()+20000).toISOString(),independentEvidence:false,
     review:{version:'memory-edit-review-v1',executionId:'inline-synthetic-execution',turnId:'inline-synthetic-turn',projectId:'project-atmosphere',documentId:'doc-atmosphere',sourceHash:'a'.repeat(64),locale,mode:'review-only',independentEvidence:false,
      edits:[{blockId:'block-direction',field:'text',revision:1,beforeExcerpt:original,suggestedText:suggestion}]}}}});
   });
@@ -142,7 +143,7 @@ for(const locale of ['en','ar'])test.describe('Inline saved Memory field '+local
   await expect(editor).toHaveValue(original);await expect(check).toBeEnabled();expect(calls).toHaveLength(0);
   await editor.dispatchEvent('compositionstart');await expect(check).toBeDisabled();await editor.dispatchEvent('compositionend');await expect(check).toBeEnabled();
   await check.click();await expect(field).toContainText(suggestion);await expect(field.locator('script')).toHaveCount(0);await expect(editor).toHaveValue(original);
-  await field.scrollIntoViewIfNeeded();expect(await field.evaluate(el=>el.scrollWidth>el.clientWidth+1)).toBe(false);await page.screenshot({path:'.wrangler/memory-inline-field-'+locale+'.png'});
+  await field.scrollIntoViewIfNeeded();expect(await field.evaluate(el=>el.scrollWidth>el.clientWidth+1)).toBe(false);await page.screenshot({path:'.wrangler/memory-inline-field-'+locale+'-'+background+'.png'});
   await field.getByRole('button',{name:label('fieldDismiss'),exact:true}).focus();await page.keyboard.press('Escape');await expect(field).not.toContainText(suggestion);await expect(editor).toHaveValue(original);
   await check.click();await expect(field).toContainText(suggestion);await editor.fill('UNSENT local revision');await expect(field).not.toContainText(suggestion);await expect(check).toBeDisabled();expect(calls).toHaveLength(2);
   await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(editor).toHaveValue('UNSENT local revision');await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
@@ -157,13 +158,14 @@ for(const locale of ['en','ar'])test.describe('Inline saved Memory field '+local
    const after=Number(new URL(request.request().url()).searchParams.get('after')??0),head=events.at(-1).sequence;
    return request.fulfill({json:{events:events.filter(event=>event.sequence>after),head,nextAfter:head,hasMore:false,content:{}}});
   });
-  await context.route('**/api/assistant/specialist?*',request=>{
-   const body=request.request().postDataJSON();expect(body.action).toBe('apply-edit');expect(body.publishToDocument).toBe(true);expect(body.approvedEditHash).toMatch(/^[a-f0-9]{64}$/u);
+  const apply=request=>{
+   const body=request.request().postDataJSON();if(background){expect(Object.keys(body).sort()).toEqual(['jobId','claimKey','approvedEditHash','validUntil','publishToDocument'].sort());expect(body.jobId).toBe('c'.repeat(64));}else expect(body.action).toBe('apply-edit');expect(body.publishToDocument).toBe(true);expect(body.approvedEditHash).toMatch(/^[a-f0-9]{64}$/u);
    expect(JSON.stringify(body)).not.toContain(suggestion);expect(accepted).toBe(false);accepted=true;
+   const requestId=background?'memory-field:'+body.approvedEditHash:'inline-synthetic-execution';
    events.push({...events[0],eventId:'inline-memory-authored',sequence:events.at(-1).sequence+1,type:'BlockPropertyEdited',actor:'user',clientId:'web:assistant-memory',
-    payload:{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:'block-direction',property_path:'text',old_value:original,new_value:suggestion,memory_authored_version:1,request_id:'inline-synthetic-execution'}});
-   return request.fulfill({json:{status:'applied',executionId:'inline-synthetic-execution',blockId:'block-direction',eventId:'inline-memory-authored'}});
-  });
+    payload:{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:'block-direction',property_path:'text',old_value:original,new_value:suggestion,memory_authored_version:1,request_id:requestId}});
+   return request.fulfill({json:{status:'applied',...(background?{jobId:body.jobId,requestId}:{executionId:'inline-synthetic-execution'}),blockId:'block-direction',eventId:'inline-memory-authored'}});
+  };applyBackground=apply;await context.route('**/api/assistant/specialist?*',apply);
   await context.route('**/api/events',request=>{
    const body=request.request().postDataJSON();writes.push(body);expect(body.events).toHaveLength(1);const input=body.events[0];expect(input.compensatesEventId).toBe('inline-memory-authored');expect(input.payload.new_value).toBe(original);
    const event={...events[0],...input,eventId:'inline-memory-undo',sequence:events.at(-1).sequence+1,actor:'user',clientId:'web:lit'};events.push(event);

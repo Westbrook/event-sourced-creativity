@@ -1,3 +1,4 @@
+import { memoryDerivationSourceWindow } from "../model/memory-derivation-policy.ts";
 import { MEMORY_DERIVATION_HEALTH, parseMemoryDerivationHealth, type MemoryDerivationHealth } from '../model/memory-derivation-health.ts';
 import { MEMORY_EVIDENCE_RESOURCES, type MemoryResourceCitation } from '../model/memory-evidence-resource.ts';
 import { DOCUMENT_VIEWS } from '../model/document-view-signals.ts';
@@ -20,7 +21,7 @@ export type DerivationSettings = { financial?: MemoryDerivationFinanceView; enab
 export type DerivationEnable = { version: typeof MEMORY_DERIVATION_CONTROL; policyVersion: typeof MEMORY_DERIVATION_POLICY;
   purpose: MemoryDerivationPurpose; qualificationId: string; termsSha256: string; projectId: string; documentId: string;
   enrollmentId: string; enrollmentRevision: number; revision: number; expectedConsentId: string | null; expectedCustody: MemoryCustody;
-  monthlyCapMicroUsd: number; background: boolean; retentionDays: number; expiresAt: string; sourceWindow: "future-originals" | "future-originals-and-actions";
+  monthlyCapMicroUsd: number; background: boolean; retentionDays: number; expiresAt: string; sourceWindow: "future-originals" | "future-originals-and-actions" | "future-originals-actions-and-fields";
   chargeMyAiAllowance: true; confirmation: "ENABLE_DERIVED_MEMORY" };
 export class MemoryDerivationClientError extends Error {
   constructor(readonly mutationUnknown = false, readonly status: number | null = null) {
@@ -93,7 +94,7 @@ async function settings(raw: unknown, expected: DerivationScopeRequest): Promise
     qualifiedIds.add(item.qualificationId); qualifications.push({ qualificationId: item.qualificationId, termsSha256: item.termsSha256, expiresAt: item.expiresAt, terms });
   }
   check(qualifications.every(item => Date.parse(item.expiresAt) > Date.now()));
-  check(row.sourceWindow===(qualifications.some(item=>item.terms.recipeVersion==='memory-derivation-candidates-v2')?'qualified-recipe':'future-originals'));
+  check(row.sourceWindow===(qualifications.some(item=>memoryDerivationSourceWindow(item.terms.recipeVersion)!=='future-originals')?'qualified-recipe':'future-originals'));
   check(row.available === (qualifications.length > 0) && (row.enabled || !row.available));
   return frozen({ enabled: row.enabled, available: row.available, processingImplemented: row.processingImplemented, grants, qualifications,...(financial?{financial}:{}) });
 }
@@ -105,7 +106,7 @@ function enable(value: unknown): DerivationEnable {
     && (row.revision === 0 ? row.expectedConsentId === null : derivationConsentId(row.expectedConsentId))
     && derivationInteger(row.monthlyCapMicroUsd, 1, 1000000000) && typeof row.background === "boolean" && derivationInteger(row.retentionDays, 1, 365)
     && derivationTime(row.expiresAt) && Date.parse(row.expiresAt) > Date.now() && Date.parse(row.expiresAt) <= Date.now() + 365 * 86400000
-    && ["future-originals","future-originals-and-actions"].includes(String(row.sourceWindow)) && row.chargeMyAiAllowance === true && row.confirmation === "ENABLE_DERIVED_MEMORY");
+    && ["future-originals","future-originals-and-actions","future-originals-actions-and-fields"].includes(String(row.sourceWindow)) && row.chargeMyAiAllowance === true && row.confirmation === "ENABLE_DERIVED_MEMORY");
   const result = frozen({ ...structuredClone(row), ...selected } as DerivationEnable);
   check(new TextEncoder().encode(JSON.stringify(result)).byteLength <= 4096); return result;
 }
@@ -130,7 +131,7 @@ export const DERIVATION_OBSERVED_ACTIONS=['encounter','inspect','compare','edit'
 export type DerivationObservedCitation={observationIndex:number;action:typeof DERIVATION_OBSERVED_ACTIONS[number];recordedAt:string;role:'support'|'counterevidence'};
 export type DerivationProfileRelation={relationship:'revises'|'contradicts';claimKey:string;category:'preference-hypothesis'|'workflow-hypothesis';supports:readonly DerivationCitation[]};
 export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[];
-  citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[];observationCitations?:readonly DerivationObservedCitation[];reconciles?:readonly DerivationProfileRelation[];resourceCitations?:readonly MemoryResourceCitation[]};
+  citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[];observationCitations?:readonly DerivationObservedCitation[];reconciles?:readonly DerivationProfileRelation[];resourceCitations?:readonly MemoryResourceCitation[];fieldTarget?:{blockId:string;field:'text';revision:number;sequence:number;textHash:string};replacement?:string;locale?:string};
 export type DerivationHistory = {windowCount:number;originalPairs:number;boundary:'consent'|'bounded'|'capacity';afterSequence:number;throughSequence:number};
 export type DerivationResultView = DerivationResultEntry & {validUntil:string;items:readonly DerivationResultItem[];history?:DerivationHistory;controlRevisions:Readonly<Record<string,number>>};
 export type DerivationControl = {controlId:string;claimKey:string;lineageId:string;revision:number;action:'corrected'|'suppressed'|'released';correctionText:string|null;expiresAt:string;purpose:MemoryDerivationPurpose;textAvailable:boolean};
@@ -143,19 +144,27 @@ function resultEntry(value:unknown):DerivationResultEntry{
 function resultView(value:unknown,expected:DerivationResultEntry,withControls=true,withResources=false):DerivationResultView{
   const hasHistory=!!value&&typeof value==='object'&&Object.hasOwn(value,'history');
   const row=own(value,['version','jobId','expiresAt','candidate',...(withControls?['controlRevisions']:[]),...(hasHistory?['history']:[]),...(withResources?['resourceEvidence']:[])]),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
-  check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&['memory-derivation-candidates-v1','memory-derivation-candidates-v2','memory-profile-consolidation-v1'].includes(String(candidate.version))
+  check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&['memory-derivation-candidates-v1','memory-derivation-candidates-v2','memory-profile-consolidation-v1','memory-field-suggestions-v1'].includes(String(candidate.version))
     &&candidate.purpose===expected.purpose&&candidate.scopeKey===expected.scopeKey&&candidate.semanticAuthority==='model-derived-unverified'
     &&candidate.manifestId===expected.jobId&&candidate.manifestRevision===1
     &&candidate.semanticCompleteness===false&&candidate.independentEvidence===false&&derivationTime(candidate.validUntil)&&Date.parse(candidate.validUntil)>Date.now()
     &&Date.parse(candidate.validUntil)<=Date.now()+60000&&candidate.validUntil<=row.expiresAt
     &&Date.parse(row.expiresAt as string)>Date.now()&&Array.isArray(candidate.items)&&candidate.items.length<=16);
+  const field=candidate.version==='memory-field-suggestions-v1';
+  check(!field||expected.purpose==='suggestion'&&candidate.items.length<=8);
   const behavioral=candidate.version==='memory-derivation-candidates-v2',profile=candidate.version==='memory-profile-consolidation-v1';
   check(!profile||expected.purpose==='profile');let relationCount=0;
   const items:DerivationResultItem[]=candidate.items.map(raw=>{
-    const item=own(raw,['operation','target','category','text','supports','counterevidence','claimKey','lineageIds','sourceBindings','validUntil','citationStatus',...(profile?['reconciles']:[]),...(behavioral?['observationSupports','observationCounterevidence','observationCitations']:[])]);
+    const item=own(raw,['operation','target','category','text','supports','counterevidence','claimKey','lineageIds','sourceBindings','validUntil','citationStatus',...(profile?['reconciles']:[]),...(field?['fieldTarget','replacement','locale']:[]),...(behavioral?['observationSupports','observationCounterevidence','observationCitations']:[])]);
     check(item.operation==='assert'&&item.target===null&&reviewText(item.claimKey,240)&&reviewText(item.category,120)&&reviewText(item.text)
       &&Array.isArray(item.lineageIds)&&item.lineageIds.length>0&&item.lineageIds.length<=128&&item.lineageIds.every(derivationHash)
       &&item.validUntil===candidate.validUntil&&['support-cited','conflicting-citations'].includes(String(item.citationStatus)));
+    let fieldTarget:DerivationResultItem['fieldTarget'];
+    if(field){const target=own(item.fieldTarget,['blockId','field','revision','sequence','textHash']);
+      check(item.category==='proposal'&&derivationId(target.blockId)&&target.field==='text'&&derivationInteger(target.revision,1)&&derivationInteger(target.sequence,1)&&derivationHash(target.textHash)
+        &&typeof item.replacement==='string'&&item.replacement.isWellFormed()&&item.replacement.trim().length>0&&Array.from(item.replacement).length<=600&&['en','fr','ar','ja'].includes(String(item.locale)));
+      fieldTarget={...target} as DerivationResultItem['fieldTarget'];
+    }
     const seen=new Set<string>();
     const citations=(value:unknown,minimum:number,unique=seen)=>{
       check(Array.isArray(value)&&value.length>=minimum&&value.length<=16);
@@ -194,8 +203,9 @@ function resultView(value:unknown,expected:DerivationResultEntry,withControls=tr
     const sourceIds=new Set<string>();for(const raw of item.sourceBindings){const binding=own(raw,['sourceId','revision','contentHash']);
       check(derivationId(binding.sourceId)&&!sourceIds.has(binding.sourceId)&&derivationInteger(binding.revision,1)&&derivationHash(binding.contentHash));sourceIds.add(binding.sourceId);}
     return {claimKey:item.claimKey,category:item.category,text:item.text,lineageIds:[...item.lineageIds] as string[],
-      citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence,...(reconciles?{reconciles}:{}),...(observationCitations?{observationCitations}:{})};
+      citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence,...(fieldTarget?{fieldTarget,replacement:item.replacement as string,locale:item.locale as string}:{}),...(reconciles?{reconciles}:{}),...(observationCitations?{observationCitations}:{})};
   });
+  check(!field||new Set(items.map(item=>item.fieldTarget!.blockId)).size===items.length);
   check(new Set(items.map(item=>item.claimKey)).size===items.length&&!items.some(item=>item.reconciles?.some(link=>items.some(peer=>peer.claimKey===link.claimKey))));
   if(withResources){
     const evidence=own(row.resourceEvidence,['version','complete','claims']);
@@ -305,7 +315,7 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
           ...(view.history?{history:{windowCount:view.history.windowCount,originalPairs:view.history.originalPairs,boundary:view.history.boundary}}:{}),
           items:view.items.map(item=>({category:item.category,text:item.text,citationStatus:item.citationStatus,
             originalQuotes:{supports:item.supports,counterevidence:item.counterevidence},
-            observedActions:item.observationCitations??[],...(item.reconciles?{proposedRelationships:item.reconciles.map(link=>({relationship:link.relationship,category:link.category,originalQuotes:link.supports,establishedFact:false}))}:{})}))}},null,2);
+            observedActions:item.observationCitations??[],...(item.fieldTarget?{fieldProposal:{target:item.fieldTarget,replacement:item.replacement,locale:item.locale,applied:false}}:{}),...(item.reconciles?{proposedRelationships:item.reconciles.map(link=>({relationship:link.relationship,category:link.category,originalQuotes:link.supports,establishedFact:false}))}:{})}))}},null,2);
       check(new TextEncoder().encode(json).byteLength<=524288);
       return frozen({json,validUntil:view.validUntil});
     },

@@ -1,3 +1,4 @@
+import { parseMemoryFieldResult,type ParsedMemoryFieldDerivation } from './memory-field-result.ts';
 import { parseMemoryProfileResult,type ParsedMemoryProfileDerivation } from './memory-profile-result.ts';
 import { MEMORY_EVIDENCE_RESOURCES, type MemoryResourceCitation } from '../src/model/memory-evidence-resource.ts';
 import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
@@ -31,6 +32,7 @@ function dependencies(manifest: NativeDerivationManifestData): Dependency[] {
   const add = (kind: Dependency['kind'], resource_id: string, actor_user_id = '', scope_key = '') => {
     const row = { kind, resource_id, actor_user_id, scope_key }; rows.set(memoryCanonical(row), row);
   };
+  for(const field of manifest.fieldTargets??[])for(const id of field.eventIds)add('event',id);
   for (const event of manifest.provenance.events) add('event', event.eventId);
   for (const artifact of manifest.provenance.artifacts??[]) {
     add('content',artifact.contentRef);
@@ -129,7 +131,7 @@ export async function publishNativeDerivationResult(env: WorkerEnv, receipt: Nat
 declare const readBrand: unique symbol;
 export type NativeDerivationResultRead = Readonly<{ [readBrand]: true }>;
 const reads = new WeakMap<NativeDerivationResultRead, { env: WorkerEnv; db: WorkerEnv['DB']; row: Row; evidence: import('./memory-derivation-admission.ts').NativeDerivationEvidence;
-  capture: NativeDerivationSourceCapture; manifest: NativeDerivationManifest; candidate: ParsedMemoryDerivation | ParsedMemoryBehavioralDerivation | ParsedMemoryProfileDerivation; dependencies: Dependency[] }>();
+  capture: NativeDerivationSourceCapture; manifest: NativeDerivationManifest; candidate: ParsedMemoryDerivation | ParsedMemoryBehavioralDerivation | ParsedMemoryProfileDerivation | ParsedMemoryFieldDerivation; dependencies: Dependency[] }>();
 
 /** actorUserId comes from the authenticated native principal, never request JSON.
  * No result body is read before that actor's current scope/purpose proof. */
@@ -155,7 +157,7 @@ async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
     const context={purpose: source.purpose, scopeKey: source.scopeKey,
       manifestId: jobId, manifestRevision: 1, checkedAt: source.checkedAt, validUntil: source.validUntil,
       sources: source.originals, priorItems: [], suppressedLineages: []};
-    const candidate = nativeDerivationEvidenceInputs(env,evidence).qualification.terms.recipeVersion==='memory-profile-consolidation-v1'?await parseMemoryProfileResult(row.raw_json,context):source.behavioralSources?await parseMemoryBehavioralResult(row.raw_json,{...context,observations:source.behavioralSources}):await parseMemoryDerivationResult(row.raw_json,context);
+    const candidate = nativeDerivationEvidenceInputs(env,evidence).qualification.terms.recipeVersion==='memory-field-suggestions-v1'?await parseMemoryFieldResult(row.raw_json,context,source.fieldTargets??[]):nativeDerivationEvidenceInputs(env,evidence).qualification.terms.recipeVersion==='memory-profile-consolidation-v1'?await parseMemoryProfileResult(row.raw_json,context):source.behavioralSources?await parseMemoryBehavioralResult(row.raw_json,{...context,observations:source.behavioralSources}):await parseMemoryDerivationResult(row.raw_json,context);
     if (!candidate) return null;
     const handle = Object.freeze({}) as NativeDerivationResultRead;
     reads.set(handle, { env, db, row, evidence, capture: captured.capture, manifest, candidate, dependencies: expected });

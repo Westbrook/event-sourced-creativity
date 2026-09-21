@@ -1,3 +1,7 @@
+import { createMemoryElapsed } from '../src/model/memory-lifetime.ts';
+import { prepareBackgroundMemoryField } from './memory-background-field.ts';
+import { memoryBackgroundFieldApprovalHash } from '../src/model/memory-background-field.ts';
+import { derivationExact,derivationHash,derivationTime } from './memory-derivation-policy.ts';
 import { parseMemoryFieldRequest,memoryFieldRequestCurrent } from '../src/model/memory-field-request.ts';
 import { readNativeControlBody } from "./native-control-body.ts";
 import { parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
@@ -1670,29 +1674,37 @@ export async function handleAssistantBillingReconciliation(request: Request, env
  * private-copy graph. Public source identifiers retain negative provenance after
  * the private Memory result retires; no supporting profile text is published. */
 async function publishAssistantMemoryEdit(env:WorkerEnv,actor:AuthorizedAssistant,publication:MemoryEditPublication){
-  if(!assistantActionsEnabled(env,actor))return json({error:'assistant_authoring_denied'},403);
-  const {review,blockId,context,sourceHead,preconditions}=publication,edit=review.edits.find(item=>item.blockId===blockId);
+  const edit=publication.review.edits.find(item=>item.blockId===publication.blockId);
   if(!edit)return json({error:'assistant_memory_edit_invalid'},409);
+  return publishMemoryAuthoredField(env,actor,{...publication,replacement:edit.suggestedText,requestId:publication.review.executionId,
+    origin:{kind:'specialist',turnId:publication.review.turnId}});
+}
+async function publishMemoryAuthoredField(env:WorkerEnv,actor:AuthorizedAssistant,input:{blockId:string;replacement:string;requestId:string;
+ context:MemoryEditPublication['context'];sourceHead:number;preconditions:D1PreparedStatement[];
+ origin:{kind:'specialist';turnId:string}|{kind:'background';jobId:string;claimKey:string}}){
+  if(!assistantActionsEnabled(env,actor))return json({error:'assistant_authoring_denied'},403);
+  const {blockId,replacement,requestId,context,sourceHead,preconditions,origin}=input;
   const projection=await assistantAuthoritativeProjection(env,actor),checked=authoritativeAssistantEvents(
-    {kind:'context.edit',targetBlockId:blockId,text:edit.suggestedText},context,projection,review.turnId);
+    {kind:'context.edit',targetBlockId:blockId,text:replacement},context,projection,origin.kind==='specialist'?origin.turnId:'');
   if(checked.events.length!==1)return json({error:'assistant_memory_edit_invalid'},409);
   const stream=actor.project?'creative:'+actor.project.ownerUserId:actor.principal.streamId;
-  const receipt='memory-edit:'+review.executionId+':'+blockId,now=new Date().toISOString();
+  const receipt='memory-edit:'+requestId+':'+blockId,now=new Date().toISOString();
   const mutation=checked.events[0]!;
-  mutation.payload={...mutation.payload,memory_authored_version:1,source_chat_turn_id:review.turnId,request_id:review.executionId};
+  delete mutation.payload.source_chat_turn_id;
+  mutation.payload={...mutation.payload,memory_authored_version:1,request_id:requestId,...(origin.kind==='specialist'?{source_chat_turn_id:origin.turnId}:{source_memory_job_id:origin.jobId,source_memory_claim_key:origin.claimKey})};
   const guard={sql:'NOT EXISTS(SELECT 1 FROM event_client_receipts WHERE stream_id=? AND client_event_id=?)',bindings:[stream,receipt]};
   const assertProof=(proof:BudgetReservationGuard)=>env.DB.prepare("SELECT CASE WHEN ("+proof.sql+") THEN 1 ELSE json('assistant_memory_edit_stale') END AS verified").bind(...proof.bindings);
   const receipts=(eventId:string,sequence:number)=>[
     env.DB.prepare(`INSERT INTO event_client_receipts(stream_id,client_event_id,event_id,sequence,created_at)
       SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=? AND stream_id=? AND sequence=? AND type='BlockPropertyEdited'
-        AND json_extract(payload,'$.source_chat_turn_id')=? AND json_extract(payload,'$.memory_authored_version')=1)`)
-      .bind(stream,receipt,eventId,sequence,now,eventId,stream,sequence,review.turnId),
+        AND json_extract(payload,'$.request_id')=? AND json_extract(payload,'$.memory_authored_version')=1)`)
+      .bind(stream,receipt,eventId,sequence,now,eventId,stream,sequence,requestId),
     env.DB.prepare("SELECT CASE WHEN EXISTS(SELECT 1 FROM event_client_receipts WHERE stream_id=? AND client_event_id=? AND event_id=?) THEN 1 ELSE json('assistant_memory_edit_stale') END AS verified")
       .bind(stream,receipt,eventId),
   ];
   let eventId:string;
   if(actor.project){
-    const response=await appendProjectEvents(env,actor.project,actor.principal,{action:'batch',events:[mutation],clientId:'web:assistant-memory',correlationId:review.executionId},undefined,{
+    const response=await appendProjectEvents(env,actor.project,actor.principal,{action:'batch',events:[mutation],clientId:'web:assistant-memory',correlationId:requestId},undefined,{
       preserveGovernance:true,authoringOperation:'memory-edit',expectedOwnerHead:sourceHead,guardSql:guard.sql,guardBindings:guard.bindings,preconditions,
       buildStatements:(lastId,proof,events)=>{if(!proof)throw Error('assistant_memory_edit_stale');return [assertProof(proof),...receipts(lastId,events!.at(-1)!.sequence)];},
     });
@@ -1701,7 +1713,7 @@ async function publishAssistantMemoryEdit(env:WorkerEnv,actor:AuthorizedAssistan
     if(body.appended?.length!==1||!body.appended[0]?.eventId)throw Error('assistant_memory_edit_unconfirmed');
     eventId=body.appended[0].eventId;
   }else{
-    const event=makeEvent(stream,sourceHead+1,'user','web:assistant-memory',review.executionId,mutation.type,mutation.payload);
+    const event=makeEvent(stream,sourceHead+1,'user','web:assistant-memory',requestId,mutation.type,mutation.payload);
     eventId=event.eventId;
     const authority=assistantReadAuthorityGuard(actor),placeholders=EVENT_WRITE_COLUMNS.split(',').map(()=>'?').join(',');
     const committed=await env.DB.batch<Record<string,unknown>>([...preconditions,env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) SELECT ${placeholders}
@@ -1709,7 +1721,7 @@ async function publishAssistantMemoryEdit(env:WorkerEnv,actor:AuthorizedAssistan
       .bind(...eventWriteBindings(event),stream,sourceHead,...authority.bindings,...guard.bindings),assertProof(authoringEventProof([event])),...receipts(event.eventId,event.sequence)]);
     if(committed.some(result=>result.success!==true)||committed.at(-1)?.results[0]?.verified!==1)throw Error('assistant_memory_edit_unconfirmed');
   }
-  return json({status:'applied',executionId:review.executionId,eventId,blockId,independentEvidence:false,preservedOnMemoryWithdrawal:true});
+  return json({status:'applied',...(origin.kind==='specialist'?{executionId:requestId}:{jobId:origin.jobId,requestId}),eventId,blockId,independentEvidence:false,preservedOnMemoryWithdrawal:true});
 }
 
 const assistantSpecialistHost:AssistantSpecialistHost={
@@ -1728,12 +1740,15 @@ export async function handleAssistantSpecialist(request:Request,env:WorkerEnv,ex
  * No browser draft is accepted; the later apply transaction still revalidates
  * its exact full source and canonical replacement. */
 export async function handleAssistantFieldSuggestion(request:Request,env:WorkerEnv):Promise<Response>{
-  if(request.method!=='GET')return json({error:'method_not_allowed'},405);
+  const db=env.DB,started=Date.now(),elapsed=createMemoryElapsed({wall:started,monotonic:performance.now()});
+  const current=()=>env.DB===db&&elapsed.elapsed({wall:Date.now(),monotonic:performance.now()})<30000;
+  if(request.method!=='GET'&&request.method!=='POST')return json({error:'method_not_allowed'},405);
   const query=new URL(request.url).searchParams,blockId=query.get('blockId')??'',locale=query.get('locale')??'';
   if(request.url.length>4096||[...query.keys()].some(key=>!['route','projectId','blockId','locale'].includes(key)||query.getAll(key).length!==1)
     ||!blockId||blockId.length>240||!blockId.isWellFormed()||!['en','fr','ar','ja'].includes(locale))return json({error:'assistant_field_request_invalid'},400);
   try{
-    const source=new AssistantContextReadWitness(env),authorization=await authorizeAssistant(request,env,source);
+    const source=new AssistantContextReadWitness(env);source.before(new Date(started+30000).toISOString());
+    const authorization=await authorizeAssistant(request,env,source);
     if(authorization.response||!authorization.authorized)return authorization.response!;
     const actor=authorization.authorized,projectId=actor.projectId,documentId=actor.surface.documentId;
     if(!projectId||!documentId||actor.surface.canvasId||!assistantActionsEnabled(env,actor)||!liveMemoryEnabled(env,actor.principal.userId))
@@ -1741,7 +1756,32 @@ export async function handleAssistantFieldSuggestion(request:Request,env:WorkerE
     await ensureAssistantSchema(env);
     const state=await assistantContext(request,env,actor,source,blockId),atom=state.context.decisionAtoms.find(item=>item.id===blockId);
     const emptyValue={version:'memory-field-completion-v1',suggestion:null},empty=()=>json(emptyValue);
-    if(!atom||atom.locked||atom.immutable||atom.protected||!atom.providerEligible||atom.providerVisibility!=='editable')return empty();
+    if(!atom||atom.locked||atom.immutable||atom.protected||!atom.providerEligible||atom.providerVisibility!=='editable')return request.method==='GET'?empty():json({error:'assistant_field_stale',noAutomaticRetry:true},409);
+    const target={projectId,documentId,blockId,revision:atom.version,text:atom.text,locale};
+    if(request.method==='POST'){
+      const parsed=await readNativeControlBody(request,4096),body=parsed.status==='parsed'?parsed.value:null;
+      if(!derivationExact(body,['jobId','claimKey','approvedEditHash','validUntil','publishToDocument'])||!derivationHash(body.jobId)
+        ||typeof body.claimKey!=='string'||!/^derived:[a-f0-9]{64}$/u.test(body.claimKey)||!derivationHash(body.approvedEditHash)
+        ||!derivationTime(body.validUntil)||Date.parse(body.validUntil)<=Date.now()||Date.parse(body.validUntil)>Date.now()+60000||body.publishToDocument!==true)
+        return json({error:'assistant_field_approval_required'},400);
+      const prepared=await prepareBackgroundMemoryField(env,actor.principal.userId,actor.project?.ownerUserId??actor.principal.userId,target,{jobId:body.jobId,claimKey:body.claimKey});
+      if(!prepared||await memoryBackgroundFieldApprovalHash(prepared.value)!==body.approvedEditHash)return json({error:'assistant_field_stale',noAutomaticRetry:true},409);
+      const sourceHead=source.ownerHead(actor.project?'creative:'+actor.project.ownerUserId:actor.principal.streamId);
+      if(sourceHead===null)return json({error:'assistant_field_stale',noAutomaticRetry:true},409);
+      const guards=[...source.precommitGuards(),...prepared.guards().map(guard=>({sql:guard.condition,bindings:guard.bindings}))];
+      const preconditions=[...guards.map(guard=>env.DB.prepare("SELECT CASE WHEN ("+guard.sql+") THEN 1 ELSE json('memory_field_stale') END AS verified").bind(...guard.bindings)),env.DB.prepare("SELECT CASE WHEN ?>strftime('%Y-%m-%dT%H:%M:%fZ','now') THEN 1 ELSE json('memory_field_expired') END AS verified").bind(body.validUntil)];
+      prepared.current();if(!current())throw Error('memory_field_expired');
+      return await publishMemoryAuthoredField(env,actor,{blockId,replacement:prepared.value.suggestedText,requestId:'memory-field:'+body.approvedEditHash,
+        origin:{kind:'background',jobId:prepared.value.jobId,claimKey:prepared.value.claimKey},context:state.context,sourceHead,preconditions});
+    }
+    const background=await prepareBackgroundMemoryField(env,actor.principal.userId,actor.project?.ownerUserId??actor.principal.userId,target);
+    if(background){
+      const proof=[...source.precommitStatements(),...background.statements()],verified=structuredClone(await env.DB.batch<Record<string,unknown>>(proof));
+      if(verified.length!==proof.length||verified.some(row=>row.success!==true||row.results.length!==1||!(row.results[0]?.verified===1||row.results[0]?.context_source_asserted===1)))throw Error('memory_field_stale');
+      background.current();if(!current())throw Error('memory_field_expired');
+      const response=json({version:'memory-field-completion-v1',suggestion:background.value});
+      background.current();if(!current())throw Error('memory_field_expired');return response;
+    }
     const candidates=(await recentAssistantTasks(env,actor)).filter(entry=>entry.record.status==='completed'
       &&entry.record.scope_key===assistantScopeKey(actor)&&entry.record.document_id===actor.surface.documentId&&entry.record.locale===locale);
     if(!candidates.length)return empty();

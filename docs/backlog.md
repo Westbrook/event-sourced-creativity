@@ -341,3 +341,7 @@ now supports independently authorized organization parents through the actual UI
 combined native cycle/depth checks, explicit-consent-only recall and durable
 private-use retirement. MEM-003 remains In progress for its other native
 completion-matrix requirements. Additive0066 still needs production integration.
+
+## MEM-026 — Pre-authorized saved-field proposals
+
+**In progress — Memory implementation task.** [Background plain-text suggestions](forma-memory-background-fields-2026-09-21.md) now connect separately qualified source consent, native capture/job/accounting/private publication and the actual inline editor’s explicit application with non-destructive authored provenance. Focused native/D1, model/control and browser checks pass; broader regression is running. Continue the remaining native workstreams in the [completion matrix](forma-memory-completion-matrix-2026-09-20.md). Hosted schedule registration, real-provider qualification and affirmative enrollment remain tracked separately; no production activation is claimed.

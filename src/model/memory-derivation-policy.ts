@@ -6,12 +6,16 @@ export const MEMORY_DERIVATION_CONTROL = "memory-derivation-control-v1";
 export const MEMORY_DERIVATION_PURPOSES = ["rolling-summary", "profile", "suggestion"] as const;
 export type MemoryDerivationTerms = Readonly<{
   version: "memory-derivation-terms-v1"; purpose: MemoryDerivationPurpose;
-  recipeVersion: "memory-derivation-candidates-v1" | "memory-derivation-candidates-v2" | "memory-profile-consolidation-v1"; provider: "openai"; model: string;
+  recipeVersion: "memory-derivation-candidates-v1" | "memory-derivation-candidates-v2" | "memory-profile-consolidation-v1" | "memory-field-suggestions-v1"; provider: "openai"; model: string;
   pricing: Readonly<{ inputMicroUsdPerMillion: number; cachedInputMicroUsdPerMillion: number; outputMicroUsdPerMillion: number }>;
   maximumInputTokens: number; maximumOutputTokens: number; monthlyCapMicroUsd: number;
   payer: "self-ai-allowance"; providerStore: false; retentionPolicyId: string; providerRetentionDisclosure: string;
   evidence: Readonly<Record<"modelAccess" | "pricing" | "retention" | "tokenBounds" | "nativeAccounting" | "failureRecovery" | "privacy" | "benchmark" | "capApproval", string>>;
 }>;
+/** The accepted recipe fixes the source window; upgrading requires new consent. */
+export function memoryDerivationSourceWindow(recipe:MemoryDerivationTerms['recipeVersion']) {
+  return recipe==='memory-field-suggestions-v1'?'future-originals-actions-and-fields':recipe==='memory-derivation-candidates-v2'?'future-originals-and-actions':'future-originals';
+}
 export type MemoryDerivationQualification = Readonly<{
   qualification_id: string; source_sha256: string; origin: string; deployment_id: string; terms_json: string; terms_sha256: string;
   status: "qualified" | "withdrawn"; qualified_at: string; expires_at: string;
@@ -44,7 +48,7 @@ export function parseMemoryDerivationTerms(terms: unknown): MemoryDerivationTerm
   try {
     if (!derivationExact(terms, ["version", "purpose", "recipeVersion", "provider", "model", "pricing", "maximumInputTokens", "maximumOutputTokens", "monthlyCapMicroUsd", "payer", "providerStore", "retentionPolicyId", "providerRetentionDisclosure", "evidence"])
       || terms.version !== "memory-derivation-terms-v1" || !MEMORY_DERIVATION_PURPOSES.some(purpose => purpose === terms.purpose)
-      || !(["memory-derivation-candidates-v1","memory-derivation-candidates-v2","memory-profile-consolidation-v1"] as unknown[]).includes(terms.recipeVersion) || terms.recipeVersion === "memory-profile-consolidation-v1" && terms.purpose !== "profile" || terms.provider !== "openai" || !derivationId(terms.model)
+      || !(["memory-derivation-candidates-v1","memory-derivation-candidates-v2","memory-profile-consolidation-v1","memory-field-suggestions-v1"] as unknown[]).includes(terms.recipeVersion) || terms.recipeVersion === "memory-profile-consolidation-v1" && terms.purpose !== "profile" || terms.recipeVersion === "memory-field-suggestions-v1" && terms.purpose !== "suggestion" || terms.provider !== "openai" || !derivationId(terms.model)
       || !derivationExact(terms.pricing, ["inputMicroUsdPerMillion", "cachedInputMicroUsdPerMillion", "outputMicroUsdPerMillion"])
       || !derivationInteger(terms.pricing.inputMicroUsdPerMillion, 1, 1_000_000_000)
       || !derivationInteger(terms.pricing.cachedInputMicroUsdPerMillion, 0, terms.pricing.inputMicroUsdPerMillion)

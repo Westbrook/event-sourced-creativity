@@ -89,7 +89,7 @@ export function decodeNativeMemoryBlockHistory(rows:readonly Row[],scope:NativeM
  * Versions describe retained native block fields, NOT relations or dereferenced attachments.
  */
 export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:NativeMemoryResourceScope,
-  observations:readonly Observation[],observer:NativeMemoryContextObserver,onCapacity?:()=>void):Promise<NativeMemoryBlockBindings>{
+  observations:readonly Observation[],observer:NativeMemoryContextObserver,onCapacity?:()=>void,onVersion?:(binding:NativeMemoryBlockBinding,events:ReturnType<typeof decodeNativeMemoryBlockHistory>)=>void):Promise<NativeMemoryBlockBindings>{
   const selected=observations.filter(row=>row.blockPointer!==null&&(actions.has(row.eventType)||row.reference===true&&['BlockRelationAdded','BlockRelationRemoved','BlockInspected'].includes(row.eventType)));
   const empty=()=>({version:1 as const,entries:[],unresolved:selected.length});
   if(!selected.length)return empty();
@@ -169,6 +169,7 @@ export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:NativeMem
       const resourceKey=JSON.stringify(['memory-resource-v1',e.owner_user_id,e.organization_id,e.project_access_id,'block',e.project_id,e.document_id,blockId]);
       entries.push({eventId:observation.eventId,blockId,scopeKey:memoryCanonical([parent.partitionKey,resourceKey]),
         revision:events.at(-1)!.sequence,stateSha256:await memoryDigest(memoryCanonical({version:'native-block-fields-v1',events})),eventIds:events.map(event=>event.eventId)});
+      onVersion?.(entries.at(-1)!,events);
     }catch{/* Preserve the document action, not an unproved block interpretation. */}
   }
   return {version:1,entries,unresolved:selected.length-entries.length};

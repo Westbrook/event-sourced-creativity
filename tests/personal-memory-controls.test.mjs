@@ -1,3 +1,4 @@
+import { memoryDerivationSourceWindow } from "../src/model/memory-derivation-policy.ts";
 // Bounded component fixtures only: actual class, real Lit template values and client,
 // finite Store/host/dialog/HTTP ports. No Store, Worker, full app, native lifecycle,
 // provider, persistence or live account is imported or evaluated. This is not a DOM
@@ -302,7 +303,7 @@ function fixture(t, { initial = settings(), route = "/memory", session: initialS
     if (response instanceof Error) throw response;
     return response instanceof Response ? response : Response.json(response);
   }
-  const ports = { memoryPrivacyMutationActive: () => privacyPending, FormaElement, html, nothing, createMemoryDerivationClient, MemoryDerivationClientError, MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, createMemoryElapsed, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION, DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT, parseMemoryCustody, liveConversationDigest, memoryConsumptionExtendedWindows,
+  const ports = { memoryDerivationSourceWindow, memoryPrivacyMutationActive: () => privacyPending, FormaElement, html, nothing, createMemoryDerivationClient, MemoryDerivationClientError, MEMORY_DERIVATION_CONTROL, MEMORY_DERIVATION_POLICY, createMemoryElapsed, DocumentProfileClientError, DOCUMENT_PROFILE_CONTROL_VERSION, DOCUMENT_PROFILE_POLICY, NATIVE_DOCUMENT_PALETTE_CHOICE_RECIPE, MemoryClientError, MEMORY_POLICY, MEMORY_TIMING, MEMORY_WRITE_CONTRACT, parseMemoryCustody, liveConversationDigest, memoryConsumptionExtendedWindows,
     personalMemoryMessage: localized ? personalMemoryMessage
       : (_locale, key, values = {}) => key + Object.values(values).map(value => ` [${value}]`).join(""),
     window: windowPort, document: documentPort, Date: FixtureDate, performance: { now: () => clock.monotonic },
@@ -543,7 +544,7 @@ function hostFixture(t, options = {}) {
       return h.component.isConnected ? [h.component] : [];
     }
   }
-  const ports = { memoryPrivacyMutationActive: h.privacyActive, FormaElement: HostElement, html, nothing, keyed, assistantInteractionForSurface, assistantSurfaceForRoute,
+  const ports = { memoryDerivationSourceWindow, memoryPrivacyMutationActive: h.privacyActive, FormaElement: HostElement, html, nothing, keyed, assistantInteractionForSurface, assistantSurfaceForRoute,
     personalMemoryMessage, parseMemoryAnswerPresentation, createMemoryElapsed, ASSISTANT_CONTEXT_LIMITS,
     Date: h.DatePort, performance: { now: () => h.clock.monotonic },
     document: h.documentPort, window: h.windowPort, location: { origin: "https://forma.invalid" },
@@ -3348,17 +3349,18 @@ for (const conflict of ["scope identity", "cleanup state"]) test("structured cle
   assert.equal(h.mutations().length, 0); assert.equal(h.calls.length, 2);
 });
 
-function purposeSettings(item,{grant=null,ready=false,enabled=true,financial,behavioral=false}={}){
+function purposeSettings(item,{grant=null,ready=false,enabled=true,financial,behavioral=false,field=false}={}){
   const terms={version:'memory-derivation-terms-v1',purpose:'rolling-summary',recipeVersion:'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Isolated synthetic qualification only; no real provider retention claim.',retentionPolicyId:'isolated-retention',evidence:Object.fromEntries(['modelAccess','pricing','retention','tokenBounds','nativeAccounting','failureRecovery','privacy','benchmark','capApproval'].map(key=>[key,'a'.repeat(64)]))};
   const canonical=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.entries(item).sort(([a],[b])=>a<b?-1:a>b?1:0)):item);
   if(behavioral)terms.recipeVersion='memory-derivation-candidates-v2';
+  if(field){terms.recipeVersion='memory-field-suggestions-v1';terms.purpose='suggestion';}
   const offer={qualificationId:'isolated-qualification',termsSha256:createHash('sha256').update(canonical(terms)).digest('hex'),expiresAt:item.expiresAt,terms};
   return {version:MEMORY_DERIVATION_CONTROL,enabled,available:enabled,reason:enabled?null:'disabled',policyVersion:MEMORY_DERIVATION_POLICY,
     scope:{projectId:item.projectId,documentId:item.documentId,custody:{kind:'personal'}},enrollmentId:item.id,enrollmentRevision:item.revision,
-    grants:grant?[grant]:[],qualifications:enabled?[offer]:[],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:enabled&&behavioral?'qualified-recipe':'future-originals',processingImplemented:ready,...(financial?{financial}:{})};
+    grants:grant?[grant]:[],qualifications:enabled?[offer]:[],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:enabled&&(behavioral||field)?'qualified-recipe':'future-originals',processingImplemented:ready,...(financial?{financial}:{})};
 }
 function purposeGrant(item,control=purposeSettings(item)){
-  const offer=control.qualifications[0];return {scope:control.scope,grantId:'a'.repeat(64),revision:1,consentId:crypto.randomUUID(),purpose:'rolling-summary',enrollmentId:item.id,enrollmentRevision:item.revision,
+  const offer=control.qualifications[0];return {scope:control.scope,grantId:'a'.repeat(64),revision:1,consentId:crypto.randomUUID(),purpose:offer.terms.purpose,enrollmentId:item.id,enrollmentRevision:item.revision,
     qualificationId:offer.qualificationId,termsSha256:offer.termsSha256,monthlyCapMicroUsd:offer.terms.monthlyCapMicroUsd,sourceAfterSequence:9,background:false,retentionDays:item.retentionDays,
     consentedAt:new Date(Date.now()-1000).toISOString(),expiresAt:item.expiresAt,revokedAt:null};
 }
@@ -3366,9 +3368,9 @@ function purposeToggle(h,open){const details=h.all().find(control=>control.attri
 function purposeSubmit(h){const form=h.all().find(control=>control.attributes.has('data-memory-purpose-form'));assert.ok(form);return h.invoke(form,'@submit').result;}
 const purposeActions=h=>h.calls.filter(call=>String(call.url).startsWith('/api/memory/derivation/'));
 function purposeConsent(h){h.change('memory-purpose-qualification','isolated-qualification');h.change('memory-purpose-charge',true);h.change('memory-purpose-consent',true);}
-async function purposeFixture(t,{ready=true,grant=false,enabled=true,locale='en',localized=false,financial,behavioral=false}={}){
+async function purposeFixture(t,{ready=true,grant=false,enabled=true,locale='en',localized=false,financial,behavioral=false,field=false}={}){
   const item=enrollment(),h=fixture(t,{initial:settings([item]),locale,localized});await flush();await h.select(item.documentId);purposeToggle(h,true);
-  const control=purposeSettings(item,{ready,enabled,financial,behavioral}),known=grant?purposeGrant(item):null;control.grants=known?[known]:[];
+  const control=purposeSettings(item,{ready,enabled,financial,behavioral,field}),known=grant?purposeGrant(item):null;control.grants=known?[known]:[];
   h.enqueue(control);await profileClick(h,'purposeLoad');return{h,item,control,grant:known};
 }
 test('derived purpose controls never load on mount, selection or disclosure; inactive processing cannot enroll',async t=>{
@@ -3657,3 +3659,11 @@ for(const interruption of ['blur','pagehide','forma-memory-assistant-context-cha
   gate.resolve();await flush();h.dispatchWindow('focus');h.commit();assert.doesNotMatch(hostText(h),/Do not restore late recall/);assert.equal(assistantPosts(h).length,1);
  });
 }
+
+for(const locale of ['en','fr','ar','ja'])test('background field purpose consent has distinct saved-field authorization '+locale,async t=>{
+ const {h,item,control}=await purposeFixture(t,{field:true,locale,localized:true});
+ h.change('memory-purpose-qualification','isolated-qualification');assert.doesNotMatch(h.text(),/memory\.live\.purpose/);
+ h.change('memory-purpose-charge',true);await purposeSubmit(h);assert.equal(h.mutations().length,0);
+ h.change('memory-purpose-consent',true);const grant=purposeGrant(item,control);h.enqueue({version:MEMORY_DERIVATION_CONTROL,grant,capScope:control.capScope,processingImplemented:true});await purposeSubmit(h);
+ const body=JSON.parse(h.mutations().at(-1).init.body);assert.equal(body.sourceWindow,'future-originals-actions-and-fields');assert.equal(body.purpose,'suggestion');
+});

@@ -181,7 +181,7 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
     Object.fromEntries(DERIVATION_QUALIFICATION_COLUMNS.map((key,index)=>[key,(qualificationPacked as unknown[][])[0]![index]])),binding)
     : await readDerivationQualification(env, grant.qualification_id);
   if(env.DB!==db||configured!==configuration(env))fail();
-  if (!qualification || qualification.terms.recipeVersion==='memory-profile-consolidation-v1'&&(!schema.userControlsPresent||!schema.lifecyclePresent) || qualification.terms.recipeVersion==='memory-derivation-candidates-v2'&&(!schema.observationControlsPresent||!schema.lifecyclePresent) || qualification.row.terms_sha256 !== grant.terms_sha256 || qualification.terms.purpose !== grant.purpose
+  if (!qualification || ['memory-profile-consolidation-v1','memory-field-suggestions-v1'].includes(qualification.terms.recipeVersion)&&(!schema.userControlsPresent||!schema.lifecyclePresent) || ['memory-derivation-candidates-v2','memory-field-suggestions-v1'].includes(qualification.terms.recipeVersion)&&(!schema.observationControlsPresent||!schema.lifecyclePresent) || qualification.row.terms_sha256 !== grant.terms_sha256 || qualification.terms.purpose !== grant.purpose
     || qualification.terms.monthlyCapMicroUsd !== grant.monthly_cap_microusd) return null;
   const authority = await liveMemoryAuthority(env, e);
   if (!authority) return null;
