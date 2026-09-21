@@ -101,7 +101,6 @@ test('organization recall needs separate owner inventories and never aliases equ
  assert.deepEqual(memoryRecallRelation(source,target,'organization',organizationForest,readable,{forest:organizationForest,readable}),{zoom:'organization',distance:0,weight:.0125});
  for(const field of ['actorId','organizationId'])assert.equal(memoryRecallRelation(source,{...target,[field]:'different'},'organization',organizationForest,readable,{forest:organizationForest,readable}),null);
  assert.equal(memoryRecallRelation({...source,organizationId:null},{...target,organizationId:null},'organization',organizationForest,readable,{forest:organizationForest,readable}),null);
- assert.ok(.5/31>.0125&&.0125>.01);
 });
 test('organization consent client requires an explicitly advertised eligible scope',async()=>{
  let calls=0;const client=createRecallBoundaryClient(async()=>{calls++;return Response.json({version:'memory-scope-recall-v1',saved:true,refreshRequired:true});});
@@ -113,4 +112,13 @@ test('organization source catalogs keep different owners with equal bare IDs dis
  const client=createRecallBoundaryClient(async()=>Response.json({version:'memory-scope-recall-v1',sources,validUntil:new Date(Date.now()+20000).toISOString(),complete:true}));
  assert.equal((await client.sources(selected,signal())).sources.length,2);
  delete sources[0].ownerId;await assert.rejects(client.sources(selected,signal()));
+});
+
+test('qualified cross-owner tree sources preserve equal project IDs and exact owner identity',async()=>{
+ const item={ownerId:'independent-owner',enrollmentId:'remote',projectId:selected.projectId,documentId:selected.documentId,zoom:'project-tree',distance:1,weight:.25};
+ const client=createRecallBoundaryClient(async()=>Response.json({version:'memory-scope-recall-v1',sources:[item],validUntil:new Date(Date.now()+20000).toISOString(),complete:true}));
+ assert.deepEqual((await client.sources(selected,signal())).sources,[item]);
+ for(const change of [{ownerId:''},{zoom:'project',distance:0,weight:.7},{weight:1},{distance:0}]){
+  const malformed=createRecallBoundaryClient(async()=>Response.json({version:'memory-scope-recall-v1',sources:[{...item,...change}],validUntil:new Date(Date.now()+20000).toISOString(),complete:true}));await assert.rejects(malformed.sources(selected,signal()));
+ }
 });

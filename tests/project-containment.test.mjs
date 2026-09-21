@@ -211,3 +211,28 @@ for(const fault of ['duplicate','utf8','bom','abort','deadline','oversized','len
  assert.deepEqual(f.sqlite.prepare('SELECT * FROM project_containment').all(),before);assert.equal(request.body.locked,false);
  if(['abort','deadline'].includes(fault))assert.equal(cancel,1);
 });
+
+const {organizationProjectForest,reparentOrganizationProject,qualifiedProjectKey,visibleOrganizationAncestors}=await import('../src/model/organization-project-nesting.ts');
+const {parseOrganizationProjectNesting}=await import('../src/state/project-containment-client.ts');
+test('owner-qualified nesting keeps equal bare IDs separate and cannot bridge hidden ancestors',()=>{
+ const a={ownerId:'alice',projectId:'same'},b={ownerId:'bob',projectId:'same'},c={ownerId:'carol',projectId:'leaf'};
+ const nodes=[{...a,organizationId:'org',parent:null},{...b,organizationId:'org',parent:a},{...c,organizationId:'org',parent:b}],forest=organizationProjectForest(nodes);
+ assert.equal(forest.size,3);assert.equal(reparentOrganizationProject(nodes,a,c),null);
+ assert.equal(organizationProjectForest([...nodes,{...a,organizationId:'org',parent:null}]),null);
+ assert.equal(organizationProjectForest(nodes.map(n=>n.ownerId==='bob'?{...n,organizationId:'other'}:n)),null);
+ assert.deepEqual(visibleOrganizationAncestors(forest,c,new Set([qualifiedProjectKey(c),qualifiedProjectKey(a)])),{ancestors:[],ancestryComplete:false});
+ assert.deepEqual(visibleOrganizationAncestors(forest,c,new Set(nodes.map(qualifiedProjectKey))),{ancestors:[b,a],ancestryComplete:true});
+});
+test('qualified nesting enforces combined descendant depth and owner capacity',()=>{
+ const nodes=Array.from({length:16},(_,i)=>({ownerId:i%2?'a':'b',projectId:'p'+i,organizationId:'org',parent:i?{ownerId:(i-1)%2?'a':'b',projectId:'p'+(i-1)}:null}));
+ assert.ok(organizationProjectForest(nodes));
+ assert.equal(organizationProjectForest([...nodes,{ownerId:'a',projectId:'too-deep',organizationId:'org',parent:{ownerId:'a',projectId:'p15'}}]),null);
+ assert.equal(organizationProjectForest(Array.from({length:9},(_,i)=>({ownerId:'owner'+i,projectId:'p',organizationId:'org',parent:null}))),null);
+});
+test('qualified hierarchy decoder rejects incomplete identities, leaked mutation fields and stale views',()=>{
+ const p={ownerId:'alice',projectId:'same'},q={ownerId:'bob',projectId:'same'};
+ const view={version:'project-containment-v2',project:p,revision:'sha256:'+'a'.repeat(64),validUntil:new Date(Date.now()+20000).toISOString(),ancestors:[q],ancestryComplete:true,parent:q,candidates:[q],canReparent:true,accessInherited:false};
+ assert.deepEqual(parseOrganizationProjectNesting(view,'same'),view);
+ for(const change of [{accessInherited:true},{project:{projectId:'same'}},{parent:p},{ancestors:[q,q]},{candidates:[p]},{canReparent:false},{extra:true},{validUntil:new Date(Date.now()-1).toISOString()},{validUntil:new Date(Date.now()+60000).toISOString()}])assert.equal(parseOrganizationProjectNesting({...view,...change},'same'),null);
+ const accepted=parseOrganizationProjectNesting(view,'same');view.parent.ownerId='changed';assert.equal(accepted.parent.ownerId,'bob');
+});

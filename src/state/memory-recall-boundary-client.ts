@@ -16,7 +16,8 @@ function object(value: unknown, keys: string[]): Row {
 }
 function lifetime(value: unknown) { check(derivationTime(value) && Date.parse(value) > Date.now() && Date.parse(value) <= Date.now() + 30000); return value; }
 function source(value: unknown): RecallSource {
-  const organization=(value as Row)?.zoom==='organization';
+  const organization=(value as Row)?.zoom==='organization'||Boolean(value&&typeof value==='object'&&Object.hasOwn(value,'ownerId'));
+  check(!organization||['organization','project-tree'].includes(String((value as Row)?.zoom)));
   const row = object(value, ['enrollmentId','projectId','documentId','zoom','distance','weight',...(organization?['ownerId']:[])]);
   check(!organization||derivationId(row.ownerId));
   check([row.enrollmentId,row.projectId,row.documentId].every(derivationId) && memoryRecallBoundary(row.zoom) && row.zoom !== 'document'
@@ -50,7 +51,7 @@ export function createRecallBoundaryClient(transport: typeof fetch = fetch) {
       const row=object(await request(scope,'recall-scopes',signal),['version','sources','validUntil','complete']);
       check(row.complete===true&&Array.isArray(row.sources)&&row.sources.length<=32);lifetime(row.validUntil);
       const sources=row.sources.map(source);check(new Set(sources.map(s=>s.enrollmentId)).size===sources.length&&new Set(sources.map(s=>JSON.stringify([s.ownerId??null,s.projectId,s.documentId]))).size===sources.length
-        &&sources.every((s,index)=>(s.zoom==='organization'||s.projectId!==scope.projectId||s.documentId!==scope.documentId)&&(!index||sources[index-1].weight>=s.weight)));
+        &&sources.every((s,index)=>(s.ownerId!==undefined||s.projectId!==scope.projectId||s.documentId!==scope.documentId)&&(!index||sources[index-1].weight>=s.weight)));
       return {sources,validUntil:row.validUntil as string};
     },
     async inspect(scope:Scope,expected:RecallSource,purpose:MemoryDerivationPurpose,signal:AbortSignal){

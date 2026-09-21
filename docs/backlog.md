@@ -335,3 +335,9 @@ Memory atomic-publication continuation (2026-09-21): [native completion and reco
 now atomically retains the fresh private answer, its inverse dependencies and task
 receipts.436 native regressions pass; whole synthetic execution is88/90 calls.
 Native capacity and the other MEM-003 completion-matrix work stay assigned.
+
+Memory nesting continuation (2026-09-21): [owner-qualified project hierarchy](forma-memory-cross-owner-nesting-2026-09-21.md)
+now supports independently authorized organization parents through the actual UI,
+combined native cycle/depth checks, explicit-consent-only recall and durable
+private-use retirement. MEM-003 remains In progress for its other native
+completion-matrix requirements. Additive0066 still needs production integration.

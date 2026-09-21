@@ -1,3 +1,4 @@
+import { organizationProjectNestingSchemaProfile } from './organization-project-nesting-schema.ts';
 import { readNativeControlBody } from "./native-control-body.ts";
 import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import { projectContainmentId as id, projectContainmentForest, reparentProjectForest, visibleProjectAncestors, PROJECT_CONTAINMENT_LIMIT,
@@ -17,9 +18,11 @@ const headers = { 'cache-control': 'private, no-store', vary: 'Cookie, oai-authe
 const reply = (body: unknown, status = 200) => Response.json(body, { status, headers });
 const exact = (v: Row, keys: string[]) => Object.keys(v).sort().join(',') === keys.sort().join(',');
 const schemaQuery = `SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE name LIKE 'project_containment%' OR name LIKE 'idx_project_containment%'
-  OR tbl_name='project_containment' OR instr(lower(COALESCE(sql,'')),'project_containment')>0 ORDER BY name,type`;
+  OR tbl_name='project_containment' OR instr(lower(COALESCE(sql,'')),'project_containment')>0
+  OR name LIKE 'organization_project_nesting%' OR name LIKE 'idx_organization_project_nesting%' OR tbl_name='organization_project_nesting'
+  OR instr(lower(COALESCE(sql,'')),'organization_project_nesting')>0 ORDER BY name,type LIMIT 64`;
 
-function principalGuard(env: WorkerEnv, user: PilotUser): Query | null {
+export function projectContainmentPrincipalGuard(env: WorkerEnv, user: PilotUser): Query | null {
   const s = user.authorizationSnapshot, pilot = configuredPilotAdmissionGuard(env, user);
   if (!s) return null;
   return { sql: `EXISTS(SELECT 1 FROM(${PRINCIPAL_WITH_ACCESS_SQL}) principal WHERE
@@ -56,9 +59,15 @@ export async function readNativeProjectContainment(env: WorkerEnv, owner: string
   const schema = { sql: schemaQuery, bindings: [] };
   const [schemaRows, measured] = batched ? await readBatch(env, [schema,size]) : [await read(env,schema),await read(env,size)];
   const explicit = schemaRows.filter(row => row.sql !== null);
-  if (schemaRows.length !== projectContainmentSchemaProfile.count + 1 || explicit.length !== projectContainmentSchemaProfile.count
-    || 'sha256:' + await memoryDigest(memoryCanonical(explicit.map(row => ({ ...row, sql: String(row.sql).trim().replace(/;$/u,'').replace(/\bIF\s+NOT\s+EXISTS\s+/giu,'') })))) !== projectContainmentSchemaProfile.digest
-    || schemaRows.some(row => row.sql === null && row.name !== 'sqlite_autoindex_project_containment_1')) throw new Error('containment_schema');
+  const crossOwner=explicit.some(row=>(organizationProjectNestingSchemaProfile.names as readonly string[]).includes(String(row.name)));
+  const profiles=crossOwner?[projectContainmentSchemaProfile,organizationProjectNestingSchemaProfile]:[projectContainmentSchemaProfile];
+  if(schemaRows.length!==profiles.reduce((sum,p)=>sum+p.count+p.automaticIndexes.length,0)
+    ||explicit.some(row=>!profiles.some(p=>(p.names as readonly string[]).includes(String(row.name))))
+    ||schemaRows.some(row=>!exact(row,['name','sql','table','type'])||row.sql===null&&!profiles.some(p=>(p.automaticIndexes as readonly string[]).includes(String(row.name)))))throw Error('containment_schema');
+  for(const profile of profiles){
+    const found=explicit.filter(row=>(profile.names as readonly string[]).includes(String(row.name)));
+    if(found.length!==profile.count||'sha256:'+await memoryDigest(memoryCanonical(found.map(row=>({...row,sql:String(row.sql).trim().replace(/;$/u,'').replace(/\bIF\s+NOT\s+EXISTS\s+/giu,'')}))))!==profile.digest)throw Error('containment_schema');
+  }
   if (measured.length !== 1 || !Number.isSafeInteger(measured[0].count) || !Number.isSafeInteger(measured[0].bytes)
     || Number(measured[0].count) > PROJECT_CONTAINMENT_LIMIT || Number(measured[0].bytes) > 1_048_576) throw new Error('containment_capacity');
   const declarations: Query = { sql: `SELECT event.event_id AS declaration,event.payload,event.sequence,
@@ -95,7 +104,7 @@ export async function readNativeProjectContainment(env: WorkerEnv, owner: string
   const forest = projectContainmentForest(nodes); if (!forest) throw new Error('containment_forest');
   const guards = [snapshot(schema,schemaRows,['name','sql','table','type']),snapshot(size,measured,['count','bytes']), snapshot(boundedDeclarations,declared,['declaration','payload','sequence','custody']),
     snapshot(edges,links,['project_id','declaration_ref','parent_project_id','parent_declaration_ref','organization_id','revision','updated_at'])];
-  return { forest, access, guards, revision: 'sha256:' + await memoryDigest(memoryCanonical([declared,links])) };
+  return { forest, access, guards, crossOwner, revision: 'sha256:' + await memoryDigest(memoryCanonical([declared,links])) };
 }
 
 async function commandBody(request: Request): Promise<Row | null> {
@@ -104,6 +113,9 @@ async function commandBody(request: Request): Promise<Row | null> {
 }
 
 export async function handleProjectContainment(request: Request, env: WorkerEnv): Promise<Response> {
+  if(new URL(request.url).searchParams.get('version')==='2'){
+    const extended=await (await import('./organization-project-nesting-api.ts')).handleOrganizationProjectNesting(request,env);if(extended)return extended;
+  }
   if (!['GET','PATCH'].includes(request.method)) return reply({ error: 'method_not_allowed' },405);
   const origin = request.headers.get('origin');
   if (origin && origin !== new URL(request.url).origin || request.headers.get('sec-fetch-site') === 'cross-site') return reply({ error: 'same_origin_required' },403);
@@ -118,7 +130,8 @@ export async function handleProjectContainment(request: Request, env: WorkerEnv)
     if (!id(projectId) || request.method === 'PATCH' && (!body || body.parentId !== null && !id(body.parentId) || !/^sha256:[a-f0-9]{64}$/u.test(String(body.revision)))) return reply({error:'invalid_containment_command'},400);
     if (selected.context && selected.context.projectId !== projectId) return reply({error:'containment_unavailable'},403);
     const owner = selected.context?.ownerUserId ?? user.userId, db = env.DB;
-    const state = await readNativeProjectContainment(env,owner), node = state.forest.get(projectId), principal = principalGuard(env,user);
+    const state = await readNativeProjectContainment(env,owner), node = state.forest.get(projectId), principal = projectContainmentPrincipalGuard(env,user);
+    if(state.crossOwner&&node?.organizationId)return reply({error:'containment_version_required'},409);
     const readable = new Set<string>();
     for (const candidate of state.forest.values()) {
       const native = state.access.get(candidate.id)!;

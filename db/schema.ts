@@ -2780,3 +2780,14 @@ export const memoryRecallOrganizationRanges = sqliteTable('memory_recall_organiz
   check('memory_organization_boundary', sql.raw('length(boundary_revision)=36')),
   check('memory_organization_time', sql.raw("length(consented_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',consented_at) IS consented_at")),
 ]);
+
+/** Independently authorized organization containment; never inherited access. */
+export const organizationProjectNesting = sqliteTable('organization_project_nesting', {
+ ownerUserId:text('owner_user_id').notNull().references(()=>users.userId,{onDelete:'cascade'}),
+ projectId:text('project_id').notNull(),declarationRef:text('declaration_ref').notNull().references(()=>events.eventId,{onDelete:'cascade'}),
+ parentOwnerUserId:text('parent_owner_user_id').notNull().references(()=>users.userId,{onDelete:'cascade'}),
+ parentProjectId:text('parent_project_id').notNull(),parentDeclarationRef:text('parent_declaration_ref').notNull().references(()=>events.eventId,{onDelete:'cascade'}),
+ organizationId:text('organization_id').notNull().references(()=>organizations.organizationId,{onDelete:'cascade'}),
+ revision:text('revision').notNull(),updatedAt:text('updated_at').notNull(),
+},table=>[primaryKey({columns:[table.ownerUserId,table.projectId]}),index('idx_organization_project_nesting_org').on(table.organizationId),
+ check('organization_nesting_cross_owner',sql.raw('owner_user_id<>parent_owner_user_id'))]);

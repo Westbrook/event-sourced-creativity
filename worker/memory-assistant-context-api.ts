@@ -208,7 +208,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
       if(!nativeSavedAssistantContextMatches(env,nativeHandle,result))throw Error('context_changed');
     }
     const final=nativeSavedAssistantContextInputs(env,nativeHandle);
-    const response=answer({...metadata(),context:{revision:old!.revision,state:'accepted',jobId,source:{...recallSourceIdentity(source,relation.zoom),...relation},purpose:bound.purpose,expiresAt},
+    const response=answer({...metadata(),context:{revision:old!.revision,state:'accepted',jobId,source:{...recallSourceIdentity(source,relation.zoom,source.owner_user_id!==target.owner_user_id),...relation},purpose:bound.purpose,expiresAt},
       presentation:final.presentation,independentEvidence:false,completeHistory:false});
     savedContextResponses.set(response,nativeHandle);return response;
   }catch{return answer({error:request.method==='GET'?'assistant_context_unavailable':'assistant_context_commit_unconfirmed',noAutomaticRetry:true},503);}

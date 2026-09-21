@@ -18298,8 +18298,10 @@ for(const fault of ['missing','unknown'])test('native organization recall: '+fau
  await assert.rejects((await import('../worker/memory-derivation-store.ts')).memoryDerivationSchema(state.env));
 });
 
-for(const native of [false,true])test('native organization consumer: independent cross-owner dispatch and withdrawal '+native,{timeout:120000},async t=>{
- const state=await organizationRecallFixture(t);await state.organizationWiden();const view=await(await state.organizationRequest('assistant-context')).json();
+for(const nested of [false,true])for(const native of [false,true])test('native organization consumer: independent cross-owner dispatch and withdrawal '+native+' nesting '+nested,{timeout:120000},async t=>{
+ const state=await (nested?organizationNestingFixture(t):organizationRecallFixture(t));
+ if(nested){const view=await(await state.nesting()).json();const r=await state.nesting({version:view.version,project:view.project,parent:{ownerId:'memory-target-owner',projectId:'organization-recall-target'},revision:view.revision});assert.equal(r.status,200,await r.clone().text());}
+ await state.organizationWiden();const view=await(await state.organizationRequest('assistant-context')).json();
  const accepted=await state.organizationRequest('assistant-context',{method:'PUT',body:{jobId:state.executionJob.job_id,revision:null,targetEnrollmentId:view.targetEnrollmentId,targetRevision:view.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'}});assert.equal(accepted.status,200,await accepted.clone().text());
  if(native){
   const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
@@ -18317,7 +18319,7 @@ for(const native of [false,true])test('native organization consumer: independent
  const execute=await specialistExecute(state,review,options);assert.equal(execute.status,202,await execute.clone().text()+' '+state.controls.lastDatabaseError);await state.drainBackground();
  const result=await specialistRetrieve(state,review,options),body=await result.json();assert.equal(result.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.result?.sourceStatus,'semantic-memory-assisted',JSON.stringify(body));assert.equal(calls,1);
  const copies=(await state.env.DB.prepare('SELECT content_id FROM memory_derivation_consumer_contents').all()).results;assert.equal(copies.length,3);
- await state.env.DB.prepare('DELETE FROM memory_recall_organization_ranges').run();
+ await state.env.DB.prepare(nested?'DELETE FROM organization_project_nesting':'DELETE FROM memory_recall_organization_ranges').run();
  for(const copy of copies)assert.equal((await state.env.DB.prepare('SELECT content FROM private_content WHERE content_id=?').bind(copy.content_id).first()).content,'');
  assert.equal((await specialistRetrieve(state,review,options)).status,404);assert.equal(calls,1);
  assert.equal((await state.env.DB.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').bind(review.executionId).first()).verified_tokens,1300);
@@ -18349,4 +18351,87 @@ for(const fault of ['receipt','raw','source','task-ack','action-ack'])test('Memo
  const retrieved=await specialistRetrieve(state,review,state.semanticOptions);
  if(fault==='raw'||fault==='source')assert.equal(retrieved.status,404,await retrieved.clone().text());else{const body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body));assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');}
  assert.equal(calls,1);
+});
+
+async function organizationNestingFixture(t){
+ const state=await organizationRecallFixture(t);
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0066_organization_project_nesting.sql',import.meta.url),'utf8'));
+ const nesting=async(body=null,{target=false}={})=>{
+  const access=target?state.targetAccessId:state.projectAccessId;
+  const principal={'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'};
+  const opened=await state.request(`/api/workspaces/${state.organizationId}/projects/${access}/context`,{method:'POST',headers:principal});assert.equal(opened.status,200,await opened.clone().text());
+  const headers={...principal,cookie:opened.headers.get('set-cookie')?.split(';')[0]??'',origin:'http://localhost'};
+  return state.request('/api/projects/containment?version=2'+(body?'':'&projectId='+(target?'organization-recall-target':state.current().project_id)),body?{method:'PATCH',headers:{...headers,'content-type':'application/json'},body:JSON.stringify(body)}:{headers});
+ };
+ return Object.assign(state,{nesting});
+}
+
+test('organization nesting: actual owner-qualified move, recall weighting and private retirement',async t=>{
+ const state=await organizationNestingFixture(t),before=adaptiveReentryFinancialState(state);
+ let r=await state.nesting(),view=await r.json();assert.equal(r.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);
+ assert.equal(view.version,'project-containment-v2');assert.equal(view.accessInherited,false);
+ const parent={ownerId:'memory-target-owner',projectId:'organization-recall-target'};
+ assert.ok(view.candidates.some(p=>p.ownerId===parent.ownerId&&p.projectId===parent.projectId),JSON.stringify(view));
+ r=await state.nesting({version:view.version,project:view.project,parent,revision:view.revision});assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);
+ r=await state.nesting();view=await r.json();assert.deepEqual(view.ancestors,[parent]);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM organization_project_nesting').get().n,1);
+ await state.organizationWiden('partition');assert.deepEqual((await(await state.organizationRequest()).json()).sources,[],'nesting never widens old consent');
+ await state.organizationWiden();r=await state.organizationRequest();let recalled=await r.json();assert.equal(r.status,200,JSON.stringify(recalled)+' '+state.controls.lastDatabaseError);
+ assert.equal(recalled.sources[0].zoom,'project-tree');assert.equal(recalled.sources[0].distance,1);assert.equal(recalled.sources[0].weight,.25);assert.equal(recalled.sources[0].ownerId,'assistant-owner');
+ const prior=await(await state.organizationRequest('assistant-context')).json();
+ r=await state.organizationRequest('assistant-context',{method:'PUT',body:{jobId:state.executionJob.job_id,revision:prior.context?.revision??null,targetEnrollmentId:prior.targetEnrollmentId,targetRevision:prior.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'}});
+ assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);
+ r=await state.nesting();view=await r.json();r=await state.nesting({version:view.version,project:view.project,parent:null,revision:view.revision});assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_contexts').get().state,'dismissed');
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM organization_project_nesting').get().n,0);
+ assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const fault of ['parent-access','source-custody','parent-custody','declaration','schema','edge','task-ack'])test('organization nesting: late '+fault+' prevents a partial move',async t=>{
+ const state=await organizationNestingFixture(t),r=await state.nesting(),view=await r.json();assert.equal(r.status,200,JSON.stringify(view));
+ const db=state.env.DB,batch=db.batch;t.after(()=>{db.batch=batch;});let injected=false;db.batch=async statements=>{
+  if(injected||!statements.some(s=>s.sql.startsWith('INSERT INTO organization_project_nesting')))return batch.call(db,statements);injected=true;
+  if(fault==='parent-access')state.sqlite.prepare("UPDATE project_memberships SET status='revoked' WHERE project_access_id=? AND user_id='assistant-owner'").run(state.targetAccessId);
+  if(fault==='source-custody'||fault==='parent-custody')state.sqlite.prepare("UPDATE organization_projects SET status='archived' WHERE project_access_id=?").run(fault==='source-custody'?state.projectAccessId:state.targetAccessId);
+  if(fault==='declaration')state.sqlite.prepare("UPDATE events SET payload=json_set(payload,'$.name','Changed') WHERE type='ProjectCreated' AND stream_id='creative:memory-target-owner'").run();
+  if(fault==='schema')state.sqlite.exec('DROP TRIGGER organization_project_nesting_insert');
+  if(fault==='edge')state.sqlite.prepare("INSERT INTO project_containment(owner_user_id,project_id,declaration_ref,parent_project_id,parent_declaration_ref,organization_id,revision,updated_at) SELECT 'assistant-owner',?,event_id,NULL,NULL,?,'late',? FROM events WHERE type='ProjectCreated' AND stream_id='creative:assistant-owner' AND json_extract(payload,'$.project_id')=?").run(state.current().project_id,state.organizationId,new Date().toISOString(),state.current().project_id);
+  if(fault==='task-ack')state.sqlite.exec("CREATE TRIGGER ignore_nesting BEFORE INSERT ON organization_project_nesting BEGIN SELECT RAISE(IGNORE); END");
+  return batch.call(db,statements);
+ };
+ const response=await state.nesting({version:view.version,project:view.project,parent:{ownerId:'memory-target-owner',projectId:'organization-recall-target'},revision:view.revision});
+ assert.equal(injected,true);assert.equal(response.status,503,await response.clone().text());
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM organization_project_nesting').get().n,0);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_containment WHERE revision<>'late'").get().n,0);
+});
+
+test('organization nesting: parent editor cannot move another owner project or inherit parent access',async t=>{
+ const state=await organizationNestingFixture(t);let r=await state.nesting(null,{target:true}),view=await r.json();assert.equal(r.status,200,JSON.stringify(view));assert.equal(view.canReparent,false);assert.deepEqual(view.candidates,[]);
+ r=await state.nesting({version:view.version,project:view.project,parent:null,revision:view.revision},{target:true});assert.equal(r.status,403);
+ r=await state.nesting();view=await r.json();r=await state.nesting({version:view.version,project:view.project,parent:{ownerId:'memory-target-owner',projectId:'organization-recall-target'},revision:view.revision});assert.equal(r.status,200);
+ state.sqlite.prepare("UPDATE project_memberships SET status='revoked' WHERE project_access_id=? AND user_id='assistant-owner'").run(state.targetAccessId);
+ r=await state.nesting();view=await r.json();assert.equal(r.status,200,JSON.stringify(view));assert.deepEqual(view.ancestors,[]);assert.equal(view.ancestryComplete,false);assert.deepEqual(view.candidates,[]);
+});
+
+test('organization nesting: SQL cycle rejection and custody retirement are permanent',async t=>{
+ const state=await organizationNestingFixture(t);let view=await(await state.nesting()).json();assert.equal((await state.nesting({version:view.version,project:view.project,parent:{ownerId:'memory-target-owner',projectId:'organization-recall-target'},revision:view.revision})).status,200);
+ const edge=state.sqlite.prepare('SELECT * FROM organization_project_nesting').get();
+ assert.throws(()=>state.sqlite.prepare('INSERT INTO organization_project_nesting VALUES(?,?,?,?,?,?,?,?,?)').run(edge.parent_owner_user_id,edge.parent_project_id,edge.parent_declaration_ref,edge.owner_user_id,edge.project_id,edge.declaration_ref,edge.organization_id,crypto.randomUUID(),new Date().toISOString()),/cycle_or_depth/u);
+ state.sqlite.prepare("UPDATE project_migration_states SET status='pending' WHERE project_access_id=?").run(state.targetAccessId);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM organization_project_nesting').get().n,0);
+ state.sqlite.prepare("UPDATE project_migration_states SET status='active' WHERE project_access_id=?").run(state.targetAccessId);view=await(await state.nesting()).json();assert.deepEqual(view.ancestors,[]);
+});
+
+for(const fault of ['partial-schema','unknown-trigger','oversized-edge','expired-clock'])test('organization nesting: '+fault+' fails closed before metadata disclosure',async t=>{
+ const state=await organizationNestingFixture(t);
+ if(fault==='partial-schema')state.sqlite.exec('DROP TRIGGER organization_project_nesting_retire');
+ if(fault==='unknown-trigger')state.sqlite.exec('CREATE TRIGGER organization_project_nesting_extra AFTER INSERT ON organization_project_nesting BEGIN SELECT 1; END');
+ if(fault==='oversized-edge'){
+  const view=await(await state.nesting()).json();assert.equal((await state.nesting({version:view.version,project:view.project,parent:{ownerId:'memory-target-owner',projectId:'organization-recall-target'},revision:view.revision})).status,200);
+  const row=state.sqlite.prepare('SELECT * FROM organization_project_nesting').get();state.sqlite.exec('DELETE FROM organization_project_nesting');row.revision='x'.repeat(262145);state.sqlite.prepare('INSERT INTO organization_project_nesting VALUES(?,?,?,?,?,?,?,?,?)').run(...Object.values(row));
+ }
+ if(fault==='expired-clock'){
+  const db=state.env.DB,batch=db.batch;t.after(()=>{db.batch=batch;});let injected=false;
+  db.batch=async statements=>{const rows=await batch.call(db,statements);if(!injected&&statements.some(s=>s.sql.includes('organization_project_nesting')&&s.sql.includes('AS verified'))){injected=true;const next=performance.now()+31000;t.mock.method(performance,'now',()=>next);}return rows;};
+ }
+ const response=await state.nesting();assert.equal(response.status,503,await response.clone().text());const body=await response.json();assert.equal(Object.hasOwn(body,'ancestors'),false);assert.equal(Object.hasOwn(body,'candidates'),false);
 });

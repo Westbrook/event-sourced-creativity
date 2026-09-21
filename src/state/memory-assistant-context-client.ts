@@ -24,7 +24,8 @@ export function createAssistantMemoryContextClient(transport:typeof fetch=fetch)
    check(uuid(c.revision)&&derivationHash(c.jobId));
    if(!accepted){check((c.state==='dismissed'||controls&&c.state==='unavailable')&&row.presentation===null);return {...row,presentation:null} as AssistantMemoryContextView;}
    check(row.independentEvidence===false&&row.completeHistory===false&&MEMORY_DERIVATION_PURPOSES.includes(c.purpose as MemoryDerivationPurpose)&&derivationTime(c.expiresAt)&&Date.parse(c.expiresAt as string)>Date.now());
-   const organization=(c.source as Row)?.zoom==='organization';
+   const organization=(c.source as Row)?.zoom==='organization'||Boolean(c.source&&typeof c.source==='object'&&Object.hasOwn(c.source,'ownerId'));
+   check(!organization||['organization','project-tree'].includes(String((c.source as Row)?.zoom)));
    const source=object(c.source,['enrollmentId','projectId','documentId','zoom','distance','weight',...(organization?['ownerId']:[])]);
    check(!organization||derivationId(source.ownerId));
    check([source.enrollmentId,source.projectId,source.documentId].every(derivationId)&&memoryRecallBoundary(source.zoom)&&Number.isSafeInteger(source.distance)&&Number(source.distance)>=0&&Number(source.distance)<=30);

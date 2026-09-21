@@ -1,3 +1,5 @@
+import { readNativeOrganizationNesting } from './organization-project-nesting.ts';
+import { qualifiedProjectKey,visibleOrganizationAncestors } from '../src/model/organization-project-nesting.ts';
 import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import { bodyOf, parentColumns, readScope } from './memory-derivation-api.ts';
 import { nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery } from './memory-native-deadlines.ts';
@@ -102,6 +104,21 @@ export async function readNativeRecallRelation(env:WorkerEnv,actor:PilotUser,sou
   const readable=(owner:string,t:RecallTree)=>new Set([...t.forest.values()].filter(node=>{
     const access=t.access.get(node.id)!;return access.active&&(node.organizationId===null?owner===actor.userId:hasCapability(actor,'project.read',{organizationId:node.organizationId,projectAccessId:access.accessId}));
   }).map(node=>node.id));
+  // Only the separately explicit organization range can traverse another
+  // owner's edges. Legacy partition/project-tree consent is never broadened.
+  if(boundary==='organization'&&source.organization_id&&sourceTree.crossOwner&&targetTree.crossOwner){
+    const graph=await readNativeOrganizationNesting(env,source.organization_id,actor,trees);
+    const from={ownerId:source.owner_user_id,projectId:source.project_id},to={ownerId:target.owner_user_id,projectId:target.project_id};
+    const a=visibleOrganizationAncestors(graph.forest,from,graph.readable),b=visibleOrganizationAncestors(graph.forest,to,graph.readable);
+    if(!a||!b)return {relation:null,guards:graph.guards.map(g=>({condition:g.sql,bindings:g.bindings})),hierarchyRevision:graph.revision};
+    const left=[from,...a.ancestors],right=[to,...b.ancestors],distances=left.flatMap((p,i)=>{const j=right.findIndex(q=>qualifiedProjectKey(p)===qualifiedProjectKey(q));return j<0?[]:[i+j];});
+    const distance=distances.length?Math.min(...distances):null;
+    const sameProject=qualifiedProjectKey(from)===qualifiedProjectKey(to);
+    const relation:import('../src/model/memory-recall-boundary.ts').MemoryRecallRelation=sameProject
+      ?{zoom:source.document_id===target.document_id?'document':'project',distance:0,weight:source.document_id===target.document_id?1:.7}
+      :distance!==null?{zoom:'project-tree',distance,weight:.5/(1+distance)}:{zoom:'organization',distance:0,weight:.0125};
+    return {relation,guards:graph.guards.map(g=>({condition:g.sql,bindings:g.bindings})),hierarchyRevision:graph.revision};
+  }
   const relation=memoryRecallRelation(identity(source),identity(target),boundary,targetTree.forest,readable(target.owner_user_id,targetTree),
     {forest:sourceTree.forest,readable:readable(source.owner_user_id,sourceTree)});
   const distinct=sourceTree===targetTree?[targetTree]:[sourceTree,targetTree];
@@ -109,8 +126,8 @@ export async function readNativeRecallRelation(env:WorkerEnv,actor:PilotUser,sou
     hierarchyRevision:sourceTree===targetTree?targetTree.revision:'sha256:'+await memoryDigest(memoryCanonical([
       [source.owner_user_id,sourceTree.revision],[target.owner_user_id,targetTree.revision]]))};
 }
-export function recallSourceIdentity(e:LiveMemoryEnrollment,zoom:string){
-  return {enrollmentId:e.enrollment_id,projectId:e.project_id,documentId:e.document_id,...(zoom==='organization'?{ownerId:e.owner_user_id}: {})};
+export function recallSourceIdentity(e:LiveMemoryEnrollment,zoom:string,crossOwner=false){
+  return {enrollmentId:e.enrollment_id,projectId:e.project_id,documentId:e.document_id,...(zoom==='organization'||crossOwner?{ownerId:e.owner_user_id}: {})};
 }
 
 /** Consent and ephemeral cross-scope presentation. No provider, scheduling,
@@ -240,7 +257,7 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
       const presentation = await readNativeDerivationPresentation(env, actor.userId, String(latest[0].job_id), { enrollmentId: chosen.e.enrollment_id,
         enrollmentRevision: chosen.e.revision, guards: packRecallGuards(guards) });
       if (!presentation || !current()) return reply({ error: 'recall_source_unavailable' }, 503);
-      return reply({ source: { ...recallSourceIdentity(chosen.e,chosen.relation.zoom), ...chosen.relation },
+      return reply({ source: { ...recallSourceIdentity(chosen.e,chosen.relation.zoom,chosen.e.owner_user_id!==parent.owner_user_id), ...chosen.relation },
         presentation, validUntil: new Date(Math.min(presentationDeadline, Date.parse(presentation.candidate.validUntil))).toISOString(),
         independentEvidence: false, completeHistory: false, presentationOnly: true });
     }
@@ -248,7 +265,7 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
     guards.push(...eligible.map(source => source.authority.guard));
     const checks = packRecallGuards(guards).map(g => derivationAssertion(env, g)), checked = await db.batch(checks);
     if (!current() || !derivationResults(checked, checks.length) || !checked.every(derivationVerified)) throw Error('recall_changed');
-    return reply({ sources: eligible.map(source => ({ ...recallSourceIdentity(source.e,source.relation.zoom), ...source.relation })),
+    return reply({ sources: eligible.map(source => ({ ...recallSourceIdentity(source.e,source.relation.zoom,source.e.owner_user_id!==parent.owner_user_id), ...source.relation })),
       validUntil: new Date(Math.min(presentationDeadline, ...eligible.map(source => Date.parse(source.e.expires_at)))).toISOString(), complete: true });
   } catch { return reply({ error: request.method === 'GET' ? 'recall_unavailable' : 'recall_commit_unconfirmed' }, 503); }
 }
