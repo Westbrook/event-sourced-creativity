@@ -1,3 +1,4 @@
+import { nativeDerivationResultRowSql,nativeDerivationStoredRow,type NativeDerivationStoredRow } from './memory-derivation-result-row.ts';
 import { memoryCanonical, type MemorySqlGuard } from "./memory-sql.ts";
 import { liveMemoryAuthority, liveMemoryEnrollmentGuard, type LiveMemoryAuthority, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import { DERIVATION_JOB_COLUMNS, DERIVATION_JOB_SOURCE_COLUMNS } from "./memory-derivation-job-schema.ts";
@@ -24,7 +25,7 @@ declare const issuedRead: unique symbol;
 /** Read-only evidence; never an execution lease or permission to purchase work. */
 export type NativeDerivationRead = Readonly<{ [issuedRead]: true }>;
 export type NativeDerivationEvidence = NativeDerivationLease | NativeDerivationRead;
-type Admission = { mode: "execute" | "read"; env: WorkerEnv; db: WorkerEnv["DB"]; configuration: string; until: string;
+type Admission = { observedResult?:NativeDerivationStoredRow|null;mode: "execute" | "read"; env: WorkerEnv; db: WorkerEnv["DB"]; configuration: string; until: string;
   job: NativeJob; enrollment: LiveMemoryEnrollment; grant: MemoryDerivationGrant; qualification: Qualification;
   observationControlsPresent: boolean; userControlsPresent: boolean; lifecyclePresent: boolean; relationsPresent: boolean; reusePresent: boolean; resultsPresent: boolean; historyPresent: boolean; producersPresent: boolean; producer: "creator" | "chat-studio"; authority: LiveMemoryAuthority; references: Reference[]; guards: MemorySqlGuard[] };
 const issued = new WeakMap<NativeDerivationEvidence, Admission>();
@@ -82,9 +83,9 @@ export async function claimNativeDerivationJob(env: WorkerEnv, jobId: string): P
 /** Internal read capability for an authenticated actor's retained job. It does
  * not renew, reclaim, retry, mutate, or grant authority to transmit originals.
  * HTTP callers must derive actorUserId from current authentication, never JSON. */
-export async function observeNativeDerivationJob(env: WorkerEnv, actorUserId: string, jobId: string): Promise<NativeDerivationRead | null> {
+export async function observeNativeDerivationJob(env: WorkerEnv, actorUserId: string, jobId: string,options:{includeResult?:true}={}): Promise<NativeDerivationRead | null> {
   if (!derivationId(actorUserId)) return null;
-  return resolveNativeDerivationAdmission(env, jobId, actorUserId) as Promise<NativeDerivationRead | null>;
+  return resolveNativeDerivationAdmission(env, jobId, actorUserId,options.includeResult===true) as Promise<NativeDerivationRead | null>;
 }
 /** Read-only same-consent lookback from an already issued native capability.
  * Reuses the exact original authority/schema/grant assertions, not a cached
@@ -111,6 +112,8 @@ export async function observeNativeDerivationHistoryJob(env: WorkerEnv, anchor: 
     const admission:Admission={...source,mode:'read',job,references,until,producer:chat?'chat-studio':'creator',guards:[...source.guards,...producerGuard(source.producersPresent,jobId,Number(chat)),
       liveMemoryEnrollmentGuard(source.enrollment,'recall'),referenceGuard(jobId,references),jobGuard(job),
       {condition:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[until]}]};
+    // A lookback is a distinct job, not a transfer of the anchor's result bytes.
+    delete admission.observedResult;
     if(!current(admission,env))return null;
     const checked=structuredClone(await db.batch<Row>(admission.guards.map(guard=>derivationAssertion(env,guard))));
     if(lookup(env,anchor)!==source||!current(admission,env)||!derivationResults(checked,admission.guards.length)||!checked.every(derivationVerified))return null;
@@ -118,7 +121,7 @@ export async function observeNativeDerivationHistoryJob(env: WorkerEnv, anchor: 
   }catch{return null;}
 }
 
-async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, readActorId?: string): Promise<NativeDerivationEvidence | null> {
+async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, readActorId?: string,includeResult=false): Promise<NativeDerivationEvidence | null> {
   const mode = readActorId === undefined ? "execute" : "read";
   if (!derivationHash(jobId)) return null;
   const db = env.DB, configured = configuration(env), started = Date.now(), schema = await memoryDerivationSchema(env);
@@ -218,9 +221,14 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
     WHERE job_id=? AND state='waiting' AND attempts=? AND not_before<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
       AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(next.lease_token, next.lease_expires_at, jobId, job.attempts),
   derivationAssertion(env, { condition: "changes()=1", bindings: [] }), ...admission.guards.map(guard => derivationAssertion(env, guard)));
+  const resultIndex=includeResult&&mode==='read'&&schema.resultsPresent?statements.length:-1;
+  // Read bytes only AFTER every native access/purpose/source assertion in the
+  // same transaction. A failed assertion aborts before this bounded SELECT.
+  if(resultIndex>=0)statements.push(db.prepare(nativeDerivationResultRowSql).bind(jobId));
   const result = structuredClone(await db.batch<Row>(statements));
   if (!current(admission, env) || !derivationResults(result, statements.length) || mode === "execute" && !derivationChanged(result[mutationIndex]!, 1)
-    || !result.every((row, index) => index === mutationIndex || derivationVerified(row))) throw new Error("memory-derivation-claim-unconfirmed");
+    || !result.every((row, index) => index === mutationIndex || index===resultIndex || derivationVerified(row))) throw new Error("memory-derivation-claim-unconfirmed");
+  if(resultIndex>=0)admission.observedResult=nativeDerivationStoredRow(result[resultIndex]);
   const handle = Object.freeze({}) as NativeDerivationEvidence; issued.set(handle, admission); return handle;
 }
 
@@ -265,4 +273,13 @@ export async function replayNativeDerivationEvidence(env: WorkerEnv, handle: Nat
     const a = lookup(env, handle), statements = nativeDerivationEvidenceStatements(env, handle), result = structuredClone(await a.db.batch<Row>(statements));
     return current(a, env) && derivationResults(result, statements.length) && result.every(derivationVerified);
   } catch { return false; }
+}
+
+/** The optional bounded row captured after native read admission, not an
+ * independent access grant. The caller must replay result and source guards. */
+export function nativeDerivationAdmissionResult(env:WorkerEnv,handle:NativeDerivationRead){
+  const admission=lookup(env,handle);
+  if(admission.mode!=='read'||!Object.hasOwn(admission,'observedResult')
+    ||admission.observedResult&&admission.observedResult.job_id!==admission.job.job_id)return fail();
+  return structuredClone(admission.observedResult??null);
 }

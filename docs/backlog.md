@@ -344,4 +344,17 @@ completion-matrix requirements. Additive0066 still needs production integration.
 
 ## MEM-026 — Pre-authorized saved-field proposals
 
-**In progress — Memory implementation task.** [Background plain-text suggestions](forma-memory-background-fields-2026-09-21.md) now connect separately qualified source consent, native capture/job/accounting/private publication and the actual inline editor’s explicit application with non-destructive authored provenance. Focused native/D1, model/control and browser checks pass; broader regression is running. Continue the remaining native workstreams in the [completion matrix](forma-memory-completion-matrix-2026-09-20.md). Hosted schedule registration, real-provider qualification and affirmative enrollment remain tracked separately; no production activation is claimed.
+**In progress — Memory implementation task.** [Background plain-text suggestions](forma-memory-background-fields-2026-09-21.md) now connect separately qualified source consent, native capture/job/accounting/private publication and the actual inline editor’s explicit application with non-destructive authored provenance. Focused native/D1, model/control and browser checks pass; the broader native regression passes613/613. Continue the remaining native workstreams in the [completion matrix](forma-memory-completion-matrix-2026-09-20.md). Hosted schedule registration, real-provider qualification and affirmative enrollment remain tracked separately; no production activation is claimed.
+
+## MEM-027 — Native Memory approval and paired budget admission
+
+Implemented locally: single-use native approval compilation with fresh atomic
+source/access replay, paired token/dollar reservation, exact compiled Document
+authorization, atomic publication-row acknowledgement and admission-bound,
+SQLite-byte-limited result reads. Current whole execution is 67/71 personal/shared
+calls, still above the conservative 50-call target. See
+[versioned capacity evidence](forma-memory-native-capacity-2026-09-20.md#native-approval-replay-and-paired-admission--2026-09-21)
+for distinct regression checkpoints and the ongoing full run. Types, changed-worker
+lint and build pass. MEM-003 and the full native completion matrix remain assigned;
+no deployment or enrollment occurred. Background-field checkpoint `0bc453f9`
+separately passes the full 2,125-test runtime suite.

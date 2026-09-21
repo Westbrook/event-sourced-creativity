@@ -1066,6 +1066,16 @@ async function claimCostReservation(env: WorkerEnv, userId: string, reservationI
     FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=?`).bind(reservationId,userId).first<CostBudgetReservationRow&{fixed_scope_json:string|null}>();
   if(!reservation||reservation.status!=="active")return false;
   const fixed=reservation.fixed_scope_json?JSON.parse(reservation.fixed_scope_json) as {cohort_id:string;organization_id:string}:null;
+  const claimed=await prepareCostBudgetClaim(env,userId,reservation,fixed).run();
+  if(Number(claimed.meta.changes??0)===1)return true;
+  if(releaseOnFailure)await settleCostBudget(env,userId,reservationId,0,{activeOnly:true});
+  return false;
+}
+
+/** The ordinary live policy/custody claim, composable only inside a native
+ * reservation transaction. This statement alone never establishes a hold. */
+export function prepareCostBudgetClaim(env:WorkerEnv,userId:string,reservation:Pick<CostBudgetReservationRow,'reservation_id'|'workspace_id'>,fixed:{cohort_id:string;organization_id:string}|null){
+  const reservationId=reservation.reservation_id;
   const now=new Date().toISOString();
   const restriction=fixed?` AND EXISTS(
     SELECT 1 FROM pilot_cost_reservation_scopes fixed_scope
@@ -1136,12 +1146,9 @@ async function claimCostReservation(env: WorkerEnv, userId: string, reservationI
         AND scoped.organization_id=cost_budget_reservations.workspace_id
         AND scoped.actor_user_id=cost_budget_reservations.owner_id
         AND(project.owner_user_id=cost_budget_reservations.owner_id OR project_member.role IN('owner','editor')))`;
-  const claimed=await env.DB.prepare(`UPDATE cost_budget_reservations SET status='executing',updated_at=?
+  return env.DB.prepare(`UPDATE cost_budget_reservations SET status='executing',updated_at=?
     WHERE reservation_id=? AND owner_id=? AND status='active'${restriction}${projectCustody}`)
-    .bind(now,reservationId,userId,...(fixed?[fixed.cohort_id,fixed.organization_id,now,now,POLICY_VERSION]:[]),...(reservation.workspace_id!=="forma"?[POLICY_VERSION]:[])).run();
-  if(Number(claimed.meta.changes??0)===1)return true;
-  if(releaseOnFailure)await settleCostBudget(env,userId,reservationId,0,{activeOnly:true});
-  return false;
+    .bind(now,reservationId,userId,...(fixed?[fixed.cohort_id,fixed.organization_id,now,now,POLICY_VERSION]:[]),...(reservation.workspace_id!=="forma"?[POLICY_VERSION]:[]));
 }
 
 type FixedCostSettlementScope={cohort_id:string;organization_id:string;actor_user_id:string};

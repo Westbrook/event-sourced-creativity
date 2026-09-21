@@ -14243,6 +14243,50 @@ for(const shared of [false,true])for(const hosted of [false,true])test('native d
   assert.deepEqual((await db.prepare('PRAGMA foreign_key_check').all()).results,[]);
 });
 
+test('native derivation results: SQLite byte bounds apply before result hydration',async t=>{
+ const {nativeDerivationResultRowSql,nativeDerivationStoredRow}=await import('../worker/memory-derivation-result-row.ts');
+ const columns=(await import('../worker/memory-derivation-results-schema.ts')).DERIVATION_RESULT_TABLE_COLUMNS.memory_derivation_results;
+ const sqlite=new DatabaseSync(':memory:');t.after(()=>sqlite.close());sqlite.exec('CREATE TABLE memory_derivation_results('+columns.join(',')+')');
+ const base={job_id:'j',finance_id:'f',state:'active',raw_json:'{}',manifest_json:'{}',output_sha256:'o',manifest_sha256:'m',dependency_count:1,published_at:'p',expires_at:'e',retired_at:null};
+ const read=()=>sqlite.prepare(nativeDerivationResultRowSql).all('j');
+ const write=row=>{sqlite.exec('DELETE FROM memory_derivation_results');sqlite.prepare('INSERT INTO memory_derivation_results VALUES('+columns.map(()=>'?').join(',')+')').run(...columns.map(key=>row[key]));};
+ for(const [key,limit] of [['raw_json',65536],['manifest_json',262144]]){
+  write({...base,[key]:'x'.repeat(limit)});assert.equal(read().length,1);
+  write({...base,[key]:'x'.repeat(limit+1)});assert.equal(read().length,0);
+  write({...base,[key]:'界'.repeat(Math.floor(limit/3)+1)});assert.equal(read().length,0,'limits count UTF-8 bytes, not characters');
+ }
+ write({...base,finance_id:'x'.repeat(8193)});assert.equal(read().length,0);
+ const ack=results=>({success:true,results});assert.deepEqual(nativeDerivationStoredRow(ack([base])),base);
+ for(const rows of [[{...base,raw_json:1}],[{...base,manifest_json:1}],[{...base,raw_json:'x'.repeat(65537)}],[{...base,unexpected:1}],[base,base]])assert.throws(()=>nativeDerivationStoredRow(ack(rows)));
+});
+for(const fault of ['missing-ack','empty-ack','foreign-job','extra-column','late-withdrawal'])test('native derivation results: admitted body rejects '+fault,async t=>{
+ const state=await nativeDerivationResultFixture(t),store=state.resultStore;assert.equal((await store.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+ const {nativeDerivationResultRowSql}=await import('../worker/memory-derivation-result-row.ts');
+ const db=state.env.DB,batch=db.batch;let hit=false,hydrated=false;t.after(()=>{db.batch=batch;});
+ db.batch=async statements=>{
+  const index=statements.findIndex(s=>s.sql===nativeDerivationResultRowSql);if(index<0)return batch.call(db,statements);hit=true;
+  assert.equal(index,statements.length-1);assert.ok(index>1);
+  if(fault==='late-withdrawal')state.sqlite.exec('UPDATE memory_live_enrollments SET recall_enabled=0');
+  const rows=await batch.call(db,statements);hydrated=rows[index].results.length>0;
+  if(fault==='missing-ack')return rows.slice(0,-1);
+  if(fault==='empty-ack')rows[index].results=[];
+  if(fault==='foreign-job')rows[index].results[0].job_id='f'.repeat(64);
+  if(fault==='extra-column')rows[index].results[0].unexpected=1;
+  return rows;
+ };
+ assert.equal(await state.readResult(),null);assert.equal(hit,true);
+ if(fault==='late-withdrawal')assert.equal(hydrated,false,'revoked admission aborts before retained bodies are read');
+});
+test('native derivation history: lookback never inherits the anchor result snapshot',async t=>{
+ const state=await nativeDerivationRollingFixture(t,{windows:2}),admission=await import('../worker/memory-derivation-admission.ts');
+ const jobs=state.queue().jobs.sort((a,b)=>a.through_sequence-b.through_sequence);
+ const anchor=await admission.observeNativeDerivationJob(state.env,state.current().actor_user_id,jobs[1].job_id,{includeResult:true});assert.ok(anchor);
+ assert.equal(admission.nativeDerivationAdmissionResult(state.env,anchor).job_id,jobs[1].job_id);
+ const history=await admission.observeNativeDerivationHistoryJob(state.env,anchor,jobs[0].job_id);assert.ok(history);
+ assert.throws(()=>admission.nativeDerivationAdmissionResult(state.env,history));
+ assert.throws(()=>admission.nativeDerivationAdmissionResult(state.env,{...anchor}));
+});
+
 for(const source of ['content','event','turn','dependency','shared-custody','shared-retention'])test('native derivation results: source inverse or rejected mutation '+source,{timeout:60000},async t=>{
   const state=await nativeDerivationResultFixture(t,{shared:source.startsWith('shared-')}),store=state.resultStore,db=state.env.DB;
   assert.equal((await store.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
@@ -16759,13 +16803,13 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  assert.equal(quoted.status,200,JSON.stringify(review)+' SQL: '+state.controls.lastDatabaseError);
  const original=globalThis.fetch,calls=[];globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');const payload=JSON.parse(init.body);calls.push(payload);return specialistRawResponse(payload);};t.after(()=>{globalThis.fetch=original;});
  const executing=await specialistExecute(state,review,options);assert.equal(executing.status,202,await executing.clone().text()+' SQL: '+state.controls.lastDatabaseError);
- const executeOperations=counter.read();t.diagnostic(JSON.stringify({executeOperations}));counter.reset();
+ const executeOperations=counter.read();t.diagnostic(JSON.stringify({executeOperations,...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));counter.reset();
  await state.drainBackground();
  // waitUntil starts before the HTTP response completes. Only the combined
  // interval is a stable invocation measurement; phase counts are diagnostic.
  const combinedExecuteOperations=executeOperations+counter.read();
  t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),combinedExecuteOperations,...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
- assert.ok(combinedExecuteOperations<=(shared?90:88),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
+ assert.ok(combinedExecuteOperations<=(shared?71:67),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
  const response=await specialistRetrieve(state,review,options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=(shared?33:35));
@@ -17090,7 +17134,7 @@ for(const fault of ['oversized','invalid-utf8','deadline','header-deadline'])tes
 
 for(const shared of [false,true])for(const fault of ['current','elapsed','dismissed','withdrawn','permission','schema','wall-rollback','monotonic-rollback'])test('semantic dispatch handoff: '+shared+'/'+fault+' preserves fresh authority',async t=>{
  const state=await semanticPaidConsumerFixture(t,{shared}),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200);
- const db=state.env.DB,prepare=db.prepare;let reads=0,retainedReads=0,recoveryReads=0,release,entered;
+ const db=state.env.DB,prepare=db.prepare,batch=db.batch;let reads=0,retainedReads=0,recoveryReads=0,release,entered;
  const gate=new Promise(resolve=>{release=resolve;}),atHandoff=new Promise(resolve=>{entered=resolve;});
  db.prepare=function(sql){
   if(sql.startsWith('SELECT execution.status AS execution_status'))recoveryReads++;
@@ -17103,7 +17147,8 @@ for(const shared of [false,true])for(const fault of ['current','elapsed','dismis
    return Reflect.get(target,key,target);
   }});return wrap(statement);
  };
- t.after(()=>{release();db.prepare=prepare;});
+ db.batch=async statements=>{if(statements.some(s=>s.sql.includes('AS retained_handoff'))){entered();await gate;}return batch.call(db,statements);};
+ t.after(()=>{release();db.prepare=prepare;db.batch=batch;});
  const original=globalThis.fetch;let calls=0;
  globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
  try{
@@ -17146,7 +17191,13 @@ async function semanticFollowupFixture(t,{shared=false,levels=2,assets=false,nat
   const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
   const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['SourceHandoff'],script:"export default {fetch(){return new Response('Synthetic source handoff');}};",outboundService(){throw Error('No external requests');}});
   t.after(()=>mf.dispose());const db=await mf.getD1Database('SourceHandoff');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
-  state.env.DB={prepare:sql=>db.prepare(sql),batch:async statements=>{try{return await db.batch(statements);}catch(error){state.controls.lastDatabaseError=String(error);throw error;}},exec:sql=>db.exec(sql)};
+  const originalStatements=new WeakMap();
+  const diagnostic=raw=>{const proxy=new Proxy(raw,{get(target,key){
+   if(key==='bind')return(...values)=>diagnostic(target.bind(...values));
+   if(['first','all','run','raw'].includes(key))return async(...values)=>{try{return await target[key](...values);}catch(error){state.controls.lastDatabaseError=String(error);throw error;}};
+   return Reflect.get(target,key,target);
+  }});originalStatements.set(proxy,raw);return proxy;};
+  state.env.DB={prepare:sql=>diagnostic(db.prepare(sql)),batch:async statements=>{try{return await db.batch(statements.map(s=>originalStatements.get(s)??s));}catch(error){state.controls.lastDatabaseError=String(error);throw error;}},exec:sql=>db.exec(sql)};
  }
  globalThis.fetch=async(_url,init)=>{if(native&&String(_url)!=='https://api.openai.com/v1/responses')return original(_url,init);const payload=JSON.parse(init.body);calls.push(payload);return specialistRawResponse(payload);};t.after(()=>{globalThis.fetch=original;});
  const reviews=[];
@@ -18169,11 +18220,12 @@ for(const shared of [false,true])for(const fault of ['body','redaction','custody
  const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:blockId,scope:'document',type:'direction',properties:{text:'Exact native field before dispatch'}}}},state.owner));assert.equal(created.status,200,await created.clone().text());
  const event=state.sqlite.prepare("SELECT event_id,stream_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')=?").get(blockId);
  const quote=await state.semanticQuote(),review=quote.body;assert.equal(quote.response.status,200,JSON.stringify(review));
- const db=state.env.DB,prepare=db.prepare;let retainedReads=0,release,entered;
+ const db=state.env.DB,prepare=db.prepare,batch=db.batch;let retainedReads=0,release,entered;
  const gate=new Promise(resolve=>{release=resolve;}),atHandoff=new Promise(resolve=>{entered=resolve;});
  db.prepare=function(sql){const statement=prepare.call(this,sql);if(!sql.startsWith('SELECT execution.*,content.content AS retained_consent_content'))return statement;
   const wrap=raw=>new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(key==='first')return async(...args)=>{if(++retainedReads===2){entered();await gate;}return target.first(...args);};return Reflect.get(target,key,target);}});return wrap(statement);};
- t.after(()=>{release();db.prepare=prepare;});
+ db.batch=async statements=>{if(statements.some(s=>s.sql.includes('AS retained_handoff'))){entered();await gate;}return batch.call(db,statements);};
+ t.after(()=>{release();db.prepare=prepare;db.batch=batch;});
  const original=globalThis.fetch;let calls=0;globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
  try{
   assert.equal((await specialistExecute(state,review,state.semanticOptions)).status,202);await atHandoff;
@@ -18352,6 +18404,32 @@ for(const fault of ['receipt','raw','source','task-ack','action-ack'])test('Memo
  const retrieved=await specialistRetrieve(state,review,state.semanticOptions);
  if(fault==='raw'||fault==='source')assert.equal(retrieved.status,404,await retrieved.clone().text());else{const body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body));assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');}
  assert.equal(calls,1);
+});
+
+for(const fault of ['missing-row','empty-row','wrong-identity','extra-column','lost-ack','concurrent-winner'])test('Memory atomic result publication: completed row '+fault+' retains one paid result',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared:true}),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch,original=globalThis.fetch;let hit=false,calls=0;
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;db.batch=batch;});
+ db.batch=async statements=>{
+  if(hit||!statements.some(s=>s.sql.startsWith("UPDATE consequential_executions SET status='completed'"))||!statements.some(s=>s.sql.startsWith("UPDATE assistant_specialist_tasks SET status='completed'")))return batch.call(db,statements);
+  hit=true;const rows=await batch.call(db,statements);
+  // Commit a real winner, then let the original stale attempt collide with it.
+  if(fault==='concurrent-winner')return batch.call(db,statements);
+  if(fault==='missing-row')return rows.slice(0,-1);
+  if(fault==='empty-row')rows.at(-1).results=[];
+  if(fault==='wrong-identity')rows.at(-1).results[0].execution_id='foreign-execution';
+  if(fault==='extra-column')rows.at(-1).results[0].unexpected=1;
+  if(fault==='lost-ack')throw Error('isolated-publication-ack-lost');
+  return rows;
+ };
+ const execute=await specialistExecute(state,review,state.semanticOptions);assert.equal(execute.status,202,await execute.clone().text());await state.drainBackground();
+ assert.equal(hit,true);assert.equal(calls,1);
+ const row=state.sqlite.prepare('SELECT status,result_ref FROM consequential_executions WHERE execution_id=?').get(review.executionId);
+ assert.equal(row.status,'completed');assert.ok(row.result_ref);
+ assert.equal(state.sqlite.prepare("SELECT count(*) n FROM memory_derivation_consumer_contents WHERE role='result'").get().n,1);
+ assert.equal(state.sqlite.prepare('SELECT count(*) n FROM assistant_action_commits WHERE commit_id=?').get('task:'+review.executionId).n,1);
+ const retrieved=await specialistRetrieve(state,review,state.semanticOptions),body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body));assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');assert.equal(calls,1);
+ assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,1300);
 });
 
 async function organizationNestingFixture(t){
@@ -18557,4 +18635,90 @@ for(const shared of [false,true])for(const lostAck of [false,true])test('backgro
  assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_results').get().state,'active');
  const jobId=state.sqlite.prepare('SELECT job_id FROM memory_derivation_results').get().job_id,store=await import('../worker/memory-derivation-results.ts');assert.ok(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,jobId));
  assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_usage').get().n,1);
+});
+
+for(const shared of [false,true])for(const fault of ['consent','execution','task','step','missing-ack','false-ack','extra-ack','nested-ack'])test('Memory admission handoff: fresh native replay denies '+shared+'/'+fault,async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch;let injected=false;
+ db.batch=async statements=>{
+  const matched=!injected&&statements.some(s=>s.sql.includes('AS retained_handoff'));
+  if(matched){injected=true;
+   if(fault==='consent')state.sqlite.prepare("UPDATE private_content SET content=content||' ' WHERE content_id=(SELECT consent_ref FROM consequential_executions WHERE execution_id=?)").run(review.executionId);
+   if(fault==='execution')state.sqlite.prepare("UPDATE consequential_executions SET binding_hash=? WHERE execution_id=?").run('0'.repeat(64),review.executionId);
+   if(fault==='task')state.sqlite.prepare("UPDATE assistant_specialist_tasks SET document_id='different-document' WHERE task_id=?").run(review.executionId);
+   if(fault==='step')state.sqlite.prepare("UPDATE consequential_execution_steps SET status='uncertain' WHERE execution_id=?").run(review.executionId);
+  }
+  const rows=await batch.call(db,statements);
+  if(matched){
+   if(fault==='missing-ack')return rows.slice(0,-1);
+   if(fault==='false-ack')return rows.map((r,i)=>i===0?{...r,results:[{verified:0}]}:r);
+   if(fault==='extra-ack')return [...rows,rows.at(-1)];
+   if(fault==='nested-ack')return rows.map((r,i)=>i===0?{...r,results:[{verified:1,unexpected:{verified:0}}]}:r);
+  }
+  return rows;
+ };t.after(()=>{state.env.DB=db;db.batch=batch;});
+ const original=globalThis.fetch;let calls=0;globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ const before=adaptiveReentryFinancialState(state);
+ await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();
+ assert.equal(injected,true);assert.equal(calls,0);
+ assert.deepEqual(adaptiveReentryFinancialState(state),before);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n,0);
+});
+
+for(const shared of [false,true])for(const fault of ['token-cap','cost-cap','second-ledger','cost-claim','source-at-commit','lost-ack','false-ack','missing-proof-ack'])test('Memory paired reservation: atomic rollback and no repurchase '+shared+'/'+fault,async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch;let injected=false;
+ db.batch=async statements=>{
+  const matched=!injected&&statements.some(s=>s.sql.startsWith('INSERT OR IGNORE INTO budget_reservations'))&&statements.some(s=>s.sql.startsWith('INSERT OR IGNORE INTO cost_budget_reservations'));
+  if(matched){injected=true;
+   if(fault==='token-cap')state.sqlite.prepare("UPDATE budget_counters SET used_tokens=1000000000 WHERE scope='user' AND scope_id=?").run(state.current().actor_user_id);
+   if(fault==='cost-cap')state.sqlite.prepare("UPDATE cost_budget_counters SET used_microusd=1000000000 WHERE scope='user' AND scope_id=?").run(state.current().actor_user_id);
+   if(fault==='second-ledger')state.sqlite.exec("CREATE TRIGGER pair_cost_fault BEFORE INSERT ON cost_budget_reservations WHEN NEW.operation LIKE 'assistant-specialist:%' BEGIN SELECT RAISE(ABORT,'synthetic pair insertion failure'); END");
+   if(fault==='cost-claim')state.sqlite.exec("CREATE TRIGGER pair_cost_fault BEFORE UPDATE OF status ON cost_budget_reservations WHEN NEW.status='executing' AND NEW.operation LIKE 'assistant-specialist:%' BEGIN SELECT RAISE(ABORT,'synthetic claim failure'); END");
+   if(fault==='source-at-commit')state.sqlite.exec("CREATE TRIGGER pair_source_fault AFTER INSERT ON budget_reservations WHEN NEW.operation LIKE 'assistant-specialist:%' BEGIN UPDATE private_content SET redacted_at='2000-01-01T00:00:00.000Z' WHERE kind='execution-consent'; END");
+  }
+  const rows=await batch.call(db,statements);
+  if(matched&&fault==='lost-ack')return rows.slice(0,-1);
+  if(matched&&fault==='missing-proof-ack')return rows.map((row,i)=>i===0?{...row,results:[]}:row);
+  if(matched&&fault==='false-ack')return rows.map((row,i)=>i===rows.length-1?{...row,results:[{verified:0}]}:row);
+  return rows;
+ };t.after(()=>{db.batch=batch;});
+ const original=globalThis.fetch;let calls=0;globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();assert.equal(injected,true);assert.equal(calls,0);
+ const tokens=state.sqlite.prepare('SELECT status,reserved_tokens,used_tokens FROM budget_reservations WHERE reservation_id=?').get(review.executionId+':tokens:0');
+ const cost=state.sqlite.prepare('SELECT status,reserved_microusd,used_microusd FROM cost_budget_reservations WHERE reservation_id=?').get(review.executionId+':usd:0');
+ if(['lost-ack','false-ack','missing-proof-ack'].includes(fault)){
+  assert.equal(tokens.status,'released');assert.equal(cost.status,'released');assert.equal(tokens.used_tokens,0);assert.equal(cost.used_microusd,0);
+ }else{assert.equal(tokens,undefined);assert.equal(cost,undefined);}
+ const stable=adaptiveReentryFinancialState(state);
+ await specialistRetrieve(state,review,state.semanticOptions);await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();
+ assert.equal(calls,0);assert.deepEqual(adaptiveReentryFinancialState(state),stable);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n,0);
+});
+
+for(const shared of [false,true])for(const phase of ['purchase','step','dispatch'])for(const fault of ['email','permission','missing-proof'])test('Memory compiled authority: fresh '+shared+'/'+phase+'/'+fault+' blocks dispatch',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch;let injected=false;
+ db.batch=async statements=>{
+  const matched=!injected&&(phase==='purchase'?statements.some(s=>s.sql.startsWith('SELECT 1 AS current WHERE'))&&statements.some(s=>s.sql.includes("json('assistant_authorization_changed')"))
+   :phase==='step'?statements.some(s=>s.sql.startsWith("UPDATE consequential_execution_steps SET status='submitting'"))
+   :statements.some(s=>s.sql.includes('AS deadline')&&s.sql.includes("step.status='submitting'")));
+  if(matched){injected=true;
+   if(fault==='email')state.sqlite.prepare("UPDATE users SET email='changed-address@example.test' WHERE user_id=?").run(state.current().actor_user_id);
+   if(fault==='permission')state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run(state.current().actor_user_id);
+  }
+  const rows=await batch.call(db,statements);
+  return matched&&fault==='missing-proof'?rows.map((row,i)=>i===0?{...row,results:[]}:row):rows;
+ };t.after(()=>{db.batch=batch;});
+ const original=globalThis.fetch;let calls=0;globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();assert.equal(injected,true);assert.equal(calls,0);
+ const tokens=state.sqlite.prepare('SELECT status,used_tokens FROM budget_reservations WHERE reservation_id=?').get(review.executionId+':tokens:0');
+ const cost=state.sqlite.prepare('SELECT status,used_microusd FROM cost_budget_reservations WHERE reservation_id=?').get(review.executionId+':usd:0');
+ assert.equal(tokens.status,'released');assert.equal(cost.status,'released');assert.equal(tokens.used_tokens,0);assert.equal(cost.used_microusd,0);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n,0);
+ const before=adaptiveReentryFinancialState(state);await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();
+ assert.equal(calls,0);assert.deepEqual(adaptiveReentryFinancialState(state),before);
 });

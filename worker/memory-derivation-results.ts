@@ -1,3 +1,4 @@
+import { nativeDerivationResultRowSql,nativeDerivationStoredRow } from './memory-derivation-result-row.ts';
 import { parseMemoryFieldResult,type ParsedMemoryFieldDerivation } from './memory-field-result.ts';
 import { parseMemoryProfileResult,type ParsedMemoryProfileDerivation } from './memory-profile-result.ts';
 import { MEMORY_EVIDENCE_RESOURCES, type MemoryResourceCitation } from '../src/model/memory-evidence-resource.ts';
@@ -11,7 +12,7 @@ import { derivationExact, derivationHash, derivationId, derivationInteger } from
 import { derivationAssertion, derivationAssertedChange, derivationChanged, derivationResults, derivationVerified, memoryDerivationSchema } from './memory-derivation-store.ts';
 import { DERIVATION_RESULT_TABLE_COLUMNS } from './memory-derivation-results-schema.ts';
 import { nativeDerivationCandidateInputs, nativeDerivationCandidateStatements, type NativeDerivationCandidateReceipt } from './memory-derivation-provider.ts';
-import { observeNativeDerivationJob, nativeDerivationEvidenceInputs } from './memory-derivation-admission.ts';
+import { observeNativeDerivationJob, nativeDerivationAdmissionResult, nativeDerivationEvidenceInputs } from './memory-derivation-admission.ts';
 import { captureNativeDerivationSources, nativeDerivationSourceInputs, type NativeDerivationSourceCapture } from './memory-derivation-sources.ts';
 import { nativeDerivationManifestInputs, nativeDerivationManifestGuards, nativeDerivationManifestStatements, revalidateNativeDerivationManifest,
   type NativeDerivationManifest, type NativeDerivationManifestData } from './memory-derivation-manifest.ts';
@@ -76,10 +77,8 @@ function dependencyPredicate(jobId: string, expected: Dependency[]) {
 }
 const dependencyGuard=(env:WorkerEnv,jobId:string,expected:Dependency[])=>derivationAssertion(env,dependencyPredicate(jobId,expected));
 async function resultRow(env: WorkerEnv, jobId: string) {
-  const db = env.DB, result = structuredClone(await db.prepare(`SELECT ${columns.join(',')} FROM memory_derivation_results WHERE job_id=? LIMIT 2`).bind(jobId).all<Row>());
-  if (env.DB !== db || !derivationResults([result], 1) || result.results.length > 1
-    || result.results.some(row => !derivationExact(row, columns))) throw Error('memory-result-unavailable');
-  return result.results[0] ?? null;
+  const db=env.DB,result=structuredClone(await db.prepare(nativeDerivationResultRowSql).bind(jobId).all<Row>());
+  if(env.DB!==db)throw Error('memory-result-unavailable');return nativeDerivationStoredRow(result);
 }
 
 /** Atomic body + complete inverse index publication. No provider call, semantic
@@ -139,13 +138,13 @@ async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
   consumer?: { enrollmentId: string; enrollmentRevision: number; guards: readonly MemorySqlGuard[] },prepareOnly=false): Promise<NativeDerivationResultRead | null> {
   try {
     if (!derivationHash(jobId)) return null;
-    const db = env.DB, evidence = await observeNativeDerivationJob(env, actorUserId, jobId);
+    const db = env.DB, evidence = await observeNativeDerivationJob(env, actorUserId, jobId,{includeResult:true});
     if (!evidence || !nativeDerivationEvidenceInputs(env,evidence).resultsPresent || env.DB !== db) return null;
     if (consumer) {
       const parent = nativeDerivationEvidenceInputs(env, evidence).enrollment;
       if (!parent || parent.enrollment_id !== consumer.enrollmentId || parent.revision !== consumer.enrollmentRevision || !consumer.guards.length) return null;
     }
-    const row = await resultRow(env, jobId);
+    const row = nativeDerivationAdmissionResult(env,evidence);
     if (!row || row.state !== 'active' || typeof row.raw_json !== 'string' || typeof row.manifest_json !== 'string'
       || typeof row.expires_at !== 'string' || row.expires_at <= new Date().toISOString()
       || await memoryDigest(row.raw_json) !== row.output_sha256 || await memoryDigest(row.manifest_json) !== row.manifest_sha256) return null;

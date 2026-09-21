@@ -57,7 +57,7 @@ privacy mutation and changed native source ownership retire the inline view.
 - Four final rebuilt inline-editor browser checks also passed after the localized
   background-origin disclosure was added.
 - TypeScript, changed-path lint and production build passed (existing chunk-size
-  advisory). Broader native regression is running; not claimed passed yet.
+  advisory). The broader native derivation, worker, finance, privacy, profile and field regression passed613/613 in383.3seconds.
 
 These tests use synthetic qualifications and provider replies. No real provider
 call, spending, scheduling registration, enrollment, migration or deployment.
@@ -73,3 +73,7 @@ profile promotion and integrated capacity/freshness remain in the
 [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
 Hosted scheduling qualification and registration remain in the
 [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
+
+Full native runtime regression at`0bc453f9`: **2125/2125 pass** in974.9seconds.
+This verifies the background-field checkpoint; later admission changes have
+separate evidence. No production data or actual provider requests were used.

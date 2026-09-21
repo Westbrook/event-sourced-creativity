@@ -1,3 +1,4 @@
+import { NATIVE_DERIVATION_MANIFEST_BYTES } from './memory-derivation-result-row.ts';
 import type { WorkerEnv } from './runtime.ts';
 import { memoryCanonical } from './memory-sql.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
@@ -5,7 +6,7 @@ import { nativeDerivationSourceInputs, nativeDerivationSourceGuards, nativeDeriv
   type NativeDerivationSourceCapture } from './memory-derivation-sources.ts';
 
 export const NATIVE_DERIVATION_MANIFEST_VERSION = 'native-memory-manifest-v1';
-const maximumBytes = 256 * 1024;
+const maximumBytes = NATIVE_DERIVATION_MANIFEST_BYTES;
 type Capture = ReturnType<typeof nativeDerivationSourceInputs>;
 export type NativeDerivationManifestData = Readonly<{
   version: typeof NATIVE_DERIVATION_MANIFEST_VERSION;

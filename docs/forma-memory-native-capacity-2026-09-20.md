@@ -174,3 +174,56 @@ The full suite at preceding organization commit`e4adb0ea` passes2070/2070; that
 full run does not include this later publication change. Types, changed-worker
 lint and build pass. Whole runtime-test-file lint retains16 pre-existing findings.
 All provider responses are synthetic. No hosted qualification or deployment.
+
+## Native approval replay and paired admission — 2026-09-21
+
+Freshly admitted native Memory requests now carry an opaque, single-use,
+same-request/database/host compilation into the deferred driver. One read-only
+transaction replays the exact principal, pilot admission, retained consent,
+execution identity, winning task, original turns and full semantic source proof.
+The receiver requires every acknowledgement. It is not a cached positive access
+decision: changed rows fail, expired captures require full reconstruction, and
+clock rollback or malformed acknowledgements prevent dispatch. Existing tasks,
+managed pilots and unsupported source kinds keep the original full-read path.
+The worker still refreshes authorization before provider dispatch.
+
+New native Memory steps now reserve the existing token and dollar ledgers and
+claim the cost reservation in one transaction. This composes the existing budget
+builders and the same live cost-claim policy; it creates no separate allowance.
+Exact source/principal assertions, a quoted-step CAS, reservation absence,
+per-insert acknowledgements and final bookends make cap/claim/source failures
+atomic. No partial or previously submitted hold is adopted. A lost acknowledgement
+never authorizes dispatch or automatic repurchase; verified unsubmitted holds
+are released by the existing recovery path.
+
+The Document path now compiles the exact current principal, email, custody and
+pilot predicates into the preparation, step and dispatch transactions. These
+remain separate SQL assertions to preserve native parameter and expression-depth
+limits. After provider completion, an unchanged actor snapshot is verified again;
+a changed snapshot falls back to ordinary authorization. Other routes retain
+the original authorization path.
+
+Fresh publication returns the actual completed execution row from the same
+atomic transaction. Missing, malformed or lost result acknowledgements cannot
+turn a second attempt into another purchase or overwrite an existing winner.
+Retained derivation reads now enforce the existing 64 KiB result and 256 KiB
+manifest limits in SQLite before hydration, following every admission assertion
+in that same transaction. A historical read handle cannot inherit another job's
+captured body. Exact source/result/dependency replay is still mandatory.
+
+Whole synthetic execution is **67 personal / 71 shared native binding calls**,
+from 88/90. Quote is 49/51 and retrieval 34/32. The conservative 50-call target
+is still open; these are not hosted quota or latency qualification numbers.
+
+Verification checkpoints (overlapping, not additive): 444 broad runtime checks
+passed before the subsequent compiled-authority and bounded-row changes; 65
+compiled-authority/source/acknowledgement checks then passed; the final bounded-row
+smoke passed 39 checks, and 15 new body-boundary/publication/history checks passed,
+including real isolated workerd/D1 three-generation replay. The 15 cover UTF-8
+byte limits, admission acknowledgement faults, late withdrawal, history handle
+separation and committed-publication recovery including a concurrent winner.
+TypeScript, changed-worker lint and production build pass at this source
+(existing chunk warnings). A full runtime run is in progress and is not yet
+claimed as passed. The earlier background-field checkpoint separately passed
+2,125 tests at `0bc453f9`. No actual provider calls, enrollment, production
+migration, deployment or external provisioning.

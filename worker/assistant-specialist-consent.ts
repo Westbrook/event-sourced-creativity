@@ -1,3 +1,4 @@
+import { configuredPilotAdmissionGuard } from "./intake-authority.ts";
 import { parseMemoryFieldRequest,memoryFieldRequestCurrent,type MemoryFieldRequest } from '../src/model/memory-field-request.ts';
 import { prepareAuthoringSourceProof,packAuthoringSourceProof } from './context-authoring-source.ts';
 import { memoryAssistantEditReview } from './memory-assistant-edits.ts';
@@ -957,7 +958,7 @@ async function publishFreshMemoryResult(env:WorkerEnv,actor:SpecialistActor,task
    bindings:[id,usage.totalTokens,paid.cost,paid.observed.responseId,...(paid.billingPending?[]:[id+':usd:0',paid.cost,id+':tokens:0',userId,usage.totalTokens])]};
  const canonical=canonicalProviderResult(env,task,retained,paid);
  await completeConsequentialExecution(env,actor.principal,retained.binding,id,canonical,join(raw.proof,accounting),{
-   precommit:()=>semanticAssistantMemoryStatements(env,memory),
+   fresh:true,precommit:()=>semanticAssistantMemoryStatements(env,memory),
    publish:ref=>semanticAssistantMemoryContentStatements(env,memory,ref,'result'),
    complete:ref=>[
      env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='completed',error_code=NULL,updated_at=?,completed_at=?
@@ -1143,7 +1144,7 @@ function capturePurchaseSource(env:WorkerEnv,retained:Retained,source:Awaited<Re
       sourceProof:join(structuredClone(source.sourceProof),deadline(new Date(wall+30000).toISOString()))}});
   return handoff;
 }
-async function purchasePreparation(request:Request,env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,retained:Retained,handoff?:PurchaseSourceHandoff){
+async function purchasePreparation(request:Request,env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,retained:Retained,handoff?:PurchaseSourceHandoff,authority?:BudgetReservationGuard){
   // turnProof below includes the exact negative Memory ancestry predicate in
   // this same current-source read and in every subsequent atomic consumer.
   // A separate earlier positive ancestry query adds no authority.
@@ -1164,11 +1165,26 @@ async function purchasePreparation(request:Request,env:WorkerEnv,actor:Specialis
   if(reasons.length)fail(reasons[0]!);if(!env.OPENAI_API_KEY)fail("assistant_provider_unavailable");
   const consentGuard=consentProof(retained),turnGuard=turnProof(retained.binding,retained.request,true),conversationGuard=conversationProof(retained.binding,retained.request);
   const proof=join(consentGuard,turnGuard,conversationGuard,source.sourceProof);
-  if(!await env.DB.prepare("SELECT 1 AS current WHERE "+proof.sql).bind(...proof.bindings).first()){await assertNoPaidMemory(env,noMemoryProof(retained.request));fail("assistant_consent_source_changed");}
+  const selected=env.DB.prepare("SELECT 1 AS current WHERE "+proof.sql).bind(...proof.bindings);
+  const checked=authority?await env.DB.batch<Record<string,unknown>>([
+    env.DB.prepare(`SELECT CASE WHEN (${authority.sql}) THEN 1 ELSE json('assistant_authorization_changed') END AS verified`).bind(...authority.bindings),selected,
+  ]):null;
+  if(checked&&(!Array.isArray(checked)||checked.length!==2||checked.some(row=>!row||row.success!==true||('error' in row&&row.error!==undefined)||!Array.isArray(row.results))
+    ||checked[0]!.results.length!==1||Object.keys(checked[0]!.results[0]!).length!==1||checked[0]!.results[0]!.verified!==1))fail('assistant_authorization_changed');
+  if(!(checked?checked[1]!.results[0]:await selected.first())){await assertNoPaidMemory(env,noMemoryProof(retained.request));fail("assistant_consent_source_changed");}
   if(handoff)purchaseSourceCurrent(env,retained,handoff);
-  return{...source,proof,handoff};
+  return{...source,proof,handoff,authority};
 }
-async function refreshReadActor(request:Request,env:WorkerEnv,retained:Retained):Promise<SpecialistActor>{
+async function refreshReadActor(request:Request,env:WorkerEnv,retained:Retained,compiled?:SpecialistActor):Promise<SpecialistActor>{
+  if(compiled&&compiled.principal.userId===retained.binding.actorUserId&&/^\/document\/[^/]+(?:\/|$)/u.test(compiled.surface.route)){
+    const guard=join(readAuthority(compiled,retained),configuredPilotAdmissionGuard(env,compiled.principal),
+      {sql:'EXISTS(SELECT 1 FROM users WHERE user_id=? AND email=?)',bindings:[compiled.principal.userId,compiled.principal.email]});
+    // Fresh native authorization, reusing only decoded claim structure. Changed
+    // access falls through to the full read, so a valid new viewer role can still
+    // read an already-paid result without inheriting the old authoring rights.
+    const db=env.DB,current=await db.prepare('SELECT 1 AS current WHERE '+guard.sql).bind(...guard.bindings).first<{current:number}>();
+    if(env.DB!==db)fail('assistant_read_scope_denied');if(current?.current===1&&Object.keys(current).length===1)return compiled;
+  }
   const auth=await requireUser(request,env,"viewer",{account:"principal"});if(auth.response||!auth.user||auth.user.userId!==retained.binding.actorUserId)fail("assistant_read_scope_denied");
   if(requireConsent(auth.user))fail("assistant_read_scope_denied");
   const scope=retained.binding.scope,principal=auth.user,project=scope?{contextId:"",organizationId:scope.organizationId,projectAccessId:scope.projectAccessId,projectId:scope.projectId,ownerUserId:scope.ownerUserId,principalUserId:principal.userId,role:principal.access.projects.find(item=>item.projectAccessId===scope.projectAccessId)?.role??"viewer",permissions:principal.access.capabilities.filter(capability=>hasCapability(principal,capability,scope)),expiresAt:""}:null;
@@ -1179,18 +1195,61 @@ async function finishFailed(env:WorkerEnv,task:SpecialistTaskRecord,leaseToken:s
   await env.DB.prepare("UPDATE assistant_specialist_tasks SET status=?,error_code=?,updated_at=?,completed_at=? WHERE task_id=? AND actor_user_id=? AND status!='completed' AND json_extract(result_json,'$.leaseToken')=? AND NOT EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=assistant_specialist_tasks.task_id AND execution.result_ref IS NOT NULL)")
     .bind(paid?"needs-review":"failed",code,new Date().toISOString(),new Date().toISOString(),task.task_id,task.actor_user_id,leaseToken).run();
 }
+declare const approvedTaskHandoffBrand:unique symbol;
+type ApprovedTaskHandoff=Readonly<{[approvedTaskHandoffBrand]:true}>;
+const approvedTaskHandoffs=new WeakMap<ApprovedTaskHandoff,{env:WorkerEnv;db:WorkerEnv['DB'];host:AssistantSpecialistHost;request:Request;actor:SpecialistActor;retained:Retained;task:SpecialistTaskRecord;wall:number;mono:number}>();
+/** Process-local compilation only. The receiver replays exact native authority,
+ * consent, task and Memory predicates before using any retained bytes. */
+function captureApprovedTask(env:WorkerEnv,host:AssistantSpecialistHost,request:Request,actor:SpecialistActor,retained:Retained,task:SpecialistTaskRecord,source?:PurchaseSourceHandoff):ApprovedTaskHandoff|undefined{
+  if(!source||!retained.request.memory||retained.row.status!=='reserved'||task.status!=='queued'||task.provider_submitted!==0)return undefined;
+  purchaseSourceCurrent(env,retained,source);
+  const token=Object.freeze({}) as ApprovedTaskHandoff;
+  approvedTaskHandoffs.set(token,{env,db:env.DB,host,request,actor,retained,task,wall:Date.now(),mono:performance.now()});return token;
+}
+async function consumeApprovedTask(env:WorkerEnv,host:AssistantSpecialistHost,request:Request,id:string,turnId:string,token?:ApprovedTaskHandoff){
+  if(!token)return null;
+  const captured=approvedTaskHandoffs.get(token);approvedTaskHandoffs.delete(token);
+  if(!captured||captured.env!==env||captured.db!==env.DB||captured.host!==host||captured.request!==request
+    ||captured.task.task_id!==id||captured.retained.row.execution_id!==id||captured.retained.request.turnId!==turnId)fail('assistant_admission_handoff_invalid');
+  const {actor,retained,task}=captured;
+  const current=()=>{const wall=Date.now(),mono=performance.now();
+    if(![wall,mono,captured.wall,captured.mono].every(Number.isFinite)||wall<captured.wall||mono<captured.mono)fail('assistant_admission_handoff_invalid');
+    return wall-captured.wall<30000&&mono-captured.mono<30000;
+  };
+  if(!current())return null;
+  const memory=semanticMemory(env,retained.request);if(!memory||!semanticAssistantMemoryLeaseCurrent(env,memory,actor.principal.userId))return null;
+  const proofs=[join(readAuthority(actor,retained),configuredPilotAdmissionGuard(env,actor.principal)),consentProof(retained),
+    turnProof(retained.binding,retained.request),executionIdentityProof(retained),taskProof(task,retained)];
+  const statements=[...semanticAssistantMemoryStatements(env,memory),...proofs.map(proof=>env.DB.prepare(`SELECT CASE WHEN (${proof.sql}) THEN 1 ELSE json('assistant_admission_handoff_changed') END AS verified`).bind(...proof.bindings)),
+    env.DB.prepare(`SELECT step.status AS retained_handoff FROM consequential_executions execution
+      JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id AND step.step_index=0
+      WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.status='reserved' AND execution.result_ref IS NULL
+        AND execution.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ?=strftime('%Y-%m','now')
+        AND execution.execution_id=(SELECT task_id FROM assistant_specialist_tasks WHERE actor_user_id=? AND scope_key=? AND turn_id=? ORDER BY created_at,task_id LIMIT 1)`)
+      .bind(id,actor.principal.userId,retained.binding.period,actor.principal.userId,retained.request.scopeKey,turnId)];
+  const rows=structuredClone(await env.DB.batch<{verified?:number;retained_handoff?:string}>(statements));
+  if(env.DB!==captured.db||!Array.isArray(rows)||rows.length!==statements.length
+    ||rows.some((row,index)=>!row||row.success!==true||('error' in row&&row.error!==undefined)||!Array.isArray(row.results)
+      ||row.results.length!==1||!row.results[0]||Object.keys(row.results[0]).length!==1
+      ||(index<rows.length-1?row.results[0].verified!==1:typeof row.results[0].retained_handoff!=='string')))fail('assistant_admission_handoff_changed');
+  if(!current())return null;
+  semanticAssistantMemoryInputs(env,memory);
+  return{actor,retained,task,current,step:{status:rows.at(-1)!.results[0]!.retained_handoff!}};
+}
 /** Only an explicit execute request drives the existing queue. Reads never call this function. */
-async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpecialistHost,taskId:string,turnId:string,preparedMemory?:SemanticAssistantMemory,sourceHandoff?:PurchaseSourceHandoff){
+async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpecialistHost,taskId:string,turnId:string,preparedMemory?:SemanticAssistantMemory,sourceHandoff?:PurchaseSourceHandoff,admissionHandoff?:ApprovedTaskHandoff){
   let task:SpecialistTaskRecord|null=null,retained:Retained|null=null,leaseToken="",ownsSubmission=false,providerInvoked=false;
   try{
-    const authorization=await host.authorize(request,env),actor=authorization.authorized;if(authorization.response||!actor)return;
-    const scopeKey=host.scopeKey(actor);
-    // Continue only this execution's native source compilation, never its access
-    // decision. Retained consent is reread; the actor, exact binding, original
-    // monotonic lease and every transactional source assertion remain mandatory.
-    retained=await retainedConsent(env,actor,scopeKey,turnId,taskId,preparedMemory);if(!retained)return;
-    task=await existingTask(env,actor,scopeKey,turnId);if(!task||task.task_id!==taskId)return;
-    const step=await env.DB.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").bind(taskId).first<{status:string}>();if(!step)return;
+    const continued=await consumeApprovedTask(env,host,request,taskId,turnId,admissionHandoff);
+    let actor:SpecialistActor,step:{status:string}|null;
+    if(continued){({actor,retained,task,step}=continued);}
+    else{
+      const authorization=await host.authorize(request,env);if(authorization.response||!authorization.authorized)return;
+      actor=authorization.authorized;const scopeKey=host.scopeKey(actor);
+      retained=await retainedConsent(env,actor,scopeKey,turnId,taskId,preparedMemory);if(!retained)return;
+      task=await existingTask(env,actor,scopeKey,turnId);if(!task||task.task_id!==taskId)return;
+      step=await env.DB.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").bind(taskId).first<{status:string}>();if(!step)return;
+    }
     // An unsubmitted step has no paid result to recover. Reservation/dispatch
     // still CAS its actual native state; a concurrent winner cannot repurchase.
     if(!["quoted","reserved"].includes(step.status)){await recoverResult(env,actor,host,task,retained);return;}
@@ -1203,17 +1262,30 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
       .bind(now,now,new Date(Date.now()+10*60_000).toISOString(),leaseToken,taskId,actor.principal.userId,actor.principal.userId,taskId,...taskRetention.bindings,...initial.proof.bindings).run();
     if(Number(claim.meta.changes??0)!==1)return;
     const lease:BudgetReservationGuard={sql:"EXISTS(SELECT 1 FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND task.status='running' AND json_extract(task.result_json,'$.leaseToken')=? AND task.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[taskId,actor.principal.userId,leaseToken]};
-    if(step.status==="quoted")await reserveConsequentialSteps(env,actor.principal,retained.binding,taskId,join(initial.proof,join(taskRetention,lease)));
-    const live=await host.authorize(request,env);if(live.response||!live.authorized)fail("assistant_authorization_changed");
-    const currentActor=live.authorized,current=await purchasePreparation(request,env,currentActor,host,retained,initial.handoff);
+    if(step.status==="quoted")await reserveConsequentialSteps(env,actor.principal,retained.binding,taskId,join(initial.proof,join(taskRetention,lease)),{atomicSpecialistPair:Boolean(retained.request.memory)});
+    // For the same short-lived Document invocation, compile the already decoded
+    // principal into a NEW SQL authorization predicate, not another positive
+    // permission cache. Its full current native access snapshot, email, custody,
+    // selected session and pilot entry are checked by purchasePreparation and
+    // every subsequent dispatch transaction. Canvas/other surfaces and elapsed
+    // captures retain their full host-specific authorization reads.
+    let currentActor:SpecialistActor,compiledAuthority:BudgetReservationGuard|undefined;
+    if(continued&&continued.current()&&/^\/document\/[^/]+(?:\/|$)/u.test(actor.surface.route)){
+      currentActor=actor;
+      compiledAuthority=join(readAuthority(actor,retained),configuredPilotAdmissionGuard(env,actor.principal),
+        {sql:'EXISTS(SELECT 1 FROM users WHERE user_id=? AND email=?)',bindings:[actor.principal.userId,actor.principal.email]});
+    }else{
+      const live=await host.authorize(request,env);if(live.response||!live.authorized)fail("assistant_authorization_changed");currentActor=live.authorized;
+    }
+    const current=await purchasePreparation(request,env,currentActor,host,retained,initial.handoff,compiledAuthority);
     const dispatch=join(current.proof,join(taskRetention,lease));
-    await beginConsequentialStep(env,currentActor.principal,retained.binding,taskId,0,current.sourceHead,dispatch,{separateSourceProof:true});ownsSubmission=true;
+    await beginConsequentialStep(env,currentActor.principal,retained.binding,taskId,0,current.sourceHead,dispatch,{separateSourceProof:true,...(current.authority?{additionalAssertions:[current.authority]}:{})});ownsSubmission=true;
     const marked=await env.DB.prepare("UPDATE assistant_specialist_tasks SET provider_submitted=1,updated_at=? WHERE task_id=? AND actor_user_id=? AND status='running' AND json_extract(result_json,'$.leaseToken')=?").bind(new Date().toISOString(),taskId,currentActor.principal.userId,leaseToken).run();if(Number(marked.meta.changes??0)!==1)fail("assistant_dispatch_authorization_changed");
     const finalAuthority=executionAdmissionGuard(currentActor.principal,retained.binding,current.sourceHead,true);
     const readyProof=join(current.proof,join(taskRetention,lease,finalAuthority));
     const splitReady=Boolean(retained.request.memory)||6+readyProof.bindings.length>100;
     const inlineReady=splitReady?join(taskRetention,lease,finalAuthority):readyProof;
-    const readyChecks=splitReady?[env.DB.prepare(`SELECT CASE WHEN (${current.proof.sql}) THEN 1 ELSE json('assistant_dispatch_authorization_changed') END AS verified`).bind(...current.proof.bindings)]:[];
+    const readyChecks=[...(current.authority?[env.DB.prepare(`SELECT CASE WHEN (${current.authority.sql}) THEN 1 ELSE json('assistant_dispatch_authorization_changed') END AS verified`).bind(...current.authority.bindings)]:[]),...(splitReady?[env.DB.prepare(`SELECT CASE WHEN (${current.proof.sql}) THEN 1 ELSE json('assistant_dispatch_authorization_changed') END AS verified`).bind(...current.proof.bindings)]:[])];
     const readyStatement=env.DB.prepare(`SELECT MIN(execution.expires_at,task.lease_expires_at,COALESCE(?,'9999-12-31T23:59:59.999Z'),
       COALESCE((SELECT expires_at FROM project_context_sessions WHERE context_id=?),'9999-12-31T23:59:59.999Z'),
       COALESCE((SELECT ends_at FROM pilot_cohorts WHERE cohort_id=?),'9999-12-31T23:59:59.999Z')) AS deadline
@@ -1222,8 +1294,11 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
         AND ?=strftime('%Y-%m','now') AND ${inlineReady.sql}`)
       .bind(current.sourceRightsValidUntil,retained.binding.contextSessionId,retained.binding.pilotCohortId,taskId,currentActor.principal.userId,retained.binding.period,...inlineReady.bindings);
     const memory=semanticMemory(env,retained.request);
-    const ready=memory||splitReady?(await env.DB.batch<{deadline:string}>([...(memory?semanticAssistantMemoryStatements(env,memory):[]),...readyChecks,readyStatement])).at(-1)?.results[0]
-      :await readyStatement.first<{deadline:string}>();
+    const readyStatements=[...(memory?semanticAssistantMemoryStatements(env,memory):[]),...readyChecks,readyStatement];
+    const readyRows=memory||splitReady?structuredClone(await env.DB.batch<Record<string,unknown>>(readyStatements)):null;
+    if(readyRows&&(!Array.isArray(readyRows)||readyRows.length!==readyStatements.length||readyRows.some((row,index)=>!row||row.success!==true||('error' in row&&row.error!==undefined)||!Array.isArray(row.results)
+      ||row.results.length!==1||!row.results[0]||Object.keys(row.results[0]).length!==1||(index<readyRows.length-1?row.results[0].verified!==1:typeof row.results[0].deadline!=='string'))))fail('assistant_dispatch_authorization_changed');
+    const ready=readyRows?readyRows.at(-1)!.results[0] as {deadline:string}:await readyStatement.first<{deadline:string}>();
     if(!ready||!Number.isFinite(Date.parse(ready.deadline))||Date.now()>=Date.parse(ready.deadline)||new Date().toISOString().slice(0,7)!==retained.binding.period||!env.OPENAI_API_KEY||modelEligibility(env,currentActor,host,retained.request.taskKind,retained.binding.steps[0]!.model as AssistantModel,retained.request.explicitModel).length){await assertNoPaidMemory(env,noMemoryProof(retained.request));fail("assistant_dispatch_authorization_changed");}
     const started=Date.now(),remaining=Math.min(60_000,Date.parse(ready.deadline)-started);
     if(!Number.isFinite(remaining)||remaining<=0)fail('assistant_dispatch_authorization_changed');
@@ -1245,7 +1320,7 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
       const body=JSON.parse(text),usage=readAssistantProviderUsage(body,{model:retained.binding.steps[0]!.model as AssistantModel});
       observedMemoryUsage={body,observed:usage,...await accountObservedUsage(env,currentActor.principal.userId,retained,usage)};
     }
-    const readActor=await refreshReadActor(request,env,retained);
+    const readActor=await refreshReadActor(request,env,retained,continued?currentActor:undefined);
     if(retained.request.memory)await refreshSemanticMemory(env,readActor,retained.request,true);
     const storedRaw=await retainRaw(env,readActor,task,retained,raw);
     if(observedMemoryUsage){await publishFreshMemoryResult(env,readActor,task,retained,storedRaw,observedMemoryUsage);return;}
@@ -1255,7 +1330,7 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
     if(!task||!retained||!leaseToken)return;
     const current=await env.DB.prepare("SELECT json_extract(result_json,'$.leaseToken') AS lease FROM assistant_specialist_tasks WHERE task_id=? AND actor_user_id=?").bind(task.task_id,task.actor_user_id).first<{lease:string}>();
     if(!ownsSubmission&&current?.lease!==leaseToken)return;
-    if(ownsSubmission&&!providerInvoked)await proveConsequentialStepNotSubmitted(env,task.actor_user_id,task.task_id,0,retained.row.binding_hash);
+    if(current?.lease===leaseToken&&!providerInvoked)await proveConsequentialStepNotSubmitted(env,task.actor_user_id,task.task_id,0,retained.row.binding_hash);
     let code=errorCode(error);try{await assertNoPaidMemory(env,noMemoryProof(retained.request));}catch{code=MEMORY_PAID_UNSUPPORTED;}
     await failConsequentialExecution(env,task.actor_user_id,task.task_id,code);await finishFailed(env,task,leaseToken,code,providerInvoked);
   }
@@ -1353,13 +1428,16 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
     if(action==="retrieve"||action==="resume")return resultResponse(env,actor,host,retained,task,id);
     if(task){const step=await env.DB.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").bind(id).first<{status:string}>();if(retained.row.status!=="reserved"||!step||!["quoted","reserved"].includes(step.status))return resultResponse(env,actor,host,retained,task,id);}
     const current=await purchasePreparation(request,env,actor,host,retained);
+    let freshlyAdmitted=false;
     if(!task){
       const admitted=await admitTask(env,actor,retained,current.sourceHead,current.sourceProof,hash);task=await existingTask(env,actor,scopeKey,turnId);
       if(!task){await assertNoPaidMemory(env,noMemoryProof(retained.request));return json({error:admitted.error??"assistant_consent_changed",noAutomaticRetry:true},admitted.status??409);}
+      if(admitted.row?.execution_id===id&&admitted.reused===false){retained.row=admitted.row;freshlyAdmitted=true;}
       if(task.task_id!==id){const winner=await retainedConsent(env,actor,scopeKey,turnId,task.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",retentionUnavailable:true},409);return resultResponse(env,actor,host,winner,task,id);}
     }
     const background=new Request(request.url,{method:"GET",headers:request.headers});
-    execution.waitUntil(driveApprovedTask(background,env,host,id,turnId,semanticMemory(env,retained.request)??undefined,current.handoff).catch(()=>undefined));
+    const admittedHandoff=freshlyAdmitted?captureApprovedTask(env,host,background,actor,retained,task,current.handoff):undefined;
+    execution.waitUntil(driveApprovedTask(background,env,host,id,turnId,semanticMemory(env,retained.request)??undefined,current.handoff,admittedHandoff).catch(()=>undefined));
     return resultResponse(env,actor,host,retained,task,id,202);
   }catch(error){const code=errorCode(error);return json({error:code,noAutomaticRetry:true,...(code==="assistant_read_scope_denied"?{retentionUnavailable:true}:{})},code==="assistant_provider_unavailable"?503:/rights|denied|authorization|custody/u.test(code)?403:code.includes("too_large")?413:409);}
 }

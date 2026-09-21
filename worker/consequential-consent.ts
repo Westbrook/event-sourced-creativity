@@ -1,6 +1,6 @@
 import { executionAdmissionGuard } from "./intake-authority.ts";
 export { executionAdmissionGuard };
-import { claimCostBudgetReservation, preparePrivateContent, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, settleSpecialistBudgetPair, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
+import { claimCostBudgetReservation, prepareBudgetReservation, prepareCostBudgetReservation, prepareCostBudgetClaim, preparePrivateContent, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, settleSpecialistBudgetPair, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { uuidV7, type WorkerEnv } from "./runtime.ts";
 
 export type ExecutionStepLimit={name:string;provider:string;model:string;inputTokens:number;outputTokens:number;maximumMicrousd:number;toolCalls:number};
@@ -148,11 +148,44 @@ function consequentialReservationGuard(userId:string,binding:ConsequentialBindin
       AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.status='reserved' AND execution.result_ref IS NULL
       AND execution.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ?=strftime('%Y-%m','now'))`,bindings:[id,index,status,`${id}:tokens:${index}`,`${id}:usd:${index}`,step.inputTokens+step.outputTokens,step.maximumMicrousd,userId,bindingHash,binding.period]};
 }
-export async function reserveConsequentialSteps(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,additional:BudgetReservationGuard={sql:"1",bindings:[]}){
+/** New native Memory steps reserve both existing ledgers and claim the dollar
+ * hold atomically. Existing/resumed holds and managed pilots keep their original
+ * recovery path; no imported or partial reservation is adopted here. */
+async function reserveNativeSpecialistPair(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,index:number,hash:string,source:BudgetReservationGuard){
+  const db=env.DB,step=binding.steps[index]!,tokenId=`${id}:tokens:${index}`,costId=`${id}:usd:${index}`;
+  const quoted=consequentialReservationGuard(user.userId,binding,id,index,hash,'quoted'),reserved=consequentialReservationGuard(user.userId,binding,id,index,hash);
+  const context={batchCounterInitialization:true,streamId:binding.streamId,correlationId:id,operation:`${binding.operation}:${step.name}:${step.model}`,period:binding.period,
+    reservationGuard:reserved,...(binding.scope?{projectScope:binding.scope}:{})};
+  const token=await prepareBudgetReservation(env,user.userId,step.inputTokens+step.outputTokens,{...context,reservationId:tokenId});
+  if(!token.ok)throw Error('context_token_budget_unavailable');
+  const cost=await prepareCostBudgetReservation(env,user.userId,step.maximumMicrousd,{...context,reservationId:costId,maximumMicrousd:step.maximumMicrousd,allowUserOverage:false});
+  if(!cost.ok)throw Error(cost.scope==='authorization'?'context_execution_not_active':'context_cost_budget_unavailable');
+  if(cost.pilot)return false;
+  if(env.DB!==db)throw Error('context_execution_not_active');
+  const checks=new Set<D1PreparedStatement>();
+  const checked=(statement:D1PreparedStatement)=>{checks.add(statement);return statement;};
+  const assertion=(proof:BudgetReservationGuard)=>checked(db.prepare(`SELECT CASE WHEN (${proof.sql}) THEN 1 ELSE json('context_reservation_pair_unavailable') END AS verified`).bind(...proof.bindings));
+  const changed=()=>checked(db.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_reservation_pair_unavailable') END AS verified"));
+  const absence={sql:'NOT EXISTS(SELECT 1 FROM budget_reservations WHERE reservation_id=?) AND NOT EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=?)',bindings:[tokenId,costId]};
+  const statements=[assertion(source),assertion(executionAdmissionGuard(user,binding,null,true)),assertion(quoted),assertion(absence),
+    db.prepare("UPDATE consequential_execution_steps SET status='reserved',updated_at=? WHERE execution_id=? AND step_index=? AND status='quoted'").bind(new Date().toISOString(),id,index),changed(),
+    ...token.statements.slice(0,token.reservationStatementIndex+1),changed(),...token.statements.slice(token.reservationStatementIndex+1),
+    ...cost.statements.slice(0,cost.reservationStatementIndex+1),changed(),...cost.statements.slice(cost.reservationStatementIndex+1),
+    prepareCostBudgetClaim(env,user.userId,{reservation_id:costId,workspace_id:cost.workspaceId},null),changed(),assertion(source),assertion(reserved)];
+  const rows=structuredClone(await db.batch(statements));
+  if(env.DB!==db||!Array.isArray(rows)||rows.length!==statements.length||rows.some((row,index)=>!row||row.success!==true||('error' in row&&row.error!==undefined)||!Array.isArray(row.results)
+    ||checks.has(statements[index]!)&&(row.results.length!==1||!row.results[0]||(row.results[0] as Record<string,unknown>).verified!==1)
+    ||row.results.some(value=>!value||typeof value!=='object'||Object.hasOwn(value,'verified')&&(Object.keys(value).length!==1||(value as Record<string,unknown>).verified!==1)))
+    ||rows.at(-1)?.results.length!==1||(rows.at(-1)?.results[0] as Record<string,unknown>)?.verified!==1)throw Error('context_reservation_pair_unavailable');
+  return true;
+}
+export async function reserveConsequentialSteps(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,additional:BudgetReservationGuard={sql:"1",bindings:[]},options:{atomicSpecialistPair?:boolean}={}){
   const hash=await consentHash(binding);
   const guarded=(proof:BudgetReservationGuard):BudgetReservationGuard=>({sql:`(${proof.sql}) AND (${additional.sql})`,bindings:[...proof.bindings,...additional.bindings]});
   for(const [index,step] of binding.steps.entries()){
     const correlationId=id,operation=`${binding.operation}:${step.name}:${step.model}`,tokenId=`${id}:tokens:${index}`,costId=`${id}:usd:${index}`;
+    if(options.atomicSpecialistPair&&binding.operation==='assistant-specialist'&&!binding.pilotCohortId
+      &&await reserveNativeSpecialistPair(env,user,binding,id,index,hash,additional))continue;
     // Persist the hold linkage first. A crash cannot make the orphan sweeper release a possibly dispatched step.
     const nativeQuoted=consequentialReservationGuard(user.userId,binding,id,index,hash,"quoted"),quoted=guarded(nativeQuoted);
     const splitQuoted=3+quoted.bindings.length>100,inlineQuoted=splitQuoted?nativeQuoted:quoted;
@@ -183,12 +216,12 @@ export async function reserveConsequentialSteps(env:WorkerEnv,user:PilotUser,bin
   }
 }
 
-export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,index:number,sourceHead:number,additional:BudgetReservationGuard={sql:"1",bindings:[]},options:{separateSourceProof?:boolean}={}){
+export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,index:number,sourceHead:number,additional:BudgetReservationGuard={sql:"1",bindings:[]},options:{separateSourceProof?:boolean;additionalAssertions?:readonly BudgetReservationGuard[]}={}){
   const guard=executionAdmissionGuard(user,binding,sourceHead,true),reservation=consequentialReservationGuard(user.userId,binding,id,index,await consentHash(binding)),now=new Date().toISOString();
   // Source consumers may also require separation for SQLite expression depth.
   // A shared source can exceed D1's 100-bind limit when proofs combine. Replay in
   // the same atomic batch, never as an earlier positive authorization cache.
-  const split=options.separateSourceProof===true||8+reservation.bindings.length+guard.bindings.length+additional.bindings.length>100;
+  const split=options.separateSourceProof===true||Boolean(options.additionalAssertions?.length)||8+reservation.bindings.length+guard.bindings.length+additional.bindings.length>100;
   const inline=split?{sql:"1",bindings:[]}:additional;
   const statement=env.DB.prepare(`UPDATE consequential_execution_steps SET status='submitting',updated_at=? WHERE execution_id=? AND step_index=? AND status='reserved'
     AND ${reservation.sql} AND ${guard.sql} AND (${inline.sql})
@@ -196,11 +229,13 @@ export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,bindin
       OR pending.status='reserved' AND(NOT EXISTS(SELECT 1 FROM budget_reservations tokens WHERE tokens.reservation_id=pending.token_reservation_id AND tokens.owner_id=? AND tokens.status='active' AND tokens.period=? AND tokens.reserved_tokens=pending.maximum_tokens)
         OR NOT EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=pending.cost_reservation_id AND cost.owner_id=? AND cost.status='executing' AND cost.period=? AND cost.reserved_microusd=pending.maximum_microusd))))`)
     .bind(now,id,index,...reservation.bindings,...guard.bindings,...inline.bindings,id,user.userId,binding.period,user.userId,binding.period);
-  const changed=split?(await env.DB.batch([
-    env.DB.prepare(`SELECT CASE WHEN (${additional.sql}) THEN 1 ELSE abs(-9223372036854775808) END AS verified`).bind(...additional.bindings),
-    statement,
-    env.DB.prepare('SELECT CASE WHEN changes()=1 THEN 1 ELSE abs(-9223372036854775808) END AS verified'),
-  ]))[1]!:await statement.run();
+  const extraAssertions=(options.additionalAssertions??[]).map(proof=>env.DB.prepare(`SELECT CASE WHEN (${proof.sql}) THEN 1 ELSE json('context_authorization_changed') END AS verified`).bind(...proof.bindings));
+  const statements=[...extraAssertions,env.DB.prepare(`SELECT CASE WHEN (${additional.sql}) THEN 1 ELSE abs(-9223372036854775808) END AS verified`).bind(...additional.bindings),
+    statement,env.DB.prepare('SELECT CASE WHEN changes()=1 THEN 1 ELSE abs(-9223372036854775808) END AS verified')];
+  const results=split?structuredClone(await env.DB.batch<Record<string,unknown>>(statements)):null,mutationIndex=extraAssertions.length+1;
+  if(results&&extraAssertions.length&&(!Array.isArray(results)||results.length!==statements.length||results.some((row,i)=>!row||row.success!==true||('error' in row&&row.error!==undefined)||!Array.isArray(row.results)
+    ||i!==mutationIndex&&(row.results.length!==1||!row.results[0]||Object.keys(row.results[0]).length!==1||row.results[0].verified!==1))))throw Error('context_authorization_changed');
+  const changed=results?results[mutationIndex]!:await statement.run();
   if(Number(changed.meta.changes??0)!==1)throw new Error("context_authorization_changed");
 }
 export async function settleConsequentialStep(env:WorkerEnv,userId:string,id:string,index:number,tokens:number,microusd:number,providerRequestId:string|null,options:{atomicSpecialistPair?:boolean}={}){
@@ -265,8 +300,8 @@ export async function failConsequentialExecution(env:WorkerEnv,userId:string,id:
   await releaseStoppedConsequentialSteps(env,userId,id);
   return(await readConsequentialExecution(env,userId,id))?.status==="uncertain";
 }
-export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,result:unknown,proof:BudgetReservationGuard={sql:"1",bindings:[]},evidence?:{precommit:()=>D1PreparedStatement[];publish:(contentId:string)=>D1PreparedStatement[];complete?:(contentId:string)=>D1PreparedStatement[]}){
-  const existing=await readConsequentialExecution(env,user.userId,id);if(existing?.result_ref)return existing;
+export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,result:unknown,proof:BudgetReservationGuard={sql:"1",bindings:[]},evidence?:{fresh?:true;precommit:()=>D1PreparedStatement[];publish:(contentId:string)=>D1PreparedStatement[];complete?:(contentId:string)=>D1PreparedStatement[]}){
+  const existing=evidence?.fresh?null:await readConsequentialExecution(env,user.userId,id);if(existing?.result_ref)return existing;
   const hash=await consentHash(binding),authority=executionAdmissionGuard(user,{...binding,contextSessionId:null,pilotCohortId:null},null);
   const accounted={sql:`EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.result_ref IS NULL AND execution.status IN('reserved','uncertain','failed')
     AND(SELECT COUNT(*) FROM consequential_execution_steps step WHERE step.execution_id=execution.execution_id)=?
@@ -281,11 +316,18 @@ export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUse
     // in the same atomic transaction as the copy and its inverse registration.
     const verified=env.DB.prepare(`SELECT CASE WHEN (${accounted.sql}) THEN 1 ELSE json('context_result_not_retained') END AS verified`).bind(...accounted.bindings);
     const statements=[...evidence.precommit(),...content.statements,...evidence.publish(content.contentId),verified,complete(content.contentId,true),
-      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_result_not_retained') END AS verified"),...(evidence.complete?.(content.contentId)??[])];
-    const rows=structuredClone(await env.DB.batch(statements));
+      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_result_not_retained') END AS verified"),...(evidence.complete?.(content.contentId)??[]),
+      env.DB.prepare("SELECT execution_id,actor_user_id,intent_hash,binding_hash,consent_ref,result_ref,status,error_code,expires_at FROM consequential_executions WHERE execution_id=? AND actor_user_id=? AND binding_hash=? AND result_ref=? AND status='completed'")
+        .bind(id,user.userId,hash,content.contentId)];
+    const rows=structuredClone(await env.DB.batch<Record<string,unknown>>(statements));
     if(!Array.isArray(rows)||rows.length!==statements.length||!Array.from(rows).every(row=>row&&row.success===true&&(!('error' in row)||row.error===undefined)&&Array.isArray(row.results)
-      &&row.results.every(value=>value&&typeof value==='object'&&(!Object.hasOwn(value,'verified')||Object.keys(value).length===1&&(value as Record<string,unknown>).verified===1)))
-      ||rows.at(-1)?.results.length!==1||(rows.at(-1)?.results[0] as Record<string,unknown>)?.verified!==1)throw new Error('context_result_not_retained');
+      &&row.results.every(value=>value&&typeof value==='object'&&(!Object.hasOwn(value,'verified')||Object.keys(value).length===1&&value.verified===1)))
+      ||rows.at(-2)?.results.length!==1||rows.at(-2)?.results[0]?.verified!==1)throw new Error('context_result_not_retained');
+    const current=rows.at(-1)!.results[0];
+    if(rows.at(-1)!.results.length!==1||!current||Object.keys(current).sort().join(',')!=='actor_user_id,binding_hash,consent_ref,error_code,execution_id,expires_at,intent_hash,result_ref,status'
+      ||current.execution_id!==id||current.actor_user_id!==user.userId||current.binding_hash!==hash||current.intent_hash!==binding.intentHash||current.result_ref!==content.contentId
+      ||current.status!=='completed'||current.error_code!==null||typeof current.consent_ref!=='string'||!current.consent_ref||typeof current.expires_at!=='string'||!Number.isFinite(Date.parse(current.expires_at)))throw Error('context_result_not_retained');
+    return current as ExecutionRow;
   }else{
     const content=await storePrivateContent(env,user.userId,'context-proposal',serialized,binding.scope??undefined,accounted);
     await complete(content.contentId).run();
