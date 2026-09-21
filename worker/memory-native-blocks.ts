@@ -22,7 +22,7 @@ const clean=(p:Record<string,unknown>)=>!p.simulation&&!p.synthetic&&!(p.origin&
 /** Shared strict native envelope decoding. Identity data alone is not authority;
  * callers must retain the exact DB read in the enclosing authenticated witness. */
 type FieldUndoEdge = Readonly<{ compensated:number; target:string|null }>;
-export function decodeNativeMemoryResourceEvent(row:Row,e:NativeMemoryResourceScope,resourceKind:'block'|'relation',resourceId:string,fieldUndo?:FieldUndoEdge){
+export function decodeNativeMemoryResourceEvent(row:Row,e:NativeMemoryResourceScope,resourceKind:'block'|'relation'|'document'|'collection',resourceId:string,fieldUndo?:FieldUndoEdge){
   if(row.schema_version!==1||!derivationId(row.event_id)||!derivationInteger(row.sequence,1)||!derivationTime(row.recorded_at)||String(row.recorded_at)>new Date().toISOString()
     ||String(row.event_id).startsWith('optimistic:')||String(row.client_id).includes('optimistic')
     ||fieldUndo&&resourceKind!=='block'||row.compensated!==(fieldUndo?.compensated??0)||row.compensates_event_id!==(fieldUndo?.target??null))throw Error('source');
@@ -31,7 +31,7 @@ export function decodeNativeMemoryResourceEvent(row:Row,e:NativeMemoryResourceSc
     ||[resourceKind+'_id','project_id','document_id','canvas_id','scope',...(resourceKind==='relation'?['from_block_id','to_block_id','kind']:[])].some(key=>publicPayload[key]!==undefined&&publicPayload[key]!==p[key])
     ||p.project_id!==undefined&&p.project_id!==e.project_id||p.document_id!==undefined&&p.document_id!==e.document_id
     ||row.redacted_at!==null||publicPayload._private_ref===undefined&&row.private_json!==null||publicPayload._private_ref!==undefined&&(publicPayload._private_ref!==row.event_id
-      ||typeof row.private_json!=='string'||row.owner_id!==e.owner_user_id||row.project_id!==e.project_id||row.document_id!==e.document_id))throw Error('private');
+      ||typeof row.private_json!=='string'||row.owner_id!==e.owner_user_id||row.project_id!==e.project_id||row.document_id!==(resourceKind==='collection'?null:e.document_id)))throw Error('private');
   const scopes=JSON.parse(String(row.custody));
   if(!Array.isArray(scopes)||(e.organization_id===null?scopes.length!==0:scopes.length!==1||scopes[0].organization!==e.organization_id
     ||scopes[0].access!==e.project_access_id||scopes[0].project!==e.project_id||scopes[0].owner!==e.owner_user_id

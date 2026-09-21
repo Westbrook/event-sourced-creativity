@@ -13701,7 +13701,7 @@ test('native derivation delivery: conversation bookkeeping keeps exact reference
   state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.deepEqual(state.queue(),before);
 });
 
-async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,originalCount=1,termOverrides={},beforeEnrollment,beforeRun}={}){
+async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,originalCount=1,termOverrides={},beforeEnrollment,beforeRun,reuseVersion}={}){
   const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides,beforeEnrollment:async state=>{
     state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
     if(recovery||results)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0046_memory_derivation_recovery_cursor.sql',import.meta.url),'utf8'));
@@ -13732,7 +13732,7 @@ async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,rec
   }
   if(deferClaim)return Object.assign(state,{admission,sources,finance,executionJob:job});
   const lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease,state.controls.lastDatabaseError);
-  const captured=await sources.captureNativeDerivationSources(state.env,lease);assert.equal(captured.status,'captured',state.controls.lastDatabaseError);
+  const captured=await sources.captureNativeDerivationSources(state.env,lease,{reuseVersion});assert.equal(captured.status,'captured',state.controls.lastDatabaseError);
   return Object.assign(state,{admission,sources,finance,executionJob:job,executionLease:lease,executionCapture:captured.capture});
 }
 for(const shared of [false,true])test('native derivation execution: original '+(shared?'shared':'personal')+' source proof reserves and claims once',{timeout:60000},async t=>{
@@ -19281,4 +19281,75 @@ for(const fault of ['missing','failed','sparse','false-access','extra-head','for
   if(fault==='extra-head')rows[2].results[0].extra='not metadata authority';if(fault==='foreign-placement')rows[3].results[0].block_id='not-requested';if(fault==='duplicate-placement')rows[3].results=[rows[3].results[0],rows[3].results[0]];
   return rows;
  };t.after(()=>{db.batch=batch;});const response=await state.reuseRequest();assert.equal(hit,true);assert.notEqual(response.status,200);assert.equal(Object.hasOwn(await response.json(),'sources'),false);
+});
+
+async function nativeDuplicatedReuseFixture(t,{shared=false,folder=false,locked=false}={}){
+ const state=await nativeReuseRecallFixture(t,{shared}),e=state.reuseTarget,source=state.reuseSource;
+ if(folder)for(const event of [{type:'CollectionCreated',payload:{project_id:e.project_id,collection_id:'duplicate-recall-folder',name:'Private grouping',handle:'private-grouping'}},{type:'CollectionItemAdded',payload:{project_id:e.project_id,collection_id:'duplicate-recall-folder',item_ref:{document_id:source.documentId},position:'a0'}}]){
+  const response=await state.request('/api/events',json({action:'append',event},state.owner));assert.equal(response.status,200,await response.clone().text());
+ }
+ if(locked){const response=await state.request('/api/events',json({action:'append',event:{type:'BlockLocked',payload:{project_id:e.project_id,document_id:source.documentId,block_id:state.copies[0].sourceBlockId}}},state.owner));assert.equal(response.status,200,await response.clone().text());}
+ const copy=body=>state.request('/api/documents/duplicate',json({projectId:e.project_id,documentId:source.documentId,...body},state.owner));
+ const proposed=await copy({action:'preview',operationId:crypto.randomUUID(),title:'Independently enrolled duplicate'});assert.equal(proposed.status,200,await proposed.clone().text());const preview=(await proposed.json()).preview;
+ const applied=await copy({action:'apply',previewId:preview.previewId,approvalHash:preview.approvalHash});assert.equal(applied.status,200,await applied.clone().text());const documentId=(await applied.json()).documentId;
+ assert.equal(state.sqlite.prepare('SELECT count(*) n FROM memory_live_enrollments WHERE document_id=?').get(documentId).n,0,'Duplication never enrolls or inherits Memory consent');
+ const enrolled=await state.handleLiveMemory(state.settingsRequest({...state.preferences,documentId,revision:0}),state.env,'settings');assert.equal(enrolled.status,200,await enrolled.clone().text());const target=(await enrolled.json()).enrollment;
+ const consent=await state.derivationRequest('PUT',{...state.derivationInput,documentId,enrollmentId:target.id,enrollmentRevision:target.revision});assert.equal(consent.status,200,await consent.clone().text());
+ const created=state.sqlite.prepare("SELECT event_id,payload FROM events WHERE stream_id=? AND type='BlockCreated' AND json_extract(payload,'$.document_id')=? ORDER BY sequence").all('creative:'+e.owner_user_id,documentId);assert.ok(created.length);
+ for(const event of created){const blockId=JSON.parse(event.payload).block_id,inspected=await state.request('/api/events/hot',json({action:'hot',event:{type:'BlockInspected',payload:{project_id:e.project_id,document_id:documentId,block_id:blockId,source_event_ids:state.sqlite.prepare("SELECT event_id FROM events WHERE stream_id=? AND json_extract(payload,'$.block_id')=? AND type IN('BlockCreated','BlockLocked') ORDER BY sequence").all('creative:'+e.owner_user_id,blockId).map(row=>row.event_id),source_surface:'document-context-controls'}}},state.owner));assert.equal(inspected.status,200,await inspected.clone().text());}
+ state.env.FORMA_MEMORY_ENABLED='false';await specialistFreeTurn(state,'duplicate-own-original','A fresh original request within this separately enrolled copy.',{route:'/document/'+documentId,project:e.project_id});state.env.FORMA_MEMORY_ENABLED='true';
+ state.sqlite.exec("UPDATE memory_live_enrollments SET next_due_at='2999-01-01T00:00:00.000Z'");state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(target.id);
+ assert.equal((await state.run()).status,'completed',state.controls.lastDatabaseError);assert.equal((await(await import('../worker/memory-derivation-worker.ts')).runNativeDerivationScheduled(state.env)).status,'stored',state.controls.lastDatabaseError);
+ const result=state.sqlite.prepare('SELECT r.* FROM memory_derivation_results r JOIN memory_derivation_jobs j ON j.job_id=r.job_id JOIN memory_derivation_grants g ON g.consent_id=j.consent_id WHERE g.enrollment_id=? ORDER BY j.through_sequence DESC LIMIT 1').get(target.id);
+ return Object.assign(state,{duplicateTarget:target,duplicatePreview:preview,duplicateResult:result});
+}
+for(const shared of [false,true])for(const folder of [false,true])test('native duplicate recall: new consent and inspection certify retained copy history '+shared+'/'+folder,{timeout:120000},async t=>{
+ const state=await nativeDuplicatedReuseFixture(t,{shared,folder,locked:folder}),manifest=JSON.parse(state.duplicateResult.manifest_json),bindings=manifest.provenance.reuseBindings;
+ assert.equal(bindings.version,2);assert.equal(bindings.entries.length,2,JSON.stringify(bindings)+' '+state.controls.lastDatabaseError);assert.ok(bindings.entries.every(row=>row.previewRef===state.duplicatePreview.previewId));
+ assert.equal(manifest.observations.filter(row=>row.action==='reuse').length,0,'Inspecting an old duplicate is not a newly performed copy');assert.equal(manifest.observations.filter(row=>row.eventType==='BlockInspected').length,2);
+ const response=await state.reuseRequest(state.duplicateTarget.documentId),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.deepEqual(body.sources.map(row=>row.enrollmentId),[state.reuseSource.id]);
+ assert.equal(JSON.stringify(state.rollingRequests).includes('COPY_BODY_NOT_HUMAN'),false,'Copied content never becomes original human preference evidence');
+});
+
+for(const version of [1,2])test('native duplicate recall: retained reuse contract '+version+' replays without silent upgrade',async t=>{
+ const state=await nativeDerivationResultFixture(t,{lifecycle:true,indexIntents:true,reuseVersion:version,beforeRun:async seed=>{
+  for(const tag of ['0055_memory_derivation_relation_lifecycle','0056_memory_derivation_reuse_lifecycle'])seed.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/'+tag+'.sql',import.meta.url),'utf8'));
+  await appendNativeMemoryApprovedCopies(seed,'compatibility');
+ }});
+ assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+ const manifest=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(state.executionJob.job_id).manifest_json);assert.equal(manifest.provenance.reuseBindings.version,version);assert.equal(manifest.provenance.reuseBindings.entries.length,2);
+ assert.ok(await state.readResult(),state.controls.lastDatabaseError);assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_results WHERE job_id=?').get(state.executionJob.job_id).state,'active');
+});
+for(const fault of ['original-consent','original-range','duplicate-consent','duplicate-approval','copied-body','original-removed'])test('native duplicate recall: '+fault+' preserves authored work without granting original memory',async t=>{
+ const state=await nativeDuplicatedReuseFixture(t),e=state.reuseTarget,counts=state.sqlite.prepare("SELECT count(*) n FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.document_id')=?").get(state.duplicateTarget.documentId).n;
+ if(fault==='original-consent')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.reuseSource.id);
+ if(fault==='original-range')state.sqlite.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').run(state.reuseSource.id);
+ if(fault==='duplicate-consent')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.duplicateTarget.id);
+ if(fault==='duplicate-approval')state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),state.duplicatePreview.previewId);
+ if(fault==='copied-body')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Changed authored copy') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.document_id')=?)").run(state.duplicateTarget.documentId);
+ if(fault==='original-removed'){const removed=await state.request('/api/events',json({action:'append',event:{type:'DocumentRemoved',payload:{project_id:e.project_id,document_id:state.reuseSource.documentId}}},state.owner));assert.equal(removed.status,200,await removed.clone().text());}
+ const response=await state.reuseRequest(state.duplicateTarget.documentId),body=await response.json();assert.ok(response.status!==200||body.sources.length===0,JSON.stringify(body));
+ assert.equal(state.sqlite.prepare("SELECT count(*) n FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.document_id')=?").get(state.duplicateTarget.documentId).n,counts);
+ assert.equal(state.sqlite.prepare("SELECT count(*) n FROM events WHERE type='DocumentRemoved' AND json_extract(payload,'$.document_id')=?").get(state.duplicateTarget.documentId).n,0);
+ if(fault==='original-consent'||fault==='original-range')assert.ok(await(await import('../worker/memory-derivation-results.ts')).readNativeDerivationResult(state.env,e.actor_user_id,state.duplicateResult.job_id),'Own original request does not inherit source enrollment');
+});
+for(const shared of [false,true])test('native duplicate recall: actual D1 approved folder-copy retirement and restore '+shared,{timeout:120000},async t=>{
+ const state=await nativeDuplicatedReuseFixture(t,{shared,folder:true,locked:true}),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['DuplicateRecall'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());
+ const db=await mf.getD1Database('DuplicateRecall');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+ const response=await state.reuseRequest(state.duplicateTarget.documentId),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.sources.length,1);
+ const original=await db.prepare('SELECT content FROM private_content WHERE content_id=?').bind(state.duplicatePreview.previewId).first();await db.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").bind(new Date().toISOString(),state.duplicatePreview.previewId).run();
+ assert.notEqual((await state.reuseRequest(state.duplicateTarget.documentId)).status,200);
+ await db.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').bind(original.content,state.duplicatePreview.previewId).run();assert.notEqual((await state.reuseRequest(state.duplicateTarget.documentId)).status,200);
+ assert.equal((await db.prepare("SELECT count(*) n FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.document_id')=?").bind(state.duplicateTarget.documentId).first()).n,2,'Deliberately authored copies are retained');
+});
+for(const fault of ['target','source-document','operation','source-stream','footprint','collection-reference'])test('native duplicate recall: changed native '+fault+' cannot certify duplication',async t=>{
+ const state=await nativeDuplicatedReuseFixture(t,{folder:true}),id=state.duplicatePreview.previewId;
+ if(fault==='target')state.sqlite.prepare("UPDATE authoring_commits SET result_json=json_set(result_json,'$.documentId','other-document') WHERE preview_id=?").run(id);
+ if(fault==='source-document')state.sqlite.prepare("UPDATE authoring_commits SET document_id='other-document' WHERE preview_id=?").run(id);
+ if(fault==='operation')state.sqlite.prepare("UPDATE authoring_commits SET operation='context-proposal' WHERE preview_id=?").run(id);
+ if(fault==='source-stream')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.source_stream_id','creative:other-owner') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='DocumentCreated' AND json_extract(payload,'$.document_id')=?)").run(state.duplicateTarget.documentId);
+ if(fault==='footprint'){const saved=JSON.parse(state.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(id).content),event=saved.plan.events.find(row=>row.type==='BlockCreated');await(await import('../worker/runtime.ts')).appendAuditEvent(state.env,'creative:'+state.reuseTarget.owner_user_id,'user:'+state.reuseTarget.actor_user_id,event.type,event.payload,'authoring:'+state.reuseTarget.actor_user_id+':'+id);}
+ if(fault==='collection-reference')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.item_ref.document_id','other-document') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='CollectionItemAdded' AND correlation_id=?)").run('authoring:'+state.reuseTarget.actor_user_id+':'+id);
+ const response=await state.reuseRequest(state.duplicateTarget.documentId),body=await response.json();assert.notEqual(response.status,200,JSON.stringify(body));assert.equal(Object.hasOwn(body,'sources'),false);
 });

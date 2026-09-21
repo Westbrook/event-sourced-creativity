@@ -10,19 +10,25 @@ import type { RetainedAuthoringPreview } from './authoring-commits.ts';
 
 type Observation={eventId:string;sequence:number;eventType:string;blockPointer:string|null};
 type Row=Record<string,unknown>;
-export type NativeMemoryReuseBindings={version:1;entries:{eventId:string;targetBlockId:string;targetScopeKey:string;sourceBlockId:string;
+export type NativeMemoryReuseBindings={version:1|2;entries:{eventId:string;targetBlockId:string;targetScopeKey:string;sourceBlockId:string;
   sourceScope:'unresolved';previewRef:string;outcomeKey:string;receiptSha256:string;previewSha256:string;eventIds:string[];expiresAt:string}[];unresolved:number};
 const columns=['event_id','stream_id','sequence','occurred_at','recorded_at','actor','client_id','correlation_id','causation_id','compensates_event_id','schema_version','type','payload'];
 
 /** Certifies a committed copy INTO the enrolled document, not permission to read
- * the original source. A copied_from pointer alone is never evidence. The native
+ * the original source. Version 2 also certifies explicitly inspected historical
+ * copies and native document duplication. Inspection is not a new reuse action.
+ * Version 1 remains byte-compatible for previously retained manifests. A copied_from pointer alone is never evidence. The native
  * receipt, retained approval and complete committed footprint must still agree.
  * No copied prose becomes new human authorship or leaves this private witness.
  * Callers must replay it with the issued grant and both lifecycle schema proofs. */
 export async function observeNativeMemoryReuseBindings(env:WorkerEnv,e:LiveMemoryEnrollment,observations:readonly Observation[],
-  blocks:NativeMemoryBlockBindings,observer:NativeMemoryContextObserver):Promise<NativeMemoryReuseBindings>{
-  const selected=observations.filter(row=>row.eventType==='BlockCreated'&&row.blockPointer!==null);
-  const empty=():NativeMemoryReuseBindings=>({version:1,entries:[],unresolved:selected.length});
+  blocks:NativeMemoryBlockBindings,observer:NativeMemoryContextObserver,version:1|2=2):Promise<NativeMemoryReuseBindings>{
+  if(version!==1&&version!==2)throw Error('memory-reuse-version');
+  const selected=observations.filter(row=>(row.eventType==='BlockCreated'||version===2&&row.eventType==='BlockInspected')&&row.blockPointer!==null);
+  const references=blocks.entries.filter(block=>selected.some(row=>row.eventId===block.eventId&&row.blockPointer===block.blockId));
+  const creationIds=version===1?selected.map(row=>row.eventId):[...new Set(references.flatMap(block=>block.eventIds))];
+  if(creationIds.length>1024)throw Error('memory-reuse-capacity');
+  const empty=():NativeMemoryReuseBindings=>({version,entries:[],unresolved:selected.length});
   if(!selected.length)return empty();
   const db=env.DB,stream='creative:'+e.owner_user_id,prefix='authoring:'+e.actor_user_id+':';
   const scope=e.organization_id===null?null:{organizationId:e.organization_id,projectAccessId:e.project_access_id!,projectId:e.project_id,ownerUserId:e.owner_user_id,actorUserId:e.actor_user_id};
@@ -48,8 +54,9 @@ export async function observeNativeMemoryReuseBindings(env:WorkerEnv,e:LiveMemor
         FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
         WHERE event.stream_id=? AND event.correlation_id=?||receipt.preview_id) AS event_bytes
       FROM candidates JOIN authoring_commits receipt USING(preview_id) JOIN private_content saved ON saved.content_id=receipt.preview_id
-      WHERE receipt.actor_user_id=? AND receipt.operation='context-proposal' AND receipt.verified=1
-        AND receipt.project_id=? AND receipt.document_id=? AND receipt.canvas_id IS NULL
+      WHERE receipt.actor_user_id=? AND receipt.verified=1 AND receipt.project_id=? AND receipt.canvas_id IS NULL
+        AND (receipt.operation='context-proposal' AND receipt.document_id=?
+          ${version===2?"OR receipt.operation='document-duplicate' AND json_extract(receipt.result_json,'$.documentId')=?":''})
         AND receipt.organization_id IS ? AND receipt.project_access_id IS ?
         AND saved.owner_id=? AND saved.kind='authoring-preview' AND saved.redacted_at IS NULL
         AND saved.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${custody.sql}
@@ -60,26 +67,30 @@ export async function observeNativeMemoryReuseBindings(env:WorkerEnv,e:LiveMemor
       FROM eligible receipt WHERE (SELECT COUNT(*) FROM candidates)<=8 AND preview_content IS NOT NULL
         AND event_count BETWEEN 1 AND 128 AND event_bytes<=196608
         AND (SELECT SUM(event_bytes+COALESCE(length(CAST(preview_content AS BLOB)),0)) FROM eligible)<=786432
-      ORDER BY receipt.preview_id`,bindings:[prefix.length+1,stream,JSON.stringify(selected.map(row=>row.eventId)),'user:'+e.actor_user_id,prefix.length,prefix,
-      stream,prefix,stream,prefix,e.actor_user_id,e.project_id,e.document_id,e.organization_id,e.project_access_id,e.actor_user_id,...custody.bindings,stream,prefix]};
+      ORDER BY receipt.preview_id`,bindings:[prefix.length+1,stream,JSON.stringify(creationIds),'user:'+e.actor_user_id,prefix.length,prefix,
+      stream,prefix,stream,prefix,e.actor_user_id,e.project_id,e.document_id,...(version===2?[e.document_id]:[]),e.organization_id,e.project_access_id,e.actor_user_id,...custody.bindings,stream,prefix]};
   const statement=db.prepare(query.sql).bind(...query.bindings),result=structuredClone(await statement.all<Row>());
   if(env.DB!==db||!result.success||!Array.isArray(result.results)||result.results.length>8)throw Error('memory-reuse-read');
   observer.observe([statement],[result],[query]);
-  const entries:NativeMemoryReuseBindings['entries']=[];
+  const entries:NativeMemoryReuseBindings['entries']=[],resolved=new Set<string>();
   for(const row of result.results){
     try{
-      const saved=JSON.parse(String(row.preview_content)) as RetainedAuthoringPreview,plan=saved.plan,b=plan.binding;
+      const saved=JSON.parse(String(row.preview_content)) as RetainedAuthoringPreview,plan=saved.plan,b=plan.binding,duplicate=version===2&&row.operation==='document-duplicate';
       if(saved.state!=='applied'||saved.approvalHash!==row.approval_hash||await consentHash(plan)!==row.approval_hash
-        ||plan.operation!=='context-proposal'||b.operation!=='context-proposal'||b.actorUserId!==e.actor_user_id||b.streamId!==stream
-        ||b.projectId!==e.project_id||b.documentId!==e.document_id||b.blockId!==row.block_id||b.canvasId!==null
+        ||plan.operation!==(duplicate?'document-duplicate':'context-proposal')||b.operation!==plan.operation||b.actorUserId!==e.actor_user_id||b.streamId!==stream
+        ||b.projectId!==e.project_id||b.documentId!==(duplicate?row.document_id:e.document_id)||duplicate&&(plan.result.documentId!==e.document_id||plan.duplication?.copyMode!=='independent-snapshot')||b.blockId!==row.block_id||b.canvasId!==null
         ||canonicalConsent(b.scope)!==canonicalConsent(scope)||canonicalConsent(plan.result)!==canonicalConsent(JSON.parse(String(row.result_json)))
         ||!derivationTime(row.expires_at)||!derivationTime(row.created_at)||!derivationTime(plan.expiresAt)||String(row.created_at)>plan.expiresAt
         ||!Array.isArray(plan.events)||!plan.events.length||!Array.isArray(plan.changes))continue;
+      if(duplicate&&(b.documentId===e.document_id||plan.events[0]?.type!=='DocumentCreated'||plan.events.filter(event=>event.type==='DocumentCreated').length!==1||plan.events.filter(event=>event.type==='CollectionItemAdded').length>1))continue;
       const rows=JSON.parse(String(row.footprint)) as Row[];
       if(rows.length!==plan.events.length||rows.length!==row.event_count||rows.at(-1)?.event_id!==row.last_event_id)continue;
       const events=rows.map((source,index)=>{
-        const input=plan.events[index]!,kind=input.type.startsWith('BlockRelation')?'relation':'block',id=input.payload[kind+'_id'];
-        if(!['BlockCreated','BlockPropertyEdited','BlockRelationAdded'].includes(input.type)||!derivationId(id))throw Error('unsupported');
+        const input=plan.events[index]!,kind=input.type.startsWith('BlockRelation')?'relation':input.type==='DocumentCreated'?'document':input.type==='CollectionItemAdded'?'collection':'block',id=input.payload[kind+'_id'];
+        const allowed=duplicate?['DocumentCreated','BlockCreated','BlockPropertyEdited','BlockRelationAdded','BlockLocked','CollectionItemAdded']:['BlockCreated','BlockPropertyEdited','BlockRelationAdded'];
+        if(!allowed.includes(input.type)||!derivationId(id)||duplicate&&input.payload.source_surface!=='project-document-duplicate'
+          ||kind==='document'&&(index!==0||id!==e.document_id||input.payload.source_document_id!==b.documentId||input.payload.source_stream_id!==stream||input.payload.source_sequence!==plan.sourceHead||input.payload.copy_mode!=='independent-snapshot')
+          ||kind==='collection'&&((input.payload.item_ref as Record<string,unknown>)?.document_id!==e.document_id||input.payload.document_id!==undefined))throw Error('unsupported');
         const event=decodeNativeMemoryResourceEvent(source,e,kind,id);
         if(event.type!==input.type||canonicalConsent(event.payload)!==canonicalConsent(input.payload)||event.actor!=='user:'+e.actor_user_id
           ||event.clientId!=='web:context-approval'||event.correlationId!==prefix+row.preview_id||event.recordedAt>plan.expiresAt
@@ -90,16 +101,17 @@ export async function observeNativeMemoryReuseBindings(env:WorkerEnv,e:LiveMemor
       const receipt={...row};delete receipt.preview_content;delete receipt.footprint;delete receipt.event_count;delete receipt.event_bytes;
       const receiptSha256=await memoryDigest(memoryCanonical(receipt)),previewSha256=await memoryDigest(String(row.preview_content));
       for(const observation of selected){
-        const target=blocks.entries.find(block=>block.eventId===observation.eventId&&block.blockId===observation.blockPointer);
-        const event=events.find(event=>event.eventId===observation.eventId&&event.sequence===observation.sequence&&event.type==='BlockCreated');
-        const properties=event?.payload.properties as Record<string,unknown>|undefined,sourceId=properties?.copied_from_block_id;
-        if(!target||!event||!derivationId(sourceId)||sourceId===target.blockId||event.payload.source_surface!=='approved-context-proposal'
+        const target=blocks.entries.find(block=>block.eventId===observation.eventId&&block.blockId===observation.blockPointer);if(!target)continue;
+        const event=events.find(event=>event.type==='BlockCreated'&&(version===1?event.eventId===observation.eventId&&event.sequence===observation.sequence:event.payload.block_id===target.blockId&&target.eventIds.includes(event.eventId)&&event.sequence<=observation.sequence));
+        const properties=event?.payload.properties as Record<string,unknown>|undefined,sourceId=duplicate?event?.payload.copied_from_block_id:properties?.copied_from_block_id;
+        if(!event||!derivationId(sourceId)||sourceId===target.blockId||event.payload.source_surface!==(duplicate?'project-document-duplicate':'approved-context-proposal')
           ||plan.changes.filter(change=>change.kind==='copy'&&change.sourceId===sourceId&&change.targetId===target.blockId).length!==1)continue;
+        resolved.add(observation.eventId);if(entries.some(entry=>entry.eventId===event.eventId&&entry.targetBlockId===target.blockId))continue;
         entries.push({eventId:event.eventId,targetBlockId:target.blockId,targetScopeKey:target.scopeKey,sourceBlockId:sourceId,sourceScope:'unresolved',
           previewRef:String(row.preview_id),outcomeKey,receiptSha256,previewSha256,eventIds:events.map(event=>event.eventId),expiresAt:row.expires_at});
       }
     }catch{/* Unknown or changed native approval remains an ordinary document action. */}
   }
   for(const entry of entries)observer.before(entry.expiresAt);
-  return {version:1,entries,unresolved:selected.length-entries.length};
+  return {version,entries,unresolved:selected.length-resolved.size};
 }

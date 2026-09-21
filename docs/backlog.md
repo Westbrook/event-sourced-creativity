@@ -441,3 +441,13 @@ Every intermediate requires its own access, enrollment, range and current native
 approval/result. No pointer-only shortcut or resurrection after body restore.
 Actual personal/shared D1 measures46 calls; final privacy/receipt regression passes.
 Duplicate-document/cross-owner and distinct resource coverage remain assigned.
+
+
+## MEM-036 — Explicitly enrolled duplicate-document original recall
+
+Implemented locally: [native duplication, inspected history and source recall](forma-memory-duplicate-source-recall-2026-09-21.md).
+Real copied document identity never inherits consent. Version2 provenance verifies
+native approval and the complete footprint, supports folder/lock copies and keeps
+inspection separate from new reuse. Version1 replays unchanged.137 native and62
+existing authoring/model checks pass, including actual D1 retirement/restoration.
+Cross-owner and distinct-resource/consumer integration remains tracked, not waived.

@@ -318,3 +318,16 @@ copy provenance and Library/Canvas resource identities remain explicit native
 requirements. Full regression at preceding763e91c2 passes2,399/2,399; subsequent
 profile/reuse changes have separate focused and browser evidence, not that full
 suite's qualification. No production deployment or enrollment.
+
+
+## Native duplicate-document ancestry
+
+[Independently enrolled duplicates](forma-memory-duplicate-source-recall-2026-09-21.md)
+now connect real document identities, later explicit inspection, versioned native
+copy certification and separately authorized original discovery. Folder/lock
+copies and old manifests are verified; no enrollment or preference evidence is
+inherited. Actual D1 withdrawal/restoration keeps authored copies while retiring
+private inference. This closes native same-owner duplicate-document source
+certification, not cross-owner copy authoring, Library/Canvas enrollment, direct
+private Output or aggregate semantic-profile consumers.137 native and62 existing
+copy checks are distinct from the earlier2,399-test full run.
