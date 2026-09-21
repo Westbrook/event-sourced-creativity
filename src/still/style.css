@@ -75,11 +75,14 @@ still-app .quiet-state p { color: var(--en-color-text-muted); }
 still-app .still-mark { width: 30px; height: 30px; border: 1px solid var(--en-color-boundary); border-radius: 50%; box-shadow: 8px 0 0 -1px var(--en-color-canvas), 9px 0 0 0 var(--en-color-line); }
 still-app .check { display:block;margin:16px 0; }
 still-app .image-frame { --image-max-height: min(60dvh, 720px); max-width: 100%; }
-still-app .image-frame.known-size { width: min(100%, 950px, calc(var(--image-max-height) * var(--image-ratio))); aspect-ratio: var(--image-ratio); }
+still-app .image-frame.known-size, still-app .image-frame.pending-size { width: min(100%, 950px, calc(var(--image-max-height) * var(--image-ratio))); aspect-ratio: var(--image-ratio); }
+/* A provisional layout only; actual request dimensions always take precedence. */
+still-app .image-frame.pending-size { --image-ratio: calc(4 / 3); }
+@media (orientation: portrait) {
+  still-app .image-frame.pending-size { --image-ratio: calc(3 / 4); }
+}
 still-app .image-frame img { display: block; width: 100%; height: auto; max-height: var(--image-max-height); object-fit: contain; }
 still-app .image-frame en-skeleton { display: block; height: 100%; --en-skeleton-size: 100%; }
-still-app .image-size-pending { width: min(100%, 240px); padding-block: 24px; }
-still-app .image-size-pending .caption { text-align: left; }
 still-app figcaption, still-app .caption { font-size: 12px; color: var(--en-color-text-muted); margin-top: 16px; text-align: center; }
 still-app .results-page { max-width: 1050px; margin: 5vh auto; }
 still-app .result-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 42px; }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'vite';
 import {chromium} from '@playwright/test';
-test('pending and completed images share responsive dimensions and unknown size stays neutral',async()=>{
+test('pending and completed images share responsive dimensions and unknown pending sizes follow viewport orientation',async()=>{
  const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-image-geometry',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body><still-app></still-app></body></html>');});}}]});let browser;
  try{
   await server.listen();browser=await chromium.launch({headless:true});const page=await browser.newPage();
@@ -25,6 +25,13 @@ test('pending and completed images share responsive dimensions and unknown size 
     assert.equal(await page.locator('img').getAttribute('width'),String(size.width));assert.equal(await page.locator('img').getAttribute('height'),String(size.height));
    }
   }
-  await page.evaluate(()=>window.show({},false));assert.equal(await page.locator('.image-frame').count(),0);assert.equal(await page.locator('en-skeleton[shape="text"]').count(),1);
+  await page.evaluate(()=>window.show({},false));
+  assert.equal(await page.locator('en-skeleton[shape="rectangle"]').count(),1);
+  for(const {width,ratio} of [{width:1200,ratio:4/3},{width:390,ratio:3/4},{width:1200,ratio:4/3}]){
+   await page.setViewportSize({width,height:800});
+   const pending=await page.locator('.image-frame.pending-size').boundingBox();
+   assert.ok(Math.abs(pending.width/pending.height-ratio)<.01,`unknown pending image at ${width}px`);
+   assert.ok(pending.width<=width);assert.ok(pending.height<=480.1);
+  }
  }finally{await browser?.close();await server.close();}
 });

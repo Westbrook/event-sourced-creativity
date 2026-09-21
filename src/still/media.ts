@@ -42,8 +42,8 @@ export function stillVideo(src:string,artifact:DocumentArtifact) {
 export function stillImageStage(title:string,metadata:unknown,src?:string){
  const size=mediaSize(metadata),known=size.source==='metadata';
  return html`<section class="generation-stage image-stage"><span class="eyebrow">Image</span><h1>${title}</h1>${known?html`<p class="caption">${size.width} × ${size.height}</p>`:nothing}
-   ${src||known?html`<div class=${`image-frame ${known?'known-size':''}`} style=${known?`--image-ratio:${size.width/size.height}`:nothing} aria-label=${src?nothing:'Image generation in progress'}>
+   <div class=${`image-frame ${known?'known-size':!src?'pending-size':''}`} style=${known?`--image-ratio:${size.width/size.height}`:nothing} aria-label=${src?nothing:'Image generation in progress'}>
      ${src?stillImage(src,title,metadata,{loading:'eager'}):html`<en-skeleton shape="rectangle"></en-skeleton>`}
-   </div>`:html`<div class="image-size-pending" aria-label="Image generation in progress"><en-skeleton shape="text"></en-skeleton><p class="caption">Image dimensions are not available yet.</p></div>`}
+   </div>
  </section>`;
 }
