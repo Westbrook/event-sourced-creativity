@@ -41,7 +41,7 @@ export function localActionRules(p:CreativeProjection,pos:Position):LocalRule[]{
   if(block?.locked){add('unlock','Selected idea is locked');add('context','Review the whole document');add('use-in','Reuse this idea elsewhere');return rules;}
   if(block&&Number(block.properties.weight??1)<=0){add('toggle-context','Selected idea is excluded from generation');add('edit-block','Revise the excluded idea');add('context','Review the active document context');return rules;}
   if(done==='split-context'){add('context','Review the smaller ideas you just saved');add('compose','Arrange the saved pieces');add('edit-block','Refine the shared source direction');}
-  else if(done==='find-references'||done==='research-context'){add('context','Review the reference or research you just saved');add('use-in','Use the enriched idea elsewhere');add('create','Try the updated context in an output');}
+  else if(done==='find-references'||done==='research-context'||done==='supply-reference'){add('context','Review the reference or research you just saved');add('use-in','Use the enriched idea elsewhere');add('create','Try the updated context in an output');}
   else if(['compose','replace-part','edit-block','add-context','reuse'].includes(done??'')){add('context','Review your saved context changes');add('create','Try the updated context');if(hasResults)add('results','Compare with existing results');}
   if(block){
     add('edit-block','An editable idea is selected');

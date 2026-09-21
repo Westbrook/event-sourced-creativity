@@ -17,7 +17,7 @@ export class ContextWorkflow {
   publicQuery = '';
   status = 'start';
   stale = false;
-  constructor(readonly client: StillClient, readonly kind: 'decompose' | 'research') {
+  constructor(readonly client: StillClient, readonly kind: 'decompose' | 'research', readonly purpose: 'research'|'references' = 'research') {
     const { projectId, documentId, blockId } = client.position;
     this.target = { projectId, documentId, blockId, canvasId: null }; this.scopeKey = client.scopeKey;
   }
@@ -38,7 +38,7 @@ export class ContextWorkflow {
   async prepareQuote() {
     const check = await this.guard();
     if (this.quote && this.quote.status !== 'quoted') throw new Error('Check the original analysis before starting another.');
-    const result = await api<{ quote: ContextQuote }>(`/api/context/${this.kind}`, { ...this.target, action: 'quote', publicQuery: this.publicQuery.trim() }); check();
+    const result = await api<{ quote: ContextQuote }>(`/api/context/${this.kind}`, { ...this.target, analysisProfile:'still-ideas-v1', purpose:this.purpose, action: 'quote', publicQuery: this.publicQuery.trim() }); check();
     this.validate(result.quote); this.quote = result.quote; this.publicQuery = result.quote.publicQuery ?? ''; this.status = 'quote';
   }
   async analyze() {
@@ -49,7 +49,7 @@ export class ContextWorkflow {
     // Mark uncertainty before dispatch, so interrupted replies can only be retrieved.
     if (next.action === 'execute') this.quote = { ...quote, status: 'uncertain' };
     try {
-      const result = await api<{ plan?: DecompositionPlan; report?: ContextResearchReport; executionId: string; bindingHash: string; status?: string; quote?: ContextQuote }>(`/api/context/${this.kind}`, { ...this.target, publicQuery: this.publicQuery, action: next.action, executionId: quote.executionId, approvedBindingHash: quote.bindingHash }); check();
+      const result = await api<{ plan?: DecompositionPlan; report?: ContextResearchReport; executionId: string; bindingHash: string; status?: string; quote?: ContextQuote }>(`/api/context/${this.kind}`, { ...this.target, analysisProfile:'still-ideas-v1', purpose:this.purpose, publicQuery: this.publicQuery, action: next.action, executionId: quote.executionId, approvedBindingHash: quote.bindingHash }); check();
       if (!result.plan && !result.report) { this.quote = { ...quote, status: result.status ?? 'uncertain' }; throw new Error('The original analysis is still pending. Check it again shortly.'); }
       let retained = quote;
       if (result.quote) {

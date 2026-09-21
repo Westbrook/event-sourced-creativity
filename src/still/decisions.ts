@@ -1,3 +1,4 @@
+import { IDEA_ACTIONS, ideaActionTargets, ideaBenefitQuestions } from './idea-actions.ts';
 import { nextBestQuestion, toolbarDecisionContext } from './next-best.ts';
 import { evaluateLocalActions, localFormatRules } from './local-policy.ts';
 import type { GenerationDecisionContext } from './generation-decision.ts';
@@ -8,7 +9,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-16';
+export const POLICY_VERSION = 'still-17';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback; generation?:GenerationDecisionContext };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -23,7 +24,8 @@ export const ACTIONS: readonly Action[] = [
   { id: 'edit-block', label: 'Edit idea', group: 'write', description: 'Edit the selected context block without replacing other work.' },
   { id: 'split-context', label: 'Split idea', group: 'context', description: 'Review a cost, then extract independently useful decisions into editable child blocks while keeping their source and relationships.' },
   { id: 'research-context', label: 'Research idea', group: 'context', description: 'Review research cost, then find related project ideas or sourced information for the selected thought. Public search uses a separately supplied public subject.' },
-  { id: 'find-references', label: 'Find references', group: 'context', description: 'Research examples for this thought, inspect licensed image candidates, and explicitly acquire a chosen image with attribution into shared Forma context.' },
+  { id: 'find-references', label: 'Find reference', group: 'context', description: 'Search for file-based evidence—images, video, audio, 3D models or documents—then review sources and permissions before attaching a chosen reference.' },
+  { id: 'supply-reference', label: 'Supply reference', group: 'context', description: 'Choose a file you already possess and explicitly attach it to an idea, keeping its source and rights. No model analysis is required.' },
   { id: 'compose', label: 'Arrange ideas', group: 'context', description: 'Arrange existing editable ideas under the selected thought, retaining their identities, sources, and order. Members can be removed, replaced, and re-added in a different order.' },
   { id: 'rename', label: 'Rename document', group: 'write', description: 'Rename the current creative document.' },
   { id: 'context', label: 'View document', group: 'navigate', description: 'Read the document context and creative direction.' },
@@ -74,7 +76,7 @@ export function evaluateEligibility(p: CreativeProjection, pos: Position, abilit
     if (a.id === 'edit-artifact') return !abilities.author ? 'Author permission required' : artifact && ['short_story', 'scene', 'slides', 'storyboard'].includes(artifact.kind) ? '' : 'Select editable writing';
     if (a.id === 'context') return pos.view !== 'document' || !!pos.blockId ? '' : 'Already viewing document';
     if (!abilities.author) return 'Author permission required';
-    if (['split-context','research-context','find-references'].includes(a.id)) return !abilities.generate ? 'Generation permission required' : !editableIdea(block) ? 'Select an editable idea' : !(Number(block.properties.weight ?? 1)>0) ? 'Include this idea first' : !String(block.properties.text ?? '').trim() ? 'Idea text required' : String(block.properties.text ?? '').length > (a.id==='split-context'?6000:2400) ? 'Source exceeds action text limit' : '';
+    if (IDEA_ACTIONS.includes(a.id as typeof IDEA_ACTIONS[number])) return a.id!=='supply-reference'&&!abilities.generate ? 'Generation permission required' : !ideaActionTargets(p,pos,a.id).length ? 'An editable idea with supported text is required' : '';
     if (a.id === 'use-in') return block ? editableIdea(block) ? '' : 'Select an editable idea' : p.blocks.some(editableIdea) ? '' : 'An editable idea is required';
     if (a.id === 'compose') return !editableIdea(block) ? 'Select an editable idea' : p.blocks.some(b => b.id !== block.id && editableIdea(b)) ? '' : 'Another editable idea required';
     if (['edit-block','lock','toggle-context'].includes(a.id)) return !block ? 'Select an idea' : block.locked ? 'Idea is locked' : '';
@@ -276,9 +278,10 @@ const SIGNALS: Record<string, { yes?: string[]; no?: string[] }> = {
   projects: { yes: ['returning', 'existing_start'] }, documents: { yes: ['returning', 'reuse_result'] },
   'new-project': { yes: ['first_step'] }, 'new-document': { yes: ['reuse_result', 'viewpoint'] },
   'add-context': { yes: ['missing_reference', 'sensory', 'causality', 'establishing_beat', 'evidence', 'scene_to_character', 'blocked_input'] },
-  'split-context': { yes: ['independent_change','independent_reuse','independent_sources','portable_motif'] },
-  'research-context': { yes: ['research_factual_gap','research_requested','source_disagreement','source_time_sensitive','provenance_gap'] },
-  'find-references': { yes: ['reference_gap','reference_target'] },
+  'split-context': { yes: ['benefit_split-context','independent_change','independent_reuse','independent_sources','portable_motif'] },
+  'research-context': { yes: ['benefit_research-context','research_factual_gap','research_requested','source_disagreement','source_time_sensitive','provenance_gap'] },
+  'find-references': { yes: ['benefit_find-references','reference_gap','reference_target'] },
+  'supply-reference': { yes: ['benefit_supply-reference','reference_gap'] },
   compose: { yes: ['shared_target','recur_together','fragmentation_friction','unexpected_pairing','existing_atom_fit','preserve_order','discover_connection'] },
   'edit-block': { yes: ['local_replacement','fixed_variable','finish_detail','alternative_distinct','source_overlap','contradiction', 'obsolete_context', 'repetition', 'tone', 'continuity', 'preference', 'model_silhouette'] },
   rename: { yes: ['finish'] }, context: { yes: ['failure', 'blocked_input', 'contradiction','review_whole','part_in_whole'] },
@@ -303,10 +306,10 @@ const SIGNALS: Record<string, { yes?: string[]; no?: string[] }> = {
 };
 /** Keep the full creative library, but ask only judgments consumed by this menu.
  * Scoring and preservation dependencies are retained even when they reduce rank. */
-export function questionsFor(candidates: Action[], position?: Position, artifactKind?: string): Record<string, Question> {
-  const all=comprehensiveQuestionsFor(candidates,position,artifactKind);
+export function questionsFor(candidates: Action[], position?: Position, artifactKind?: string, blocks?: Parameters<typeof ideaBenefitQuestions>[2]): Record<string, Question> {
+  const all={...comprehensiveQuestionsFor(candidates,position,artifactKind),...(position?ideaBenefitQuestions(candidates,position,blocks):{})};
   if(position?.palette||position?.view==='choose-format'||position?.view==='find-action')return all;
-  const needed=new Set(['stage','next_best_action']);
+  const needed=new Set(['stage','next_best_action',...Object.keys(all).filter(id=>id.startsWith('benefit_')||id.startsWith('target_'))]);
   for(const action of candidates){
     if(action.id==='intent'||Object.hasOwn(MEDIUM_QUESTIONS,action.id)&&position&&!position.intent.trim())continue;
     needed.add(`use_${action.id}`);needed.add(`requested_${action.id}`);
@@ -356,7 +359,7 @@ export function evaluateActions(candidates: Action[], pos: Position, answers: Re
     const reviewFirst = a.group === 'make' ? Math.max(evidence('unreviewed'), evidence('alternatives'), evidence('failure'), evidence('manage_ideas'), evidence('preserve_options')) * .8 : 0;
     const splitBenefit = answers.split_benefit;
     const usefulSplit = splitBenefit?.type === 'score' && Number.isFinite(splitBenefit.score) && splitBenefit.score! >= 2 && splitBenefit.score! <= 3 && Number.isFinite(splitBenefit.confidence) && splitBenefit.confidence! >= .12 && splitBenefit.confidence! <= 1;
-    const reduce = a.id === 'split-context' ? Math.max(evidence('essential_relationship'),evidence('fragmentation_friction'),evidence('coherent_small_idea')) * 1.5 + (Object.keys(answers).length && !usefulSplit && !['independent_change','independent_reuse','independent_sources'].some(id=>evidence(id)>.5) ? 1 : 0)
+    const reduce = a.id === 'split-context' ? Math.max(evidence('essential_relationship'),evidence('fragmentation_friction'),evidence('coherent_small_idea')) * 1.5 + (Object.keys(answers).length && !usefulSplit && evidence('benefit_split-context')<=.5 && !['independent_change','independent_reuse','independent_sources'].some(id=>evidence(id)>.5) ? 1 : 0)
       : a.id === 'research-context' ? evidence('creative_uncertainty')*.6
       : a.id === 'find-references' ? evidence('existing_reference_fit')*.7
       : ['compose','edit-block','surprise'].includes(a.id) ? Math.max(evidence('constraint_conflict'),evidence('scope_conflict'))*1.5 : 0;
@@ -396,6 +399,16 @@ export function buildDecisionState(events: CreativeEvent[], position: Position, 
   const nearBlocks = p.blocks.filter(b=>!b.removed&&nearIds.has(b.id)).sort((a,b)=>Number(b.id===position.blockId)-Number(a.id===position.blockId));
   const provenance = (b: typeof p.blocks[number]) => ({ id:b.id, authority:safeText(b.properties.authority,40), sourceBlock:safeText(b.properties.source_block_id ?? b.properties.copied_from_block_id,180), referenceId:safeText(b.properties.reference_id,180), excerpt:safeText(b.properties.source_excerpt,400), hasSource:!!b.properties.source_url, license:safeText(b.properties.source_license,120), humanEdited:!!b.properties.human_edited, sourceEvents:b.sourceEvents.slice(-4) });
   const locked = p.blocks.filter(b=>!b.removed&&b.locked);
+  const ideaTargets=new Map(IDEA_ACTIONS.map(action=>[action,new Set(ideaActionTargets(p,{...position,blockId:''},action).map(b=>b.id))]));
+  const mediaTypes=new Map(p.blocks.filter(b=>!b.removed).map(b=>[b.id,safeText(b.properties.media_type??b.properties.model_mime_type,80)]));
+  const references=new Map<string,string[]>();
+  for(const [id,mime] of mediaTypes)if(mime)references.set(id,[mime]);
+  for(const link of relations){
+    const mime=mediaTypes.get(link.toBlockId);if(!mime)continue;
+    const types=references.get(link.fromBlockId)??[];
+    if(types.length<8&&!types.includes(mime))types.push(mime);
+    references.set(link.fromBlockId,types);
+  }
   const state = {
     policy: POLICY_VERSION,
     toolbarDecision: toolbarDecisionContext(position,candidates),
@@ -406,7 +419,7 @@ export function buildDecisionState(events: CreativeEvent[], position: Position, 
     capabilities: abilities,
     focus: { selectedBlockId:position.blockId, nodes:nearBlocks.slice(0,12).map(b=>({id:b.id,type:b.type,locked:b.locked,active:Number(b.properties.weight??1)>0,text:safeText(b.properties.text,350)})), relations:near.slice(0,24).map(r=>({id:r.id,from:r.fromBlockId,to:r.toBlockId,kind:r.kind,order:Number(r.properties.member_order??0)})), groups:p.blocks.filter(b=>!b.removed&&!!b.properties.context_group).slice(0,12).map(b=>{const g=b.properties.context_group as Record<string,unknown>;return{id:b.id,target:safeText(g.target,120),role:safeText(g.role,60),application:safeText(g.application,30)};}), lockedConstraints:locked.slice(0,12).map(b=>({id:b.id,text:safeText(b.properties.text,400)})), provenance:p.blocks.filter(b=>!b.removed&&(b.id===position.blockId||near.some(r=>r.toBlockId===b.id||r.fromBlockId===b.id))).slice(0,12).map(provenance), coverage:{omittedNodes:Math.max(0,nearBlocks.length-12),omittedRelations:Math.max(0,near.length-24),omittedLocked:Math.max(0,locked.length-12),meaning:'Graph is selection-centered and bounded. Missing evidence is unknown, not false.'} },
     selectedWork: selectedArtifact ? { id:selectedArtifact.id, kind:selectedArtifact.kind, title:safeText(selectedArtifact.title,200), item:position.itemIndex ?? 0, text:safeText(['slides','storyboard'].includes(selectedArtifact.kind) ? selectedItem?.body : retained?.content_markdown ?? selectedItem?.body,3000) } : null,
-    active: { project: safeText(p.projectName,200), document: safeText(p.documentTitle,200), blocks: p.blocks.filter(b => !b.removed).sort((a,b) => (Number(b.id === position.blockId)*2+Number(nearIds.has(b.id))) - (Number(a.id === position.blockId)*2+Number(nearIds.has(a.id)))).slice(0, 40).map(b => ({ id: b.id, type: b.type, handle: safeText(b.handle,120), locked: b.locked, active: Number(b.properties.weight ?? 1) > 0, text: safeText(b.properties.text, 1400) })), outputs: p.outputs.slice(0, 12).map(o => ({ id: o.id, title: safeText(o.title,200), pinned: o.pinned, saved: o.saved })), artifacts: p.artifacts.slice(0, 12).map(a => ({ id: a.id, kind: a.kind, title: safeText(a.title, 200), summary: safeText(a.summary, 500) })) },
+    active: { project: safeText(p.projectName,200), document: safeText(p.documentTitle,200), blocks: p.blocks.filter(b => !b.removed).sort((a,b) => (Number(b.id === position.blockId)*2+Number(nearIds.has(b.id))) - (Number(a.id === position.blockId)*2+Number(nearIds.has(a.id)))).slice(0, 40).map(b => ({ id: b.id, type: b.type, handle: safeText(b.handle,120), locked: b.locked, active: Number(b.properties.weight ?? 1) > 0, ideaActions: IDEA_ACTIONS.filter(action=>ideaTargets.get(action)!.has(b.id)), text: safeText(b.properties.text, 1400), referenceTypes: references.get(b.id)??[] })), outputs: p.outputs.slice(0, 12).map(o => ({ id: o.id, title: safeText(o.title,200), pinned: o.pinned, saved: o.saved })), artifacts: p.artifacts.slice(0, 12).map(a => ({ id: a.id, kind: a.kind, title: safeText(a.title, 200), summary: safeText(a.summary, 500) })) },
     history: { eventCounts: Object.fromEntries(Object.entries(counts).sort((a,b) => b[1]-a[1]).slice(0,120)), eventTypeCount:Object.keys(counts).length, projects: p.projects.slice(0, 50).map(x => ({ id: x.id, name: safeText(x.name, 200), documents: x.documentCount, outputs: x.outputCount, artifacts: x.artifactCount })), recent: useful.slice(-45).map(compact), recentCreative: creative.slice(-12).map(compact), focused: useful.filter(e => position.documentId && e.payload.document_id === position.documentId || position.blockId && e.payload.block_id === position.blockId || position.outputId && (e.payload.object_id === position.outputId || e.payload.artifact_id === position.outputId || Array.isArray(e.payload.object_ids) && e.payload.object_ids.includes(position.outputId))).slice(-35).map(compact), milestones: useful.filter(e => /Preference|Intent|Critique|Pinned|Saved|Condition|Rejected|Failed/.test(e.type)).slice(-40).map(compact), coverage: { accessibleEvents: summary?.accessibleEvents??events.length, summarizedEvents: summary?.summarizedEvents??useful.length, creativeEvents: summary?.creativeEvents??creative.length, sampledEvents: 0, omittedEventDetails: 0, included: {recent:0,recentCreative:0,focused:0,milestones:0}, head, oldest: summary?.oldest??events[0]?.occurredAt, newest: summary?.newest??events.at(-1)?.occurredAt, excluded: 'Forgotten attention; URLs; media bytes; secrets. Older history is aggregated; long text and sampled details are bounded to the request budget. Media quality is not inferred. Only the authorized account or selected shared project is used.' } },
     reusableContext: p.libraryBlocks.filter(b => !b.removed).slice(-20).map(b => ({ id: b.id, handle: safeText(b.handle,120), projectId:b.projectId, documentId:b.documentId, document:safeText(p.documents.find(d=>d.id===b.documentId)?.title,120), type: b.type, text: safeText(b.properties.text, 400) })),
     candidates,

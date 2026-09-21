@@ -197,7 +197,7 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
   if(selected.response)return selected.response;
   if(selected.context&&!hasCapability(auth.user,"project.author",{organizationId:selected.context.organizationId,projectAccessId:selected.context.projectAccessId}))return new Response("Forbidden",{status:403});
   const form=await request.formData();const file=form.get("file");
-  if(!(file instanceof File))return Response.json({error:"A supported image, audio recording, document, or GLB model is required"},{status:400});
+  if(!(file instanceof File))return Response.json({error:"A supported image, MP4 video, audio recording, document, or GLB model is required"},{status:400});
   if(form.get("rightsConfirmed")!=="true")return Response.json({error:"external_asset_rights_confirmation_required"},{status:428});
   const managedPilot=selected.context
     ?await env.DB.prepare("SELECT cohort_id,source_classification FROM pilot_cohorts WHERE organization_id=? AND status IN ('active','paused','closed') ORDER BY CASE WHEN status='closed' THEN 1 ELSE 0 END,created_at DESC LIMIT 1")
@@ -212,10 +212,12 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
   const modelMime=model3dMimeType(file);
   const mimeType=modelMime??canonicalSourceDocumentMime(file);
   const isAudio=Boolean(audioMimeType(mimeType));
-  if((!SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)&&!SAFE_UPLOADED_DOCUMENT_TYPES.has(mimeType)&&!isAudio&&!modelMime)||file.size>(modelMime?MAX_MODEL3D_UPLOAD_BYTES:isAudio?MAX_AUDIO_UPLOAD_BYTES:12*1024*1024))return Response.json({error:modelMime?"Choose a GLB model smaller than 64 MB.":isAudio?"Choose an MP3, WAV, M4A, AAC, OGG, FLAC, or WebM audio recording smaller than 25 MB.":"Choose a supported image, audio recording, PDF, text, Markdown, CSV, JSON, Word, presentation, or spreadsheet smaller than 12 MB."},{status:400});
+  const isVideo=mimeType==="video/mp4";
+  if((!SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)&&!SAFE_UPLOADED_DOCUMENT_TYPES.has(mimeType)&&!isAudio&&!isVideo&&!modelMime)||file.size>(modelMime?MAX_MODEL3D_UPLOAD_BYTES:isAudio||isVideo?MAX_AUDIO_UPLOAD_BYTES:12*1024*1024))return Response.json({error:modelMime?"Choose a GLB model smaller than 64 MB.":isAudio?"Choose an MP3, WAV, M4A, AAC, OGG, FLAC, or WebM audio recording smaller than 25 MB.":"Choose an image or document under 12 MB, MP4 video or audio under 25 MB, or GLB model under 64 MB."},{status:400});
   const owner=selected.context?.ownerUserId??auth.user.userId;
   const key=`${ownerMediaNamespace(owner)}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,"-")}`;
   const bytes=await file.arrayBuffer();
+  if(isVideo&&(bytes.byteLength<12||new TextDecoder().decode(new Uint8Array(bytes,4,4))!=="ftyp"))return Response.json({error:"Choose an MP4 video with a valid file container."},{status:400});
   if(modelMime){try{validateModel3dAsset(bytes,modelMime);}catch(error){return Response.json({error:error instanceof Error?error.message:"This file is not a valid GLB 2.0 model. Export it again as a self-contained GLB."},{status:400});}}
   const modelSourceFields=[form.get("modelUrl"),form.get("modelContentHash"),form.get("modelView")];
   let modelViewMetadata:Record<string,string>={};
@@ -248,7 +250,7 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
   ))return Response.json({error:"The selected source does not match its advertised document format."},{status:400});
   const digest=await crypto.subtle.digest("SHA-256",bytes);
   const contentHash=[...new Uint8Array(digest)].map((byte)=>byte.toString(16).padStart(2,"0")).join("");
-  const extraction=SAFE_UPLOADED_DOCUMENT_TYPES.has(mimeType)?await extractSourceDocument(file):null;
+  const extraction=isVideo?{status:"unavailable" as const,text:"",segments:[],sourceKind:"unsupported" as const,truncated:false,message:"Video retained as a reference. No frames or transcript extracted."}:SAFE_UPLOADED_DOCUMENT_TYPES.has(mimeType)?await extractSourceDocument(file):null;
   const evidence=extraction?sourceDocumentEvidence(extraction,contentHash,mimeType):null;
   const sourceEvidenceHash=evidence?await sourceDocumentEvidenceDigest(evidence):null;
   const timing=isAudio?verifiedAudioTiming(new Uint8Array(bytes),mimeType):null;
@@ -271,7 +273,7 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
       if(Number(inserted.meta.changes??0)!==1)throw new Error("project_access_revoked");
     }catch{await env.MEDIA.delete(key).catch(()=>undefined);return new Response("Forbidden",{status:403});}
   }
-  return Response.json({key,url:`/api/media/${encodeURIComponent(key)}`,name:file.name,mimeType,contentHash,kind:modelMime?"model3d":isAudio?"audio":SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)?"image":"document",rights:"asserted",size:file.size,...(timing?{durationSeconds:timing.durationSeconds}:{}),...(extraction&&sourceEvidenceHash?{extraction,sourceEvidenceHash}:{}),...(managedPilot?{sourceClassification:managedPilot.source_classification}:{})});
+  return Response.json({key,url:`/api/media/${encodeURIComponent(key)}`,name:file.name,mimeType,contentHash,kind:modelMime?"model3d":isVideo?"video":isAudio?"audio":SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)?"image":"document",rights:"asserted",size:file.size,...(timing?{durationSeconds:timing.durationSeconds}:{}),...(extraction&&sourceEvidenceHash?{extraction,sourceEvidenceHash}:{}),...(managedPilot?{sourceClassification:managedPilot.source_classification}:{})});
 }
 export async function getMedia(request:Request,key:string,env:WorkerEnv){
   const scoped=hasProjectContextCookie(request);

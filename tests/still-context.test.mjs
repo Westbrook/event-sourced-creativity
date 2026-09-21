@@ -69,6 +69,10 @@ test('largest eligible request remains below the combined Jev budget and contain
   const requestState={...state,compositions:compositionIndex(questions),connectionCandidates:evidence.destinations.map(d=>({...d,label:d.label.slice(0,120),project:d.project.slice(0,120),document:d.document.slice(0,120)})),compositionGuidance:'Questions in each composition supply distinct judgments, not independent votes on the same outcome. Missing evidence remains unknown. Code combines eligible results; suggestions never authorize actions.'};
   const requestBytes=Buffer.byteLength(JSON.stringify({model:'jev-latest',state:requestState,questions}));
   assert.ok(requestBytes<60000,`Request uses ${requestBytes} bytes`);
+  const documentPosition={...pos,blockId:''},documentState=buildDecisionState(full,documentPosition,ability,156);
+  const documentQuestions=questionsFor(documentState.candidates,documentPosition,undefined,documentState.state.active.blocks);
+  const documentBytes=Buffer.byteLength(JSON.stringify({model:'jev-latest',state:{...documentState.state,compositions:compositionIndex(documentQuestions),connectionCandidates:evidence.destinations},questions:documentQuestions}));
+  assert.ok(documentBytes<60000,`Document request uses ${documentBytes} bytes`);
   const storyQuestions=questionsFor(candidates,pos,'short_story');
   assert.ok(storyQuestions.protagonist);assert.equal(storyQuestions.model_material,undefined);assert.ok(storyQuestions.use_context);
 });

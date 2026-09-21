@@ -35,6 +35,7 @@ export type ContextResearchSuggestion = {
   distance:number;
   sourceUrl:string|null;
   imageUrl:string|null;
+  fileKind?:string;
   license:string|null;
   attribution:string|null;
 };

@@ -85,7 +85,8 @@ test('Still form workflows use one responsive toolbar with their original comman
    await button('Approve analysis').waitFor();assert.equal(await button('Approve analysis').isDisabled(),true);
    await page.evaluate(()=>{const flow=document.querySelector('still-context-flow');flow.phase='intake';flow.intake={research:{label:'A reference',attribution:'Fixture',license:'CC0'}};flow.requestUpdate();});
    await button('Add reference').waitFor();assert.equal(await button('Add reference').isDisabled(),true);
-   await page.evaluate(()=>{const flow=document.querySelector('still-context-flow');flow.rights=true;flow.requestUpdate();});await page.waitForFunction(()=>!document.querySelector('.action-dock en-button').disabled);
+   await page.evaluate(()=>{const flow=document.querySelector('still-context-flow');flow.rights=true;flow.requestUpdate();});assert.equal(await button('Add reference').isDisabled(),true);
+   await page.evaluate(()=>{const flow=document.querySelector('still-context-flow');flow.file=new File(['Reference content'],'reference.txt',{type:'text/plain'});flow.requestUpdate();});await page.waitForFunction(()=>!document.querySelector('.action-dock en-button').disabled);
    await button('Back').click();await button('Close').waitFor();
   });
   await t.test('reuse destination flow and small action limits share the toolbar',async()=>{

@@ -85,7 +85,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
   if (position.projectId && !built.projection.projects.some(p => p.id === position.projectId) || position.documentId && !built.projection.documents.some(d => d.id === position.documentId && !d.removed)) return reply({ error: 'selection_unavailable' }, 409);
   if(position.palette){position.palette.toolbar=position.palette.toolbar.filter(id=>built.candidates.some(a=>a.id===id));position.palette.more=position.palette.more.filter(id=>built.candidates.some(a=>a.id===id));}
   const choosingFormat = position.view === 'choose-format'&&!palette, finding=position.view==='find-action';
-  const questions=questionsFor(built.candidates,position,built.state.selectedWork?.kind);
+  const questions=questionsFor(built.candidates,position,built.state.selectedWork?.kind,built.state.active.blocks);
   const started=Date.now(),deadline=started+10_000;
   const evidence=palette||choosingFormat||finding||!env.JEV_API_KEY||!built.candidates.some(a=>a.id==='use-in')?{destinations:[],details:[],source:null}:connectionEvidence(events,position,projection);
   // Hash the complete authorized decision input, not a client-provided head or cache key.
@@ -158,7 +158,14 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     const availablePresentation=presentActions(choosingFormat?rankedFormats:evaluateActions(built.candidates,position,answers).ranked.map(a=>a.id),answers,choosingFormat?'fit_':'use_');
     for(const row of Object.values(availablePresentation))Object.assign(row,{variant:'secondary',size:'medium',tier:'peer',reason:'Not in initial menu; evaluated when shown'});
     presentation={...availablePresentation,...presentActions(recommended,answers,choosingFormat?'fit_':'use_')};
-    return {source:'jev',model:first.model,policy:POLICY_VERSION,head,nextBest:questions.next_best_action?inspectAnswer(questions.next_best_action,answers.next_best_action):undefined,actions,rankedActions:choosingFormat?[]:evaluateActions(built.candidates,position,answers).ranked.map(a=>({id:a.id})),formats,rankedFormats,presentation,...(target?{targets:{'use-in':target.id}}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)};
+    const targets:Record<string,string>={};
+    for(const [key,answer] of Object.entries(answers)){
+      if(!key.startsWith('target_')||!questions[key])continue;
+      const inspected=inspectAnswer(questions[key],answer),action=key.slice(7);
+      if(inspected.status==='Answered'&&Number(inspected.confidence)>=.5&&built.state.active.blocks.some(b=>b.id===inspected.choice&&b.ideaActions.some(id=>id===action)))targets[action]=inspected.choice!;
+    }
+    if(target)targets['use-in']=target.id;
+    return {source:'jev',model:first.model,policy:POLICY_VERSION,head,nextBest:questions.next_best_action?inspectAnswer(questions.next_best_action,answers.next_best_action):undefined,actions,rankedActions:choosingFormat?[]:evaluateActions(built.candidates,position,answers).ranked.map(a=>({id:a.id})),formats,rankedFormats,presentation,...(Object.keys(targets).length?{targets}:{}),candidateIds:built.candidates.map(a=>a.id),stage:questions.stage?inspectAnswer(questions.stage,answers.stage).choice:undefined,questionsEvaluated:passes.reduce((n,p)=>n+p.questions.length,0),...diagnostics('jev',undefined,answers,first.model)};
   };
   if(shouldEnrich(position,answers,evidence.destinations.length)&&deadline-Date.now()>=1200){
     emitInitial?.({...resultBody(),preparation,delivery:delivery('initial')});
