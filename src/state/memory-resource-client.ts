@@ -1,3 +1,4 @@
+import { createMemoryElapsed } from '../model/memory-lifetime.ts';
 import { createMemoryPrivateRequest } from './memory-private-request.ts';
 import { memoryResourceIdentity,type MemoryResourceSelector,type MemoryResourceIdentity } from '../model/memory-resource-scope.ts';
 import { type MemoryCustody } from '../model/memory-custody.ts';
@@ -13,7 +14,18 @@ function deadline(value:unknown){check(time(value)&&Date.parse(value as string)>
 /** Explicit user control, bounded transport, no enrollment/capture on mount. */
 export function createMemoryResourceClient(transport:typeof fetch){
  const opening=createMemoryPrivateRequest(transport,'memory-resource-opening-v1'),settings=createMemoryPrivateRequest(transport,'memory-resource-settings-v1'),history=createMemoryPrivateRequest(transport,'memory-resource-history-v1');
- return {
+ const client={
+  async observeOpening(scope:MemoryResourceSelector,signal:AbortSignal,openingId:string,current:()=>boolean){
+   const clock=createMemoryElapsed({wall:Date.now(),monotonic:performance.now()});
+   if(signal.aborted||!current())return false;
+   const selected=await client.settings(scope,signal);
+   const enrollment=selected.enrollment;
+   // A fresh metadata read is not collection consent. The native POST still
+   // independently checks the same user/resource enrollment and current rights.
+   if(signal.aborted||!current()||clock.elapsed({wall:Date.now(),monotonic:performance.now()})>=30000
+    ||Date.now()>=Date.parse(selected.validUntil)||!enrollment?.learn||Date.now()>=Date.parse(enrollment.expiresAt))return false;
+   return client.opening(scope,signal,openingId);
+  },
   async opening(scope:MemoryResourceSelector,signal:AbortSignal,openingId:string){
    check(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(openingId));
    const v=await opening(scope,'resource-opening',signal,'POST',{openingId});check(typeof v.recorded==='boolean'&&v.noAutomaticRetry===true);return v.recorded as boolean;
@@ -42,4 +54,5 @@ export function createMemoryResourceClient(transport:typeof fetch){
    check(Array.isArray(v.sources)&&v.sources.length<=256&&v.sources.every((r:unknown)=>record(r)&&typeof r.eventId==='string'&&r.eventId.length<=240&&typeof r.type==='string'&&r.type.length<=80&&time(r.recordedAt)));return v;
   },
  };
+ return client;
 }

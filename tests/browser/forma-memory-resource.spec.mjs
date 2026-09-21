@@ -19,7 +19,12 @@ for(const locale of ['en','ar'])for(const kind of ['library','canvas'])test.desc
     const actual=Object.fromEntries(url.searchParams);openings.push({scope:actual,id:req.postDataJSON().openingId,recorded:!!enrolled&&JSON.stringify(actual)===JSON.stringify(selector)});
     return route.fulfill({json:{version:'memory-resource-opening-v1',recorded:openings.at(-1).recorded,noAutomaticRetry:true}});
    }
-   expect(Object.fromEntries(url.searchParams)).toEqual(selector);
+   const selected=Object.fromEntries(url.searchParams);
+   if(url.pathname.endsWith('resource-settings')&&req.method()==='GET'&&JSON.stringify(selected)!==JSON.stringify(selector)){
+    expect(selected).toEqual({kind:'library',projectId:'project-atmosphere',resourceId:'project-atmosphere'});
+    return route.fulfill({json:{version:'memory-resource-settings-v1',scope:memoryResourceIdentity(selected,{actorUserId:scope.actorUserId,ownerUserId:scope.ownerUserId,organizationId:null,projectAccessId:null}),validUntil:new Date(Date.now()+25000).toISOString(),policyVersion:'personal-resource-memory-v1',enrollment:null}});
+   }
+   expect(selected).toEqual(selector);
    if(req.method()==='GET')reads.push(url.pathname);else writes.push({path:url.pathname,body:req.postDataJSON()});
    if(url.pathname.endsWith('resource-settings')){
     if(req.method()==='GET')return route.fulfill({json:{version:'memory-resource-settings-v1',scope,validUntil:new Date(Date.now()+25000).toISOString(),policyVersion:'personal-resource-memory-v1',enrollment:enrolled}});
@@ -33,8 +38,8 @@ for(const locale of ['en','ar'])for(const kind of ['library','canvas'])test.desc
   });
   await page.goto('/library?document=doc-atmosphere');await expect(page.locator('forma-library')).toBeVisible();
   if(kind==='canvas'){await page.locator('a[href="/canvas"]').first().click();await page.locator('a[href="/canvas/resource-test-board/resource-test-board"]').first().click();await expect(page.locator('forma-canvas-surface .canvas-workspace')).toBeVisible();}
-  const control=page.locator('forma-memory-resource-controls:visible');await expect(control).toBeVisible();expect(writes).toEqual([]);expect(reads).toEqual([]);
-  await control.getByRole('button',{name:c.open,exact:true}).click();expect(reads).toEqual([]);await control.getByRole('button',{name:c.refresh,exact:true}).click();await expect(control.getByRole('button',{name:c.enable,exact:true})).toBeDisabled();
+  const control=page.locator('forma-memory-resource-controls:visible');await expect(control).toBeVisible();expect(writes).toEqual([]);await expect.poll(()=>reads.length).toBe(1);expect(reads).toEqual(['/api/memory/resource-settings']);expect(openings).toEqual([]);
+  await control.getByRole('button',{name:c.open,exact:true}).click();expect(reads).toEqual(['/api/memory/resource-settings']);await control.getByRole('button',{name:c.refresh,exact:true}).click();await expect(control.getByRole('button',{name:c.enable,exact:true})).toBeDisabled();
   await control.getByRole('checkbox').last().check();await control.getByRole('button',{name:c.enable,exact:true}).click();await expect.poll(()=>writes.length).toBe(1);expect(writes[0].body.background).toBe(false);expect(writes[0].body.expectedCustody).toEqual({kind:'personal'});await expect(control.getByRole('status')).toContainText(uncertain?c.unavailable:c.saved);
   await control.getByRole('button',{name:c.refresh,exact:true}).click();if(uncertain){await expect(control.getByRole('button',{name:c.enable,exact:true})).toBeDisabled();expect(writes).toHaveLength(1);return;}
   const beforeReturn=openings.length;if(kind==='canvas'){await page.locator('a[href="/canvas"]').first().click();await page.locator('a[href="/canvas/resource-test-board/resource-test-board"]').first().click();}else await page.reload();await expect(control).toBeVisible();await expect.poll(()=>openings.length).toBe(beforeReturn+1);expect(openings.at(-1).scope).toEqual(selector);expect(openings.at(-1).recorded).toBe(true);expect(new Set(openings.map(r=>r.id)).size).toBe(openings.length);

@@ -315,7 +315,8 @@ test("late Project " + outcome + " cannot restore or retarget a newer " + newer 
   if (newer === "aba") h.store.setRoute("/deliver?document=" + h.bd);
   await h.store.syncDocumentFromRoute(); // The actual Shell synchronizes each new route before later responses settle.
   const route = h.store.route.get(), toast = "Newer view owns feedback"; h.store.patchUi({ toast });
-  release.resolve(); assert.equal(await pending, outcome === "success");
+  // A committed opening receipt does not authorize a superseded navigation continuation.
+  release.resolve(); assert.equal(await pending, false);
   assert.equal(h.store.route.get(), route);
   if (outcome === "denied") {
     // A still-owned source denial retires private UI even after a newer local route.
@@ -1603,7 +1604,8 @@ test("F intelligence static navigation cannot expose a denied current Source / "
       assert.equal(h.store.sourceOwnershipActive(h.store.captureSourceOwnership()), false);
       assert.equal(f.components().some(owner => F_INTELLIGENCE_ENTRIES.some(value => value.tag === owner.tag)), false);
       const main = f.find("main", node => node.attributes.id === "main-content");
-      assert.equal(main.attributes["aria-busy"], "true");
+      assert.equal(h.store.documentRouteState(entry.path), "unavailable");
+      assert.equal(main.attributes["aria-busy"], "false", "A completed denial is unavailable, not perpetually loading");
       assert.equal(h.store.eventView.get().length, 0);
       assert.deepEqual(h.store.content.get(), {});
     }

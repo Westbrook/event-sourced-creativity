@@ -41,7 +41,7 @@ export class MemoryResourceControls extends FormaElement{
   const client=createMemoryResourceClient((url,init)=>store.guardedFetch(url,init,this.#text().heading,{current:opening.current}));
   // One attempt per actual opening. No retry on focus, uncertain ack, settings
   // refresh, enrollment or locale change; none of these is another resource visit.
-  void client.opening(scope,controller.signal,crypto.randomUUID()).catch(()=>{});
+  void client.observeOpening(scope,controller.signal,crypto.randomUUID(),opening.current).catch(()=>{});
  }
  #begin(){
   this.#clear();const scope=this.#selection(),store=this.store,session=store.session.get(),authorization=store.captureAuthorizationScope(),source=store.captureSourceOwnership(),route=store.route.get(),locale=this.i18n.locale;

@@ -1943,3 +1943,26 @@ for(const fault of ['missing-ack','unbounded','semantic','unpaired'])test('resou
  let calls=0;const client=createMemoryResourceClient(async()=>{calls++;return Response.json(fault==='missing-ack'?{version:'memory-resource-opening-v1',recorded:true}:body);});
  await assert.rejects(()=>fault==='missing-ack'?client.opening(selector,new AbortController().signal,crypto.randomUUID()):client.recall(selector,new AbortController().signal));assert.equal(calls,1);
 });
+
+for(const fault of ['none','unenrolled','learn-off','expired-enrollment','stale-owner','aborted','expired-read','wall-rollback','monotonic-expiry','invalid-scope','lost-ack'])test('resource opening observation checks fresh consent before mutation '+fault,async t=>{
+ const {createMemoryResourceClient}=await import('../src/state/memory-resource-client.ts'),{memoryResourceIdentity}=await import('../src/model/memory-resource-scope.ts');
+ const selector={kind:'library',projectId:'p',resourceId:'p'},scope=memoryResourceIdentity(selector,{actorUserId:'a',ownerUserId:'a',organizationId:null,projectAccessId:null});
+ const started=Date.now(),controller=new AbortController(),openingId=crypto.randomUUID(),calls=[];let current=true;
+ const enrollment={id:crypto.randomUUID(),revision:1,...selector,learn:fault!=='learn-off',recall:true,background:false,retentionDays:7,timeZone:'UTC',enrolledAt:new Date(started-1000).toISOString(),expiresAt:new Date(started+(fault==='expired-enrollment'?-1:86400000)).toISOString(),throughSequence:1,nextDueAt:new Date(started+60000).toISOString(),policyVersion:'personal-resource-memory-v1'};
+ const body={version:'memory-resource-settings-v1',scope,validUntil:new Date(started+25000).toISOString(),policyVersion:enrollment.policyVersion,enrollment:fault==='unenrolled'?null:enrollment};
+ const client=createMemoryResourceClient(async(url,init)=>{
+  calls.push({url,method:init.method,body:init.body?JSON.parse(init.body):null});
+  if(init.method==='POST'){if(fault==='lost-ack')throw Error('unknown delivery');return Response.json({version:'memory-resource-opening-v1',recorded:true,noAutomaticRetry:true});}
+  if(fault==='stale-owner')current=false;if(fault==='aborted')controller.abort();
+  if(fault==='expired-read')t.mock.method(Date,'now',()=>started+26000);
+  if(fault==='wall-rollback')t.mock.method(Date,'now',()=>started-1);
+  if(fault==='monotonic-expiry'){const tick=performance.now();t.mock.method(performance,'now',()=>tick+31000);}
+  if(fault==='invalid-scope')body.scope.resourceId='other';
+  return Response.json(body);
+ });
+ const operation=()=>client.observeOpening(selector,controller.signal,openingId,()=>current);
+ if(['aborted','expired-read','wall-rollback','monotonic-expiry','invalid-scope','lost-ack'].includes(fault))await assert.rejects(operation);else assert.equal(await operation(),fault==='none');
+ assert.equal(calls[0].method,'GET');assert.equal(calls[0].body,null);
+ assert.equal(calls.length,['none','lost-ack'].includes(fault)?2:1);
+ if(calls.length===2)assert.deepEqual(calls[1],{url:'/api/memory/resource-opening?kind=library&projectId=p&resourceId=p',method:'POST',body:{openingId}});
+});

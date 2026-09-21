@@ -547,3 +547,10 @@ Implemented locally: [post-serialization privacy checks](forma-memory-native-cap
 Eight native read surfaces now retain the original lease through serialization;
 correction text expires at its own retention boundary.41 new cases and122
 integrated native checks pass. No source cache, migration or deployment.
+
+## MEM-048 — Resource collection consent preflight
+
+Implemented locally: [client preflight and navigation regression](forma-memory-resource-openings-2026-09-21.md#client-collection-preflight-and-integrated-navigation).
+Native resource openings make no collection POST without a fresh affirmative
+learning enrollment.206 client/model checks,36 integrated navigation checks and10
+synthetic browser journeys pass; server authority remains mandatory.

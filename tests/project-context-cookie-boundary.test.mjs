@@ -67,7 +67,7 @@ const mutationRoutes = [
   { path: "/api/document-jobs", body: { kind: "not-a-job" }, error: "unsupported_document_job" },
   { path: "/api/generation-readiness", body: { kind: "not-a-preflight" }, error: "generation_preflight_input_required" },
   { path: "/api/shares", body: { resourceKind: "not-a-share" }, error: "share_resource_scope_required" },
-  { path: "/api/media", multipart: true, error: "A supported image, audio recording, or document is required" },
+  { path: "/api/media", multipart: true, error: "A supported image, audio recording, document, or GLB model is required" },
 ];
 function invalidRequest(route, cookie) {
   return route.multipart ? { method: "POST", headers: headers(cookie), body: new FormData() }

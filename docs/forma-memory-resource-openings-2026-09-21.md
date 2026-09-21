@@ -49,3 +49,26 @@ No production migration/deployment, actual enrollment, provider request, externa
 service, scheduler registration or spending occurred. Semantic resource consumers,
 private image/live-preview and profile consolidation remain native implementation
 requirements in the completion matrix; opening counts do not substitute for them.
+
+## Client collection preflight and integrated navigation
+
+Visible Library/Canvas openings now make a fresh, read-only resource-settings
+check before attempting an observation POST. No enrollment, learn-disabled or
+expired enrollment, stale owner, cancellation or expired read may submit it. The
+server still independently verifies consent and source authority in its atomic
+transaction. Settings are not cached as authority; each actual opening gets one
+attempt, with no retry on focus, enrollment, failed delivery or refresh.
+
+206 client/model/authoring/cookie-boundary checks and36 integrated navigation
+checks pass.10 synthetic Chromium journeys cover both resources in English and
+narrow Arabic, affirmative enrollment, uncertain writes, retained activity, blur,
+withdrawal and source-free controls. Types, changed-file lint (excluding the
+retained runtime-test baseline) and the unchanged production build pass.
+
+The integration preserves strict no-extra-mutation navigation assertions. Three
+old test contracts were reconciled with the existing application: a GLB fixture
+now includes its required immutable media hash, native video preload respects
+manual mode, and superseded navigation returns false even if its opening receipt
+committed. An unavailable source has finished loading and correctly reports
+aria-busy=false while keeping private content absent. The full navigation suite
+is tracked separately from the36 selected checks. No deployment or enrollment.
