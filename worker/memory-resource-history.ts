@@ -14,6 +14,33 @@ const TYPES=Object.keys(actions).map(type=>"'"+type+"'").join(',');
 type Source={event_id:string;sequence:number;type:keyof typeof actions;recorded_at:string};
 const sourceColumns=['event_id','sequence','type','recorded_at'];
 const reply=(body:Record<string,unknown>,status=200)=>Response.json({version:'memory-resource-history-v1',...body},{status,headers:{'cache-control':'private, no-store',vary:'Cookie, oai-authenticated-user-id, oai-authenticated-user-email'}});
+declare const resourceRecallBrand:unique symbol;
+export type NativeResourceMemoryRecall=Readonly<{[resourceRecallBrand]:true}>;
+type ResourceRecallCapture={env:WorkerEnv;db:WorkerEnv['DB'];authority:NativeMemoryResourceAuthority;guards:MemorySqlGuard[];value:Awaited<ReturnType<typeof captureResourceRecall>>['value']};
+const recalls=new WeakMap<NativeResourceMemoryRecall,ResourceRecallCapture>();
+function currentRecall(env:WorkerEnv,handle:NativeResourceMemoryRecall){
+ const c=recalls.get(handle);if(!c||c.env!==env||c.db!==env.DB)throw Error('resource_recall_expired');
+ nativeMemoryResourceScopeInputs(env,c.authority);
+ if(Date.now()>=Date.parse(c.value.validUntil))throw Error('resource_recall_expired');return c;
+}
+/** Private native evidence, not model-use consent. The JSON presentation cannot
+ * mint this handle or substitute for exact current source/consent predicates.
+ * Every downstream disclosure/write must replay these predicates atomically. */
+export async function prepareNativeResourceMemoryRecall(env:WorkerEnv,authority:NativeMemoryResourceAuthority):Promise<NativeResourceMemoryRecall>{
+ const db=env.DB,e=await enrollment(env,authority),captured=await captureResourceRecall(env,e,authority);
+ if(env.DB!==db)throw Error('resource_recall_changed');
+ const handle=Object.freeze({}) as NativeResourceMemoryRecall;
+ recalls.set(handle,{env,db,authority,guards:structuredClone(captured.guards),value:structuredClone(captured.value)});currentRecall(env,handle);return handle;
+}
+export function nativeResourceMemoryRecallInputs(env:WorkerEnv,handle:NativeResourceMemoryRecall){return structuredClone(currentRecall(env,handle).value);}
+export function nativeResourceMemoryRecallGuards(env:WorkerEnv,handle:NativeResourceMemoryRecall){return structuredClone(currentRecall(env,handle).guards);}
+export function nativeResourceMemoryRecallStatements(env:WorkerEnv,handle:NativeResourceMemoryRecall){return nativeResourceMemoryRecallGuards(env,handle).map(g=>derivationAssertion(env,g));}
+export async function replayNativeResourceMemoryRecall(env:WorkerEnv,handle:NativeResourceMemoryRecall){
+ try{const c=currentRecall(env,handle),proof=nativeResourceMemoryRecallStatements(env,handle),frames=await c.db.batch(proof);currentRecall(env,handle);
+  if(derivationResults(frames,proof.length)&&frames.every(derivationVerified))return true;
+ }catch{/* A denied or uncertain native replay cannot be retried as authority. */}
+ recalls.delete(handle);return false;
+}
 /** No private prose or linked-document hydration. These are actor actions, not
  * independent evidence of preferences. Historical AND current block placement
  * must match; seeing a Canvas link never authorizes its destination. */
@@ -74,7 +101,7 @@ export async function processResourceMemory(env:WorkerEnv,e:MemoryResourceEnroll
  if(env.DB!==db||!derivationResults(checked,statements.length)||!checked.slice(0,proofCount).every(derivationVerified)||!derivationVerified(checked[proofCount+1]!)||!derivationVerified(checked[proofCount+3]!))throw Error('resource_capture_unconfirmed');
  nativeMemoryResourceScopeInputs(env,handle);return {captured:page.length,throughSequence:through,more:rows.length>64};
 }
-async function recall(env:WorkerEnv,e:MemoryResourceEnrollment,handle:NativeMemoryResourceAuthority){
+async function captureResourceRecall(env:WorkerEnv,e:MemoryResourceEnrollment,handle:NativeMemoryResourceAuthority){
  const db=env.DB,s=nativeMemoryResourceScopeInputs(env,handle),schema=await memoryResourceSchema(env),guards=[schema,...nativeMemoryResourceScopeGuards(env,handle),memoryResourceEnrollmentGuard(e),purpose(e,'recall')],q=sourceQuery(e);
  const descriptor={sql:`SELECT event.event_id,event.sequence,event.type,event.recorded_at ${q.from} JOIN memory_resource_history history ON history.event_id=event.event_id AND history.enrollment_id=?
   WHERE ${q.condition} AND history.sequence=event.sequence AND history.event_type=event.type AND history.recorded_at=event.recorded_at AND history.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY event.sequence DESC LIMIT 257`,bindings:[e.enrollment_id,...q.bindings]};
@@ -89,13 +116,17 @@ async function recall(env:WorkerEnv,e:MemoryResourceEnrollment,handle:NativeMemo
  const witness=new AssistantContextReadWitness<null>(env);witness.observe([read],[result],[descriptor]);
  if(openingRead&&openingResult)witness.observe([openingRead],[openingResult],[openingDescriptor]);
  witness.before(s.validUntil);witness.seal(null);
- const proof=[...guards,...witness.precommitGuards().map(g=>({condition:g.sql,bindings:g.bindings}))].map(g=>derivationAssertion(env,g));
+ const sourceGuards=[...guards,...witness.precommitGuards().map(g=>({condition:g.sql,bindings:g.bindings}))];
+ const proof=sourceGuards.map(g=>derivationAssertion(env,g));
  const checked=await db.batch(proof);if(env.DB!==db||!derivationResults(checked,proof.length)||!checked.every(derivationVerified))throw Error('resource_recall_changed');nativeMemoryResourceScopeInputs(env,handle);
- const sources=rows.slice(0,256),at=Date.now(),validUntil=new Date(Math.min(Date.parse(s.validUntil),Date.parse(e.expires_at),...sources.map(r=>Date.parse(r.recorded_at)+e.retention_days*86400000),...openings.map(r=>Date.parse(String(r.expires_at))))).toISOString();
- return {scope:s.identity,validUntil,method:'action-counts-not-semantic',independentPreferenceEvidence:false,linkedContentRead:false,
+ const sources=rows.slice(0,256),at=Date.now();
+ const transitions=[...sources,...openings].flatMap(r=>[7,30].map(days=>Date.parse(String(r.recorded_at))+days*86400000)).filter(time=>time>at);
+ const validUntil=new Date(Math.min(Date.parse(s.validUntil),Date.parse(e.expires_at),...sources.map(r=>Date.parse(r.recorded_at)+e.retention_days*86400000),...openings.map(r=>Date.parse(String(r.expires_at))),...transitions)).toISOString();
+ const value={scope:s.identity,validUntil,method:'action-counts-not-semantic',independentPreferenceEvidence:false,linkedContentRead:false,
   coverage:{since:e.enrolled_at,throughSequence:e.cursor_sequence,currentHead:s.sourceHead,completeFromStart:false,sourceLimit:256,sourceLimitReached:rows.length>256},
   openings:{method:'resource-surface-open-not-content-consumption',limit:256,limitReached:openingRows.length>256,available:schema.openings},
   windows:[7,30].map(days=>({days,resourceOpenings:openings.filter(r=>Date.parse(String(r.recorded_at))>at-days*86400000).length,counts:sources.filter(r=>Date.parse(r.recorded_at)>at-days*86400000).reduce<Record<string,number>>((out,r)=>{const action=actions[r.type];out[action]=(out[action]??0)+1;return out;},{})})),sources:sources.map(r=>({eventId:r.event_id,type:r.type,recordedAt:r.recorded_at}))};
+ return {value,guards:[...sourceGuards,{condition:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[validUntil]}]};
 }
 export async function handleMemoryResourceHistory(request:Request,env:WorkerEnv){
  const url=new URL(request.url);if(!['GET','POST'].includes(request.method))return reply({error:'method_not_allowed'},405);
@@ -104,8 +135,12 @@ export async function handleMemoryResourceHistory(request:Request,env:WorkerEnv)
  const selector=memoryResourceSelector(Object.fromEntries(url.searchParams));if(!selector)return reply({error:'resource_scope_required'},400);
  try{
   if(request.method==='POST'){const parsed=await readNativeControlBody(request);if(parsed.status!=='parsed'||!derivationExact(parsed.value,['confirmation'])||parsed.value.confirmation!=='REVIEW_RESOURCE_ACTIVITY')return reply({error:'resource_review_required'},400);}
-  const handle=await prepareNativeMemoryResourceAuthority(request,env,selector),e=await enrollment(env,handle);
-  if(request.method==='POST')return reply(await processResourceMemory(env,e,handle));return reply(await recall(env,e,handle));
+  const handle=await prepareNativeMemoryResourceAuthority(request,env,selector);
+  if(request.method==='POST')return reply(await processResourceMemory(env,await enrollment(env,handle),handle));
+  const recalled=await prepareNativeResourceMemoryRecall(env,handle),response=reply(nativeResourceMemoryRecallInputs(env,recalled));
+  // Serialization can consume the remaining lease. Do not deliver expired
+  // private counts, even when the final database read itself was still current.
+  nativeResourceMemoryRecallInputs(env,recalled);return response;
  }catch{return reply({error:'resource_history_unavailable',noAutomaticRetry:true},503);}
 }
 export async function runResourceMemoryScheduled(env:WorkerEnv){

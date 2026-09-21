@@ -109,3 +109,23 @@ Commit `b2c72f14` passes the complete assistant runtime suite:2564/2564, zero
 failures,1485794.973375ms, from an immutable archived checkout. This includes the
 resource integration and preceding package-reference work, but not later
 aggregate-profile changes. It remains local synthetic evidence, not deployment.
+
+## Native downstream recall evidence and final delivery
+
+The actual resource-history reader now retains a private, environment-bound
+source handle alongside its owned presentation. Future native consumers can
+replay every exact schema, actor, custody, enrollment, source-row and opening
+predicate in their own atomic transactions; browser JSON cannot mint authority.
+A failed or uncertain replay permanently retires that request handle. This is
+not model-use consent or a durable semantic consumer registration.
+
+Both resource identity and history responses recheck the original lease after
+serialization. Invalid/non-finite clocks, clock reversal, expiry, configuration
+changes and binding replacement deny disclosure. Rolling counts expire at the
+next seven-/thirty-day boundary as well as the source retention ceiling.
+
+104 integrated native checks pass, including13 new cases and two real local D1
+handle/replay/uncertain-ack journeys. Types, scoped worker lint and the production
+build pass. A separate integrated Memory regression at4af22be3 passes2172/2172
+with zero failures; it predates this resource recall change. No migration,
+provider request, enrollment or deployment was performed.

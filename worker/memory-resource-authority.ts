@@ -20,8 +20,8 @@ type Capture={env:WorkerEnv;db:WorkerEnv['DB'];actor:PilotUser;identity:MemoryRe
 const captures=new WeakMap<NativeMemoryResourceAuthority,Capture>();
 const configuration=(env:WorkerEnv)=>JSON.stringify([env.FORMA_MEMORY_SCHEDULING_ENABLED,env.FORMA_MEMORY_ENABLED,env.FORMA_MEMORY_USER_IDS,env.FORMA_PILOT_COHORT_ID,env.FORMA_ADMIN_EMAILS]);
 function current(env:WorkerEnv,handle:NativeMemoryResourceAuthority){
- const c=captures.get(handle);if(!c||c.env!==env||env.DB!==c.db||Date.now()<c.started||Date.now()>=Date.parse(c.validUntil)
-  ||performance.now()<c.monotonic||performance.now()-c.monotonic>=30000||configuration(env)!==c.config)throw Error('resource_scope_expired');return c;
+ const c=captures.get(handle),wall=Date.now(),monotonic=performance.now();if(!c||c.env!==env||env.DB!==c.db||!Number.isFinite(wall)||!Number.isFinite(monotonic)||wall<c.started||wall>=Date.parse(c.validUntil)
+  ||monotonic<c.monotonic||monotonic-c.monotonic>=30000||configuration(env)!==c.config)throw Error('resource_scope_expired');return c;
 }
 export function nativeMemoryResourceScopeInputs(env:WorkerEnv,handle:NativeMemoryResourceAuthority){const c=current(env,handle);return {identity:structuredClone(c.identity),validUntil:c.validUntil,sourceHead:c.head,permissionEpoch:c.actor.access.permissionEpoch};}
 export function nativeMemoryResourceScopeGuards(env:WorkerEnv,handle:NativeMemoryResourceAuthority){return structuredClone(current(env,handle).guards);}
@@ -105,6 +105,7 @@ export async function handleMemoryResourceScope(request:Request,env:WorkerEnv){
  try{
   const handle=await prepareNativeMemoryResourceAuthority(request,env,selector),proof=nativeMemoryResourceScopeGuards(env,handle).map(g=>derivationAssertion(env,g)),db=env.DB,checked=await db.batch(proof);
   if(env.DB!==db||!derivationResults(checked,proof.length)||!checked.every(derivationVerified))throw Error('resource_changed');
-  const value=nativeMemoryResourceScopeInputs(env,handle);return reply({scope:value.identity,validUntil:value.validUntil,enrollmentRequired:true,documentEnrollmentInherited:false,linkedResourceAccessInherited:false});
+  const value=nativeMemoryResourceScopeInputs(env,handle),response=reply({scope:value.identity,validUntil:value.validUntil,enrollmentRequired:true,documentEnrollmentInherited:false,linkedResourceAccessInherited:false});
+  nativeMemoryResourceScopeInputs(env,handle);return response;
  }catch{return reply({error:'resource_scope_unavailable'},403);}
 }

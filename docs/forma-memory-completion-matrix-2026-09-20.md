@@ -409,3 +409,7 @@ bounded7/30-day counts. These private observations do not assert content reading
 or preferences; forget/renewal/expiry and old-schema compatibility are verified.
 Additive0069 is local only. Semantic resource/profile consumers, direct private
 image/live-preview and integrated qualification remain assigned native work.
+
+## Resource recall delivery and native evidence
+
+[Resource recall evidence](forma-memory-resource-integration-2026-09-21.md#native-downstream-recall-evidence-and-final-delivery) now keeps exact predicates with the actual resource-history reader, rejects expired serialized responses and bounds rolling-count freshness to the next window transition.104 integrated native checks pass. The separate integrated Memory regression at4af22be3 is2172/2172. Neither receipt is a claim that durable semantic resource consumers or the full matrix are complete.

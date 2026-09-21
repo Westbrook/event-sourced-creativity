@@ -532,3 +532,11 @@ Implemented locally: [independent read waves and truthful capacity accounting](f
 Three-source execution is now63/64 personal/shared binding calls with original
 source proofs intact. SQL statement counts are recorded separately. The50-call
 target and all other native matrix work remain assigned, not silently waived.
+
+## MEM-046 — Native resource recall proof and final-delivery lifetime
+
+Implemented locally: [resource downstream evidence and delivery privacy](forma-memory-resource-integration-2026-09-21.md#native-downstream-recall-evidence-and-final-delivery).
+The actual endpoint retains native proofs and rejects post-serialization expiry;
+rolling counts stop at their next window transition.104 integrated native tests
+pass, including13 new lifetime/authority/D1 cases. This does not grant provider
+consent or replace the still-required durable semantic resource consumer.

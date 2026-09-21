@@ -19964,3 +19964,51 @@ for(const shared of [false,true])test('native resource opening: personal erasure
  const state=await resourceOpeningFixture(t,{shared,kind:'canvas'});assert.equal((await state.resourceSettings('PUT',state.resourceInput)).status,200);assert.equal((await(await state.openResource()).json()).recorded,true);
  const {prepareResourceMemoryPersonalErasure}=await import('../worker/memory-resource-settings.ts'),erasure=await prepareResourceMemoryPersonalErasure(state.env,state.current().actor_user_id),frames=await state.env.DB.batch(erasure.statements);assert.deepEqual(erasure.acknowledge(frames),{count:shared?0:1});assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_openings').get().n,shared?1:0);
 });
+
+for(const shared of [false,true])test('native resource recall evidence: issued handles own snapshots and cannot transfer authority '+shared,async t=>{
+ const state=await resourceOpeningFixture(t,{shared,kind:'canvas'});assert.equal((await state.resourceSettings('PUT',state.resourceInput)).status,200);assert.equal((await(await state.openResource()).json()).recorded,true);
+ const port=await import('../worker/memory-resource-history.ts'),{prepareNativeMemoryResourceAuthority}=await import('../worker/memory-resource-authority.ts');
+ const authority=await prepareNativeMemoryResourceAuthority(new Request('http://localhost'+state.resourceUrl,{headers:state.owner}),state.env,state.resourceSelector),handle=await port.prepareNativeResourceMemoryRecall(state.env,authority);
+ const value=port.nativeResourceMemoryRecallInputs(state.env,handle);assert.deepEqual(value.windows.map(w=>w.resourceOpenings),[1,1]);assert.equal(value.independentPreferenceEvidence,false);
+ value.windows[0].resourceOpenings=200;value.scope.actorUserId='other';const guards=port.nativeResourceMemoryRecallGuards(state.env,handle);guards.length=0;
+ assert.equal(port.nativeResourceMemoryRecallInputs(state.env,handle).windows[0].resourceOpenings,1);assert.notEqual(port.nativeResourceMemoryRecallInputs(state.env,handle).scope.actorUserId,'other');assert.ok(port.nativeResourceMemoryRecallGuards(state.env,handle).length);
+ assert.throws(()=>port.nativeResourceMemoryRecallInputs(state.env,{}));assert.throws(()=>port.nativeResourceMemoryRecallInputs(state.env,value));assert.throws(()=>port.nativeResourceMemoryRecallInputs({...state.env},handle));assert.equal(await port.replayNativeResourceMemoryRecall(state.env,handle),true);
+ const opening=state.sqlite.prepare('SELECT * FROM memory_resource_openings').get();state.sqlite.prepare('DELETE FROM memory_resource_openings').run();assert.equal(await port.replayNativeResourceMemoryRecall(state.env,handle),false);
+ state.sqlite.prepare('INSERT INTO memory_resource_openings('+Object.keys(opening).join(',')+') VALUES('+Object.keys(opening).map(()=>'?').join(',')+')').run(...Object.values(opening));
+ assert.equal(await port.replayNativeResourceMemoryRecall(state.env,handle),false,'Failed replay permanently retires this request handle even if source bytes are restored');assert.throws(()=>port.nativeResourceMemoryRecallInputs(state.env,handle));
+});
+for(const fault of ['wall-expiry','wall-rollback','wall-nonfinite','monotonic-expiry','monotonic-nonfinite','binding-replacement','configuration'])test('native resource recall evidence: final serialization rejects '+fault,async t=>{
+ const state=await resourceOpeningFixture(t);assert.equal((await state.resourceSettings('PUT',state.resourceInput)).status,200);await state.openResource();
+ const original=Response.json,wall=Date.now,monotonic=performance.now.bind(performance),db=state.env.DB,enabled=state.env.FORMA_MEMORY_ENABLED;let hit=false;
+ t.mock.method(Response,'json',(value,init)=>{const response=original.call(Response,value,init);if(value?.version==='memory-resource-history-v1'&&value.windows){hit=true;
+  if(fault==='wall-expiry')t.mock.method(Date,'now',()=>wall()+60000);if(fault==='wall-rollback')t.mock.method(Date,'now',()=>0);if(fault==='wall-nonfinite')t.mock.method(Date,'now',()=>NaN);
+  if(fault==='monotonic-expiry')t.mock.method(performance,'now',()=>monotonic()+60000);if(fault==='monotonic-nonfinite')t.mock.method(performance,'now',()=>NaN);
+  if(fault==='binding-replacement')state.env.DB={...db};if(fault==='configuration')state.env.FORMA_MEMORY_ENABLED='false';
+ }return response;});
+ try{const response=await state.resourceHistory(),body=await response.json();assert.equal(hit,true);assert.equal(response.status,503,JSON.stringify(body));assert.equal(Object.hasOwn(body,'windows'),false);assert.equal(Object.hasOwn(body,'scope'),false);}
+ finally{state.env.DB=db;state.env.FORMA_MEMORY_ENABLED=enabled;t.mock.restoreAll();}
+});
+test('native resource recall evidence: rolling seven-day opening count bounds the original delivery lease',async t=>{
+ const state=await resourceOpeningFixture(t);assert.equal((await state.resourceSettings('PUT',state.resourceInput)).status,200);await state.openResource();
+ const opening=state.sqlite.prepare('SELECT * FROM memory_resource_openings').get(),cutoff=Date.now()+15000;
+ state.sqlite.prepare('DELETE FROM memory_resource_openings').run();
+ // Retained synthetic historical grant, without replaying or enrolling real users.
+ state.sqlite.prepare('UPDATE memory_resource_enrollments SET enrolled_at=?').run(new Date(Date.now()-8*86400000).toISOString());
+ state.sqlite.prepare('INSERT INTO memory_resource_openings('+Object.keys(opening).join(',')+') VALUES('+Object.keys(opening).map(()=>'?').join(',')+')').run(...Object.values({...opening,recorded_at:new Date(cutoff-7*86400000).toISOString()}));
+ const response=await state.resourceHistory(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.deepEqual(body.windows.map(w=>w.resourceOpenings),[1,1]);assert.equal(Date.parse(body.validUntil),cutoff);
+});
+for(const shared of [false,true])test('native resource recall evidence: actual D1 replay retains source proofs and permanently retires an uncertain handle '+shared,{timeout:120000},async t=>{
+ const state=await resourceOpeningFixture(t,{shared,kind:'canvas'});assert.equal((await state.resourceSettings('PUT',state.resourceInput)).status,200);await state.openResource();
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['ResourceRecall'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());const db=await mf.getD1Database('ResourceRecall');await install(db,exportSynthetic(state.sqlite));let truncate=false;
+ state.env.DB={prepare:sql=>db.prepare(sql),batch:async statements=>{const result=await db.batch(statements);return truncate?result.slice(1):result;}};
+ const port=await import('../worker/memory-resource-history.ts'),{prepareNativeMemoryResourceAuthority}=await import('../worker/memory-resource-authority.ts');
+ const authority=await prepareNativeMemoryResourceAuthority(new Request('http://localhost'+state.resourceUrl,{headers:state.owner}),state.env,state.resourceSelector),handle=await port.prepareNativeResourceMemoryRecall(state.env,authority);
+ assert.equal(await port.replayNativeResourceMemoryRecall(state.env,handle),true);assert.deepEqual(port.nativeResourceMemoryRecallInputs(state.env,handle).windows.map(w=>w.resourceOpenings),[1,1]);
+ truncate=true;assert.equal(await port.replayNativeResourceMemoryRecall(state.env,handle),false);truncate=false;assert.equal(await port.replayNativeResourceMemoryRecall(state.env,handle),false);assert.throws(()=>port.nativeResourceMemoryRecallInputs(state.env,handle));
+});
+test('native distinct Memory scope: final serialization cannot disclose an expired independent identity',async t=>{
+ const state=await nativeDistinctResourceFixture(t,{shared:true,kind:'canvas'}),json=Response.json,wall=Date.now;let hit=false;
+ t.mock.method(Response,'json',(value,init)=>{const response=json.call(Response,value,init);if(value?.version==='memory-resource-scope-v1'&&value.scope){hit=true;t.mock.method(Date,'now',()=>wall()+60000);}return response;});
+ try{const response=await state.request(state.resourceUrl,{headers:state.owner}),body=await response.json();assert.equal(hit,true);assert.equal(response.status,403,JSON.stringify(body));assert.equal(Object.hasOwn(body,'scope'),false);}finally{t.mock.restoreAll();}
+});
