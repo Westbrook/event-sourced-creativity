@@ -1,9 +1,10 @@
+import { observeNativePackageReuse,type NativeReuseSourceEdge } from './memory-package-reuse.ts';
 import type { WorkerEnv } from './runtime.ts';
 import type { PilotUser } from './pilot-policy.ts';
 import type { LiveMemoryEnrollment } from './memory-live-authority.ts';
 import { liveMemoryAuthorityFromPrincipal,liveMemoryEnrollmentGuard } from './memory-live-authority.ts';
 import { derivationAssertion,derivationResults,derivationVerified } from './memory-derivation-store.ts';
-import { prepareNativeDerivationResult,nativeDerivationResultBinding,nativeDerivationResultGuards,nativeDerivationResultInputs,nativeDerivationResultReuseEvidence } from './memory-derivation-results.ts';
+import { prepareNativeDerivationResult,nativeDerivationResultBinding,nativeDerivationResultGuards,nativeDerivationResultInputs,nativeDerivationResultReuseEvidence,nativeDerivationResultBlockEvidence } from './memory-derivation-results.ts';
 import { AssistantContextReadWitness } from './assistant-context-source.ts';
 import { observeNativeMemoryBlockBindings } from './memory-native-blocks.ts';
 import type { MemorySqlGuard } from './memory-sql.ts';
@@ -16,7 +17,7 @@ export async function prepareNativeReuseRecall(env:WorkerEnv,actor:PilotUser,tar
   const db=env.DB,witness=new AssistantContextReadWitness<{enrollments:string[]}>(env);
   const guards:MemorySqlGuard[]=[],enrollments=new Set<string>();
   let validUntil=target.expires_at;
-  const copiesFor=async(enrollment:LiveMemoryEnrollment)=>{
+  const copiesFor=async(enrollment:LiveMemoryEnrollment):Promise<NativeReuseSourceEdge[]>=>{
     const query={sql:`SELECT j.job_id FROM memory_derivation_jobs j JOIN memory_derivation_grants g ON g.consent_id=j.consent_id
       JOIN memory_derivation_results r ON r.job_id=j.job_id WHERE g.enrollment_id=? AND g.enrollment_revision=? AND g.actor_user_id=?
       ORDER BY j.through_sequence DESC,j.job_id LIMIT 1`,bindings:[enrollment.enrollment_id,enrollment.revision,actor.userId]};
@@ -30,23 +31,30 @@ export async function prepareNativeReuseRecall(env:WorkerEnv,actor:PilotUser,tar
     if(bound.enrollment.enrollment_id!==enrollment.enrollment_id||bound.enrollment.revision!==enrollment.revision)throw Error('reuse_recall_target');
     guards.push(...nativeDerivationResultGuards(env,handle));
     validUntil=[validUntil,nativeDerivationResultInputs(env,handle).candidate.validUntil].sort()[0]!;
-    return nativeDerivationResultReuseEvidence(env,handle);
+    const packages=await observeNativePackageReuse(env,actor,enrollment,nativeDerivationResultBlockEvidence(env,handle),sources,witness,guards);
+    validUntil=[validUntil,...packages.flatMap(edge=>edge.expiresAt?[edge.expiresAt]:[])].sort()[0]!;
+    return [...nativeDerivationResultReuseEvidence(env,handle).map(edge=>({targetBlockId:edge.targetBlockId,sourceBlockId:edge.sourceBlockId,ownerUserId:enrollment.owner_user_id})),...packages];
   };
-  const copies=await copiesFor(target),allIds=new Set(copies.map(copy=>copy.sourceBlockId));
-  let ids=[...allIds];
+  const edgeKey=(edge:NativeReuseSourceEdge)=>JSON.stringify([edge.ownerUserId,edge.projectId??null,edge.documentId??null,edge.sourceBlockId]);
+  const copies=await copiesFor(target),allIds=new Set(copies.map(edgeKey));
+  let ids=copies;
   if(ids.length>16||sources.length>32)throw Error('reuse_recall_capacity');
   if(ids.length){
-    // The authoring receipt certifies only this owner's native copy operation.
-    // Equal IDs in another owner's stream must never be guessed as originals.
-    const candidates=sources.filter(source=>source.owner_user_id===target.owner_user_id);
-    if(candidates.length>8)throw Error('reuse_recall_capacity');
+    // Context copies bind their author's owner; published package adoptions
+    // carry their immutable source owner/project/document. Neither bare IDs nor
+    // a later project owner can supply missing provenance.
+    const matches=(source:LiveMemoryEnrollment,edge:NativeReuseSourceEdge)=>source.owner_user_id===edge.ownerUserId
+      &&(edge.projectId===undefined||source.project_id===edge.projectId)&&(edge.documentId===undefined||source.document_id===edge.documentId);
+    const candidateIds=new Set<string>();
     const inspected=new Set<string>(),copyCache=new Map<string,Awaited<ReturnType<typeof copiesFor>>>();
     let probes=0;
     for(let depth=0;ids.length;depth++){
       if(depth>=4)throw Error('reuse_recall_capacity');
-      const next=new Set<string>();
+      const next:NativeReuseSourceEdge[]=[];
+      const candidates=sources.filter(source=>ids.some(edge=>matches(source,edge)));
       for(const source of candidates){
-        const pending=ids.filter(id=>!inspected.has(JSON.stringify([source.enrollment_id,id])));
+        candidateIds.add(source.enrollment_id);if(candidateIds.size>8)throw Error('reuse_recall_capacity');
+        const pending=[...new Set(ids.filter(edge=>matches(source,edge)).map(edge=>edge.sourceBlockId))].filter(id=>!inspected.has(JSON.stringify([source.enrollment_id,id])));
         if(!pending.length)continue;if(++probes>24)throw Error('reuse_recall_capacity');
         for(const id of pending)inspected.add(JSON.stringify([source.enrollment_id,id]));
         const authority=liveMemoryAuthorityFromPrincipal(env,source,actor);if(!authority)continue;
@@ -89,12 +97,12 @@ export async function prepareNativeReuseRecall(env:WorkerEnv,actor:PilotUser,tar
           // not confer ancestry or authorize a hidden source read.
           let edges=copyCache.get(source.enrollment_id);
           if(!edges){edges=await copiesFor(source);copyCache.set(source.enrollment_id,edges);}
-          for(const edge of edges)if(blocks.entries.some(block=>block.blockId===edge.targetBlockId)&&!allIds.has(edge.sourceBlockId)){
-            allIds.add(edge.sourceBlockId);if(allIds.size>16)throw Error('reuse_recall_capacity');next.add(edge.sourceBlockId);
+          for(const edge of edges)if(blocks.entries.some(block=>block.blockId===edge.targetBlockId)&&!allIds.has(edgeKey(edge))){
+            allIds.add(edgeKey(edge));if(allIds.size>16)throw Error('reuse_recall_capacity');next.push(edge);
           }
         }
       }
-      ids=[...next];
+      ids=next;
     }
   }
   witness.before(validUntil);witness.seal({enrollments:[...enrollments]});

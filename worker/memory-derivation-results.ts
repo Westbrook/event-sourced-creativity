@@ -234,6 +234,12 @@ export function nativeDerivationResultReuseEvidence(env:WorkerEnv,handle:NativeD
   const read=currentRead(env,handle),source=nativeDerivationSourceInputs(env,read.capture);
   return structuredClone(source.provenance.reuseBindings?.entries??[]);
 }
+/** Qualified native block histories for request-local copy discovery only.
+ * These are not an enrollment, source-owner guess, or publication capability. */
+export function nativeDerivationResultBlockEvidence(env:WorkerEnv,handle:NativeDerivationResultRead){
+  const read=currentRead(env,handle),source=nativeDerivationSourceInputs(env,read.capture);
+  return structuredClone(source.provenance.blockBindings?.entries??[]);
+}
 /** A consumer that writes an answer must carry these statements into its own
  * atomic publication; read success alone is not durable answer authority. */
 export function nativeDerivationResultGuards(env: WorkerEnv, handle: NativeDerivationResultRead) {

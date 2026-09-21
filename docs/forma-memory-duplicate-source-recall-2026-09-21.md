@@ -51,3 +51,7 @@ The full2,399-test suite at763e91c2 is an earlier source checkpoint, not a full
 run for this change. Cross-owner copy authoring/provenance, distinct Library/Canvas
 resource enrollment, direct private Output consumers and aggregate semantic
 profile consumers remain assigned native work in the completion matrix.
+
+## Frozen full regression
+
+At immutable commit886305ca the complete native runtime suite passes **2,442/2,442**, zero failures, in1,499.5seconds. Subsequent private-history and cross-owner-package work is outside this frozen run and has separate evidence. No hosted qualification or deployment is implied.

@@ -120,7 +120,7 @@ export function rollingLiveMemoryConsumption(sources: readonly LiveConsumptionRe
         blocks: [...blocks.values()].map(indices => ({ sourceIndex: indices[0], ...counts(indices) })) };
     }) };
 }
-const COPY_FIELDS = ["copied_from_block_id", "forked_from_block_id", "copied_from_relation_id", "forked_from_relation_id", "source_block_id", "source_output_id", "source_generation_id", "source_artifact_id", "source_document_id", "source_claim_ref"];
+const COPY_FIELDS = ["organization_context_source_block_id", "copied_from_block_id", "forked_from_block_id", "copied_from_relation_id", "forked_from_relation_id", "source_block_id", "source_output_id", "source_generation_id", "source_artifact_id", "source_document_id", "source_claim_ref"];
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const usableId = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512;
 

@@ -1,3 +1,4 @@
+import { memoryAuthoredBlockIds } from '../src/model/memory-authorship.ts';
 import { rejectOutputContextPackage } from "./output-context-package-policy.ts";
 import { foldEvents, type CreativeBlock, type CreativeBlockRelation } from "../src/model/events.ts";
 import { FORMA_CAPABILITIES } from "../src/platform/capabilities.ts";
@@ -23,6 +24,9 @@ const PACKAGE_PROVENANCE_FIELDS = new Set([
   "organization_context_package_version_id",
   "organization_context_package_binding_id",
   "organization_context_source_block_id",
+  "organization_context_source_owner_id",
+  "organization_context_source_project_id",
+  "organization_context_source_document_id",
 ]);
 const NONPORTABLE_FIELDS = new Set([
   "copied_from_block_id",
@@ -48,6 +52,7 @@ type PackageSource={objectKey:string;contentSha256:string;mimeType:string;origin
 
 type PackageBlock = {
   sourceBlockId: string;
+  memoryAssisted?: true;
   type: string;
   handle: string;
   position: string;
@@ -63,11 +68,18 @@ type PackageSnapshot = {
   schema: 1;
   organizationId: string;
   sourceProjectAccessId: string;
+  sourceIdentity?: { version: 1; ownerUserId: string; projectId: string; streamId: string };
   sourceDocumentId: string;
   sourceHead: number;
   blocks: PackageBlock[];
   relations: Array<{ fromSourceBlockId: string; toSourceBlockId: string; kind: string; properties: Record<string, unknown> }>;
 };
+
+function packageSourceIdentity(snapshot:PackageSnapshot){
+  const identity=snapshot.sourceIdentity;
+  return identity?.version===1?{organization_context_source_owner_id:identity.ownerUserId,
+    organization_context_source_project_id:identity.projectId,organization_context_source_document_id:snapshot.sourceDocumentId}:{};
+}
 
 const sha256 = async (value: string) => Array.from(
   new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))),
@@ -153,6 +165,7 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
   const outputPackage=rejectOutputContextPackage(selected);if(outputPackage)return outputPackage;
   const now = Date.now();
   const blocks: PackageBlock[] = [];
+  const memoryAssisted=memoryAuthoredBlockIds(projection.blocks,events);
   const preparedSources:Array<{block:PackageBlock;bytes:Uint8Array;metadata:Record<string,string>}>=[];
   let preparedSourceBytes=0;
   for (const block of selected as CreativeBlock[]) {
@@ -170,6 +183,7 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
     const properties = portableProperties(block.properties);
     const packaged:PackageBlock={
       sourceBlockId: block.id,
+      ...(memoryAssisted.has(block.id)?{memoryAssisted:true as const}:{}),
       type: block.type,
       handle: block.handle,
       position: block.position,
@@ -219,7 +233,9 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
   if(adoptionEventCount>MAX_PACKAGE_EVENTS)return Response.json({error:"context_package_event_limit_exceeded",maximumEvents:MAX_PACKAGE_EVENTS,requiredEvents:adoptionEventCount},{status:400});
   const sourceHead=await readHead();
   if(sourceHead!==capturedSourceHead)return Response.json({error:"stale_context_package_source",head:sourceHead},{status:409});
-  const snapshot: PackageSnapshot = { schema: 1, organizationId, sourceProjectAccessId: projectAccessId, sourceDocumentId: documentId, sourceHead, blocks, relations };
+  const snapshot: PackageSnapshot = { schema: 1, organizationId, sourceProjectAccessId: projectAccessId,
+    sourceIdentity: { version: 1, ownerUserId: source.ownerUserId, projectId: source.projectId, streamId: `creative:${source.ownerUserId}` },
+    sourceDocumentId: documentId, sourceHead, blocks, relations };
   const serialized = JSON.stringify(snapshot);
   if (new TextEncoder().encode(serialized).byteLength > MAX_PACKAGE_BYTES) return Response.json({ error: "context_package_too_large" }, { status: 413 });
   const stored:string[]=[];
@@ -281,10 +297,11 @@ async function createVersion(env: WorkerEnv, actor: PilotUser, organizationId: s
     WHERE organization.organization_id=? AND organization.status='active' AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL
       AND member.revoked_at IS NULL AND member.role IN('owner','administrator')
       AND(source_project.owner_user_id=member.user_id OR source_member.role='editor')
+      AND (source_project.owner_user_id,source_project.project_id)=(?,?)
       AND ${effectivePilotParticipantSql("organization.organization_id","member.user_id")}
       AND NOT ${effectivePilotReviewerSql("organization.organization_id","member.user_id")})
     AND (SELECT COALESCE(MAX(project_sequence),0) FROM project_event_scopes WHERE project_access_id=? AND organization_id=?)=?`;
-  const guardValues = [actor.userId,POLICY_VERSION,source.snapshot.sourceProjectAccessId,organizationId,actor.userId,source.snapshot.sourceProjectAccessId,organizationId,source.snapshot.sourceHead] as const;
+  const guardValues = [actor.userId,POLICY_VERSION,source.snapshot.sourceProjectAccessId,organizationId,actor.userId,source.snapshot.sourceIdentity!.ownerUserId,source.snapshot.sourceIdentity!.projectId,source.snapshot.sourceProjectAccessId,organizationId,source.snapshot.sourceHead] as const;
   const statements: D1PreparedStatement[] = [];
   if (createPackage) statements.push(env.DB.prepare(`INSERT INTO organization_context_packages(package_id,organization_id,name,description,status,created_by_user_id,created_at,updated_at)
     SELECT ?,?,?,?,'active',?,?,? WHERE ${guarded}`).bind(packageId, organizationId, createPackage.name, createPackage.description, actor.userId, now, now, ...guardValues));
@@ -402,6 +419,7 @@ async function adoptVersion(env: WorkerEnv, actor: PilotUser, organizationId: st
       payload: {
         project_id: project.projectId,
         document_id: documentId,
+        ...(block.memoryAssisted?{memory_authored_version:1}:{}),
         block_id: localIds.get(block.sourceBlockId),
         type: block.type,
         handle: block.handle,
@@ -410,6 +428,7 @@ async function adoptVersion(env: WorkerEnv, actor: PilotUser, organizationId: st
         properties: {
           ...block.properties,
           ...materialized.properties,
+          ...packageSourceIdentity(version.snapshot),
           organization_context_package_id: packageId,
           organization_context_package_version_id: String(version.row.version_id),
           organization_context_package_binding_id: bindingId,
@@ -530,7 +549,7 @@ async function updateBinding(env: WorkerEnv, actor: PilotUser, organizationId: s
       const materialized=await materializePackageSource(env,actor,organizationId,project,String(binding.document_id),nextBlock,cohort,copiedSources,now);
       if(materialized instanceof Response){await cleanupSources();return materialized;}
       events.push(...materialized.events);
-      events.push({ type: "BlockCreated", payload: { project_id: project.projectId, document_id: String(binding.document_id), block_id: targetId, type: nextBlock.type, handle: nextBlock.handle, position: nextBlock.position, scope: "document", properties: { ...nextBlock.properties,...materialized.properties, organization_context_package_id: packageId, organization_context_package_version_id: String(next.row.version_id), organization_context_package_binding_id: bindingId, organization_context_source_block_id: nextBlock.sourceBlockId } } });
+      events.push({ type: "BlockCreated", payload: { project_id: project.projectId, document_id: String(binding.document_id), block_id: targetId, ...(nextBlock.memoryAssisted?{memory_authored_version:1}:{}), type: nextBlock.type, handle: nextBlock.handle, position: nextBlock.position, scope: "document", properties: { ...nextBlock.properties,...materialized.properties,...packageSourceIdentity(next.snapshot), organization_context_package_id: packageId, organization_context_package_version_id: String(next.row.version_id), organization_context_package_binding_id: bindingId, organization_context_source_block_id: nextBlock.sourceBlockId } } });
       if(nextBlock.locked)events.push({type:"BlockLocked",payload:contextPayload(targetId)});
       if(existing){
         replacedSources.add(nextBlock.sourceBlockId);
@@ -629,7 +648,10 @@ async function updateBinding(env: WorkerEnv, actor: PilotUser, organizationId: s
     .bind(String(next.row.version_id),now,bindingId,organizationId,String(binding.version_id),eventId,eventId,actor.userId,POLICY_VERSION);
   if (events.length) {
     sidecars.push((eventId)=>bindingUpdate(eventId));
-    const result = await appendProjectEvents(env, project, actor, { action: "batch", events, ...(Number.isSafeInteger(body.expectedProjectHead) ? { expectedSequence: Number(body.expectedProjectHead) } : {}) }, undefined, {
+    const assistedTargets=new Set(next.snapshot.blocks.filter(block=>block.memoryAssisted).map(block=>targetIds.get(block.sourceBlockId)));
+    const attributedEvents=events.map(event=>['BlockCreated','BlockPropertyEdited'].includes(event.type)&&assistedTargets.has(String(event.payload.block_id))
+      ?{...event,payload:{...event.payload,memory_authored_version:1}}:event);
+    const result = await appendProjectEvents(env, project, actor, { action: "batch", events:attributedEvents, ...(Number.isSafeInteger(body.expectedProjectHead) ? { expectedSequence: Number(body.expectedProjectHead) } : {}) }, undefined, {
       buildStatements:(eventId)=>sidecars.map((statement)=>statement(eventId)),
       guardSql: `EXISTS(SELECT 1 FROM organization_context_package_versions WHERE version_id=? AND organization_id=? AND package_id=? AND status='published' AND redacted_at IS NULL)
         AND EXISTS(SELECT 1 FROM project_context_package_bindings WHERE binding_id=? AND organization_id=? AND package_id=? AND version_id=? AND status='active')`,

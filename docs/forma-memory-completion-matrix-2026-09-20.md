@@ -337,3 +337,14 @@ copy checks are distinct from the earlier2,399-test full run.
 
 [Private history filtering](forma-memory-private-history-boundaries-2026-09-21.md)
 now excludes mismatched owner/project/document and Library bodies in the native database query, before private prose reaches application decoding. Inspection coverage uses a versioned consistent denominator without upgrading retained manifests.22 focused,126 history/recall and54 resource checks pass. This advances integrated privacy qualification; distinct-resource enrollment and the other native workstreams remain required.
+
+
+## Cross-owner published-package ancestry
+
+[Owner-qualified published-package recall](forma-memory-published-package-recall-2026-09-21.md)
+now connects genuine plain-text adoption and approved updates to independently
+authorized original discovery. Source owner/project identity is immutable and
+bound at publication. Negative attribution survives deliberate authoring and
+withdrawal without erasing copied work.81 native,40 authoring and16 browser
+checks pass; direct cross-owner D1 recall uses46 calls. Package media/reference
+provenance and the remaining native resource/consumer work are not closed.

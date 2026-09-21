@@ -19375,3 +19375,110 @@ for(const kind of ['block-history','copy-footprint','relation-history','authored
  }
  assert.equal(observed,true,'Inspect the native DB transport, not just the final rejected presentation');
 });
+
+async function nativePackageReuseFixture(t){
+ const state=await organizationRecallFixture(t,{profile:true}),source=state.current(),target=state.organizationTarget,api=await import('../worker/memory-derivation-api.ts');
+ const bare={'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'};
+ const headersFor=async access=>{const response=await state.request(`/api/workspaces/${state.organizationId}/projects/${access}/context`,{method:'POST',headers:bare});assert.equal(response.status,200,await response.clone().text());return {...bare,cookie:response.headers.get('set-cookie')?.split(';')[0]??''};};
+ const sourceHeaders=await headersFor(state.projectAccessId),blockId='package-original-block';
+ const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:source.project_id,document_id:source.document_id,block_id:blockId,type:'direction',handle:'Original package direction',position:'package-a0',scope:'document',properties:{text:'PACKAGE_COPY_NOT_INDEPENDENT_HUMAN_INTENT'}}}},sourceHeaders));assert.equal(created.status,200,await created.clone().text());
+ const endpoint=`/api/workspaces/${state.organizationId}/context-packages`,draft=await state.request(endpoint,json({name:'Qualified cross-owner reuse',sourceProjectAccessId:state.projectAccessId,documentId:source.document_id,blockIds:[blockId]},sourceHeaders));assert.equal(draft.status,201,await draft.clone().text());const version=await draft.json();
+ const published=await state.request(`${endpoint}/${version.packageId}/versions/${version.versionId}/publish`,{method:'POST',headers:sourceHeaders});assert.equal(published.status,200,await published.clone().text());
+ const headers=await headersFor(state.targetAccessId),adopted=await state.request(`${endpoint}/${version.packageId}/adopt`,json({projectAccessId:state.targetAccessId,documentId:target.documentId,versionId:version.versionId,updateMode:'pinned'},headers));assert.equal(adopted.status,201,await adopted.clone().text());const adoption=await adopted.json(),copy=adoption.appended.find(event=>event.type==='BlockCreated');assert.ok(copy);
+ const custody={kind:'organization',organizationId:state.organizationId,projectAccessId:state.targetAccessId,ownerUserId:'memory-target-owner'};
+ const consent=await api.handleMemoryDerivationSettings(new Request(state.derivationOrigin+'/api/memory/derivation/settings',{...json({...state.derivationInput,projectId:target.projectId,documentId:target.documentId,enrollmentId:target.id,enrollmentRevision:target.revision,expectedCustody:custody},{...headers,origin:state.derivationOrigin}),method:'PUT'}),state.env);assert.equal(consent.status,200,await consent.clone().text());
+ const inspected=await state.request('/api/events/hot',json({action:'hot',event:{type:'BlockInspected',payload:{project_id:target.projectId,document_id:target.documentId,block_id:copy.payload.block_id,source_event_ids:[copy.eventId],source_surface:'document-context-controls'}}},headers));assert.equal(inspected.status,200,await inspected.clone().text());
+ state.env.FORMA_MEMORY_ENABLED='false';await specialistFreeTurn(state,'package-target-original','An independent original question about the target.',{route:'/document/'+target.documentId,project:target.projectId,headers});state.env.FORMA_MEMORY_ENABLED='true';
+ state.sqlite.exec("UPDATE memory_live_enrollments SET next_due_at='2999-01-01T00:00:00.000Z'");state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(target.id);
+ assert.equal((await state.run()).status,'completed',state.controls.lastDatabaseError);assert.equal((await(await import('../worker/memory-derivation-worker.ts')).runNativeDerivationScheduled(state.env)).status,'stored',state.controls.lastDatabaseError);
+ await state.organizationWiden();return Object.assign(state,{packageVersion:version,packageAdoption:adoption,packageCopy:copy,packageSourceBlock:blockId,packageHeaders:headers});
+}
+test('native package reuse: real cross-owner publication, adoption and independent enrollment locate original',async t=>{
+ const state=await nativePackageReuseFixture(t),before=adaptiveReentryFinancialState(state),calls=state.rollingRequests.length;
+ const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.deepEqual(body.sources.map(row=>row.enrollmentId),[state.current().enrollment_id]);assert.equal(body.sources[0].ownerId,'assistant-owner');assert.equal(body.sources[0].weight,.0125);
+ assert.equal(state.rollingRequests.length,calls);assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(JSON.stringify(body).includes('PACKAGE_COPY_NOT_INDEPENDENT_HUMAN_INTENT'),false);
+});
+for(const fault of ['source-consent','source-range','target-consent','binding','source-identity','missing-identity','package-body','adoption-body','withdrawn-version','source-removed'])test('native package reuse: '+fault+' cannot grant original memory',async t=>{
+ const state=await nativePackageReuseFixture(t),source=state.current(),version=state.packageVersion,copy=state.packageCopy;
+ if(fault==='source-consent'||fault==='target-consent')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(fault==='source-consent'?source.enrollment_id:state.organizationTarget.id);
+ if(fault==='source-range')state.sqlite.prepare('DELETE FROM memory_recall_organization_ranges WHERE enrollment_id=?').run(source.enrollment_id);
+ if(fault==='binding')state.sqlite.prepare("UPDATE project_context_package_members SET source_block_id='unrelated-id' WHERE binding_id=?").run(state.packageAdoption.bindingId);
+ if(fault==='source-identity'||fault==='missing-identity'||fault==='package-body'){
+  const raw=state.sqlite.prepare('SELECT content_json FROM organization_context_package_contents WHERE version_id=?').get(version.versionId).content_json;
+  assert.throws(()=>state.sqlite.prepare('UPDATE organization_context_package_contents SET content_json=? WHERE version_id=?').run('{}',version.versionId),/published_context_package_content_is_immutable/);
+  const db=state.env.DB,prepare=db.prepare,batch=db.batch;
+  const corrupt=rows=>{for(const row of rows??[]){if(Object.hasOwn(row,'source_owner')){if(fault==='source-identity')row.source_owner='memory-target-owner';if(fault==='missing-identity')row.source_owner=null;}if(fault==='package-body'&&Object.hasOwn(row,'package_sha256'))row.content_json=raw+' ';}};
+  db.prepare=sql=>{const statement=prepare.call(db,sql),wrap=raw=>new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(key==='all')return async(...args)=>{const result=await target.all(...args);corrupt(result.results);return result;};return Reflect.get(target,key,target);}});return wrap(statement);};
+  db.batch=async statements=>{const result=await batch.call(db,statements);for(const frame of result)corrupt(frame.results);return result;};t.after(()=>{db.prepare=prepare;db.batch=batch;});
+ }
+ if(fault==='adoption-body')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.organization_context_source_owner_id','different-owner') WHERE private_event_id=?").run(copy.eventId);
+ if(fault==='withdrawn-version')state.sqlite.prepare("UPDATE organization_context_package_versions SET redacted_at=? WHERE version_id=?").run(new Date().toISOString(),version.versionId);
+ if(fault==='source-removed'){
+  await state.organizationRequest('recall-boundary',{source:true});const opened=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/context`,{method:'POST',headers:state.owner}),headers={...state.owner,cookie:opened.headers.get('set-cookie')?.split(';')[0]??''};
+  const response=await state.request('/api/events',json({action:'append',event:{type:'BlockRemoved',payload:{project_id:source.project_id,document_id:source.document_id,block_id:state.packageSourceBlock}}},headers));assert.equal(response.status,200,await response.clone().text());
+ }
+ const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.ok(response.status!==200||body.sources.length===0,JSON.stringify(body));
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM events WHERE event_id=?').get(copy.eventId).n,1,'Withdrawal does not delete deliberately adopted authored work');
+});
+for(const fault of ['missing-ack','failed-ack','source-access-race','target-access-race','late-package','late-range'])test('native package reuse: final '+fault+' withholds stale discovery',async t=>{
+ const state=await nativePackageReuseFixture(t),db=state.env.DB,batch=db.batch;let hit=false;
+ db.batch=async statements=>{
+  const selected=!hit&&statements.some(s=>s.sql?.startsWith('SELECT version.content_sha256 AS package_sha256'));
+  if(selected){hit=true;if(fault==='source-access-race'||fault==='target-access-race')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(fault==='source-access-race'?state.current().enrollment_id:state.organizationTarget.id);}
+  const rows=await batch.call(db,statements);if(!selected)return rows;
+  if(fault==='missing-ack')return rows.slice(1);if(fault==='failed-ack')return rows.map((row,index)=>index===0?{...row,success:false}:row);
+  if(fault==='late-package')state.sqlite.prepare('UPDATE organization_context_package_versions SET redacted_at=? WHERE version_id=?').run(new Date().toISOString(),state.packageVersion.versionId);
+  if(fault==='late-range')state.sqlite.prepare('DELETE FROM memory_recall_organization_ranges WHERE enrollment_id=?').run(state.current().enrollment_id);
+  return rows;
+ };t.after(()=>{db.batch=batch;});
+ const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.equal(hit,true);assert.notEqual(response.status,200,JSON.stringify(body));assert.equal(Object.hasOwn(body,'sources'),false);
+});
+test('native package reuse: real D1 discovery and private-source restoration cannot resurrect recall',{timeout:120000},async t=>{
+ const state=await nativePackageReuseFixture(t),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['PackageRecall'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());
+ const selected=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.targetAccessId}/context`,{method:'POST',headers:{'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'}});assert.equal(selected.status,200,await selected.clone().text());const recallHeaders={...state.owner,cookie:selected.headers.get('set-cookie')?.split(';')[0]??''};
+ const db=await mf.getD1Database('PackageRecall');await install(db,exportSynthetic(state.sqlite));let calls=0;const originals=new WeakMap();
+ const wrap=statement=>{const value=new Proxy(statement,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{calls++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(value,statement);return value;};
+ state.env.DB={prepare:sql=>wrap(db.prepare(sql)),batch:async statements=>{calls++;try{return await db.batch(statements.map(statement=>originals.get(statement)??statement));}catch(error){state.controls.lastDatabaseError=String(error);throw error;}}};
+ const recall=()=>import('../worker/memory-recall-boundary-api.ts').then(api=>api.handleMemoryRecallBoundary(new Request('http://localhost/api/memory/recall-scopes?'+new URLSearchParams({projectId:state.organizationTarget.projectId,documentId:state.organizationTarget.documentId,reuse:'1'}),{headers:recallHeaders}),state.env));
+ const response=await recall(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.sources.length,1);t.diagnostic(JSON.stringify({bindingOperations:calls}));assert.ok(calls<=50,'Direct request stays within native call budget: '+calls);
+ const sourceManifest=JSON.parse(state.sqlite.prepare('SELECT r.manifest_json FROM memory_derivation_results r JOIN memory_derivation_jobs j ON j.job_id=r.job_id JOIN memory_derivation_grants g ON g.consent_id=j.consent_id WHERE g.enrollment_id=? ORDER BY j.through_sequence DESC LIMIT 1').get(state.current().enrollment_id).manifest_json);
+ const source=await db.prepare('SELECT content_id,content FROM private_content WHERE content_id=?').bind(sourceManifest.originalBacking[0].contentRef).first();assert.ok(source);
+ await db.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").bind(new Date().toISOString(),source.content_id).run();
+ const revoked=await recall();assert.ok(revoked.status!==200||(await revoked.json()).sources.length===0);
+ await db.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').bind(source.content,source.content_id).run();
+ const restored=await recall();assert.ok(restored.status!==200||(await restored.json()).sources.length===0);
+ assert.equal((await db.prepare('SELECT COUNT(*) n FROM events WHERE event_id=?').bind(state.packageCopy.eventId).first()).n,1);
+});
+test('authored Memory package adoption: deliberate publication preserves negative attribution after withdrawal',async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared:true,creation:true}),applied=await state.applyAuthored();assert.equal(applied.status,200,await applied.clone().text());const blockId=(await applied.json()).blockId,e=state.current();
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,e.actor_user_id,state.executionJob.job_id),true);state.env.FORMA_MEMORY_ENABLED='false';
+ const endpoint=`/api/workspaces/${e.organization_id}/context-packages`,draft=await state.request(endpoint,json({name:'Retained authored decision',sourceProjectAccessId:e.project_access_id,documentId:state.recallTarget.documentId,blockIds:[blockId]},state.owner));assert.equal(draft.status,201,await draft.clone().text());const version=await draft.json();
+ const snapshot=JSON.parse(state.sqlite.prepare('SELECT content_json FROM organization_context_package_contents WHERE version_id=?').get(version.versionId).content_json);assert.equal(snapshot.blocks[0].memoryAssisted,true);assert.equal(snapshot.sourceIdentity.ownerUserId,e.owner_user_id);assert.equal(JSON.stringify(snapshot).includes(state.authoredReview.executionId),false);
+ const published=await state.request(`${endpoint}/${version.packageId}/versions/${version.versionId}/publish`,{method:'POST',headers:state.owner});assert.equal(published.status,200,await published.clone().text());
+ const documentId='authored-package-destination',created=await state.request('/api/events',json({action:'append',event:{type:'DocumentCreated',payload:{project_id:e.project_id,document_id:documentId,title:'Explicit authored package destination'}}},state.owner));assert.equal(created.status,200,await created.clone().text());
+ const adopted=await state.request(`${endpoint}/${version.packageId}/adopt`,json({projectAccessId:e.project_access_id,documentId,versionId:version.versionId,updateMode:'pinned'},state.owner));assert.equal(adopted.status,201,await adopted.clone().text());const copy=(await adopted.json()).appended.find(event=>event.type==='BlockCreated');assert.ok(copy);assert.equal(copy.payload.memory_authored_version,1);
+ const row=state.sqlite.prepare('SELECT payload FROM events WHERE event_id=?').get(copy.eventId);assert.equal(JSON.parse(row.payload).memory_authored_version,1);assert.equal(state.sqlite.prepare("SELECT count(*) n FROM memory_derivation_asset_edges WHERE target_kind='event' AND target_id=?").get(copy.eventId).n,0);assert.equal(state.providerCalls(),1);
+ const next=await state.request(`${endpoint}/${version.packageId}/versions`,json({sourceProjectAccessId:e.project_access_id,documentId:state.recallTarget.documentId,blockIds:[blockId]},state.owner));assert.equal(next.status,201,await next.clone().text());const v2=await next.json();
+ const published2=await state.request(`${endpoint}/${version.packageId}/versions/${v2.versionId}/publish`,{method:'POST',headers:state.owner});assert.equal(published2.status,200,await published2.clone().text());
+ const binding=state.sqlite.prepare('SELECT binding_id FROM project_context_package_members WHERE target_block_id=?').get(copy.payload.block_id);
+ const accepted=await state.request(`${endpoint}/${version.packageId}/bindings/${binding.binding_id}`,{...json({action:'accept',versionId:v2.versionId},state.owner),method:'PATCH'});assert.equal(accepted.status,200,await accepted.clone().text());
+ const edits=state.sqlite.prepare("SELECT payload FROM events WHERE type='BlockPropertyEdited' AND json_extract(payload,'$.block_id')=? ORDER BY sequence").all(copy.payload.block_id);assert.ok(edits.length);assert.ok(edits.every(row=>JSON.parse(row.payload).memory_authored_version===1));assert.equal(state.providerCalls(),1);
+
+});
+
+test('native package reuse: approved updates retain the original owner-qualified adoption',async t=>{
+ const state=await nativePackageReuseFixture(t),e=state.current(),bare={'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'},endpoint=`/api/workspaces/${state.organizationId}/context-packages`;
+ const opened=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/context`,{method:'POST',headers:bare}),headers={...bare,cookie:opened.headers.get('set-cookie')?.split(';')[0]??''};assert.equal(opened.status,200);
+ const changed=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',payload:{project_id:e.project_id,document_id:e.document_id,block_id:state.packageSourceBlock,property_path:'text',old_value:'PACKAGE_COPY_NOT_INDEPENDENT_HUMAN_INTENT',new_value:'Updated explicitly published context'}}},headers));assert.equal(changed.status,200,await changed.clone().text());
+ const draft=await state.request(`${endpoint}/${state.packageVersion.packageId}/versions`,json({sourceProjectAccessId:state.projectAccessId,documentId:e.document_id,blockIds:[state.packageSourceBlock]},headers));assert.equal(draft.status,201,await draft.clone().text());const version=await draft.json();
+ const published=await state.request(`${endpoint}/${version.packageId}/versions/${version.versionId}/publish`,{method:'POST',headers});assert.equal(published.status,200,await published.clone().text());
+ const accepted=await state.request(`${endpoint}/${version.packageId}/bindings/${state.packageAdoption.bindingId}`,{...json({action:'accept',versionId:version.versionId},state.packageHeaders),method:'PATCH'});assert.equal(accepted.status,200,await accepted.clone().text());
+ const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.deepEqual(body.sources.map(row=>row.enrollmentId),[e.enrollment_id]);
+});
+test('native package source: a changed project identity cannot publish the old captured owner scope',async t=>{
+ const state=await sharedProjectFixture(),db=state.env.DB,batch=db.batch,blockId='owner-bound-package-source';
+ const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:blockId,type:'direction',scope:'document',properties:{text:'Source identity is native.'}}}},state.owner));assert.equal(created.status,200,await created.clone().text());
+ let hit=false;db.batch=async statements=>{if(!hit&&statements.some(s=>s.sql?.startsWith('INSERT INTO organization_context_package_versions'))){hit=true;state.sqlite.prepare("UPDATE organization_projects SET project_id='changed-source-project' WHERE project_access_id=?").run(state.projectAccessId);}return batch.call(db,statements);};t.after(()=>{db.batch=batch;});
+ const response=await state.request(`/api/workspaces/${state.organizationId}/context-packages`,json({name:'Captured owner',sourceProjectAccessId:state.projectAccessId,documentId:'doc-atmosphere',blockIds:[blockId]},state.owner));assert.equal(hit,true);assert.ok(response.status>=400,await response.clone().text());assert.equal(state.sqlite.prepare('SELECT count(*) n FROM organization_context_packages').get().n,0);assert.equal(state.sqlite.prepare('SELECT count(*) n FROM organization_context_package_contents').get().n,0);
+});

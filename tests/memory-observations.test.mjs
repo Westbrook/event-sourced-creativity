@@ -57,6 +57,7 @@ test("assisted, copied, compensated and unresolved mutations never become indepe
     f.receipt({ type: "ProposalAccepted" }), f.receipt({ payload: { memory_authored_version: 1 } }), f.receipt({ payload: { source_surface: "assistant" } }),
     f.receipt({ payload: { source_chat_turn_id: "turn-1" } }), f.receipt({ payload: { source_surface: "autocomplete" } }),
     f.receipt({ payload: { properties: { copied_from_block_id: "original" } } }),
+    f.receipt({ payload: { properties: { organization_context_source_block_id: "published-original" } } }),
     f.receipt({ type: "BlockRelationAdded", payload: { properties: { copied_from_relation_id: "original-relation" } } }),
     f.receipt({ event: { compensatesEventId: "earlier" } }), f.receipt({ lineageResolved: false }),
   ];

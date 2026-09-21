@@ -457,3 +457,13 @@ Cross-owner and distinct-resource/consumer integration remains tracked, not waiv
 
 Implemented locally: [private history boundaries](forma-memory-private-history-boundaries-2026-09-21.md).
 Block, relation, copy and authored-profile readers withhold foreign private bodies in SQL. Native inspected-reference counts use version2 with retained-version1 replay.22 focused,126 history/recall and54 resource/mixed-producer checks pass. This closes a concrete source boundary, not Library/Canvas enrollment or the other native completion rows.
+
+
+## MEM-038 — Owner-qualified published-package original recall
+
+Implemented locally: [published-package source recall](forma-memory-published-package-recall-2026-09-21.md).
+Native publishing/adoption preserves original owner/project identity and negative
+Memory attribution. Independently enrolled sources retain their own access,
+consent, rights and retirement.81 native,40 authoring and16 browser checks pass;
+actual direct D1 recall uses46 binding calls. Media references and other native
+completion-matrix rows remain assigned; no deployment or implicit enrollment.

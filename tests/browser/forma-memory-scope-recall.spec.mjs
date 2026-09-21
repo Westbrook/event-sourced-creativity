@@ -4,7 +4,7 @@ import {FORMA_PERSONAL_MEMORY_MESSAGES} from '../../src/components/design-system
 const m=(locale,key)=>FORMA_PERSONAL_MEMORY_MESSAGES[locale]['memory.live.'+key];
 for(const locale of ['en','ar'])test.describe('Memory cross-scope '+locale,()=>{
  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
- for(const organization of [false,true])for(const reused of (organization?[false]:[false,true]))for(const uncertain of [false,true])test('Explicit scope consent and ephemeral preview '+locale+'/'+uncertain+'/'+organization+'/'+reused,async({page,context,baseURL})=>{
+ for(const organization of [false,true])for(const reused of [false,true])for(const uncertain of [false,true])test('Explicit scope consent and ephemeral preview '+locale+'/'+uncertain+'/'+organization+'/'+reused,async({page,context,baseURL})=>{
   expect(syntheticNetworkEnabled(baseURL)).toBe(true);let boundary='document',revision=null,settleWrite;const writes=[],reads=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
   const enrollment={id:'a'.repeat(64),projectId:'project-atmosphere',documentId:'doc-atmosphere',organizationId:null,revision:1,learn:true,recall:true,background:true,
    retentionDays:30,timeZone:'UTC',expiresAt:new Date(Date.now()+86400000).toISOString(),policyVersion:'personal-memory-v2',lastAdmittedAt:null,throughSequence:24,cutoffSequence:null,backlog:false,nextDueAt:new Date().toISOString(),attempts:0,status:'ready'};
