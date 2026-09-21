@@ -17962,3 +17962,27 @@ for(const shared of [false,true])test('Canvas semantic Memory: selected document
  assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
  const retired=await specialistRetrieve(state,review,options),text=await retired.text();assert.doesNotMatch(text,/PRIVATE_VERIFIED_SPECIALIST_REPLY|PRIVATE_JOB_QUES/);assert.ok(retired.status>=400,text);assert.equal(calls,1);
 });
+
+for(const fault of ['oversized','invalid-utf8','duplicate-message','escaped-duplicate','lone-surrogate','length-mismatch','abort','deadline'])test('Memory original ingress: '+fault+' never creates a chat original or spending',async t=>{
+ const state=await specialistMockFixture();t.after(()=>state.cleanup());
+ assert.equal((await state.request(endpoint())).status,200);
+ const before=adaptiveReentryFinancialState(state),counts=()=>state.sqlite.prepare('SELECT (SELECT COUNT(*) FROM assistant_turns) AS turns,(SELECT COUNT(*) FROM private_content) AS bodies,(SELECT COUNT(*) FROM events) AS events').get(),original=counts();
+ let body=JSON.stringify({turnId:'memory-original-upload',message:'Exact original intent',locale:'en'}),headers={...state.owner,'content-type':'application/json'};
+ if(fault==='oversized')body+=' '.repeat(16384);
+ if(fault==='invalid-utf8')body=Uint8Array.from([...new TextEncoder().encode('{"turnId":"memory-original-upload","message":"'),255,...new TextEncoder().encode('"}')]);
+ if(fault==='duplicate-message')body=body.slice(0,-1)+',"message":"A silently replaced original"}';
+ if(fault==='escaped-duplicate')body=body.slice(0,-1)+',"mess\\u0061ge":"A silently replaced original"}';
+ if(fault==='lone-surrogate')body=JSON.stringify({turnId:'memory-original-upload',message:'\ud800'});
+ if(fault==='length-mismatch')headers['content-length']='1';
+ const controller=new AbortController();if(fault==='deadline')t.mock.timers.enable({apis:['setTimeout']});
+ if(fault==='abort'||fault==='deadline')body=new ReadableStream({pull(){if(fault==='abort')controller.abort();else t.mock.timers.tick(30000);}},{highWaterMark:0});
+ const response=await state.request(endpoint(),{method:'POST',headers,body,signal:controller.signal,duplex:'half'});
+ assert.equal(response.status,fault==='oversized'?413:400,await response.clone().text());
+ assert.deepEqual(counts(),original);assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.calls.length,0);
+});
+test('Memory original ingress: maximum escaped multilingual text remains a precise zero-cost original',async t=>{
+ const state=await specialistMockFixture();t.after(()=>state.cleanup());const text='雪'.repeat(1200),body='{"turnId":"memory-original-escaped","message":"'+'\\u96ea'.repeat(1200)+'","locale":"ja"}';
+ const response=await state.request(endpoint(),{method:'POST',headers:{...state.owner,'content-type':'application/json'},body}),result=await response.json();
+ assert.equal(response.status,201,JSON.stringify(result));assert.equal(result.turn.user,text);assert.equal(state.calls.length,0);
+ const retained=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=(SELECT user_content_ref FROM assistant_turns WHERE turn_id='memory-original-escaped')").get();assert.equal(retained.content,text);
+});

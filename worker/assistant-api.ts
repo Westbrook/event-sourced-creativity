@@ -1,3 +1,4 @@
+import { readNativeControlBody } from "./native-control-body.ts";
 import { parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
 import { authoringEventProof } from './authoring-event-proof.ts';
@@ -1770,16 +1771,22 @@ export async function handleAssistantFieldSuggestion(request:Request,env:WorkerE
 
 export async function handleAssistant(request: Request, env: WorkerEnv, execution: WorkerExecutionContext): Promise<Response> {
   if(request.method!=="GET"&&request.method!=="POST")return json({error:"method_not_allowed"},405);
+  // Original text is later eligible for separately consented Memory capture.
+  // Reject lossy decoding or ambiguous keys before reading native context. The
+  // wire ceiling includes fully JSON-escaped 1,200-character multilingual text.
+  let body:Record<string,unknown>={};
+  if(request.method==="POST"){
+    const parsed=await readNativeControlBody(request,16_384);
+    if(parsed.status!=="parsed")return json({error:parsed.status==="too-large"?"assistant_request_too_large":"assistant_request_invalid"},parsed.status==="too-large"?413:400);
+    body=parsed.value;
+  }
   const source=new AssistantContextReadWitness(env);
   const authorization=await authorizeAssistant(request,env,source);if(authorization.response||!authorization.authorized)return authorization.response!;
   const actor=authorization.authorized;await ensureAssistantSchema(env);const state=await assistantContext(request,env,actor,source);
   if(request.method==="GET"){await resumeAssistantTasks(request,env,actor,execution);return certifiedAssistantTaskFeed(env,actor,assistantScopeKey(actor),state,await recentAssistantTasks(env,actor));}
-  let body:{turnId?:unknown;message?:unknown;locale?:unknown;model?:unknown;premiumApproval?:unknown;memoryMode?:unknown};
-  try{body=await request.json()as typeof body;}catch{return json({error:"assistant_request_invalid"},400);}
-  if(!body||typeof body!=="object"||Array.isArray(body))return json({error:"assistant_request_invalid"},400);
   const turnId=typeof body.turnId==="string"?body.turnId.trim():"",message=typeof body.message==="string"?body.message.trim():"";
   if(!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId))return json({error:"assistant_turn_invalid"},400);
-  if(!message||message.length>ASSISTANT_CONTEXT_LIMITS.turnChars)return json({error:"assistant_message_invalid"},400);
+  if(!message||!message.isWellFormed()||message.length>ASSISTANT_CONTEXT_LIMITS.turnChars)return json({error:"assistant_message_invalid"},400);
   if(Object.hasOwn(body,"memoryMode")&&body.memoryMode!=="recall")return json({error:"assistant_memory_mode_invalid"},400);
   // Select from fresh native enrollment and ledger metadata before *any* saved
   // turn early return. No selected structured failure can fall through to v1.

@@ -93,3 +93,17 @@ checks overlap that run. Four final capacity/inventory checks pass after
 tightening the ceilings and adding deterministic eight-task selection.
 TypeScript, changed-worker lint and production build pass (existing warnings).
 No provider spending, deployment or hosted-capacity qualification occurred.
+
+## Exact original chat ingress — 2026-09-21
+
+The original Assistant POST now uses the same strict bounded upload reader as
+Memory controls, before context or persistence reads. Its16KiB wire limit includes
+fully escaped1,200-character multilingual messages. Invalid UTF-8, duplicate or
+escaped-duplicate keys, length mismatch, lone-surrogate text, cancellation and
+upload deadline expiry fail without saving a turn or purchasing work. These
+safeguards preserve original human text before separately consented Memory capture.
+
+Nine focused checks pass, including bytewise multilingual input. The previous
+reader's acceptance of malformed encoding, duplicate keys and lone surrogates was
+reproduced on the baseline. TypeScript and production build pass; the API's28
+pre-existing lint findings are unchanged. No deployment or enrollment occurred.

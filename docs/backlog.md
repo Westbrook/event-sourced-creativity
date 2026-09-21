@@ -295,3 +295,9 @@ Memory capacity follow-up (2026-09-21): [current-source ancestry proof](forma-me
 Memory field/history follow-up (2026-09-21): [bounded saved history and final delivery](forma-memory-field-completion-2026-09-20.md#bounded-history-and-final-delivery--2026-09-21) now preserve eligible older suggestions across unrelated later answers, and close final-serialization expiry in task/inline/quote/retrieval responses.20 focused checks include real isolated D1; no new provider call, enrollment or deployment. Remaining native scope stays assigned in the completion matrix.
 
 Memory recovery capacity (2026-09-21): [canonical pointer/body snapshot](forma-memory-native-capacity-2026-09-20.md#canonical-result-snapshot--2026-09-21) preserves unavailable-result/no-repurchase behavior while reducing execution to116/126 and retrieval to36/36 synthetic binding calls.301 native regressions pass; native capacity remains above target and assigned.
+
+Memory continuation (2026-09-21): original Assistant uploads now have strict
+byte/encoding/key/deadline/cancellation validation before persistence; see
+[exact original ingress](forma-memory-native-capacity-2026-09-20.md#exact-original-chat-ingress--2026-09-21).
+The native completion matrix remains assigned; next work is fresh field-bound
+suggestion generation through existing explicit spending and publication review.
