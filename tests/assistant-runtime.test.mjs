@@ -17858,3 +17858,58 @@ for(const shared of [false,true])test('specialist exact source D1: private-field
   assert.equal((await db.prepare('SELECT COALESCE(SUM(reserved_microusd),0) AS n FROM cost_budget_counters').first()).n,0);
  }
 });
+
+for(const shared of [false,true])for(const native of [false,true])test('Memory field history: later ordinary answer does not hide independently retained exact suggestion '+shared+'/'+native,{timeout:120000},async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared,native});
+ for(let index=0;index<2;index++)await specialistFreeTurn(state,'field-history-window-'+index,'Review ordinary authored work.',state.semanticOptions);
+ const turn=await specialistFreeTurn(state,'field-history-later-answer','Review the current document.',state.semanticOptions);
+ const later=await specialistQuote(state,turn.id,undefined,state.semanticOptions);
+ assert.equal((await specialistExecute(state,later,state.semanticOptions)).status,202);await state.drainBackground();
+ const fetched=await specialistRetrieve(state,later,state.semanticOptions),result=await fetched.json();
+ assert.equal(fetched.status,200,JSON.stringify(result));assert.equal(result.result.sourceStatus,'original-approved-source');
+ const financial=()=>state.env.DB.prepare("SELECT json_group_array(json_object('id',reservation_id,'status',status,'cost',used_microusd)) AS receipts FROM cost_budget_reservations").first();
+ const before=await financial(),calls=state.providerCalls();
+ const path=endpoint(state.semanticOptions.route,state.semanticOptions.project).replace('/api/assistant?','/api/assistant/field-suggestion?')+'&blockId='+state.authoredBlock+'&locale=en';
+ const response=await state.request(path,{headers:state.owner??{}}),body=await response.json();
+ assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.suggestion?.review.executionId,state.authoredReview.executionId,JSON.stringify(body));
+ assert.equal(body.suggestion.review.edits[0].suggestedText,'Explicitly accepted authored direction.');
+ assert.equal(state.providerCalls(),calls);assert.deepEqual(await financial(),before);
+ // An older completion has its own live ancestry, not permission inherited
+ // from the later unrelated task or the still-readable document.
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ const retired=await state.request(path,{headers:state.owner??{}}),text=await retired.text();assert.doesNotMatch(text,/Explicitly accepted authored direction/);
+ assert.ok(retired.status>=400||JSON.parse(text).suggestion===null,text);assert.equal(state.providerCalls(),calls);
+});
+
+for(const surface of ['field','feed'])test('Memory final delivery: semantic task expires during serialization '+surface,async t=>{
+ const state=await semanticAuthoredEditFixture(t),before=adaptiveReentryFinancialState(state),stringify=JSON.stringify;
+ let hit=false;
+ t.mock.method(JSON,'stringify',function(value,...args){
+  const serialized=stringify.call(this,value,...args);
+  if(!hit&&(surface==='field'?value?.version==='memory-field-completion-v1'&&value.suggestion:Array.isArray(value?.tasks)&&value.tasks.some(task=>task.completedReview?.memory))){
+   hit=true;const next=performance.now()+120000;t.mock.method(performance,'now',()=>next);
+  }
+  return serialized;
+ });
+ let path=endpoint(state.semanticOptions.route,state.semanticOptions.project);
+ if(surface==='field')path=path.replace('/api/assistant?','/api/assistant/field-suggestion?')+'&blockId='+state.authoredBlock+'&locale=en';
+ const response=await state.request(path,{headers:state.owner??{}}),text=await response.text();
+ assert.equal(hit,true);assert.doesNotMatch(text,/Explicitly accepted authored direction|Consider this change/);
+ assert.equal(state.providerCalls(),1);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const surface of ['quote','retrieve'])test('Memory final delivery: private protocol expires while constructing response '+surface,async t=>{
+ const state=surface==='quote'?await semanticPaidConsumerFixture(t):await semanticAuthoredEditFixture(t),jsonResponse=Response.json;
+ let hit=false;
+ t.mock.method(Response,'json',function(value,options){
+  const response=jsonResponse.call(this,value,options);
+  if(!hit&&value?.memory?.version==='semantic-memory-answer-v1'&&value.quote){
+   hit=true;const next=performance.now()+120000;t.mock.method(performance,'now',()=>next);
+  }
+  return response;
+ });
+ const response=surface==='quote'?await specialistProtocolRequest(state,{action:'quote',turnId:state.semanticTurn.id,memory:'saved'},state.semanticOptions):await specialistRetrieve(state,state.authoredReview,state.semanticOptions);
+ const text=await response.text();assert.equal(hit,true);assert.ok(response.status>=400,text);
+ assert.doesNotMatch(text,/Explicitly accepted authored direction|Consider this change|PRIVATE_JOB_QUES|privateInput/);
+ if(surface==='retrieve')assert.equal(state.providerCalls(),1);
+});

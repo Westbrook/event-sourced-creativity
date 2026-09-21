@@ -32,6 +32,14 @@ import { nativeMemoryTurnInspectionEnvironment, captureNativeMemoryTurnExclusion
 export const ASSISTANT_SPECIALIST_CONSENT_VERSION="assistant-specialist-consent-v1";
 const OPERATION="assistant-specialist",OUTPUT_TOKENS=1_600,CONVERSATION_TURNS=Math.floor(ASSISTANT_CONTEXT_LIMITS.turns/2),HEADERS={"cache-control":"private, no-store",vary:"Cookie, oai-authenticated-user-id, oai-authenticated-user-email"};
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:HEADERS});
+/** Building a response can consume the last part of a private delivery lease.
+ * Check after serialization and before handing the response to the caller. */
+function semanticJson(env:WorkerEnv,memory:SemanticAssistantMemory|null,value:unknown,status=200){
+ const response=json(value,status);
+ if(memory)try{semanticAssistantMemoryInputs(env,memory);}
+ catch{return json({error:"assistant_memory_unavailable",noAutomaticRetry:true},409);}
+ return response;
+}
 const record=(value:unknown):Record<string,unknown>=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
 function fail(code:string):never{throw new Error(code);}
 const errorCode=(error:unknown)=>error instanceof Error&&/^(?:assistant|context|provider|project|source|canvas)_[a-z_]+(?:_\d+)?$/u.test(error.message)?error.message:"assistant_specialist_unavailable";
@@ -777,8 +785,21 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
     // each repeat removes at least one of the bounded history turns.
     const now=Date.now(),current=visibleTurns.filter(turn=>!memoryReads.expired(turn,now)
       &&memoryReads.matches(turn,reads.slice(memoryOffset,memoryOffset+memoryReads.statements.length),env,actor.principal.userId));
-    if(current.length===visibleTurns.length)return new Response(serialized,{headers:{...HEADERS,"content-type":"application/json"}});
-    visibleTurns=current;
+    // Completed task reviews are separate from transcript turns. They can
+    // expire while a synchronous projection/serialization is being built, even
+    // when the feed contains no private transcript turn. Recheck the original
+    // monotonic lease before releasing bytes; retire and rebuild, never renew.
+    let taskExpired=false;
+    for(const [index,candidate]of candidates.entries()){
+      if(!candidate.semantic||!Object.hasOwn(tasks[index]!,"completedReview"))continue;
+      try{semanticAssistantMemoryInputs(env,candidate.semantic);}
+      catch{
+        tasks[index]={...candidate.entry.display,canExecute:false,retentionUnavailable:true};
+        hidden.add(candidate.entry.record.turn_id);taskExpired=true;
+      }
+    }
+    if(current.length===visibleTurns.length&&!taskExpired)return new Response(serialized,{headers:{...HEADERS,"content-type":"application/json"}});
+    visibleTurns=current.filter(turn=>!hidden.has(turn.id));
   }
 }
 
@@ -1012,7 +1033,7 @@ async function resultResponse(env:WorkerEnv,actor:SpecialistActor,host:Assistant
   if(finalRead?.no_memory_ancestry!==1)fail(MEMORY_PAID_UNSUPPORTED);
   if(finalRead?.retained!==1)return json({error:"assistant_execution_unavailable",turnId:retained.request.turnId,executionId:retained.row.execution_id,retentionUnavailable:true,noAutomaticRetry:true},404);
   if(recovered&&finalRead.result_retained!==1){recovered=null;recoveryError="assistant_result_unavailable";}
-  return json({turnId:retained.request.turnId,executionId:row.execution_id,...(memoryPresentation?{memory:memoryPresentation}:{}),quote:{...retained.preview,status:row.status,providerAvailable:Boolean(env.OPENAI_API_KEY),canExecute:shown?.canExecute??false},originalRequest,...(shown?{task:shown}:{}),
+  return semanticJson(env,semantic,{turnId:retained.request.turnId,executionId:row.execution_id,...(memoryPresentation?{memory:memoryPresentation}:{}),quote:{...retained.preview,status:row.status,providerAvailable:Boolean(env.OPENAI_API_KEY),canExecute:shown?.canExecute??false},originalRequest,...(shown?{task:shown}:{}),
     ...(recovered?{result:recovered.result,materializationPending:recovered.materializationPending,...(recovered.turn!==undefined?{turn:recovered.turn}:{})}:{}),
     ...(recoveryError?{recoveryError,...(recoveryError==="assistant_result_unavailable"?{retainedResultUnavailable:true}:{})}:{}),...(finalRead.unused_execution===1?{unusedExecution:true as const}:{}),reused:Boolean(task),noAutomaticRetry:true,
     ...(requestedExecutionId&&requestedExecutionId!==row.execution_id?{requestedExecutionId,reusedExecutionId:row.execution_id,winnerExecutionId:row.execution_id}:{}),
@@ -1198,7 +1219,7 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
       const final=memory?(await env.DB.batch([...semanticAssistantMemoryStatements(env,memory),finalStatement])).at(-1)?.results[0]:await finalStatement.first();
       if(!final){await assertNoPaidMemory(env,noMemoryProof(retained.request));return json({error:"assistant_execution_unavailable",turnId,executionId:quote.executionId,retentionUnavailable:true},404);}
       const preview=retained.preview,budgetAvailable=availableMicrousd!==null&&availableMicrousd>=preview.maximumMicrousd,providerAvailable=Boolean(env.OPENAI_API_KEY),originalRequest={...retained.request.originalRequest,model:retained.binding.steps[0]!.model,taskKind:retained.request.taskKind,sourceHash:retained.binding.sourceHash,conversationTurnIds:retained.request.conversation.map(item=>item.turnId)};
-      return json({turnId,executionId:preview.executionId,...(memory?{memory:{version:'semantic-memory-answer-v1',validUntil:semanticAssistantMemoryInputs(env,memory).validUntil,independentEvidence:false}}:{}),quote:{...preview,status:retained.row.status,providerAvailable,budgetAvailable,availableMicrousd,unavailableReasons:prepared.unavailableReasons,canExecute:retained.row.status==="quoted"&&providerAvailable&&budgetAvailable&&!prepared.unavailableReasons.length},originalRequest,noAutomaticRetry:true});
+      return semanticJson(env,memory,{turnId,executionId:preview.executionId,...(memory?{memory:{version:'semantic-memory-answer-v1',validUntil:semanticAssistantMemoryInputs(env,memory).validUntil,independentEvidence:false}}:{}),quote:{...preview,status:retained.row.status,providerAvailable,budgetAvailable,availableMicrousd,unavailableReasons:prepared.unavailableReasons,canExecute:retained.row.status==="quoted"&&providerAvailable&&budgetAvailable&&!prepared.unavailableReasons.length},originalRequest,noAutomaticRetry:true});
     }
     const id=String(body.executionId??""),hash=String(body.approvedBindingHash??"");
     if(!/^[a-zA-Z0-9_-]{8,80}$/u.test(id)||action!=="resume"&&!/^[a-f0-9]{64}$/u.test(hash))return json({error:"assistant_approval_required"},428);

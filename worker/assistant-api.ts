@@ -1740,23 +1740,30 @@ export async function handleAssistantFieldSuggestion(request:Request,env:WorkerE
     const state=await assistantContext(request,env,actor,source,blockId),atom=state.context.decisionAtoms.find(item=>item.id===blockId);
     const emptyValue={version:'memory-field-completion-v1',suggestion:null},empty=()=>json(emptyValue);
     if(!atom||atom.locked||atom.immutable||atom.protected||!atom.providerEligible||atom.providerVisibility!=='editable')return empty();
-    const latest=(await recentAssistantTasks(env,actor)).find(entry=>entry.record.status==='completed'
+    const candidates=(await recentAssistantTasks(env,actor)).filter(entry=>entry.record.status==='completed'
       &&entry.record.scope_key===assistantScopeKey(actor)&&entry.record.document_id===actor.surface.documentId&&entry.record.locale===locale);
-    if(!latest)return empty();
-    return await certifiedAssistantTaskFeed(env,actor,assistantScopeKey(actor),state,[latest],value=>{
+    if(!candidates.length)return empty();
+    // The existing eight-task inventory bounds this search. Each candidate's
+    // retained consent, original source and final delivery proof are independent.
+    // A later unrelated answer must not hide an older exact-current field edit.
+    return await certifiedAssistantTaskFeed(env,actor,assistantScopeKey(actor),state,candidates,value=>{
     const feed=value as {contextUnavailable?:boolean;tasks?:Array<{certifiedCompleted?:boolean;completedReview?:{
       executionId:string;turnId:string;quote:{bindingHash:string};originalRequest:{sourceHash:string;locale:string};
       memory?:unknown;result?:{sourceStatus?:string;editReview?:unknown}}}>};
-    const completed=feed.tasks?.[0]?.certifiedCompleted&&feed.tasks[0].completedReview;
-    const memory=completed&&parseSemanticMemoryAnswerPresentation(completed.memory);
-    if(feed.contextUnavailable||!completed||!memory||completed.result?.sourceStatus!=='semantic-memory-assisted'
-      ||completed.originalRequest.locale!==locale)return emptyValue;
-    const review=parseMemoryEditReview(completed.result.editReview,{executionId:completed.executionId,turnId:completed.turnId,
-      projectId,documentId,sourceHash:completed.originalRequest.sourceHash,locale});
-    const edit=review?.edits.find(item=>item.blockId===blockId&&item.revision===atom.version&&item.beforeExcerpt===atom.text);
-    if(!review||!edit)return emptyValue;
-    return {version:'memory-field-completion-v1',suggestion:{review:{...review,edits:[edit]},bindingHash:completed.quote.bindingHash,
-      validUntil:memory.validUntil,independentEvidence:false}};
+    if(feed.contextUnavailable)return emptyValue;
+    for(const task of feed.tasks??[]){
+      const completed=task.certifiedCompleted&&task.completedReview;
+      const memory=completed&&parseSemanticMemoryAnswerPresentation(completed.memory);
+      if(!completed||!memory||completed.result?.sourceStatus!=='semantic-memory-assisted'
+        ||completed.originalRequest.locale!==locale)continue;
+      const review=parseMemoryEditReview(completed.result.editReview,{executionId:completed.executionId,turnId:completed.turnId,
+        projectId,documentId,sourceHash:completed.originalRequest.sourceHash,locale});
+      const edit=review?.edits.find(item=>item.blockId===blockId&&item.revision===atom.version&&item.beforeExcerpt===atom.text);
+      if(!review||!edit)continue;
+      return {version:'memory-field-completion-v1',suggestion:{review:{...review,edits:[edit]},bindingHash:completed.quote.bindingHash,
+        validUntil:memory.validUntil,independentEvidence:false}};
+    }
+    return emptyValue;
     });
   }catch{return json({error:'assistant_field_unavailable',noAutomaticRetry:true},409);}
 }

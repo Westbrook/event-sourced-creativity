@@ -51,3 +51,32 @@ generation. Independently authorized source reuse, complete creative-output/live
 preview, evolving semantic profile consolidation, other native resource histories
 and whole-invocation qualification remain in the completion matrix. Hosted
 scheduler/provider qualification and deployment stay on their separate checklist.
+
+## Bounded history and final delivery — 2026-09-21
+
+The actual inline suggestion endpoint now searches the existing eight-task
+inventory in recency order, independently certifying each retained candidate.
+A later ordinary answer no longer hides an older exact-current field suggestion.
+The search stays within the current actor, scope, document and language; current
+field revision/text, original consent and source ancestry are still required. It
+never creates a turn, quote, provider call or enrollment. Expired, erased or
+withdrawn history cannot supply a fallback. Acceptance keeps its separate exact
+whole-source transaction and explicit publication approval.
+
+Final delivery now rechecks the original monotonic lease after response
+serialization, both for task/inline reviews and specialist quote/retrieval. The
+feed drops expired review bytes and rebuilds its response; a private protocol
+response that expires during construction returns a private, no-store error.
+This fixes reproduced final-serialization leaks, not just a UI timer.
+
+Verification:20 focused runtime checks pass, including four personal/shared
+SQLite/real isolated D1 older-suggestion/withdrawal journeys and four reproduced
+final-delivery expiry cases. A137-check neighboring native regression passes
+before the final quote/retrieve wrapper; those wrappers have the focused final
+checks. TypeScript and production build pass, with existing chunk warnings.
+The earlier full1,981/1,981 runtime run is at extraction commitcf0b3b10, not
+misrepresented as a full-suite run of these later changes.
+
+This closes bounded saved-field-history selection and final private delivery
+expiry. New automatically generated field suggestions, broader resources and
+the remaining native completion matrix are still assigned for implementation.
