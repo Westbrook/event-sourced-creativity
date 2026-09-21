@@ -133,3 +133,17 @@ no-op financial recovery round trips while preserving ledger settlement and
 uncertain-submission behavior. The combined execution is now 126/136 personal/shared
 synthetic binding calls, still above the conservative target. These verified
 boundary/recovery fixes do not close any of the six end-to-end native workstreams.
+
+## Resource ancestry continuation
+
+[Native resource ancestry](forma-memory-asset-ancestry-2026-09-20.md) now adds
+bounded, permanent private-materialization provenance with atomic private-event
+inheritance, descendant erasure, restoration prevention and expiry maintenance.
+Registration explicitly excludes authored artifacts and ordinary authoring events:
+Memory disable/rollback must not undo authored work.
+The existing assistant publication path uses it through additive migration0064.
+This advances the durable lifecycle row; it does not close accepted-edit/output
+integration. The remaining non-destructive authored provenance, root publication, private
+event-reader/browser expiry,
+independently authorized reuse and output/index callers are explicitly listed in
+the checkpoint and stay assigned to this implementation task.

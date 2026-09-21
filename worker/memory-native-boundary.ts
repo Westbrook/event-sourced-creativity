@@ -179,10 +179,16 @@ async function qualifyNativeMemoryAnswerExclusion(env: WorkerEnv, db: WorkerEnv[
       OR EXISTS(SELECT 1 FROM events job_origin_event
         WHERE job_origin_event.event_id IN(job_origin.user_event_id,job_origin.answer_event_id)
           AND json_extract(job_origin_event.payload,'$.content_ref')=${answer}.content_id))` : "";
-  const semanticOrigins=semantic.present?` AND NOT EXISTS(SELECT 1 FROM memory_derivation_consumer_contents semantic_copy
+  // One parent-list binding covers both negative registries. Repeating it for
+  // every content/turn alias can exceed D1's statement parameter ceiling.
+  const semanticOrigins=semantic.present?` AND NOT EXISTS(SELECT 1 FROM (
+    SELECT semantic_origin.origin_id AS origin_id FROM memory_derivation_consumer_contents semantic_copy
     JOIN memory_derivation_consumers semantic_origin ON semantic_origin.origin_id=semantic_copy.origin_id
     WHERE (semantic_copy.content_id=${answer}.content_id${turn?` OR (semantic_copy.role IN('result','answer') AND
-      (semantic_origin.actor_user_id,semantic_origin.scope_key,semantic_origin.turn_id)=(${turn}.actor_user_id,${turn}.scope_key,${turn}.turn_id))`:''}) ${semanticParents.length?'AND semantic_origin.origin_id NOT IN(SELECT value FROM json_each(?))':''})`:'';
+      (semantic_origin.actor_user_id,semantic_origin.scope_key,semantic_origin.turn_id)=(${turn}.actor_user_id,${turn}.scope_key,${turn}.turn_id))`:''})
+    ${semantic.assetsPresent?`UNION ALL SELECT CASE WHEN asset.source_kind='consumer' THEN asset.source_id ELSE '' END AS origin_id
+      FROM memory_derivation_asset_edges asset WHERE asset.target_kind='content' AND asset.target_id=${answer}.content_id`:''}
+    ) marked ${semanticParents.length?'WHERE marked.origin_id NOT IN(SELECT value FROM json_each(?))':''})`:'';
   // Generic hydration has no outer turn alias. Repointing a marked turn's
   // authored or answer ref must not create a new ordinary hydration route.
   const linked = hasTurns && hasTurns.present === 1 ? ` AND NOT EXISTS(SELECT 1 FROM assistant_turns linked_turn

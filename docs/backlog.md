@@ -241,3 +241,12 @@ services, qualification and enrollment remain in the Sites capability checklist.
 ### MEM-003 native field Undo coverage
 
 [Closed native Undo/Redo histories](forma-memory-native-field-undo-2026-09-20.md) are now supported by Document Memory inspection, with exact custody/private-body replay and historical invalidation. The complete context-controls suite also passes after reconciling its stale navigation port. The subsequently reproduced shared-block-removal restoration gap is now also fixed using a guarded historical proof and exact D1-aware write receipts. Final native/project D1 verification:294/294 pass. Current resource authorization remains mandatory; the other completion-matrix work stays in scope.
+
+### MEM-003 native resource ancestry
+
+[Resource-specific content/event provenance](forma-memory-asset-ancestry-2026-09-20.md)
+adds migration0064, existing assistant publication registration, private-event inheritance and bounded descendant retirement. Authored records are
+explicitly excluded so Memory disable cannot erase them. Root accepted-edit publication, event-reader/browser lifecycle, output/index
+callers and the other [native workstreams](forma-memory-completion-matrix-2026-09-20.md)
+remain implementation work on this task. No deployment, external service or real
+user enrollment is claimed.

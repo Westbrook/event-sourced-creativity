@@ -94,10 +94,17 @@ export function semanticAssistantMemoryContentStatements(env:WorkerEnv,handle:Se
  * enrolls a user, and never removes usage/accounting or permits a repurchase. */
 export async function sweepSemanticAssistantMemory(env:WorkerEnv){
  const schema=await memoryDerivationSchema(env);if(!schema.consumersPresent||!schema.consumerSourcesPresent||!schema.consumerParentsPresent)return 0;
+ const assets=schema.assetsPresent?[
+  env.DB.prepare(`UPDATE memory_derivation_asset_edges SET state='retired',retired_at=MAX(created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+   WHERE rowid IN(SELECT rowid FROM memory_derivation_asset_edges WHERE state='active' AND expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY expires_at,rowid LIMIT 16)`),
+  env.DB.prepare('SELECT changes() AS retired_assets'),
+ ]:[];
  const result=await env.DB.batch([derivationAssertion(env,schema.guard),env.DB.prepare(`UPDATE memory_derivation_consumers
   SET state='retired',retired_at=MAX(created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-  WHERE state='active' AND origin_id IN(SELECT origin_id FROM memory_derivation_consumers consumer WHERE state='active' AND (expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') OR (${consumerClosureCurrent}) IS NOT TRUE) ORDER BY expires_at,origin_id LIMIT 16)`),env.DB.prepare('SELECT changes() AS retired')]);
- if(!derivationResults(result,3)||!derivationVerified(result[0]!)||result[2]!.results.length!==1||!Number.isInteger(result[2]!.results[0]!.retired)||Number(result[2]!.results[0]!.retired)<0||Number(result[2]!.results[0]!.retired)>16)throw Error('assistant_memory_retirement_unconfirmed');
+  WHERE state='active' AND origin_id IN(SELECT origin_id FROM memory_derivation_consumers consumer WHERE state='active' AND (expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') OR (${consumerClosureCurrent}) IS NOT TRUE) ORDER BY expires_at,origin_id LIMIT 16)`),env.DB.prepare('SELECT changes() AS retired'),...assets]);
+ const bounded=(value:unknown)=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0&&value<=16;
+ if(!derivationResults(result,3+assets.length)||!derivationVerified(result[0]!)||result[2]!.results.length!==1||!bounded(result[2]!.results[0]!.retired)
+  ||assets.length&&(result[4]!.results.length!==1||!bounded(result[4]!.results[0]!.retired_assets)))throw Error('assistant_memory_retirement_unconfirmed');
  return Number(result[2]!.results[0]!.retired);
 }
 

@@ -2748,3 +2748,21 @@ export const memoryDerivationConsumerParents=sqliteTable('memory_derivation_cons
 },t=>[primaryKey({columns:[t.originId,t.parentOriginId]}),
  index('idx_memory_derivation_consumer_parent').on(t.parentOriginId),
  check('memory_consumer_parent_distinct',sql.raw('origin_id<>parent_origin_id'))]);
+
+/** Disposable Memory materializations only, never accepted authored records.
+ * Resource-specific negative provenance never grants source/target access;
+ * native callers must publish them atomically with separately authorized writes. */
+export const memoryDerivationAssetEdges=sqliteTable('memory_derivation_asset_edges',{
+ sourceKind:text('source_kind').notNull(),sourceId:text('source_id').notNull(),
+ targetKind:text('target_kind').notNull(),targetId:text('target_id').notNull(),
+ ownerUserId:text('owner_user_id').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),
+ state:text('state').notNull(),retiredAt:text('retired_at'),
+},t=>[primaryKey({columns:[t.sourceKind,t.sourceId,t.targetKind,t.targetId]}),
+ index('idx_memory_derivation_asset_target').on(t.targetKind,t.targetId),
+ index('idx_memory_derivation_asset_owner').on(t.ownerUserId,t.targetKind),
+ index('idx_memory_derivation_asset_expiry').on(t.state,t.expiresAt),
+ check('memory_asset_kinds',sql.raw("source_kind IN('consumer','content','event') AND target_kind IN('content','event') AND (source_kind<>target_kind OR source_id<>target_id)")),
+ check('memory_asset_identity',sql.raw("length(source_id) BETWEEN 1 AND 240 AND length(target_id) BETWEEN 1 AND 240 AND length(owner_user_id) BETWEEN 1 AND 240")),
+ check('memory_asset_state',sql.raw("(state='active' AND retired_at IS NULL) OR (state='retired' AND retired_at IS NOT NULL)")),
+ check('memory_asset_time',sql.raw("length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at AND (retired_at IS NULL OR length(retired_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',retired_at) IS retired_at AND retired_at>=created_at)")),
+]);

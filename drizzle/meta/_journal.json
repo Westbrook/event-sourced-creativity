@@ -435,6 +435,13 @@
       "when": 1789935981981,
       "tag": "0063_memory_derivation_consumer_parents",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1789951723611,
+      "tag": "0064_memory_derivation_asset_edges",
+      "breakpoints": true
     }
   ]
 }

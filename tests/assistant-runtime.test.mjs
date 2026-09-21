@@ -16775,12 +16775,13 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  const replay=await specialistRetrieve(state,review,options);assert.equal(replay.status,404);assert.equal(calls.length,1);
 });
 
-async function semanticPaidConsumerFixture(t,{shared=false,prior=false,chat=false}={}){
+async function semanticPaidConsumerFixture(t,{shared=false,prior=false,chat=false,assets=false}={}){
  const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});
  state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=state.current().actor_user_id;state.env.OPENAI_API_KEY='fixture-provider-key';
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0061_memory_derivation_consumers.sql',import.meta.url),'utf8'));
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0062_memory_derivation_consumer_sources.sql',import.meta.url),'utf8'));
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0063_memory_derivation_consumer_parents.sql',import.meta.url),'utf8'));
+ if(assets)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0064_memory_derivation_asset_edges.sql',import.meta.url),'utf8'));
  await state.widen();assert.equal((await state.contextAccept(await state.contextGet())).status,200);
  const options={route:'/document/'+state.recallTarget.documentId+(chat?'/memory-guidance/view/chat':''),project:state.current().project_id};
  for(let i=0;i<Number(prior);i++)await specialistFreeTurn(state,'semantic-original-prior-turn'+(i?'-'+i:''),'Keep the original constraints.',options);
@@ -17131,8 +17132,8 @@ test('semantic consumer recovery: equal-cost conflicting receipt never becomes a
  assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,1300);
 });
 
-async function semanticFollowupFixture(t,{shared=false,levels=2}={}){
- const state=await semanticPaidConsumerFixture(t,{shared}),original=globalThis.fetch,calls=[];
+async function semanticFollowupFixture(t,{shared=false,levels=2,assets=false}={}){
+ const state=await semanticPaidConsumerFixture(t,{shared,assets}),original=globalThis.fetch,calls=[];
  globalThis.fetch=async(_url,init)=>{const payload=JSON.parse(init.body);calls.push(payload);return specialistRawResponse(payload);};t.after(()=>{globalThis.fetch=original;});
  const reviews=[];
  for(let index=0;index<levels;index++){
@@ -17402,4 +17403,188 @@ for(const operation of ['live-settings','live-forget','profile-forget'])for(cons
  assert.equal(body.error,operation==='profile-forget'?(fault==='oversized'?'document_profile_request_too_large':'document_profile_request_invalid'):(fault==='oversized'?'memory_request_too_large':'invalid_memory_request'));
  assert.equal(request.body.locked,false);if(['abort','deadline'].includes(fault))assert.equal(cancelled,1);
  assert.deepEqual(structuredClone(state.current()),before);assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.calls.length,calls);
+});
+
+async function nativeAssetFixture(t,{shared=false}={}){
+ const state=await semanticPaidConsumerFixture(t,{shared,assets:true});
+ const {response,body:review}=await state.semanticQuote();assert.equal(response.status,200,JSON.stringify(review)+' '+state.controls.lastDatabaseError);
+ const owner=state.current().actor_user_id,root=state.sqlite.prepare('SELECT * FROM memory_derivation_asset_edges').get();assert.ok(root);
+ const addContent=(id,actor=owner)=>state.sqlite.prepare('INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+  .run(id,actor,'context-proposal','synthetic-'+id,root.created_at,root.expires_at);
+ const edge=(sourceKind,sourceId,targetKind,targetId,actor=owner,until=root.expires_at)=>state.sqlite.prepare("INSERT INTO memory_derivation_asset_edges VALUES(?,?,?,?,?,?,?,'active',NULL)")
+  .run(sourceKind,sourceId,targetKind,targetId,actor,new Date().toISOString(),until);
+ const read=id=>state.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(id);
+ return Object.assign(state,{assetRoot:root,assetReview:review,assetOwner:owner,addAssetContent:addContent,addAssetEdge:edge,readAsset:read});
+}
+for(const shared of [false,true])test('native asset ancestry: existing quote, completed result and source withdrawal '+shared,async t=>{
+ const state=await nativeAssetFixture(t,{shared}),review=state.assetReview,original=globalThis.fetch;let calls=0;
+ globalThis.fetch=async(url,init)=>{calls++;assert.equal(String(url),'https://api.openai.com/v1/responses');return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ const execute=await specialistExecute(state,review,state.semanticOptions);assert.equal(execute.status,202,await execute.clone().text());await state.drainBackground();
+ const response=await specialistRetrieve(state,review,state.semanticOptions),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+ assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');assert.equal(calls,1);
+ const edges=state.sqlite.prepare('SELECT * FROM memory_derivation_asset_edges').all();assert.equal(edges.length,3);assert.ok(edges.every(e=>e.state==='active'));
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.assetOwner,state.executionJob.job_id),true);
+ assert.ok(state.sqlite.prepare('SELECT * FROM memory_derivation_asset_edges').all().every(e=>e.state==='retired'));
+ for(const e of edges)assert.equal(state.readAsset(e.target_id).content,'');
+ assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);assert.equal(calls,1);
+});
+for(const recursive of [false,true])test('native asset ancestry: diamond retirement clears descendants, not siblings '+recursive,async t=>{
+ const state=await nativeAssetFixture(t);state.sqlite.exec('PRAGMA recursive_triggers='+Number(recursive));const parent=state.assetRoot.target_id;
+ for(const id of ['asset-left','asset-right','asset-join','asset-tail','asset-independent'])state.addAssetContent(id);
+ for(const [from,to]of [[parent,'asset-left'],[parent,'asset-right'],['asset-left','asset-join'],['asset-right','asset-join'],['asset-join','asset-tail']])state.addAssetEdge('content',from,'content',to);
+ state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id='asset-left'").run(new Date().toISOString());
+ for(const id of ['asset-left','asset-join','asset-tail']){assert.equal(state.readAsset(id).content,'');assert.ok(state.sqlite.prepare("SELECT * FROM memory_derivation_asset_edges WHERE target_id=?").all(id).every(e=>e.state==='retired'));}
+ for(const id of [parent,'asset-right','asset-independent'])assert.ok(state.readAsset(id).content);
+ assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_consumers').get().state,'active');
+ assert.throws(()=>state.sqlite.prepare("UPDATE private_content SET content='restored',redacted_at=NULL WHERE content_id='asset-tail'").run(),/memory_asset_restore_forbidden/);
+ state.sqlite.prepare("DELETE FROM private_content WHERE content_id='asset-tail'").run();assert.throws(()=>state.addAssetContent('asset-tail'),/memory_asset_restore_forbidden/);
+ assert.throws(()=>state.sqlite.prepare("DELETE FROM memory_derivation_asset_edges WHERE target_id='asset-tail'").run(),/memory_asset_tombstone_required/);
+});
+for(const fault of ['foreign-owner','unregistered-source','cycle','self','expired','extended','duplicate','retired-parent','replace-edge','retype','replace-content'])test('native asset ancestry: rejects '+fault,async t=>{
+ const state=await nativeAssetFixture(t),parent=state.assetRoot.target_id;state.addAssetContent('asset-child');state.addAssetContent('asset-next');
+ state.addAssetEdge('content',parent,'content','asset-child');
+ const attempt=()=>{
+  if(fault==='foreign-owner')return state.addAssetEdge('content',parent,'content','asset-next','other-owner');
+  if(fault==='unregistered-source')return state.addAssetEdge('content','asset-next','content','asset-child');
+  if(fault==='cycle')return state.addAssetEdge('content','asset-child','content',parent);
+  if(fault==='self')return state.addAssetEdge('content','asset-child','content','asset-child');
+  if(fault==='expired')return state.addAssetEdge('content',parent,'content','asset-next',state.assetOwner,new Date(Date.now()-1000).toISOString());
+  if(fault==='extended')return state.addAssetEdge('content',parent,'content','asset-next',state.assetOwner,new Date(Date.parse(state.assetRoot.expires_at)+1).toISOString());
+  if(fault==='duplicate')return state.addAssetEdge('content',parent,'content','asset-child');
+  if(fault==='retired-parent'){state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id='asset-child'").run(new Date().toISOString());return state.addAssetEdge('content','asset-child','content','asset-next');}
+  if(fault==='replace-edge')return state.sqlite.prepare("INSERT OR REPLACE INTO memory_derivation_asset_edges SELECT * FROM memory_derivation_asset_edges WHERE target_id='asset-child'").run();
+  if(fault==='retype')return state.sqlite.prepare("UPDATE private_content SET kind='chat-user' WHERE content_id='asset-child'").run();
+  return state.sqlite.prepare("INSERT OR REPLACE INTO private_content SELECT * FROM private_content WHERE content_id='asset-child'").run();
+ };
+ assert.throws(attempt,/memory_asset_/);assert.ok(state.readAsset('asset-next').content);
+});
+test('native asset ancestry: generic content hydration remains excluded after body erasure',async t=>{
+ const state=await nativeAssetFixture(t),parent=state.assetRoot.target_id;state.addAssetContent('asset-descendant');state.addAssetEdge('content',parent,'content','asset-descendant');
+ const {nativeMemoryAnswerExclusion}=await import('../worker/memory-native-boundary.ts'),guard=await nativeMemoryAnswerExclusion(state.env,{answerAlias:'content'});
+ const ordinary=id=>state.sqlite.prepare('SELECT 1 AS ok FROM private_content content WHERE content_id=? AND '+guard.sql).get(id,...guard.bindings);
+ assert.equal(ordinary('asset-descendant'),undefined);
+ state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id='asset-descendant'").run(new Date().toISOString());assert.equal(ordinary('asset-descendant'),undefined);
+ state.addAssetContent('asset-unrelated');assert.equal(ordinary('asset-unrelated').ok,1);
+});
+
+async function nativeAssetEvent(state,{block='asset-block',value='synthetic edit',old='synthetic before',compensates=null,source=null,authored=false}={}){
+ const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/event-write-primitives.ts'),stream='creative:'+state.assetOwner;
+ const head=(await state.env.DB.prepare('SELECT COALESCE(MAX(sequence),0) AS n FROM events WHERE stream_id=?').bind(stream).first()).n;
+ const event=makeEvent(stream,head+1,'user:'+state.assetOwner,'asset-fixture',crypto.randomUUID(),authored?'BlockPropertyEdited':'AssistantReasoned',{
+  block_id:block,project_id:state.current().project_id,document_id:state.recallTarget.documentId,property_path:'text',old_value:old,new_value:value,
+  ...(authored?{}:{memory_origin_version:3}),...(source?{source_event_id:source}:{}),
+ },{compensatesEventId:compensates});
+ const values=eventWriteBindings(event);await state.env.DB.prepare('INSERT INTO event_write_stage('+EVENT_WRITE_COLUMNS+') VALUES('+values.map(()=>'?').join(',')+')').bind(...values).run();return event;
+}
+for(const recursive of [false,true])test('native asset ancestry: private derived events inherit through actual event staging '+recursive,async t=>{
+ const state=await nativeAssetFixture(t);state.sqlite.exec('PRAGMA recursive_triggers='+Number(recursive));
+ const root=await nativeAssetEvent(state),parent=state.assetRoot.target_id;
+ state.addAssetEdge('content',parent,'event',root.eventId);
+ const edited=await nativeAssetEvent(state,{value:'synthetic revised',old:'synthetic edit',source:root.eventId}),undo=await nativeAssetEvent(state,{value:'synthetic edit',old:'synthetic revised',compensates:edited.eventId});
+ const unrelated=await nativeAssetEvent(state,{block:'unrelated-block',authored:true,source:root.eventId});
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE target_kind='event'").get().n,3);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE target_id=?').get(unrelated.eventId).n,0);
+ state.addAssetContent('asset-output');state.addAssetEdge('event',undo.eventId,'content','asset-output');
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.assetOwner,state.executionJob.job_id),true);
+ for(const event of [root,edited,undo]){const row=state.sqlite.prepare('SELECT private_json,redacted_at FROM event_private_payloads WHERE private_event_id=?').get(event.eventId);assert.equal(row.private_json,'');assert.ok(row.redacted_at);}
+ assert.ok(state.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').get(unrelated.eventId).private_json.includes('synthetic edit'));
+ assert.equal(state.readAsset('asset-output').content,'');
+ const head=state.sqlite.prepare('SELECT MAX(sequence) AS n FROM events').get().n;
+ await assert.rejects(()=>nativeAssetEvent(state,{compensates:undo.eventId}),/memory_asset_source_unavailable/);assert.equal(state.sqlite.prepare('SELECT MAX(sequence) AS n FROM events').get().n,head);
+ assert.throws(()=>state.sqlite.prepare("UPDATE event_private_payloads SET private_json=?,redacted_at=NULL WHERE private_event_id=?").run(JSON.stringify(root.payload),root.eventId),/memory_asset_restore_forbidden/);
+ assert.throws(()=>state.sqlite.prepare("UPDATE events SET payload=? WHERE event_id=?").run(JSON.stringify(root.payload),root.eventId),/memory_asset_event_immutable/);
+});
+test('native asset ancestry: bounded parent and ancestor inventory',async t=>{
+ const state=await nativeAssetFixture(t),root=state.assetRoot.target_id;let previous=root;
+ for(let i=0;i<63;i++){const id='asset-chain-'+i;state.addAssetContent(id);state.addAssetEdge('content',previous,'content',id);previous=id;}
+ state.addAssetContent('asset-overflow');assert.throws(()=>state.addAssetEdge('content',previous,'content','asset-overflow'),/memory_asset_source_unavailable/);
+ assert.ok(state.readAsset('asset-overflow').content);
+});
+for(const drift of ['missing-trigger','unknown-trigger','changed-table'])test('native asset ancestry: exact schema denies '+drift,async t=>{
+ const state=await nativeAssetFixture(t),{memoryDerivationSchema}=await import('../worker/memory-derivation-store.ts');
+ assert.equal((await memoryDerivationSchema(state.env)).assetsPresent,true);
+ if(drift==='missing-trigger')state.sqlite.exec('DROP TRIGGER memory_derivation_asset_content_restore');
+ if(drift==='unknown-trigger')state.sqlite.exec('CREATE TRIGGER unexpected_asset_read AFTER INSERT ON private_content BEGIN SELECT 1 FROM memory_derivation_asset_edges; END');
+ if(drift==='changed-table')state.sqlite.exec('ALTER TABLE memory_derivation_asset_edges ADD COLUMN ignored TEXT');
+ await assert.rejects(()=>memoryDerivationSchema(state.env),/schema/);
+ await assert.rejects(()=>(import('../worker/memory-native-boundary.ts')).then(m=>m.nativeMemoryAnswerExclusion(state.env,{answerAlias:'content'})),/schema/);
+});
+
+test('native asset ancestry: expiry clamps bodies and source-free sweep erases without buying',async t=>{
+ const state=await nativeAssetFixture(t),root=state.assetRoot.target_id,until=new Date(Date.now()+5000).toISOString();
+ state.addAssetContent('asset-short');state.addAssetEdge('content',root,'content','asset-short',state.assetOwner,until);
+ assert.equal(state.readAsset('asset-short').expires_at,until);state.addAssetContent('asset-short-child');state.addAssetEdge('content','asset-short','content','asset-short-child',state.assetOwner,until);
+ const clock=consequentialDbClock(state);t.after(()=>clock.close());t.mock.timers.enable({apis:['Date'],now:Date.parse(until)+1});clock.set(new Date().toISOString());
+ const before=adaptiveReentryFinancialState(state),calls=state.calls.length,{sweepSemanticAssistantMemory}=await import('../worker/memory-assistant-consumer.ts');
+ assert.equal(await sweepSemanticAssistantMemory(state.env),0);
+ assert.equal(state.readAsset('asset-short').content,'');assert.equal(state.readAsset('asset-short-child').content,'');assert.ok(state.readAsset(root).content);
+ assert.equal(await sweepSemanticAssistantMemory(state.env),0);assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.calls.length,calls);
+});
+for(const shared of [false,true])test('native asset ancestry: semantic follow-up still uses qualified original parents '+shared,async t=>{
+ const state=await semanticFollowupFixture(t,{shared,levels:3,assets:true});
+ assert.equal(state.followupCalls.length,3);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_asset_edges').get().n,9);
+ const first=state.sqlite.prepare('SELECT origin_id FROM memory_derivation_consumers WHERE execution_id=?').get(state.followupReviews[0].executionId).origin_id;
+ state.sqlite.prepare("UPDATE memory_derivation_consumers SET state='retired',retired_at=? WHERE origin_id=?").run(new Date().toISOString(),first);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE state='active'").get().n,0);
+});
+test('native asset ancestry: cannot add ancestry after a resource has descendants',async t=>{
+ const state=await nativeAssetFixture(t),root=state.assetRoot.target_id;for(const id of ['asset-first','asset-second','asset-used'])state.addAssetContent(id);
+ state.addAssetEdge('content',root,'content','asset-first');state.addAssetEdge('content',root,'content','asset-second');state.addAssetEdge('content','asset-first','content','asset-used');
+ assert.throws(()=>state.addAssetEdge('content','asset-second','content','asset-first'),/memory_asset_source_unavailable/);
+});
+test('native asset ancestry: actual D1 atomic private-event inheritance and retirement',{timeout:180000},async t=>{
+ const state=await nativeAssetFixture(t),root=await nativeAssetEvent(state);state.addAssetEdge('content',state.assetRoot.target_id,'event',root.eventId);
+ const edited=await nativeAssetEvent(state,{value:'D1 synthetic edit',source:root.eventId});state.addAssetContent('asset-d1-output');state.addAssetEdge('event',edited.eventId,'content','asset-d1-output');
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryAssets'],script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('No external network');}});
+ t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('MemoryAssets');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+ assert.equal((await(import('../worker/memory-derivation-store.ts')).then(m=>m.memoryDerivationSchema(state.env))).assetsPresent,true);
+ const d1Edit=await nativeAssetEvent(state,{value:'actual D1 inherited edit',source:edited.eventId});
+ assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE target_kind='event' AND target_id=?").bind(d1Edit.eventId).first()).n,1);
+ await db.prepare("UPDATE memory_derivation_consumers SET state='retired',retired_at=? WHERE origin_id=?").bind(new Date().toISOString(),state.assetRoot.source_id).run();
+ for(const event of [root,edited,d1Edit])assert.equal((await db.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').bind(event.eventId).first()).private_json,'');
+ assert.equal((await db.prepare("SELECT content FROM private_content WHERE content_id='asset-d1-output'").first()).content,'');
+ assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE state='active'").first()).n,0);
+ await assert.rejects(()=>nativeAssetEvent(state,{compensates:root.eventId}),/memory_asset_source_unavailable/);
+});
+
+test('native asset ancestry: bounded fan-out and per-target parents',async t=>{
+ const state=await nativeAssetFixture(t),root=state.assetRoot.target_id;
+ for(let i=0;i<17;i++){state.addAssetContent('asset-parent-'+i);state.addAssetEdge('content',root,'content','asset-parent-'+i);}
+ state.addAssetContent('asset-many-parents');for(let i=0;i<16;i++)state.addAssetEdge('content','asset-parent-'+i,'content','asset-many-parents');
+ assert.throws(()=>state.addAssetEdge('content','asset-parent-16','content','asset-many-parents'),/memory_asset_source_unavailable/);
+ // Consumer plus its consent, 17 parents and the joined child: 20 nodes.
+ // Capacity permits 256 resource nodes, including the native consent.
+ for(let i=0;i<237;i++){state.addAssetContent('asset-width-'+i);state.addAssetEdge('content',root,'content','asset-width-'+i);}
+ state.addAssetContent('asset-width-overflow');assert.throws(()=>state.addAssetEdge('content',root,'content','asset-width-overflow'),/memory_asset_source_unavailable/);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(DISTINCT target_id) AS n FROM memory_derivation_asset_edges').get().n,256);
+ state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),root);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE state='active'").get().n,0);
+ assert.ok(state.readAsset('asset-width-overflow').content);
+});
+
+test('native asset ancestry: private-body deletion preserves public append-only history and tombstones',async t=>{
+ const state=await nativeAssetFixture(t),root=await nativeAssetEvent(state);state.addAssetEdge('content',state.assetRoot.target_id,'event',root.eventId);
+ const child=await nativeAssetEvent(state,{value:'derived private continuation',source:root.eventId});
+ assert.throws(()=>state.sqlite.prepare("UPDATE events SET actor='deleted-user',payload='{}' WHERE event_id=?").run(root.eventId),/events are append-only/);
+ assert.throws(()=>state.sqlite.prepare('DELETE FROM events WHERE event_id=?').run(root.eventId),/events are append-only/);
+ state.sqlite.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),root.eventId);
+ for(const event of [root,child])assert.equal(state.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').get(event.eventId).private_json,'');
+ state.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(root.eventId);
+ assert.throws(()=>state.sqlite.prepare('INSERT INTO event_private_payloads(private_event_id,owner_id,project_id,document_id,private_json,created_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)')
+  .run(root.eventId,state.assetOwner,root.payload.project_id,root.payload.document_id,JSON.stringify(root.payload),root.recordedAt),/memory_asset_restore_forbidden/);
+ assert.ok(state.sqlite.prepare('SELECT event_id FROM events WHERE event_id=?').get(root.eventId));
+ assert.ok(state.readAsset(state.assetRoot.target_id).content,'Retiring a private child is not erasing its unrelated parent consent');
+});
+
+test('native asset ancestry: Memory withdrawal cannot enroll or erase authored work',async t=>{
+ const state=await nativeAssetFixture(t),parent=state.assetRoot.target_id;
+ const authored=await nativeAssetEvent(state,{authored:true,source:parent});
+ assert.throws(()=>state.addAssetEdge('content',parent,'event',authored.eventId),/memory_asset_source_unavailable/);
+ state.addAssetContent('asset-authored-document');state.sqlite.prepare("UPDATE private_content SET kind='document-artifact' WHERE content_id='asset-authored-document'").run();
+ assert.throws(()=>state.addAssetEdge('content',parent,'content','asset-authored-document'),/memory_asset_source_unavailable/);
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.assetOwner,state.executionJob.job_id),true);
+ assert.ok(state.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').get(authored.eventId).private_json.includes('synthetic edit'));
+ assert.equal(state.readAsset('asset-authored-document').content,'synthetic-asset-authored-document');
+ const after=await nativeAssetEvent(state,{authored:true,source:authored.eventId});assert.ok(after.eventId);
 });
