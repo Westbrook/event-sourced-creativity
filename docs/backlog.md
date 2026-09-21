@@ -583,3 +583,14 @@ billing.148 native,3 final accounting,224 client/documentation,102 migration and
 10 browser checks pass. Personal/shared execution uses38/42 local D1 calls.
 No deployment or enrollment; automatic unified profiles, private Output and the
 remaining native matrix work continue on this task.
+
+## MEM-052 — Unified current-profile review
+
+Implemented locally: [actor-private current profile catalog and review](forma-memory-unified-profile-review-2026-09-21.md).
+The real localized Memory panel now discovers qualified nightly projections and
+explicitly inspects the latest completed result with original-source and current
+correction checks. Retired heads never fall back to older interpretations.
+38 integrated native and232 client cases pass; local D1 catalog/current inspection
+uses6/30 calls. No new enrollment, provider work or migration. Remaining native
+cross-scope publication, aggregate capacity, direct private Output and broader
+integration stay assigned in the completion matrix; external rollout remains gated.

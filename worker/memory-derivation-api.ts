@@ -1,3 +1,4 @@
+import { currentProfileHeadGuard } from './memory-profile-catalog.ts';
 import { memoryDerivationSourceWindow } from "../src/model/memory-derivation-policy.ts";
 import { readNativeControlBody } from "./native-control-body.ts";
 export { NATIVE_CONTROL_READ_TIMEOUT_MS as MEMORY_CONTROL_READ_TIMEOUT_MS } from "./native-control-body.ts";
@@ -5,7 +6,7 @@ import { createMemoryElapsed } from '../src/model/memory-lifetime.ts';
 import { MEMORY_DERIVATION_HEALTH, parseMemoryDerivationHealth } from '../src/model/memory-derivation-health.ts';
 import { readProjectRequestContext, resolveOwnerExecutionScope } from './project-access.ts';
 import { nativeMemoryDocumentIdentity, nativeMemoryDocumentScopeQuery, prepareNativeMemoryDocumentScopeObservation } from "./memory-native-scope.ts";
-import { readNativeDerivationResult,nativeDerivationResultInputs,nativeDerivationResultResources,nativeDerivationResultStatements,withdrawNativeDerivationResult } from "./memory-derivation-results.ts";
+import { readNativeDerivationResult,nativeDerivationResultBinding,nativeDerivationResultInputs,nativeDerivationResultResources,nativeDerivationResultStatements,withdrawNativeDerivationResult } from "./memory-derivation-results.ts";
 import { controlNativeDerivationResult,reviseNativeDerivationUserControl } from "./memory-derivation-user-controls.ts";
 import { DERIVATION_USER_CONTROL_COLUMNS, derivationControlRelation } from "./memory-derivation-user-control-schema.ts";
 import { memoryDerivationFinanceView, memoryDerivationFinanceViewStatement } from "./memory-derivation-finance-view.ts";
@@ -285,8 +286,9 @@ export async function handleMemoryDerivationResult(request:Request,env:WorkerEnv
   if(actor.fictional||!identity)return deny('principal_account_required',403);
   if(!['GET','POST','DELETE'].includes(request.method))return deny('method_not_allowed',405);
   if(request.method!=='GET'&&!sameOrigin(request))return deny('same_origin_required',403);
-  if(!derivationHash(jobId)||url.searchParams.getAll('jobId').length!==1||[...url.searchParams.keys()].some(key=>!['jobId','resources'].includes(key)))return deny('memory_result_request_invalid');
-  const resources=url.searchParams.get('resources');
+  if(!derivationHash(jobId)||url.searchParams.getAll('jobId').length!==1||[...url.searchParams.keys()].some(key=>!['jobId','resources','profileCurrent'].includes(key)))return deny('memory_result_request_invalid');
+  const resources=url.searchParams.get('resources'),profileCurrent=url.searchParams.get('profileCurrent');
+  if(profileCurrent!==null&&(profileCurrent!=='1'||request.method!=='GET'||url.searchParams.getAll('profileCurrent').length!==1))return deny('memory_result_request_invalid');
   if(resources!==null&&(resources!=='1'||request.method!=='GET'||url.searchParams.getAll('resources').length!==1))return deny('memory_result_request_invalid');
   const current=()=>env.DB===db&&elapsed.elapsed({wall:Date.now(),monotonic:performance.now()})<60000&&settingsKey(env)===configuration;
   try{
@@ -314,10 +316,11 @@ export async function handleMemoryDerivationResult(request:Request,env:WorkerEnv
     const controlBindings=[jobId,actor.userId,JSON.stringify(lineages)];
     const controls=schema.userControlsPresent?await rows(env,controlQuery,controlBindings):[];
     const controlRevisions=Object.fromEntries(lineages.map(lineage=>[lineage,Number(controls.find(row=>row.lineage_id===lineage)?.revision??0)]));
-    const statements=[derivationAssertion(env,identity),...nativeDerivationResultStatements(env,read),...(schema.userControlsPresent?[derivationAssertion(env,{condition:`(SELECT json_group_array(json_array(lineage_id,revision)) FROM (${controlQuery}))=?`,bindings:[...controlBindings,JSON.stringify(controls.map(row=>[row.lineage_id,row.revision]))]})]:[])];
+    const bound=profileCurrent==='1'?nativeDerivationResultBinding(env,read):null;if(bound&&(bound.purpose!=='profile'||!bound.enrollment||!schema.completionPresent))return deny('memory_profile_unavailable',409);
+    const statements=[...(bound?[derivationAssertion(env,currentProfileHeadGuard(actor.userId,bound.enrollment.enrollment_id,jobId))]:[]),derivationAssertion(env,identity),...nativeDerivationResultStatements(env,read),...(schema.userControlsPresent?[derivationAssertion(env,{condition:`(SELECT json_group_array(json_array(lineage_id,revision)) FROM (${controlQuery}))=?`,bindings:[...controlBindings,JSON.stringify(controls.map(row=>[row.lineage_id,row.revision]))]})]:[])];
     const checked=structuredClone(await db.batch<Record<string,unknown>>(statements));
     if(!current()||!derivationResults(checked,statements.length)||!checked.every(row=>derivationVerified(row)||row.results.length===1&&row.results[0]?.context_source_asserted===1))return deny('memory_result_unavailable',503);
-    nativeDerivationResultInputs(env,read);return reply({...input,controlRevisions,...(resources==='1'?{resourceEvidence:nativeDerivationResultResources(env,read)}:{})},200,()=>{nativeDerivationResultInputs(env,read);return current();});
+    nativeDerivationResultInputs(env,read);return reply({...input,controlRevisions,...(profileCurrent==='1'?{profileCurrent:true}:{}),...(resources==='1'?{resourceEvidence:nativeDerivationResultResources(env,read)}:{})},200,()=>{nativeDerivationResultInputs(env,read);return current();});
   }catch{return request.method==='GET'?deny('memory_result_unavailable',503):failure();}
 }
 

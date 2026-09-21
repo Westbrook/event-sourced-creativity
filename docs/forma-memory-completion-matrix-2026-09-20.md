@@ -444,3 +444,11 @@ accounting,224 client/documentation,102 migration and10 browser checks pass.
 This closes that standalone resource consumer, not automatic unified-profile
 publication, wider autocomplete integration, direct private Output/live-preview
 or integrated qualification. These remaining native tasks stay assigned here.
+
+[Unified current-profile review](forma-memory-unified-profile-review-2026-09-21.md)
+now exposes the qualified nightly document projections through one actor-private
+metadata catalog and explicitly verified current-source inspection. Retired heads
+never fall back; existing corrections retain precedence.38 integrated native and
+232 client checks pass, including actual D1 catalog/current inspection at6/30
+calls. This closes unified discovery/review, not automatic cross-scope publication,
+aggregate capacity, direct private Output or the remaining integrated journeys.

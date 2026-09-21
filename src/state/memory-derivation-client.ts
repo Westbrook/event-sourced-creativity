@@ -298,6 +298,12 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
     async inspectResultResources(value:DerivationResultEntry,signal?:AbortSignal){
       const expected=resultEntry(value);return request('GET','?jobId='+expected.jobId+'&resources=1',undefined,raw=>resultView(raw,expected,true,true),signal,'/api/memory/derivation/result');
     },
+    async inspectCurrentProfileResult(value:DerivationResultEntry,signal?:AbortSignal){
+      const expected=resultEntry(value);check(expected.purpose==='profile');return request('GET','?jobId='+expected.jobId+'&profileCurrent=1',undefined,raw=>{
+        check(raw&&typeof raw==='object'&&Object.hasOwn(raw,'profileCurrent')&&(raw as Record<string,unknown>).profileCurrent===true);
+        const {profileCurrent:_current,...body}=raw as Record<string,unknown>;return resultView(body,expected);
+      },signal,'/api/memory/derivation/result');
+    },
     async inspectResult(value:DerivationResultEntry,signal?:AbortSignal){
       const expected=resultEntry(value);return request('GET','?jobId='+expected.jobId,undefined,raw=>resultView(raw,expected),signal,'/api/memory/derivation/result');
     },

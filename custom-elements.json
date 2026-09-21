@@ -14747,6 +14747,47 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/memory-profile-review.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "MemoryProfileReview",
+          "tagName": "forma-memory-profile-review",
+          "customElement": true,
+          "summary": "Memory profile review application interface.",
+          "description": "Actor-private profile review. The catalog is metadata only; each selected\ncurrent profile requires fresh original-source and correction checks.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-memory-profile-review",
+          "declaration": {
+            "name": "MemoryProfileReview",
+            "module": "src/components/memory-profile-review.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "MemoryProfileReview",
+          "declaration": {
+            "name": "MemoryProfileReview",
+            "module": "src/components/memory-profile-review.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/memory-recall-boundary.ts",
       "declarations": [
         {

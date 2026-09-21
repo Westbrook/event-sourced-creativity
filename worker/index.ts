@@ -1,3 +1,4 @@
+import { handleMemoryProfileCatalog } from './memory-profile-catalog.ts';
 import { handleMemoryResourceAssistant,reconcileResourceAssistantUsage } from './memory-resource-assistant.ts';
 import { handleMemoryResourceContext } from './memory-resource-context.ts';
 import { handleMemoryResourceOpening } from './memory-resource-openings.ts';
@@ -192,6 +193,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
     if(url.pathname==="/api/internal/memory-benchmark"||url.pathname==="/api/internal/memory-benchmark/approval"||url.pathname==="/api/internal/memory-benchmark/reconcile"||url.pathname==="/api/internal/memory-benchmark/release-undispatched")return handleNativeMemoryBenchmark(request,env);
+    if(url.pathname==="/api/memory/profile-catalog")return handleMemoryProfileCatalog(request,env);
     if(url.pathname==="/api/memory/resource-assistant")return handleMemoryResourceAssistant(request,env);
     if(url.pathname==="/api/memory/resource-assistant-context")return handleMemoryResourceContext(request,env);
     if(url.pathname==="/api/memory/resource-enrollments")return handleMemoryResourceEnrollments(request,env);

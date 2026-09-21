@@ -669,3 +669,25 @@ test('organization facet qualifies colliding document and source identifiers by 
  const facets=scopedMemoryProfileFacets({projectId:'project',documentId:'document',custody:{kind:'organization',organizationId:'org',projectAccessId:'access',ownerUserId:'owner'}},sections,{boundary:'organization',organizationAvailable:true});
  assert.equal(facets.length,1);assert.equal(facets[0].projectCount,2);assert.equal(facets[0].documentCount,2);assert.equal(facets[0].originalCount,3);
 });
+
+const {createMemoryProfileClient}=await import('../src/state/memory-profile-catalog-client.ts');
+function profileCatalogFixture(){
+ const f=briefFixture(),entry={enrollment_id:f.expected.enrollmentId,enrollment_revision:2,owner_user_id:'owner',organization_id:null,project_access_id:null,project_id:'project',document_id:'document',job_id:f.entry.jobId,through_sequence:20,state:'active',published_at:new Date().toISOString(),expires_at:f.entry.expiresAt,scope_key:f.entry.scopeKey};
+ const {scope_key:_scope,...metadata}=entry,page={version:'memory-profile-catalog-v1',controlMetadataOnly:true,sourceContentRead:false,automaticallyDerived:true,completeProfile:false,pageRevision:hash(derivationCanonical([metadata])),validUntil:new Date(Date.now()+25000).toISOString(),entries:[entry],nextAfter:null};
+ f.result.profileCurrent=true;f.result.candidate.purpose='profile';f.result.candidate.items[0].category='preference-hypothesis';
+ const transport=async(url,init)=>{f.calls.push({url,init});return Response.json(String(url).includes('profile-catalog')?page:String(url).includes('/controls')?f.controls:f.result);};return {...f,page,profileEntry:entry,transport};
+}
+for(const fault of ['none','hash','duplicate','order','extra','cursor','expired','scope','claim','limit'])test('profile catalog client bounds current metadata '+fault,async()=>{
+ const f=profileCatalogFixture();if(fault==='hash')f.page.pageRevision='0'.repeat(64);if(fault==='duplicate')f.page.entries.push(f.profileEntry);if(fault==='order')f.page.entries.push({...f.profileEntry,enrollment_id:'a'});if(fault==='extra')f.profileEntry.prose='private';if(fault==='cursor')f.page.nextAfter='other';if(fault==='expired')f.page.validUntil=new Date(Date.now()-1).toISOString();if(fault==='scope')f.profileEntry.organization_id='org';if(fault==='claim')f.page.completeProfile=true;if(fault==='limit')f.page.entries=Array.from({length:17},()=>f.profileEntry);
+ const request=createMemoryProfileClient(f.transport).page(f.controller.signal);if(fault==='none'){assert.equal((await request).entries.length,1);assert.equal(f.calls.length,1);}else await assert.rejects(request);
+});
+for(const fault of ['none','superseded','wrong-purpose','wrong-scope','control-race','pagination','suppressed','corrected','expired-correction','mutated-entry'])test('profile inspection preserves controls and exact source '+fault,async()=>{
+ const f=profileCatalogFixture();if(fault==='superseded')delete f.result.profileCurrent;if(fault==='wrong-purpose')f.result.candidate.purpose='rolling-summary';if(fault==='wrong-scope')f.result.candidate.scopeKey='other';if(fault==='control-race')f.result.controlRevisions[f.lineage]=1;if(fault==='pagination')f.controls.next='a'.repeat(64);
+ if(['suppressed','corrected','expired-correction'].includes(fault)){f.controls.controls=[{controlId:'a'.repeat(64),claimKey:f.item.claimKey,lineageId:f.lineage,revision:1,action:fault==='suppressed'?'suppressed':'corrected',correctionText:fault==='suppressed'?null:'My explicit correction',expiresAt:new Date(Date.now()+(fault==='expired-correction'?-1:10000)).toISOString(),purpose:'profile',textAvailable:fault!=='suppressed'}];f.result.controlRevisions[f.lineage]=1;}
+ const request=createMemoryProfileClient(f.transport).inspect(f.profileEntry,f.controller.signal);if(fault==='mutated-entry')f.profileEntry.job_id='f'.repeat(64);
+ if(['none','suppressed','corrected','mutated-entry'].includes(fault)){const result=await request;assert.equal(result.items.length,['suppressed','corrected'].includes(fault)?0:1);assert.equal(result.corrections.length,fault==='corrected'?1:0);assert.equal(result.entry.job_id,f.entry.jobId);}else await assert.rejects(request);
+});
+for(const fault of ['abort','elapsed'])test('profile catalog hashing cannot extend lifetime '+fault,async()=>{
+ const f=profileCatalogFixture(),digest=crypto.subtle.digest,now=Date.now;crypto.subtle.digest=async(...args)=>{const value=await digest.apply(crypto.subtle,args);if(fault==='abort')f.controller.abort();else Date.now=()=>now()+31000;return value;};
+ try{await assert.rejects(createMemoryProfileClient(f.transport).page(f.controller.signal));}finally{crypto.subtle.digest=digest;Date.now=now;}
+});

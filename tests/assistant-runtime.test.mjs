@@ -20359,3 +20359,62 @@ test('native resource semantic assistant: ambiguous inner JSON remains billable 
  const state=await nativeResourceSemanticFixture(t,{respond:payload=>specialistRawResponse(payload,{output:[{type:'message',id:'ambiguous-resource',role:'assistant',status:'completed',content:[{type:'output_text',text:'{"reply":"hidden","reply":"AMBIGUOUS_PRIVATE_REPLY","actions":[]}'}]}]})}),quote=await state.resourceAssistantQuote();
  const response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash});assert.equal(response.status,409);assert.equal(state.resourceProviderRequests.length,1);assert.equal(consequentialReceipt(state,quote.executionId).steps[0].status,'settled');assert.equal(consequentialReceipt(state,quote.executionId).execution.result_ref,null);
 });
+
+for(const shared of [false,true])test('native profile catalog: current nightly projection and original-backed client review shared='+shared,{timeout:180000},async t=>{
+ const state=await nativeDerivationRollingFixture(t,{windows:2,shared,termOverrides:{purpose:'profile'},profileAllOriginals:true}),catalog=await import('../worker/memory-profile-catalog.ts'),api=await import('../worker/memory-derivation-api.ts');
+ const jobs=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence),calls=[];
+ const transport=(path,init)=>{calls.push(path);return (path.startsWith('/api/memory/profile-catalog')?catalog.handleMemoryProfileCatalog:path.startsWith('/api/memory/derivation/controls')?api.handleMemoryDerivationUserControls:api.handleMemoryDerivationResult)(new Request(state.derivationOrigin+path,{...init,headers:{...init?.headers,...state.owner}}),state.env);};
+ const {createMemoryProfileClient}=await import('../src/state/memory-profile-catalog-client.ts'),client=createMemoryProfileClient(transport),signal=new AbortController().signal;
+ const page=await client.page(signal);assert.equal(page.entries.length,1);assert.equal(page.entries[0].job_id,jobs[0].job_id);assert.equal(page.nextAfter,null);assert.doesNotMatch(JSON.stringify(page),/Synthetic project-wide habit|Original human intent/);assert.equal(calls.length,1);
+ const review=await client.inspect(page.entries[0],signal);assert.equal(review.items.length,1);assert.equal(review.items[0].text,'Synthetic project-wide habit');assert.equal(review.history.windowCount,2);assert.ok(review.items[0].supports.length>=2);assert.equal(review.corrections.length,0);assert.ok(calls.at(-1).includes('profileCurrent=1'));
+ const old=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+jobs[1].job_id+'&profileCurrent=1',{headers:state.owner}),state.env);assert.notEqual(old.status,200);
+ const historic=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+jobs[1].job_id,{headers:state.owner}),state.env);assert.equal(historic.status,200);
+});
+for(const fault of ['withdrawn','body-erased','expired'])test('native profile catalog: retired current head never resurrects older interpretation '+fault,{timeout:180000},async t=>{
+ const state=await nativeDerivationRollingFixture(t,{windows:2,termOverrides:{purpose:'profile'}}),catalog=await import('../worker/memory-profile-catalog.ts'),api=await import('../worker/memory-derivation-api.ts'),jobs=state.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence);
+ if(fault==='body-erased'){const manifest=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(jobs[0].job_id).manifest_json);state.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(manifest.originalBacking.at(-1).contentRef);}
+ if(fault==='withdrawn')await (await import('../worker/memory-derivation-results.ts')).withdrawNativeDerivationResult(state.env,state.current().actor_user_id,jobs[0].job_id);
+ if(fault==='expired'){const clock=consequentialDbClock(state),now=Date.now,until=state.sqlite.prepare('SELECT expires_at FROM memory_derivation_results WHERE job_id=?').get(jobs[0].job_id).expires_at;clock.set(until);Date.now=()=>Date.parse(until);t.after(()=>{Date.now=now;clock.close();});}
+ const response=await catalog.handleMemoryProfileCatalog(new Request(state.derivationOrigin+'/api/memory/profile-catalog',{headers:state.owner}),state.env),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.ok(body.entries.every(entry=>entry.job_id===jobs[0].job_id));assert.ok(body.entries.length<=1);if(fault!=='expired')assert.equal(body.entries.length,1);
+ for(const job of jobs){const response=await api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+job.job_id+'&profileCurrent=1',{headers:state.owner}),state.env);assert.notEqual(response.status,200);}
+});
+test('native profile catalog: metadata query and principal/configuration replay are fail closed',{timeout:120000},async t=>{
+ const state=await nativeDerivationRollingFixture(t,{windows:1,termOverrides:{purpose:'profile'}}),catalog=await import('../worker/memory-profile-catalog.ts');
+ const get=(extra='',init={})=>catalog.handleMemoryProfileCatalog(new Request(state.derivationOrigin+'/api/memory/profile-catalog'+extra,{headers:state.owner,...init}),state.env);
+ for(const extra of ['?unexpected=1','?after=x&after=y','?after=%00'])assert.equal((await get(extra)).status,400);
+ assert.equal((await get('',{method:'POST'})).status,405);assert.equal((await get('',{headers:{...state.owner,'sec-fetch-site':'cross-site'}})).status,403);
+ const db=state.env.DB,batch=db.batch;let raced=false;db.batch=async function(statements){if(!raced){raced=true;state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';}return batch.call(this,statements);};t.after(()=>{db.batch=batch;});assert.equal((await get()).status,503);assert.ok(raced);assert.equal((await get()).status,403);
+});
+
+for(const fault of ['withdrawal','authority','configuration','elapsed','serialization'])test('native profile catalog: final replay and serialization reject '+fault,{timeout:120000},async t=>{
+ const state=await nativeDerivationRollingFixture(t,{windows:1,termOverrides:{purpose:'profile'}}),catalog=await import('../worker/memory-profile-catalog.ts'),now=Date.now,json=Response.json;
+ t.after(()=>{Date.now=now;Response.json=json;});let hit=false;
+ if(fault==='serialization')Response.json=function(body,init){const r=json.call(this,body,init);if(body.entries){hit=true;Date.now=()=>now()+31000;}return r;};
+ else{const restore=interceptConsequentialDb(state,'batch',/json_group_array\(json_array\(enrollment_id/ ,()=>{hit=true;
+  if(fault==='withdrawal')state.sqlite.exec("UPDATE memory_derivation_grants SET revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')");
+  if(fault==='authority')state.sqlite.prepare("UPDATE users SET role='viewer',updated_at='changed' WHERE user_id=?").run(state.current().actor_user_id);
+  if(fault==='configuration')state.env.FORMA_MEMORY_DERIVATION_ENABLED='false';
+  if(fault==='elapsed')Date.now=()=>now()+31000;
+ });t.after(restore);}
+ const response=await catalog.handleMemoryProfileCatalog(new Request(state.derivationOrigin+'/api/memory/profile-catalog',{headers:state.owner}),state.env);assert.ok(hit);assert.equal(response.status,503);assert.doesNotMatch(await response.text(),/Synthetic|enrollment_id|Original human/);
+});
+for(const shared of [false,true])test('native profile catalog: actual D1 catalog and current-head read stay bounded shared='+shared,{timeout:180000},async t=>{
+ const state=await nativeDerivationRollingFixture(t,{windows:3,shared,termOverrides:{purpose:'profile'},profileAllOriginals:true});
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['Profile'],script:"export default {fetch(){return new Response('isolated',{status:404});}};",outboundService(){outbound++;throw Error('No network');}});
+ t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('Profile');await install(db,exportSynthetic(state.sqlite));let calls=0;const originals=new WeakMap();
+ const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{calls++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+ state.env.DB={prepare:sql=>wrap(db.prepare(sql)),batch:inputs=>{calls++;return db.batch(inputs.map(s=>originals.get(s)??s));}};
+ const catalog=await import('../worker/memory-profile-catalog.ts'),api=await import('../worker/memory-derivation-api.ts'),request=path=>new Request(state.derivationOrigin+path,{headers:state.owner});
+ const response=await catalog.handleMemoryProfileCatalog(request('/api/memory/profile-catalog'),state.env),page=await response.json();assert.equal(response.status,200,JSON.stringify(page));assert.equal(page.entries.length,1);const catalogCalls=calls;calls=0;
+ const read=await api.handleMemoryDerivationResult(request('/api/memory/derivation/result?jobId='+page.entries[0].job_id+'&profileCurrent=1'),state.env),body=await read.json();assert.equal(read.status,200,JSON.stringify(body));assert.equal(body.profileCurrent,true);t.diagnostic(JSON.stringify({catalogCalls,currentHeadCalls:calls}));assert.ok(catalogCalls<50&&calls<50);
+});
+
+test('native profile catalog: newly derived profile cannot override an original user correction',{timeout:180000},async t=>{
+ let saved=[];const store=await import('../worker/memory-derivation-results.ts'),controls=await import('../worker/memory-derivation-user-controls.ts');
+ const state=await nativeDerivationRollingFixture(t,{windows:2,termOverrides:{purpose:'profile'},profileAllOriginals:true,beforeWindow:async(state,index)=>{
+  if(index!==1)return;const job=state.queue().jobs[0],read=await store.readNativeDerivationResult(state.env,state.current().actor_user_id,job.job_id),item=store.nativeDerivationResultInputs(state.env,read).candidate.items[0];saved=await controls.controlNativeDerivationResult(state.env,read,item.claimKey,'corrected','This is a one-off choice, not a general preference.',Object.fromEntries(item.lineageIds.map(id=>[id,0])));
+ }}),catalog=await import('../worker/memory-profile-catalog.ts'),api=await import('../worker/memory-derivation-api.ts'),{createMemoryProfileClient}=await import('../src/state/memory-profile-catalog-client.ts');
+ const client=createMemoryProfileClient((path,init)=>(path.startsWith('/api/memory/profile-catalog')?catalog.handleMemoryProfileCatalog:path.startsWith('/api/memory/derivation/controls')?api.handleMemoryDerivationUserControls:api.handleMemoryDerivationResult)(new Request(state.derivationOrigin+path,{...init,headers:{...init.headers,...state.owner}}),state.env)),signal=new AbortController().signal;
+ const page=await client.page(signal);assert.equal(page.entries.length,1);const review=await client.inspect(page.entries[0],signal);assert.ok(review.items.every(item=>item.lineageIds.every(id=>!saved.some(control=>control.lineageId===id))));assert.equal(review.corrections.length,saved.length);assert.ok(review.corrections.every(c=>c.correctionText==='This is a one-off choice, not a general preference.'));
+});

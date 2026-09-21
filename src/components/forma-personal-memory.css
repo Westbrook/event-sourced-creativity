@@ -311,3 +311,5 @@ forma-personal-memory :is(code, time, bdi) {
     color: CanvasText;
   }
 }
+
+.memory-profile-review{min-width:0;overflow-wrap:anywhere;border-block-start:1px solid var(--border-color,#d9d7d0);padding-block:1rem}.memory-profile-review article{padding-block:.75rem;border-block-end:1px solid var(--border-color,#d9d7d0)}.memory-profile-review p{font-size:.875rem;line-height:1.5}.memory-profile-review button{max-width:100%;white-space:normal}.memory-profile-review blockquote{margin-inline:1rem;white-space:pre-wrap;overflow-wrap:anywhere}.memory-profile-text{white-space:pre-wrap}

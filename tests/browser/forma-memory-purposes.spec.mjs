@@ -182,9 +182,9 @@ for(const locale of ['en','ar'])test.describe('Memory purpose locale '+locale,()
     await context.route(origin+'/memory-privacy-peer-fixture',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Isolated privacy peer</title>'}));
     const peer=await context.newPage();await peer.goto(origin+'/memory-privacy-peer-fixture');await page.bringToFront();
     await peer.evaluate(()=>{window.memoryPeer=new BroadcastChannel('forma-memory-privacy-v1');window.memoryPeer.postMessage({version:1,operation:'12345678-1234-1234-1234-123456789abc',phase:'begin'});});
-    await expect(panel).not.toContainText('Synthetic private proposal');await expect(panel.locator('[aria-busy="true"]')).toBeVisible();
+    await expect(panel).not.toContainText('Synthetic private proposal');await expect(panel.locator(':scope > p[role="status"]')).toBeVisible();await expect(panel.locator('.personal-memory-card')).toBeHidden();
     await peer.evaluate(()=>window.memoryPeer.postMessage({version:1,operation:'12345678-1234-1234-1234-123456789abc',phase:'end'}));
-    await expect(panel.locator('[aria-busy="true"]')).toHaveCount(0);
+    await expect(panel.locator(':scope > p[role="status"]')).toBeHidden();await expect(panel.locator('.personal-memory-card')).toBeVisible();
     await expect(panel).not.toContainText('Synthetic private proposal');await peer.close();
     expect(calls.filter(call=>call.method!=='GET')).toHaveLength(1);expect(errors).toEqual([]);
   }
@@ -225,6 +225,7 @@ for(const purpose of ['rolling-summary','profile'])for(const behavioral of [fals
       expect(request.method()).toBe('GET');
       expect(request.headers()['x-forma-memory-consumer']).toBe('document-brief-v1');
       const validUntil=new Date(Date.now()+45000).toISOString();
+      if(url.pathname==='/api/memory/recall-boundary')return route.fulfill({json:{version:'memory-scope-recall-v1',enrollmentId:parent,enrollmentRevision:1,boundary:'partition',revision:'11111111-1111-4111-8111-111111111111',validUntil:new Date(Date.now()+25000).toISOString()}});
       if(url.pathname==='/api/memory/settings')return route.fulfill({json:base});
       if(url.pathname.endsWith('/derivation/settings'))return route.fulfill({json:settings});
       if(url.pathname.endsWith('/results')){
@@ -258,7 +259,7 @@ for(const purpose of ['rolling-summary','profile'])for(const behavioral of [fals
             semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:'preference-hypothesis',text:'Private '+source.zoom+' profile context',
               supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[],claimKey:'derived:'+id,lineageIds:[lineage],sourceBindings:[{sourceId:'original-'+source.zoom,revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'support-cited'}]}}}});
       }
-      throw Error('Undeclared automatic Memory route');
+      throw Error('Undeclared automatic Memory route '+url.pathname+url.search);
     });
     await page.goto(path);const brief=page.locator('[data-memory-document-brief]');
     await expect(brief).toBeVisible();await expect(brief).toContainText('Synthetic private brief <script>not code</script>.');
@@ -354,5 +355,29 @@ for(const zoom of ['project','project-tree','partition'])for(const locale of ['e
   await facets.getByText(message(locale,'briefEvidence'),{exact:true}).click();await expect(facets.getByText('Original',{exact:true})).toHaveCount(3);await expect(facets.locator('script')).toHaveCount(0);
   await facets.scrollIntoViewIfNeeded();expect(await brief.evaluate(element=>element.scrollWidth<=element.clientWidth+1)).toBe(true);await page.screenshot({path:'.wrangler/memory-scope-profile-'+zoom+'-'+locale+'.png'});
   await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(brief).toHaveCount(0);corrected=true;await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await expect(brief).toContainText('Only for this document.');await expect(facets).toHaveCount(0);expect(writes).toEqual([]);expect(errors).toEqual([]);
+ });
+});
+
+for(const locale of ['en','ar'])test.describe('Unified current profile '+locale,()=>{
+ test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
+ test('actor-private current head, literal evidence and privacy reset',async({page,context,baseURL},info)=>{
+  expect(syntheticNetworkEnabled(baseURL)).toBe(true);const {memoryProfileMessages}=await import('../../src/components/design-system/locales/memory-profile-messages.ts'),c=memoryProfileMessages[locale],calls=[],errors=[];page.on('pageerror',e=>errors.push(e.message));let retired=false;
+  const now=new Date().toISOString(),expiresAt=new Date(Date.now()+60000).toISOString(),jobId='1'.repeat(64),lineage='2'.repeat(64),scopeKey='synthetic-profile-scope';
+  const metadata={enrollment_id:'a'.repeat(64),enrollment_revision:1,owner_user_id:'e6-network-synthetic-principal',organization_id:null,project_access_id:null,project_id:'project-atmosphere',document_id:'doc-atmosphere',job_id:jobId,through_sequence:24,state:'active',published_at:now,expires_at:expiresAt};
+  await context.route('**/api/memory/**',async route=>{
+   const request=route.request(),url=new URL(request.url());calls.push(url.pathname);expect(request.method()).toBe('GET');const validUntil=new Date(Date.now()+25000).toISOString();
+   if(url.pathname==='/api/memory/profile-catalog'){const row={...metadata,state:retired?'withdrawn':'active'};return route.fulfill({json:{version:'memory-profile-catalog-v1',controlMetadataOnly:true,sourceContentRead:false,automaticallyDerived:true,completeProfile:false,pageRevision:createHash('sha256').update(derivationCanonical([row])).digest('hex'),validUntil,entries:[{...row,scope_key:scopeKey}],nextAfter:null}});}
+   if(url.pathname==='/api/memory/derivation/controls')return route.fulfill({json:{version:'memory-derivation-control-v1',available:true,controls:[],next:null,scope:{projectId:metadata.project_id,documentId:metadata.document_id,custody:{kind:'personal'}},enrollmentId:metadata.enrollment_id,enrollmentRevision:1,validUntil}});
+   if(url.pathname==='/api/memory/derivation/result'){
+    expect(url.searchParams.get('profileCurrent')).toBe('1');expect(url.searchParams.get('jobId')).toBe(jobId);
+    return route.fulfill({json:{version:'memory-derivation-control-v1',profileCurrent:true,jobId,expiresAt,controlRevisions:{[lineage]:0},candidate:{version:'memory-derivation-candidates-v1',purpose:'profile',scopeKey,manifestId:jobId,manifestRevision:1,validUntil,semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:'preference-hypothesis',text:'PRIVATE_PROFILE <script>literal</script>',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[],claimKey:'claim',lineageIds:[lineage],sourceBindings:[{sourceId:'original',revision:1,contentHash:'4'.repeat(64)}],validUntil,citationStatus:'support-cited'}]}}});
+   }
+   return route.fulfill({status:503,json:{error:'synthetic_unavailable'}});
+  });
+  await page.goto(path);await expect(page.locator('forma-workspace')).toBeVisible();const owner=page.locator('.application-creative > forma-creative-assistant');await owner.locator('button.forma-assistant-launcher').click();const memory=owner.locator('[data-assistant-memory]');await memory.locator(':scope > summary').click();const profile=memory.locator('forma-memory-profile-review');await expect(profile).toBeVisible();expect(calls).not.toContain('/api/memory/profile-catalog');
+  await profile.getByRole('button',{name:c.refresh,exact:true}).click();await expect(profile.getByRole('button',{name:c.inspect,exact:true})).toBeEnabled();expect(calls).not.toContain('/api/memory/derivation/result');
+  await profile.getByRole('button',{name:c.inspect,exact:true}).click();await expect(profile).toContainText('PRIVATE_PROFILE <script>literal</script>');await expect(profile.locator('script')).toHaveCount(0);await profile.locator('details > summary').click();await expect(profile.locator('blockquote')).toHaveText('Original');await profile.scrollIntoViewIfNeeded();expect(await profile.evaluate(el=>el.scrollWidth<=el.clientWidth+1)).toBe(true);await captureViewport(page,info,'unified-profile-'+locale,{assertStable:false});
+  const profileCalls=()=>calls.filter(path=>['/api/memory/profile-catalog','/api/memory/derivation/controls','/api/memory/derivation/result'].includes(path)).length;const before=profileCalls();await page.evaluate(()=>window.dispatchEvent(new Event('blur')));await expect(profile).not.toContainText('PRIVATE_PROFILE');await page.evaluate(()=>window.dispatchEvent(new Event('focus')));expect(profileCalls()).toBe(before);await expect(profile).not.toContainText('PRIVATE_PROFILE');
+  retired=true;await profile.getByRole('button',{name:c.refresh,exact:true}).click();await expect(profile.getByRole('button',{name:c.inspect,exact:true})).toBeDisabled();await expect(profile).toContainText(c.retired);expect(errors).toEqual([]);
  });
 });

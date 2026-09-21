@@ -272,3 +272,9 @@ The local50-call target is met for this consumer; that is not hosted capacity,
 model/pricing/retention qualification or schedule registration. No real provider
 calls, deployment or enrollment occurred for these slices. The native completion
 matrix remains separate from these operational gates.
+
+The [unified current-profile catalog](forma-memory-unified-profile-review-2026-09-21.md)
+is implemented natively with existing tables and source authority. No external
+service is needed for its explicit review UI. Automatic cross-scope publication,
+remaining native consumers and qualification stay on the implementation matrix;
+this catalog is not a substitute for those tasks or hosted schedule qualification.

@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1658tge.44": "Memory profile review application interface.",
+  "system.auto.13q2pxg.143": "Actor-private profile review. The catalog is metadata only; each selected current profile requires fresh original-source and correction checks.",
   "system.auto.1qiljrp.57": "Memory resource assistant controls application interface.",
   "system.auto.1aoksce.154": "Read-only native resource consumer. Selection, quotation and purchase are separate actions. Private drafts/answers do not survive ownership or visibility.",
   "system.auto.49pzob.48": "Memory resource inventory application interface.",

@@ -1,3 +1,4 @@
+import './memory-profile-review.ts';
 import './memory-resource-controls.ts';
 import { memoryDerivationSourceWindow } from "../model/memory-derivation-policy.ts";
 import './memory-recall-boundary.ts';
@@ -1501,6 +1502,7 @@ export class FormaPersonalMemory extends FormaElement {
           ${row === selected && owner.sourceCurrent() ? html`<forma-memory-recall-boundary .enrollment=${row} .currentCheck=${owner.sourceCurrent}></forma-memory-recall-boundary>${this.#renderProfile(row)}${this.#renderPurposes(row)}` : nothing}
         </article>`)}</div>
       ` : nothing}
+      <forma-memory-profile-review></forma-memory-profile-review>
       <forma-memory-resource-inventory></forma-memory-resource-inventory>
     </section>`;
   }

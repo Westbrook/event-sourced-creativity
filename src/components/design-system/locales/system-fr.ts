@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1658tge.44": "Interface de revue du profil Mémoire.",
+  "system.auto.13q2pxg.143": "Revue du profil privée pour la personne. Le catalogue ne contient que des métadonnées ; chaque profil actuel sélectionné exige une nouvelle vérification des sources originales et des corrections.",
   "system.auto.1qiljrp.57": "Interface de commande de l’assistant de mémoire des ressources.",
   "system.auto.1aoksce.154": "Consommateur de ressources natif en lecture seule. La sélection, le devis et l’achat sont distincts. Les brouillons et réponses privés disparaissent lors des changements de propriété ou de visibilité.",
   "system.auto.49pzob.48": "Interface de l’inventaire de mémoire des ressources.",
