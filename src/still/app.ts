@@ -1,3 +1,4 @@
+import { stillPageTitle } from './page-title.ts';
 import { isIdeaPage, pageToolbarCandidates, withDocumentReturn, DOCUMENT_RETURN_REASON } from './local-policy.ts';
 import {matchingIdeaAssessment,cachedIdeaAssessment,type IdeaAssessment} from './idea-assessment.ts';
 import type { WorkflowAction, WorkflowToolbar } from './workflow-toolbar.ts';
@@ -312,6 +313,7 @@ export class StillApp extends LitElement {
   createRenderRoot() { return this; }
   connectedCallback() {
     super.connectedCallback(); this.disposed = false;
+    this.updatePageTitle();
     this.updateHeaderScroll();
     window.addEventListener('scroll', this.updateHeaderScroll, { passive: true });
     this.attention=new StillAttentionObserver(this,snapshot=>{
@@ -335,7 +337,12 @@ export class StillApp extends LitElement {
   private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange;}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
   private changed() { this.requestUpdate(); }
+  private updatePageTitle() {
+    const title=stillPageTitle(location.href,this.client.session?.policy.accepted?this.client.projection:undefined,this.client.jobs,this.routeError);
+    if(document.title!==title)document.title=title;
+  }
   protected updated() {
+    this.updatePageTitle();
     this.reconcileGenerationNotices();
     this.reconcileGeneration();
     this.hydrateVisibleWriting();
@@ -463,6 +470,7 @@ export class StillApp extends LitElement {
       history[replace?'replaceState':'pushState']({...history.state,stillIndex:this.historyIndex},'',url);
     }
     this.activeAddress=url;
+    this.updatePageTitle();
   }
   private resetStep(){this.ideaRequestPending=false;this.ideaAssessment=undefined;this.ideaAssessmentTrace=undefined;this.listDisplay.leave();this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
