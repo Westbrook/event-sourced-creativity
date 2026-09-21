@@ -222,3 +222,14 @@ keeps every remaining native workstream distinct from external/operational gates
 ## Additional exact migration review: consumer dependency retirement
 
 Before rollout, qualify the [0063 consumer-parent upgrade](forma-memory-semantic-followup-2026-09-20.md#migration-and-rollout-review). It replaces a hash-pinned trigger to permit exact retired-row no-ops during cascades; it is not purely additive. Local qualification does not satisfy owner review or hosted atomic-executor qualification, and the earlier additive-only rollout authorization is not expanded.
+
+## Independent resource rollout dependency — 2026-09-21
+
+[Native Library/Canvas integration](forma-memory-resource-integration-2026-09-21.md)
+is implemented locally, including the native scheduled callback and source-free
+privacy controls. The production owner's atomic migration review must include
+additive0067 and its source/settings retirement triggers before any resource
+consent is enabled. There is no automatic enrollment/backfill. Hosted registration,
+no-visitor execution, combined subsystem capacity, failure recovery and privacy
+qualification remain external/operational gates; local D1/browser checks do not
+qualify the host or authorize real user enrollment.

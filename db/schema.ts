@@ -2791,3 +2791,38 @@ export const organizationProjectNesting = sqliteTable('organization_project_nest
  revision:text('revision').notNull(),updatedAt:text('updated_at').notNull(),
 },table=>[primaryKey({columns:[table.ownerUserId,table.projectId]}),index('idx_organization_project_nesting_org').on(table.organizationId),
  check('organization_nesting_cross_owner',sql.raw('owner_user_id<>parent_owner_user_id'))]);
+
+/** Independent Library/Canvas consent. No document enrollment aliases/backfill. */
+export const memoryResourceEnrollments=sqliteTable('memory_resource_enrollments',{
+ enrollmentId:text('enrollment_id').primaryKey().notNull(),actorUserId:text('actor_user_id').notNull().references(()=>users.userId,{onDelete:'cascade'}),
+ ownerUserId:text('owner_user_id').notNull().references(()=>users.userId,{onDelete:'cascade'}),organizationId:text('organization_id'),projectAccessId:text('project_access_id'),
+ projectId:text('project_id').notNull(),resourceKind:text('resource_kind').notNull(),resourceId:text('resource_id').notNull(),resourceKey:text('resource_key').notNull(),
+ permissionEpoch:text('permission_epoch').notNull(),policyVersion:text('policy_version').notNull(),revision:integer('revision').notNull(),
+ learnEnabled:integer('learn_enabled').notNull(),recallEnabled:integer('recall_enabled').notNull(),backgroundEnabled:integer('background_enabled').notNull(),
+ retentionDays:integer('retention_days').notNull(),timeZone:text('time_zone').notNull(),enrolledAt:text('enrolled_at').notNull(),expiresAt:text('expires_at').notNull(),
+ sourceAfterSequence:integer('source_after_sequence').notNull(),cursorSequence:integer('cursor_sequence').notNull(),nextDueAt:text('next_due_at').notNull(),lastLocalDay:text('last_local_day'),
+},t=>[unique().on(t.actorUserId,t.resourceKey),index('idx_memory_resource_due').on(t.backgroundEnabled,t.nextDueAt,t.enrollmentId),
+ check('memory_resource_identifier',sql.raw('length(enrollment_id)=36 AND length(project_id) BETWEEN 1 AND 240 AND length(resource_id) BETWEEN 1 AND 240 AND length(permission_epoch)=64')),
+ check('memory_resource_kind',sql.raw("resource_kind IN('library','canvas') AND (resource_kind<>'library' OR resource_id=project_id)")),
+ check('memory_resource_policy',sql.raw("policy_version='personal-resource-memory-v1'")),
+ check('memory_resource_revision',sql.raw("typeof(revision)='integer' AND revision>=1")),
+ check('memory_resource_controls',sql.raw('learn_enabled IN(0,1) AND recall_enabled IN(0,1) AND background_enabled IN(0,1) AND background_enabled<=learn_enabled')),
+ check('memory_resource_retention',sql.raw("typeof(retention_days)='integer' AND retention_days BETWEEN 1 AND 30")),
+ check('memory_resource_times',sql.raw("length(enrolled_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',enrolled_at) IS enrolled_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>enrolled_at AND length(next_due_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',next_due_at) IS next_due_at")),
+ check('memory_resource_cursor',sql.raw("typeof(source_after_sequence)='integer' AND source_after_sequence>=0 AND typeof(cursor_sequence)='integer' AND cursor_sequence>=source_after_sequence")),
+ check('memory_resource_custody',sql.raw('(organization_id IS NULL AND project_access_id IS NULL AND owner_user_id=actor_user_id) OR (organization_id IS NOT NULL AND project_access_id IS NOT NULL)')),
+ check('memory_resource_key',sql.raw("resource_key=json_array('memory-resource-v1',owner_user_id,organization_id,project_access_id,resource_kind,project_id,resource_id)")),
+]);
+
+/** Metadata-only actor actions; private source deletion/changes retire them. */
+export const memoryResourceHistory=sqliteTable('memory_resource_history',{
+ enrollmentId:text('enrollment_id').notNull().references(()=>memoryResourceEnrollments.enrollmentId,{onDelete:'cascade'}),
+ eventId:text('event_id').notNull().references(()=>eventPrivatePayloads.privateEventId,{onDelete:'cascade'}),
+ sequence:integer('sequence').notNull(),eventType:text('event_type').notNull(),action:text('action').notNull(),recordedAt:text('recorded_at').notNull(),expiresAt:text('expires_at').notNull(),
+},t=>[primaryKey({columns:[t.enrollmentId,t.eventId]}),unique().on(t.enrollmentId,t.sequence),index('idx_memory_resource_history_expiry').on(t.expiresAt),
+ check('memory_resource_history_sequence',sql.raw("typeof(sequence)='integer' AND sequence>0")),
+ check('memory_resource_history_action',sql.raw("action IN('edit','reuse','remove','restore','commit','inspect')")),check('memory_resource_history_expiry',sql.raw('expires_at>recorded_at'))]);
+/** Source-free negative ancestry survives restoring a previously erased body. */
+export const memoryResourceRetiredSources=sqliteTable('memory_resource_retired_sources',{
+ enrollmentId:text('enrollment_id').notNull().references(()=>memoryResourceEnrollments.enrollmentId,{onDelete:'cascade'}),eventId:text('event_id').notNull(),
+},t=>[primaryKey({columns:[t.enrollmentId,t.eventId]})]);

@@ -357,3 +357,16 @@ metadata-only and independently consented.102 integrated tests include actual
 D1 privacy restoration and47/48-call plain/file requests. Distinct Library/Canvas
 resources, direct private Output, aggregate profile consumers and integrated
 qualification remain required; this does not close those rows.
+
+## Independent Library and Canvas resources
+
+[Resource integration](forma-memory-resource-integration-2026-09-21.md) now supplies
+real owner-qualified identity, separate explicit enrollment, bounded native
+history, nightly-runner integration and actual Library/Canvas controls. Source
+retirement covers erasure before and after first capture. The existing Memory
+panel provides actor-owned forgetting without renewed source access.73 native,
+177 client,83 migration and10 browser checks pass; measured local D1 requests
+remain below50 calls. This closes the distinct-resource identity/enrollment/action-
+history requirement. Semantic resource/profile consumption, direct private Output
+and integrated qualification are not replaced by activity counts and remain
+assigned. Additive0067, scheduling and production rollout are not deployed.

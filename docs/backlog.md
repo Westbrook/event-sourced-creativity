@@ -477,3 +477,14 @@ current license state. All private disclosure proofs replay; authored copies
 survive withdrawal.102 integrated checks pass; actual D1 calls47 plain/48 file.
 No file hydration, provider purchase, migration, rollout or implicit enrollment.
 Other native completion-matrix rows remain assigned.
+
+## MEM-040 — Independent Library/Canvas Memory and privacy controls
+
+Implemented locally: [resource identity, consent, history and consumers](forma-memory-resource-integration-2026-09-21.md).
+Additive0067 has no enrollment/backfill. Native nightly processing, bounded
+metadata history, before/after-capture retirement and source-free forgetting are
+connected to real Library/Canvas and Memory-panel controls.73 native,177 client,
+83 migration and10 browser checks pass; actual D1 requests use8/7 personal and9/8
+shared capture/recall calls. No deployment, schedule registration or real enrollment.
+Semantic aggregate/resource consumers, direct private creative Output and integrated
+qualification stay assigned in the completion matrix.

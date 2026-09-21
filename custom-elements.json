@@ -14787,6 +14787,135 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/memory-resource-controls.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "MemoryResourceControls",
+          "tagName": "forma-memory-resource-controls",
+          "customElement": true,
+          "summary": "Memory resource controls application interface.",
+          "description": "Explicit native-resource controls. A mount, focus or refresh never enrolls,\nlearns, follows linked documents or invokes a model. No private local storage.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "kind",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "kind"
+            },
+            {
+              "kind": "field",
+              "name": "projectId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "projectid"
+            },
+            {
+              "kind": "field",
+              "name": "resourceId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "resourceid"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "kind",
+              "fieldName": "kind",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "projectid",
+              "fieldName": "projectId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "resourceid",
+              "fieldName": "resourceId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        },
+        {
+          "kind": "class",
+          "name": "MemoryResourceInventory",
+          "tagName": "forma-memory-resource-inventory",
+          "customElement": true,
+          "summary": "Memory resource inventory application interface.",
+          "description": "Source-free resource consent inventory. Forgetting never requires renewed source access or enrollment.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-memory-resource-controls",
+          "declaration": {
+            "name": "MemoryResourceControls",
+            "module": "src/components/memory-resource-controls.ts"
+          }
+        },
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-memory-resource-inventory",
+          "declaration": {
+            "name": "MemoryResourceInventory",
+            "module": "src/components/memory-resource-controls.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "MemoryResourceControls",
+          "declaration": {
+            "name": "MemoryResourceControls",
+            "module": "src/components/memory-resource-controls.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "MemoryResourceInventory",
+          "declaration": {
+            "name": "MemoryResourceInventory",
+            "module": "src/components/memory-resource-controls.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/model3d-geometry-editor.ts",
       "declarations": [
         {

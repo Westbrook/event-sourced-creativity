@@ -45,6 +45,9 @@ import { handleArtifactEdit } from "./artifact-api";
 import { handleGeneratedImageEdit } from "./generated-image-api";
 import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist, handleAssistantFieldSuggestion } from "./assistant-api";
 import { handlePlatformAssistant } from "./platform-assistant-api";
+import { handleMemoryResourceSettings,handleMemoryResourceEnrollments } from "./memory-resource-settings.ts";
+import { handleMemoryResourceHistory,runResourceMemoryScheduled,sweepResourceMemory } from './memory-resource-history.ts';
+import { handleMemoryResourceScope } from "./memory-resource-authority.ts";
 import { handleLiveMemory } from "./memory-live-api.ts";
 import { handleMemoryDerivationSettings, handleMemoryDerivationResult, handleMemoryDerivationUserControls, handleMemoryDerivationResults } from "./memory-derivation-api.ts";
 import { maintainNativeDerivationRecovery } from "./memory-derivation-recovery.ts";
@@ -186,6 +189,10 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
     if(url.pathname==="/api/internal/memory-benchmark"||url.pathname==="/api/internal/memory-benchmark/approval"||url.pathname==="/api/internal/memory-benchmark/reconcile"||url.pathname==="/api/internal/memory-benchmark/release-undispatched")return handleNativeMemoryBenchmark(request,env);
+    if(url.pathname==="/api/memory/resource-enrollments")return handleMemoryResourceEnrollments(request,env);
+    if(url.pathname==="/api/memory/resource-history")return handleMemoryResourceHistory(request,env);
+    if(url.pathname==="/api/memory/resource-settings")return handleMemoryResourceSettings(request,env);
+    if(url.pathname==="/api/memory/resource-scope")return handleMemoryResourceScope(request,env);
     if(url.pathname==="/api/memory/settings")return handleLiveMemory(request,env,"settings");
     if(url.pathname==="/api/memory/recall")return handleLiveMemory(request,env,"recall");
     if(url.pathname==="/api/memory/export")return handleLiveMemory(request,env,"export");
@@ -386,6 +393,7 @@ export default {
       let cleanupFailed = false, cleanupError: unknown;
       const cleanupSteps = [
         () => sweepStillPanels(env),
+        () => sweepResourceMemory(env),
         () => observeScheduledRetention(env,1_000),
         () => sweepExpiredMemoryCheckpoints(env,128),
         () => sweepExpiredDocumentProfileSuppressions(env,128),
@@ -409,6 +417,7 @@ export default {
       // admission, actor rollout and each existing background-purpose enrollment.
       await runLiveMemoryScheduled(env);
       await runNativeDerivationScheduled(env);
+      await runResourceMemoryScheduled(env);
     } finally {
       try {
         // Synthetic payload expiry is independent of spending/enrollment flags.

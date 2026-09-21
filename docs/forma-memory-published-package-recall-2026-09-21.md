@@ -63,3 +63,10 @@ license deadline. Existing authored copies remain intact.
 This closes published-package reference provenance/current-rights integration,
 not distinct resource enrollment, direct private Output, aggregate semantic
 consumers or complete system qualification. No rollout or real enrollment.
+
+## Frozen preceding full-runtime result
+
+The immutable `a02e985b` snapshot completed2,479/2,479 native runtime checks with
+zero failures in1,223,883.688416ms. This qualifies that preceding snapshot only;
+it excludes the later`35cc318a` rights/reference extension and independent-resource
+work, which have their own focused evidence above and in their checkpoint.

@@ -1,3 +1,4 @@
+import { prepareResourceMemoryPersonalErasure } from './memory-resource-settings.ts';
 import { reconcileOutputAssetStorage } from "./output-asset-storage-control.ts";
 import { reconcileOutputNativeStorage } from "./output-private-execution.ts";
 import { EXPIRED_DOCUMENT_JOB_REDACTION_SQL } from "./document-jobs-api.ts";
@@ -122,6 +123,8 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     const platformAssistant=await db.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
       .first<{available:number}>();
     if(!current())return unconfirmed();
+    const resourceErasure=await prepareResourceMemoryPersonalErasure(env,userId);
+    if(!current())return unconfirmed();
     const barrier=await prepareLiveMemoryErasureBarrier(env,{actorUserId:userId,personalOnly:true},now);
     if(!current())return unconfirmed();
     const outputErasure=await personalOutputErasureStatements(env,userId,now,EXPIRED_DOCUMENT_JOB_REDACTION_SQL);
@@ -181,14 +184,17 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     // defers authored-body erasure. Each owner acknowledges only its receipts.
     const selectedShareOffset=legacyIndex+1+genericChecks.length+heldChecks.length;
     const selectedShareStatements=[...selectedShareErasure.statements,...selectedShareErasure.terminalAssertions];
-    const terminalOffset=selectedShareOffset+selectedShareStatements.length;
-    const statements=[...prefix,...generic,...outputErasure,legacyPresentationErasure,...genericChecks,...heldChecks,...selectedShareStatements,...terminal];
+    const resourceOffset=selectedShareOffset+selectedShareStatements.length;
+    const terminalOffset=resourceOffset+resourceErasure.statements.length;
+    const statements=[...prefix,...generic,...outputErasure,legacyPresentationErasure,...genericChecks,...heldChecks,...selectedShareStatements,...resourceErasure.statements,...terminal];
     if(!current())return unconfirmed();
     const result=await db.batch(statements),summary=privacyBatchChanges(result,statements.length,prefix.length,legacyIndex,genericChecks.length,heldChecks.length);
     if(!summary||!current())return unconfirmed();
     const {changes,held}=summary;
-    const selectedShareSummary=selectedShareErasure.acknowledge(Array.prototype.slice.call(result,selectedShareOffset,terminalOffset));
+    const selectedShareSummary=selectedShareErasure.acknowledge(Array.prototype.slice.call(result,selectedShareOffset,resourceOffset));
     if(!selectedShareSummary||!current())return unconfirmed();
+    const resourceSummary=resourceErasure.acknowledge(Array.prototype.slice.call(result,resourceOffset,terminalOffset));
+    if(!resourceSummary||!current())return unconfirmed();
     const ownReceipts=[...Array.prototype.slice.call(result,0,prefix.length),...Array.prototype.slice.call(result,terminalOffset)];
     if(!(final?final.acknowledge(ownReceipts):barrier.acknowledge(ownReceipts))||!current())return unconfirmed();
     let advancedMemoryCleanupWorkUnits=0;
@@ -221,6 +227,7 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
       heldAuthoredEventBodies:pending?null:heldAuthoredEventBodies,heldTemporaryContent:pending?null:heldTemporaryContent,
       memoryJobOriginsPendingAtStart:barrier.pendingOrigins,initializedMemoryJobOrigins:pending?barrier.initializedOrigins:0,
       advancedMemoryCleanupWorkUnits,
+      ...(resourceErasure.installed?{forgottenPersonalResourceEnrollments:resourceSummary.count}:{}),
       ...(pending?{message:'Authored content is retained while memory cleanup is pending. Repeat this confirmed erasure request to continue; active legal holds may defer cleanup.'}:authoredPending?{message:'Unheld personal content was erased; authored content covered by active legal holds is retained. Repeat this confirmed request after the holds are released.'}:{}),
       erasedAuthoredEventBodies:pending?0:changes[prefix.length],erasedTemporaryContent:pending?0:changes[prefix.length+1],
       clearedDerivedContent:pending?0:changes[prefix.length+2],erasedPlatformConversations:!pending&&platformAssistant?changes[prefix.length+3]:0,

@@ -1909,3 +1909,23 @@ test('extended consumption windows retain old projection and add bounded day and
 test('extended consumption windows refuse unverified sources instead of manufacturing longer history',()=>{
  const f=pageConsumptionRecall();f.p.sources[0].target.documentId='foreign';assert.equal(memoryConsumptionExtendedWindows(...f.input()),null);
 });
+
+test('resource Memory client uses exact independent scopes and explicit controls without mount-side effects',async()=>{
+ const {createMemoryResourceClient}=await import('../src/state/memory-resource-client.ts'),{memoryResourceIdentity}=await import('../src/model/memory-resource-scope.ts');
+ const selector={kind:'canvas',projectId:'project',resourceId:'canvas'},scope=memoryResourceIdentity(selector,{actorUserId:'actor',ownerUserId:'actor',organizationId:null,projectAccessId:null}),calls=[];
+ const client=createMemoryResourceClient(async(url,init)=>{calls.push({url,init});return Response.json(init.method==='GET'?{version:'memory-resource-settings-v1',scope,validUntil:new Date(Date.now()+25000).toISOString(),policyVersion:'personal-resource-memory-v1',enrollment:null}:{version:'memory-resource-settings-v1',saved:true,refreshRequired:true});});
+ assert.equal(calls.length,0);const signal=new AbortController().signal;const view=await client.settings(selector,signal);assert.equal(view.scope.kind,'canvas');assert.equal(calls.length,1);assert.doesNotMatch(calls[0].url,/documentId/);
+ await client.enable(selector,signal,{revision:0,background:false,retentionDays:7,timeZone:'UTC',expectedCustody:{kind:'personal'},confirmation:'ENABLE_RESOURCE_MEMORY'});assert.equal(calls.length,2);const body=JSON.parse(calls[1].init.body);assert.equal(body.background,false);assert.equal(body.confirmation,'ENABLE_RESOURCE_MEMORY');assert.equal(body.learn,true);
+ await assert.rejects(()=>client.settings({projectId:'project',documentId:'canvas'},signal));assert.equal(calls.length,2);
+});
+for(const fault of ['wrong-kind','wrong-owner','expired','semantic-counts','over-limit'])test('resource Memory client rejects '+fault+' before rendering',async()=>{
+ const {createMemoryResourceClient}=await import('../src/state/memory-resource-client.ts'),{memoryResourceIdentity}=await import('../src/model/memory-resource-scope.ts');const selector={kind:'library',projectId:'p',resourceId:'p'},scope=memoryResourceIdentity(selector,{actorUserId:'a',ownerUserId:'a',organizationId:null,projectAccessId:null});
+ const body={version:'memory-resource-history-v1',scope,validUntil:new Date(Date.now()+25000).toISOString(),method:'action-counts-not-semantic',independentPreferenceEvidence:false,linkedContentRead:false,windows:[{days:7,counts:{edit:1}},{days:30,counts:{edit:1}}],coverage:{since:now(),throughSequence:1,currentHead:1,completeFromStart:false,sourceLimit:256,sourceLimitReached:false},sources:[{eventId:'e',type:'BlockCreated',recordedAt:now()}]};
+ if(fault==='wrong-kind')body.scope.kind='canvas';if(fault==='wrong-owner')body.scope.ownerUserId='foreign';if(fault==='expired')body.validUntil='2000-01-01T00:00:00.000Z';if(fault==='semantic-counts')body.independentPreferenceEvidence=true;if(fault==='over-limit')body.windows[0].counts.edit=257;
+ const client=createMemoryResourceClient(async()=>Response.json(body));await assert.rejects(()=>client.recall(selector,new AbortController().signal));
+});
+test('resource nightly due time handles local midnight, quarter-hour zones and DST without fixed-24-hour drift',async()=>{
+ const {nextResourceMemoryNight}=await import('../worker/memory-resource-schedule.ts');
+ for(const [now,zone,expected] of [['2026-09-21T00:30:00.000Z','UTC','2026-09-21T01:00:00.000Z'],['2026-09-21T01:00:00.001Z','UTC','2026-09-22T01:00:00.000Z'],['2026-09-21T18:00:00.000Z','Asia/Kathmandu','2026-09-21T19:15:00.000Z'],['2026-11-01T07:00:00.000Z','America/New_York','2026-11-02T06:00:00.000Z']])assert.equal(nextResourceMemoryNight(now,zone),expected);
+ assert.throws(()=>nextResourceMemoryNight('invalid','UTC'));assert.throws(()=>nextResourceMemoryNight(new Date().toISOString(),'not-a-zone'));
+});

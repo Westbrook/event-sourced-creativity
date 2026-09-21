@@ -1,16 +1,18 @@
 import { beginMemoryPrivacyMutation } from './memory-privacy-mutation.ts';
 import { createMemoryElapsed } from '../model/memory-lifetime.ts';
 import { derivationId } from '../model/memory-derivation-policy.ts';
-type Scope={projectId:string;documentId:string};
+import { memoryResourceSelector,type MemoryResourceSelector } from '../model/memory-resource-scope.ts';
+type Scope={projectId:string;documentId:string}|MemoryResourceSelector|{after:string};
 function check(value:unknown):asserts value{if(!value)throw Error('memory-private-response');}
 /** Bounded same-origin, non-retrying transport. No draft or custody fields on the wire. */
 export function createMemoryPrivateRequest(transport:typeof fetch,version:string){
-  async function request(scope: Scope, route: 'recall-boundary'|'recall-scopes'|'assistant-context', signal: AbortSignal, method='GET', body?: unknown, query: Record<string,string>={}) {
-    check([scope.projectId,scope.documentId].every(derivationId));
+  async function request(scope: Scope, route: 'recall-boundary'|'recall-scopes'|'assistant-context'|'resource-settings'|'resource-history'|'resource-enrollments', signal: AbortSignal, method='GET', body?: unknown, query: Record<string,string>={}) {
+    const resource=route.startsWith('resource-');
+    check(route==='resource-enrollments'?'after' in scope&&(scope.after===''||/^[a-f0-9-]{36}$/.test(scope.after)):resource?memoryResourceSelector(scope):'documentId' in scope&&[scope.projectId,scope.documentId].every(derivationId));
     const elapsed=createMemoryElapsed({wall:Date.now(),monotonic:performance.now()}),controller=new AbortController();
     // Select the wire fields explicitly: callers may also carry private custody
     // objects, UI ownership stamps or other native selection metadata.
-    const url='/api/memory/'+route+'?'+new URLSearchParams({projectId:scope.projectId,documentId:scope.documentId,...query});
+    const url='/api/memory/'+route+'?'+new URLSearchParams({...('after' in scope?{after:scope.after}:'kind' in scope?{kind:scope.kind,projectId:scope.projectId,resourceId:scope.resourceId}:{projectId:scope.projectId,documentId:scope.documentId}),...query});
     let response:Response|undefined,reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
     let rejectInterrupted:(error:Error)=>void=()=>{};
     const interrupted=new Promise<never>((_resolve,reject)=>{rejectInterrupted=reject;});

@@ -19554,3 +19554,174 @@ for(const expired of [false,true])test('native package rights: a later original 
  const edit=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',payload:{project_id:source.project_id,document_id:source.document_id,block_id:state.packageSourceBlock,property_path:expired?'rights_expires_at':'rights_revoked',old_value:null,new_value:expired?'2000-01-01T00:00:00.000Z':true}}},headers));assert.equal(edit.status,200,await edit.clone().text());
  const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.ok(response.status!==200||body.sources.length===0,JSON.stringify(body));assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM events WHERE event_id=?').get(state.packageCopy.eventId).n,1);
 });
+
+async function nativeDistinctResourceFixture(t,{shared=false,kind='library'}={}){
+ const state=await nativeMemoryJobFixture(t,{shared,beforeEnrollment:async state=>{const actor=(await nativeMemoryPrepare(state)).principal.userId;state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run(actor);}}),e=state.current(),resourceId=kind==='library'?e.project_id:'memory-independent-board';
+ if(kind==='canvas'){
+  const created=await state.request('/api/events',json({action:'append',event:{type:'CanvasCreated',payload:{project_id:e.project_id,canvas_id:resourceId,name:'An independent scope, not a document'}}},state.owner));assert.equal(created.status,200,await created.clone().text());
+  const placed=await state.request('/api/events',json({action:'append',event:{type:'CanvasItemPlaced',payload:{project_id:e.project_id,canvas_id:resourceId,item_id:'scope-linked-document',source_kind:'document',source_id:e.document_id,title:'Only a reference',frame:{x:0,y:0,w:240,h:160,z:'a0'}}}},state.owner));assert.equal(placed.status,200,await placed.clone().text());
+ }
+ const selector={kind,projectId:e.project_id,resourceId},url='/api/memory/resource-scope?'+new URLSearchParams(selector),before=state.sqlite.prepare('SELECT * FROM memory_live_enrollments').all();
+ return Object.assign(state,{resourceSelector:selector,resourceUrl:url,resourceBefore:before});
+}
+for(const shared of [false,true])for(const kind of ['library','canvas'])test('native distinct Memory scope: actual '+kind+' identity is independent of document enrollment '+shared,async t=>{
+ const state=await nativeDistinctResourceFixture(t,{shared,kind}),before=adaptiveReentryFinancialState(state);
+ await(await import('../worker/memory-resource-authority.ts')).prepareNativeMemoryResourceAuthority(new Request('http://localhost'+state.resourceUrl,{headers:state.owner}),state.env,state.resourceSelector);
+ const response=await state.request(state.resourceUrl,{headers:state.owner}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+ assert.equal(body.scope.kind,kind);assert.equal(body.scope.resourceId,state.resourceSelector.resourceId);assert.equal(Object.hasOwn(body.scope,'documentId'),false);assert.equal(body.enrollmentRequired,true);assert.equal(body.documentEnrollmentInherited,false);assert.equal(body.linkedResourceAccessInherited,false);
+ const document=(await import('../worker/memory-native-scope.ts')).nativeMemoryDocumentIdentity(state.current());assert.notEqual(body.scope.resourceKey,document.documentKey);assert.equal(body.scope.partitionKey,document.partitionKey);
+ assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_live_enrollments').all(),state.resourceBefore);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+ assert.match(response.headers.get('cache-control'),/no-store/);
+ // An existing document grant cannot enroll a different native resource.
+ state.sqlite.prepare('UPDATE memory_live_enrollments SET learn_enabled=0,recall_enabled=0').run();const independent=await state.request(state.resourceUrl,{headers:state.owner});assert.equal(independent.status,200);assert.equal((await independent.json()).enrollmentRequired,true);
+});
+for(const fault of ['document-alias','missing-project','missing-canvas','removed-canvas','foreign-project','missing-custody','feature-disabled','impersonation','duplicate-parameter'])test('native distinct Memory scope: '+fault+' does not invent a resource',async t=>{
+ const state=await nativeDistinctResourceFixture(t,{shared:true,kind:'canvas'});let url=state.resourceUrl,headers={...state.owner};
+ if(fault==='document-alias')url='/api/memory/resource-scope?'+new URLSearchParams({kind:'library',projectId:state.current().project_id,resourceId:state.current().document_id});
+ if(fault==='missing-project'||fault==='foreign-project')url='/api/memory/resource-scope?'+new URLSearchParams({...state.resourceSelector,projectId:fault==='foreign-project'?'another-owner-project':'absent'});
+ if(fault==='missing-canvas')url='/api/memory/resource-scope?'+new URLSearchParams({...state.resourceSelector,resourceId:state.current().document_id});
+ if(fault==='removed-canvas'){const removed=await state.request('/api/events',json({action:'append',event:{type:'CanvasRemoved',payload:{project_id:state.current().project_id,canvas_id:state.resourceSelector.resourceId}}},state.owner));assert.equal(removed.status,200,await removed.clone().text());}
+ if(fault==='missing-custody')state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE owner_user_id=? AND resource_kind='canvas' AND resource_id=?").run(state.current().owner_user_id,state.resourceSelector.resourceId);
+ if(fault==='feature-disabled')state.env.FORMA_MEMORY_ENABLED='false';
+ if(fault==='impersonation')headers.cookie=(headers.cookie??'')+'; forma_impersonation=untrusted';
+ if(fault==='duplicate-parameter')url+='&resourceId=another';
+ const response=await state.request(url,{headers});assert.notEqual(response.status,200,await response.clone().text());assert.equal(Object.hasOwn(await response.json(),'scope'),false);
+});
+for(const fault of ['missing-frame','bad-frame','late-access','late-lifecycle','binding-swap'])test('native distinct Memory scope: final '+fault+' cannot disclose a stale identity',async t=>{
+ const state=await nativeDistinctResourceFixture(t,{shared:true,kind:'canvas'}),db=state.env.DB,batch=db.batch;let hit=false;
+ db.batch=async statements=>{const selected=!hit&&statements.some(s=>s.sql?.includes('AS canvases,'));const frames=await batch.call(db,statements);if(!selected)return frames;hit=true;
+  if(fault==='missing-frame')return frames.slice(1);if(fault==='bad-frame')return frames.map((row,index)=>index===0?{...row,success:false}:row);
+  if(fault==='late-access')state.sqlite.prepare("UPDATE users SET role='viewer',updated_at=? WHERE user_id=?").run(new Date().toISOString(),state.current().actor_user_id);
+  if(fault==='late-lifecycle')state.sqlite.prepare("UPDATE events SET payload=json_set(payload,'$.project_id','foreign-project') WHERE stream_id=? AND type='CanvasCreated' AND json_extract(payload,'$.canvas_id')=?").run('creative:'+state.current().owner_user_id,state.resourceSelector.resourceId);
+  if(fault==='binding-swap')state.env.DB={...db};return frames;
+ };t.after(()=>{db.batch=batch;state.env.DB=db;});
+ const response=await state.request(state.resourceUrl,{headers:state.owner});assert.equal(hit,true);assert.notEqual(response.status,200,await response.clone().text());
+});
+
+async function nativeResourceSettingsFixture(t,options={}){
+ const state=await nativeDistinctResourceFixture(t,options),{readFile}=await import('node:fs/promises');state.sqlite.exec(await readFile(new URL('../drizzle/0067_memory_resource_enrollments.sql',import.meta.url),'utf8'));
+ const url=state.resourceUrl.replace('resource-scope','resource-settings'),input={revision:0,learn:true,recall:true,background:true,retentionDays:30,timeZone:'UTC',expiresAt:new Date(Date.now()+29*86400000).toISOString(),expectedCustody:state.preferences.expectedCustody,policyVersion:'personal-resource-memory-v1',confirmation:'ENABLE_RESOURCE_MEMORY'};
+ const resourceSettings=async(method='GET',body)=>state.request(url,{...(body?json(body,{...state.owner,origin:'http://localhost'}):{headers:state.owner}),method});return Object.assign(state,{resourceSettings,resourceInput:input,resourceSettingsUrl:url});
+}
+for(const shared of [false,true])for(const kind of ['library','canvas'])test('native resource consent: actual independent '+kind+' grant, CAS and source-free withdrawal '+shared,async t=>{
+ const state=await nativeResourceSettingsFixture(t,{shared,kind}),before=adaptiveReentryFinancialState(state),get=await state.resourceSettings();assert.equal(get.status,200,await get.clone().text());assert.equal((await get.json()).enrollment,null);
+ const saved=await state.resourceSettings('PUT',state.resourceInput);assert.equal(saved.status,200,await saved.clone().text()+' '+state.controls.lastDatabaseError);
+ const read=await state.resourceSettings(),body=await read.json();assert.equal(read.status,200,JSON.stringify(body));const e=body.enrollment;assert.equal(e.kind,kind);assert.equal(e.resourceId,state.resourceSelector.resourceId);assert.equal(e.revision,1);assert.ok(e.throughSequence>0);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').get().n,1);assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_live_enrollments').all(),state.resourceBefore);
+ const stale=await state.resourceSettings('PUT',state.resourceInput);assert.equal(stale.status,400);assert.equal((await stale.json()).error,'resource_consent_required');
+ const renewed=await state.resourceSettings('PUT',{...state.resourceInput,revision:1,background:false});assert.equal(renewed.status,200,await renewed.clone().text());assert.equal(state.sqlite.prepare('SELECT revision FROM memory_resource_enrollments').get().revision,2);
+ state.env.FORMA_MEMORY_ENABLED='false';
+ const erased=await state.resourceSettings('DELETE',{id:e.id,revision:2,confirmation:'FORGET_RESOURCE_MEMORY'});assert.equal(erased.status,200,await erased.clone().text());assert.equal((await erased.json()).authoredResourcesPreserved,true);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').get().n,0);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+for(const fault of ['document-consent','wrong-custody','retention','implicit-background','bad-zone','extra-document','schema-trigger','schema-extra-trigger','late-revocation','missing-ack'])test('native resource consent: '+fault+' cannot silently enroll a resource',async t=>{
+ const state=await nativeResourceSettingsFixture(t,{shared:true,kind:'canvas'}),input={...state.resourceInput};
+ if(fault==='document-consent')input.policyVersion='personal-memory-v2';
+ if(fault==='wrong-custody')input.expectedCustody={kind:'personal'};
+ if(fault==='retention')input.retentionDays=365;
+ if(fault==='implicit-background')input.learn=false;
+ if(fault==='bad-zone')input.timeZone='Unknown/Zone';
+ if(fault==='extra-document')input.documentId=state.current().document_id;
+ if(fault==='schema-trigger')state.sqlite.exec('DROP TRIGGER memory_resource_enrollment_identity');
+ if(fault==='schema-extra-trigger')state.sqlite.exec("CREATE TRIGGER extra_resource_write AFTER INSERT ON memory_resource_enrollments BEGIN SELECT 1; END");
+ if(fault==='late-revocation'||fault==='missing-ack'){
+  const db=state.env.DB,batch=db.batch;let hit=false;db.batch=async statements=>{const selected=!hit&&statements.some(s=>s.sql?.startsWith('INSERT INTO memory_resource_enrollments'));if(selected){hit=true;if(fault==='late-revocation')state.sqlite.prepare("UPDATE users SET role='viewer',updated_at=? WHERE user_id=?").run(new Date().toISOString(),state.current().actor_user_id);}const result=await batch.call(db,statements);return selected&&fault==='missing-ack'?result.slice(1):result;};t.after(()=>{db.batch=batch;assert.equal(hit,true);});
+ }
+ const response=await state.resourceSettings('PUT',input);assert.notEqual(response.status,200,await response.clone().text());
+ if(fault!=='missing-ack')assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').get().n,0);
+ else{assert.equal(response.status,503);assert.equal((await response.json()).noAutomaticRetry,true);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').get().n,1,'Lost acknowledgement is uncertain completion, not permission to retry');}
+});
+
+for(const shared of [false,true])test('native resource consent: personal erasure clears only personal resource grants '+shared,async t=>{
+ const state=await nativeResourceSettingsFixture(t,{shared,kind:'library'}),saved=await state.resourceSettings('PUT',state.resourceInput);assert.equal(saved.status,200,await saved.clone().text());
+ const {prepareResourceMemoryPersonalErasure}=await import('../worker/memory-resource-settings.ts'),erasure=await prepareResourceMemoryPersonalErasure(state.env,state.current().actor_user_id),frames=await state.env.DB.batch(erasure.statements),receipt=erasure.acknowledge(frames);assert.deepEqual(receipt,{count:shared?0:1});
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').get().n,shared?1:0);assert.equal(erasure.acknowledge(frames.slice(1)),null);
+});
+test('native resource consent: actual personal privacy API retires the independent grants',async t=>{
+ const state=await nativeResourceSettingsFixture(t,{kind:'canvas'});assert.equal((await state.resourceSettings('PUT',state.resourceInput)).status,200);
+ const {migrateLegacyEventPayloads}=await import('../worker/event-privacy-migration.ts');await migrateLegacyEventPayloads(state.env);
+ const response=await state.request('/api/privacy/events',json({action:'erase-personal-authored-context',confirmation:'ERASE_MY_PERSONAL_AUTHORED_CONTEXT'},state.owner)),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.forgottenPersonalResourceEnrollments,1);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').get().n,0);
+});
+for(const shared of [false,true])test('native resource consent: real D1 optional schema, independent scope and atomic CAS '+shared,{timeout:120000},async t=>{
+ const state=await nativeResourceSettingsFixture(t,{shared,kind:'canvas'}),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['ResourceMemory'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());
+ const db=await mf.getD1Database('ResourceMemory');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+ const saved=await state.resourceSettings('PUT',state.resourceInput);assert.equal(saved.status,200,await saved.clone().text());const response=await state.resourceSettings(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.enrollment.kind,'canvas');assert.equal(body.enrollment.resourceId,state.resourceSelector.resourceId);
+ const erased=await state.resourceSettings('DELETE',{id:body.enrollment.id,revision:1,confirmation:'FORGET_RESOURCE_MEMORY'});assert.equal(erased.status,200,await erased.clone().text());assert.equal((await db.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').first()).n,0);
+});
+
+async function nativeResourceHistoryFixture(t,options={}){
+ const state=await nativeResourceSettingsFixture(t,options);assert.equal((await state.resourceSettings('PUT',state.resourceInput)).status,200);
+ const source=state.current(),selector=state.resourceSelector;
+ const payload={project_id:source.project_id,scope:options.documentBlock?'document':selector.kind,...(options.documentBlock?{document_id:source.document_id}:{}),block_id:'resource-history-authored',type:'text',handle:'reusable-note',position:'a0',properties:{text:'Private resource content must never be transported by activity history'},...(selector.kind==='canvas'?{canvas_id:selector.resourceId}:{})};
+ const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload}},state.owner));assert.equal(created.status,200,await created.clone().text());
+ const authored=(await created.json()).appended[0];
+ const history=async(method='GET')=>state.request(state.resourceUrl.replace('resource-scope','resource-history'),{...(method==='POST'?json({confirmation:'REVIEW_RESOURCE_ACTIVITY'},{...state.owner,origin:'http://localhost'}):{headers:state.owner}),method});
+ return Object.assign(state,{resourceHistory:history,resourceAuthored:authored});
+}
+for(const shared of [false,true])for(const kind of ['library','canvas'])test('native resource history: independent '+kind+' activity captures, recalls and retires without document inheritance '+shared,async t=>{
+ const state=await nativeResourceHistoryFixture(t,{shared,kind}),finance=adaptiveReentryFinancialState(state),captured=await state.resourceHistory('POST'),receipt=await captured.json();assert.equal(captured.status,200,JSON.stringify(receipt)+' '+state.controls.lastDatabaseError);assert.equal(receipt.captured,1);
+ const response=await state.resourceHistory(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.scope.kind,kind);assert.equal(body.sources.length,1);assert.equal(body.sources[0].eventId,state.resourceAuthored.eventId);assert.deepEqual(body.windows[0].counts,{edit:1});assert.equal(body.independentPreferenceEvidence,false);assert.equal(body.linkedContentRead,false);assert.doesNotMatch(JSON.stringify(body),/Private resource content/);
+ const repeated=await state.resourceHistory('POST');assert.equal((await repeated.json()).captured,0);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_history').get().n,1);
+ const raw=state.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(state.resourceAuthored.eventId);state.sqlite.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),raw.private_event_id);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_history').get().n,0);
+ state.sqlite.prepare('UPDATE event_private_payloads SET private_json=?,redacted_at=NULL WHERE private_event_id=?').run(raw.private_json,raw.private_event_id);assert.equal((await(await state.resourceHistory('POST')).json()).captured,0);assert.equal((await(await state.resourceHistory()).json()).sources.length,0);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM events WHERE event_id=?').get(raw.private_event_id).n,1);assert.deepEqual(adaptiveReentryFinancialState(state),finance);
+});
+for(const fault of ['no-learn','wrong-actor','foreign-envelope','synthetic','document-block','late-consent','missing-ack','malformed-ack'])test('native resource history: '+fault+' never upgrades incomplete capture',async t=>{
+ const state=await nativeResourceHistoryFixture(t,{documentBlock:fault==='document-block'}),db=state.env.DB,batch=db.batch,e=state.sqlite.prepare('SELECT * FROM memory_resource_enrollments').get();let hit=false;
+ if(fault==='no-learn')state.sqlite.prepare('UPDATE memory_resource_enrollments SET learn_enabled=0,background_enabled=0').run();
+ if(fault==='wrong-actor')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.actor_user_id','someone-else') WHERE private_event_id=?").run(state.resourceAuthored.eventId);
+ if(fault==='foreign-envelope')state.sqlite.prepare("UPDATE event_private_payloads SET owner_id='someone-else' WHERE private_event_id=?").run(state.resourceAuthored.eventId);
+ if(fault==='synthetic')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.origin.synthetic',json('true')) WHERE private_event_id=?").run(state.resourceAuthored.eventId);
+
+ db.batch=async statements=>{const chosen=!hit&&statements.some(s=>s.sql?.startsWith('INSERT INTO memory_resource_history'));if(chosen){hit=true;if(fault==='late-consent')state.sqlite.prepare('UPDATE memory_resource_enrollments SET learn_enabled=0,background_enabled=0').run();}const frames=await batch.call(db,statements);if(chosen&&fault==='missing-ack')return frames.slice(1);if(chosen&&fault==='malformed-ack')return frames.map((v,i)=>i===0?{...v,success:false}:v);return frames;};t.after(()=>db.batch=batch);
+ const response=await state.resourceHistory('POST'),body=await response.json();if(['wrong-actor','foreign-envelope','synthetic','document-block'].includes(fault)){assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.captured,0);}else assert.notEqual(response.status,200,JSON.stringify(body));
+ const count=state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_history').get().n;if(fault.endsWith('ack')){assert.equal(count,1);assert.equal(body.noAutomaticRetry,true);}else assert.equal(count,0);
+ if(fault==='late-consent')assert.equal(state.sqlite.prepare('SELECT cursor_sequence FROM memory_resource_enrollments').get().cursor_sequence,e.cursor_sequence);
+});
+for(const shared of [false,true])test('native resource history: scheduled native identity, daily no-op and renewed grant retirement '+shared,async t=>{
+ const state=await nativeResourceHistoryFixture(t,{shared,kind:'canvas'}),{runResourceMemoryScheduled}=await import('../worker/memory-resource-history.ts');state.env.FORMA_MEMORY_SCHEDULING_ENABLED='false';assert.equal((await runResourceMemoryScheduled(state.env)).status,'scheduling-disabled');assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_history').get().n,0);
+ state.env.FORMA_MEMORY_SCHEDULING_ENABLED='true';state.sqlite.prepare("UPDATE memory_resource_enrollments SET next_due_at='2000-01-01T00:00:00.000Z'").run();const captured=await runResourceMemoryScheduled(state.env);assert.equal(captured.captured,1);assert.equal((await runResourceMemoryScheduled(state.env)).status,'idle');assert.equal((await(await state.resourceHistory()).json()).sources.length,1);
+ assert.equal((await state.resourceSettings('PUT',{...state.resourceInput,revision:1})).status,200);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_history').get().n,0);state.sqlite.prepare("UPDATE memory_resource_enrollments SET next_due_at='2000-01-01T00:00:00.000Z'").run();assert.equal((await runResourceMemoryScheduled(state.env)).captured,0);
+});
+
+for(const shared of [false,true])test('native resource history: actual D1 capture, recall, retirement and source restoration '+shared,{timeout:120000},async t=>{
+ const state=await nativeResourceHistoryFixture(t,{shared,kind:'canvas'}),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['ResourceHistory'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());const db=await mf.getD1Database('ResourceHistory');await install(db,exportSynthetic(state.sqlite));let calls=0;const originals=new WeakMap(),wrap=statement=>{const value=new Proxy(statement,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{calls++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(value,statement);return value;};state.env.DB={prepare:sql=>wrap(db.prepare(sql)),batch:async statements=>{calls++;return db.batch(statements.map(s=>originals.get(s)??s));}};
+ const begun=performance.now(),captured=await state.resourceHistory('POST');assert.equal(captured.status,200,await captured.clone().text());assert.equal((await captured.json()).captured,1);const captureCalls=calls,captureMs=performance.now()-begun;assert.ok(captureCalls<=50,String(captureCalls));calls=0;const readStart=performance.now();let response=await state.resourceHistory();assert.equal(response.status,200,await response.clone().text());assert.equal((await response.json()).sources.length,1);t.diagnostic(JSON.stringify({shared,captureCalls,recallCalls:calls,captureMs,recallMs:performance.now()-readStart}));assert.ok(calls<=50,String(calls));
+ const before=await db.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').bind(state.resourceAuthored.eventId).first();await db.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=? WHERE private_event_id=?").bind(new Date().toISOString(),before.private_event_id).run();await db.prepare('UPDATE event_private_payloads SET private_json=?,redacted_at=NULL WHERE private_event_id=?').bind(before.private_json,before.private_event_id).run();
+ assert.equal((await(await state.resourceHistory('POST')).json()).captured,0);response=await state.resourceHistory();assert.equal(response.status,200);assert.equal((await response.json()).sources.length,0);assert.equal((await db.prepare('SELECT COUNT(*) n FROM events WHERE event_id=?').bind(before.private_event_id).first()).n,1);
+});
+test('native resource history: exact 64-event pages resume without duplicate source counting',async t=>{
+ const state=await nativeResourceHistoryFixture(t),source=state.current();for(let index=0;index<65;index++){
+  const written=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',payload:{project_id:source.project_id,scope:'library',block_id:'resource-history-authored',property_path:'text',old_value:'',new_value:'Synthetic edit '+index}}},state.owner));assert.equal(written.status,200);assert.equal((await written.json()).appended.length,1);
+ }
+ const one=await(await state.resourceHistory('POST')).json();assert.equal(one.captured,64);assert.equal(one.more,true);const two=await(await state.resourceHistory('POST')).json();assert.equal(two.captured,2);assert.equal(two.more,false);const body=await(await state.resourceHistory()).json();assert.equal(body.sources.length,66);assert.equal(body.windows[0].counts.edit,66);assert.equal(new Set(body.sources.map(r=>r.eventId)).size,66);
+});
+
+for(const deletion of [false,true])test('native resource history: retirement before the first review survives exact body restoration '+deletion,async t=>{
+ const state=await nativeResourceHistoryFixture(t),row=state.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(state.resourceAuthored.eventId);
+ if(deletion)state.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(row.private_event_id);else state.sqlite.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),row.private_event_id);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_retired_sources').get().n,1);
+ if(deletion)state.sqlite.prepare(`INSERT INTO event_private_payloads(${Object.keys(row).join(',')}) VALUES(${Object.keys(row).map(()=>'?').join(',')})`).run(...Object.values(row));else state.sqlite.prepare('UPDATE event_private_payloads SET private_json=?,redacted_at=NULL WHERE private_event_id=?').run(row.private_json,row.private_event_id);
+ const response=await state.resourceHistory('POST'),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.captured,0);assert.equal((await(await state.resourceHistory()).json()).sources.length,0);
+});
+for(const shared of [false,true])test('native resource history: document Memory still runs with the independent resource migration installed '+shared,async t=>{
+ const state=await nativeResourceHistoryFixture(t,{shared});await state.send('resource-neighbor-document');state.due();const run=await state.run();assert.equal(run.failed,0,JSON.stringify(run));assert.ok(run.processed>0);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_history').get().n,0);
+});
+
+for(const shared of [false,true])test('native resource consent: actor-owned inventory and forgetting survive source and feature withdrawal '+shared,async t=>{
+ const state=await nativeResourceHistoryFixture(t,{shared});assert.equal((await state.resourceHistory('POST')).status,200);state.env.FORMA_MEMORY_ENABLED='false';if(shared)state.sqlite.prepare("UPDATE organization_memberships SET status='revoked' WHERE user_id=?").run(state.current().actor_user_id);
+ const request=await state.request('/api/memory/resource-enrollments',{headers:state.owner}),body=await request.json();assert.equal(request.status,200,JSON.stringify(body));assert.equal(body.controlMetadataOnly,true);assert.equal(body.enrollments.length,1);assert.equal(body.enrollments[0].kind,'library');assert.equal(body.nextAfter,null);assert.equal(Object.hasOwn(body,'sources'),false);
+ const e=body.enrollments[0],forgotten=await state.resourceSettings('DELETE',{id:e.id,revision:e.revision,confirmation:'FORGET_RESOURCE_MEMORY'});assert.equal(forgotten.status,200,await forgotten.clone().text());assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_history').get().n,0);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM events WHERE event_id=?').get(state.resourceAuthored.eventId).n,1);
+});
+
+for(const retired of [false,true])test('native resource history: ordinary Library editor events bind missing project metadata from native block history '+retired,async t=>{
+ const state=await nativeResourceHistoryFixture(t),written=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',payload:{block_id:'resource-history-authored',property_path:'text',old_value:'Original',new_value:'Library edit with no project or document identity',source_surface:'library-block-editor'}}},state.owner));assert.equal(written.status,200);const appended=(await written.json()).appended;assert.equal(appended.length,1);assert.equal(appended[0].type,'BlockPropertyEdited');
+ const row=state.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(appended[0].eventId);assert.equal(row.project_id,null);assert.equal(row.document_id,null);
+ if(retired){state.sqlite.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),row.private_event_id);state.sqlite.prepare('UPDATE event_private_payloads SET private_json=?,redacted_at=NULL WHERE private_event_id=?').run(row.private_json,row.private_event_id);}
+ const response=await state.resourceHistory('POST'),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.captured,retired?1:2);assert.equal((await(await state.resourceHistory()).json()).sources.length,retired?1:2);
+});
+
+for(const kind of ['library','canvas'])test('native distinct Memory scope: shared owner cannot alias governed project as personal '+kind,async t=>{
+ const state=await nativeResourceSettingsFixture(t,{shared:true,kind}),e=state.current(),owner=state.sqlite.prepare('SELECT email FROM users WHERE user_id=?').get(e.owner_user_id);state.env.FORMA_MEMORY_USER_IDS=e.owner_user_id;const headers={'oai-authenticated-user-id':e.owner_user_id,'oai-authenticated-user-email':owner.email};
+ const response=await state.request(state.resourceUrl,{headers});assert.notEqual(response.status,200,await response.clone().text());const saved=await state.request(state.resourceSettingsUrl,{...json({...state.resourceInput,expectedCustody:{kind:'personal'}},{...headers,origin:'http://localhost'}),method:'PUT'});assert.notEqual(saved.status,200,await saved.clone().text());assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').get().n,0);
+});

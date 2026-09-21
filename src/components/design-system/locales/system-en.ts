@@ -1,5 +1,9 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.49pzob.48": "Memory resource inventory application interface.",
+  "system.auto.nedhwo.102": "Source-free resource consent inventory. Forgetting never requires renewed source access or enrollment.",
+  "system.auto.1bblc11.47": "Memory resource controls application interface.",
+  "system.auto.4fj5we.154": "Explicit native-resource controls. A mount, focus or refresh never enrolls, learns, follows linked documents or invokes a model. No private local storage.",
   "system.auto.1ajba9u.47": "Memory assistant context application interface.",
   "system.auto.1tlq4uh.152": "Private reference-only assistant context. Choosing a note neither sends a prompt nor changes authored fields; saved references are revalidated natively.",
 
