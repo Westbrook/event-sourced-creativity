@@ -4,7 +4,7 @@ import type { Position } from './decisions.ts';
 export const STILL_FORMATS = ['image','short_story','scene','slides','storyboard','video','audio','model3d'] as const;
 // Addresses open views/forms only. Mutations such as lock, export, save, or generate
 // are deliberately absent: visiting a link is never an instruction to execute one.
-export const STILL_MODES = ['actions','workspaces','new-project','new-document','add-context','edit-block','rename','intent','edit-artifact','use-in','reuse','split-context','research-context','find-references','supply-reference','compose','surprise','clarify'] as const;
+export const STILL_MODES = ['actions','workspaces','new-project','new-document','add-context','edit-block','rename','intent','edit-artifact','use-in','reuse','split-context','research-context','find-references','supply-reference','compose','clarify'] as const;
 export type StillRoute = Pick<Position,'projectId'|'documentId'|'blockId'|'outputId'|'view'> & { itemIndex:number; page:number; mode:string; format:string; legacy?:boolean; itemExplicit?:boolean };
 const empty = ():StillRoute => ({projectId:'',documentId:'',blockId:'',outputId:'',view:'projects',itemIndex:0,page:0,mode:'',format:''});
 // IDs reject path separators and control characters after decoding.
@@ -55,7 +55,8 @@ export function parseStillRoute(value:string|URL):StillRoute|null {
     if(!route.documentId)return null;route.mode='generate';i++;
     if(parts[i]){if(!STILL_FORMATS.includes(parts[i] as typeof STILL_FORMATS[number]))return null;route.format=parts[i++];}
   }else if(parts[i]==='action'){
-    const mode=parts[++i];if(!STILL_MODES.includes(mode as typeof STILL_MODES[number]))return null;
+    const requestedMode=parts[++i];
+    const mode=requestedMode==='surprise'?'add-context':requestedMode;if(!STILL_MODES.includes(mode as typeof STILL_MODES[number]))return null;
     route.mode=mode;i++;
   }
   if(i!==parts.length)return null;
@@ -78,7 +79,7 @@ export function stillPath(route:StillRoute):string {
   }
   if(route.page)path+=`/page/${route.page+1}`;
   if(route.mode==='generate')path+=`/create${route.format?`/${route.format}`:''}`;
-  else if(route.mode)path+=`/action/${route.mode}`;
+  else if(route.mode)path+=`/action/${route.mode==='surprise'?'add-context':route.mode}`;
   if(!parseStillRoute(path))throw new Error('Invalid Still address');
   return path;
 }

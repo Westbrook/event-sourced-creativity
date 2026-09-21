@@ -9,7 +9,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-19';
+export const POLICY_VERSION = 'still-20';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback; generation?:GenerationDecisionContext };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -20,7 +20,7 @@ export const ACTIONS: readonly Action[] = [
   { id: 'documents', label: 'View documents', group: 'navigate', description: 'Browse documents in this project.' },
   { id: 'new-project', label: 'New project', group: 'write', description: 'Create a named Forma project. Documents and ideas are added separately.' },
   { id: 'new-document', label: 'New document', group: 'write', description: 'Create a document in the current project, optionally starting with an idea.' },
-  { id: 'add-context', label: 'Add idea', group: 'context', description: 'Write an authored context block that will guide the creative work.' },
+  { id: 'add-context', label: 'Add idea', group: 'context', description: 'Write an authored context block to add an idea, detail, constraint, or variation that will guide the creative work. The user writes and accepts it; this does not generate a result or create an alternate document.' },
   { id: 'edit-block', label: 'Edit idea', group: 'write', description: 'Edit the selected context block without replacing other work.' },
   { id: 'split-context', label: 'Split idea', group: 'context', description: 'Review a cost, then extract independently useful decisions into editable child blocks while keeping their source and relationships.' },
   { id: 'research-context', label: 'Research idea', group: 'context', description: 'Review research cost, then find related project ideas or sourced information for the selected thought. Public search uses a separately supplied public subject.' },
@@ -46,7 +46,6 @@ export const ACTIONS: readonly Action[] = [
   { id: 'video', label: 'Make video', group: 'make', description: 'Generate video from the active context.' },
   { id: 'audio', label: 'Make audio', group: 'make', description: 'Generate audio from the active context.' },
   { id: 'model3d', label: 'Make 3D model', group: 'make', description: 'Generate a 3D model from the current context using its adapted prompt.' },
-  { id: 'surprise', label: 'Add variation', group: 'context', description: 'Open a new context draft inviting a change of scale, setting, medium, or point of view. The user writes and accepts the direction.' },
   { id: 'clarify', label: 'Add direction', group: 'context', description: 'Write a focused statement of audience, emotional effect, or essential idea.' },
   { id: 'intent', label: 'Set next goal', group: 'reflect', description: 'Tell the decision layer what you want next, without automatically changing or generating work.' },
 ] as const;
@@ -240,7 +239,7 @@ export function comprehensiveQuestionsFor(candidates: Action[], position?: Posit
     ...Object.fromEntries(evaluated.filter(a=>Object.hasOwn(MEDIUM_QUESTIONS,a.id)).map(a=>[`requested_${a.id}`,{type:'noul',instructions:`Does current.intent explicitly request creating a new ${a.label.replace(/^(Create|Make|Write) /,'')} now? Use current intent only. A past action, viewed result, visual subject, reference, or available provider is not a request. Unknown: 0.5.`}])),
     ...Object.fromEntries(evaluated.flatMap(a=>[
       [`use_${a.id}`,{type:'score',instructions:`How useful is offering “${a.label}” in the toolbar now? ${a.description} Follow state.guidance and toolbarDecision. Rate usefulness now, not next-click probability.`,criteria:['Unrelated or counterproductive','Possible later','Helpful now','Directly answers the need']}],
-      ...(['surprise','compose','use-in','edit-block','new-document'].includes(a.id)?[[`novel_${a.id}`,{type:'noul',instructions:`Would offering “${a.label}” open a useful direction distinct from recently attempted or rejected actions while preserving accepted constraints?`}]]:[]),
+      ...(['add-context','compose','use-in','edit-block','new-document'].includes(a.id)?[[`novel_${a.id}`,{type:'noul',instructions:`Would offering “${a.label}” open a useful direction distinct from recently attempted or rejected actions while preserving accepted constraints?`}]]:[]),
     ])),
   } as Record<string,Question>;
 }
@@ -302,7 +301,6 @@ const SIGNALS: Record<string, { yes?: string[]; no?: string[] }> = {
   video: { yes: ['image_to_motion', 'motion', 'duration'] },
   audio: { yes: ['spoken_text', 'audio_delivery', 'pacing', 'audition', 'sound_to_scene'] },
   model3d: { yes: ['model_subject', 'model_scale', 'model_material', 'model_views'] },
-  surprise: { yes: ['bold_invitation', 'change_scale', 'change_setting', 'genre', 'exploration_stalled'] },
   clarify: { yes: ['blocked_input', 'unsupported', 'contradiction', 'taste_question'], no: ['premise', 'audience', 'emotion', 'takeaway'] },
 };
 /** Keep the full creative library, but ask only judgments consumed by this menu.
@@ -320,7 +318,7 @@ export function questionsFor(candidates: Action[], position?: Position, artifact
     if(action.id==='split-context')for(const id of ['split_benefit','essential_relationship','fragmentation_friction','coherent_small_idea','independent_change','independent_reuse','independent_sources'])needed.add(id);
     if(action.id==='research-context')needed.add('creative_uncertainty');
     if(action.id==='find-references')needed.add('existing_reference_fit');
-    if(['compose','edit-block','surprise'].includes(action.id)){needed.add('constraint_conflict');needed.add('scope_conflict');}
+    if(['compose','edit-block'].includes(action.id)){needed.add('constraint_conflict');needed.add('scope_conflict');}
   }
   return Object.fromEntries(Object.entries(all).filter(([id])=>needed.has(id)));
 }
@@ -363,7 +361,7 @@ export function evaluateActions(candidates: Action[], pos: Position, answers: Re
     const reduce = a.id === 'split-context' ? Math.max(evidence('essential_relationship'),evidence('fragmentation_friction'),evidence('coherent_small_idea')) * 1.5 + (Object.keys(answers).length && !usefulSplit && evidence('benefit_split-context')<=.5 && !['independent_change','independent_reuse','independent_sources'].some(id=>evidence(id)>.5) ? 1 : 0)
       : a.id === 'research-context' ? evidence('creative_uncertainty')*.6
       : a.id === 'find-references' ? evidence('existing_reference_fit')*.7
-      : ['compose','edit-block','surprise'].includes(a.id) ? Math.max(evidence('constraint_conflict'),evidence('scope_conflict'))*1.5 : 0;
+      : ['compose','edit-block'].includes(a.id) ? Math.max(evidence('constraint_conflict'),evidence('scope_conflict'))*1.5 : 0;
     const afterStructure = ['split-context','compose','replace-part','edit-block'].includes(pos.recentActions.at(-1) ?? '') && ['split-context','compose'].includes(a.id) ? .4 : 0;
     adjustments.push({label:'Stage match (no confidence gate)',questions:['stage'],delta:stage}, {label:'Novelty',questions:['bold_invitation','fixed_variable',`novel_${a.id}`],delta:novelty}, {label:'Review or manage first',questions:['unreviewed','alternatives','failure','manage_ideas','preserve_options'],delta:-reviewFirst}, {label:'Context preservation',questions:a.id==='split-context'?['essential_relationship','fragmentation_friction','coherent_small_idea','split_benefit','independent_change','independent_reuse','independent_sources']:a.id==='research-context'?['creative_uncertainty']:a.id==='find-references'?['existing_reference_fit']:['constraint_conflict','scope_conflict'],delta:-reduce}, {label:'Recent structural action clicked',questions:[],delta:-afterStructure});
     const value = (valid ? answer.score! : base) + support + stage + novelty - reviewFirst - reduce - afterStructure;

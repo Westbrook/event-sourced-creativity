@@ -61,3 +61,13 @@ test('route ownership never accepts the fold fallback or another document’s bl
   const removed=foldEvents([...events,{eventId:'removed',sequence:7,type:'DocumentRemoved',payload:{document_id:'d'}}],Infinity,'d','p');
   assert.notEqual(removed.documentId,'d');assert.equal(stillRouteProblem(doc,removed),'Document unavailable');
 });
+
+
+test('legacy variation addresses canonicalize to the ordinary idea form',()=>{
+  const old='/still/project/p/document/d/block/b/action/surprise';
+  const route=parseStillRoute(old);
+  assert.equal(route.mode,'add-context');
+  assert.equal(route.blockId,'b');
+  assert.equal(stillURL(route,old+'?developer&progress-report'),'/still/project/p/document/d/block/b/action/add-context?developer=&progress-report=');
+  assert.equal(stillPath({...route,mode:'surprise'}),'/still/project/p/document/d/block/b/action/add-context');
+});

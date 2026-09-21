@@ -35,7 +35,7 @@ test('ranking math, caps, diversity, and capacity explain the actual selector',(
   for(const row of result.rows.filter(r=>r.value!==undefined))assert.ok(Math.abs(row.base+row.adjustments.reduce((sum,a)=>sum+a.delta,0)-row.value)<1e-12);
   assert.ok(result.rows.find(r=>r.id==='add-context').adjustments.some(a=>a.label==='Support cap (0.8)'&&a.delta<0));
   assert.ok(result.rows.some(r=>r.reason==='Four-action limit'));
-  const group=evaluateActions(ACTIONS.filter(a=>['add-context','clarify','surprise','projects'].includes(a.id)),pos,Object.fromEntries(['add-context','clarify','surprise','projects'].map(id=>[`use_${id}`,score()])));
+  const group=evaluateActions(ACTIONS.filter(a=>['add-context','clarify','compose','projects'].includes(a.id)),pos,Object.fromEntries(['add-context','clarify','compose','projects'].map(id=>[`use_${id}`,score()])));
   assert.ok(group.rows.some(r=>r.reason==='Two actions per group limit'));
   const make=evaluateActions(ACTIONS.filter(a=>['create','image'].includes(a.id)),{...pos,intent:'Make an image'},{use_create:score(3),use_image:score(2),requested_image:yes});
   assert.equal(make.rows.find(r=>r.id==='image').reason,'One creation action limit');

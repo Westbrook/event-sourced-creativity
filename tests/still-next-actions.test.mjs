@@ -72,3 +72,17 @@ test('only a useful clear leader with valid probability evidence receives emphas
   for(const answers of [{},{use_a:score(),use_b:score()},{use_a:score(3,.2),use_b:score(2)},{use_a:{type:'score',score:3,confidence:1},use_b:score(2)},{use_a:{...score(),probabilities:{0:0,1:0,2:0,3:2}},use_b:score(2)}])assert.ok(Object.values(presentActions(ids,answers)).every(x=>x.variant==='secondary'&&x.size==='medium'));
   assert.equal(presentActions(['a'],{use_a:score()}).a.size,'large');
 });
+
+
+test('idea creation is one Jev candidate and variation searches find it',()=>{
+  const p=foldEvents(fixture(),Infinity,'d','p');
+  const candidates=eligibleActions(p,position,abilities);
+  assert.ok(candidates.some(a=>a.id==='add-context'));
+  assert.ok(!ACTIONS.some(a=>a.id==='surprise'));
+  const questions=questionsFor(candidates,position,p);
+  assert.ok(questions['use_add-context']);
+  assert.ok(!questions.use_surprise&&!questions.novel_surprise);
+  assert.ok(!Object.hasOwn(questions.next_best_action.criteria,'surprise'));
+  assert.ok(Object.hasOwn(questions.next_best_action.criteria,'add-context'));
+  assert.equal(findActions('Add variation',candidates)[0].id,'add-context');
+});

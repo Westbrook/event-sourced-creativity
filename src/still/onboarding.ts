@@ -5,7 +5,6 @@ export const ACTION_HELP:Record<string,string>={
  'new-document':'Create a document in this project. Add ideas and make outputs from them.',
  'add-context':'Add one idea, detail, constraint, or reference to this document.',
  'reuse':'Copy an existing idea from another document into this document.',
- 'surprise':'Write a new variation as an idea; this does not generate a result.',
  'clarify':'Add a direction idea describing what matters for this document.',
  'intent':'Tell Still your next goal to guide its action suggestions.',
  'edit-block':'Change this idea without rewriting the rest of the document.',

@@ -27,3 +27,9 @@ test('the palette includes utilities and eligible output formats regardless of r
   assert.deepEqual(paletteActions('an unrecognized creative request',candidates),[]);
   assert.equal(finderEntry('export'),'view-result');assert.equal(finderEntry('lock'),'context');
 });
+
+
+test('variation terminology resolves to Add idea without a duplicate palette option',()=>{
+  assert.deepEqual(paletteActions('variation',ACTIONS).map(a=>a.id),['add-context']);
+  assert.equal(paletteActions('',ACTIONS).filter(a=>['add-context','surprise'].includes(a.id)).length,1);
+});
