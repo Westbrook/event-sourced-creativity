@@ -103,9 +103,9 @@ test('Still form workflows use one responsive toolbar with their original comman
     const tip=tips.find(t=>document.getElementById(t.getAttribute('for'))?.textContent.trim()===label);return tip?.textContent.trim();
    },label);
    for(const [value,save,back] of [
-    ['new-project','Create this project and open its first document.','Cancel this project and return without saving.'],
-    ['new-document','Create this document in the current project and open it.','Cancel this document and return without saving.'],
-    ['add-context','Add this idea to the document so you can use it in your work.','Return without adding this idea.'],
+    ['new-project','Create this project and open its first document.','Return without creating a new project.'],
+    ['new-document','Create this document in the current project and open it.','Return without creating a new document.'],
+    ['add-context','Add this idea to the document so you can use it in your work.','Return without adding a new idea.'],
     ['rename','Save the document’s new name.','Return without changing the document’s name.'],
    ]){
     await mode(value);await button('Save').waitFor();assert.equal(await help('Save'),save);assert.equal(await help('Back'),back);

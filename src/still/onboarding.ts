@@ -50,9 +50,9 @@ export function workflowHelp(mode:string,id:string,label:string,unconfirmedSave=
   if(id.startsWith('workflow:intake:'))return 'Return to the suggestions without adding this reference.';
   if(id.startsWith('workflow:compose-behavior:')||id.startsWith('workflow:compose-review:'))return 'Return to choosing the ideas in this group.';
   return ({
-   'new-project':'Cancel this project and return without saving.',
-   'new-document':'Cancel this document and return without saving.',
-   'add-context':'Return without adding this idea.',
+   'new-project':'Return without creating a new project.',
+   'new-document':'Return without creating a new document.',
+   'add-context':'Return without adding a new idea.',
    'edit-block':'Return without saving your edits to this idea.',
    rename:'Return without changing the document’s name.',
    'edit-artifact':'Return without saving your edits to this result.',
