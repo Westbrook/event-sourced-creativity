@@ -43,7 +43,7 @@ import { hasProjectContextCookie, readProjectRequestContext } from "./project-ac
 import { handlePerformanceSample } from "./performance-api";
 import { handleArtifactEdit } from "./artifact-api";
 import { handleGeneratedImageEdit } from "./generated-image-api";
-import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist } from "./assistant-api";
+import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist, handleAssistantFieldSuggestion } from "./assistant-api";
 import { handlePlatformAssistant } from "./platform-assistant-api";
 import { handleLiveMemory } from "./memory-live-api.ts";
 import { handleMemoryDerivationSettings, handleMemoryDerivationResult, handleMemoryDerivationUserControls, handleMemoryDerivationResults } from "./memory-derivation-api.ts";
@@ -182,6 +182,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/still/decision")return handleStillDecision(request,env,context);
     if(url.pathname==="/api/session")return handleSession(request,env,context);
     if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
+    if(url.pathname==="/api/assistant/field-suggestion")return handleAssistantFieldSuggestion(request,env);
     if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
     if(url.pathname==="/api/internal/memory-benchmark"||url.pathname==="/api/internal/memory-benchmark/approval"||url.pathname==="/api/internal/memory-benchmark/reconcile"||url.pathname==="/api/internal/memory-benchmark/release-undispatched")return handleNativeMemoryBenchmark(request,env);

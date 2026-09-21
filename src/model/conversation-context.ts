@@ -25,7 +25,7 @@ export const ASSISTANT_CONTEXT_LIMITS = {
 export const ASSISTANT_OUTPUT_KINDS = ["image", ...DOCUMENT_ARTIFACT_KINDS] as const;
 
 export type AssistantConversationTurn = { id: string; role: "user" | "assistant"; text: string; sequence: number };
-export type AssistantDecisionAtom = { id: string; type: string; text: string; intent: string; locked: boolean; focused: boolean; version: number; immutable: boolean; providerEligible: boolean; protected?:boolean; providerVisibility?:"editable"|"governed"|"restricted" };
+export type AssistantDecisionAtom = { id: string; type: string; text: string; intent: string; locked: boolean; focused: boolean; version: number; immutable: boolean; providerEligible: boolean; protected?:boolean; providerVisibility?:"editable"|"governed"|"restricted"; memoryAssisted?:true };
 export type AssistantSelectedItem = { id: string; kind: string; sourceId: string; title: string; documentId: string | null };
 export type AssistantRecentAction = { id: string; type: string; sequence: number; documentId: string | null };
 export type AssistantOutputSummary = { id: string; kind: string; title: string; documentId: string; status: string };
@@ -76,6 +76,14 @@ const displayText = (block: CreativeBlock) => protectedAssistantDecision(block)
   ?String(block.properties.text??block.properties.label??block.handle).trim().slice(0,ASSISTANT_CONTEXT_LIMITS.decisionChars)
   :clip(block.properties.text??block.properties.label??block.handle,ASSISTANT_CONTEXT_LIMITS.decisionChars);
 const eventDocument = (event: CreativeEvent) => String(event.payload.document_id ?? "") || null;
+
+/** Negative authorship provenance, not a private Memory body or positive proof
+ * of independent intent. Later manual changes/Undo do not erase this history.
+ * Callers use only their authorized events and the block's native source IDs. */
+export function memoryAuthoredEventIds(events:readonly CreativeEvent[]):ReadonlySet<string>{
+  return new Set(events.filter(event=>event.type==='BlockPropertyEdited'&&event.payload.property_path==='text'
+    &&event.payload.memory_authored_version===1).map(event=>event.eventId));
+}
 
 /** Compile small, explicitly scoped views. Never forward payload maps, media URLs, or raw streams. */
 export function compileAssistantContext(input: AssistantContextInput): AssistantContext {
@@ -130,6 +138,7 @@ export function compileAssistantContext(input: AssistantContextInput): Assistant
   const outputOwnedBlockIds = new Set(input.projection.libraryBlockRelations
     .filter((relation) => !relation.removed && relation.kind === "artifact_contains")
     .flatMap((relation) => [relation.fromBlockId, relation.toBlockId]));
+  const memoryAuthored=memoryAuthoredEventIds(visibleEvents);
   const decisionAtoms = prioritizedBlocks.slice(0, ASSISTANT_CONTEXT_LIMITS.decisions).map((block) => {
     const governed=Boolean(block.properties.organization_context_package_binding_id||block.properties.organization_context_package_id);
     const immutable=Boolean(block.properties.source_evidence_hash||governed||block.properties.source_artifact_id
@@ -140,6 +149,7 @@ export function compileAssistantContext(input: AssistantContextInput): Assistant
       id:block.id,type:block.type,text:displayText(block),intent:blockIntentFor(block.type,block.properties),locked:block.locked,protected:protectedAssistantDecision(block),
       focused:block.id===focusedBlockId,version:block.sourceEvents.length,immutable,
       providerEligible:promptFactIsActive(block)&&!activeRightsIssue(block),providerVisibility,
+      ...(block.sourceEvents.some(id=>memoryAuthored.has(id))?{memoryAssisted:true as const}:{}),
     };
   });
   const visibleBlockIds = new Set(decisionAtoms.map((block) => block.id));

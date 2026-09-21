@@ -1,5 +1,6 @@
+import { prepareAuthoringSourceProof,packAuthoringSourceProof } from './context-authoring-source.ts';
 import { memoryAssistantEditReview } from './memory-assistant-edits.ts';
-import { parseMemoryEditReview,type MemoryEditReview } from '../src/model/memory-edit-review.ts';
+import { memoryEditApprovalHash,parseMemoryEditReview,type MemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { bodyOf as readMemoryControlBody } from './memory-derivation-api.ts';
 import type { SemanticAssistantParent } from './memory-assistant-parents.ts';
 import { prepareSemanticAssistantMemory,semanticAssistantMemoryLeaseCurrent,semanticAssistantMemoryRetentionGuard,semanticAssistantMemoryInputs,semanticAssistantMemoryStatements,semanticAssistantMemoryQuoteStatements,semanticAssistantMemoryContentStatements,type SemanticAssistantMemory,type SemanticAssistantMemoryBinding } from './memory-assistant-consumer.ts';
@@ -9,12 +10,12 @@ import { foldEvents } from "../src/model/events.ts";
 import { ASSISTANT_MODELS, selectAssistantModel, type AssistantModel, type AssistantTask } from "../src/model/assistant-model-policy.ts";
 import { assistantSurfaceForRoute, assistantPlaybookForSurface, type AssistantSurface } from "../src/model/assistant-route-policy.ts";
 import { blockIntentFor } from "../src/model/block-types.ts";
-import { compileAssistantContext, protectedAssistantDecision, ASSISTANT_CONTEXT_LIMITS, type AssistantContext } from "../src/model/conversation-context.ts";
+import { compileAssistantContext,memoryAuthoredEventIds, protectedAssistantDecision, ASSISTANT_CONTEXT_LIMITS, type AssistantContext } from "../src/model/conversation-context.ts";
 import { creativeContextRightsValidity } from "../src/model/context-health.ts";
 import { assistantContextReadWitness, unavailableAssistantPageContext, type AssistantContextReadWitness } from "./assistant-context-source.ts";
 import { promptFactIsActive } from "../src/model/prompt-policy.ts";
 import { consentedTextPricing, assertConsentedTextPricing, maximumConsentedTextMicrousd, priceConsentedTextUsageMicrousd, type ConsentedTextPricing } from "../src/model/consented-text-pricing.ts";
-import { prepareDocumentAuthority, readDocumentExecutionAuthority } from "./context-authoring-authority.ts";
+import { contextSourceHash,prepareDocumentAuthority, readDocumentExecutionAuthority } from "./context-authoring-authority.ts";
 import { governedPackageSourceRightsValidity, sourceRightsDispatchGuard } from "./context-package-rights.ts";
 import { synchronizeProjectScope, readProjectSourceEvents, type ProjectRequestContext } from "./project-access.ts";
 import { managedPilotSourceClassificationValid, verifySourceDocumentEvidence } from "./media-api.ts";
@@ -151,6 +152,8 @@ async function rememberPaidMemoryProof(env:WorkerEnv,binding:ConsequentialBindin
 }
 type RawReceipt={schema:1;executionId:string;bindingHash:string;providerRequestHash:string;httpStatus:number;responseBody:string;receivedAt:string;latencyMs:number};
 type CanonicalResult={editReview?:MemoryEditReview;schema:1;executionId:string;bindingHash:string;turnId:string;reply:string;actions:AssistantProviderResult["actions"];providerResult:AssistantProviderResult;sourceStatus:"original-approved-source"|"semantic-memory-assisted";sourceHash:string;maximumMicrousd:number;accountedMicrousd:number;billingStatus:"settled"|"pending";noAutomaticRetry:true};
+export type MemoryEditPublication={review:MemoryEditReview;blockId:string;approvalHash:string;context:AssistantContext;sourceHead:number;
+  preconditions:D1PreparedStatement[]};
 export type AssistantSpecialistHost={
   ensure:(env:WorkerEnv)=>Promise<void>;
   authorize:(request:Request,env:WorkerEnv)=>Promise<{authorized:SpecialistActor|null;response:Response|null}>;
@@ -160,6 +163,7 @@ export type AssistantSpecialistHost={
   providerEnrolled:(env:WorkerEnv,userId:string)=>boolean;
   solEnrolled:(env:WorkerEnv,userId:string)=>boolean;
   turn:(env:WorkerEnv,actor:SpecialistActor,turnId:string)=>Promise<SpecialistTurn|null>;
+  applyMemoryEdit?:(env:WorkerEnv,actor:SpecialistActor,publication:MemoryEditPublication)=>Promise<Response>;
   commit:(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTaskRecord,result:AssistantProviderResult,context:AssistantContext,proof:BudgetReservationGuard)=>Promise<void>;
 };
 
@@ -436,16 +440,18 @@ async function sourcePreparation(request:Request,env:WorkerEnv,actor:SpecialistA
   if(canvas&&(!original.selectedItemIds.length||canvasDocumentTarget(projection,canvas,original.selectedItemIds,"")!==documentId))fail("assistant_source_document_required");
   const surface=assistantSurfaceForRoute(original.route),base=compileAssistantContext({route:"/document/"+encodeURIComponent(documentId),projection,events,actorUserId:actor.principal.userId,projectId:original.projectId,organizationId:scope?.organizationId,projectAccessId:scope?.projectAccessId,capabilities:actor.project?.permissions??actor.principal.access.capabilities,head:authority.sourceHead});
   const outputOwned=new Set(projection.libraryBlockRelations.filter(relation=>!relation.removed&&relation.kind==="artifact_contains").flatMap(relation=>[relation.fromBlockId,relation.toBlockId]));
+  const memoryAuthored=memoryAuthoredEventIds(events);
   const context:AssistantContext={...base,surface,playbook:assistantPlaybookForSurface(surface),documentTitle:projection.documents.find(item=>item.id===documentId)?.title??null,
     scope:{actorUserId:actor.principal.userId,organizationId:scope?.organizationId??null,projectAccessId:scope?.projectAccessId??null,projectId:original.projectId,documentId},
     selectedItems:selected.map(item=>({id:item!.id,sourceId:item!.sourceId,kind:item!.sourceKind,title:item!.title,documentId})),
     recentTurns:conversation.flatMap((turn,index)=>[{id:turn.turnId+":user",role:"user" as const,text:turn.user,sequence:index*2},{id:turn.turnId+":assistant",role:"assistant" as const,text:parents.some(p=>p.turnId===turn.turnId)?"Earlier Memory-assisted answer (derived context, not independent evidence):\n"+parents.find(p=>p.turnId===turn.turnId)!.reply:turn.assistant,sequence:index*2+1}]),
     decisionAtoms:blocks.map(block=>{const governed=Boolean(block.properties.organization_context_package_binding_id||block.properties.organization_context_package_id),immutable=Boolean(block.properties.source_evidence_hash||governed||block.properties.source_artifact_id||block.properties.source_artifact_item_id||block.properties.context_set_root_id||outputOwned.has(block.id));
-      return{id:block.id,type:block.type,text:String(block.properties.text??block.properties.label??block.handle),intent:blockIntentFor(block.type,block.properties),locked:block.locked,protected:protectedAssistantDecision(block),focused:block.id===surface.focusedBlockId,version:block.sourceEvents.length,immutable,providerEligible:promptFactIsActive(block),providerVisibility:block.type==="reference"||block.type==="model3d"||block.type==="audio"&&immutable?"restricted":governed?"governed":immutable?"restricted":"editable"};}),
+      return{...(block.sourceEvents.some(id=>memoryAuthored.has(id))?{memoryAssisted:true as const}:{}),id:block.id,type:block.type,text:String(block.properties.text??block.properties.label??block.handle),intent:blockIntentFor(block.type,block.properties),locked:block.locked,protected:protectedAssistantDecision(block),focused:block.id===surface.focusedBlockId,version:block.sourceEvents.length,immutable,providerEligible:promptFactIsActive(block),providerVisibility:block.type==="reference"||block.type==="model3d"||block.type==="audio"&&immutable?"restricted":governed?"governed":immutable?"restricted":"editable"};}),
     relationships:relationships.map(relation=>({id:relation.id,from:relation.fromBlockId,to:relation.toBlockId,kind:relation.kind})),
     totals:{...base.totals,decisions:blocks.length,protectedDecisions:blocks.filter(block=>promptFactIsActive(block)&&protectedAssistantDecision(block)).length,unsafeRightsDecisions:0,truncatedProtectedDecisions:0},truncated:false};
   const source:AssistantProviderSource={blocks:blocks.map(block=>({id:block.id,type:block.type,properties:block.properties,locked:block.locked,intent:blockIntentFor(block.type,block.properties),document_id:block.documentId,canvas_id:block.canvasId??null,scope:block.scope})),relationships:relationships.map(relation=>({id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties}))};
-  const sourceHash=await consentHash({projectId:original.projectId,documentId,canvasId:original.canvasId,title:context.documentTitle,blocks,relationships,rights:rights.map(event=>({id:event.eventId,payload:event.payload})),selected});
+  const sourceHash=await consentHash({projectId:original.projectId,documentId,canvasId:original.canvasId,title:context.documentTitle,blocks,relationships,rights:rights.map(event=>({id:event.eventId,payload:event.payload})),selected,
+    ...(memoryAuthored.size?{memoryAuthoredEvents:[...memoryAuthored].sort()}: {})});
   return{...authority,context,source,sourceHash,sourceRightsValidUntil,sourceProof:join(deadline(sourceRightsValidUntil),sourceProof),allowance,unavailableReasons};
 }
 function modelEligibility(env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,kind:AssistantTask,model:AssistantModel,explicit:AssistantModel|null){
@@ -665,7 +671,7 @@ function assistantFeedPaidTurnProof(actor:SpecialistActor,scopeKey:string,turn:S
 
 /** GET may certify a previously committed answer; it cannot recover, charge, or materialize one. */
 export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistActor,scopeKey:string,
-  state:{context:AssistantContext;turns:SpecialistTurn[]},entries:AssistantTaskFeedEntry[]):Promise<Response>{
+  state:{context:AssistantContext;turns:SpecialistTurn[]},entries:AssistantTaskFeedEntry[],present?:(feed:Record<string,unknown>)=>unknown):Promise<Response>{
   const scope=actorScope(actor);
   if(!(scope?hasCapability(actor.principal,"project.read",scope):actor.principal.access.capabilities.includes("project.read")))
     return json({error:"assistant_read_scope_denied"},403);
@@ -758,9 +764,12 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
   for(;;){
     const visibleTurnIds=new Set(visibleTurns.map(turn=>turn.id));
     const recentTurns=capturedContext.recentTurns.filter(turn=>visibleTurnIds.has(turn.id.replace(/:(?:user|assistant)$/u,"")));
-    const serialized=JSON.stringify({...state,turns:visibleTurns,
+    const feed={...state,turns:visibleTurns,
       context:contextCurrent?{...capturedContext,recentTurns}:unavailableAssistantPageContext(capturedContext,recentTurns),
-      ...(!contextCurrent?{contextUnavailable:true}:{}),tasks});
+      ...(!contextCurrent?{contextUnavailable:true}:{}),tasks};
+    // Optional internal projection remains synchronous with the final authority
+    // snapshot. Never parse and republish a private response after an await.
+    const serialized=JSON.stringify(present?present(feed):feed);
     // Later synchronous context/JSON work must not send an earlier turn past
     // its original delivery deadline. Remove only expired entries and rebuild;
     // each repeat removes at least one of the bounded history turns.
@@ -1124,6 +1133,34 @@ async function admitTask(env:WorkerEnv,actor:SpecialistActor,retained:Retained,s
   return claimConsequentialExecution(env,actor.principal,binding,id,approvedHash,sourceHead,[inserted,verified],insertProof);
 }
 
+/** No provider call, retry, budget reservation or implicit promotion. Canonical
+ * retained output supplies the text; the browser approves only its exact hash. */
+async function applyMemoryEdit(request:Request,env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,
+  retained:Retained,task:SpecialistTaskRecord|null,body:Record<string,unknown>){
+  if(!actor.canPropose||!host.applyMemoryEdit||!task||task.task_id!==retained.row.execution_id
+    ||!retained.request.memory||body.publishToDocument!==true)fail('assistant_memory_edit_denied');
+  const saved=await canonicalResult(env,actor,task,retained),review=saved?.result.editReview;
+  if(!saved||!review||saved.result.sourceStatus!=='semantic-memory-assisted'||typeof body.blockId!=='string'
+    ||typeof body.approvedEditHash!=='string'||await memoryEditApprovalHash(review,body.blockId)!==body.approvedEditHash)fail('assistant_memory_edit_approval_required');
+  const source=await sourcePreparation(request,env,actor,retained.request.originalRequest,retained.request.conversation,retained.binding,retained.request.memory.parents);
+  if(source.sourceHash!==review.sourceHash||source.sourceRightsValidUntil!==retained.request.sourceRightsValidUntil)fail('assistant_memory_edit_stale');
+  const edit=review.edits.find(item=>item.blockId===body.blockId),block=source.context.decisionAtoms.find(item=>item.id===body.blockId);
+  if(!edit||!block||block.version!==edit.revision||block.text!==edit.beforeExcerpt||block.locked||block.immutable||block.protected
+    ||!block.providerEligible||block.providerVisibility!=='editable'||block.intent==='prohibit')fail('assistant_memory_edit_stale');
+  const memory=semanticMemory(env,retained.request);if(!memory)fail('assistant_memory_edit_denied');
+  // A head alone does not notice private-body erasure or custody changes.
+  // Reuse the native authoring witness and replay its exact rows atomically.
+  const nativeHash=await contextSourceHash(retained.binding.projectId,retained.binding.documentId,undefined,source.projection,source.events);
+  const canvas=retained.binding.canvasId?foldCanvasEvents(source.events,retained.binding.projectId,retained.binding.canvasId):null;
+  const sourceHash=canvas?await consentHash({sourceHash:nativeHash,canvas:canvas.canvases.find(item=>item.id===retained.binding.canvasId)??null,items:canvas.items}):nativeHash;
+  const nativeProof=packAuthoringSourceProof(await prepareAuthoringSourceProof(env,{...source,binding:{...retained.binding,sourceHash}}));
+  const proofs=[readAuthority(actor,retained),saved.proof,consentProof(retained),turnProof(retained.binding,retained.request),source.sourceProof,nativeProof,
+    {sql:'(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?',bindings:[source.scope?'creative:'+source.scope.ownerUserId:actor.principal.streamId,source.sourceHead]}];
+  const preconditions=[...semanticAssistantMemoryStatements(env,memory),...proofs.map(proof=>env.DB.prepare(
+    "SELECT CASE WHEN ("+proof.sql+") THEN 1 ELSE json('assistant_memory_edit_stale') END AS verified").bind(...proof.bindings))];
+  return host.applyMemoryEdit(env,actor,{review,blockId:body.blockId,approvalHash:body.approvedEditHash,context:source.context,sourceHead:source.sourceHead,preconditions});
+}
+
 export async function handleAssistantSpecialistConsent(request:Request,env:WorkerEnv,execution:WorkerExecutionContext,host:AssistantSpecialistHost):Promise<Response>{
   env=nativeMemoryTurnInspectionEnvironment(env);
   if(request.method!=="POST")return json({error:"method_not_allowed"},405);
@@ -1132,8 +1169,8 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
   // quote, reservation or provider work is attempted.
   const body=await readMemoryControlBody(request,4096);if(!body)return json({error:"assistant_request_invalid"},400);
   const action=String(body.action??""),turnId=String(body.turnId??"");
-  if(!["quote","execute","retrieve","resume"].includes(action)||!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId))return json({error:"assistant_request_invalid"},400);
-  const fields=action==="quote"?["action","turnId","model","memory"]:action==="resume"?["action","turnId","executionId"]:["action","turnId","executionId","approvedBindingHash"];
+  if(!["quote","execute","retrieve","resume","apply-edit"].includes(action)||!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId))return json({error:"assistant_request_invalid"},400);
+  const fields=action==="apply-edit"?["action","turnId","executionId","approvedBindingHash","blockId","approvedEditHash","publishToDocument"]:action==="quote"?["action","turnId","model","memory"]:action==="resume"?["action","turnId","executionId"]:["action","turnId","executionId","approvedBindingHash"];
   if(Object.hasOwn(body,"memory")&&body.memory!=="saved")return json({error:"assistant_memory_mode_invalid"},400);
   if(Object.keys(body).some(key=>!fields.includes(key)))return json({error:"assistant_request_invalid"},400);
   const authorization=await host.authorize(request,env);if(authorization.response||!authorization.authorized)return authorization.response!;
@@ -1164,6 +1201,7 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
     const retained=await retainedConsent(env,actor,scopeKey,turnId,id);if(!retained)return json({error:"assistant_execution_unavailable",turnId,executionId:id,retentionUnavailable:true},404);
     if(action!=="resume"&&retained.row.binding_hash!==hash)return json({error:"assistant_consent_changed"},409);
     let task=await existingTask(env,actor,scopeKey,turnId);
+    if(action==="apply-edit")return await applyMemoryEdit(request,env,actor,host,retained,task,body);
     if(task&&task.task_id!==id){
       const winner=await retainedConsent(env,actor,scopeKey,turnId,task.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",retentionUnavailable:true,noAutomaticRetry:true},409);return resultResponse(env,actor,host,winner,task,id);
     }

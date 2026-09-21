@@ -8048,9 +8048,12 @@ for(const paid of["settled","uncertain"])test("assistant authority R2: generic c
   const {review,task}=await specialistApprovedTurn(state,"Review the exact retained source.");await state.drainBackground();
   const original=consequentialReceipt(state,task.id);assert.equal(state.calls.length,1);if(paid==="settled")assert.equal(original.cost[0].used_microusd,560);else assert.ok(original.balances.cost.reserved>0);
   const before=assistantR2Financial(state);
-  restore=interceptConsequentialDb(state,"first",/^SELECT \* FROM consequential_executions WHERE execution_id=/u,()=>{throw new Error("fixture transient original receipt read");});
+  let fired=false;
+  // The canonical retained-consent read now joins its original private body.
+  // Fault the current ingress, not an optional recoverable result lookup.
+  restore=interceptConsequentialDb(state,"first",/^SELECT execution\.\*,content\.content AS retained_consent_content FROM consequential_executions execution/u,()=>{fired=true;throw new Error("fixture transient original receipt read");});
   const response=await specialistRetrieve(state,review),body=await response.json();
-  assert.equal(response.status,409);assert.equal(body.submission,undefined);assert.equal(body.unusedExecution,undefined);assert.deepEqual(assistantR2Financial(state),before);
+  assert.equal(fired,true);assert.equal(response.status,409);assert.equal(body.submission,undefined);assert.equal(body.unusedExecution,undefined);assert.deepEqual(assistantR2Financial(state),before);
  }finally{restore?.();await state.cleanup();}
 });
 test("assistant authority R2: original unused recovery has a certified refresh marker",async()=>{
@@ -17467,12 +17470,12 @@ test('native asset ancestry: generic content hydration remains excluded after bo
  state.addAssetContent('asset-unrelated');assert.equal(ordinary('asset-unrelated').ok,1);
 });
 
-async function nativeAssetEvent(state,{block='asset-block',value='synthetic edit',old='synthetic before',compensates=null,source=null,authored=false}={}){
+async function nativeAssetEvent(state,{block='asset-block',value='synthetic edit',old='synthetic before',compensates=null,source=null,authored=false,chat=false}={}){
  const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/event-write-primitives.ts'),stream='creative:'+state.assetOwner;
  const head=(await state.env.DB.prepare('SELECT COALESCE(MAX(sequence),0) AS n FROM events WHERE stream_id=?').bind(stream).first()).n;
  const event=makeEvent(stream,head+1,'user:'+state.assetOwner,'asset-fixture',crypto.randomUUID(),authored?'BlockPropertyEdited':'AssistantReasoned',{
   block_id:block,project_id:state.current().project_id,document_id:state.recallTarget.documentId,property_path:'text',old_value:old,new_value:value,
-  ...(authored?{}:{memory_origin_version:3}),...(source?{source_event_id:source}:{}),
+  ...(authored?{}:{memory_origin_version:3}),...(chat?{operation:'creative-chat',actor_user_id:state.assetOwner}:{}),...(source?{source_event_id:source}:{}),
  },{compensatesEventId:compensates});
  const values=eventWriteBindings(event);await state.env.DB.prepare('INSERT INTO event_write_stage('+EVENT_WRITE_COLUMNS+') VALUES('+values.map(()=>'?').join(',')+')').bind(...values).run();return event;
 }
@@ -17587,4 +17590,157 @@ test('native asset ancestry: Memory withdrawal cannot enroll or erase authored w
  assert.ok(state.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').get(authored.eventId).private_json.includes('synthetic edit'));
  assert.equal(state.readAsset('asset-authored-document').content,'synthetic-asset-authored-document');
  const after=await nativeAssetEvent(state,{authored:true,source:authored.eventId});assert.ok(after.eventId);
+});
+
+
+async function semanticAuthoredEditFixture(t,{shared=false,native=false}={}){
+ const state=await semanticPaidConsumerFixture(t,{shared,assets:true}),projectId=state.current().project_id,documentId=state.recallTarget.documentId,blockId='memory-authored-target';
+ state.env.FORMA_ASSISTANT_ACTION_USER_IDS=state.current().actor_user_id;
+ const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:projectId,document_id:documentId,
+  block_id:blockId,scope:'document',type:'direction',properties:{text:'Original authored direction.'}}}},state.owner));
+ assert.equal(created.status,200,await created.clone().text());
+ if(native){
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+  const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryAuthored'],
+   script:"export default {fetch(){return new Response('Synthetic only',{status:404});}};",outboundService(){throw Error('No external requests');}});
+  t.after(()=>mf.dispose());const db=await mf.getD1Database('MemoryAuthored');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+ }
+ const {response,body:review}=await state.semanticQuote();assert.equal(response.status,200,JSON.stringify(review));
+ const original=globalThis.fetch;let calls=0;
+ globalThis.fetch=async(url,init)=>{
+  if(native&&String(url)!=='https://api.openai.com/v1/responses')return original(url,init);
+  assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;
+  const request=JSON.parse(init.body),alias=JSON.parse(request.input).blocks.find(b=>b.text==='Original authored direction.').id;
+  return specialistRawResponse(request,{output:[{type:'message',id:'edit-message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Consider this change.',actions:[
+   {kind:'context.edit',block_type:'direction',target_block_id:alias,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:'Explicitly accepted authored direction.'}]})}]}]});
+ };t.after(()=>{globalThis.fetch=original;});
+ const executed=await specialistExecute(state,review,state.semanticOptions);assert.equal(executed.status,202,await executed.clone().text());await state.drainBackground();
+ const read=await specialistRetrieve(state,review,state.semanticOptions),result=await read.json();assert.equal(read.status,200,JSON.stringify(result));assert.ok(result.result?.editReview,JSON.stringify(result));
+ const {memoryEditApprovalHash}=await import('../src/model/memory-edit-review.ts');
+ const approval={action:'apply-edit',turnId:review.turnId,executionId:review.executionId,approvedBindingHash:review.quote.bindingHash,
+  blockId,approvedEditHash:await memoryEditApprovalHash(result.result.editReview,blockId),publishToDocument:true};
+ return Object.assign(state,{authoredReview:review,authoredResult:result,authoredApproval:approval,authoredBlock:blockId,providerCalls:()=>calls,
+  applyAuthored:(body=approval)=>specialistProtocolRequest(state,body,state.semanticOptions)});
+}
+for(const shared of [false,true])for(const native of [false,true])test('semantic authored edit: exact acceptance preserves authored work after withdrawal '+shared+'/'+native,{timeout:120000},async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared,native}),db=state.env.DB;
+ const before=(await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n;
+ const applied=await state.applyAuthored(),body=await applied.json();assert.equal(applied.status,200,JSON.stringify(body)+' SQL '+state.controls.lastDatabaseError);
+ assert.equal(body.status,'applied');assert.equal(body.preservedOnMemoryWithdrawal,true);assert.equal(state.providerCalls(),1);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,before+1);
+ const event=await db.prepare("SELECT e.event_id,e.payload,p.private_json FROM events e JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.type='BlockPropertyEdited' AND json_extract(e.payload,'$.block_id')=?").bind(state.authoredBlock).first();
+ assert.ok(event);assert.equal(JSON.parse(event.payload).memory_authored_version,1);assert.equal(JSON.parse(event.payload).source_chat_turn_id,state.authoredReview.turnId);
+ assert.equal(JSON.parse(event.private_json).new_value,'Explicitly accepted authored direction.');
+ assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE target_kind='event' AND target_id=?").bind(event.event_id).first()).n,0);
+ const duplicate=await state.applyAuthored();assert.equal(duplicate.status,409);assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,before+1);
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ assert.equal((await db.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').bind(event.event_id).first()).private_json,event.private_json);
+ const withdrawn=await state.applyAuthored();assert.equal(withdrawn.status,404);assert.equal(state.providerCalls(),1);
+ // Memory withdrawal retires private inference, not ordinary authoring history.
+ // A subsequent deliberate Undo still uses the established authoring route.
+ const undone=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',compensatesEventId:event.event_id,payload:{
+  project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:state.authoredBlock,property_path:'text',
+  old_value:'Explicitly accepted authored direction.',new_value:'Original authored direction.',memory_authored_version:1,request_id:state.authoredReview.executionId,
+ }}},state.owner));assert.equal(undone.status,200,await undone.clone().text());
+ const inverse=await db.prepare('SELECT e.event_id,e.payload,p.private_json FROM events e JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.compensates_event_id=?').bind(event.event_id).first();
+ assert.ok(inverse);assert.equal(JSON.parse(inverse.payload).memory_authored_version,1);assert.equal(JSON.parse(inverse.private_json).new_value,'Original authored direction.');
+ assert.equal((await db.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').bind(event.event_id).first()).private_json,event.private_json);
+ assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE target_kind='event' AND target_id=?").bind(inverse.event_id).first()).n,0);
+});
+for(const shared of [false,true])for(const fault of ['approval','destination','unknown-field','withdrawal','source-race','private-field-race','access-race'])test('semantic authored edit: denies '+fault+' before any authored change '+shared,async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared}),db=state.env.DB,approval={...state.authoredApproval};
+ const before=(await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n;
+ if(fault==='approval')approval.approvedEditHash='f'.repeat(64);
+ if(fault==='destination')approval.publishToDocument=false;
+ if(fault==='unknown-field')approval.suggestedText='UNAPPROVED';
+ if(fault==='withdrawal')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+ let hit=false;
+ if(['source-race','private-field-race','access-race'].includes(fault)){
+  const batch=db.batch;db.batch=async statements=>{
+   if(!hit&&statements.some(s=>s.sql?.includes('INSERT INTO event_client_receipts')&&s.values?.includes('memory-edit:'+approval.executionId+':'+approval.blockId))){
+    hit=true;
+    if(fault==='source-race')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+    if(fault==='private-field-race')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Concurrent changed field') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')=?)").run(state.authoredBlock);
+    if(fault==='access-race')state.sqlite.prepare("UPDATE users SET role='viewer',updated_at=? WHERE user_id=?").run(new Date().toISOString(),state.current().actor_user_id);
+   }
+   return batch.call(db,statements);
+  };t.after(()=>{db.batch=batch;});
+ }
+ const applied=await state.applyAuthored(approval);assert.ok(applied.status>=400,await applied.clone().text());
+ if(['source-race','private-field-race','access-race'].includes(fault))assert.equal(hit,true);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,before);assert.equal(state.providerCalls(),1);
+});
+
+for(const shared of [false,true])test('semantic authored edit: subsequent native prompts retain non-independent ancestry after withdrawal '+shared,async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared});assert.equal((await state.applyAuthored()).status,200);
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ const edited=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',payload:{project_id:state.current().project_id,
+  document_id:state.recallTarget.documentId,block_id:state.authoredBlock,property_path:'text',old_value:'Explicitly accepted authored direction.',new_value:'My later ordinary revision.'}}},state.owner));
+ assert.equal(edited.status,200,await edited.clone().text());
+ // Disable Memory and use a new ordinary conversation window. Retired private
+ // answers must not be silently reused merely because authored text survives.
+ state.env.FORMA_MEMORY_ENABLED='false';
+ for(let i=0;i<2;i++)await specialistFreeTurn(state,'memory-authored-new-window-'+i,'Review ordinary authored work.',state.semanticOptions);
+ const turn=await specialistFreeTurn(state,'memory-authored-later-turn','Review the current document.',state.semanticOptions);
+ const quote=await specialistQuote(state,turn.id,undefined,state.semanticOptions),provider=quote.quote.privateInput.providerRequest;
+ const input=JSON.parse(provider.input),block=input.blocks.find(item=>item.text==='My later ordinary revision.');
+ assert.ok(block);assert.equal(block.authorship,'accepted-memory-assisted');assert.equal(block.independent_evidence,false);
+ assert.doesNotMatch(JSON.stringify(input),new RegExp(state.authoredReview.executionId));
+ assert.equal(state.providerCalls(),1,'Reading or quoting later authored context cannot purchase another completion');
+});
+
+for(const shared of [false,true])for(const phase of ['active','expired-unswept','retired'])test('native asset event feed: generic reads cannot hydrate private inference '+shared+'/'+phase,async t=>{
+ const state=await nativeAssetFixture(t,{shared}),secret='PRIVATE_ASSET_FIELD_'+phase;
+ const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{block_id:'asset-block',project_id:state.current().project_id,
+  document_id:state.recallTarget.documentId,type:'direction',scope:'document',properties:{text:'synthetic before'}}}},state.owner));
+ assert.equal(created.status,200,await created.clone().text());
+ const root=await nativeAssetEvent(state,{value:secret,chat:true}),until=new Date(Date.now()+5000).toISOString();
+ state.addAssetEdge('content',state.assetRoot.target_id,'event',root.eventId,state.assetOwner,until);
+ const authored=await nativeAssetEvent(state,{authored:true,value:'Deliberately authored text remains readable'});
+ if(phase==='expired-unswept'){
+  const clock=consequentialDbClock(state);t.after(()=>clock.close());t.mock.timers.enable({apis:['Date'],now:Date.parse(until)+1});clock.set(new Date().toISOString());
+  assert.ok(state.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').get(root.eventId).private_json.includes(secret),'No maintenance sweep has run');
+ }
+ if(phase==='retired')await state.resultStore.withdrawNativeDerivationResult(state.env,state.assetOwner,state.executionJob.job_id);
+ const response=await state.request('/api/events?after=0&limit=2000&content=1',{headers:state.owner??{}}),text=await response.text();
+ assert.equal(response.status,200,text);assert.ok(!text.includes(secret));const events=JSON.parse(text).events;
+ const privateEvent=events.find(e=>e.eventId===root.eventId);assert.ok(privateEvent);assert.equal(privateEvent.payload.new_value,undefined);
+ assert.equal(privateEvent.payload.old_value,undefined);assert.equal(privateEvent.payload.memory_origin_version,3);
+ assert.equal(events.find(e=>e.eventId===authored.eventId).payload.new_value,'Deliberately authored text remains readable');
+});
+for(const marker of [1,2,3,null,'unknown',999])test('event serialization: marked private Memory stays withheld independently of restored body '+marker,async()=>{
+ const {serializeEvent}=await import('../worker/event-read-primitives.ts');
+ const row={event_id:'event',type:'AssistantReasoned',payload:JSON.stringify({project_id:'p',document_id:'d',operation:'creative-chat',memory_origin_version:marker,text:'LEGACY_PRIVATE_BODY',response_ref:'PRIVATE_POINTER'}),private_json:JSON.stringify({text:'RESTORED_PRIVATE_BODY',response_ref:'PRIVATE_POINTER'})};
+ const result=serializeEvent(row);assert.doesNotMatch(JSON.stringify(result.payload),/PRIVATE_BODY/);assert.equal(result.payload.response_ref,'PRIVATE_POINTER');assert.equal(result.payload.project_id,'p');assert.equal(result.payload.operation,'creative-chat');
+});
+
+for(const shared of [false,true])test('Memory field completion: current saved suggestion is a bounded read without a provider or turn '+shared,async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared}),counts=adaptiveReentryFinancialState(state),before=state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_turns').get().n;
+ const path=endpoint(state.semanticOptions.route,state.semanticOptions.project).replace('/api/assistant?','/api/assistant/field-suggestion?')+'&blockId='+state.authoredBlock+'&locale=en';
+ const response=await state.request(path,{headers:state.owner??{}}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));
+ assert.equal(body.version,'memory-field-completion-v1');assert.ok(body.suggestion,JSON.stringify(body));
+ assert.equal(body.suggestion.review.edits.length,1);assert.equal(body.suggestion.review.edits[0].blockId,state.authoredBlock);
+ assert.equal(body.suggestion.review.edits[0].suggestedText,'Explicitly accepted authored direction.');assert.equal(body.suggestion.independentEvidence,false);
+ assert.equal(state.providerCalls(),1);assert.deepEqual(adaptiveReentryFinancialState(state),counts);assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_turns').get().n,before);
+ for(const suffix of ['&draft=UNSENT','&locale=fr','&blockId=another'])assert.equal((await state.request(path+suffix,{headers:state.owner??{}})).status,400);
+ const foreign=await state.request(path.replace(state.authoredBlock,'different-block'),{headers:state.owner??{}});assert.equal((await foreign.json()).suggestion,null);
+ const language=await state.request(path.replace('locale=en','locale=fr'),{headers:state.owner??{}});assert.equal((await language.json()).suggestion,null);
+ assert.equal((await state.applyAuthored()).status,200);const stale=await state.request(path,{headers:state.owner??{}});assert.equal((await stale.json()).suggestion,null);
+});
+
+for(const shared of [false,true])for(const fault of ['disabled','withdrawn','read-only','private-field-changed','locked'])test('Memory field completion: no saved private text after '+fault+' '+shared,async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared}),counts=adaptiveReentryFinancialState(state);
+ if(fault==='disabled')state.env.FORMA_MEMORY_ENABLED='false';
+ if(fault==='withdrawn')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+ if(fault==='read-only')state.sqlite.prepare("UPDATE users SET role='viewer',updated_at=? WHERE user_id=?").run(new Date().toISOString(),state.current().actor_user_id);
+ if(fault==='private-field-changed')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Concurrent changed field') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')=?)").run(state.authoredBlock);
+ if(fault==='locked'){
+  const locked=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',payload:{project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:state.authoredBlock,property_path:'locked',old_value:false,new_value:true}}},state.owner));assert.equal(locked.status,200,await locked.clone().text());
+ }
+ const path=endpoint(state.semanticOptions.route,state.semanticOptions.project).replace('/api/assistant?','/api/assistant/field-suggestion?')+'&blockId='+state.authoredBlock+'&locale=en';
+ const response=await state.request(path,{headers:state.owner??{}}),text=await response.text();
+ assert.doesNotMatch(text,/Explicitly accepted authored direction|Original authored direction/);
+ assert.ok(response.status>=400||JSON.parse(text).suggestion===null,text);
+ assert.equal(state.providerCalls(),1);assert.deepEqual(adaptiveReentryFinancialState(state),counts);
 });

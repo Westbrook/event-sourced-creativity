@@ -36,6 +36,8 @@ import "./reference-composition-editor";
 import "./image-format-editor";
 import "./output-input-editor";
 import "./context-intelligence";
+import type { MemoryFieldCompletion } from "./memory-field-completion.ts";
+import "./memory-field-completion.ts";
 
 type ContextControlFocus = { lease: OutputNavigationFocusLease; current: () => boolean };
 
@@ -57,6 +59,7 @@ export class ContextBlock extends FormaElement {
   #savingDraft: object | null = null;
   #controlFocus: ContextControlFocus | null = null;
   #draft = "";
+  #draftComposing=false;
   #imageLabel = "";
   #imagePalette: string[] = [];
   #editingFocused = false;
@@ -83,6 +86,7 @@ export class ContextBlock extends FormaElement {
   #finishEdit(focus: ContextControlFocus) {
     this.querySelector("forma-output-input-editor")?.reset();
     this.#structuredEditor = null;
+    this.#draftComposing=false;
     this.#draftRevision++;
     this.#savingDraft = null;
     if (this.store.ui.editingBlockId === this.block.id) this.store.patchUi({ editingBlockId: "" });
@@ -142,7 +146,7 @@ export class ContextBlock extends FormaElement {
     this.#imagePalette = Array.isArray(this.block.properties.output_palette) ? this.block.properties.output_palette.map(String) : [];
   }
 
-  #markDraftChanged() { this.#draftRevision++; this.#draftChanged = true; }
+  #markDraftChanged() { this.querySelector<MemoryFieldCompletion>("forma-memory-field-completion")?.retire();this.#draftRevision++; this.#draftChanged = true; }
 
   #markStructuredDraftChanged() { this.#structuredEditor = this.querySelector("forma-output-input-editor"); this.#markDraftChanged(); }
 
@@ -321,7 +325,9 @@ export class ContextBlock extends FormaElement {
       : this.#calmSurface() ? this.i18n.t("context.controls.shortcut", "⌘/Ctrl + Enter to save · Esc to close controls") : this.i18n.system("⌘/Ctrl + Enter to save · Esc to cancel");
     if (outputInputDraft(this.block)) return html`<form class="block-editor output-derived-block-editor" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.#saveEdit(); }} @keydown=${this.#editorKeys}><forma-output-input-editor .block=${this.block} .source=${this.surface} .shortcutHelp=${this.#calmSurface()?this.i18n.t("context.controls.shortcutHelp","Command or Control plus Enter saves; Escape closes controls and keeps unsaved edits."):""} @output-input-change=${this.#markStructuredDraftChanged}></forma-output-input-editor><div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save input</button></div></form>`;
     if (properties.source_output_id || properties.source_artifact_item_id) return html`<form class="block-editor output-derived-block-editor" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.#saveEdit(); }} @keydown=${this.#editorKeys}>${properties.source_output_id ? html`<label>Image title<input .value=${this.#imageLabel} @input=${(event: InputEvent) => { this.#imageLabel = (event.target as HTMLInputElement).value; this.#markDraftChanged(); }}></label>` : nothing}<forma-ui-rich-text .label=${properties.source_artifact_item_id ? properties.source_artifact_kind==="video"?this.i18n.system("Scene {value} direction", { value: String(properties.video_scene_index??properties.narrative_order??"") }):this.i18n.system("Frame {value} shot direction", { value: String(properties.storyboard_frame_index ?? "") }) : this.i18n.system("Image description and creative direction")} .value=${this.#draft} .rows=${5} .help=${this.#calmSurface()?this.i18n.t("context.controls.shortcutHelp","Command or Control plus Enter saves; Escape closes controls and keeps unsaved edits."):this.i18n.system("Command or Control plus Enter saves; Escape cancels.")} @forma-input=${(event: CustomEvent<{ value: string }>) => { this.#draft = event.detail.value; this.#markDraftChanged(); }}></forma-ui-rich-text>${properties.source_output_id&&this.#imagePalette.length?html`<fieldset class="output-input-image-palette"><legend>Creative image palette</legend>${this.#imagePalette.map((color,index)=>html`<label>Palette color ${index+1}<input .value=${color} @input=${(event:InputEvent)=>{this.#imagePalette=this.#imagePalette.map((value,position)=>position===index?(event.target as HTMLInputElement).value:value);this.#markDraftChanged();}}></label>`)}</fieldset>`:nothing}<div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save input</button></div></form>`;
-    return html`<form class="block-editor" @submit=${(event:SubmitEvent)=>{event.preventDefault();void this.#saveEdit();}}><label for=${`block-copy-${this.block.id}`}>Edit ${this.block.type} content</label><textarea id=${`block-copy-${this.block.id}`} rows="3" .value=${this.#draft} placeholder=${String(properties.placeholder??"Describe a direction…")} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.#markDraftChanged();this.requestUpdate();}} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.isComposing){event.preventDefault();event.stopPropagation();if(this.#calmSurface())this.#closeControls();else this.#cancelEdit();}else if(event.key==="Enter"&&!event.isComposing&&(event.metaKey||event.ctrlKey)){event.preventDefault();(event.currentTarget as HTMLTextAreaElement).form?.requestSubmit();}}}></textarea><div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save</button></div></form>`;
+    return html`<form class="block-editor" @submit=${(event:SubmitEvent)=>{event.preventDefault();void this.#saveEdit();}}><label for=${`block-copy-${this.block.id}`}>Edit ${this.block.type} content</label><textarea id=${`block-copy-${this.block.id}`} rows="3" .value=${this.#draft} placeholder=${String(properties.placeholder??"Describe a direction…")} @compositionstart=${()=>{this.#draftComposing=true;this.querySelector<MemoryFieldCompletion>("forma-memory-field-completion")?.retire();this.requestUpdate();}} @compositionend=${()=>{this.#draftComposing=false;this.requestUpdate();}} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.#markDraftChanged();this.requestUpdate();}} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.isComposing){event.preventDefault();event.stopPropagation();if(this.#calmSurface())this.#closeControls();else this.#cancelEdit();}else if(event.key==="Enter"&&!event.isComposing&&(event.metaKey||event.ctrlKey)){event.preventDefault();(event.currentTarget as HTMLTextAreaElement).form?.requestSubmit();}}}></textarea><forma-memory-field-completion .block=${this.block} .draft=${this.#draft} .composing=${this.#draftComposing} .disabled=${Boolean(this.#savingDraft)}
+      .fieldCurrent=${()=>!this.#draftComposing&&!this.#savingDraft&&this.#canEdit()&&this.#draft===String(this.block.properties.text??'')}
+      @forma-memory-field-applied=${(event:CustomEvent<{blockId:string}>)=>{if(event.detail.blockId===this.block.id&&!this.#draftComposing&&!this.#savingDraft)this.#finishEdit(this.#captureControlFocus());}}></forma-memory-field-completion><div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save</button></div></form>`;
   }
   async #rename() {
     const previous = this.block.handle;

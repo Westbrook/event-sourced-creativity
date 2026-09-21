@@ -1,5 +1,5 @@
 import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
-import { parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
+import { memoryEditApprovalHash,parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { libraryBlockEditorFromRoute } from '../src/model/routes.ts';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -101,7 +101,7 @@ function fixture(locale = "en", nativeWindow = { addEventListener() {}, removeEv
   const previewExports = {};
   new Function("require", "exports", previewCode)(name => { assert.equal(name, "lit"); return lit; }, previewExports);
   const dependencies = {
-    "../../model/memory-edit-review.ts": {parseMemoryEditReview},
+    "../../model/memory-edit-review.ts": {memoryEditApprovalHash,parseMemoryEditReview},
     "../../model/memory-answer.ts": {parseSemanticMemoryAnswerPresentation},
     lit, "lit/directives/keyed.js": { keyed }, "../../model/conversation-context.ts": { ASSISTANT_CONTEXT_LIMITS },
     "../../model/context-consent-state.ts": { contextConsentAction },
@@ -3836,4 +3836,18 @@ for(const locale of ['en','fr','ar','ja'])test('Memory edit preview: localized h
   f.setReview(changed);assert.doesNotMatch(f.render().markup,/UNAPPLIED_PREVIEW/u);
  }
  f.setReview({...state,editReview:undefined});assert.deepEqual(f.render().buttons.map(b=>b.label),buttons,'Review does not add Apply, copy, generation, or approval controls');
+});
+
+for(const locale of ['en','fr','ar','ja'])test('Memory authored edit panel: disclosure and exact rendered approval '+locale,async()=>{
+ const f=fixture(locale),state=review('retrieve');state.originalRequest.sourceHash=state.quote.sourceHash='a'.repeat(64);
+ state.resultSource='semantic-memory-assisted';state.semanticMemory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false};
+ state.editReview={version:'memory-edit-review-v1',executionId:state.executionId,turnId:state.turnId,projectId:state.originalRequest.projectId,
+  documentId:state.originalRequest.documentId,sourceHash:state.originalRequest.sourceHash,locale:'en',mode:'review-only',independentEvidence:false,
+  edits:[{blockId:'block-a',field:'text',revision:2,beforeExcerpt:'Original',suggestedText:'Exact replacement'}]};
+ f.panel.canMemoryEdit=true;f.setReview(state);const shown=f.render();
+ assert.ok(shown.markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.editPublishDetail']));
+ const button=shown.buttons.find(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.editApply']);assert.ok(button);assert.equal(button.disabled,false);
+ await button.click();const control=f.emitted.at(-1).detail;assert.equal(control.action,'apply-edit');assert.equal(control.blockId,'block-a');
+ assert.equal(control.approvedEditHash,await memoryEditApprovalHash(state.editReview,'block-a'));assert.equal(control.reviewId,state.id);
+ f.panel.canMemoryEdit=false;assert.equal(f.render().buttons.some(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.editApply']),false);
 });

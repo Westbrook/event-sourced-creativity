@@ -1261,12 +1261,14 @@ async function currentArtifactRightsBinding(env:WorkerEnv,context:ProjectRequest
 
 export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestContext,principal:PilotUser,body:{action?:string;event?:{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null};events?:Array<{type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null}>;clientId?:string;correlationId?:string;expectedSequence?:number},atomicEdit?:{artifactId:string;contentId:string;oldContent:string;newContent:string;expectedRevision:number;documentId:string;revisions:ArtifactRevisionSnapshot[];restoreSource?:{revision:number;contentSha256:string;contentJson:string}},atomicSidecars?:{
   statements?:D1PreparedStatement[];
+  /** Internal, atomic checks before authoring can change the captured source. */
+  preconditions?:D1PreparedStatement[];
   buildStatements?:(lastEventId:string,writeProof?:BudgetReservationGuard,allocatedEvents?:readonly EventRow[])=>D1PreparedStatement[];
   guardSql?:string;
   guardBindings?:Array<string|number|null>;
   expectedOwnerHead?:number;
   preserveGovernance?:true;
-  authoringOperation?:"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
+  authoringOperation?:"memory-edit"|"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
   assistantAcceptance?:{proposalId:string;turnId:string;actorUserId:string;scopeKey:string;organizationId:string;projectAccessId:string;projectId:string;documentId:string};
 }){
   const action=String(body.action??"append");
@@ -1276,6 +1278,11 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     ||(atomicSidecars.authoringOperation==="canvas-arrangement"
       ? action!=="batch"||validateAtomicCanvasArrangementEvents(original,principal.userId)!==null
       : (atomicSidecars.authoringOperation==="workspace-quick-edit"?!validWorkspaceQuickEditEvents(original):original.some((event)=>!(atomicSidecars.authoringOperation==="adaptive-proposal"?["BlockCreated","BlockPropertyEdited","CanvasItemPlaced"]:["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"]).includes(String(event.type)))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
+  if(atomicSidecars?.authoringOperation==='memory-edit'&&!atomicSidecars.preconditions?.length)return Response.json({error:'invalid_authoring_operation'},{status:403});
+  if(atomicSidecars?.preconditions?.length&&(!atomicSidecars.preserveGovernance||atomicSidecars.authoringOperation!=='memory-edit'
+    ||atomicSidecars.preconditions.length>128||original.length!==1||original[0]?.type!=='BlockPropertyEdited'
+    ||original[0]?.payload?.property_path!=='text'||original[0]?.payload?.memory_authored_version!==1))
+    return Response.json({error:'invalid_authoring_operation'},{status:403});
   const assistantAcceptance=atomicSidecars?.assistantAcceptance;
   if(assistantAcceptance){
     const accepted=original[0],mutation=original[1],payload=accepted?.payload??{};
@@ -1605,7 +1612,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   const current=await env.DB.prepare("SELECT COALESCE(MAX(project_sequence),0) AS head FROM project_event_scopes WHERE project_access_id=?").bind(context.projectAccessId).first<{head:number}>();
   let projectHead=Number(current?.head??0);
   if(action!=="canvas_sync"&&Number.isSafeInteger(body.expectedSequence)&&Number(body.expectedSequence)!==projectHead)return Response.json({error:"stale_sequence",expected:body.expectedSequence,head:projectHead},{status:409});
-  const now=new Date().toISOString(),appended:EventRow[]=[],statements:D1PreparedStatement[]=[];
+  const now=new Date().toISOString(),appended:EventRow[]=[],statements:D1PreparedStatement[]=[...(atomicSidecars?.preconditions??[])];
   let bulkAdmission:BudgetReservationGuard|null=null,bulkAdmissionKey="";
   const bulkProjectRows:Array<Array<string|number|null>>=[],bulkResourceRows:Array<Array<string|number|null>>=[];
   const bulkMediaRows:Array<[string,string,string,string]>=[];
@@ -1689,17 +1696,17 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       if(bulkAdmission&&bulkAdmissionKey!==key)throw new Error("invalid_authoring_operation");
       bulkAdmission={sql,bindings:writeBindings};bulkAdmissionKey=key;
     }else{
-      if(restoreProof.length)restoreExactWriteIndexes.add(statements.length);
+      restoreExactWriteIndexes.add(statements.length);
       statements.push(env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS})
         SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=? AND ${guard}${contentGuard}${exactContentProof.sql}${restoreGuard}${assignmentGuard}${decisionGuard}${sidecarGuard}`)
         .bind(...eventWriteBindings(event),ownerStream,event.sequence-1,...writeBindings));
     }
     projectHead+=1;
     const projectRow=[event.eventId,context.projectAccessId,context.organizationId,context.projectId,context.ownerUserId,ownerStream,event.sequence,projectHead,principal.userId,now];
-    if(restoreProof.length)restoreProjectRows.push(projectRow);
+    restoreProjectRows.push(projectRow);
     if(bulkAuthoring)bulkProjectRows.push(projectRow);
     else{
-      if(restoreProof.length)restoreExactWriteIndexes.add(statements.length);
+      restoreExactWriteIndexes.add(statements.length);
       statements.push(env.DB.prepare("INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM events WHERE event_id=?)")
         .bind(...projectRow,event.eventId));
     }
@@ -1761,7 +1768,9 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   }
   for(const proof of restoreProof){restoreProofIndexes.add(statements.length);statements.push(proof);}
   let restoreCommitIndex=-1;
-  if(restoreProof.length){
+  if(restoreProof.length||!bulkAuthoring){
+    // Exact native receipts cover ordinary field Undo/Redo too: D1 reports
+    // trigger side effects in meta.changes, not just the top-level event row.
     const exact=authoringEventProof(appended),custody=authoringSidecarProof('project_event_scopes',restoreProjectRows);
     restoreCommitIndex=statements.length;
     statements.push(env.DB.prepare(`SELECT CASE WHEN (${exact.sql}) AND (${custody.sql})
@@ -1775,6 +1784,9 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     for(const restore of restoreWitnesses)restore.assertCurrent();
     const results=await env.DB.batch<Record<string,unknown>>(statements);
     for(const restore of restoreWitnesses)restore.assertCurrent();
+    if(atomicSidecars?.preconditions?.length&&(results.length!==statements.length||results.slice(0,atomicSidecars.preconditions.length).some(result=>
+      result.success!==true||result.results?.length!==1||result.results[0]?.verified!==1)))
+      return Response.json({error:'authoring_commit_unconfirmed',noAutomaticRetry:true},{status:409});
     if(restoreProofIndexes.size&&(results.length!==statements.length||[...restoreProofIndexes].some(index=>{
       const result=results[index];return result?.success!==true||'error' in result&&result.error!==undefined
         ||result.results?.length!==1||result.results[0]?.context_source_asserted!==1;
@@ -1787,7 +1799,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       if(index<(validatedOutputOwnerHead===null?0:1)||restoreProofIndexes.has(index)||index===restoreCommitIndex)return false;
       const changes=Number(result.meta.changes??0);
       // D1 includes trigger writes in event/custody change counts. The exact
-      // event/private/custody/head assertion above is the restore receipt.
+      // event/private/custody/head assertion above is the authoring receipt.
       return restoreExactWriteIndexes.has(index)
         ? !Number.isSafeInteger(changes)||changes<1 : changes!==1;
     }))return Response.json({error:"project_access_revoked"},{status:403});

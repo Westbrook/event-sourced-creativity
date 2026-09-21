@@ -73,7 +73,7 @@ function providerDecisionAliases(context:AssistantContext){
 
 function assistantProviderView(context: AssistantContext, message: string, aliases:ReadonlyMap<string,string>, recentTurns:AssistantContext["recentTurns"]) {
   const blocks=context.decisionAtoms.filter((item)=>aliases.has(item.id))
-    .map((item)=>({id:aliases.get(item.id)!,type:item.type,text:item.text,intent:item.intent,locked:item.locked||item.immutable||Boolean(item.protected),read_only:item.immutable||Boolean(item.protected)}));
+    .map((item)=>({id:aliases.get(item.id)!,type:item.type,text:item.text,intent:item.intent,locked:item.locked||item.immutable||Boolean(item.protected),read_only:item.immutable||Boolean(item.protected),...(item.memoryAssisted?{authorship:"accepted-memory-assisted",independent_evidence:false}:{})}));
   return providerFacingCreativeContext({
     page: context.surface.page,
     page_family: context.surface.canonicalFamily,
@@ -184,7 +184,8 @@ export function snapshotAssistantProviderInput(context:AssistantContext,message:
   const {plan}=providerFacingCombinedContextPlan({facts,relationships});
   const view=assistantProviderView(context,message,forward,context.recentTurns);
   delete view.relationships;
-  view.blocks=semantic.facts.map((fact,index)=>({...fact,id:forward.get(eligible[index]!.id)!}));
+  view.blocks=semantic.facts.map((fact,index)=>({...fact,id:forward.get(eligible[index]!.id)!,
+    ...(eligible[index]!.memoryAssisted?{authorship:"accepted-memory-assisted",independent_evidence:false}:{})}));
   if(semantic.relationships?.length)view.relationship_plan=semantic.relationships;
   if(plan.length)view.combined_context_plan=plan;
   // Clone the approved bytes: later UI/context mutation cannot retarget aliases or alter the source.
@@ -196,7 +197,7 @@ async function actorSafetyIdentifier(actorUserId: string) {
   return `forma_${Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join("").slice(0, 32)}`;
 }
 
-const assistantProviderInstructions=(locale:string)=>`You are Forma, a concise, page-aware creative collaborator. Respond in the user's selected language (${locale}). Prioritize the current page and exact selection, then their recent authorized activity and most recent messages. Treat audio as a currently available output format. Never claim it is a future capability. Propose the smallest independently reviewable actions; never combine several creative decisions in one context block. You cannot execute actions, change reference or audio transfer consent, launch generation, spend money, share, export, publish, or bypass approvals. Never create a reference because actual licensed uploads require their dedicated flow. Preserve locked decisions, verified sources, protected constraints, governed organization context, and other users' privacy. Explain relevant current results and next steps without exposing system internals. ${creativePromptGuardrails()}`;
+const assistantProviderInstructions=(locale:string)=>`You are Forma, a concise, page-aware creative collaborator. Respond in the user's selected language (${locale}). Prioritize the current page and exact selection, then their recent authorized activity and most recent messages. An accepted-memory-assisted block is deliberately authored document content but is not independent evidence of a personal preference; later edits or Undo do not make its history independent. Do not infer agreement, stable intent or a broader preference from it. Treat audio as a currently available output format. Never claim it is a future capability. Propose the smallest independently reviewable actions; never combine several creative decisions in one context block. You cannot execute actions, change reference or audio transfer consent, launch generation, spend money, share, export, publish, or bypass approvals. Never create a reference because actual licensed uploads require their dedicated flow. Preserve locked decisions, verified sources, protected constraints, governed organization context, and other users' privacy. Explain relevant current results and next steps without exposing system internals. ${creativePromptGuardrails()}`;
 
 /** Free request construction. The caller stores these exact bytes and aliases before approving a paid dispatch. */
 export async function buildAssistantProviderRequest(actorUserId:string,input:{model:AssistantModel;locale:string;maximumOutputTokens:number;view:Record<string,unknown>}):Promise<Record<string,unknown>>{

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createSceneCostFixture } from "./helpers/scene-cost-fixture.mjs";
 import { createSceneStoreHost, sceneDeferred } from "./helpers/scene-cost-store-host.mjs";
-import { appendAuditEvent, readWorkspaceEvents } from "../worker/runtime.ts";
+import { appendAuditEvent, appendEvents, makeEvent, streamHead, readWorkspaceEvents } from "../worker/runtime.ts";
 import { documentContextBlockRoute } from "../src/model/routes.ts";
 import { registerOutputSourceImports } from "./output-server-test-helpers.mjs";
 const focusImports = registerOutputSourceImports();
@@ -58,4 +58,33 @@ test("newer navigation after DocumentOpened dispatch keeps the original committe
  const events=await h.history();assert.equal(events.length,before.length+1);assert.equal(events.at(-1).payload.document_id,h.otherId);
  assert.deepEqual(h.worker.counts(),counts);assert.equal(h.requests.filter(row=>row.init.method==="POST").length,1);
  assert.equal(h.store.captureWorkspaceNavigationFocus(newer),null);focus.dispose();assert.equal(document.count(),0);
+});
+
+
+for(const shared of [false,true])test('Memory authored acceptance joins existing Store Undo/Redo without retaining a private preview '+shared,async t=>{
+ t.mock.method(globalThis,'fetch',async()=>assert.fail('No external requests'));
+ const h=await createSceneStoreHost({count:1,shared});t.after(()=>h.close());
+ const {store,worker}=h,blockId='scene-reuse-direction';
+ const previousHistory=globalThis.history;globalThis.history={pushState(_state,_title,route){const url=new URL(route,'http://localhost');Object.assign(h.location,{pathname:url.pathname,search:url.search,hash:url.hash});},replaceState(...args){this.pushState(...args);}};t.after(()=>{globalThis.history=previousHistory;});
+ store.setRoute(documentContextBlockRoute(worker.documentId,'Current authored Document',blockId));
+ const original=store.projection.get().blocks.find(block=>block.id===blockId);assert.ok(original);
+ // Existing edit creates an in-memory Undo entry; server acceptance must be newer.
+ await store.appendBatchWithReceipt([{type:'BlockPropertyEdited',payload:{project_id:worker.projectId,document_id:worker.documentId,
+  block_id:blockId,property_path:'text',old_value:original.properties.text,new_value:'Human revision before acceptance'}}]);
+ // Seed the same canonical server event as the approved specialist publisher,
+ // not the untrusted browser append route (which strips private Chat pointers).
+ const accepted=makeEvent(worker.streamId,(await streamHead(worker.env,worker.streamId))+1,
+  shared?'user:'+worker.owner:'user','web:assistant-memory','memory-execution','BlockPropertyEdited',{
+  project_id:worker.projectId,document_id:worker.documentId,block_id:blockId,property_path:'text',old_value:'Human revision before acceptance',new_value:'Accepted Memory suggestion',
+  memory_authored_version:1,source_chat_turn_id:'memory-turn',request_id:'memory-execution'});
+ await appendEvents(worker.env,[accepted]);await store.refreshEvents();
+ const event=store.events.get().findLast(item=>item.payload.memory_authored_version===1);assert.ok(event);
+ const receipt={eventId:event.eventId,executionId:'memory-execution',turnId:'memory-turn',blockId,projectId:worker.projectId,documentId:worker.documentId};
+ assert.equal(store.rememberMemoryAuthoredEdit({...receipt,executionId:'other'}),false);
+ assert.equal(store.rememberMemoryAuthoredEdit(receipt),true);assert.equal(store.rememberMemoryAuthoredEdit(receipt),false);
+ const source=()=>store.projection.get().blocks.find(block=>block.id===blockId).properties.text;
+ assert.equal(store.canUndo(),true);await store.undo();assert.equal(source(),'Human revision before acceptance');
+ const inverse=store.events.get().find(item=>item.compensatesEventId===event.eventId);assert.ok(inverse);assert.equal(inverse.payload.memory_authored_version,1);
+ assert.equal(store.canRedo(),true);await store.redo();assert.equal(source(),'Accepted Memory suggestion');
+ assert.equal(store.events.get().at(-1).payload.memory_authored_version,1);assert.equal(store.events.get().at(-1).payload.request_id,'memory-execution');
 });

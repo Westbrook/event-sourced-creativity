@@ -7025,6 +7025,24 @@ export class FormaStore {
   #canvasHistoryEvent(event:CreativeEvent,canvasId:string){return String(event.payload.canvas_id??event.payload.source_canvas_id??"")===canvasId&&Boolean(inverseEvent(event));}
   #historyIndex(groups:HistoryGroup[],canvasId=""){for(let index=groups.length-1;index>=0;index-=1)if(groups[index].some((event)=>canvasId?this.#canvasHistoryEvent(event,canvasId):Boolean(inverseEvent(event))))return index;return-1;}
   #streamCanvasUndoGroup(canvasId:string){const ownerId=this.session.get()?.user.userId??"";if(!ownerId)return null;const actor=this.#principalEventActor(),events=this.events.get();const compensated=new Set(events.map((event)=>event.compensatesEventId).filter(Boolean));const undone=outcomeArrangementUndoneActions(events,canvasId,ownerId);const owned=events.filter((event)=>(event.actor===actor||isProtectedOutcomeArrangementEvent(event,ownerId))&&!event.compensatesEventId&&event.payload.history_owner_id===ownerId&&this.#canvasHistoryEvent(event,canvasId));const eligible=owned.filter((event)=>!compensated.has(event.eventId)&&!undone.has(String(event.payload.history_action_id??"")));const latest=eligible.at(-1);if(!latest)return null;const actionId=String(latest.payload.history_action_id??latest.eventId);const action=owned.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);return action.some((event)=>event.type==="CanvasArrangementCreated")?action:eligible.filter((event)=>String(event.payload.history_action_id??event.eventId)===actionId);}
+  /** Remember only an independently refreshed canonical server edit. A receipt
+   * pointer cannot inject text, grant authorship or revive a retired preview.
+   * Shared event reads deliberately omit private Chat pointers; the canonical
+   * event identity and execution receipt identify the accepted public edit. */
+  rememberMemoryAuthoredEdit(receipt:{eventId:string;executionId:string;turnId:string;blockId:string;projectId:string;documentId:string}){
+    const owner=this.captureSourceOwnership(),projection=this.projection.get();
+    if(!this.sourceOwnershipActive(owner)||projection.projectId!==receipt.projectId||projection.documentId!==receipt.documentId)return false;
+    const event=this.events.get().find(item=>item.eventId===receipt.eventId),block=projection.blocks.find(item=>item.id===receipt.blockId);
+    if(!event||event.actor!==this.#principalEventActor()||event.clientId!=='web:assistant-memory'||event.compensatesEventId
+      ||event.type!=='BlockPropertyEdited'||event.payload.memory_authored_version!==1||event.payload.property_path!=='text'
+      ||event.payload.request_id!==receipt.executionId||event.payload.block_id!==receipt.blockId
+      ||event.payload.project_id!==receipt.projectId||event.payload.document_id!==receipt.documentId||typeof event.payload.old_value!=='string'
+      ||typeof event.payload.new_value!=='string'||!block||block.removed||block.properties.text!==event.payload.new_value||block.sourceEvents.at(-1)!==event.eventId
+      ||this.events.get().some(item=>item.compensatesEventId===event.eventId)
+      ||this.#undo.some(group=>group.some(item=>item.eventId===event.eventId)))return false;
+    this.#mergeConfirmed([event],this.head.get(),true);this.notify();return true;
+  }
+
   canUndo() {
     const canvasId=canvasIdFromRoute(this.route.get())??"";if(this.#historyIndex(this.#undo,canvasId)>=0)return true;if(canvasId)return Boolean(this.#streamCanvasUndoGroup(canvasId));
     const compensated=new Set(this.events.get().map((event)=>event.compensatesEventId).filter(Boolean));

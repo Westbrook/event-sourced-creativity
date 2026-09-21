@@ -1,6 +1,7 @@
+import { memoryDigest } from "./scoped-memory.ts";
 /** Private historical review, never an authoring capability or an autocomplete
  * draft. The excerpt belongs to the approved source, not necessarily today's
- * field. Applying a suggestion requires a separate native ancestry transaction. */
+ * field. Applying a suggestion requires a separate, explicitly approved native authored-work transaction. */
 export type MemoryEditReview = {
   version: 'memory-edit-review-v1'; executionId: string; turnId: string;
   projectId: string; documentId: string; sourceHash: string; locale: string;
@@ -39,4 +40,14 @@ export function parseMemoryEditReview(value:unknown,target:MemoryEditReviewTarge
   }
   return structuredClone(value) as MemoryEditReview;
   }catch{return null;}
+}
+
+/** Explicit promotion of one exact reviewed replacement, not blanket approval
+ * for a model response or permission to publish private supporting sources. */
+export async function memoryEditApprovalHash(review:MemoryEditReview,blockId:string):Promise<string|null>{
+  const valid=parseMemoryEditReview(review,{executionId:review.executionId,turnId:review.turnId,
+    projectId:review.projectId,documentId:review.documentId,sourceHash:review.sourceHash,locale:review.locale});
+  const edit=valid?.edits.find(item=>item.blockId===blockId);
+  return valid&&edit?memoryDigest(JSON.stringify(['memory-authored-text-v1',valid.executionId,valid.turnId,
+    valid.projectId,valid.documentId,valid.sourceHash,valid.locale,edit.blockId,edit.field,edit.revision,edit.beforeExcerpt,edit.suggestedText])):null;
 }

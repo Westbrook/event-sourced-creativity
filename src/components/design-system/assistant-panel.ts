@@ -1,4 +1,4 @@
-import { parseMemoryEditReview,type MemoryEditReview } from '../../model/memory-edit-review.ts';
+import { memoryEditApprovalHash,parseMemoryEditReview,type MemoryEditReview } from '../../model/memory-edit-review.ts';
 import { parseSemanticMemoryAnswerPresentation,type SemanticMemoryAnswerPresentation } from '../../model/memory-answer.ts';
 import { html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { keyed } from "lit/directives/keyed.js";
@@ -175,7 +175,7 @@ export type AssistantSpecialistReview = {
 /** A captured control is an exact user intention, never an instruction to infer the current action. */
 export type AssistantSpecialistControl = {
   reviewId: string; turnId: string; executionId: string; bindingHash: string;
-  action: "approve" | "run-approved" | "retrieve" | "resume" | "quote"; model?: string; memory?: boolean;
+  action: "approve" | "run-approved" | "retrieve" | "resume" | "quote" | "apply-edit"; model?: string; memory?: boolean; blockId?:string; approvedEditHash?:string;
 };
 
 /** Resume is a free read. Only a fresh, exact server proof can enable this separate user action. */
@@ -231,6 +231,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     retainGuidanceDraft: { type: Boolean },
     guidanceDelivery: { type: String },
     canSpecialist: { type: Boolean },
+    canMemoryEdit: { type: Boolean },
     specialist: { attribute: false },
   };
 
@@ -254,6 +255,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   declare retainGuidanceDraft: boolean;
   declare guidanceDelivery: "" | "sending" | "uncertain";
   declare canSpecialist: boolean;
+  declare canMemoryEdit: boolean;
   declare specialist: AssistantSpecialistReview | null;
   #draft = "";
   #activeMode: AssistantInteractionMode = "guidance";
@@ -328,6 +330,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     this.retainGuidanceDraft = false;
     this.guidanceDelivery = "";
     this.canSpecialist = false;
+    this.canMemoryEdit = false;
     this.specialist = null;
   }
 
@@ -1541,11 +1544,21 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     return this.canSpecialist && this.#hasUnusedSpecialistProof(state);
   }
 
+  async #applyReviewedMemoryEdit(target:Omit<AssistantSpecialistControl,'action'|'model'>,review:MemoryEditReview,blockId:string){
+    // Hash the rendered clone, not a later response that shares an execution ID.
+    const approvedEditHash=await memoryEditApprovalHash(review,blockId);
+    if(approvedEditHash)this.#specialistControl({...target,action:'apply-edit',blockId,approvedEditHash});
+  }
+
   #specialistControl(detail: AssistantSpecialistControl, modelChange = false) {
     if (!this.#specialistTargetCurrent(detail)) return;
     const state = this.specialist!, quote = state.quote;
     const purchase = Boolean(quote && !state.retrievalOnly && quote.status === "quoted");
-    const allowed = detail.action === "approve" ? purchase && this.canSpecialist && quote
+    const allowed = detail.action === "apply-edit" ? this.canMemoryEdit && quote?.status==='completed'
+      && state.resultSource==='semantic-memory-assisted' && Boolean(parseSemanticMemoryAnswerPresentation(state.semanticMemory))
+      && typeof detail.approvedEditHash==='string'&&/^[a-f0-9]{64}$/u.test(detail.approvedEditHash)
+      && Boolean(state.editReview?.edits.some(edit=>edit.blockId===detail.blockId))
+      : detail.action === "approve" ? purchase && this.canSpecialist && quote
       && Date.parse(quote.expiresAt) > Date.now() && !contextConsentAction(quote.status, quote.providerAvailable, quote.canExecute === true).disabled
       : detail.action === "run-approved" ? assistantApprovedRequestCanRun(state, this.canSpecialist)
       : detail.action === "retrieve" ? !purchase && Boolean(detail.executionId && detail.bindingHash)
@@ -1638,9 +1651,12 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         ${state.retrievalOnly || state.task ? html`<p role="status">${this.#specialistFinancial(state.task)}</p>` : nothing}
         ${editReview?html`<section class="forma-assistant-memory-edit-review" aria-label=${this.i18n.t('assistant.specialist.editReviewTitle')}>
           <h3>${this.i18n.t('assistant.specialist.editReviewTitle')}</h3><p>${this.i18n.t('assistant.specialist.editReviewDetail')}</p>
+          ${this.canMemoryEdit?html`<p>${this.i18n.t('assistant.specialist.editPublishDetail')}</p>`:nothing}
           ${editReview.edits.map(edit=>html`<article><h4 dir="auto">${this.i18n.t('assistant.specialist.editReviewTarget','',{id:edit.blockId,revision:edit.revision})}</h4>
             <dl><dt>${this.i18n.t('assistant.specialist.editReviewBefore')}</dt><dd dir="auto">${edit.beforeExcerpt}</dd>
-              <dt>${this.i18n.t('assistant.specialist.editReviewAfter')}</dt><dd dir="auto">${edit.suggestedText}</dd></dl></article>`)}
+              <dt>${this.i18n.t('assistant.specialist.editReviewAfter')}</dt><dd dir="auto">${edit.suggestedText}</dd></dl>
+              ${this.canMemoryEdit?html`<button type="button" class="button secondary" ?disabled=${state.working||!this.#modalReady}
+                @click=${()=>this.#applyReviewedMemoryEdit(target,editReview,edit.blockId)}>${this.i18n.t('assistant.specialist.editApply')}</button>`:nothing}</article>`)}
         </section>`:nothing}
         ${reply ? html`<section class="forma-assistant-specialist-result"><h3>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryResult":"assistant.specialist.originalResult")}</h3><p dir="auto">${reply}</p><small>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryReview":"assistant.specialist.resultReview")}</small></section>` : nothing}
         <footer>

@@ -199,3 +199,24 @@ test("audio is an existing output kind with pending and ready event-derived guid
   assert.equal(ready.expectedOutputKind, "audio");
   assert.deepEqual(ASSISTANT_OUTPUT_KINDS, ["image", ...DOCUMENT_ARTIFACT_KINDS]);
 });
+
+for(const history of ['accepted','later-human-edit','undo','redo'])test('Memory-authored context remains non-independent through '+history,()=>{
+  const {events}=fixture(),payload={project_id:'project-a',document_id:'document-a',block_id:'direction-a',property_path:'text'};
+  const accepted=event(6,'BlockPropertyEdited',{...payload,old_value:'Launch a greenhouse',new_value:'Accepted suggestion',memory_authored_version:1});events.push(accepted);
+  if(history==='later-human-edit')events.push(event(7,'BlockPropertyEdited',{...payload,old_value:'Accepted suggestion',new_value:'My subsequent revision'}));
+  if(history==='undo'||history==='redo')events.push({...event(7,'BlockPropertyEdited',{...payload,old_value:'Accepted suggestion',new_value:'Launch a greenhouse'}),compensatesEventId:accepted.eventId});
+  if(history==='redo')events.push(event(8,'BlockPropertyEdited',{...payload,old_value:'Launch a greenhouse',new_value:'Accepted suggestion'}));
+  const projection=foldEvents(events,Infinity,'document-a'),context=compileAssistantContext({route:'/document/document-a',events,projection,actorUserId:'owner'});
+  const atom=context.decisionAtoms.find(item=>item.id==='direction-a');assert.equal(atom.memoryAssisted,true);
+  assert.equal(atom.text,projection.blocks.find(item=>item.id==='direction-a').properties.text);
+  assert.equal(context.decisionAtoms.find(item=>item.id==='boundary-a').memoryAssisted,undefined);
+  assert.equal(atom.immutable,false,'Negative provenance does not prevent normal authored editing');
+});
+test('Memory authorship cannot be supplied by a loose block property, another resource or a private Chat pointer',()=>{
+  const {events}=fixture();events[2].payload.properties.memory_authored_version=1;
+  events.push(event(6,'BlockPropertyEdited',{project_id:'other',document_id:'other',block_id:'foreign',property_path:'text',new_value:'Private',memory_authored_version:1}));
+  events.push(event(7,'BlockPropertyEdited',{project_id:'project-a',document_id:'document-a',block_id:'direction-a',property_path:'text',new_value:'Ordinary edit',source_chat_turn_id:'PRIVATE-TURN'}));
+  const context=compileAssistantContext({route:'/document/document-a',events,projection:foldEvents(events,Infinity,'document-a'),actorUserId:'owner'});
+  assert.equal(context.decisionAtoms.find(item=>item.id==='direction-a').memoryAssisted,undefined);
+  assert.doesNotMatch(JSON.stringify(context),/PRIVATE-TURN/);
+});

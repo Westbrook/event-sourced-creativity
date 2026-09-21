@@ -11,11 +11,11 @@ not close an end-to-end consumer.
 
 | Workstream | Implemented foundation | Work required before closing it |
 | --- | --- | --- |
-| Assistant and Chat Studio consumption | Actual consent-bound specialist and embedded Chat guidance prompts; bounded follow-up ancestry; historical readers, source/target replay and withdrawal/erasure; private historical text-edit review; browser privacy coverage | Memory-assisted creative edit/output integration; conservative whole-invocation capacity and broader latency/freshness qualification. Read-only guidance is not the legacy creative-edit/live-preview consumer. |
-| Exact-field autocomplete | Native versioned block history, source proofs and suggestion results | Bind completion to exact field/revision/language; cancellable nonblocking presentation and IME/keyboard behavior; explicit accept/reject/edit/undo; retain assisted ancestry through later edits and independently authorized reuse; do not persist unsent drafts. |
+| Assistant and Chat Studio consumption | Actual consent-bound specialist and embedded Chat guidance prompts; bounded follow-up ancestry; historical readers, source/target replay and withdrawal/erasure; private historical text-edit review and explicitly accepted exact-field authoring with native Undo/Redo; browser privacy coverage | Finished creative-output/live-preview integration and independently authorized reuse; conservative whole-invocation capacity and broader latency/freshness qualification. Read-only guidance is not the legacy creative-edit/live-preview consumer. |
+| Exact-field autocomplete | Native versioned block history and exact-field saved suggestion endpoint; actual localized Document text editor; cancellable byte/deadline-limited reads, IME/keyboard/draft protection, explicit accept/dismiss and native Undo; non-destructive assisted ancestry through later edits | New automatically generated field suggestions and independently authorized source reuse; broader field/resource coverage and integrated freshness qualification. Saved suggestion reuse does not generate a new completion. |
 | Unified evolving profile | Qualified derivation, rolling original-backed windows, private controls, paginated retained profile with claim-revision/counterevidence review and explicit broader bands | Longer-term source-backed consolidation, supersession and contradiction handling beyond the bounded retained projection; scope-specific promotion with independent support; consumer integration and lifecycle tests. |
 | Complete native resource/zoom coverage | Document/page/block identities and inspection; artifact revisions; same-owner nesting; certified approved-copy outcomes | Library/Canvas resource identity and history, remaining unsupported block histories, cross-owner nesting with independent permissions, and original-source recall across reuse relationships. Nesting must not grant access. |
-| Durable downstream lifecycle | Native result/index-intent retirement, saved-reference retirement and transitive specialist generated-answer provenance | Persisted ancestry-dependent edit/output/index invalidation, restore/rebuild negative provenance and non-resurrection tests for the remaining consumers/resources. |
+| Durable downstream lifecycle | Native result/index-intent retirement, saved-reference retirement and transitive specialist generated-answer provenance | Direct accepted text and subsequent assistant prompts now retain non-destructive negative provenance. Generic event readers now withhold marked private inference even before an expiry sweep or after body restoration. Remaining: output/index/reuse consumers and their browser/restore/rebuild/non-resurrection journeys. Authored work must not be erased by Memory withdrawal. |
 | Integrated qualification and operations | [Private retained-job diagnostics](forma-memory-processing-health-2026-09-20.md), budget/finance/recovery tests and migration reconciliation | End-to-end journeys across the above consumers, expanded privacy/request/byte bounds, consumer latency and source-evidence freshness qualification; reconcile all failures and update deployment/handoff evidence. |
 
 These are code/integration tasks. **They are not blocked merely because external
@@ -147,3 +147,24 @@ integration. The remaining non-destructive authored provenance, root publication
 event-reader/browser expiry,
 independently authorized reuse and output/index callers are explicitly listed in
 the checkpoint and stay assigned to this implementation task.
+
+## Explicit authored-edit continuation
+
+[Accepted Memory text edits](forma-memory-authored-edits-2026-09-20.md) now have
+actual Assistant/Chat controls, exact reviewed replacement approval, atomic
+source/privacy/rights proofs, duplicate protection, native Undo/Redo and
+non-destructive block-history provenance in subsequent assistant prompts.
+Withdrawal preserves deliberately authored text while retiring its private
+supporting inference. This completes the direct text-acceptance slice; every
+remaining native row above stays assigned here. No deployment or enrollment.
+
+## Inline field and generic reader continuation
+
+[Inline saved field completion](forma-memory-field-completion-2026-09-20.md) now has
+an actual Document editor caller, exact source/text/language checks, cancellation,
+IME/draft protection, explicit publication and toolbar Undo. Generic event feeds
+now withhold all marked private assistant inference rather than hydrating it via
+the ordinary event-private-body path. Existing operational references remain
+available for native scope reconstruction; private content readers independently
+exclude those bodies. Active, expired-unswept and withdrawn personal/shared
+fixtures pass. Neither change enrolls users or purchases a completion.

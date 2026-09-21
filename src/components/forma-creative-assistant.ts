@@ -1,4 +1,4 @@
-import { parseMemoryEditReview } from '../model/memory-edit-review.ts';
+import { memoryEditApprovalHash,parseMemoryEditReview } from '../model/memory-edit-review.ts';
 import './memory-assistant-context.ts';
 import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import { html, nothing } from "lit";
@@ -1145,6 +1145,44 @@ export class FormaCreativeAssistant extends FormaElement {
       notice: action === "stop" ? "stopUnconfirmed" : action === "execute" ? notSubmitted ? "denied" : "uncertain" : "lookupFailed" };
   }
 
+  async #applyMemoryEdit(control:AssistantSpecialistControl){
+    this.#pruneSemanticReceipts();
+    const state=this.#specialist,source=this.store.captureSourceOwnership();
+    if(!state||state.working||!this.#open||!this.#canAuthor()||this.store.session.get()?.assistant?.phase!=='actions'
+      ||memoryPrivacyMutationActive()||state.scope!==this.#scope()||state.id!==control.reviewId
+      ||state.executionId!==control.executionId||state.turnId!==control.turnId||state.quote?.bindingHash!==control.bindingHash
+      ||state.quote.status!=='completed'||state.resultSource!=='semantic-memory-assisted'||!state.editReview||!control.blockId
+      ||!parseSemanticMemoryAnswerPresentation(state.semanticMemory)||!this.#semanticLeases.has(state.executionId)
+      ||!this.store.sourceOwnershipActive(source))return;
+    const revision=++this.#reviewRevision,withdrawal=this.#withdrawalRevision;
+    const current=()=>this.#specialist?.id===state.id&&revision===this.#reviewRevision&&state.scope===this.#scope()
+      &&!memoryPrivacyMutationActive()&&this.#withdrawalCurrent(state.turnId,state.executionId,withdrawal)
+      &&this.store.sourceOwnershipScopeActive(source)&&Boolean(parseSemanticMemoryAnswerPresentation(this.#specialist.semanticMemory));
+    this.#specialist={...state,working:true,notice:''};this.requestUpdate();
+    try{
+      const hash=await memoryEditApprovalHash(state.editReview,control.blockId);
+      if(!hash||hash!==control.approvedEditHash||!current()||!this.store.sourceOwnershipActive(source))return;
+      const response=await this.store.guardedFetch(this.#specialistUrl,{method:'POST',cache:'no-store',headers:{'content-type':'application/json',accept:'application/json'},
+        body:JSON.stringify({action:'apply-edit',turnId:state.turnId,executionId:state.executionId,approvedBindingHash:control.bindingHash,
+          blockId:control.blockId,approvedEditHash:hash,publishToDocument:true})},this.i18n.t('assistant.specialist.editApply'));
+      if(!current())return;
+      const body=await response.json();if(!current())return;
+      if(!response.ok||body.status!=='applied'||body.executionId!==state.executionId||body.blockId!==control.blockId||typeof body.eventId!=='string'||!body.eventId)throw Error('memory-edit-unconfirmed');
+      this.#retireSemanticReviews();this.requestUpdate();
+      await this.store.refreshEvents();
+      if(state.scope===this.#scope()&&this.store.sourceOwnershipScopeActive(source)){
+        this.store.rememberMemoryAuthoredEdit({eventId:body.eventId,executionId:state.executionId,turnId:state.turnId,blockId:control.blockId,
+          projectId:state.editReview.projectId,documentId:state.editReview.documentId});
+        this.store.toast(this.i18n.t('assistant.specialist.editApplied'));
+      }
+    }catch{
+      if(current()){this.#retireSemanticReviews();this.store.toast(this.i18n.t('assistant.specialist.editNotConfirmed'));}
+    }finally{
+      if(this.#specialist?.id===state.id&&this.#specialist.working)this.#specialist={...this.#specialist,working:false};
+      this.requestUpdate();
+    }
+  }
+
   #specialistAction(control?: AssistantSpecialistControl) {
     const state = this.#specialist;
     if (!control || !state || state.working || !this.#open || state.scope !== this.#scope()
@@ -1152,6 +1190,7 @@ export class FormaCreativeAssistant extends FormaElement {
       || control.bindingHash !== (state.quote?.bindingHash ?? state.task?.bindingHash ?? "")) return;
     // A captured free Retrieve must never become approval of whichever review
     // happens to be current when the event arrives.
+    if (control.action === "apply-edit") return this.#applyMemoryEdit(control);
     if (control.action === "approve") {
       if (state.retrievalOnly || !state.quote || state.quote.status !== "quoted") return;
       return this.#requestSpecialist("execute");
@@ -1482,6 +1521,7 @@ export class FormaCreativeAssistant extends FormaElement {
       }) : nothing}${this.#renderMemory(scope)}${surface.documentId&&this.#memoryOpen?html`<forma-memory-assistant-context></forma-memory-assistant-context>`:nothing}` : nothing}
       .retainGuidanceDraft=${true} .guidanceDelivery=${this.#guidance?.status ?? ""}
       .canSpecialist=${this.#canSpecialist()} .specialist=${this.#specialist}
+      .canMemoryEdit=${this.#canAuthor()&&session.assistant.phase==="actions"&&Boolean(surface.documentId)}
       .canReconcile=${false}
       .pending=${this.#pending.size + this.#activeTasks.size + Number(planning)} .readOnly=${embedded || !this.#canAuthor()}
       .guidanceOnly=${embedded || this.#canAuthor() && (session.assistant.phase !== "actions" || !surface.documentId)}

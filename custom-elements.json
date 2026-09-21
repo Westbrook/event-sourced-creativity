@@ -2762,6 +2762,14 @@
             },
             {
               "kind": "field",
+              "name": "canMemoryEdit",
+              "type": {
+                "text": "boolean"
+              },
+              "attribute": "canmemoryedit"
+            },
+            {
+              "kind": "field",
               "name": "canReconcile",
               "type": {
                 "text": "boolean"
@@ -3003,6 +3011,13 @@
             }
           ],
           "attributes": [
+            {
+              "name": "canmemoryedit",
+              "fieldName": "canMemoryEdit",
+              "type": {
+                "text": "boolean"
+              }
+            },
             {
               "name": "canreconcile",
               "fieldName": "canReconcile",
@@ -14580,6 +14595,128 @@
           "declaration": {
             "name": "MemoryAssistantContext",
             "module": "src/components/memory-assistant-context.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/memory-field-completion.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "MemoryFieldCompletion",
+          "tagName": "forma-memory-field-completion",
+          "customElement": true,
+          "summary": "Memory field completion application interface.",
+          "description": "Inline reuse of an already approved assistant result. This never captures a\nkeystroke, changes an unsent draft, starts a model request or auto-accepts.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "block",
+              "type": {
+                "text": "CreativeBlock"
+              }
+            },
+            {
+              "kind": "field",
+              "name": "composing",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "composing"
+            },
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "draft",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "kind": "field",
+              "name": "fieldCurrent",
+              "type": {
+                "text": "() => boolean"
+              },
+              "default": "()=>false"
+            },
+            {
+              "kind": "method",
+              "name": "retire",
+              "return": {
+                "type": {
+                  "text": "void"
+                }
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "composing",
+              "fieldName": "composing",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            }
+          ],
+          "events": [
+            {
+              "name": "forma-memory-field-applied",
+              "type": {
+                "text": "CustomEvent<{ blockId: string; eventId: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-memory-field-completion",
+          "declaration": {
+            "name": "MemoryFieldCompletion",
+            "module": "src/components/memory-field-completion.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "MemoryFieldCompletion",
+          "declaration": {
+            "name": "MemoryFieldCompletion",
+            "module": "src/components/memory-field-completion.ts"
           }
         }
       ]

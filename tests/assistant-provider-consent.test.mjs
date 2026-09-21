@@ -157,3 +157,15 @@ test("legacy HTTP marker remains a transport error and is never automatically re
   let calls=0;t.mock.method(globalThis,"fetch",async()=>{calls++;return Response.json({error:{code:"temporary_error"}},{status:503});});const f=sourceFixture(4);
   await assert.rejects(requestAssistantProvider({OPENAI_API_KEY:"fixture-only"},"legacy-actor",{model,locale:"en",context:f.context,message:f.message,maximumInputTokens:1000,maximumOutputTokens:1000}),error=>error instanceof AssistantProviderRejectedError&&error.status===503);assert.equal(calls,1);
 });
+
+test('actual assistant provider snapshots distinguish authored Memory text without publishing private lineage',async()=>{
+ const f=sourceFixture(4);f.context.decisionAtoms[0].memoryAssisted=true;
+ for(const view of [providerFacingAssistantViews(f.context,f.message),snapshotAssistantProviderInput(f.context,f.message,f.source).view]){
+  assert.equal(view.blocks[0].authorship,'accepted-memory-assisted');assert.equal(view.blocks[0].independent_evidence,false);
+  assert.equal(view.blocks[1].authorship,undefined);assert.equal(view.blocks[1].independent_evidence,undefined);
+  assert.doesNotMatch(JSON.stringify(view),/SECRET-/);
+ }
+ const built=await buildAssistantProviderRequest('actor',{model,locale:'en',maximumOutputTokens:512,view:snapshotAssistantProviderInput(f.context,f.message,f.source).view});
+ assert.match(built.instructions,/not independent evidence of a personal preference/);
+ assert.equal(JSON.parse(built.input).blocks[0].authorship,'accepted-memory-assisted');
+});

@@ -1,4 +1,4 @@
-import { parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
+import { memoryEditApprovalHash,parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { personalMemoryMessage } from '../src/components/design-system/locales/personal-memory-messages.ts';
 import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
 import { createMemoryElapsed } from '../src/model/memory-lifetime.ts';
@@ -99,6 +99,7 @@ function fixture(t, locale = "en") {
     captureAuthorizationScope: () => ({ key: JSON.stringify([session.get()?.user.userId, session.get()?.permissionEpoch, session.get()?.projectContext?.projectAccessId]), shared: Boolean(session.get()?.projectContext) }),
     guardedFetch: (url, init, action) => { trace.push(["guarded", action]); return fetch(url, init); },
     documentJobActive: () => false, adaptiveStructureFor: () => null, adaptiveSuggestionSetsFor: () => [],
+    rememberMemoryAuthoredEdit: receipt=>{trace.push(["remember-memory-edit",receipt]);return true;},
     refreshEvents: async () => { throw new Error("Free Send/retrieval must not mutate or refresh creative output"); },
     refreshSession: async () => {}, toast: (message) => trace.push(["toast", message]), setRoute: (route) => store.route.set(route),
   };
@@ -235,7 +236,7 @@ function fixture(t, locale = "en") {
       host.render();
       const fresh = host.snapshotForTest();
       Object.assign(panel, { continuation, context: fresh.context, messages: fresh.messages, proposals: fresh.proposals, tasks: fresh.tasks,
-        specialist: fresh.specialist, canSpecialist: host.canRequestForTest(), models: session.get()?.assistant?.models ?? [],
+        specialist: fresh.specialist, canMemoryEdit:session.get()?.assistant?.phase==='actions'&&(session.get()?.projectContext?.permissions??session.get()?.capabilities??[]).includes('project.author'), canSpecialist: host.canRequestForTest(), models: session.get()?.assistant?.models ?? [],
         guidanceDelivery: fresh.guidance?.status ?? "", conversationScope: host.scopeForTest(),
         readOnly: !(session.get()?.projectContext?.permissions ?? session.get()?.capabilities ?? []).includes("project.author") });
       const update = () => panel.updateForTest(new Map([["specialist", state.specialist], ["guidanceDelivery", ""], ...(previousMessages !== panel.messages ? [["messages", previousMessages]] : []), ...(previousScope !== panel.conversationScope ? [["conversationScope", previousScope || undefined]] : [])]));
@@ -3156,4 +3157,48 @@ test('Memory edit review host: an unclassified historical feed cannot repopulate
  await f.reply(call,{context:f.context,turns:[sampleTurn()],tasks:[savedTask({status:'completed',submission:'settled',canExecute:false,certifiedCompleted:true,completedReview:response})]});await loading;
  assert.deepEqual(f.host.snapshotForTest().tasks,[]);assert.doesNotMatch(JSON.stringify(f.host.snapshotForTest()),/PRIVATE_LATE_FEED|PRIVATE_FEED_BEFORE|PRIVATE_FEED_AFTER/u);
  assert.equal(f.panel.draftForTest,'Retained local draft');assert.equal(f.calls.some(c=>c.body?.action==='execute'),false);
+});
+
+
+async function retainedMemoryEditReview(f){
+ await f.open();await review(f);
+ const changing=f.host.requestForTest('quote','gpt-5.6-luna',true),call=await f.take();
+ const memory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+20000).toISOString(),independentEvidence:false};
+ await f.reply(call,specialistResponse(preview({sourceHash:'a'.repeat(64)}),{memory}));await changing;
+ const editReview={version:'memory-edit-review-v1',executionId:'approval-a',turnId:'turn-a',projectId:'project-a',documentId:'doc-a',sourceHash:'a'.repeat(64),locale:'en',mode:'review-only',independentEvidence:false,
+  edits:[{blockId:'block-a',field:'text',revision:3,beforeExcerpt:'PRIVATE_BEFORE_EXCERPT',suggestedText:'PRIVATE_ACCEPTED_TEXT'}]};
+ const reading=f.host.requestForTest('retrieve'),get=await f.take();
+ await f.reply(get,specialistResponse(preview({status:'completed',canExecute:false,sourceHash:'a'.repeat(64)}),{
+  memory,result:{reply:'Tentative guidance',sourceStatus:'semantic-memory-assisted',editReview},task:savedTask({status:'completed',submission:'settled',canExecute:false})}));await reading;
+ const state=f.host.snapshotForTest().specialist;
+ return {reviewId:state.id,turnId:state.turnId,executionId:state.executionId,bindingHash:state.quote.bindingHash,action:'apply-edit',blockId:'block-a',approvedEditHash:await memoryEditApprovalHash(editReview,'block-a')};
+}
+for(const locale of ['en','fr','ar','ja'])test('Memory authored edit UI: explicit publication sends only exact approval and refreshes authored state '+locale,async t=>{
+ const f=fixture(t,locale),control=await retainedMemoryEditReview(f);let refreshes=0;f.store.refreshEvents=async()=>{refreshes++;};
+ f.panel.draftForTest='Unsent draft never transmitted';
+ const render=f.render();assert.ok(render.markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.editPublishDetail']));
+ assert.ok(render.buttons.some(button=>button.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.editApply']&&!button.disabled));
+ const applying=f.host.actionForTest(control),call=await f.take();
+ assert.deepEqual(Object.keys(call.body).sort(),['action','approvedBindingHash','approvedEditHash','blockId','executionId','publishToDocument','turnId'].sort());
+ assert.equal(call.body.action,'apply-edit');assert.equal(call.body.publishToDocument,true);assert.match(call.body.approvedEditHash,/^[a-f0-9]{64}$/u);
+ assert.doesNotMatch(JSON.stringify(call.body),/PRIVATE_|Unsent draft/u);
+ await f.reply(call,{status:'applied',executionId:'approval-a',blockId:'block-a',eventId:'authored-event'});await applying;
+ assert.equal(refreshes,1);assert.equal(f.host.snapshotForTest().specialist.editReview,undefined);assert.equal(f.panel.draftForTest,'Unsent draft never transmitted');
+});
+for(const fault of ['blur','field','control','read-only','not-enrolled','expired','changed-review'])test('Memory authored edit UI: '+fault+' cannot dispatch acceptance',async t=>{
+ const f=fixture(t),control=await retainedMemoryEditReview(f),count=f.calls.length;
+ if(fault==='blur')f.host.retireSemanticForTest();
+ if(fault==='field')control.blockId='foreign';
+ if(fault==='control')control.bindingHash='different';
+ if(fault==='changed-review')f.host.snapshotForTest().specialist.editReview.edits[0].suggestedText='Different undisplayed suggestion';
+ if(fault==='read-only')f.session.set({...f.session.get(),capabilities:['project.read']});
+ if(fault==='not-enrolled')f.session.set({...f.session.get(),assistant:{...f.session.get().assistant,phase:'guidance'}});
+ if(fault==='expired')f.host.snapshotForTest().specialist.semanticMemory.validUntil=new Date(Date.now()-1).toISOString();
+ await f.host.actionForTest(control);assert.equal(f.calls.length,count);
+});
+test('Memory authored edit UI: late success after withdrawal does not resurrect private review',async t=>{
+ const f=fixture(t),control=await retainedMemoryEditReview(f);let refreshes=0;f.store.refreshEvents=async()=>{refreshes++;};
+ const applying=f.host.actionForTest(control),call=await f.take();f.host.retireSemanticForTest();
+ await f.reply(call,{status:'applied',executionId:'approval-a',blockId:'block-a',eventId:'authored-event'});await applying;
+ assert.equal(refreshes,0);assert.equal(f.host.snapshotForTest().specialist.editReview,undefined);assert.doesNotMatch(f.render().markup,/PRIVATE_/u);
 });

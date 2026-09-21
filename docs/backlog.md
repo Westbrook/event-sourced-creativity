@@ -250,3 +250,18 @@ explicitly excluded so Memory disable cannot erase them. Root accepted-edit publ
 callers and the other [native workstreams](forma-memory-completion-matrix-2026-09-20.md)
 remain implementation work on this task. No deployment, external service or real
 user enrollment is claimed.
+
+### MEM-003 explicit authored Memory edits
+
+[Accepted text authoring and non-destructive provenance](forma-memory-authored-edits-2026-09-20.md)
+connect reviewed suggestions to actual Document Assistant and embedded Chat
+approval, atomic personal/shared writes, canonical Undo/Redo and downstream
+assistant prompt disclosure. Memory withdrawal does not erase authored edits.
+Continue autocomplete, profile consolidation, full resource/reuse/output coverage
+and qualification in the [native completion matrix](forma-memory-completion-matrix-2026-09-20.md).
+External qualification and rollout remain tracked separately; no production or
+user enrollment is claimed.
+
+### Memory inline field consumer and generic-reader privacy — 2026-09-20
+
+Implemented [exact-field saved suggestion reuse](forma-memory-field-completion-2026-09-20.md) in the actual Document editor, with canonical acceptance/Undo and draft/IME/privacy retirement. Ordinary event feeds no longer hydrate marked private inference. Native and browser evidence is in the checkpoint. [Remaining native work](forma-memory-completion-matrix-2026-09-20.md) stays assigned; [external qualification and rollout](forma-memory-sites-capability-todo-2026-09-18.md) remains separate. No deployment or enrollment.
