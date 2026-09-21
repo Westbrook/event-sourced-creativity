@@ -86,6 +86,7 @@ export function workflowHelp(mode:string,id:string,label:string,unconfirmedSave=
   'Remove last':'Remove the last idea from this group’s selection.',
   'Select':'Include this suggestion in the changes you will review.',
   'Deselect':'Leave this suggestion out of the changes you will review.',
+  'Previous':'View the previous suggestion.',
   'Next':mode==='use-in'?'Choose where to use the selected idea.':'View the next suggestion.',
  };
  if(label==='Add reference'&&id.startsWith('workflow:intake:'))return 'Save this reference with its source and credit.';
