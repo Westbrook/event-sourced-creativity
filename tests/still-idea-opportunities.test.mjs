@@ -35,13 +35,13 @@ test('file research retains only cited public source candidates without claiming
  assert.equal(report.learned.length,1);assert.equal(report.learned[0].fileKind,'video');assert.equal(report.learned[0].license,null);assert.equal(report.learned[0].imageUrl,null);assert.equal(report.learned[0].sourceUrl,row.source_url);
 });
 
-test('Still explicitly quotes Sol high analysis; Forma retains its model and admin restrictions still apply',async()=>{
- const f=await createSceneCostFixture(1,'visual');f.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=f.owner;
+test('Still tools need no pilot enrollment; Forma enrollment and admin model restrictions remain',async()=>{
+ const f=await createSceneCostFixture(1,'visual');
  try{
   const body={...position(f),blockId:'scene-reuse-direction',analysisProfile:'still-ideas-v1',purpose:'references',publicQuery:'Harbor navigation charts'};
   const prepare=body=>prepareContextIntelligence(new Request('http://localhost/api/context/research',{method:'POST'}),f.env,'research',body);
-  const result=await prepare(body);assert.ok(!(result instanceof Response));assert.equal(result.decision.model,'gpt-5.6-sol');assert.equal(result.providerBase.reasoning.effort,'high');assert.ok(result.providerBase.max_output_tokens>=8192);assert.equal(result.binding.steps.length,2);assert.equal(result.providerBase.text.format.schema.required[0],'references');
-  const traditional=await prepare({...body,analysisProfile:undefined});assert.equal(traditional.decision.model,'gpt-5.6-terra');assert.equal(traditional.providerBase.reasoning.effort,'low');
+  const result=await prepare(body);assert.ok(!(result instanceof Response));assert.equal(result.providerAvailable,true);assert.equal(result.decision.model,'gpt-5.6-sol');assert.equal(result.providerBase.reasoning.effort,'high');assert.ok(result.providerBase.max_output_tokens>=8192);assert.equal(result.binding.steps.length,2);assert.equal(result.providerBase.text.format.schema.required[0],'references');
+  const traditional=await prepare({...body,analysisProfile:undefined});assert.equal(traditional.decision.model,'gpt-5.6-terra');assert.equal(traditional.providerBase.reasoning.effort,'low');assert.equal(traditional.providerAvailable,false);
   assert.notEqual(result.binding.intentHash,traditional.binding.intentHash);
   const empty=await prepare({...body,publicQuery:''});assert.equal(empty.status,400);
   f.env.FORMA_ASSISTANT_ALLOWED_MODELS='gpt-5.6-terra';const restricted=await prepare(body);assert.equal(restricted.providerAvailable,false);
@@ -66,8 +66,8 @@ for(const shared of [false,true])test(`supplied files become typed, linked Forma
  }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
 });
 
-test('file discovery executes reviewed search and private analysis once, with no attachment until approval',async()=>{
- const f=await createSceneCostFixture(1,'visual'),saved=globalThis.fetch;f.env.MEDIA=memoryMedia();f.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=f.owner;
+test('file discovery runs directly without pilot enrollment, with no attachment until approval',async()=>{
+ const f=await createSceneCostFixture(1,'visual'),saved=globalThis.fetch;f.env.MEDIA=memoryMedia();
  const calls=[];globalThis.fetch=async(url,init)=>{
   if(String(url).startsWith('/'))return f.request(String(url),init);
   assert.equal(String(url),'https://api.openai.com/v1/responses');const body=JSON.parse(init.body);calls.push(body);assert.equal(body.model,'gpt-5.6-sol');assert.equal(body.reasoning.effort,'high');
@@ -76,7 +76,7 @@ test('file discovery executes reviewed search and private analysis once, with no
  };
  try{
   const c=new StillClient();await c.load();c.position={...position(f),blockId:'scene-reuse-direction'};const count=c.projection.blocks.length,flow=new ContextWorkflow(c,'research','references');flow.publicQuery='Harbor navigation chart';
-  await flow.prepareQuote();assert.equal(calls.length,0);assert.equal(flow.quote.providerAvailable,true);await flow.analyze();assert.equal(calls.length,2);assert.equal(flow.candidates.length,1);assert.equal(flow.candidates[0].research.fileKind,'document');assert.equal(flow.candidates[0].included,false);assert.equal(c.projection.blocks.length,count);
+  assert.equal(calls.length,0);await flow.startAnalysis();assert.equal(calls.length,2);assert.equal(flow.candidates.length,1);assert.equal(flow.candidates[0].research.fileKind,'document');assert.equal(flow.candidates[0].included,false);assert.equal(c.projection.blocks.length,count);
   assert.equal(calls[0].input,'Harbor navigation chart');assert.doesNotMatch(calls[0].input,/keeper/);assert.match(calls[1].input,/keeper/);assert.equal(calls[1].tools,undefined);
   await flow.analyze();assert.equal(calls.length,2,'completed analysis is retrieved, never rerun');
  }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}

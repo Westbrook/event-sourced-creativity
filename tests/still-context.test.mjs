@@ -20,7 +20,7 @@ const json=(body,status=200)=>Response.json(body,{status});
 test('uncertain paid analysis is retrieved without another execution and proposals require selection',async()=>{
   const c=client(),flow=new ContextWorkflow(c,'decompose'),saved=globalThis.fetch,actions=[];
   globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);const body=JSON.parse(init.body);actions.push(body.action);if(body.action==='quote')return json({quote});if(body.action==='execute')throw new Error('lost response');if(body.action==='retrieve')return json(result);throw new Error(`unexpected ${body.action}`);};
-  try {await flow.prepareQuote();await assert.rejects(flow.analyze(),/lost/);await flow.analyze();assert.deepEqual(actions,['quote','execute','retrieve']);assert.equal(flow.candidates[0].included,false);await assert.rejects(flow.prepareChanges(),/Choose at least one/);}finally{globalThis.fetch=saved;}
+  try {await assert.rejects(flow.startAnalysis(),/lost/);await flow.startAnalysis();assert.deepEqual(actions,['quote','execute','retrieve']);assert.equal(flow.candidates[0].included,false);await assert.rejects(flow.prepareChanges(),/Choose at least one/);}finally{globalThis.fetch=saved;}
 });
 test('analysis never accepts a result from a different retained identity',async()=>{
   const flow=new ContextWorkflow(client(),'decompose'),saved=globalThis.fetch;flow.quote=quote;
@@ -91,4 +91,11 @@ test('existing reference proposals use normal authoring while web candidates req
 test('explicitly poor suggestions do not fill an arbitrary action quota',()=>{
   const candidates=ACTIONS.slice(0,10),answers=Object.fromEntries(candidates.map(a=>[`use_${a.id}`,{type:'score',score:0,confidence:1}]));
   assert.deepEqual(selectActions(candidates,pos,answers),[]);
+});
+
+test('checking uncertain research keeps the original topic and request identity',async()=>{
+ const flow=new ContextWorkflow(client(),'research'),saved=globalThis.fetch,requests=[];
+ flow.quote={...quote,status:'uncertain',publicQuery:'Original topic'};flow.publicQuery='Original topic';
+ globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);const body=JSON.parse(init.body);requests.push(body);return json({executionId:'execution',bindingHash:'binding',report:{blockId:'parent',inferred:[],related:[],learned:[]}});};
+ try{await flow.startAnalysis('A changed topic');assert.equal(requests.length,1);assert.equal(requests[0].action,'retrieve');assert.equal(requests[0].publicQuery,'Original topic');assert.equal(requests[0].executionId,'execution');}finally{globalThis.fetch=saved;}
 });

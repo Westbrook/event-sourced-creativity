@@ -35,6 +35,15 @@ export class ContextWorkflow {
     if (result.preview) { this.validate(result.preview); this.preview = result.preview; this.status = result.status; this.stale = !!result.stale; }
     if (result.status === 'applied') { await this.client.refresh(); this.status = 'applied'; }
   }
+  /** A chosen Still action prepares its retained request and runs it without a cost-review screen. */
+  async startAnalysis(publicQuery = this.publicQuery) {
+    if (!this.quote || this.quote.status === 'quoted' && this.quote.publicQuery !== publicQuery.trim()) {
+      this.publicQuery = publicQuery.trim();
+      await this.prepareQuote();
+    }
+    // An uncertain or completed attempt is retrieved, never replaced by a new execution.
+    await this.analyze();
+  }
   async prepareQuote() {
     const check = await this.guard();
     if (this.quote && this.quote.status !== 'quoted') throw new Error('Check the original analysis before starting another.');
@@ -43,7 +52,7 @@ export class ContextWorkflow {
   }
   async analyze() {
     const check = await this.guard(), quote = this.quote;
-    if (!quote) throw new Error('Review a current cost first.');
+    if (!quote) throw new Error('Prepare the analysis first.');
     const next = contextConsentAction(quote.status, quote.providerAvailable, quote.canExecute ?? quote.providerAvailable);
     if (next.disabled) throw new Error('Analysis is unavailable for this account.');
     // Mark uncertainty before dispatch, so interrupted replies can only be retrieved.

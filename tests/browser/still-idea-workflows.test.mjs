@@ -3,12 +3,18 @@ import assert from 'node:assert/strict';
 import {createServer} from 'vite';
 import {chromium} from '@playwright/test';
 
-test('idea selection, manual file attachment and analysis review use the shared toolbar',async()=>{
+test('idea selection, manual file attachment and direct analysis use the shared toolbar without cost approval',async()=>{
  const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-idea-workflows',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body></body></html>');});}}]});let browser;
  try{
   await server.listen();browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1000,height:800}});page.setDefaultTimeout(5000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/context/apply',r=>r.fulfill({json:{status:'start'}}));
-  await page.route('**/api/context/decompose',r=>r.fulfill({json:{quote:{projectId:'p',documentId:'d',blockId:'b',canvasId:null,provider:'OpenAI',models:['gpt-5.6-sol'],providerCalls:1,searchCalls:0,maximumMicrousd:200000,publicQuery:'',status:'quoted',providerAvailable:true,canExecute:true}}}));
+  const analysisRequests=[];
+  await page.route(/\/api\/context\/(?:decompose|research)$/,r=>{
+   const body=r.request().postDataJSON();analysisRequests.push(body);
+   const identity={executionId:'execution',bindingHash:'binding'};
+   if(body.action==='quote')return r.fulfill({json:{quote:{...identity,projectId:'p',documentId:'d',blockId:'b',canvasId:null,publicQuery:body.publicQuery,status:'quoted',providerAvailable:true,canExecute:true}}});
+   return r.fulfill({json:{...identity,...(r.request().url().endsWith('/decompose')?{plan:{sourceBlockId:'b',proposals:[{id:'part',label:'Brass handle',text:'brass handle',sourceExcerpt:'brass handle'}],addenda:[]}}:{report:{blockId:'b',inferred:[],related:[],learned:[{id:'fact',label:'Brass handle',text:'A useful sourced detail.',area:'learned',type:'setting'}]}})}});
+  });
   await page.route('**/api/media',r=>r.fulfill({json:{url:'/api/media/fixture',name:'study.txt',mimeType:'text/plain',contentHash:'hash',kind:'document',sourceEvidenceHash:'evidence',extraction:{status:'ready',text:'Glazed ceramic.',sourceKind:'text',segments:[{anchor:'text',text:'Glazed ceramic.'}],truncated:false,message:''}}}));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/still`);
   await page.evaluate(async()=>{
@@ -22,8 +28,15 @@ test('idea selection, manual file attachment and analysis review use the shared 
   await page.getByRole('heading',{name:'Choose an idea'}).waitFor();await button('Continue').click();await page.getByRole('heading',{name:'Supply reference'}).waitFor();assert.equal(await button('Attach file').isDisabled(),true);assert.equal(await page.evaluate(()=>window.app.client.position.blockId),'b');
   await page.locator('input[type=file]').setInputFiles({name:'study.txt',mimeType:'text/plain',buffer:Buffer.from('Glazed ceramic.')});
   await page.getByRole('checkbox',{name:'I can use this file. It contains no sensitive personal data.'}).click();await button('Attach file').click();await page.waitForFunction(()=>window.writes.length===1);assert.equal(await page.evaluate(()=>window.writes[0].find(e=>e.type==='BlockCreated').payload.properties.text),'Glazed ceramic.');
-  await page.evaluate(()=>{window.app.begin('split-context',false);});await page.getByRole('heading',{name:'Split idea'}).waitFor();await button('Review cost').click();await page.getByRole('heading',{name:'Review analysis'}).waitFor();await page.getByText('OpenAI · gpt-5.6-sol',{exact:true}).waitFor();await button('Approve analysis').waitFor();assert.equal(await page.locator('main').getByRole('button',{name:'Approve analysis'}).count(),0);
-  await page.evaluate(()=>{window.app.begin('find-references',false);});await page.getByRole('heading',{name:'Find reference'}).waitFor();assert.match(await page.getByRole('textbox',{name:'Public search topic · 140 characters max'}).inputValue(),/glazed vessel/);
-  await page.setViewportSize({width:390,height:844});await button('Review cost').waitFor();assert.deepEqual(errors,[]);
+  for(const [action,label] of [['split-context','Split idea'],['research-context','Research idea'],['find-references','Find reference']]){
+   analysisRequests.length=0;
+   await page.evaluate(action=>window.app.begin(action,false),action);await page.getByRole('heading',{name:label}).waitFor();
+   if(action!=='split-context')assert.match(await page.getByRole('textbox',{name:'Public search topic · 140 characters max'}).inputValue(),/glazed vessel/);
+   await page.setViewportSize({width:390,height:844});await button(label).click();await page.getByRole('heading',{name:'Brass handle'}).waitFor();
+   assert.deepEqual(analysisRequests.map(r=>r.action),['quote','execute']);
+   assert.equal(await page.getByText(/Review cost|Approve analysis|Maximum cost/).count(),0);
+   assert.equal(await button('Select').count(),1,'Suggestions still require the user to select and apply them');
+  }
+  assert.deepEqual(errors,[]);
  }finally{await browser?.close();await server.close();}
 });

@@ -92,7 +92,9 @@ function resolveResearch(input:{target:CreativeBlock;documentId:string;decoded:R
 export async function prepareContextIntelligence(request:Request,env:WorkerEnv,operation:"decompose"|"research",body:Record<string,unknown>){
   const auth=await requireUser(request,env,"viewer",{account:"principal"});if(auth.response||!auth.user)return auth.response??response({error:"authentication_required"},401);
   const principal=auth.user,consent=requireConsent(principal);if(consent)return consent;
-  let providerAvailable=Boolean(env.OPENAI_API_KEY&&(env.FORMA_ASSISTANT_PROVIDER_USER_IDS??"").split(",").map((value)=>value.trim()).includes(principal.userId));
+  const still=body.analysisProfile===STILL_IDEA_PROFILE;
+  // Still idea tools are standard authoring features, not Assistant pilot enrollment.
+  let providerAvailable=Boolean(env.OPENAI_API_KEY&&(still||(env.FORMA_ASSISTANT_PROVIDER_USER_IDS??"").split(",").map((value)=>value.trim()).includes(principal.userId)));
   const projectId=clean(body.projectId,120),documentId=clean(body.documentId,120),blockId=clean(body.blockId,120);if(!projectId||!documentId||!blockId)return response({error:"context_scope_required"},400);
   const selected=await readProjectRequestContext(request,env,principal);if(selected.response)return selected.response;
   const shared=selected.context;
@@ -139,7 +141,6 @@ export async function prepareContextIntelligence(request:Request,env:WorkerEnv,o
   const ranked=[...candidates.filter((candidate)=>candidate.distance===0).slice(0,25),...candidates.filter((candidate)=>candidate.distance>0).slice(0,5)],aliases=new Map<string,CreativeBlock>([["target",target],...ranked.map((candidate,index)=>[`decision_${index+1}`,candidate.block] as [string,CreativeBlock])]);
   const vocabulary=BLOCK_TYPES.filter((item)=>item.type!=="model3d").map((item)=>({type:item.type,subtypes:item.subtypes}));
   const payload=operation==="decompose"?{source:{type:addedText&&isBlockKind(addedType)?addedType:target.type,subtype:addedText?"":clean(target.properties.subtype,80),text:sourceText},block_vocabulary:vocabulary}:{target:{...safeBlock(target,"target",target.scope==="library"?1:0),text:sourceText},document_blocks:ranked.filter((candidate)=>candidate.distance===0).map((candidate)=>safeBlock(candidate.block,[...aliases].find(([,block])=>block.id===candidate.block.id)![0],candidate.distance,candidate.connected)),project_blocks:ranked.filter((candidate)=>candidate.distance>0).map((candidate)=>safeBlock(candidate.block,[...aliases].find(([,block])=>block.id===candidate.block.id)![0],candidate.distance,candidate.connected)),protected_constraints:protectedBlocks.map((block)=>({type:block.type,subtype:clean(block.properties.subtype,80),text:researchBlockText(block),intent:clean(block.properties.intent,32),locked:block.locked})),relationships:projection.libraryBlockRelations.flatMap((relation)=>{const from=[...aliases].find(([,block])=>block.id===relation.fromBlockId)?.[0],to=[...aliases].find(([,block])=>block.id===relation.toBlockId)?.[0],role=relation.properties.participant_role;return !relation.removed&&from&&to?[{from,to,kind:relation.kind,...(relation.kind===ACTION_PARTICIPANT_RELATION&&ACTION_REFERENCE_ROLES.includes(role as typeof ACTION_REFERENCE_ROLES[number])?{participant_role:role}:{})}]:[];}).slice(0,60),block_vocabulary:vocabulary};
-  const still=body.analysisProfile===STILL_IDEA_PROFILE;
   const finding=still&&operation==='research'&&body.purpose==='references';
   if(still&&operation==='research'&&!publicQuery)return response({error:'context_public_topic_required'},400);
   const instructions=finding?referenceSearchInstructions:operation==="decompose"

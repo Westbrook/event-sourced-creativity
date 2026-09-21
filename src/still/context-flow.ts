@@ -85,10 +85,10 @@ export class StillContextFlow extends LitElement {
     const flow=this.flow;if(!flow)return [];
     if(this.phase==='source-refine')return [this.command(this.client.hasUnconfirmedWrite?'Check save':'Save',()=>void this.run(async()=>{if(!this.client.hasUnconfirmedWrite)await this.guardSource();await this.client.append([{type:'BlockPropertyEdited',payload:{block_id:this.targetId,property_path:'text',old_value:this.sourceBase,new_value:this.sourceDraft}}]);this.done();}),true),this.command('Keep original',()=>this.done(),false,this.client.hasUnconfirmedWrite)];
     if(this.phase==='completed')return [this.command('Edit shared direction',()=>{this.reviewSource();this.requestUpdate();}),this.command('Explore again',()=>void this.run(async()=>{await flow.dismiss();this.phase='start';}),true),this.command('Close',()=>this.back())];
-    if(this.phase==='start')return [this.command('Review cost',()=>void this.run(()=>this.prepare()),true,this.query.length>140||flow.kind==='research'&&!this.query.trim()),back()];
-    if(this.phase==='quote'){
-      const q=flow.quote;
-      return [q?this.command(q.status==='quoted'?'Approve analysis':'Check analysis',()=>void this.run(()=>this.analyze()),true,q.status==='quoted'&&(!q.providerAvailable||q.canExecute===false)):this.command('Review cost',()=>void this.run(()=>this.prepare()),true),back()];
+    if(this.phase==='start') {
+      const checking=!!flow.quote&&flow.quote.status!=='quoted';
+      const label=checking?'Check analysis':flow.kind==='decompose'?'Split idea':this.action==='find-references'?'Find reference':'Research idea';
+      return [this.command(label,()=>void this.run(()=>this.analyze()),true,!checking&&(this.query.length>140||flow.kind==='research'&&!this.query.trim())),back()];
     }
     if(this.phase==='intake'&&this.intake?.research)return [this.command(this.client.hasUnconfirmedWrite?'Check save':'Add reference',()=>void this.run(()=>this.file?this.supplyReference():this.importReference()),true,!this.rights||!this.file&&!this.intake?.research?.imageUrl),this.command('Back',()=>{this.phase='candidates';this.requestUpdate();},false,this.client.hasUnconfirmedWrite)];
     if(this.phase==='review'&&flow.preview)return [this.command(flow.status==='applying'?'Check save':'Apply',()=>void this.run(()=>this.apply()),true,flow.stale),...(flow.status!=='applying'?[this.command('Change selection',()=>void this.run(async()=>{await flow.dismiss();this.phase=flow.candidates.length?'candidates':'start';}))]:[]),this.command('Close',()=>this.back())];
@@ -98,9 +98,8 @@ export class StillContextFlow extends LitElement {
     return [reference?this.command('Add reference',()=>{this.intake=candidate;this.file=null;this.rights=false;this.referenceEvents=null;this.phase='intake';this.requestUpdate();},true):this.command(candidate.included?'Deselect':'Select',()=>{candidate.included=!candidate.included;this.requestUpdate();},true,!!proposal&&(!candidate.text.trim()||candidate.text.length>1800)),this.command('Next',()=>{this.index=(this.index+1)%flow.candidates.length;this.requestUpdate();},false,flow.candidates.length<2),this.command(`Review (${flow.candidates.filter(c=>c.included).length})`,()=>void this.run(()=>this.review()),false,!flow.candidates.some(c=>c.included)),this.command('Close',()=>this.back())];
   }
   private async run(work:()=>Promise<void>) { if(this.busy||this.composing)return; this.busy=true;this.error='';this.requestUpdate();try {await work();}catch(e){this.error=e instanceof Error?e.message:'This step was interrupted.';}finally{this.busy=false;this.requestUpdate();} }
-  private field(label:string,text:string,change:(v:string)=>void,rows=4) { return html`<en-textarea label=${label} .value=${live(text)} rows=${rows} .disabled=${this.busy||this.client.hasUnconfirmedWrite} @en-input=${(e:CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.requestUpdate();}}></en-textarea>`; }
-  private async prepare() { this.flow.publicQuery=this.query; await this.flow.prepareQuote(); this.phase='quote'; }
-  private async analyze() { await this.flow.analyze(); this.phase='candidates';this.index=0; }
+  private field(label:string,text:string,change:(v:string)=>void,rows=4,disabled=false) { return html`<en-textarea label=${label} .value=${live(text)} rows=${rows} .disabled=${disabled||this.busy||this.client.hasUnconfirmedWrite} @en-input=${(e:CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.requestUpdate();}}></en-textarea>`; }
+  private async analyze() { await this.flow.startAnalysis(this.query); this.phase='candidates';this.index=0; }
   private async review() { await this.flow.prepareChanges();this.phase='review'; }
   private async apply() {
     await this.flow.apply();
@@ -112,12 +111,6 @@ export class StillContextFlow extends LitElement {
   private reviewSource() {
     this.sourceBase=value(this.client.projection.blocks.find(b=>b.id===this.targetId)?.properties.text);this.sourceDraft=this.sourceBase;
     this.revision=documentSource(this.client.projection,this.client.position.documentId).revision;this.phase='source-refine';
-  }
-  private privateInput() {
-    const input=this.flow.quote?.privateInput as Record<string,unknown>|undefined;
-    if(!input)return nothing;
-    const entries=[input.source,input.target,...['document_blocks','project_blocks','protected_constraints'].flatMap(key=>Array.isArray(input[key])?input[key] as unknown[]:[])].filter((v):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v));
-    return html`<div class="analysis-input"><span class="eyebrow">Private analysis context</span>${entries.map(entry=>html`<p>${value(entry.text)}</p>`)}</div>`;
   }
   private async guardSource() {
     const check=await this.client.verifyScope(); await this.client.refresh();check();
@@ -183,12 +176,7 @@ export class StillContextFlow extends LitElement {
     const flow=this.flow;if(!flow)return html`<p>Loading…</p>`;
     if(this.phase==='source-refine')return html`<h1>Shared direction</h1><p>Ideas saved. Remove repeated details; keep shared constraints.</p>${this.field('Text',this.sourceDraft,v=>this.sourceDraft=v)}<div class="change-review">${flow.preview?.changes.filter(c=>c.kind==='create').map(c=>html`<p><strong>${c.label}</strong> · ${c.text}</p>`)}</div>`;
     if(this.phase==='completed')return html`<h1>Saved</h1>`;
-    if(this.phase==='start')return html`<span class="eyebrow">${block?.handle}</span><h1>${flow.kind==='decompose'?'Split idea':this.action==='find-references'?'Find reference':'Research idea'}</h1><p class="context-preview">${value(block?.properties.text)}</p><p>${flow.kind==='decompose'?'Review smaller ideas. Keep what helps.':this.action==='find-references'?'Find files that make this idea more precise.':'Review sourced details to enrich this idea.'}</p>${flow.kind==='research'?this.field('Public search topic · 140 characters max',this.query,v=>this.query=v,2):nothing}`;
-    if(this.phase==='quote') {
-      const q=flow.quote;
-      if(!q)return html`<h1>Review needed</h1>`;
-      return html`<span class="eyebrow">${q.provider} · ${q.models.join(', ')}</span><h1>${q.status==='quoted'?'Review analysis':'Analysis status'}</h1><p>Maximum cost: $${(q.maximumMicrousd/1e6).toFixed(4)} · ${q.providerCalls} ${q.providerCalls===1?'provider call':'provider calls'} · ${q.searchCalls} ${q.searchCalls===1?'search':'searches'}</p><p>${q.publicQuery?`Public search: ${q.publicQuery}`:'Private analysis. No web search.'}</p>${this.privateInput()}${!q.providerAvailable?html`<p>Analysis unavailable for this account.</p>`:nothing}`;
-    }
+    if(this.phase==='start')return html`<span class="eyebrow">${block?.handle}</span><h1>${flow.kind==='decompose'?'Split idea':this.action==='find-references'?'Find reference':'Research idea'}</h1><p class="context-preview">${value(block?.properties.text)}</p><p>${flow.kind==='decompose'?'Review smaller ideas. Keep what helps.':this.action==='find-references'?'Find files that make this idea more precise.':'Review sourced details to enrich this idea.'}</p>${flow.kind==='research'?this.field('Public search topic · 140 characters max',this.query,v=>this.query=v,2,!!flow.quote&&flow.quote.status!=='quoted'):nothing}`;
     if(this.phase==='intake'&&this.intake?.research) {
       const r=this.intake.research;
       return html`<h1>${r.label}</h1>${r.imageUrl?stillImage(r.imageUrl,r.label,undefined,{className:'reference-study',loading:'eager'}):nothing}<p>${r.attribution} · ${r.license}</p><p>Private copy with source and credit. Direct media guidance stays off.</p>${!r.imageUrl?html`<p>Open the source, obtain a permitted file, then attach it here.</p><a href=${sourceURL(r.sourceUrl)} target="_blank" rel="noopener noreferrer">Open source</a>${this.filePicker()}`:nothing}${r.imageUrl?html`<en-checkbox class="check" label="I can use this image. It contains no sensitive personal data." .checked=${this.rights} .disabled=${this.busy||!!this.referenceEvents} @en-change=${(e: CustomEvent<{proposed:boolean}>)=>{this.rights=e.detail.proposed;this.requestUpdate();}}></en-checkbox>`:nothing}`;
