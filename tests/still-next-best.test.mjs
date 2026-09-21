@@ -68,7 +68,8 @@ test('listing pages nominate toolbar affordances without adding content navigati
   assert.equal(question.criteria.p,undefined);assert.equal(question.criteria.d,undefined,'No content rows in toolbar nominations');
   assert.match(question.instructions,/none only when none of the eligible toolbar actions would be useful/);
   assert.match(question.instructions,/uncertainty.*probabilities and confidence/);
-  assert.match(questionsFor(candidates,pos)['use_'+defaultAction].instructions,/invitation, not the probability/);
+  assert.match(questionsFor(candidates,pos)['use_'+defaultAction].instructions,/Follow state.guidance and toolbarDecision/);
+  assert.match(state.guidance,/usefulness as an invitation/);assert.match(state.guidance,/not next-click probability/);
   const denied=buildDecisionState(events,pos,{...abilities,author:false,projectCreate:false},2);
   assert.equal(denied.state.toolbarDecision.defaultAction,null);
   assert.equal(questionsFor(denied.candidates,pos).next_best_action.criteria[defaultAction],undefined);

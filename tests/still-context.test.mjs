@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { foldEvents } from '../src/model/events.ts';
 import { compositionPlan } from '../src/still/composition.ts';
+import {compositionIndex,connectionEvidence} from '../src/still/assessments.ts';
 import { ContextWorkflow } from '../src/still/context-workflow.ts';
 import { StillClient } from '../src/still/client.ts';
 import { ACTIONS, buildDecisionState, questionsFor, selectActions, eligibleActions } from '../src/still/decisions.ts';
@@ -50,13 +51,13 @@ test('composition keeps block identities, order, and existing relation provenanc
   assert.throws(()=>compositionPlan(applied,'parent',['child'],'ordered'),/editable/);
 });
 test('atomic guidance does not equate fragmentation with progress or exploration with unlocking',()=>{
-  const candidates=ACTIONS.filter(a=>['split-context','compose','research-context','replace-part','unlock'].includes(a.id));
+  const candidates=ACTIONS.filter(a=>['split-context','compose','research-context','edit-block','unlock'].includes(a.id));
   const answers=Object.fromEntries(candidates.map(a=>[`use_${a.id}`,{type:'score',score:2,confidence:1}]));
   const noSplit={...answers,separable_decisions:{type:'noul',noul:1},coherent_small_idea:{type:'noul',noul:1},fragmentation_friction:{type:'noul',noul:1},bold_invitation:{type:'noul',noul:1}};
   assert.notEqual(selectActions(candidates,pos,noSplit)[0].id,'split-context');
   const explicit={...answers,independent_change:{type:'noul',noul:1},split_benefit:{type:'score',score:3,confidence:1}};
   assert.equal(selectActions(candidates,pos,explicit)[0].id,'split-context');
-  assert.ok(!eligibleActions(foldEvents(events,Infinity,'d','p'),pos,{author:false,generate:false,projectCreate:false,formats:[]}).some(a=>['split-context','research-context','find-references','compose','replace-part'].includes(a.id)));
+  assert.ok(!eligibleActions(foldEvents(events,Infinity,'d','p'),pos,{author:false,generate:false,projectCreate:false,formats:[]}).some(a=>['split-context','research-context','find-references','compose','edit-block'].includes(a.id)));
 });
 test('largest eligible request remains below the combined Jev budget and contains selected relationships',()=>{
   const full=[...events,...Array.from({length:150},(_,i)=>evt('BlockCreated',{project_id:'p',document_id:'d',block_id:`large-${i}`,type:'subject',handle:'方向'.repeat(60),scope:'document',position:String(i),properties:{text:'独立したアイデア'.repeat(300),weight:.8}},6+i)),evt('BlockRelationAdded',{relation_id:'r',project_id:'p',document_id:'d',from_block_id:'parent',to_block_id:'child',kind:'context_contains',properties:{member_order:0}},156)];
@@ -64,9 +65,12 @@ test('largest eligible request remains below the combined Jev budget and contain
   const {state,candidates}=buildDecisionState(full,pos,ability,156);
   assert.equal(state.focus.relations[0].to,'child');
   assert.ok(Buffer.byteLength(JSON.stringify(state))<=20000);
-  assert.ok(Buffer.byteLength(JSON.stringify({model:'jev-latest',state,questions:questionsFor(candidates,pos)}))<60000);
+  const questions=questionsFor(candidates,pos),evidence=connectionEvidence(full,pos);
+  const requestState={...state,compositions:compositionIndex(questions),connectionCandidates:evidence.destinations.map(d=>({...d,label:d.label.slice(0,120),project:d.project.slice(0,120),document:d.document.slice(0,120)})),compositionGuidance:'Questions in each composition supply distinct judgments, not independent votes on the same outcome. Missing evidence remains unknown. Code combines eligible results; suggestions never authorize actions.'};
+  const requestBytes=Buffer.byteLength(JSON.stringify({model:'jev-latest',state:requestState,questions}));
+  assert.ok(requestBytes<60000,`Request uses ${requestBytes} bytes`);
   const storyQuestions=questionsFor(candidates,pos,'short_story');
-  assert.ok(storyQuestions.protagonist);assert.equal(storyQuestions.model_material,undefined);
+  assert.ok(storyQuestions.protagonist);assert.equal(storyQuestions.model_material,undefined);assert.ok(storyQuestions.use_context);
 });
 test('reused execution alias must carry a matching scoped server quote',async()=>{
   const flow=new ContextWorkflow(client(),'decompose'),saved=globalThis.fetch;flow.quote={...quote,sourceHash:'source',operation:'context-decompose'};

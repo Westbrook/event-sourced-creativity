@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import { createSceneCostFixture } from './helpers/scene-cost-fixture.mjs';
 import { appendAuditEvent } from '../worker/runtime.ts';
@@ -18,6 +19,7 @@ test('lean Still session omits unrelated budgets/governance and content IDs narr
 
 test('personal prepared history reuses unchanged projection, consumes tail, and rejects redacted payload reuse',async()=>{
  const f=await createSceneCostFixture(),saved=globalThis.fetch,realNow=Date.now;let clock=realNow()+1_000_000;Date.now=()=>clock;f.env.JEV_API_KEY='fake';globalThis.fetch=async()=>Response.json({model:'simulated',answers:{}});
+ for(const file of ['0038_scene_source_generations.sql','0044_still_history_cache.sql'])f.sqlite.exec(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'));
  const call=async()=>{clock+=2000;const r=await f.request('/api/still/decision',f.json({view:'document',projectId:f.projectId,documentId:f.documentId,developer:true}));assert.equal(r.status,200,await r.clone().text());return r.json();};
  try{
   const first=await call();assert.equal(first.preparation.source,'fresh');

@@ -12,7 +12,7 @@ test('Still list toolbar, palette, navigation and En Reve virtual collections',a
    class FixtureApp extends StillApp{
     connectedCallback(){LitElement.prototype.connectedCallback.call(this);}
     updated(){} scheduleDockFit(){} currentRouteProblem(){return '';}
-    candidates(){return ACTIONS.filter(a=>['new-project','new-document','add-context'].includes(a.id));}
+    candidates(){return this.testActions??ACTIONS.filter(a=>['new-project','new-document','add-context'].includes(a.id));}
     decide(){} render(){return html`<main id="still-content">${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}`;}
    }
    customElements.define('fixture-app',FixtureApp);const app=window.app=new FixtureApp();
@@ -23,27 +23,27 @@ test('Still list toolbar, palette, navigation and En Reve virtual collections',a
   const button=name=>page.getByRole('button',{name,exact:true});
   await t.test('Show all and Show less return to the first toolbar after changing the list',async()=>{
    assert.equal(await page.locator('.work-row').count(),3);assert.equal(await button('Show all').count(),0);
-   await button('More').click();await button('Show all').click();
+   await button('More actions').click();await button('Show all').click();
    await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===7);
-   assert.equal(await button('Show less').count(),0);assert.equal(await button('Back').count(),0);assert.equal(await button('More').count(),1);assert.equal(await button('More results').count(),0);
+   assert.equal(await button('Show less').count(),0);assert.equal(await button('Back').count(),0);assert.equal(await button('More actions').count(),1);assert.equal(await button('Next page').count(),0);
    const ids=await page.evaluate(()=>window.app.paletteOptions().map(a=>a.id));assert.ok(ids.includes('ui:show-less'));assert.ok(!ids.includes('ui:next-page'));assert.ok(!ids.includes('ui:previous-page'));
-   await button('More').click();await button('Show less').click();await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===3);
-   assert.equal(await button('Show all').count(),0);assert.equal(await button('Back').count(),0);assert.equal(await button('More').count(),1);
-   await button('More results').click();
+   await button('More actions').click();await button('Show less').click();await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===3);
+   assert.equal(await button('Show all').count(),0);assert.equal(await button('Back').count(),0);assert.equal(await button('More actions').count(),1);
+   await button('Next page').click();
    assert.equal(await page.locator('.work-row').first().textContent().then(s=>s.includes('Project 3')),true);
    assert.ok((await page.evaluate(()=>window.app.paletteOptions().map(a=>a.id))).includes('ui:previous-page'));
   });
   await t.test('leaving resets, while opt-in remembers separately by list type',async()=>{
-   await button('More').click();await button('Show all').click();
+   await button('More actions').click();await button('Show all').click();
    await page.locator('.work-row').first().click();await page.waitForFunction(()=>window.app.client.position.view==='documents');assert.equal(await page.locator('.work-row').count(),3);
    await page.evaluate(()=>window.app.navigate('projects',{projectId:'',documentId:''}));await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===3);
-   await page.evaluate(()=>window.app.setRememberLists({detail:{value:true}}));await button('More').click();await button('Show all').click();
+   await page.evaluate(()=>window.app.setRememberLists({detail:{value:true}}));await button('More actions').click();await button('Show all').click();
    await page.locator('.work-row').first().click();await page.waitForFunction(()=>window.app.client.position.view==='documents');assert.equal(await page.locator('.work-row').count(),3);
    await page.evaluate(()=>window.app.navigate('projects',{projectId:'',documentId:''}));await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===7);
   });
   await t.test('Ideas use the same controls, and a directly selected idea is never paginated away',async()=>{
    await page.evaluate(()=>window.app.navigate('document',{projectId:'p0',documentId:'d0'}));await page.waitForFunction(()=>document.querySelectorAll('.context-block').length===3);
-   await button('More').click();await button('Show all').click();await page.waitForFunction(()=>document.querySelectorAll('.context-block').length===7);
+   await button('More actions').click();await button('Show all').click();await page.waitForFunction(()=>document.querySelectorAll('.context-block').length===7);
    await page.evaluate(()=>window.app.navigate('document',{projectId:'p0',documentId:'d0',blockId:'b6'}));await page.waitForFunction(()=>document.querySelector('[aria-current="true"]')?.textContent.includes('Idea 6'));
    assert.ok(!(await page.evaluate(()=>window.app.paletteOptions().map(a=>a.id))).includes('ui:show-all'));
   });
@@ -53,6 +53,22 @@ test('Still list toolbar, palette, navigation and En Reve virtual collections',a
    await page.evaluate(()=>window.app.openFoundAction('ui:show-all',false));await page.waitForFunction(()=>document.querySelectorAll('.result').length===8);
    const ids=await page.evaluate(()=>window.app.paletteOptions().map(a=>a.id));assert.ok(ids.includes('ui:show-less'));assert.ok(!ids.includes('ui:next-page'));
    await page.evaluate(()=>window.app.openFoundAction('ui:show-less',false));await page.waitForFunction(()=>document.querySelectorAll('.result').length===3);
+  });
+  await t.test('output actions share clear labels and keep direct generation and destination-aware Back',async()=>{
+   await page.evaluate(async()=>{
+    const {ACTIONS}=await import('/src/still/decisions.ts');
+    window.app.testActions=ACTIONS.filter(a=>['image','video','audio','scene','short_story','slides','storyboard','model3d'].includes(a.id));
+    window.app.navigate('document',{projectId:'p0',documentId:'d0',blockId:'b1'});
+    Object.assign(window.app.client.projection,{libraryBlocks:window.app.client.projection.blocks,libraryBlockRelations:[],libraryOutputs:[]});
+    window.app.mode='generate';window.app.formatSuggestions=['image','short_story','slides'];window.app.changed();
+    window.app.startGeneration=id=>{window.startedFormat=id;};
+   });
+   await button('Make image').waitFor();
+   assert.equal(await button('Write story').count(),1);assert.equal(await button('Make slides').count(),1);
+   assert.equal(await button('Back to idea').count(),1);
+   assert.equal(await page.locator('en-menu-item').filter({hasText:'Make 3D model'}).count(),1);
+   await button('Make image').click();assert.equal(await page.evaluate(()=>window.startedFormat),'image');
+   await button('Back to idea').click();assert.equal(await page.evaluate(()=>window.app.mode),'');
   });
   await t.test('large lists bound mounted rows, reach the final record and retain keyboard focus',async()=>{
    await page.evaluate(async()=>{window.app.remove();const list=window.list=document.createElement('still-all-list');list.items=window.virtualItems;list.renderItem=row=>row.content;document.body.append(list);await list.updateComplete;});

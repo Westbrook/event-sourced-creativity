@@ -18,5 +18,5 @@ export class ListDisplay {
 }
 export function listControls(type:ListType|undefined,all:boolean,page:number,count:number){
  if(!type)return [];
- return [...(!all&&page>0?[{id:'ui:previous-page',label:'Previous results'}]:[]),...(!all&&(page+1)*LIST_PAGE_SIZE<count?[{id:'ui:next-page',label:'More results'}]:[]),{id:all?'ui:show-less':'ui:show-all',label:all?'Show less':'Show all'}];
+ return [...(!all&&page>0?[{id:'ui:previous-page',label:'Previous page'}]:[]),...(!all&&(page+1)*LIST_PAGE_SIZE<count?[{id:'ui:next-page',label:'Next page'}]:[]),{id:all?'ui:show-less':'ui:show-all',label:all?'Show less':'Show all'}];
 }

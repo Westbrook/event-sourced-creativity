@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSceneCostFixture } from './helpers/scene-cost-fixture.mjs';
+import {DecisionMemo} from '../src/still/decision-cache.ts';
 import { OnboardingController } from '../src/still/onboarding-client.ts';
 import { onboardingInput } from '../src/still/onboarding.ts';
 const input={enabled:true,actions:['new-project','projects'],view:'projects',locale:'en'};
@@ -81,13 +82,15 @@ test('existing dollar budget denial prevents onboarding provider spend',async()=
  }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
 });
 
-test('identical in-flight onboarding batches share one provider request',async()=>{
+test('identical in-flight onboarding batches share one provider request',{timeout:5000},async()=>{
  const f=await createSceneCostFixture(),saved=globalThis.fetch;let calls=0,release;globalThis.fetch=async(_url,init)=>{calls++;return new Promise(r=>release=()=>r(valid(JSON.parse(init.body).model)));};
+ const originalRun=DecisionMemo.prototype.run;let entered=0,joinedResolve;const joined=new Promise(resolve=>joinedResolve=resolve);
+ DecisionMemo.prototype.run=function(...args){const result=originalRun.apply(this,args);if(++entered===2)joinedResolve();return result;};
  try{
   const first=f.request('/api/still/onboarding',f.json(input));while(!release)await pause();
-  const second=f.request('/api/still/onboarding',f.json(input));await pause();release();
+  const second=f.request('/api/still/onboarding',f.json(input));await joined;release();
   const values=await Promise.all([first,second].map(async p=>(await p).json()));assert.equal(calls,1);assert.deepEqual(values.map(v=>v.cache.status).sort(),['miss','shared']);
- }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
+ }finally{DecisionMemo.prototype.run=originalRun;release?.();globalThis.fetch=saved;await f.drainBackground();f.close();}
 });
 
 test('context keeps useful observations and strips free-form state and telemetry',()=>{

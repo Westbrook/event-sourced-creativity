@@ -29,7 +29,7 @@ test('list controls are available in the palette with matching pagination exclus
   assert.deepEqual(paged.map(a=>a.id),['ui:previous-page','ui:next-page','ui:show-all']);
   assert.deepEqual(all.map(a=>a.id),['ui:show-less']);
   assert.deepEqual(paletteActions('Show',[],undefined,all).map(a=>a.id),['ui:show-less']);
-  assert.deepEqual(paletteActions('results',[],undefined,paged).map(a=>a.id),['ui:previous-page','ui:next-page']);
+  assert.deepEqual(paletteActions('page',[],undefined,paged).map(a=>a.id),['ui:previous-page','ui:next-page']);
  }
  assert.deepEqual(listControls('projects',false,0,1).map(a=>a.id),['ui:show-all']);
  assert.deepEqual(listControls(undefined,false,0,100),[]);
