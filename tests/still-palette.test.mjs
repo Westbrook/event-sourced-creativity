@@ -29,7 +29,8 @@ test('the palette includes utilities and eligible output formats regardless of r
 });
 
 
-test('variation terminology resolves to Add idea without a duplicate palette option',()=>{
-  assert.deepEqual(paletteActions('variation',ACTIONS).map(a=>a.id),['add-context']);
+test('only Add idea is searchable, without the retired variation aliases',()=>{
+  for(const query of ['variation','surprise','unexpected','another use'])assert.deepEqual(paletteActions(query,ACTIONS),[]);
+  assert.deepEqual(paletteActions('Add idea',ACTIONS).map(a=>a.id),['add-context']);
   assert.equal(paletteActions('',ACTIONS).filter(a=>['add-context','surprise'].includes(a.id)).length,1);
 });

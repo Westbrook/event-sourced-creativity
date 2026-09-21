@@ -74,7 +74,7 @@ test('only a useful clear leader with valid probability evidence receives emphas
 });
 
 
-test('idea creation is one Jev candidate and variation searches find it',()=>{
+test('idea creation is one Jev candidate',()=>{
   const p=foldEvents(fixture(),Infinity,'d','p');
   const candidates=eligibleActions(p,position,abilities);
   assert.ok(candidates.some(a=>a.id==='add-context'));
@@ -84,5 +84,4 @@ test('idea creation is one Jev candidate and variation searches find it',()=>{
   assert.ok(!questions.use_surprise&&!questions.novel_surprise);
   assert.ok(!Object.hasOwn(questions.next_best_action.criteria,'surprise'));
   assert.ok(Object.hasOwn(questions.next_best_action.criteria,'add-context'));
-  assert.equal(findActions('Add variation',candidates)[0].id,'add-context');
 });
