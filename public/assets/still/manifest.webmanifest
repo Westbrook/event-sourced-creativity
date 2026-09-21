@@ -1,0 +1,17 @@
+{
+  "id": "/still",
+  "name": "Still",
+  "short_name": "Still",
+  "description": "A little room for the next idea.",
+  "lang": "en",
+  "start_url": "/still",
+  "scope": "/still",
+  "display": "standalone",
+  "background_color": "#f7f6f2",
+  "theme_color": "#f7f6f2",
+  "icons": [
+    { "src": "/assets/still/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/still/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/still/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
