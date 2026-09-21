@@ -149,3 +149,28 @@ assigned.33 focused source/clock/admission checks plus two actual local D1
 three-generation/withdrawal journeys pass;42 Memory field/paired settlement/D1
 checks passed before the final reservation-bind split. Full native regression at`e836e547` passes2055/2055
 in915.3seconds. No hosted qualification, deployment or enrollment.
+
+## Atomic fresh-result publication — 2026-09-21
+
+A successfully accounted Memory response now publishes its retained private result,
+inverse dependencies, execution completion, task completion and action receipt in
+one native transaction. The exact retained response, recorded provider usage,
+settled ledger amounts (when settled), original source and current permissions
+are replayed before publication. Recovery still uses the canonical retained
+receipt after interruption; it never repurchases a result. Publication does not
+authorize a document edit or disclose private text.
+
+Injected late receipt replacement, raw-body replacement, source withdrawal,
+ignored task completion and missing action acknowledgment cannot partially publish.
+Repairable interruptions recover from the original receipt without another call;
+withdrawn or changed raw sources remain unavailable.
+
+Whole synthetic execution is **88 personal /90 shared binding calls**, quote50/52
+and retrieve35/33. Regression ceilings now reflect those measurements. The
+conservative50-call execution target remains assigned.436 native specialist,
+semantic, consequential and organization regression checks pass;39 overlapping
+fault/field/settlement/three-generation checks include real isolated D1.
+The full suite at preceding organization commit`e4adb0ea` passes2070/2070; that
+full run does not include this later publication change. Types, changed-worker
+lint and build pass. Whole runtime-test-file lint retains16 pre-existing findings.
+All provider responses are synthetic. No hosted qualification or deployment.

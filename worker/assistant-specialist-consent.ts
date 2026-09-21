@@ -928,6 +928,50 @@ export async function certifiedAssistantTurnResponse(env:WorkerEnv,actor:Special
   }
 }
 
+/** One parser and canonical representation for fresh publication and recovery. */
+function canonicalProviderResult(env:WorkerEnv,task:SpecialistTaskRecord,retained:Retained,
+ paid:{body:unknown;cost:number;billingPending:boolean}):CanonicalResult{
+ const limit=retained.binding.steps[0]!;
+ const decoded=decodeAssistantProviderResult(paid.body,{model:limit.model as AssistantModel,maximumInputTokens:limit.inputTokens,maximumOutputTokens:limit.outputTokens,aliases:retained.request.aliases});
+ const memory=semanticMemory(env,retained.request),result=memory?{...decoded,actions:[]}:decoded;
+ const editReview=memory?memoryAssistantEditReview(decoded,retained.request.context,{executionId:task.task_id,turnId:retained.request.turnId,
+   projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale},retained.request.originalRequest.fieldTarget?.blockId):null;
+ return {...(editReview?{editReview}:{}),schema:1,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:retained.request.turnId,reply:result.reply,actions:result.actions,providerResult:result,sourceStatus:memory?"semantic-memory-assisted":"original-approved-source",sourceHash:retained.binding.sourceHash,maximumMicrousd:limit.maximumMicrousd,accountedMicrousd:paid.cost,billingStatus:paid.billingPending?"pending":"settled",noAutomaticRetry:true};
+}
+/** Fresh Memory completion replays the exact retained raw receipt and recorded
+ * accounting before atomically publishing the result, private inverse and task
+ * acknowledgement. No cached source/access decision or response is disclosed.
+ * An interrupted path still uses ordinary durable recovery without repurchase. */
+async function publishFreshMemoryResult(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTaskRecord,retained:Retained,
+ raw:NonNullable<Awaited<ReturnType<typeof readRaw>>>,paid:{body:unknown;observed:ReturnType<typeof readAssistantProviderUsage>;cost:number;billingPending:boolean}){
+ const memory=semanticMemory(env,retained.request);if(!memory)fail('assistant_memory_unavailable');
+ if(raw.receipt.httpStatus<200||raw.receipt.httpStatus>=300)fail('assistant_provider_failed_after_usage');
+ if(paid.cost>retained.binding.steps[0]!.maximumMicrousd)fail('assistant_provider_budget_exceeded');
+ const id=task.task_id,userId=actor.principal.userId,usage=paid.observed.usage,now=new Date().toISOString();
+ const accounting:BudgetReservationGuard={sql:`EXISTS(SELECT 1 FROM consequential_execution_steps step
+   WHERE step.execution_id=? AND step.step_index=0 AND step.status IN('usage-recorded','settled')
+   AND step.verified_tokens=? AND step.verified_microusd=? AND step.provider_request_id IS ?)
+   ${paid.billingPending?'':`AND EXISTS(SELECT 1 FROM budget_reservations tokens JOIN cost_budget_reservations cost
+     ON cost.reservation_id=? AND cost.owner_id=tokens.owner_id AND cost.status='settled' AND cost.used_microusd=?
+     WHERE tokens.reservation_id=? AND tokens.owner_id=? AND tokens.status='settled' AND tokens.used_tokens=?)`}`,
+   bindings:[id,usage.totalTokens,paid.cost,paid.observed.responseId,...(paid.billingPending?[]:[id+':usd:0',paid.cost,id+':tokens:0',userId,usage.totalTokens])]};
+ const canonical=canonicalProviderResult(env,task,retained,paid);
+ await completeConsequentialExecution(env,actor.principal,retained.binding,id,canonical,join(raw.proof,accounting),{
+   precommit:()=>semanticAssistantMemoryStatements(env,memory),
+   publish:ref=>semanticAssistantMemoryContentStatements(env,memory,ref,'result'),
+   complete:ref=>[
+     env.DB.prepare(`UPDATE assistant_specialist_tasks SET status='completed',error_code=NULL,updated_at=?,completed_at=?
+       WHERE task_id=? AND actor_user_id=? AND EXISTS(SELECT 1 FROM consequential_executions execution
+         WHERE execution.execution_id=assistant_specialist_tasks.task_id AND execution.actor_user_id=assistant_specialist_tasks.actor_user_id
+         AND execution.binding_hash=? AND execution.status='completed' AND execution.result_ref=?)`)
+       .bind(now,now,id,userId,retained.row.binding_hash,ref),
+     env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('assistant_memory_commit_failed') END AS verified"),
+     env.DB.prepare(`INSERT OR IGNORE INTO assistant_action_commits(commit_id,verified,created_at) VALUES(?,1,?)`).bind('task:'+id,now),
+     env.DB.prepare("SELECT CASE WHEN EXISTS(SELECT 1 FROM assistant_action_commits WHERE commit_id=? AND verified=1) THEN 1 ELSE json('assistant_memory_commit_failed') END AS verified").bind('task:'+id),
+   ],
+ });
+}
+
 async function recoverResult(env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,task:SpecialistTaskRecord,retained:Retained){
   await reconcileConsequentialUsage(env,actor.principal.userId,task.task_id,{atomicSpecialistPair:Boolean(retained.request.memory)});
   let saved=await canonicalResult(env,actor,task,retained);
@@ -936,11 +980,7 @@ async function recoverResult(env:WorkerEnv,actor:SpecialistActor,host:AssistantS
     const paid=await accountRaw(env,actor,retained,raw),limit=retained.binding.steps[0]!;
     if(raw.receipt.httpStatus<200||raw.receipt.httpStatus>=300)fail("assistant_provider_failed_after_usage");
     if(paid.cost>limit.maximumMicrousd)fail("assistant_provider_budget_exceeded");
-    const decoded=decodeAssistantProviderResult(paid.body,{model:limit.model as AssistantModel,maximumInputTokens:limit.inputTokens,maximumOutputTokens:limit.outputTokens,aliases:retained.request.aliases});
-    const memory=semanticMemory(env,retained.request),result=memory?{...decoded,actions:[]}:decoded;
-    const editReview=memory?memoryAssistantEditReview(decoded,retained.request.context,{executionId:task.task_id,turnId:retained.request.turnId,
-      projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale},retained.request.originalRequest.fieldTarget?.blockId):null;
-    const canonical:CanonicalResult={...(editReview?{editReview}:{}),schema:1,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:retained.request.turnId,reply:result.reply,actions:result.actions,providerResult:result,sourceStatus:memory?"semantic-memory-assisted":"original-approved-source",sourceHash:retained.binding.sourceHash,maximumMicrousd:limit.maximumMicrousd,accountedMicrousd:paid.cost,billingStatus:paid.billingPending?"pending":"settled",noAutomaticRetry:true};
+    const memory=semanticMemory(env,retained.request),canonical=canonicalProviderResult(env,task,retained,paid);
     await completeConsequentialExecution(env,actor.principal,retained.binding,task.task_id,canonical,raw.proof,memory?{
       precommit:()=>semanticAssistantMemoryStatements(env,memory),
       publish:ref=>semanticAssistantMemoryContentStatements(env,memory,ref,'result'),
@@ -1198,15 +1238,17 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
     }catch(error){if(controller.signal.aborted)fail('assistant_provider_response_unconfirmed');throw error;}
     finally{clearTimeout(timeout);}
     const raw:RawReceipt={schema:1,executionId:taskId,bindingHash:retained.row.binding_hash,providerRequestHash:await consentHash(retained.request.providerRequest),httpStatus:response.status,responseBody:text,receivedAt:new Date().toISOString(),latencyMs:Date.now()-started};
+    let observedMemoryUsage:{body:unknown;observed:ReturnType<typeof readAssistantProviderUsage>;cost:number;billingPending:boolean}|undefined;
     if(retained.request.memory){
       // Record actual usage independently of source retention. A withdrawal
       // during the provider call must not erase accounting or cause a retry.
       const body=JSON.parse(text),usage=readAssistantProviderUsage(body,{model:retained.binding.steps[0]!.model as AssistantModel});
-      await accountObservedUsage(env,currentActor.principal.userId,retained,usage);
+      observedMemoryUsage={body,observed:usage,...await accountObservedUsage(env,currentActor.principal.userId,retained,usage)};
     }
     const readActor=await refreshReadActor(request,env,retained);
     if(retained.request.memory)await refreshSemanticMemory(env,readActor,retained.request,true);
-    await retainRaw(env,readActor,task,retained,raw);
+    const storedRaw=await retainRaw(env,readActor,task,retained,raw);
+    if(observedMemoryUsage){await publishFreshMemoryResult(env,readActor,task,retained,storedRaw,observedMemoryUsage);return;}
     await env.DB.prepare("UPDATE assistant_specialist_tasks SET provider_submitted=1,updated_at=? WHERE task_id=? AND actor_user_id=? AND json_extract(result_json,'$.leaseToken')=?").bind(new Date().toISOString(),taskId,task.actor_user_id,leaseToken).run();
     await recoverResult(env,readActor,host,task,retained);
   }catch(error){

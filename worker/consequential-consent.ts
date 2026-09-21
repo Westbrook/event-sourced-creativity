@@ -265,7 +265,7 @@ export async function failConsequentialExecution(env:WorkerEnv,userId:string,id:
   await releaseStoppedConsequentialSteps(env,userId,id);
   return(await readConsequentialExecution(env,userId,id))?.status==="uncertain";
 }
-export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,result:unknown,proof:BudgetReservationGuard={sql:"1",bindings:[]},evidence?:{precommit:()=>D1PreparedStatement[];publish:(contentId:string)=>D1PreparedStatement[]}){
+export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,result:unknown,proof:BudgetReservationGuard={sql:"1",bindings:[]},evidence?:{precommit:()=>D1PreparedStatement[];publish:(contentId:string)=>D1PreparedStatement[];complete?:(contentId:string)=>D1PreparedStatement[]}){
   const existing=await readConsequentialExecution(env,user.userId,id);if(existing?.result_ref)return existing;
   const hash=await consentHash(binding),authority=executionAdmissionGuard(user,{...binding,contextSessionId:null,pilotCohortId:null},null);
   const accounted={sql:`EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.result_ref IS NULL AND execution.status IN('reserved','uncertain','failed')
@@ -280,9 +280,12 @@ export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUse
     // Retain the entire accounting/source proof immediately before completion,
     // in the same atomic transaction as the copy and its inverse registration.
     const verified=env.DB.prepare(`SELECT CASE WHEN (${accounted.sql}) THEN 1 ELSE json('context_result_not_retained') END AS verified`).bind(...accounted.bindings);
-    const rows=await env.DB.batch([...evidence.precommit(),...content.statements,...evidence.publish(content.contentId),verified,complete(content.contentId,true),
-      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_result_not_retained') END AS verified")]);
-    if(rows.some(row=>!row.success)||(rows.at(-1)?.results[0] as Record<string,unknown>)?.verified!==1)throw new Error('context_result_not_retained');
+    const statements=[...evidence.precommit(),...content.statements,...evidence.publish(content.contentId),verified,complete(content.contentId,true),
+      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_result_not_retained') END AS verified"),...(evidence.complete?.(content.contentId)??[])];
+    const rows=structuredClone(await env.DB.batch(statements));
+    if(!Array.isArray(rows)||rows.length!==statements.length||!Array.from(rows).every(row=>row&&row.success===true&&(!('error' in row)||row.error===undefined)&&Array.isArray(row.results)
+      &&row.results.every(value=>value&&typeof value==='object'&&(!Object.hasOwn(value,'verified')||Object.keys(value).length===1&&(value as Record<string,unknown>).verified===1)))
+      ||rows.at(-1)?.results.length!==1||(rows.at(-1)?.results[0] as Record<string,unknown>)?.verified!==1)throw new Error('context_result_not_retained');
   }else{
     const content=await storePrivateContent(env,user.userId,'context-proposal',serialized,binding.scope??undefined,accounted);
     await complete(content.contentId).run();

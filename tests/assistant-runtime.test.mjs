@@ -16732,7 +16732,7 @@ for(const shared of [false,true])test('semantic assistant consumer: native paid 
  const response=await specialistProtocolRequest(state,{action:'quote',turnId:turn.id,memory:'saved'},options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  t.diagnostic(JSON.stringify({semanticQuoteOperations:counter.read(),...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
- assert.ok(counter.read()<=(shared?54:50),'Native quote round-trip regression ceiling, not hosted capacity qualification');
+ assert.ok(counter.read()<=(shared?52:50),'Native quote round-trip regression ceiling, not hosted capacity qualification');
  assert.ok(body.quote?.privateInput.providerRequest);
  const consent=state.sqlite.prepare("SELECT content FROM private_content WHERE kind='execution-consent' ORDER BY created_at DESC LIMIT 1").get();
  const request=JSON.parse(consent.content).binding.request;
@@ -16764,10 +16764,10 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  // interval is a stable invocation measurement; phase counts are diagnostic.
  const combinedExecuteOperations=executeOperations+counter.read();
  t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),combinedExecuteOperations,...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
- assert.ok(combinedExecuteOperations<=(shared?102:98),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
+ assert.ok(combinedExecuteOperations<=(shared?90:88),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
  const response=await specialistRetrieve(state,review,options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
- t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=35);
+ t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=(shared?33:35));
  assert.equal(calls.length,1,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  assert.equal(body.result?.sourceStatus,'semantic-memory-assisted',JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  assert.equal(body.materializationPending,false,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
@@ -18322,4 +18322,31 @@ for(const native of [false,true])test('native organization consumer: independent
  assert.equal((await specialistRetrieve(state,review,options)).status,404);assert.equal(calls,1);
  assert.equal((await state.env.DB.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').bind(review.executionId).first()).verified_tokens,1300);
  assert.deepEqual((await state.env.DB.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});
+
+for(const fault of ['receipt','raw','source','task-ack','action-ack'])test('Memory atomic result publication: late '+fault+' cannot partially publish',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared:true}),{response,body:review}=await state.semanticQuote();assert.equal(response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch,original=globalThis.fetch;let hit=false,calls=0,originalReceipt;
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;db.batch=batch;});
+ db.batch=async statements=>{
+  if(!hit&&statements.some(s=>s.sql.startsWith("UPDATE consequential_executions SET status='completed'"))&&statements.some(s=>s.sql.startsWith("UPDATE assistant_specialist_tasks SET status='completed'"))){hit=true;
+   if(fault==='receipt'){originalReceipt=state.sqlite.prepare('SELECT provider_request_id FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).provider_request_id;state.sqlite.prepare("UPDATE consequential_execution_steps SET provider_request_id='changed-receipt' WHERE execution_id=?").run(review.executionId);}
+   if(fault==='raw')state.sqlite.prepare("UPDATE private_content SET content=content||'changed' WHERE content_id=(SELECT json_extract(result_json,'$.rawReceipt.contentRef') FROM assistant_specialist_tasks WHERE task_id=?)").run(review.executionId);
+   if(fault==='source')assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+   if(fault==='task-ack')state.sqlite.exec("CREATE TRIGGER synthetic_memory_task_ack BEFORE UPDATE ON assistant_specialist_tasks WHEN NEW.status='completed' BEGIN SELECT RAISE(IGNORE); END");
+   if(fault==='action-ack')state.sqlite.exec("CREATE TRIGGER synthetic_memory_action_ack BEFORE INSERT ON assistant_action_commits BEGIN SELECT RAISE(IGNORE); END");
+  }
+  return batch.call(db,statements);
+ };
+ const execute=await specialistExecute(state,review,state.semanticOptions);assert.equal(execute.status,202,await execute.clone().text());await state.drainBackground();
+ assert.equal(hit,true);assert.equal(calls,1);const row=state.sqlite.prepare('SELECT status,result_ref FROM consequential_executions WHERE execution_id=?').get(review.executionId);
+ assert.equal(row.result_ref,null);assert.notEqual(row.status,'completed');
+ assert.equal(state.sqlite.prepare("SELECT count(*) n FROM memory_derivation_consumer_contents WHERE role='result'").get().n,0);
+ assert.equal(state.sqlite.prepare('SELECT count(*) n FROM assistant_action_commits WHERE commit_id=?').get('task:'+review.executionId).n,0);
+ assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,1300);
+ if(fault==='task-ack'||fault==='action-ack')state.sqlite.exec('DROP TRIGGER '+(fault==='task-ack'?'synthetic_memory_task_ack':'synthetic_memory_action_ack'));
+ if(fault==='receipt')state.sqlite.prepare('UPDATE consequential_execution_steps SET provider_request_id=? WHERE execution_id=?').run(originalReceipt,review.executionId);
+ const retrieved=await specialistRetrieve(state,review,state.semanticOptions);
+ if(fault==='raw'||fault==='source')assert.equal(retrieved.status,404,await retrieved.clone().text());else{const body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body));assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');}
+ assert.equal(calls,1);
 });

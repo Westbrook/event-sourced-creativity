@@ -234,3 +234,10 @@ is explicit opt-in only; old partition consent remains unchanged. Both endpoints
 retain independent authority and retirement, including both hierarchy revisions.
 Browser testing also fixes consent-write self-abort under the privacy barrier.
 Cross-owner nesting, profile promotion and all other native rows remain assigned.
+
+[Atomic fresh-result publication](forma-memory-native-capacity-2026-09-20.md#atomic-fresh-result-publication--2026-09-21)
+now completes private result custody, inverse registration, execution and task
+receipts in one transaction. Late-failure recovery remains no-repurchase. Whole
+synthetic execution is88/90 personal/shared calls; remaining native capacity
+and all other native workstreams remain assigned. Full2070-test evidence at
+`e4adb0ea` is distinct from436 checks for this subsequent publication change.

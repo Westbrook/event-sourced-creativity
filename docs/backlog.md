@@ -330,3 +330,8 @@ Additive migration0065 never broadens existing partition consent. Withdrawal
 retires private copies without deleting usage, and the actual consent control now
 survives its own privacy barrier while hidden/inert. Native matrix work remains
 in progress; this is local implementation, not deployment or enrollment.
+
+Memory atomic-publication continuation (2026-09-21): [native completion and recovery](forma-memory-native-capacity-2026-09-20.md#atomic-fresh-result-publication--2026-09-21)
+now atomically retains the fresh private answer, its inverse dependencies and task
+receipts.436 native regressions pass; whole synthetic execution is88/90 calls.
+Native capacity and the other MEM-003 completion-matrix work stay assigned.
