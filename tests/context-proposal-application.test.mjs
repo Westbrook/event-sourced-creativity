@@ -193,3 +193,15 @@ test("Phase3E context research retains the original locked, licensed and cross-p
     assert.throws(()=>buildContextApplicationPlan({projection:{libraryBlocks:[target,protectedSource],libraryBlockRelations:[]},target,proposals:[suggestion(source.id)]}),/source_protected/);
   }
 });
+
+test('a reviewed learned title is persisted with its source and immutable factual content',()=>{
+ const target=block('target'),projection={libraryBlocks:[target],libraryBlockRelations:[]};
+ const research={...suggestion('family').research,area:'learned',blockId:null,label:'Atticus Finch’s family',text:'Atticus is the father of Scout and Jem.',sourceUrl:'https://example.org/evidence'};
+ const item={key:'learned',executionId:'execution',proposalId:'family',research};
+ const plan=buildContextApplicationPlan({projection,target,proposals:[{...item,edit:{label:'  Scout and Jem’s father  '}}]});
+ const saved=plan.events.find(e=>e.type==='BlockCreated').payload;
+ assert.equal(saved.properties.label,'Scout and Jem’s father');assert.equal(saved.properties.text,research.text);assert.equal(saved.properties.source_url,research.sourceUrl);assert.equal(saved.properties.human_edited,true);
+ assert.ok(plan.changes.some(c=>c.kind==='create'&&c.label===saved.properties.label));
+ for(const edit of [{label:''},{label:'x'.repeat(161)},{text:'different fact'},{type:'style'}])assert.throws(()=>buildContextApplicationPlan({projection,target,proposals:[{...item,edit}]}),/invalid_edit/);
+ assert.throws(()=>buildContextApplicationPlan({projection:{libraryBlocks:[target,block('family')],libraryBlockRelations:[]},target,proposals:[{...suggestion('family'),edit:{label:'Rename existing'}}]}),/existing_edit_forbidden/);
+});

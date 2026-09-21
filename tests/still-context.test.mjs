@@ -99,3 +99,10 @@ test('checking uncertain research keeps the original topic and request identity'
  globalThis.fetch=async(url,init)=>{if(url==='/api/session?profile=still')return json(session);const body=JSON.parse(init.body);requests.push(body);return json({executionId:'execution',bindingHash:'binding',report:{blockId:'parent',inferred:[],related:[],learned:[]}});};
  try{await flow.startAnalysis('A changed topic');assert.equal(requests.length,1);assert.equal(requests[0].action,'retrieve');assert.equal(requests[0].publicQuery,'Original topic');assert.equal(requests[0].executionId,'execution');}finally{globalThis.fetch=saved;}
 });
+
+test('edited research names reach the authoring preview without altering source text',async()=>{
+ const flow=new ContextWorkflow(client(),'research'),saved=globalThis.fetch;let selections;
+ flow.candidates=[{selection:{executionId:'e',bindingHash:'b',proposalId:'r'},research:{id:'r',blockId:null,area:'learned',type:'subject',label:'Subject',text:'Sourced fact'},label:'Family relationships',text:'Sourced fact',included:true}];
+ globalThis.fetch=async(url,init)=>{if(String(url)==='/api/context/apply'){selections=JSON.parse(init.body).selections;return Response.json({preview:{...flow.target,previewId:'preview'}});}return Response.json(session);};
+ try{await flow.prepareChanges();assert.deepEqual(selections[0].edit,{label:'Family relationships'});flow.candidates[0].label=' ';await assert.rejects(()=>flow.prepareChanges(),/name/);}finally{globalThis.fetch=saved;}
+});

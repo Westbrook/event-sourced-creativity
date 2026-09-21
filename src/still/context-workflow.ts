@@ -6,7 +6,7 @@ import type { ConsequentialPreview } from '../../worker/consequential-consent.ts
 import type { AuthoringPreview } from '../../worker/authoring-commits.ts';
 
 export type ContextQuote = ConsequentialPreview & { providerAvailable: boolean; canExecute?: boolean };
-export type IdeaCandidate = { selection: ContextProposalSelection; proposal?: DecompositionProposal; research?: ContextResearchSuggestion; included: boolean; text: string };
+export type IdeaCandidate = { selection: ContextProposalSelection; proposal?: DecompositionProposal; research?: ContextResearchSuggestion; included: boolean; text: string; label?: string };
 /** Independent orchestration of Forma's retained execution and authoring protocols. */
 export class ContextWorkflow {
   readonly target: { projectId: string; documentId: string; blockId: string; canvasId: null };
@@ -67,7 +67,7 @@ export class ContextWorkflow {
         retained = result.quote;
       }
       if (result.executionId !== retained.executionId || result.bindingHash !== retained.bindingHash || result.plan && result.plan.sourceBlockId !== this.target.blockId || result.report && result.report.blockId !== this.target.blockId) throw new Error('The analysis identity could not be verified.');
-      if (!this.candidates.length) this.candidates = [...(result.plan ? [...result.plan.proposals,...result.plan.addenda].map(proposal => ({ proposal, text: proposal.text, id: proposal.id })) : []), ...(result.report ? [...result.report.inferred,...result.report.related,...result.report.learned].map(research => ({ research, text: research.text, id: research.id })) : [])].map(item => ({ ...item, selection: { executionId: result.executionId, bindingHash: result.bindingHash, proposalId: item.id }, included: false }));
+      if (!this.candidates.length) this.candidates = [...(result.plan ? [...result.plan.proposals,...result.plan.addenda].map(proposal => ({ proposal, label: proposal.label, text: proposal.text, id: proposal.id })) : []), ...(result.report ? [...result.report.inferred,...result.report.related,...result.report.learned].map(research => ({ research, label: research.label, text: research.text, id: research.id })) : [])].map(item => ({ ...item, selection: { executionId: result.executionId, bindingHash: result.bindingHash, proposalId: item.id }, included: false }));
       this.quote = { ...retained, status: 'completed' }; this.status = 'candidates';
     } catch (error) {
       const body = error instanceof ApiError ? error.body : {};
@@ -77,7 +77,16 @@ export class ContextWorkflow {
   }
   async prepareChanges() {
     const check = await this.guard();
-    const selections = this.candidates.filter(c => c.included && !(c.research?.type === 'reference' && !c.research.blockId)).map(c => ({ ...c.selection, ...(c.proposal && c.text !== c.proposal.text ? { edit: { text: c.text } } : {}) }));
+    const selections = this.candidates.filter(c => c.included && !(c.research?.type === 'reference' && !c.research.blockId)).map(c => {
+      const original = c.proposal ?? c.research;
+      const edit: NonNullable<ContextProposalSelection['edit']> = {};
+      if (c.proposal && c.text !== c.proposal.text) edit.text = c.text;
+      if (c.label !== undefined && c.label !== original?.label && (c.proposal || !c.research?.blockId)) {
+        if (!c.label.trim() || c.label.trim().length > 160) throw new Error('Give each selected idea a name of 1–160 characters.');
+        edit.label = c.label.trim();
+      }
+      return { ...c.selection, ...(Object.keys(edit).length ? { edit } : {}) };
+    });
     if (!selections.length) throw new Error('Choose at least one idea to keep.');
     const result = await api<{ preview: AuthoringPreview }>('/api/context/apply', { ...this.target, action: 'preview', selections }); check();
     this.validate(result.preview); this.preview = result.preview; this.status = 'review'; this.stale = false;
