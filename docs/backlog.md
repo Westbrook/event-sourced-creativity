@@ -625,3 +625,12 @@ overwriting a draft or extending private retention. 43 native,336 provider/clien
 and10 browser checks pass. The12 stale full-regression race hooks are repaired and
 pass at real transaction boundaries; a full current rerun remains assigned.
 No deployment or enrollment; other native matrix work continues here.
+
+## MEM-056 — Private image preview and paid-response recovery
+
+Implemented locally: [private Memory image preview](forma-memory-private-image-preview-2026-09-21.md).
+Actual Document/Chat cost review, private pixels, retirement, no-repurchase recovery
+and source-free accounting maintenance are implemented.31 native and8 browser
+checks pass; preceding full commit passes2,869/2,869. Explicit authored-image
+adoption, long-response capacity/UI recovery and integrated qualification remain
+assigned native work. No production or enrollment change.

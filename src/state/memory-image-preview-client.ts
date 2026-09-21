@@ -1,0 +1,22 @@
+import { createMemoryElapsed } from '../model/memory-lifetime.ts';
+export type MemoryImageQuote={executionId:string;bindingHash:string;status:string;maximumMicrousd:number;models:string[];privateInput:unknown;expiresAt:string;canExecute:boolean};
+export type MemoryImageResult={encoded:string;sha256:string;mimeType:'image/jpeg';width:1024;height:1024};
+export type MemoryImageReply={executionId:string;validUntil:string;status?:string;quote?:MemoryImageQuote;image?:MemoryImageResult};
+const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
+const id=(v:unknown):v is string=>typeof v==='string'&&/^[a-zA-Z0-9_-]{8,80}$/u.test(v);
+const hash=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{64}$/u.test(v);
+/** Strict private DTO, bounded body and monotonic local delivery lifetime. */
+export async function readMemoryImageReply(response:Response,signal:AbortSignal):Promise<MemoryImageReply>{
+ const clock=createMemoryElapsed({wall:Date.now(),monotonic:performance.now()}),reader=response.body?.getReader();if(!response.ok||!reader)throw Error('unavailable');
+ let text='',bytes=0;const decoder=new TextDecoder('utf-8',{fatal:true}),stop=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',stop,{once:true});
+ const timer=setTimeout(stop,30000);
+ try{
+  for(;;){if(signal.aborted||clock.elapsed({wall:Date.now(),monotonic:performance.now()})>=30000)throw Error('unavailable');const next=await reader.read();if(next.done)break;bytes+=next.value.byteLength;if(bytes>1050000)throw Error('unavailable');text+=decoder.decode(next.value,{stream:true});}
+  text+=decoder.decode();const v:unknown=JSON.parse(text);if(!object(v)||v.version!=='memory-image-preview-v1'||!id(v.executionId)||typeof v.validUntil!=='string'||!Number.isFinite(Date.parse(v.validUntil))||new Date(v.validUntil).toISOString()!==v.validUntil||Date.parse(v.validUntil)<=Date.now()||Date.parse(v.validUntil)>Date.now()+31000||v.noAutomaticRetry!==true||signal.aborted||clock.elapsed({wall:Date.now(),monotonic:performance.now()})>=30000)throw Error('unavailable');
+  const result:MemoryImageReply={executionId:v.executionId,validUntil:v.validUntil};
+  if(v.quote!==undefined){const q=v.quote;if(!object(q)||q.executionId!==v.executionId||!hash(q.bindingHash)||typeof q.status!=='string'||typeof q.maximumMicrousd!=='number'||!Number.isSafeInteger(q.maximumMicrousd)||q.maximumMicrousd<0||!Array.isArray(q.models)||q.models.length!==1||typeof q.models[0]!=='string'||typeof q.expiresAt!=='string'||!Number.isFinite(Date.parse(q.expiresAt))||typeof q.canExecute!=='boolean'||!object(q.privateInput))throw Error('unavailable');result.quote={executionId:v.executionId,bindingHash:q.bindingHash,status:q.status,maximumMicrousd:q.maximumMicrousd,models:q.models,privateInput:q.privateInput,expiresAt:q.expiresAt,canExecute:q.canExecute};}
+  if(v.status!==undefined){if(!['quoted','reserved','uncertain','failed','completed'].includes(String(v.status)))throw Error('unavailable');result.status=String(v.status);}
+  if(v.result!==undefined){const r=v.result;if(!object(r)||r.version!=='memory-image-preview-v1'||r.executionId!==v.executionId||!hash(r.bindingHash)||r.mode!=='private-review'||r.independentEvidence!==false||v.status!=='completed'||!object(r.image))throw Error('unavailable');const i=r.image;if(i.mimeType!=='image/jpeg'||i.width!==1024||i.height!==1024||!hash(i.sha256)||typeof i.encoded!=='string'||!i.encoded||i.encoded.length>933336||i.encoded.length%4!==0||!/^[A-Za-z0-9+/]*={0,2}$/u.test(i.encoded))throw Error('unavailable');result.image={encoded:i.encoded,sha256:i.sha256,mimeType:i.mimeType,width:1024,height:1024};}
+  return result;
+ }finally{clearTimeout(timer);signal.removeEventListener('abort',stop);stop();reader.releaseLock();clock.retire();}
+}

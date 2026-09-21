@@ -110,11 +110,12 @@ export const MAX_ASSISTANT_PROVIDER_OUTPUT_BYTES=64*1024;
 /** Bound bytes while reading, not after Response.text() has buffered arbitrary
  * data. This retains exact UTF-8 text for receipt verification, never truncates
  * a paid answer, and makes no claim that an interrupted call was uncharged. */
-export async function readBoundedAssistantProviderResponse(response:Response,signal:AbortSignal):Promise<string>{
+export async function readBoundedAssistantProviderResponse(response:Response,signal:AbortSignal,maximumBytes=MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES):Promise<string>{
   const unavailable=()=>new Error('assistant_provider_response_unconfirmed');
+  if(!Number.isSafeInteger(maximumBytes)||maximumBytes<1||maximumBytes>1024*1024)throw unavailable();
   const body=response.body,length=response.headers.get('content-length');
   if(!body)throw unavailable();
-  if(signal.aborted||length!==null&&(!/^\d+$/u.test(length)||Number(length)>MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES)){
+  if(signal.aborted||length!==null&&(!/^\d+$/u.test(length)||Number(length)>maximumBytes)){
     void body.cancel().catch(()=>{});throw unavailable();
   }
   const reader=body.getReader(),decoder=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true});let bytes=0,text='';
@@ -124,7 +125,7 @@ export async function readBoundedAssistantProviderResponse(response:Response,sig
     if(signal.aborted)throw unavailable();
     for(;;){
       const next=await reader.read();if(signal.aborted)throw unavailable();if(next.done)break;
-      bytes+=next.value.byteLength;if(bytes>MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES)throw unavailable();
+      bytes+=next.value.byteLength;if(bytes>maximumBytes)throw unavailable();
       text+=decoder.decode(next.value,{stream:true});
     }
     return text+decoder.decode();

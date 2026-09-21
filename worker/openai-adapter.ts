@@ -1,3 +1,5 @@
+import { readBoundedAssistantProviderResponse } from './assistant-provider.ts';
+import { memoryDerivationJsonUniqueKeys } from './memory-derivation-result.ts';
 import { imageSafetyInputDigest, consumeImageSafetyDelivery } from "./image-safety-acknowledgement.ts";
 import { OPENAI_IMAGE_DIRECTION_CONTRACT, OPENAI_IMAGE_GENERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import { outputPlannerResponseShape } from "./output-planner-response-shape.ts";
@@ -61,6 +63,8 @@ export type ImageReference = { bytes: Uint8Array; mimeType: string; blockId?: st
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
 export type CreativeImagePartial = { bytes: Uint8Array; index: number; mimeType: string; width: number; height: number };
 export type CreativeImageOptions = {
+  /** Private Memory route: bounded non-streaming receipt retained before verified accounting. */
+  privateImageReceipt?:{signal:AbortSignal;onReceipt:(raw:string,requestId:string|null)=>Promise<void>};
   safetyAcknowledgement?: import("./image-safety-acknowledgement.ts").ImageSafetyAcknowledgement;
   onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;
   onBeforeSourceTransmission?:()=>void|Promise<void>;
@@ -452,12 +456,13 @@ async function readImageStream(response:Response,onEvent:(event:OpenAIImageStrea
 }
 
 export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:CreativeImageOptions={}) {
+  if(options.privateImageReceipt&&((options.partialImages??0)!==0||!options.onProviderSubmission))throw new Error('private_image_contract_invalid');
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const model=env.OPENAI_IMAGE_MODEL??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model;const quality=options.quality??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.quality;const size=options.size??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.size;const sizeValidation=validateProviderImageSize(size);
   if(model.startsWith("gpt-image-2")&&!sizeValidation.valid)throw new ProviderRequestError({code:"invalid_image_size",category:"provider",scope:"request",action:"edit_request",message:`The requested image size ${size} cannot be submitted to ${model}. ${sizeValidation.issues.join(" ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   const references=validateImageReferences(options.references??[]);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const safetyInputDigest=await imageSafetyInputDigest(snapshot,{model,quality,size,promptTechnique},references);const acknowledgedPrompt=consumeImageSafetyDelivery(options.safetyAcknowledgement,safetyInputDigest);const prompt=acknowledgedPrompt||options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:options.partialImages});const started=Date.now();
   await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
-  let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+  let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal,Boolean(options.privateImageReceipt));}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   if(moderation.flagged&&!acknowledgedPrompt)throw new ProviderRequestError({safetyInputDigest,code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and the contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation",moderationReceipt:moderation},prompt);
   await options.onStage?.("provider-wait",acknowledgedPrompt?"Risks acknowledged. Sending the reviewed request to the image provider.":"Safety preflight passed. Waiting for the image provider.");
   const outputFormat=options.outputFormat??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputFormat;const outputCompression=Math.max(0,Math.min(100,Math.round(options.outputCompression??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputCompression)));const partialImages=options.partialImages??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.partialImages;const user=await safetyIdentifier(userId);
@@ -471,20 +476,30 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   }else{
     await options.onStage?.("provider-submit","Submitting the approved image request.");
     options.onBeforeProviderDispatch?.(options.providerClientRequestId??"");
-    try{response=await openAIRequest(OPENAI_IMAGE_GENERATION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:JSON.stringify({model,prompt,n:OPENAI_IMAGE_GENERATION_CONTRACT.outputCount,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user}),signal:options.signal});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+    try{response=await openAIRequest(OPENAI_IMAGE_GENERATION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:JSON.stringify({model,prompt,n:OPENAI_IMAGE_GENERATION_CONTRACT.outputCount,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user}),signal:options.signal},undefined,options.privateImageReceipt?"caller-bounded":"classify");}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   }
-  if(!response.ok){let error:OpenAIImageResponse={};try{error=await response.json() as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw providerErrorFromResponse(response,error,`openai_image_${response.status}`,prompt);}
+  let privateRaw:string|undefined;
+  if(options.privateImageReceipt){privateRaw=await readBoundedAssistantProviderResponse(response,options.privateImageReceipt.signal,1024*1024);if(!memoryDerivationJsonUniqueKeys(privateRaw))throw new Error('private_image_receipt_invalid');}
+  if(!response.ok){let error:OpenAIImageResponse={};try{error=privateRaw===undefined?await response.json():JSON.parse(privateRaw) as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw providerErrorFromResponse(response,error,`openai_image_${response.status}`,prompt);}
   const [requestedWidth,requestedHeight]=size.split("x").map(Number);let encoded="";let revisedPrompt:string|null=null;let createdAt:number|null=null;let usage:OpenAIImageUsage={};let completedSize:string=size;let completedFormat=outputFormat;let partialCount=0;
   if(partialImages){
     try{await readImageStream(response,async(event)=>{if(event.error?.message)throw new ProviderRequestError(classifyProviderFailure(new Error(event.error.message)),prompt);if(event.type?.endsWith(".partial_image")&&event.b64_json){partialCount+=1;const eventSize=event.size??size;const [width,height]=eventSize.split("x").map(Number);await options.onPartial?.({bytes:decodeBase64Image(event.b64_json),index:Number(event.partial_image_index??partialCount-1),mimeType:imageMimeType(event.output_format??outputFormat),width,height});}if(event.type?.endsWith(".completed")&&event.b64_json){encoded=event.b64_json;createdAt=event.created_at??null;usage=event.usage??{};completedSize=event.size??size;completedFormat=event.output_format??outputFormat;}});}catch(error){if(error instanceof ProviderRequestError)throw error;throw new ProviderRequestError(classifyProviderFailure(error),prompt);}
   }else{
-    const body=await response.json() as OpenAIImageResponse;encoded=body.data?.[0]?.b64_json??"";revisedPrompt=body.data?.[0]?.revised_prompt??null;createdAt=body.created??null;usage=body.usage??{};
+    const body=(privateRaw===undefined?await response.json():JSON.parse(privateRaw)) as OpenAIImageResponse;encoded=body.data?.[0]?.b64_json??"";revisedPrompt=body.data?.[0]?.revised_prompt??null;createdAt=body.created??null;usage=body.usage??{};
   }
+  if(options.privateImageReceipt){
+    const u=usage as Record<string,unknown>,details=u.input_tokens_details as Record<string,unknown>|undefined;
+    if(!verifiedUsage(u)||!details||!['text_tokens','image_tokens'].every(k=>typeof details[k]==='number'&&Number.isSafeInteger(details[k])&&Number(details[k])>=0)
+      ||Number(details.text_tokens)+Number(details.image_tokens)!==u.input_tokens||details.image_tokens!==0)throw missingUsageReceipt(response.headers.get('x-request-id'));
+  }
+  let privateReceiptFailed=false,privateReceiptError:unknown;
+  if(privateRaw!==undefined)try{await options.privateImageReceipt!.onReceipt(privateRaw,response.headers.get('x-request-id'));}catch(error){privateReceiptFailed=true;privateReceiptError=error;}
   if(options.onProviderSubmission){
     const paidUsage={inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0),textInputTokens:Number(usage.input_tokens_details?.text_tokens??0),imageInputTokens:Number(usage.input_tokens_details?.image_tokens??0)};
     await options.onProviderSubmission({clientRequestId:options.providerClientRequestId??`forma-image-${crypto.randomUUID()}`,provider:"openai",operation:"image",model,status:"completed",providerRequestId:response.headers.get("x-request-id")??undefined,...paidUsage,...(verifiedUsage(usage)?{costMicrousd:priceImageUsageBreakdownMicrousd(model,paidUsage,references.length>0).totalMicrousd}:{})});
     if(!verifiedUsage(usage))throw missingUsageReceipt(response.headers.get("x-request-id"));
   }
+  if(privateReceiptFailed)throw privateReceiptError;
   if(!encoded)throw new Error("provider_returned_no_image");const bytes=decodeBase64Image(encoded);const [width,height]=completedSize.split("x").map(Number);
   return{model,prompt,promptTechnique,bytes,revisedPrompt,createdAt,providerRequestId:response.headers.get("x-request-id"),latencyMs:Date.now()-started,usage:{inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0),textInputTokens:Number(usage.input_tokens_details?.text_tokens??0),imageInputTokens:Number(usage.input_tokens_details?.image_tokens??0)},width:Number.isFinite(width)?width:requestedWidth,height:Number.isFinite(height)?height:requestedHeight,mimeType:imageMimeType(completedFormat),quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null})),safetyProbeCount:moderation.probeCount,safetyCoverage:moderation.coverage,safetyRequestIds:moderation.requestIds,partialCount,outputFormat:completedFormat,outputCompression:completedFormat==="png"?null:outputCompression};
 }

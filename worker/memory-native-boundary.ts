@@ -48,7 +48,9 @@ const cleanupReads = new WeakMap<WorkerEnv, CleanupRead>();
  * newly registered memory. Ordinary callers and paired publication stay fresh.
  */
 export function nativePrivateContentCleanupEnvironment(env: WorkerEnv): WorkerEnv {
-  const local = { ...env };
+  // Request identity is local, but live bindings/configuration must not become a
+  // stale snapshot during a provider call. Local overrides remain isolated.
+  const local: WorkerEnv = Object.create(env);
   cleanupReads.set(local, { db: env.DB });
   return local;
 }

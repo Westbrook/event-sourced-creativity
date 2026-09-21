@@ -1,3 +1,5 @@
+import { readBoundedAssistantProviderResponse } from './assistant-provider.ts';
+import { memoryDerivationJsonUniqueKeys } from './memory-derivation-result.ts';
 import { OPENAI_IMAGE_MODERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import type { ImageReference } from "./openai-adapter.ts";
@@ -35,10 +37,19 @@ const factText = (fact: unknown) => {
   return [record.type, record.role, record.intent, record.effect, record.handle, properties.text, properties.instruction, properties.value, properties.label, properties.description].filter(Boolean).join(" · ").slice(0, 6_000);
 };
 
-async function requestModeration(env: WorkerEnv, input: unknown, signal?: AbortSignal) {
+async function requestModeration(env: WorkerEnv, input: unknown, signal?: AbortSignal,strict=false) {
   const started = Date.now();
   const response = await fetch(OPENAI_IMAGE_MODERATION_CONTRACT.api, { method: "POST", headers: headers(env), signal, body: JSON.stringify({ model: OPENAI_IMAGE_MODERATION_CONTRACT.model, input }) });
-  let body: ModerationResponse = {}; try { body = await response.json() as ModerationResponse; } catch { /* Status still provides a useful provider receipt. */ }
+  let body: ModerationResponse = {};
+  if(strict){
+    if(!signal)throw Error('private_image_moderation_invalid');
+    const raw=await readBoundedAssistantProviderResponse(response,signal,65536);
+    if(!memoryDerivationJsonUniqueKeys(raw))throw Error('private_image_moderation_invalid');
+    body=JSON.parse(raw) as ModerationResponse;
+    if(response.ok&&(!Array.isArray(body.results)||body.results.length!==1||typeof body.results[0]?.flagged!=='boolean'
+      ||!body.results[0].categories||typeof body.results[0].categories!=='object'||Array.isArray(body.results[0].categories)
+      ||Object.values(body.results[0].categories).some(v=>typeof v!=='boolean')))throw Error('private_image_moderation_invalid');
+  }else try { body = await response.json() as ModerationResponse; } catch { /* Status still provides a useful provider receipt. */ }
   if (!response.ok) throw providerErrorFromResponse(response, body, `openai_moderation_${response.status}`);
   return { body, requestId: response.headers.get("x-request-id") ?? response.headers.get("openai-request-id"), latencyMs: Date.now() - started };
 }
@@ -67,7 +78,7 @@ function bytesToBase64(bytes: Uint8Array) {
   return btoa(binary);
 }
 
-export async function moderateExactImagePrompt(env: WorkerEnv, prompt: string, references: ImageReference[], signal?: AbortSignal): Promise<GenerationModerationReceipt> {
+export async function moderateExactImagePrompt(env: WorkerEnv, prompt: string, references: ImageReference[], signal?: AbortSignal,strict=false): Promise<GenerationModerationReceipt> {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
   // The moderation endpoint accepts one image per multimodal input. Image edits,
   // including GPT Image 2 reference workflows, can legitimately receive more
@@ -83,7 +94,7 @@ export async function moderateExactImagePrompt(env: WorkerEnv, prompt: string, r
   const categories = new Set<string>(); const scores: Record<string, number> = {}; const referenceIds = new Set<string>(); const requestIds: string[] = [];
   let flagged = false; let latencyMs = 0; let model: string = OPENAI_IMAGE_MODERATION_CONTRACT.model; let flaggedRequestId: string | null = null;
   for (const probe of probes) {
-    const result = await requestModeration(env, probe.input, signal); const summary = summarize(result.body.results ?? []);
+    const result = await requestModeration(env, probe.input, signal,strict); const summary = summarize(result.body.results ?? []);
     latencyMs += result.latencyMs; model = result.body.model ?? model;
     if (result.requestId) requestIds.push(result.requestId);
     for (const category of summary.categories) categories.add(category);

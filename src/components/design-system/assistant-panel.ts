@@ -237,6 +237,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     guidanceDelivery: { type: String },
     canSpecialist: { type: Boolean },
     canMemoryEdit: { type: Boolean },
+    memoryImageControls: { attribute: false },
     specialist: { attribute: false },
   };
 
@@ -261,6 +262,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   declare guidanceDelivery: "" | "sending" | "uncertain";
   declare canSpecialist: boolean;
   declare canMemoryEdit: boolean;
+  declare memoryImageControls:TemplateResult|undefined;
   declare specialist: AssistantSpecialistReview | null;
   #draft = "";
   #activeMode: AssistantInteractionMode = "guidance";
@@ -1694,6 +1696,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             ${this.canMemoryEdit?html`<button type="button" class="button secondary" ?disabled=${state.working||!this.#modalReady}
               @click=${()=>this.#applyReviewedMemoryCreation(target,creationReview,item.proposalId)}>${this.i18n.t(item.blockType==='output'?'assistant.specialist.outputCreationApply':'assistant.specialist.creationApply')}</button>`:nothing}</article>`)}
         </section>`:nothing}
+        ${state.resultSource==='semantic-memory-assisted'&&parseSemanticMemoryAnswerPresentation(state.semanticMemory)?this.memoryImageControls:nothing}
         ${reply ? html`<section class="forma-assistant-specialist-result"><h3>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryResult":"assistant.specialist.originalResult")}</h3><p dir="auto">${reply}</p><small>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryReview":"assistant.specialist.resultReview")}</small></section>` : nothing}
         <footer>
           <button type="button" class="button secondary" @click=${() => this.#closeSpecialist(state.id)}>${this.i18n.t("assistant.specialist.close")}</button>

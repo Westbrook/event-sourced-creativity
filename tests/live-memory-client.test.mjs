@@ -2008,3 +2008,17 @@ for(const [name,questions,valid]of [['valid',['What next?'],true],['empty',[],tr
  const {createResourceAssistantClient}=await import('../src/state/memory-resource-assistant-client.ts'),{memoryResourceIdentity}=await import('../src/model/memory-resource-scope.ts'),scope={kind:'canvas',projectId:'p',resourceId:'c'},executionId=crypto.randomUUID(),body={version:'resource-memory-assistant-v1',executionId,status:'completed',validUntil:new Date(Date.now()+25000).toISOString(),asOf:new Date().toISOString(),scope:memoryResourceIdentity(scope,{actorUserId:'a',ownerUserId:'a',organizationId:null,projectAccessId:null}),result:{reply:'Tentative',mode:'private-review',independentEvidence:false,nextQuestions:questions},noAutomaticRetry:true};
  const run=createResourceAssistantClient(async()=>Response.json(body)).read(scope,new AbortController().signal,'retrieve',executionId);if(valid)assert.deepEqual((await run).result.nextQuestions,questions);else await assert.rejects(run);
 });
+
+const imagePreviewReply=()=>({version:'memory-image-preview-v1',executionId:'synthetic-image-execution',status:'completed',validUntil:new Date(Date.now()+20000).toISOString(),noAutomaticRetry:true,
+ result:{version:'memory-image-preview-v1',executionId:'synthetic-image-execution',bindingHash:'a'.repeat(64),mode:'private-review',independentEvidence:false,image:{encoded:'aW1hZ2U=',sha256:'b'.repeat(64),mimeType:'image/jpeg',width:1024,height:1024}}});
+test('private image client: bounded private DTO has no automatic authoring or external URL',async()=>{
+ const {readMemoryImageReply}=await import('../src/state/memory-image-preview-client.ts'),v=await readMemoryImageReply(Response.json(imagePreviewReply()),new AbortController().signal);
+ assert.equal(v.image.mimeType,'image/jpeg');assert.equal(v.image.width,1024);assert.equal(v.quote,undefined);assert.equal(v.image.url,undefined);
+});
+for(const [name,edit]of [['expired',v=>v.validUntil=new Date(Date.now()-1).toISOString()],['invalid-date',v=>v.validUntil='invalid'],['future',v=>v.validUntil=new Date(Date.now()+90000).toISOString()],['wrong-execution',v=>v.result.executionId='wrong'],['independent',v=>v.result.independentEvidence=true],['svg',v=>v.result.image.mimeType='image/svg+xml'],['huge',v=>v.result.image.encoded='a'.repeat(933340)],['invalid-base64',v=>v.result.image.encoded='<script>'],['dimensions',v=>v.result.image.width=40000]])test('private image client: refuses '+name,async()=>{
+ const {readMemoryImageReply}=await import('../src/state/memory-image-preview-client.ts'),v=imagePreviewReply();edit(v);await assert.rejects(()=>readMemoryImageReply(Response.json(v),new AbortController().signal));
+});
+test('private image client: aborted and oversized transport fails closed',async()=>{
+ const {readMemoryImageReply}=await import('../src/state/memory-image-preview-client.ts'),abort=new AbortController();abort.abort();await assert.rejects(()=>readMemoryImageReply(Response.json(imagePreviewReply()),abort.signal));
+ await assert.rejects(()=>readMemoryImageReply(new Response(' '.repeat(1050001)),new AbortController().signal));
+});

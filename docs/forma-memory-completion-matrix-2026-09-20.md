@@ -485,3 +485,12 @@ private lifetime. Native invalid receipts settle verified usage without publishi
 or retrying. This closes that resource draft consumer, not private Output/live-preview
 or all integrated qualification. The frozen full run completed with12 stale test
 hooks; repaired real-transaction race tests all pass, pending a full current rerun.
+
+## Private image preview continuation
+
+[Private image generation](forma-memory-private-image-preview-2026-09-21.md) now
+connects actual Assistant/Chat to separate exact-input cost approval, native image
+generation, bounded private review, source retirement and accounting recovery.
+Normal D1 execution meets46/50 calls; fresh long-response recapture uses73 and
+stays assigned with authored adoption and integrated qualification. The prior
+full regression at`f601c4b9` is2,869/2,869, resolving the earlier stale test hooks.

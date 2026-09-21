@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1r90hqw.52": "メモリー画像プレビュー操作用のアプリケーションインターフェース。",
+  "system.auto.19zkz9s.153": "非公開画像の明示的な購入と閲覧。イベント、R2、ブラウザー保存領域、共有成果物には書き込みません。元の情報が無効になると親要素が画面を削除します。",
   "system.auto.1658tge.44": "メモリプロフィール確認のアプリケーションインターフェース。",
   "system.auto.13q2pxg.143": "利用者専用のプロフィール確認。カタログはメタデータのみで、選択した現在のプロフィールには元のソースと修正の再確認が必要です。",
   "system.auto.1qiljrp.57": "リソースメモリアシスタントの操作インターフェース。",

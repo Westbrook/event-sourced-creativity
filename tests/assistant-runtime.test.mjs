@@ -20534,3 +20534,116 @@ for(const invalid of ['missing','duplicate','long','control','surrogate','object
  const state=await nativeResourceSemanticFixture(t,{respond:payload=>specialistRawResponse(payload,{output:[{type:'message',id:'next-question-fixture',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'INVALID_PRIVATE_DRAFT',actions:[],...(invalid==='missing'?{}:{next_questions:values[invalid]})})}]}]})}),quote=await state.resourceAssistantQuote();
  const response=await state.resourceAssistant({action:'execute',executionId:quote.executionId,approvedBindingHash:quote.quote.bindingHash});assert.equal(response.status,409);const receipt=consequentialReceipt(state,quote.executionId);assert.equal(receipt.steps[0].status,'settled');assert.equal(receipt.execution.result_ref,null);assert.equal(state.resourceProviderRequests.length,1);const recovered=await(await state.resourceAssistant({action:'resume',executionId:quote.executionId})).json();assert.equal(recovered.result,undefined);assert.equal(state.resourceProviderRequests.length,1);
 });
+
+
+async function semanticImagePreviewFixture(t,{shared=false,native=false}={}){
+ const state=await semanticAuthoredEditFixture(t,{shared,native,creation:true}),original=globalThis.fetch,calls=[];
+ const {jpeg}=await import('./output-asset-fixtures.mjs');
+ globalThis.fetch=async(url,init)=>{
+  const address=String(url);if(!address.startsWith('https://api.openai.com/'))return original(url,init);
+  calls.push({url:address,body:JSON.parse(init.body)});
+  if(address.endsWith('/moderations'))return Response.json({id:'moderation-private-preview',model:'omni-moderation-latest',results:[{flagged:false,categories:{}}]});
+  assert.ok(address.endsWith('/images/generations'),address);
+  if(state.beforeImageResponse)await state.beforeImageResponse();
+  return Response.json({data:[{b64_json:Buffer.from(jpeg({width:1024,height:1024})).toString('base64')}],usage:{input_tokens:20,output_tokens:100,total_tokens:120,input_tokens_details:{text_tokens:20,image_tokens:0}}},{headers:{'x-request-id':'private-image-response'}});
+ };t.after(()=>{globalThis.fetch=original;});
+ const control={action:'image-preview',turnId:state.authoredReview.turnId,executionId:state.authoredReview.executionId,approvedBindingHash:state.authoredReview.quote.bindingHash};
+ const send=(previewAction,extra={})=>specialistProtocolRequest(state,{...control,previewAction,...extra},state.semanticOptions);
+ return Object.assign(state,{imageCalls:calls,imageSend:send});
+}
+for(const shared of [false,true])test('private Memory image: approved native preview remains private and retires '+shared,{timeout:180000},async t=>{
+ const state=await semanticImagePreviewFixture(t,{shared}),db=state.env.DB;
+ const count=(await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n;
+ const q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote)+' '+state.controls.lastDatabaseError);assert.equal(state.imageCalls.length,0);
+ assert.equal(quote.quote.canExecute,true);assert.match(quote.quote.privateInput.prompt,/tentative/i);
+ const keys={previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash};
+ const executed=await state.imageSend('execute',keys),result=await executed.json();assert.equal(executed.status,200,JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+ assert.equal(result.status,'completed');assert.equal(result.result.mode,'private-review');assert.equal(result.result.independentEvidence,false);assert.equal(result.result.image.mimeType,'image/jpeg');assert.equal(result.result.image.width,1024);
+ assert.equal(state.imageCalls.length,2);assert.equal(state.imageCalls[1].body.output_format,'jpeg');assert.equal(state.imageCalls[1].body.stream,undefined);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,count);
+ const reread=await state.imageSend('retrieve',keys);assert.equal(reread.status,200,await reread.clone().text());
+ const repeat=await state.imageSend('execute',keys);assert.equal(repeat.status,200,await repeat.clone().text());assert.equal(state.imageCalls.length,2);
+ const before=await db.prepare("SELECT content_id,content FROM private_content WHERE json_valid(content) AND json_extract(content,'$.version')='memory-image-preview-v1'").all();assert.equal(before.results.length,2);
+ await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+ for(const row of before.results){assert.equal((await db.prepare('SELECT content FROM private_content WHERE content_id=?').bind(row.content_id).first()).content,'');await assert.rejects(()=>db.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').bind(row.content,row.content_id).run());}
+ const retired=await state.imageSend('retrieve',keys);assert.ok(retired.status>=400);assert.doesNotMatch(await retired.text(),/encoded/);assert.equal(state.imageCalls.length,2);
+});
+for(const shared of [false,true])test('private Memory image: withdrawal during image settles verified usage without publication '+shared,{timeout:180000},async t=>{
+ const state=await semanticImagePreviewFixture(t,{shared}),db=state.env.DB;
+ const q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote));
+ state.beforeImageResponse=()=>state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+ const response=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash});assert.equal(response.status,409);assert.doesNotMatch(await response.text(),/encoded/);
+ const step=await db.prepare('SELECT status,verified_tokens,verified_microusd FROM consequential_execution_steps WHERE execution_id=?').bind(quote.executionId).first();assert.equal(step.status,'settled');assert.equal(step.verified_tokens,120);assert.ok(step.verified_microusd>0);
+ assert.equal((await db.prepare('SELECT result_ref FROM consequential_executions WHERE execution_id=?').bind(quote.executionId).first()).result_ref,null);
+ assert.equal(state.imageCalls.length,2);const retry=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash});assert.ok(retry.status>=400);assert.equal(state.imageCalls.length,2);
+});
+for(const shared of [false,true])test('private Memory image: actual D1 preview and metadata-only maintenance '+shared,{timeout:180000},async t=>{
+ const state=await semanticImagePreviewFixture(t,{shared,native:true}),db=state.env.DB,counter=semanticConsumerOperationCounter(state);
+ const q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote)+' '+state.controls.lastDatabaseError);
+ const quoteCalls=counter.read();counter.reset();const response=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.ok(body.result.image.encoded);t.diagnostic(JSON.stringify({shared,quoteCalls,executeCalls:counter.read(),executeStatements:counter.statements()}));assert.ok(quoteCalls<=50);assert.ok(counter.read()<=50);
+ assert.equal(await(import('../worker/memory-image-preview.ts')).then(m=>m.reconcileMemoryImageUsage(state.env)),0);
+});
+for(const kind of ['wrong-approval','source-withdrawn','malformed-moderation','moderation-withdrawal','provider-rejection','invalid-image','unknown-usage'])test('private Memory image: failure boundary '+kind,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),db=state.env.DB,q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote));
+ const original=globalThis.fetch;let imageCalls=0,moderationCalls=0;
+ globalThis.fetch=async(url,init)=>{
+  if(String(url).endsWith('/moderations')){moderationCalls++;if(kind==='malformed-moderation')return Response.json({results:[]});if(kind==='moderation-withdrawal')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);}
+  if(String(url).endsWith('/images/generations')){imageCalls++;if(kind==='provider-rejection')return Response.json({error:{message:'Synthetic rejection'}},{status:400});if(kind==='invalid-image'||kind==='unknown-usage'){const response=await original(url,init),body=await response.json();if(kind==='invalid-image')body.data[0].b64_json='bm90IGEganBlZw==';else body.usage={total_tokens:120};return Response.json(body,{headers:{'x-request-id':'private-image-response'}});}}
+  return original(url,init);
+ };t.after(()=>{globalThis.fetch=original;});
+ if(kind==='source-withdrawn')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+ const keys={previewExecutionId:quote.executionId,approvedPreviewHash:kind==='wrong-approval'?'f'.repeat(64):quote.quote.bindingHash},response=await state.imageSend('execute',keys);assert.ok(response.status>=400);assert.doesNotMatch(await response.text(),/encoded/);
+ assert.equal(imageCalls,['provider-rejection','invalid-image','unknown-usage'].includes(kind)?1:0);assert.equal(moderationCalls,['wrong-approval','source-withdrawn'].includes(kind)?0:1);
+ if(kind==='invalid-image')assert.equal((await db.prepare('SELECT status FROM consequential_execution_steps WHERE execution_id=?').bind(quote.executionId).first()).status,'settled');
+ if(['provider-rejection','invalid-image','unknown-usage'].includes(kind)){await state.imageSend('resume',keys);await state.imageSend('execute',keys);assert.equal(imageCalls,1);}
+});
+for(const recovery of ['resume','withdraw-maintenance'])test('private Memory image: durable receipt and interrupted accounting '+recovery,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),db=state.env.DB,q=await state.imageSend('quote'),quote=await q.json(),batch=db.batch;assert.equal(q.status,200,JSON.stringify(quote));let blocked=0;
+ db.batch=async statements=>{if(statements.some(s=>s.sql?.includes('AS specialist_budget_snapshot'))){blocked++;throw Error('synthetic_private_image_billing_interruption');}return batch.call(db,statements);};
+ const keys={previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash},response=await state.imageSend('execute',keys);db.batch=batch;assert.equal(response.status,409);assert.ok(blocked);assert.equal(state.imageCalls.length,2);
+ assert.equal((await db.prepare('SELECT status FROM consequential_execution_steps WHERE execution_id=?').bind(quote.executionId).first()).status,'usage-recorded');
+ const raw=await db.prepare("SELECT content_id FROM private_content WHERE kind='provider-response' AND json_valid(content) AND json_extract(content,'$.version')='memory-image-preview-v1'").first();assert.ok(raw);
+ if(recovery==='withdraw-maintenance'){
+  await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);state.env.FORMA_MEMORY_ENABLED='false';state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS='';
+  assert.equal((await db.prepare('SELECT content FROM private_content WHERE content_id=?').bind(raw.content_id).first()).content,'');
+  const {reconcileMemoryImageUsage}=await import('../worker/memory-image-preview.ts');assert.equal(await reconcileMemoryImageUsage(state.env),1);assert.equal(await reconcileMemoryImageUsage(state.env),0);
+ }else{const recovered=await state.imageSend('resume',keys),body=await recovered.json();assert.equal(recovered.status,200,JSON.stringify(body));assert.ok(body.result.image.encoded);}
+ assert.equal((await db.prepare('SELECT status FROM consequential_execution_steps WHERE execution_id=?').bind(quote.executionId).first()).status,'settled');assert.equal(state.imageCalls.length,2);
+});
+for(const seam of ['quote','dispatch','receipt','result'])test('private Memory image: late native source race '+seam,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),db=state.env.DB,batch=db.batch;let hit=false;
+ const trigger=statements=>statements.some(s=>seam==='quote'?s.sql?.startsWith('INSERT INTO consequential_executions('):seam==='dispatch'?s.sql?.includes("UPDATE consequential_execution_steps SET status='submitting'"):/INSERT INTO private_content\s*\(/u.test(s.sql??'')&&s.values?.includes(seam==='receipt'?'provider-response':'context-proposal'));
+ let quote;if(seam!=='quote'){const response=await state.imageSend('quote');quote=await response.json();assert.equal(response.status,200,JSON.stringify(quote));}
+ db.batch=async statements=>{if(!hit&&trigger(statements)){hit=true;await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);}return batch.call(db,statements);};t.after(()=>{db.batch=batch;});
+ const response=seam==='quote'?await state.imageSend('quote'):await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash});
+ assert.equal(hit,true,'real transaction injection must execute');assert.ok(response.status>=400);assert.doesNotMatch(await response.text(),/encoded/);
+ assert.equal(state.imageCalls.filter(c=>c.url.endsWith('/images/generations')).length,['receipt','result'].includes(seam)?1:0);
+});
+for(const seam of ['receipt','result'])test('private Memory image: lost publication acknowledgement never repurchases '+seam,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),db=state.env.DB,q=await state.imageSend('quote'),quote=await q.json(),batch=db.batch;assert.equal(q.status,200,JSON.stringify(quote));let hit=false;
+ db.batch=async statements=>{const matching=!hit&&statements.some(s=>/INSERT INTO private_content\s*\(/u.test(s.sql??'')&&s.values?.includes(seam==='receipt'?'provider-response':'context-proposal'));if(matching)hit=true;const rows=await batch.call(db,statements);return matching?rows.slice(0,-1):rows;};
+ const keys={previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash},response=await state.imageSend('execute',keys);db.batch=batch;assert.equal(hit,true);assert.equal(response.status,409);assert.equal(state.imageCalls.length,2);
+ const recovered=await state.imageSend('resume',keys),body=await recovered.json();assert.equal(recovered.status,200,JSON.stringify(body));assert.ok(body.result.image.encoded);await state.imageSend('execute',keys);assert.equal(state.imageCalls.length,2);
+});
+test('private Memory image: restored private body without source cannot resurrect a preview',{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),db=state.env.DB,q=await state.imageSend('quote'),quote=await q.json(),keys={previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash};assert.equal(q.status,200,JSON.stringify(quote));
+ assert.equal((await state.imageSend('execute',keys)).status,200);
+ const retained=await db.prepare("SELECT content_id,content FROM private_content WHERE kind='context-proposal' AND json_valid(content) AND json_extract(content,'$.version')='memory-image-preview-v1'").first();assert.ok(retained);
+ // Simulate a partial external restore bypassing the body-update trigger. The
+ // permanent source tombstone and remaining certified schema must still deny.
+ await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+ const trigger=state.sqlite.prepare("SELECT sql FROM sqlite_schema WHERE name='memory_derivation_asset_content_restore'").get().sql;
+ state.sqlite.exec('DROP TRIGGER memory_derivation_asset_content_restore');state.sqlite.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').run(retained.content,retained.content_id);state.sqlite.exec(trigger);
+ const read=await state.imageSend('retrieve',keys);assert.ok(read.status>=400);assert.doesNotMatch(await read.text(),/encoded/);assert.equal(state.imageCalls.length,2);
+});
+test('private Memory image: long provider response revalidates instead of extending the old lease',{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote));const original=performance.now.bind(performance);let advanced=false;
+ t.mock.method(performance,'now',()=>original()+(advanced?31000:0));state.beforeImageResponse=()=>{advanced=true;};
+ const counter=semanticConsumerOperationCounter(state),response=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash}),body=await response.json();
+ assert.equal(response.status,200,JSON.stringify(body));assert.ok(body.result.image.encoded);assert.equal(state.imageCalls.length,2);t.diagnostic(JSON.stringify({longResponseCalls:counter.read(),longResponseStatements:counter.statements()}));
+});
+for(const change of ['provider-off','model','image-provider'])test('private Memory image: changed provider configuration after safety review blocks dispatch '+change,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote));const original=globalThis.fetch;
+ globalThis.fetch=async(url,init)=>{const response=await original(url,init);if(String(url).endsWith('/moderations')){if(change==='provider-off')state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS='';else if(change==='model')state.env.OPENAI_IMAGE_MODEL='different';else state.env.FORMA_IMAGE_PROVIDER='fal';}return response;};t.after(()=>{globalThis.fetch=original;});
+ const response=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash});assert.equal(response.status,409);assert.equal(state.imageCalls.length,1);assert.ok(state.imageCalls[0].url.endsWith('/moderations'));
+});

@@ -298,3 +298,9 @@ Resource intent draft completions are [implemented natively](forma-memory-resour
 without another service, schema or model request. Existing hosted provider/model
 qualification and explicit enrollment gates still apply. This implementation
 receipt does not qualify hosted scheduling or production deployment.
+
+[Private image preview](forma-memory-private-image-preview-2026-09-21.md) is native
+implementation with mocked-provider/local-D1 evidence. It does not qualify real
+image models, pricing, provider retention, hosted capacity or enrollment. Those
+external gates remain open; authored-image and long-response integration remain
+native work on this task.

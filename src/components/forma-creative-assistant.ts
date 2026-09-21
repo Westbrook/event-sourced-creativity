@@ -1,3 +1,4 @@
+import './memory-image-preview-controls.ts';
 import { parseMemoryProfileSynthesis } from '../model/memory-profile-synthesis.ts';
 import { memoryCreationApprovalHash,parseMemoryCreationReview } from '../model/memory-creation-review.ts';
 import { parseMemoryFieldRequest,type MemoryFieldRequest } from '../model/memory-field-request.ts';
@@ -1563,6 +1564,9 @@ export class FormaCreativeAssistant extends FormaElement {
       }) : nothing}${this.#renderMemory(scope)}${surface.documentId&&this.#memoryOpen?html`<forma-memory-assistant-context></forma-memory-assistant-context>`:nothing}` : nothing}
       .retainGuidanceDraft=${true} .guidanceDelivery=${this.#guidance?.status ?? ""}
       .canSpecialist=${this.#canSpecialist()} .specialist=${this.#specialist}
+      .memoryImageControls=${this.#specialist?.resultSource==='semantic-memory-assisted'&&this.#specialist.quote?.status==='completed'&&parseSemanticMemoryAnswerPresentation(this.#specialist.semanticMemory)?html`<forma-memory-image-preview-controls
+        .endpoint=${this.#specialistUrl} .turnId=${this.#specialist.turnId} .executionId=${this.#specialist.executionId} .bindingHash=${this.#specialist.quote.bindingHash}
+        .validUntil=${this.#specialist.semanticMemory!.validUntil}></forma-memory-image-preview-controls>`:undefined}
       .canMemoryEdit=${this.#canAuthor()&&session.assistant.phase==="actions"&&Boolean(surface.documentId)}
       .canReconcile=${false}
       .pending=${this.#pending.size + this.#activeTasks.size + Number(planning)} .readOnly=${embedded || !this.#canAuthor()}

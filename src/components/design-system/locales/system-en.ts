@@ -1,5 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.1r90hqw.52": "Memory image preview controls application interface.",
+  "system.auto.19zkz9s.153": "Explicit private-image purchase and read. Never writes events, R2, browser storage or a shared Output. The parent removes this view on source retirement.",
   "system.auto.1658tge.44": "Memory profile review application interface.",
   "system.auto.13q2pxg.143": "Actor-private profile review. The catalog is metadata only; each selected current profile requires fresh original-source and correction checks.",
   "system.auto.1qiljrp.57": "Memory resource assistant controls application interface.",

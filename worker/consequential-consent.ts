@@ -242,12 +242,12 @@ export async function reserveConsequentialSteps(env:WorkerEnv,user:PilotUser,bin
   }
 }
 
-export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,index:number,sourceHead:number,additional:BudgetReservationGuard={sql:"1",bindings:[]},options:{separateSourceProof?:boolean;additionalAssertions?:readonly BudgetReservationGuard[]}={}){
+export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,index:number,sourceHead:number,additional:BudgetReservationGuard={sql:"1",bindings:[]},options:{separateSourceProof?:boolean;additionalAssertions?:readonly BudgetReservationGuard[];preconditions?:readonly D1PreparedStatement[]}={}){
   const guard=executionAdmissionGuard(user,binding,sourceHead,true),reservation=consequentialReservationGuard(user.userId,binding,id,index,await consentHash(binding)),now=new Date().toISOString();
   // Source consumers may also require separation for SQLite expression depth.
   // A shared source can exceed D1's 100-bind limit when proofs combine. Replay in
   // the same atomic batch, never as an earlier positive authorization cache.
-  const split=options.separateSourceProof===true||Boolean(options.additionalAssertions?.length)||8+reservation.bindings.length+guard.bindings.length+additional.bindings.length>100;
+  const split=options.separateSourceProof===true||Boolean(options.additionalAssertions?.length)||Boolean(options.preconditions?.length)||8+reservation.bindings.length+guard.bindings.length+additional.bindings.length>100;
   const inline=split?{sql:"1",bindings:[]}:additional;
   const statement=env.DB.prepare(`UPDATE consequential_execution_steps SET status='submitting',updated_at=? WHERE execution_id=? AND step_index=? AND status='reserved'
     AND ${reservation.sql} AND ${guard.sql} AND (${inline.sql})
@@ -255,7 +255,7 @@ export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,bindin
       OR pending.status='reserved' AND(NOT EXISTS(SELECT 1 FROM budget_reservations tokens WHERE tokens.reservation_id=pending.token_reservation_id AND tokens.owner_id=? AND tokens.status='active' AND tokens.period=? AND tokens.reserved_tokens=pending.maximum_tokens)
         OR NOT EXISTS(SELECT 1 FROM cost_budget_reservations cost WHERE cost.reservation_id=pending.cost_reservation_id AND cost.owner_id=? AND cost.status='executing' AND cost.period=? AND cost.reserved_microusd=pending.maximum_microusd))))`)
     .bind(now,id,index,...reservation.bindings,...guard.bindings,...inline.bindings,id,user.userId,binding.period,user.userId,binding.period);
-  const extraAssertions=(options.additionalAssertions??[]).map(proof=>env.DB.prepare(`SELECT CASE WHEN (${proof.sql}) THEN 1 ELSE json('context_authorization_changed') END AS verified`).bind(...proof.bindings));
+  const extraAssertions=[...(options.preconditions??[]),...(options.additionalAssertions??[]).map(proof=>env.DB.prepare(`SELECT CASE WHEN (${proof.sql}) THEN 1 ELSE json('context_authorization_changed') END AS verified`).bind(...proof.bindings))];
   const statements=[...extraAssertions,env.DB.prepare(`SELECT CASE WHEN (${additional.sql}) THEN 1 ELSE abs(-9223372036854775808) END AS verified`).bind(...additional.bindings),
     statement,env.DB.prepare('SELECT CASE WHEN changes()=1 THEN 1 ELSE abs(-9223372036854775808) END AS verified')];
   const results=split?structuredClone(await env.DB.batch<Record<string,unknown>>(statements)):null,mutationIndex=extraAssertions.length+1;

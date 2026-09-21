@@ -2850,6 +2850,13 @@
             },
             {
               "kind": "field",
+              "name": "memoryImageControls",
+              "type": {
+                "text": "TemplateResult | undefined"
+              }
+            },
+            {
+              "kind": "field",
               "name": "messages",
               "type": {
                 "text": "AssistantDisplayedMessage[]"
@@ -14741,6 +14748,136 @@
           "declaration": {
             "name": "MemoryFieldCompletion",
             "module": "src/components/memory-field-completion.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
+      "path": "src/components/memory-image-preview-controls.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "MemoryImagePreviewControls",
+          "tagName": "forma-memory-image-preview-controls",
+          "customElement": true,
+          "summary": "Memory image preview controls application interface.",
+          "description": "Explicit private-image purchase and read. Never writes events, R2, browser\nstorage or a shared Output. The parent removes this view on source retirement.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "bindingHash",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "bindinghash"
+            },
+            {
+              "kind": "field",
+              "name": "endpoint",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "endpoint"
+            },
+            {
+              "kind": "field",
+              "name": "executionId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "executionid"
+            },
+            {
+              "kind": "field",
+              "name": "turnId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "turnid"
+            },
+            {
+              "kind": "field",
+              "name": "validUntil",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "validuntil"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "bindinghash",
+              "fieldName": "bindingHash",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "endpoint",
+              "fieldName": "endpoint",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "executionid",
+              "fieldName": "executionId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "turnid",
+              "fieldName": "turnId",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            },
+            {
+              "name": "validuntil",
+              "fieldName": "validUntil",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-memory-image-preview-controls",
+          "declaration": {
+            "name": "MemoryImagePreviewControls",
+            "module": "src/components/memory-image-preview-controls.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "MemoryImagePreviewControls",
+          "declaration": {
+            "name": "MemoryImagePreviewControls",
+            "module": "src/components/memory-image-preview-controls.ts"
           }
         }
       ]

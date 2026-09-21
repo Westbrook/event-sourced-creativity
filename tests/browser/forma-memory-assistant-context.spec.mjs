@@ -1,3 +1,4 @@
+import {memoryImagePreviewMessages} from '../../src/components/design-system/locales/memory-image-preview-messages.ts';
 import { normalizeOutputRequirementCreation } from '../../src/model/output-requirement-creation.ts';
 import {ASSISTANT_MESSAGES} from '../../src/components/design-system/locales/assistant-messages.ts';
 import {assistantSurfaceForRoute} from '../../src/model/assistant-route-policy.ts';
@@ -41,7 +42,7 @@ for(const locale of ['en','ar'])test.describe('Saved assistant context '+locale,
 
 // Actual whole-app modal and privacy lifecycle with synthetic transport only.
 // Native authorization, finance and D1 are verified separately by runtime tests.
-for(const creation of [false,true,'output','profile'])for(const surface of ['document','chat'])for(const locale of ['en','ar'])for(const boundary of creation==='profile'?['blur','expiry']:['blur','expiry','apply'])test.describe('Semantic assistant '+(creation==='profile'?'profile':creation==='output'?'output':creation?'creation':'result')+' '+surface+' '+locale+' '+boundary,()=>{
+for(const creation of [false,true,'output','profile','image'])for(const surface of ['document','chat'])for(const locale of ['en','ar'])for(const boundary of ['profile','image'].includes(creation)?['blur','expiry']:['blur','expiry','apply'])test.describe('Semantic assistant '+(creation==='image'?'image':creation==='profile'?'profile':creation==='output'?'output':creation?'creation':'result')+' '+surface+' '+locale+' '+boundary,()=>{
  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
  test('historical result retires its private modal without a new purchase',async({page,context,baseURL})=>{
   expect(syntheticNetworkEnabled(baseURL)).toBe(true);
@@ -67,6 +68,11 @@ for(const creation of [false,true,'output','profile'])for(const surface of ['doc
     const after=Number(new URL(request.request().url()).searchParams.get('after')??0),head=createdEvents.at(-1).sequence;
     return request.fulfill({json:{events:createdEvents.filter(event=>event.sequence>after),head,nextAfter:head,hasMore:false,content:{}}});
   });
+  let imageData=null;
+  if(creation==='image'){
+   const encoded=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=1024;c.height=1024;const g=c.getContext('2d');g.fillStyle='#e5dbc9';g.fillRect(0,0,1024,1024);g.fillStyle='#302a22';g.font='42px sans-serif';g.fillText('Synthetic private preview',100,512);return c.toDataURL('image/jpeg',.8).split(',')[1];});
+   const {createHash}=await import('node:crypto');imageData={encoded,sha256:createHash('sha256').update(Buffer.from(encoded,'base64')).digest('hex'),mimeType:'image/jpeg',width:1024,height:1024};
+  }
   let validUntil='';const presentation=()=>({version:'semantic-memory-answer-v1',validUntil,independentEvidence:false});
   const task=()=>({id:quote.executionId,executionId:quote.executionId,turnId:originalRequest.turnId,bindingHash:quote.bindingHash,kind:'clarify',model:'gpt-5.6-luna',status:'completed',submission:'settled',canExecute:false,certifiedCompleted:true,completedReview:{turnId:originalRequest.turnId,executionId:quote.executionId,quote,originalRequest,result,memory:presentation()}});
   await context.route('**/api/assistant?*',async request=>{
@@ -75,6 +81,12 @@ for(const creation of [false,true,'output','profile'])for(const surface of ['doc
   });
   await context.route('**/api/assistant/specialist?*',async request=>{
    const body=request.request().postDataJSON();calls.push(body);
+   if(creation==='image'&&body.action==='image-preview'){
+    const executionId='synthetic-private-image',bindingHash='b'.repeat(64);
+    if(body.previewAction==='quote')return request.fulfill({json:{version:'memory-image-preview-v1',executionId,validUntil,quote:{...quote,executionId,bindingHash,status:'quoted',models:['gpt-image-2'],canExecute:true,privateInput:{prompt:'Private exact context <script>literal</script>'}},noAutomaticRetry:true}});
+    expect(body.previewExecutionId).toBe(executionId);expect(body.previewAction).toBe('execute');expect(body.approvedPreviewHash).toBe(bindingHash);
+    return request.fulfill({json:{version:'memory-image-preview-v1',executionId,validUntil,status:'completed',result:{version:'memory-image-preview-v1',executionId,bindingHash,mode:'private-review',independentEvidence:false,image:imageData},noAutomaticRetry:true}});
+   }
    if(boundary==='apply'&&body.action===(creation?'apply-creation':'apply-edit')){
     expect(Object.keys(body).sort()).toEqual(['action','turnId','executionId','approvedBindingHash',...(creation?['proposalId','approvedCreationHash']:['blockId','approvedEditHash']),'publishToDocument'].sort());
     expect(body.publishToDocument).toBe(true);expect(creation?body.proposalId:body.blockId).toBe(creation?'create-0':'synthetic-block');expect(creation?body.approvedCreationHash:body.approvedEditHash).toMatch(/^[a-f0-9]{64}$/u);
@@ -120,6 +132,15 @@ for(const creation of [false,true,'output','profile'])for(const surface of ['doc
   await page.screenshot({path:'.wrangler/memory-'+(creation==='profile'?'profile':creation==='output'?'output':creation?'creation':'edit')+'-review-'+surface+'-'+locale+'-'+boundary+'.png'});
   await dialog.locator('.forma-assistant-specialist-result').scrollIntoViewIfNeeded();expect(await dialog.evaluate(el=>el.scrollWidth>el.clientWidth+1)).toBe(false);
   await page.screenshot({path:'.wrangler/memory-semantic-'+(creation==='profile'?'profile':creation==='output'?'output':creation?'creation':'result')+'-'+surface+'-'+locale+'-'+boundary+'.png'});
+  if(creation==='image'){
+   const image=dialog.locator('forma-memory-image-preview-controls'),c=memoryImagePreviewMessages[locale];
+   await image.getByRole('button',{name:c.quote,exact:true}).click();await image.locator('summary').click();await expect(image).toContainText('Private exact context <script>literal</script>');
+   await expect(image.getByRole('button',{name:c.generate,exact:true})).toBeDisabled();await image.locator('input[type=checkbox]').check();await image.getByRole('button',{name:c.generate,exact:true}).click();
+   await expect(image.locator('img')).toBeVisible();await expect.poll(()=>image.locator('img').evaluate(e=>e.complete&&e.naturalWidth)).toBe(1024);
+   await image.locator('img').scrollIntoViewIfNeeded();expect(await dialog.evaluate(e=>e.scrollWidth>e.clientWidth+1)).toBe(false);
+   await page.screenshot({path:'.wrangler/memory-private-image-'+surface+'-'+locale+'-'+boundary+'.png'});
+   expect(calls.filter(c=>c.action==='image-preview').map(c=>c.previewAction)).toEqual(['quote','execute']);
+  }
   if(boundary==='apply'){await expect(editReview).toContainText(ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationDetail':creation?'creationDetail':'editPublishDetail')]);await editReview.getByRole('button',{name:ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationApply':creation?'creationApply':'editApply')],exact:true}).click();}
   if(boundary==='blur')await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
   await expect(dialog).not.toContainText(result.reply,{timeout:15000});await expect(dialog).not.toContainText('Synthetic private approved Memory context');await expect(dialog).not.toContainText(privateText);if(!creation)await expect(dialog).not.toContainText(result.editReview.edits[0].beforeExcerpt);
@@ -128,7 +149,8 @@ for(const creation of [false,true,'output','profile'])for(const surface of ['doc
    await draft.fill('');await page.locator('[data-chat-guidance-mode]').click();
    await expect(page.locator('#creative-chat-message')).toHaveValue('Retained creative draft');
   }
-  expect(calls.every(call=>['resume','retrieve',...(boundary==='apply'?[creation?'apply-creation':'apply-edit']:[])].includes(call.action))).toBe(true);expect(calls.filter(call=>call.action===(creation?'apply-creation':'apply-edit'))).toHaveLength(boundary==='apply'?1:0);expect(errors).toEqual([]);
+  if(creation==='image')await expect(dialog.locator('forma-memory-image-preview-controls img')).toHaveCount(0);
+  expect(calls.every(call=>['resume','retrieve',...(creation==='image'?['image-preview']:[]),...(boundary==='apply'?[creation?'apply-creation':'apply-edit']:[])].includes(call.action))).toBe(true);expect(calls.filter(call=>call.action===(creation?'apply-creation':'apply-edit'))).toHaveLength(boundary==='apply'?1:0);expect(errors).toEqual([]);
  });
 });
 
