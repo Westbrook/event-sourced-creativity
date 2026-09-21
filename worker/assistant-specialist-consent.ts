@@ -1020,7 +1020,9 @@ async function resultResponse(env:WorkerEnv,actor:SpecialistActor,host:Assistant
 }
 
 async function purchasePreparation(request:Request,env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,retained:Retained){
-  await assertNoPaidMemory(env,noMemoryProof(retained.request));
+  // turnProof below includes the exact negative Memory ancestry predicate in
+  // this same current-source read and in every subsequent atomic consumer.
+  // A separate earlier positive ancestry query adds no authority.
   if(actor.principal.access.permissionEpoch!==retained.binding.permissionEpoch)fail("assistant_authorization_changed");
   const source=await sourcePreparation(request,env,actor,retained.request.originalRequest,retained.request.conversation,retained.binding,retained.request.memory?.parents);
   if(source.sourceHash!==retained.binding.sourceHash||source.sourceRightsValidUntil!==retained.request.sourceRightsValidUntil)fail("assistant_consent_source_changed");

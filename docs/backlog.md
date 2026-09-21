@@ -289,3 +289,5 @@ Implemented [exact-field saved suggestion reuse](forma-memory-field-completion-2
 ### MEM-003 extracted reference field history — 2026-09-21
 
 [Native extraction and focal-point histories](forma-memory-extracted-block-history-2026-09-21.md) now support actual document inspection, consumption capture and Undo with complete scoped sources. 271 native resource tests pass; Library/Canvas Memory identities and the remaining matrix remain assigned.
+
+Memory capacity follow-up (2026-09-21): [current-source ancestry proof](forma-memory-native-capacity-2026-09-20.md#shared-current-source-ancestry-proof--2026-09-21) reduces complete synthetic execution to120/130 personal/shared binding calls;71 focused tests pass. Native capacity remains assigned and above target; no deployment or hosted qualification.

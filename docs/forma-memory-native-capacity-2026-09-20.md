@@ -63,3 +63,16 @@ requires further implementation; these are not hosted qualification numbers.
 52 focused native checks pass, including actual isolated workerd/D1, late private
 body/custody changes, successful follow-ups and permission/rights changes. Tightened
 whole-execution regression ceilings cover the measured reduction.
+
+## Shared current-source ancestry proof — 2026-09-21
+
+Purchase preparation now checks negative Memory ancestry in the same native
+current-source predicate used by its atomic consumers, instead of running an
+earlier redundant SELECT. The failure path still distinguishes withdrawn
+ancestry. No final dispatch, consent, exact source, rights or lease check is
+removed. Complete synthetic execution measures **120 personal / 130 shared
+binding round trips**; the conservative target remains unmet.
+
+71 focused runtime/privacy tests, TypeScript, changed-worker lint and the
+production build pass (existing chunk warnings). These are local, mocked-provider
+checks, not hosted qualification or a claim about the later full-suite run.

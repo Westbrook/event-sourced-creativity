@@ -30,8 +30,10 @@ preference. Erased field history cannot certify a restored block.
 - Native specialist/source/actual D1 regression: **34/34 pass**.
 - Existing shared Canvas extraction and governed-source regression: **2/2 pass**.
 - Conversation-context model: **19/19 pass**.
-- TypeScript, changed-source lint and production build pass; existing chunk-size
-  warnings remain. No visual layout changed.
+- TypeScript, scoped changed-source lint and production build pass; existing
+  chunk-size warnings remain. Whole-file `assistant-api.ts` lint has 28 identical
+  pre-existing diagnostics, reproduced from the baseline; its one changed event
+  allowlist adds none. No visual layout changed.
 
 This supports canonically scoped document reference histories. Unqualified legacy
 histories and Library/Canvas Memory enrollment are not silently broadened by it.
