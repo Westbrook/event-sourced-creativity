@@ -30,8 +30,8 @@ spending or scheduler registration in this change.
   withdrawal in personal and shared projects. Providers and accounts are synthetic.
 - TypeScript, changed-worker lint, production build and diff checks pass. Existing
   large-chunk build warnings remain.
-- Broader specialist/semantic/accounting regression is being recorded separately;
-  the 2,016-test full native pass is at preceding commit `e7d79ce2`, not proof of
+- All 331 broader specialist/semantic/accounting regressions pass at `f6eee87e`.
+  The 2,016-test full native pass is at preceding commit `e7d79ce2`, not proof of
   this later financial change.
 
 ## Capacity and remaining scope

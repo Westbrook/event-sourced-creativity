@@ -315,3 +315,10 @@ recoverable authorized responses across accounting interruption, and recovers af
 withdrawal without repurchase.28 focused checks include isolated D1; complete
 execution is111/119 binding calls. Remaining native work stays in the completion
 matrix; external qualification and rollout are separately tracked.
+
+Memory current-source continuation (2026-09-21): [exact local-source handoff](forma-memory-native-capacity-2026-09-20.md#exact-local-source-dispatch-handoff--2026-09-21)
+removes repeated body compilation and competing202 recovery while preserving
+fresh policy and transactional source/access checks. Exact field/custody mutation
+with an unchanged event head is denied, and actual D1 three-generation recovery
+passes. Whole execution is98/102 calls; the native capacity target and remaining
+resource/profile/consumer work stay assigned, separately from external rollout.

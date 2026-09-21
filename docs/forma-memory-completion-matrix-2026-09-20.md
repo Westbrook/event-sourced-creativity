@@ -217,3 +217,10 @@ interruption, concurrent settlement, lost acknowledgement and privacy withdrawal
 Execution is111/119 synthetic binding calls; capacity and the other native rows
 stay assigned. A full2,016-test native pass at preceding commit`e7d79ce2` is recorded
 separately from the later paired-settlement verification.
+
+[Exact local-source dispatch handoff](forma-memory-native-capacity-2026-09-20.md#exact-local-source-dispatch-handoff--2026-09-21)
+reuses only same-execution, short-lived native source proofs and replays all exact
+source predicates at claim/reservation/dispatch. Current access/policy reads remain
+mandatory. The actual local D1 three-generation journey includes the repaired
+101-bind reservation boundary. Whole execution is98/102 calls, with native capacity
+and all other remaining rows still assigned.

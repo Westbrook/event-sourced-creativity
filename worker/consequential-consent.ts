@@ -154,8 +154,15 @@ export async function reserveConsequentialSteps(env:WorkerEnv,user:PilotUser,bin
   for(const [index,step] of binding.steps.entries()){
     const correlationId=id,operation=`${binding.operation}:${step.name}:${step.model}`,tokenId=`${id}:tokens:${index}`,costId=`${id}:usd:${index}`;
     // Persist the hold linkage first. A crash cannot make the orphan sweeper release a possibly dispatched step.
-    const quoted=guarded(consequentialReservationGuard(user.userId,binding,id,index,hash,"quoted"));
-    const claimed=await env.DB.prepare(`UPDATE consequential_execution_steps SET status='reserved',updated_at=? WHERE execution_id=? AND step_index=? AND status='quoted' AND ${quoted.sql}`).bind(new Date().toISOString(),id,index,...quoted.bindings).run();
+    const nativeQuoted=consequentialReservationGuard(user.userId,binding,id,index,hash,"quoted"),quoted=guarded(nativeQuoted);
+    const splitQuoted=3+quoted.bindings.length>100,inlineQuoted=splitQuoted?nativeQuoted:quoted;
+    const claim=env.DB.prepare(`UPDATE consequential_execution_steps SET status='reserved',updated_at=? WHERE execution_id=? AND step_index=? AND status='quoted' AND ${inlineQuoted.sql}`).bind(new Date().toISOString(),id,index,...inlineQuoted.bindings);
+    // Larger retained conversations still replay the entire source proof in
+    // the same claim transaction, without exceeding D1's per-statement bound.
+    const claimed=splitQuoted?(await env.DB.batch([
+      env.DB.prepare(`SELECT CASE WHEN (${additional.sql}) THEN 1 ELSE json('context_execution_not_active') END AS verified`).bind(...additional.bindings),claim,
+      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_execution_not_active') END AS verified"),
+    ]))[1]!:await claim.run();
     if(Number(claimed.meta.changes??0)!==1)throw new Error("context_execution_not_active");
     const nativeReservation=consequentialReservationGuard(user.userId,binding,id,index,hash);
     const reservationGuard=guarded(nativeReservation);

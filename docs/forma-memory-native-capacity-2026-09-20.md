@@ -120,3 +120,32 @@ Whole execution is now **111 personal /119 shared** native binding calls. Quote
 is50/54 and retrieval36/36.28 focused native checks, including actual isolated D1,
 pass; types, changed-worker lint and build pass. The capacity target remains
 assigned and is not a hosted qualification claim.
+
+## Exact local-source dispatch handoff — 2026-09-21
+
+Memory execution now carries an opaque, same-execution source certificate for
+plain native authored text from admission into the driver. It retains the exact
+native source/head/custody proof, bound consent bytes, database identity and a
+30-second wall/monotonic lifetime. Every claim, reservation and final dispatch
+still replays that proof. Access, provider policy and pilot allowance are read
+again. References, governed packages, externally backed content and managed-pilot
+classification retain their original full source reads.
+
+An elapsed certificate can only be replaced by full source preparation under the
+same approval; it cannot extend the independent Memory evidence lease. Rollback,
+nonfinite clocks, database/consent replacement and expiry at final serialization
+prevent dispatch. Newly unsubmitted steps skip paid-result recovery; a new Memory
+execute202 acknowledges admission without launching a competing recovery worker.
+Retrieve/resume and already-submitted executions retain canonical recovery. The
+final response still checks negative ancestry, exact retained bytes and access.
+
+Native multi-turn reservation claims now split over-limit source assertions into
+the same atomic batch as the claim. This fixes a reproduced101-bind shared
+three-generation case without omitting a predicate or weakening custody.
+
+Whole synthetic execution is now **98 personal /102 shared binding calls**,
+quote50/54 and retrieve35/35. The conservative50-call whole-execution target remains
+assigned.33 focused source/clock/admission checks plus two actual local D1
+three-generation/withdrawal journeys pass;42 Memory field/paired settlement/D1
+checks passed before the final reservation-bind split. Full regression is being
+rerun at the final source. No hosted qualification, deployment or enrollment.
