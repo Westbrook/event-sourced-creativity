@@ -15,7 +15,7 @@ const duration=(start:string|null|undefined,end:string|null|undefined)=>{
 
 /** Private evidence lives only in this mounted, authorization-scoped view. */
 export class StillRejectionPage extends LitElement {
-  static properties={client:{attribute:false},scope:{type:String},inspection:{state:true},error:{state:true},loading:{state:true}};
+  static properties={client:{attribute:false},scope:{type:String},inspection:{state:true},error:{state:true},loading:{state:true},copyStatus:{state:true}};
   declare client:StillClient;
   scope='';
   private inspection?:GenerationInputInspection;
@@ -24,6 +24,7 @@ export class StillRejectionPage extends LitElement {
   private error='';
   private loading=true;
   private ticket=0;
+  private copyStatus='';
   override createRenderRoot(){return this;}
   override updated(changed:Map<string,unknown>){if(changed.has('scope')||changed.has('client'))void this.load();}
   override disconnectedCallback(){++this.ticket;this.inspection=undefined;this.job=undefined;super.disconnectedCallback();}
@@ -31,7 +32,7 @@ export class StillRejectionPage extends LitElement {
     const ticket=++this.ticket,scope=this.scope,client=this.client;
     const guard=client.fence(),jobId=client.position.outputId,documentId=client.position.documentId;
     const current=()=>{guard();return this.isConnected&&ticket===this.ticket&&scope===this.scope&&client.position.view==='rejection'&&client.position.outputId===jobId&&client.position.documentId===documentId;};
-    this.inspection=undefined;this.job=undefined;this.unavailable=[];this.error='';this.loading=true;
+    this.inspection=undefined;this.job=undefined;this.unavailable=[];this.error='';this.copyStatus='';this.loading=true;
     try{
       const result=await client.inspectGeneration(jobId,documentId);
       if(!current())return;
@@ -42,9 +43,23 @@ export class StillRejectionPage extends LitElement {
       if(ticket===this.ticket&&this.isConnected){this.inspection=undefined;this.job=undefined;this.error=error instanceof Error?error.message:'Inspection unavailable.';}
     }finally{if(ticket===this.ticket){this.loading=false;}}
   }
+  private async copyEvidence(label:string,text:string){
+    const ticket=this.ticket,scope=this.scope;
+    try{
+      this.client.fence()();
+      if(!this.isConnected||!this.inspection||this.client.position.view!=='rejection'||this.client.position.outputId!==this.job?.jobId)return;
+      await navigator.clipboard.writeText(text);
+      if(this.isConnected&&ticket===this.ticket&&scope===this.scope)this.copyStatus=`${label} copied to clipboard.`;
+    }catch{
+      if(this.isConnected&&ticket===this.ticket&&scope===this.scope)this.copyStatus='Clipboard access was unavailable. Select the evidence text and copy it manually.';
+    }
+  }
+  private copyControl(label:string,text:string,caption='Copy to clipboard'){
+    return html`<en-button class="rejection-copy" variant="secondary" size="small" aria-label=${`Copy ${label} to clipboard`} @click=${()=>this.copyEvidence(label,text)}>${this.copyStatus===`${label} copied to clipboard.`?'Copied':caption}</en-button>`;
+  }
   private details(title:string,value:unknown,note?:string){
     if(value===null||value===undefined||Array.isArray(value)&&!value.length)return nothing;
-    return html`<details><summary>${title}</summary>${note?html`<p>${note}</p>`:nothing}<pre>${pretty(value)}</pre></details>`;
+    return html`<details><summary>${title}</summary><div class="rejection-evidence-tools">${this.copyControl(title,pretty(value))}</div>${note?html`<p>${note}</p>`:nothing}<pre>${pretty(value)}</pre></details>`;
   }
   override render(){
     const job=this.job,inspection=this.inspection;
@@ -63,12 +78,17 @@ export class StillRejectionPage extends LitElement {
       ['Queue time',duration(job.requestedAt,job.startedAt)],['Execution time',duration(job.startedAt,job.completedAt)],
       ['Source revision',job.documentRevision],['Attempt count',job.attemptCount],['Input retention ends',generation.private_input_expires_at],
     ];
+    const message=failure?.message||job.error||'No rejection message was retained.';
+    const requestDetails=Object.fromEntries(facts.map(([label,value])=>[label,value??'Not recorded']));
+    const bundle=pretty({attempt:job.jobId,document:job.documentId,rejection:message,prompt:inspection.prompt??null,requestDetails,receipt,unavailable:this.unavailable});
     return html`<article class="rejection-page">
       <span class="eyebrow">${this.client.projection.documentTitle} · ${inspection.subtitle}</span>
       <h1>Inspect rejection</h1>
       <p class="rejection-lead">${preflight?'Still stopped this request for a safety review before the next submission.':'This attempt was rejected. The evidence below can help you understand the request and decide what to change.'}</p>
-      <section aria-labelledby="rejection-reason"><h2 id="rejection-reason">What was reported</h2>
-        <blockquote>${failure?.message||job.error||'No rejection message was retained.'}</blockquote>
+      <div class="rejection-export">${this.copyControl('Complete evidence',bundle,'Copy all evidence')}<span>Includes the retained prompt, request details, and technical records below.</span></div>
+      <p class="rejection-copy-status" role="status" aria-live="polite">${this.copyStatus}</p>
+      <section aria-labelledby="rejection-reason"><div class="rejection-section-heading"><h2 id="rejection-reason">What was reported</h2>${this.copyControl('Rejection message',message)}</div>
+        <blockquote><span class="rejection-quote-label">Recorded message</span>${message}</blockquote>
         <p>${preflight?'This is Still’s preflight assessment, not a confirmation that the output provider rejected the request. Required acknowledgement remains on the output page.':'The recorded message is the provider or application’s explanation. A generic safety rejection does not identify which word, idea, or reference caused it. Still cannot infer an undisclosed reason from the document title or subject.'}</p>
         ${failure?.riskCategories?.length?html`<p>Recorded risk categories: ${failure.riskCategories.join(', ')}. These are assessment signals, not proof that every listed item caused the rejection.</p>`:html`<p>No specific risk category was recorded.</p>`}
       </section>
@@ -81,13 +101,13 @@ export class StillRejectionPage extends LitElement {
         <p>${String(receipt.retention_note??'')}</p>
         <p>These are retained inputs for this attempt, not a reconstruction from today’s document. Missing inputs may have expired, may not have been captured, or may be private to the person who submitted the request.</p>
         ${this.unavailable.map(message=>html`<p>${message}</p>`)}
-        ${inspection.prompt?html`<h3>Retained prompt</h3><p>Submission status is recorded below. Retaining a prepared prompt alone does not prove it reached the provider.</p><pre>${inspection.prompt}</pre>`:html`<p>No exact prompt is available to this viewer.</p>`}
+        ${inspection.prompt?html`<div class="rejection-section-heading"><h3>Retained prompt</h3>${this.copyControl('Retained prompt',inspection.prompt)}</div><p>Submission status is recorded below. Retaining a prepared prompt alone does not prove it reached the provider.</p><pre>${inspection.prompt}</pre>`:html`<p>No exact prompt is available to this viewer.</p>`}
         ${this.details('Frozen document context and references',receipt.frozen_inputs,'Expand to inspect the original idea descriptions, relationships, versions, and reference evidence that were retained.')}
         ${this.details('Planner instructions and input',checkpoint.planner_input??privateInput.planner)}
         ${this.details('Prepared output plan',checkpoint.plan)}
         ${this.details('Retained request receipt',Object.keys(privateInput).length?privateInput:null,'Includes authorized retained request settings and original source evidence. It may contain private document content.')}
       </section>
-      <section aria-labelledby="rejection-record"><h2 id="rejection-record">Request, timing, and usage</h2>
+      <section aria-labelledby="rejection-record"><div class="rejection-section-heading"><h2 id="rejection-record">Request, timing, and usage</h2>${this.copyControl('Request details',pretty(requestDetails))}</div>
         <dl>${facts.map(([label,value])=>html`<div><dt>${label}</dt><dd>${value===undefined||value===null||value===''?'Not recorded':String(value)}</dd></div>`)}</dl>
         <p>A reservation is not a final charge. Recorded settled usage can include planning as well as output generation; an unsuccessful output does not imply zero usage. Missing usage is unknown, not zero.</p>
       </section>
