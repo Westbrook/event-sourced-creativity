@@ -31,7 +31,10 @@ test('list controls are available in the palette with matching pagination exclus
   assert.deepEqual(paletteActions('Show',[],undefined,all).map(a=>a.id),['ui:show-less']);
   assert.deepEqual(paletteActions('page',[],undefined,paged).map(a=>a.id),['ui:previous-page','ui:next-page']);
  }
- assert.deepEqual(listControls('projects',false,0,1).map(a=>a.id),['ui:show-all']);
+ for(const type of ['projects','documents','ideas','results'])for(const all of [false,true]){
+  for(const count of [0,1,2,3])assert.deepEqual(listControls(type,all,0,count),[]);
+  assert.ok(listControls(type,all,0,4).some(a=>a.id===(all?'ui:show-less':'ui:show-all')));
+ }
  assert.deepEqual(listControls(undefined,false,0,100),[]);
  assert.equal(listType('document','','selected'),undefined);assert.equal(listType('document'),'ideas');assert.equal(listType('projects','new-project'),undefined);
 });
