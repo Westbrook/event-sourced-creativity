@@ -37,7 +37,11 @@ test('quiet notifications retain review, dismissal and responsive toolbar separa
   await page.screenshot({path:'/private/tmp/still-quiet-notification-desktop-dark.png'});
   await review.click();await region.getByRole('button',{name:'Acknowledge & send'}).click();assert.equal(await page.evaluate(()=>window.sent),1);assert.equal(await page.locator('en-toast').count(),0);
   await page.evaluate(()=>{window.app.showSaved=true;window.app.showThird=true;window.app.changed();});await region.getByText('Saved.',{exact:true}).waitFor();
-  assert.equal(await page.locator('en-toast[swipe]').count(),2);await region.getByRole('button',{name:'Dismiss message'}).first().click();await page.waitForFunction(()=>document.querySelectorAll('en-toast').length===1);assert.equal(await region.getByText('Another update.',{exact:true}).isVisible(),true);
+  assert.equal(await page.locator('en-toast[swipe]').count(),2);
+  assert.equal(await page.locator('en-toast[duration="5000"]').getByRole('button',{name:'Dismiss message'}).count(),0,'timed confirmations have no close button');
+  await page.mouse.move(0,0);await page.waitForFunction(()=>document.querySelectorAll('en-toast').length===1,{},{timeout:7000});
+  assert.equal(await region.locator('.notification-summary').filter({hasText:'Another update.'}).isVisible(),true);
+  await region.getByRole('button',{name:'Dismiss message'}).click();assert.equal(await page.locator('en-toast').count(),0);
   // Exercise actual En Reve close and pointer-swipe events through both Still notice paths.
   for(const path of ['historical','live'])for(const gesture of ['close','swipe']){
    await page.evaluate(async({path,gesture})=>{

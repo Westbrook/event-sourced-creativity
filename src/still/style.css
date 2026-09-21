@@ -199,6 +199,7 @@ still-app .generation-notifications en-toast::part(icon) { flex: none; --en-icon
 still-app .notification-summary { flex: 0 1 auto; min-width: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 still-app .generation-notifications en-toast::part(actions) { flex: none; }
 still-app .generation-notifications en-toast::part(close) { min-inline-size: 36px; min-block-size: 36px; padding: 0; border-radius: var(--en-radius-pill, 9999px); background: transparent; }
+still-app .generation-notifications en-toast[duration]:not([duration="0"])::part(close) { display: none; }
 still-app .generation-notifications en-button[slot="actions"] { margin: 0; }
 still-app .notification-review::part(control) { min-height: 36px; padding-inline: 6px; background: transparent; border-color: transparent; text-decoration: underline; text-underline-offset: 3px; }
 still-app .notification-detail { order: -1; flex: 1 0 100%; min-width: 0; margin-bottom: 8px; padding: var(--en-space-4, 16px); background: var(--en-color-surface); color: var(--en-color-text); border: 1px solid var(--en-color-line); border-radius: var(--en-radius-container, 16px); box-shadow: 0 0 6px var(--still-shadow); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
