@@ -47,3 +47,17 @@ tracked for reconciliation, not reported as a passing full suite. The2,594-test
 native full pass belongs to a2523f8b, not this subsequent change.
 
 No real provider call, enrollment, deployment or main push occurred.
+
+## Integrated fixture reconciliation
+
+The55 baseline panel failures are now corrected in the test ports: they model
+the current exact Library-inspection and document status/footer selectors while
+preserving the query census, focus, geometry and no-write assertions. The combined
+model/host/panel run passes611/611. No production UI was changed by this repair.
+
+The broader Memory model/client/native run passes2,158/2,159; the sole failure
+was an unchanged block-history expectation that still required version1 instead
+of the current default version2. That expectation is corrected and the same test
+now separately verifies explicit legacy-version1 capture. The focused rerun and
+changed-test lint pass. This does not relabel the original broad run as passing.
+The full native run at immutable1009d386 is still running.

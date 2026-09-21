@@ -397,4 +397,5 @@ Output requirements. The authored requirement remains unconfirmed and does not
 authorize a plan or generation. Source/privacy races and actual Output snapshots
 are verified, including shared projects and D1. This closes that Output authoring
 path, not the separately required private image/live-preview path. Broad panel
-fixture failures are reproduced and remain in integrated qualification work.
+fixtures are reconciled:611 combined checks pass. The independent full native
+regression is running; the remaining native workstreams are unchanged.

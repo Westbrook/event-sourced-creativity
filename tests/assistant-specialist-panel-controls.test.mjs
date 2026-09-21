@@ -1642,7 +1642,13 @@ const e6DocumentCopySelectors = [
   e6DocumentCopyPrefix + ' > p.output-requirement-note:first-child + p:not([class])',
   e6DocumentCopyPrefix + ' > label.output-requirement-field:has(> :is(input[name="packageLabel"],textarea[name="originalText"])) > :is(span,small:not(.output-requirement-error))',
 ];
+const fDocumentStatusCopySelector = '#document-context-panel forma-context-block > section.context-decision[data-controls-open="false"] > div[id^="context-controls-document-"] > article.context-block--summary > .block-body > .block-heading > .block-heading-state > .context-lock-state';
+const fDocumentFooterCopySelector = '#document-context-panel [data-output-recipe-draft] > forma-output-requirement-card > .output-requirement-card > form.output-requirement-form > footer.output-requirement-form-footer > p';
 const e6DocumentFieldSelector = ':scope > input[name="packageLabel"], :scope > textarea[name="originalText"]';
+// Existing inspection-copy family is queried even when this fixture models a
+// different Library surface. Native matches() must return false, not throw or
+// accidentally admit that copy as an inspection. Keep its ordered empty census.
+const fLibraryInspectionCopySelector = '.library-main > forma-library-block-editor > section.library-block-inspection > forma-context-block[surface="library"] > section.context-decision[data-controls-open="false"] > div > article.context-block--summary > .block-body > p.block-copy[data-forma-content="primary"]';
 const fLibraryWeightFormSelector = '.library-main > forma-library-block-editor > .library-block-editor > .library-block-editor-layout > .library-block-workbench > form.library-block-form';
 const fLibraryWeightLabelSelector = ':scope > fieldset[aria-labelledby="library-block-content"] > label.library-weight';
 const fLibraryWeightCopySelector = fLibraryWeightFormSelector + ' > fieldset[aria-labelledby="library-block-content"] > label.library-weight > output';
@@ -1682,8 +1688,8 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     assert.equal(selector, ".application-creative"); return shell;
   };
   surface.querySelectorAll = selector => {
-    assert.ok((family === "forma-workspace" ? [e6HelpCopySelector, ...e6DocumentCopySelectors]
-      : family === "forma-library" ? [...e11LibraryCopySelectors, fLibraryWeightCopySelector, fLibraryWeightLabelCopySelector]
+    assert.ok((family === "forma-workspace" ? [fDocumentStatusCopySelector,e6HelpCopySelector, ...e6DocumentCopySelectors,fDocumentFooterCopySelector]
+      : family === "forma-library" ? [...e11LibraryCopySelectors, fLibraryWeightCopySelector, fLibraryWeightLabelCopySelector, fLibraryInspectionCopySelector]
       : family === fTerminalCopyOwner ? [fTerminalCopySelector]
       : family === imageHistoryCopyOwner ? [imageHistoryCopySelector]
       : family === "forma-reality-layers" ? e11LayersCopySelectors : e6SettingsCopySelectors).includes(selector),
@@ -1693,7 +1699,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     allCopyQueries.push(selector);
     if (selector === fLibraryWeightCopySelector) fCopyQueries.push(selector);
     else if (selector === fLibraryWeightLabelCopySelector) fLabelQueries.push(selector);
-    else copyQueries.push(selector);
+    else if (![fLibraryInspectionCopySelector,fDocumentStatusCopySelector,fDocumentFooterCopySelector].includes(selector)) copyQueries.push(selector);
     // Retain the old exact help query for a meaningful pre-runtime baseline;
     // the new union selects that same original node, not a duplicate fixture.
     return selector === e6DocumentCopySelectors[2]
@@ -1719,7 +1725,7 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
   };
   x.copy = (selector, raw, fragments, properties = {}) => {
     const element = x.control(raw, { tagName: "P", textContent: "Existing authored copy", isConnected: true, parentElement: surface,
-      matches(query) { assert.equal(query, fLibraryWeightLabelCopySelector); return false; },
+      matches(query) { assert.ok([fLibraryWeightLabelCopySelector,fLibraryInspectionCopySelector,fDocumentStatusCopySelector].includes(query)); return false; },
       closest(query) {
         if (query === family) return surface;
         assert.ok(["[hidden], [inert], [aria-hidden='true']", "[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon",
@@ -1754,11 +1760,16 @@ function e6CopyPlacement(t, { family = "forma-workspace-settings", locale = "en"
     if (actual.includes(fTerminalCopyOwner)) expected.push(fTerminalCopyOwner);
     if (actual.includes(imageHistoryCopyOwner)) expected.push(imageHistoryCopyOwner);
     assert.deepEqual(actual, expected, "every copy-fixture pass retains the exact empty, original-four, extended-five, terminal-six or Image-seven owner query sequence");
+    if (family === "forma-workspace") {
+      const actualCopy=allCopyQueries.slice(copyStart);
+      assert.deepEqual(actualCopy,actualCopy.length?[fDocumentStatusCopySelector,...e6DocumentCopySelectors,fDocumentFooterCopySelector]:[],
+        'Document copy census includes current empty status/footer families without admitting synthetic nodes');
+    }
     if (family === "forma-library") {
       const actualCopy = allCopyQueries.slice(copyStart), added = fLibraryWeightCopySelector;
       const labelTail = actualCopy.includes(fLibraryWeightLabelCopySelector) ? [fLibraryWeightLabelCopySelector] : [];
       if (labelTail.length) assert.ok(actualCopy.includes(added), "the label admission follows the existing OUTPUT admission");
-      assert.deepEqual(actualCopy, actualCopy.length ? [...e11LibraryCopySelectors, ...(actualCopy.includes(added) ? [added] : []), ...labelTail] : [],
+      assert.deepEqual(actualCopy, actualCopy.length ? [...e11LibraryCopySelectors, ...(actualCopy.includes(added) ? [added] : []), ...labelTail, ...(actualCopy.includes(fLibraryInspectionCopySelector)?[fLibraryInspectionCopySelector]:[])] : [],
         "the complete Library copy-query sequence retains its family and ordered additions, without skips, duplicates or hidden queries");
     }
     return box;
@@ -2957,7 +2968,7 @@ function fCopyOmissionQueries(state, requireAdmission = true) {
   assert.ok(added.length === 0 || added.length === 1 && added[0] === selector);
   assert.deepEqual(x.copyQueries, base); assert.deepEqual(x.fCopyQueries, added);
   assert.deepEqual(x.fLabelQueries, x.fLabelQueries.length ? [fLibraryWeightLabelCopySelector] : []);
-  assert.deepEqual(x.allCopyQueries, [...base, ...added, ...x.fLabelQueries], 'the complete family and each exact optional F admission retain their order');
+  assert.deepEqual(x.allCopyQueries, [...base, ...added, ...x.fLabelQueries,fLibraryInspectionCopySelector], 'the complete family and each exact optional F admission retain their order');
 }
 
 function fWeightLabelTextPlacement(t, {
@@ -2972,7 +2983,7 @@ function fWeightLabelTextPlacement(t, {
   label.getBoundingClientRect = () => { x.copyBoxReads.push(label); return labelRaw; };
   output.getBoundingClientRect = () => { x.copyBoxReads.push(output); return outputBox; };
   state.raw = outputBox;
-  label.matches = selector => { assert.equal(selector, fLibraryWeightLabelCopySelector); return true; };
+  label.matches = selector => { assert.ok([fLibraryWeightLabelCopySelector,fLibraryInspectionCopySelector].includes(selector)); return selector===fLibraryWeightLabelCopySelector; };
   const closest = function(selector) {
     if (selector === 'forma-library') return x.surface;
     assert.ok(["[hidden], [inert], [aria-hidden='true']", "[hidden], [inert], [aria-hidden='true'], script, style, svg, .forma-icon",
@@ -3363,7 +3374,7 @@ function fBrowseSlot(t, { rtl = false, coarse = false, rail = false } = {}) {
   const copy = x.ancestor(copyBox, { parentElement: library, isConnected: true, tagName: 'DIV',
     textContent: 'Take 1 · 80 × 60 · Latency 1.1s. Decide whether to pin, save, export, or record what should change next time.' });
   copy.closest = selector => selector === 'forma-library' ? library : null;
-  copy.matches = selector => (assert.equal(selector, libraryOutputCopySelector), true);
+  copy.matches = selector => { assert.ok([libraryOutputCopySelector,fLibraryInspectionCopySelector].includes(selector)); return selector===libraryOutputCopySelector; };
   library.querySelectorAll = selector => selector === libraryOutputCopySelector ? [copy] : [];
   const mainQuery = x.main.querySelectorAll;
   x.main.querySelectorAll = selector => selector === 'forma-library' ? [library] : mainQuery(selector);
@@ -3794,6 +3805,7 @@ for (const change of ['main-replacement', 'owner-replacement', 'owner-withdrawal
   let replacement;
   if (change === 'main-replacement') {
     replacement = x.ancestor(d411Rect(0, 63, 320, 737), { parentElement: x.shell, isConnected: true, ownerDocument: x.document,
+      querySelector: selector => (assert.equal(selector,'forma-deliver > .forma-deliver-page'),null),
       getAttribute: name => (assert.equal(name, 'aria-busy'), 'false'),
       closest: selector => selector === '.application-creative' ? x.shell
         : (assert.equal(selector, "[hidden], [inert], [aria-hidden='true']"), null),
@@ -3801,7 +3813,8 @@ for (const change of ['main-replacement', 'owner-replacement', 'owner-withdrawal
         setProperty() { assert.fail('retirement must not write the replacement main'); },
         removeProperty() { assert.fail('retirement must not remove replacement-owned style'); } },
     });
-    x.shell.querySelector = selector => (assert.equal(selector, ':scope > #main-content'), replacement);
+    const originalQuery=x.shell.querySelector;
+    x.shell.querySelector = selector => [':scope > #main-content','#main-content'].includes(selector)?replacement:originalQuery(selector);
   }
   if (change === 'owner-replacement') x.f.panel.parentElement = { ...owner, parentElement: x.shell, ownerDocument: x.document };
   if (change === 'owner-withdrawal') owner.parentElement = null;

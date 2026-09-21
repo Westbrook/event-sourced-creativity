@@ -494,11 +494,16 @@ async function nativeBlockCaptureFixture(t){
 test('block memory: native field versions supplement document actions without promoting text or pointer authority',async t=>{
   const f=await nativeBlockCaptureFixture(t),result=await f.capture();assert.equal(result.status,'captured');
   const source=f.sources.nativeDerivationSourceInputs(f.env,result.capture),bindings=source.provenance.blockBindings;
-  assert.equal(source.originals.length,0);assert.equal(bindings.version,1);assert.equal(bindings.unresolved,0);assert.equal(bindings.entries.length,2);
+  assert.equal(source.originals.length,0);assert.equal(bindings.version,2);assert.equal(bindings.unresolved,0);assert.equal(bindings.entries.length,2);
   assert.deepEqual(bindings.entries.map(row=>row.eventIds.length),[1,2]);assert.notEqual(bindings.entries[0].stateSha256,bindings.entries[1].stateSha256);
   assert.equal(bindings.entries[0].scopeKey,bindings.entries[1].scopeKey);assert.ok(bindings.entries[0].scopeKey.includes(f.blockId));
   assert.equal(JSON.stringify(source).includes('Private native block fields'),false);assert.equal(JSON.stringify(source).includes('Revised private native fields'),false);
   assert.ok(source.observations.every(row=>row.independentEvidence===false));
+  // Old stored manifests retain their explicit coverage version; they are not
+  // silently relabelled as the current, corrected-denominator contract.
+  const v1=await f.sources.captureNativeDerivationSources(f.env,f.lease,{blockCoverageVersion:1});assert.equal(v1.status,'captured');
+  const historical=f.sources.nativeDerivationSourceInputs(f.env,v1.capture).provenance.blockBindings;
+  assert.equal(historical.version,1);assert.deepEqual(historical.entries,bindings.entries);
   const legacy=await f.sources.captureNativeDerivationSources(f.env,f.lease,{blockBindings:false});assert.equal(legacy.status,'captured');
   assert.equal(Object.hasOwn(f.sources.nativeDerivationSourceInputs(f.env,legacy.capture).provenance,'blockBindings'),false);
   assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
