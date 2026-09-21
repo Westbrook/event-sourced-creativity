@@ -1,3 +1,4 @@
+import type {IdeaAssessment} from './idea-assessment.ts';
 import { evaluateLocalActions, localFormatRules } from './local-policy.ts';
 import type { DecisionCacheInfo } from './decision-cache.ts';
 import type { compactHistoryEvent } from './history.ts';
@@ -43,7 +44,7 @@ export type DecisionPass={id:string;parentId?:string;label:string;status:'answer
 // The opt-in exchange is the serialized, authorized request body only. Never attach
 // provider headers, credentials, arbitrary answer keys, or provider-supplied legends.
 export function decisionDiagnostics(p: CreativeProjection, position: Position, abilities: Abilities, options: {
-  head: number; source: string; reason?: string; model?: string; answers?: Record<string,Answer>;
+  opportunities?:IdeaAssessment; head: number; source: string; reason?: string; model?: string; answers?: Record<string,Answer>;
   localEvents?: ReturnType<typeof compactHistoryEvent>[]; asked?: boolean; artifactKind?: string; coverage?: unknown; observedAnswers?: Record<string,Answer>; exchange?:DecisionExchange; passes?:DecisionPass[]; presentation?:Record<string,Emphasis>; adjustments?:MenuAdjustment[]; recommended?:string[]; metrics?:Record<string,unknown>;
 }) {
   const eligibility=evaluateEligibility(p,position,abilities), candidates=eligibility.filter(r=>r.eligible).map(r=>r.action);
@@ -63,6 +64,7 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
   return {
     localStartingPoint:formats?localFormatRules(p,position).filter(r=>candidates.some(a=>a.id===r.id)).slice(0,3):evaluateLocalActions(candidates,p,position).rows.filter(r=>r.selected).sort((a,b)=>a.selected!-b.selected!).map(r=>({id:r.id,reason:r.localReason??'Local page rule'})),
     version:1 as const, policy:POLICY_VERSION, source:options.source, reason:options.reason, model:typeof options.model==='string'?options.model.slice(0,100):undefined, head:options.head,
+    opportunities:options.opportunities,
     channel:position.palette?'palette':formats?'formats':'actions',
     ...(options.exchange?{exchange:options.exchange}:{}),
     passes:options.passes??[],presentation:options.presentation??{},menuAdjustments:options.adjustments??[],metrics:options.metrics??{},
@@ -70,14 +72,14 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
     context:{blocks:p.blocks.filter(b=>!b.removed).length,libraryBlocks:p.libraryBlocks.filter(b=>!b.removed).length,outputs:p.outputs.length,artifacts:p.artifacts.length,coverage:options.coverage,localEvents:options.localEvents},
     recommended:options.recommended??(formats?(evaluation.selected as string[]):(evaluation.selected as {id:string}[]).map(a=>a.id)),
     actions:eligibility.map(row=>{const initial=evaluation.rows.find(r=>r.id===row.action.id),index=options.recommended?.indexOf(row.action.id),change=options.adjustments?.find(a=>a.actionId===row.action.id||a.replacedId===row.action.id);return {...row,...initial,eligibilityReason:row.reason,initialSelection:initial?.selected,...(index!==undefined?{selected:index>=0?index+1:undefined,reason:index>=0?'':change?.replacedId===row.action.id?`Replaced by ${change.actionId}: ${change.reason}`:initial?.reason||'Not selected by final menu'}:{})};}),
-    questions:Object.entries(questions).map(([id,question])=>({id,composition:questionComposition(id),question,asked:!!options.asked,...inspectAnswer(question,(options.observedAnswers??answers)[id])})),
+    questions:Object.entries(questions).map(([id,question])=>({id,composition:questionComposition(id),question,asked:!!options.asked&&!(options.opportunities&&id.startsWith('benefit_')),derived:!!options.opportunities&&id.startsWith('benefit_'),...inspectAnswer(question,(options.observedAnswers??answers)[id])})),
   };
 }
 export type DecisionDiagnostics = ReturnType<typeof decisionDiagnostics>;
 export type PreparationTiming={source:string;eventsRead:number;head:number;elapsedMs:number;readPages?:number;readMs?:number;cacheReadMs?:number;cacheWriteMs?:number;focusedReadMs?:number;focusedEventsRead?:number;persisted?:boolean;sessionMs:number;selectedContentMs:number;totalMs:number};
 export type DecisionDelivery={stage:"initial"|"complete";serverMs:number;cacheWriteMs?:number;firstAssessmentMs?:number;enrichmentMs?:number;enrichment?:"pending"|"complete"|"interrupted"};
 export type OriginalTiming={preparation?:PreparationTiming;delivery?:DecisionDelivery};
-export type DecisionResponse = { nextBest?:import('./next-best.ts').NextBestAnswer; delivery?:DecisionDelivery; originalTiming?:OriginalTiming; preparation?:PreparationTiming; cache?:DecisionCacheInfo; source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; paletteActions?:{id:string}[]; formats?:string[]; rankedFormats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
+export type DecisionResponse = { opportunities?:IdeaAssessment; nextBest?:import('./next-best.ts').NextBestAnswer; delivery?:DecisionDelivery; originalTiming?:OriginalTiming; preparation?:PreparationTiming; cache?:DecisionCacheInfo; source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; paletteActions?:{id:string}[]; formats?:string[]; rankedFormats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
 export type ReceivedDecision = { firstResponseMs?:number; delivery?:DecisionDelivery; originalTiming?:OriginalTiming; preparation?:PreparationTiming; receivedAt?:number; cache?:DecisionCacheInfo; at:string; requestElapsedMs?:number; disposition:string; trace?:DecisionDiagnostics; source:string; reason?:string; recommended:string[] };
 
 export function responseDisposition(result: DecisionResponse, state: { stale:boolean; focused?:boolean; touched?:boolean; head:number; headChanged?:boolean; formats?:boolean }) {

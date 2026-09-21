@@ -39,8 +39,8 @@ test('initial decision reaches client while enrichment is blocked; final trace a
   const input={...pos,view:'document',projectId:f.projectId,documentId:f.documentId,blockId:'scene-reuse-direction',developer:true};
   const pending=fetchDecision(input,r=>{initial=r;delivered();}).then(r=>{finished=true;return r;});
   await ready;assert.equal(finished,false);assert.equal(initial.source,'jev');assert.equal(initial.delivery.stage,'initial');assert.ok(initial.actions.length);assert.equal(initial.diagnostics.passes.length,1);
-  release();const final=await pending;assert.equal(final.delivery.stage,'complete');assert.equal(final.diagnostics.passes.length,2);assert.equal(final.cache.stored,true);
-  const hit=await fetchDecision(input);assert.equal(hit.cache.status,'hit');assert.equal(calls,2);
+  release();const final=await pending;assert.equal(final.delivery.stage,'complete');assert.equal(final.diagnostics.passes.length,3);assert.equal(final.opportunities.complete,true);assert.equal(final.cache.stored,true);
+  const hit=await fetchDecision(input);assert.equal(hit.cache.status,'hit');assert.equal(calls,3);
   const timing=decisionTiming({requestElapsedMs:2700,firstResponseMs:600,preparation:final.preparation,delivery:{stage:'complete',serverMs:2600},trace:final.diagnostics});
   assert.equal(timing.label,'600 ms');assert.ok(timing.steps.some(s=>s.label==='Transport / client'&&s.value==='100 ms'));
  }finally{release();globalThis.fetch=saved;await f.drainBackground();f.close();}

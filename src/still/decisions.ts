@@ -9,7 +9,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-17';
+export const POLICY_VERSION = 'still-18';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback; generation?:GenerationDecisionContext };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -102,10 +102,10 @@ export const CREATIVE_QUESTIONS = {
   result_is_reference: 'Is the selected result being used to understand or enrich an idea rather than as a request to create more of its format?',
   source_overlap: 'Does the parent still repeat source wording that conflicts with an edited child or undermines independent control of its pieces?',
   separable_decisions: 'Does the selected thought contain creative decisions that could be changed independently?',
-  independent_change: 'Does the latest intent ask to change only one part of the selected thought?',
-  independent_reuse: 'Does the supplied history identify a place where only part of this thought would be useful?',
+  independent_change: 'Does the content contain independently editable people, objects, or attributes, or does the latest intent ask to change only one part? Explicit intent is not required when the entities make independent editing useful.',
+  independent_reuse: 'Could a meaningful subset of the described entities be reused in another document, or does history identify such a use? A group of four people supports subsets of one, two, or three even without prior reuse.',
   independent_sources: 'Do separate claims in this thought rely on different identified sources?',
-  essential_relationship: 'Would separating these ideas obscure a relationship needed to understand them?',
+  essential_relationship: 'Would separating these ideas lose an essential relationship that cannot be preserved in the parent or explicit links? Membership in a family or group alone is not a reason against splitting.',
   fragmentation_friction: 'Does recent history show repeated recombination or navigation between fragments just to express one coherent idea?',
   self_contained: 'Can the selected idea be understood without unnamed people, objects, or premises supplied only by siblings?',
   shared_target: 'Do existing nearby ideas describe different aspects of the same creative target?',
@@ -129,7 +129,7 @@ export const CREATIVE_QUESTIONS = {
   constraint_conflict: 'Would the proposed direction contradict a recorded locked constraint?',
   explicit_unlock: 'Has the user specifically asked to change the selected locked constraint?',
   review_whole: 'Have recent structural changes made a review of the assembled idea useful?',
-  coherent_small_idea: 'Does this entire selected thought express one useful decision whose parts should travel together?',
+  coherent_small_idea: 'Does this entire selected thought express one inseparable useful decision? A short description of multiple independently reusable people or objects is not a single atomic idea merely because it is concise.',
   portable_motif: 'Could a recurring motif become an independently reusable idea without losing its meaning?',
   fixed_variable: 'Has the user identified a variable to explore while holding the rest of the composition constant?',
   unexpected_pairing: 'Do existing ideas from different parts of the project have a concrete, promising connection relevant to the user’s exploration?',
