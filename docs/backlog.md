@@ -467,3 +467,13 @@ Memory attribution. Independently enrolled sources retain their own access,
 consent, rights and retirement.81 native,40 authoring and16 browser checks pass;
 actual direct D1 recall uses46 binding calls. Media references and other native
 completion-matrix rows remain assigned; no deployment or implicit enrollment.
+
+
+## MEM-039 — Licensed-package references and current rights
+
+Implemented locally: [reference provenance and fresh package rights](forma-memory-published-package-recall-2026-09-21.md#licensed-references-and-fresh-rights-continuation).
+Native metadata binds both owners’ reference/file custody, exact adoption and
+current license state. All private disclosure proofs replay; authored copies
+survive withdrawal.102 integrated checks pass; actual D1 calls47 plain/48 file.
+No file hydration, provider purchase, migration, rollout or implicit enrollment.
+Other native completion-matrix rows remain assigned.

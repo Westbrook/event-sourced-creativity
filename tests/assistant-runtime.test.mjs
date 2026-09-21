@@ -19376,13 +19376,25 @@ for(const kind of ['block-history','copy-footprint','relation-history','authored
  assert.equal(observed,true,'Inspect the native DB transport, not just the final rejected presentation');
 });
 
-async function nativePackageReuseFixture(t){
+async function nativePackageReuseFixture(t,{reference=false}={}){
  const state=await organizationRecallFixture(t,{profile:true}),source=state.current(),target=state.organizationTarget,api=await import('../worker/memory-derivation-api.ts');
  const bare={'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'};
  const headersFor=async access=>{const response=await state.request(`/api/workspaces/${state.organizationId}/projects/${access}/context`,{method:'POST',headers:bare});assert.equal(response.status,200,await response.clone().text());return {...bare,cookie:response.headers.get('set-cookie')?.split(';')[0]??''};};
  const sourceHeaders=await headersFor(state.projectAccessId),blockId='package-original-block';
- const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:source.project_id,document_id:source.document_id,block_id:blockId,type:'direction',handle:'Original package direction',position:'package-a0',scope:'document',properties:{text:'PACKAGE_COPY_NOT_INDEPENDENT_HUMAN_INTENT'}}}},sourceHeaders));assert.equal(created.status,200,await created.clone().text());
- const endpoint=`/api/workspaces/${state.organizationId}/context-packages`,draft=await state.request(endpoint,json({name:'Qualified cross-owner reuse',sourceProjectAccessId:state.projectAccessId,documentId:source.document_id,blockIds:[blockId]},sourceHeaders));assert.equal(draft.status,201,await draft.clone().text());const version=await draft.json();
+ let properties={text:'PACKAGE_COPY_NOT_INDEPENDENT_HUMAN_INTENT'};
+ if(reference){
+  const {ownerMediaNamespace}=await import('../src/model/media-ownership.ts'),{extractSourceDocument,sourceDocumentEvidence,sourceDocumentEvidenceDigest}=await import('../src/model/source-documents.ts');
+  const bytes=new TextEncoder().encode('An independently licensed package reference.'),hash=await(await import('../src/model/scoped-memory.ts')).memoryDigest(new TextDecoder().decode(bytes)),mimeType='text/plain',originalName='licensed-package.txt',key=ownerMediaNamespace(source.owner_user_id)+'/'+originalName;
+  const extracted=await extractSourceDocument(new File([bytes],originalName,{type:mimeType})),evidenceHash=await sourceDocumentEvidenceDigest(sourceDocumentEvidence(extracted,hash,mimeType)),objects=new Map();
+  state.env.MEDIA={async put(key,value,options){objects.set(key,{bytes:new Uint8Array(value),options});},async get(key){const value=objects.get(key);return value?{body:value.bytes.slice(),customMetadata:value.options.customMetadata,writeHttpMetadata(headers){headers.set('content-type',value.options.httpMetadata.contentType);}}:null;},async head(key){return this.get(key);},async delete(key){objects.delete(key);}};
+  await state.env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mimeType},customMetadata:{ownerId:source.owner_user_id,sha256:hash,mimeType,sourceEvidenceSha256:evidenceHash,rights:'asserted',originalName,sourceClassification:'non-sensitive-licensed'}});
+  const mediaUrl='/api/media/'+encodeURIComponent(key),referenceId='package-original-reference';
+  state.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'media',?,?,?,?,'collaborative_output',NULL,?,?)").run(source.project_access_id,key,source.organization_id,source.project_id,source.owner_user_id,'assistant-owner',new Date().toISOString());
+  for(const event of [{type:'ReferenceIngested',payload:{project_id:source.project_id,document_id:source.document_id,reference_id:referenceId,source_ref:mediaUrl,source_type:'document',content_hash:hash,source_evidence_hash:evidenceHash,rights_class:'owned_or_licensed'}},{type:'RightsAsserted',payload:{project_id:source.project_id,document_id:source.document_id,reference_id:referenceId,rights_class:'owned_or_licensed'}}]){const written=await state.request('/api/events',json({action:'append',event},sourceHeaders));assert.equal(written.status,200,await written.clone().text());}
+  properties={reference_id:referenceId,media_url:mediaUrl,source_evidence_hash:evidenceHash,source_content_hash:hash,source_mime_type:mimeType,source_kind:extracted.sourceKind,extraction_status:extracted.status,text:extracted.text,source_citations:extracted.segments.map(segment=>({anchor:segment.anchor,excerpt:segment.text})),source_segment_count:extracted.segments.length,source_excerpt_truncated:extracted.truncated,authority:'authored',weight:1};
+ }
+ const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:source.project_id,document_id:source.document_id,block_id:blockId,type:reference?'reference':'direction',handle:'Original package direction',position:'package-a0',scope:'document',properties}}},sourceHeaders));assert.equal(created.status,200,await created.clone().text());
+ const endpoint=`/api/workspaces/${state.organizationId}/context-packages`,draft=await state.request(endpoint,json({name:'Qualified cross-owner reuse',sourceProjectAccessId:state.projectAccessId,documentId:source.document_id,blockIds:[blockId],...(reference?{sourceRightsConfirmed:true,sourceNonSensitiveConfirmed:true}:{})},sourceHeaders));assert.equal(draft.status,201,await draft.clone().text());const version=await draft.json();
  const published=await state.request(`${endpoint}/${version.packageId}/versions/${version.versionId}/publish`,{method:'POST',headers:sourceHeaders});assert.equal(published.status,200,await published.clone().text());
  const headers=await headersFor(state.targetAccessId),adopted=await state.request(`${endpoint}/${version.packageId}/adopt`,json({projectAccessId:state.targetAccessId,documentId:target.documentId,versionId:version.versionId,updateMode:'pinned'},headers));assert.equal(adopted.status,201,await adopted.clone().text());const adoption=await adopted.json(),copy=adoption.appended.find(event=>event.type==='BlockCreated');assert.ok(copy);
  const custody={kind:'organization',organizationId:state.organizationId,projectAccessId:state.targetAccessId,ownerUserId:'memory-target-owner'};
@@ -19433,8 +19445,8 @@ for(const fault of ['missing-ack','failed-ack','source-access-race','target-acce
  };t.after(()=>{db.batch=batch;});
  const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.equal(hit,true);assert.notEqual(response.status,200,JSON.stringify(body));assert.equal(Object.hasOwn(body,'sources'),false);
 });
-test('native package reuse: real D1 discovery and private-source restoration cannot resurrect recall',{timeout:120000},async t=>{
- const state=await nativePackageReuseFixture(t),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+for(const reference of [false,true])test('native package reuse: real D1 discovery and private-source restoration cannot resurrect recall reference='+reference,{timeout:120000},async t=>{
+ const state=await nativePackageReuseFixture(t,{reference}),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['PackageRecall'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());
  const selected=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.targetAccessId}/context`,{method:'POST',headers:{'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'}});assert.equal(selected.status,200,await selected.clone().text());const recallHeaders={...state.owner,cookie:selected.headers.get('set-cookie')?.split(';')[0]??''};
  const db=await mf.getD1Database('PackageRecall');await install(db,exportSynthetic(state.sqlite));let calls=0;const originals=new WeakMap();
@@ -19481,4 +19493,64 @@ test('native package source: a changed project identity cannot publish the old c
  const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:blockId,type:'direction',scope:'document',properties:{text:'Source identity is native.'}}}},state.owner));assert.equal(created.status,200,await created.clone().text());
  let hit=false;db.batch=async statements=>{if(!hit&&statements.some(s=>s.sql?.startsWith('INSERT INTO organization_context_package_versions'))){hit=true;state.sqlite.prepare("UPDATE organization_projects SET project_id='changed-source-project' WHERE project_access_id=?").run(state.projectAccessId);}return batch.call(db,statements);};t.after(()=>{db.batch=batch;});
  const response=await state.request(`/api/workspaces/${state.organizationId}/context-packages`,json({name:'Captured owner',sourceProjectAccessId:state.projectAccessId,documentId:'doc-atmosphere',blockIds:[blockId]},state.owner));assert.equal(hit,true);assert.ok(response.status>=400,await response.clone().text());assert.equal(state.sqlite.prepare('SELECT count(*) n FROM organization_context_packages').get().n,0);assert.equal(state.sqlite.prepare('SELECT count(*) n FROM organization_context_package_contents').get().n,0);
+});
+
+
+test('native package reference: genuine licensed cross-owner file adoption locates independently enrolled source',async t=>{
+ const state=await nativePackageReuseFixture(t,{reference:true}),before=adaptiveReentryFinancialState(state),calls=state.rollingRequests.length;
+ state.env.MEDIA.get=state.env.MEDIA.head=async()=>{throw Error('Recall must not fetch source pixels or file bytes');};
+ const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.deepEqual(body.sources.map(row=>row.enrollmentId),[state.current().enrollment_id]);
+ assert.equal(state.rollingRequests.length,calls);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const fault of ['source-license','target-license','source-expiry','target-revocation','source-custody','target-custody','source-body-erased','target-hash','source-foreign-body','target-field-foreign-body'])test('native package reference: '+fault+' withholds private recall without removing authored copies',async t=>{
+ const state=await nativePackageReuseFixture(t,{reference:true}),source=state.current(),copy=state.packageCopy,target=state.organizationTarget;
+ const sourceReference='package-original-reference',targetReference=copy.payload.properties.reference_id;
+ if(fault==='source-license'||fault==='target-license'||fault==='source-expiry'||fault==='target-revocation'){
+  const isSource=fault.startsWith('source'),bare={'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'},selected=await state.request(`/api/workspaces/${state.organizationId}/projects/${isSource?state.projectAccessId:state.targetAccessId}/context`,{method:'POST',headers:bare}),headers={...bare,cookie:selected.headers.get('set-cookie')?.split(';')[0]??''};assert.equal(selected.status,200);
+  const project_id=isSource?source.project_id:target.projectId,document_id=isSource?source.document_id:target.documentId;
+  const event=fault.endsWith('license')?{type:'RightsAsserted',payload:{project_id,document_id,reference_id:isSource?sourceReference:targetReference,rights_class:'revoked'}}:{type:'BlockPropertyEdited',payload:{project_id,document_id,block_id:isSource?state.packageSourceBlock:copy.payload.block_id,property_path:isSource?'rights_expires_at':'rights_revoked',old_value:null,new_value:isSource?'2000-01-01T00:00:00.000Z':true}};
+  const edited=await state.request('/api/events',json({action:'append',event},headers));
+  if(fault==='target-revocation'){assert.equal(edited.status,403);assert.equal((await edited.json()).error,'organization_context_package_decision_immutable');state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.rights_revoked',json('true')) WHERE private_event_id=?").run(copy.eventId);}
+  else assert.equal(edited.status,200,await edited.clone().text());
+ }
+ if(fault.endsWith('custody'))state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE owner_user_id=? AND resource_kind='reference' AND resource_id=?").run(fault.startsWith('source')?source.owner_user_id:'memory-target-owner',fault.startsWith('source')?sourceReference:targetReference);
+ if(fault==='source-body-erased'||fault==='source-foreign-body'){
+  const original=state.sqlite.prepare("SELECT event_id FROM events WHERE stream_id=? AND type='ReferenceIngested' AND json_extract(payload,'$.reference_id')=?").get('creative:'+source.owner_user_id,sourceReference);
+  if(fault==='source-body-erased')state.sqlite.prepare("UPDATE event_private_payloads SET private_json='',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),original.event_id);
+  else state.sqlite.prepare("UPDATE event_private_payloads SET document_id='foreign-document' WHERE private_event_id=?").run(original.event_id);
+ }
+ if(fault==='target-hash'){
+  const original=state.packageAdoption.appended.find(event=>event.type==='ReferenceIngested');state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.content_hash',?) WHERE private_event_id=?").run('a'.repeat(64),original.eventId);
+ }
+ if(fault==='target-field-foreign-body')state.sqlite.prepare("UPDATE event_private_payloads SET project_id='foreign-project' WHERE private_event_id=?").run(copy.eventId);
+ const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.ok(response.status!==200||body.sources.length===0,JSON.stringify(body));assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM events WHERE event_id=?').get(copy.eventId).n,1);
+});
+for(const fault of ['missing-frame','bad-frame','source-access-race','late-license','late-field','late-custody'])test('native package reference: final '+fault+' cannot disclose stale source',async t=>{
+ const state=await nativePackageReuseFixture(t,{reference:true}),db=state.env.DB,batch=db.batch;let hit=false;
+ db.batch=async statements=>{
+  const selected=!hit&&statements.some(s=>s.sql?.includes('AS reference_custody'));
+  if(selected){hit=true;if(fault==='source-access-race')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.current().enrollment_id);}
+  const frames=await batch.call(db,statements);if(!selected)return frames;
+  if(fault==='missing-frame')return frames.slice(1);if(fault==='bad-frame')return frames.map((row,index)=>index===0?{...row,success:false}:row);
+  if(fault==='late-license')state.sqlite.prepare("UPDATE events SET payload=json_set(payload,'$.rights_class','revoked') WHERE stream_id=? AND type='RightsAsserted' AND json_extract(payload,'$.reference_id')=?").run('creative:assistant-owner','package-original-reference');
+  if(fault==='late-field')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.rights_revoked',json('true')) WHERE private_event_id=?").run(state.packageCopy.eventId);
+  if(fault==='late-custody')state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE owner_user_id='memory-target-owner' AND resource_kind='reference' AND resource_id=?").run(state.packageCopy.payload.properties.reference_id);
+  return frames;
+ };t.after(()=>{db.batch=batch;});
+ const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}});assert.equal(hit,true);assert.notEqual(response.status,200,await response.clone().text());
+});
+
+test('native package reference: current source license caps the actual delivery lease',async t=>{
+ const state=await nativePackageReuseFixture(t,{reference:true}),source=state.current(),deadline=new Date(Date.now()+20000).toISOString(),bare={'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'};
+ const selected=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/context`,{method:'POST',headers:bare});assert.equal(selected.status,200);const headers={...bare,cookie:selected.headers.get('set-cookie')?.split(';')[0]??''};
+ const edit=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',payload:{project_id:source.project_id,document_id:source.document_id,block_id:state.packageSourceBlock,property_path:'rights_expires_at',old_value:null,new_value:deadline}}},headers));assert.equal(edit.status,200,await edit.clone().text());
+ const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.sources.length,1);assert.ok(Date.parse(body.validUntil)<=Date.parse(deadline));
+});
+
+for(const expired of [false,true])test('native package rights: a later original plain-text rights change withholds recall '+expired,async t=>{
+ const state=await nativePackageReuseFixture(t),source=state.current(),bare={'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'};
+ const selected=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.projectAccessId}/context`,{method:'POST',headers:bare});assert.equal(selected.status,200);const headers={...bare,cookie:selected.headers.get('set-cookie')?.split(';')[0]??''};
+ const edit=await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',payload:{project_id:source.project_id,document_id:source.document_id,block_id:state.packageSourceBlock,property_path:expired?'rights_expires_at':'rights_revoked',old_value:null,new_value:expired?'2000-01-01T00:00:00.000Z':true}}},headers));assert.equal(edit.status,200,await edit.clone().text());
+ const response=await state.organizationRequest('recall-scopes',{query:{reuse:'1'}}),body=await response.json();assert.ok(response.status!==200||body.sources.length===0,JSON.stringify(body));assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM events WHERE event_id=?').get(state.packageCopy.eventId).n,1);
 });

@@ -6,6 +6,7 @@ import type { NativeMemoryContextObserver } from './memory-live-context.ts';
 import { derivationAssertion,derivationResults,derivationVerified } from './memory-derivation-store.ts';
 import { memoryCanonical,type MemorySqlGuard } from './memory-sql.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
+import { observeNativePackageRights } from './memory-package-reference.ts';
 import { creativeContextRightsIssue } from '../src/model/context-health.ts';
 
 export type NativeReuseSourceEdge={targetBlockId:string;sourceBlockId:string;ownerUserId:string;projectId?:string;documentId?:string;expiresAt?:string};
@@ -87,15 +88,19 @@ export async function observeNativePackageReuse(env:WorkerEnv,actor:PilotUser,ta
       ||snapshot.sourceDocumentId!==source.document_id||identity?.version!==1||identity.ownerUserId!==source.owner_user_id
       ||identity.projectId!==source.project_id||identity.streamId!=='creative:'+source.owner_user_id||!Array.isArray(snapshot.blocks)||snapshot.blocks.length>128)throw Error('package_reuse_identity');
     const matches=snapshot.blocks.filter((block:{sourceBlockId?:unknown})=>block.sourceBlockId===row.source_block_id),block=matches[0];
-    if(matches.length!==1||!block||block.source||block.type==='reference'||block.contentSha256!==row.content_sha256
+    if(matches.length!==1||!block||block.contentSha256!==row.content_sha256
       ||creativeContextRightsIssue(block.properties,Date.now())||block.rightsExpiresAt&&(typeof block.rightsExpiresAt!=='string'||!Number.isFinite(Date.parse(block.rightsExpiresAt))||Date.parse(block.rightsExpiresAt)<=Date.now()))throw Error('package_reuse_block');
     const props={...created.properties};
     if(markers.some((key,index)=>props[key]!==[row.package_id,row.version_id,row.binding_id,row.source_block_id,source.owner_user_id,source.project_id,source.document_id][index]))throw Error('package_reuse_mapping');
     for(const key of markers)delete props[key];
+    const referenceDeadline=await observeNativePackageRights(env,source,target,String(row.source_block_id),String(row.target_block_id),String(retained.event_id),block,created.properties,observer,access);
+    if(block.source||block.type==='reference'){
+      delete props.media_url;delete props.reference_id;
+    }
     if(created.project_id!==target.project_id||created.document_id!==target.document_id||created.block_id!==row.target_block_id||created.scope!=='document'
       ||created.type!==block.type||created.handle!==block.handle||created.position!==block.position||memoryCanonical(props)!==memoryCanonical(block.properties))throw Error('package_reuse_adoption');
     if(block.rightsExpiresAt)observer.before(block.rightsExpiresAt);observer.before(source.expires_at);
-    edges.push({targetBlockId:String(row.target_block_id),sourceBlockId:String(row.source_block_id),ownerUserId:source.owner_user_id,projectId:source.project_id,documentId:source.document_id,expiresAt:[source.expires_at,...(block.rightsExpiresAt?[block.rightsExpiresAt]:[])].sort()[0]});
+    edges.push({targetBlockId:String(row.target_block_id),sourceBlockId:String(row.source_block_id),ownerUserId:source.owner_user_id,projectId:source.project_id,documentId:source.document_id,expiresAt:[source.expires_at,...(block.rightsExpiresAt?[block.rightsExpiresAt]:[]),...(referenceDeadline?[referenceDeadline]:[])].sort()[0]});
   }
   return edges;
 }

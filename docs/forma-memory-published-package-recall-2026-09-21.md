@@ -33,6 +33,33 @@ that authored content. Copied material is not independent personal evidence.
   pre-existing findings. No new migration, provider call or production change.
 
 The full 2,442-test regression is at preceding `886305ca`; it does not qualify
-this newer slice. Media-materialized package references, distinct Library/Canvas
-enrollment, direct private Output and aggregate semantic consumers remain native
-implementation work in the completion matrix.
+this newer slice. At this checkpoint media-materialized package references were still pending;
+the continuation below implements them. Distinct Library/Canvas enrollment, direct
+private Output and aggregate semantic consumers remain native implementation work.
+
+## Licensed references and fresh rights continuation
+
+Native published reference-file adoption now participates in independently
+consented original-source discovery. No file/pixel bytes are fetched during
+recall. Bounded metadata reads certify original and adopted reference ingestion,
+exact content hashes, owner-qualified media/reference custody, native adoption
+sequence and current rights. Neither publication nor access to the copied file
+grants access to the original’s private Memory.
+
+Both plain-text and file-backed packages now check current source and target
+rights fields, not just the published snapshot. All reads wait for native access
+and consent assertions and replay before disclosure. A changed/erased/foreign
+body, revoked license, changed type, lost custody or incomplete database response
+withholds discovery. The delivery lease also stops at the earliest current
+license deadline. Existing authored copies remain intact.
+
+- 102/102 integrated native checks, including actual D1 withdrawal/restoration.
+- Actual direct D1 calls:47 for plain-text packages and48 for reference packages,
+  both below the unchanged50-call regression ceiling.
+- Types, scoped lint and final Sites build pass; existing build warnings remain.
+- No migration or UI change. The preceding16 browser journeys cover the unchanged
+  source/acceptance response contract; these new rights checks are native/D1 tests.
+
+This closes published-package reference provenance/current-rights integration,
+not distinct resource enrollment, direct private Output, aggregate semantic
+consumers or complete system qualification. No rollout or real enrollment.

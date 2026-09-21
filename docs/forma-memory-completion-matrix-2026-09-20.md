@@ -348,3 +348,12 @@ bound at publication. Negative attribution survives deliberate authoring and
 withdrawal without erasing copied work.81 native,40 authoring and16 browser
 checks pass; direct cross-owner D1 recall uses46 calls. Package media/reference
 provenance and the remaining native resource/consumer work are not closed.
+
+
+[Published reference-file provenance and current package rights](forma-memory-published-package-recall-2026-09-21.md#licensed-references-and-fresh-rights-continuation)
+now close the media-reference exclusion in the preceding package checkpoint.
+Native exact adoption, original/target rights and file/reference custody are
+metadata-only and independently consented.102 integrated tests include actual
+D1 privacy restoration and47/48-call plain/file requests. Distinct Library/Canvas
+resources, direct private Output, aggregate profile consumers and integrated
+qualification remain required; this does not close those rows.
