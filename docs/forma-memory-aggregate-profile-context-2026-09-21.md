@@ -114,3 +114,24 @@ original30-second wall/monotonic lease, even if a binding never acknowledges.
 Closing a capture immediately rejects queued and in-flight groups; an eventual
 read result is discarded. No database cancellation is claimed.34 unit and36
 aggregate/Output native cases pass with this deadline in place.
+
+### Coordinated independent source reads
+
+Native source stages now register at most three independent branches. A read
+wave starts after each active branch has queued its current reads or finished;
+asynchronous source processing cannot unpredictably split that wave. Each
+branch retains its own environment-bound native authority. Original queries and
+final current-source proofs are unchanged, atomic caller groups stay whole, and
+the original deadline interrupts stalled branches as well as queued reads.
+
+41 unit and32 integrated native checks pass, with an additional four-case real
+local D1 capacity run. TypeScript, scoped lint and the unchanged repository
+production build pass. The installed Sites build helper is no longer present,
+so the repository build script was used without modifying build configuration.
+
+Both two- and three-source executions now use63 personal/64 shared binding
+calls; quote54/55 and retrieval47/45. Binding calls are not SQL statement counts:
+the maximum-three-source shared case runs528 quote,408 execution and284
+retrieval statements. These are local synthetic measurements, not a hosted SLA.
+The conservative50-binding-call execution target remains unmet and assigned.
+No positive-access cache, native proof removal, enrollment or deployment.

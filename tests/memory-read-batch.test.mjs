@@ -69,3 +69,30 @@ test('native Memory staging rejects queued reads when the current authority chec
  invalid=true;assert.deepEqual((await Promise.allSettled(reads)).map(r=>r.status),['rejected','rejected']);
  assert.equal(f.calls.length,0);batch.close();f.batch.close();
 });
+test('native Memory staging coordinates independent branches without speculative reads or timer races',async()=>{
+ const f=fixture();let release;const gate=new Promise(resolve=>{release=resolve;});const environments=[];
+ const one=f.batch.run(async env=>{environments.push(env);const a=await env.DB.prepare('SELECT ? AS value').bind('a').first('value');return [a,await env.DB.prepare('SELECT ? AS value').bind('a2').first('value')];});
+ const two=f.batch.run(async env=>{environments.push(env);await gate;return env.DB.prepare('SELECT ? AS value').bind('b').first('value');});
+ await new Promise(resolve=>setTimeout(resolve,5));assert.equal(f.calls.length,0);release();assert.deepEqual(await Promise.all([one,two]),[['a','a2'],'b']);assert.deepEqual(f.calls.map(c=>c.length),[2,1]);assert.notEqual(environments[0],environments[1]);assert.notEqual(environments[0].DB,environments[1].DB);f.batch.close();
+});
+test('native Memory staging coordinates repeated read waves while a branch does independent asynchronous work',async()=>{
+ const f=fixture();const work=(label,delay)=>f.batch.run(async env=>{const output=[];for(let i=0;i<3;i++){if(delay)await new Promise(resolve=>setTimeout(resolve,4));output.push(await env.DB.prepare('SELECT ? AS value').bind(label+i).first('value'));}return output;});
+ assert.deepEqual(await Promise.all([work('a',false),work('b',true),work('c',false)]),[['a0','a1','a2'],['b0','b1','b2'],['c0','c1','c2']]);assert.deepEqual(f.calls.map(c=>c.length),[3,3,3]);f.batch.close();
+});
+test('native Memory staging releases coordinated peers when a branch finishes without a database read',async()=>{
+ const f=fixture();const [value,empty]=await Promise.all([f.batch.run(env=>env.DB.prepare('SELECT 1').first()),f.batch.run(async()=>null)]);assert.deepEqual(value,{value:'SELECT 1'});assert.equal(empty,null);assert.equal(f.calls.length,1);f.batch.close();
+});
+test('native Memory staging deadline rejects a stalled branch and all waiting peers without late work',async()=>{
+ const f=fixture(),batch=createMemoryReadBatch(f.env,()=>true,20);let resume;const gate=new Promise(resolve=>{resume=resolve;});let late;
+ const waiting=batch.run(env=>env.DB.prepare('SELECT 1').all()),stalled=batch.run(async env=>{await gate;try{await env.DB.prepare('SELECT 2').all();late='accepted';}catch{late='rejected';}});
+ assert.deepEqual((await Promise.allSettled([waiting,stalled])).map(r=>r.status),['rejected','rejected']);assert.equal(f.calls.length,0);resume();await new Promise(resolve=>setTimeout(resolve,2));assert.equal(late,'rejected');assert.equal(f.calls.length,0);batch.close();f.batch.close();
+});
+test('native Memory staging branch failure retires pending peers without a new source read',async()=>{
+ const f=fixture(),results=await Promise.allSettled([f.batch.run(env=>env.DB.prepare('SELECT 1').all()),f.batch.run(async()=>{throw Error('source denied');})]);assert.deepEqual(results.map(r=>r.status),['rejected','rejected']);assert.equal(f.calls.length,0);f.batch.close();
+});
+test('native Memory staging coordinated branches preserve oversized atomic caller groups',async()=>{
+ const f=fixture();await Promise.all([0,1,2].map(i=>f.batch.run(env=>env.DB.batch(Array.from({length:130},()=>env.DB.prepare('SELECT ? AS value').bind(i))))));assert.deepEqual(f.calls.map(c=>c.length),[130,130,130]);f.batch.close();
+});
+test('native Memory staging permits at most three independently registered source branches',async()=>{
+ const f=fixture();await Promise.all([1,2,3].map(n=>f.batch.run(async()=>n)));await assert.rejects(f.batch.run(async()=>4));assert.equal(f.calls.length,0);f.batch.close();
+});

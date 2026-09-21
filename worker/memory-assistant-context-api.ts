@@ -31,14 +31,14 @@ type SavedContextSelection = {
  profileJobIds?:string[]; relation:{zoom:string;distance:number;weight:number};
 };
 type SavedContextCapture = { env:WorkerEnv; sourceEnv:WorkerEnv; unwrap:(statement:D1PreparedStatement)=>D1PreparedStatement; current:()=>boolean; selection:SavedContextSelection;
- source:NonNullable<Awaited<ReturnType<typeof readNativeDerivationResult>>>; consumersPresent:boolean; guards:MemorySqlGuard[]; profiles:{source:NonNullable<Awaited<ReturnType<typeof readNativeDerivationResult>>>; relation:{zoom:string;distance:number;weight:number};identity:ReturnType<typeof recallSourceIdentity>}[] };
+ source:NonNullable<Awaited<ReturnType<typeof readNativeDerivationResult>>>; consumersPresent:boolean; guards:MemorySqlGuard[]; profiles:{env:WorkerEnv;source:NonNullable<Awaited<ReturnType<typeof readNativeDerivationResult>>>; relation:{zoom:string;distance:number;weight:number};identity:ReturnType<typeof recallSourceIdentity>}[] };
 const savedContextCaptures=new WeakMap<NativeSavedAssistantContext,SavedContextCapture>();
 const savedContextResponses=new WeakMap<Response,NativeSavedAssistantContext>();
 function contextCapture(env:WorkerEnv,handle:NativeSavedAssistantContext){
  const captured=savedContextCaptures.get(handle);
  if(!captured||captured.env!==env||!captured.current())throw Error('assistant_context_source_expired');
  // The original native source lease is not renewed by reading this adapter.
- nativeDerivationResultInputs(captured.sourceEnv,captured.source);for(const profile of captured.profiles)nativeDerivationResultInputs(captured.sourceEnv,profile.source);return captured;
+ nativeDerivationResultInputs(captured.sourceEnv,captured.source);for(const profile of captured.profiles)nativeDerivationResultInputs(profile.env,profile.source);return captured;
 }
 /** Native source preparation, deliberately independent from public JSON. Only
  * an authenticated GET of an accepted, freshly checked reference can create a
@@ -54,7 +54,7 @@ export async function prepareNativeSavedAssistantContext(request:Request,env:Wor
  * interpretation; callers must not treat relevance weights as confidence. */
 export function nativeSavedAssistantContextInputs(env:WorkerEnv,handle:NativeSavedAssistantContext){
  const captured=contextCapture(env,handle);
- return {selection:structuredClone(captured.selection),consumersPresent:captured.consumersPresent,presentation:nativeDerivationResultInputs(captured.sourceEnv,captured.source),profiles:captured.profiles.map(p=>({source:{...p.identity,...p.relation},presentation:nativeDerivationResultInputs(captured.sourceEnv,p.source)}))};
+ return {selection:structuredClone(captured.selection),consumersPresent:captured.consumersPresent,presentation:nativeDerivationResultInputs(captured.sourceEnv,captured.source),profiles:captured.profiles.map(p=>({source:{...p.identity,...p.relation},presentation:nativeDerivationResultInputs(p.env,p.source)}))};
 }
 /** Replay source, target, hierarchy, boundary, consent and saved-reference DB
  * checks inside the consumer's atomic publication transaction. Environment and
@@ -62,11 +62,11 @@ export function nativeSavedAssistantContextInputs(env:WorkerEnv,handle:NativeSav
  * data above alone does not certify a subsequent write. */
 export function nativeSavedAssistantContextGuards(env:WorkerEnv,handle:NativeSavedAssistantContext){
  const captured=contextCapture(env,handle);
- return [...nativeDerivationResultGuards(captured.sourceEnv,captured.source),...captured.profiles.flatMap(p=>nativeDerivationResultGuards(captured.sourceEnv,p.source)),...structuredClone(captured.guards)];
+ return [...nativeDerivationResultGuards(captured.sourceEnv,captured.source),...captured.profiles.flatMap(p=>nativeDerivationResultGuards(p.env,p.source)),...structuredClone(captured.guards)];
 }
 export function nativeSavedAssistantContextStatements(env:WorkerEnv,handle:NativeSavedAssistantContext){
  const captured=contextCapture(env,handle);
- return [...nativeDerivationResultStatements(captured.sourceEnv,captured.source).map(captured.unwrap),...captured.profiles.flatMap(p=>nativeDerivationResultStatements(captured.sourceEnv,p.source).map(captured.unwrap)),...packRecallGuards(captured.guards).map(g=>derivationAssertion(env,g))];
+ return [...nativeDerivationResultStatements(captured.sourceEnv,captured.source).map(captured.unwrap),...captured.profiles.flatMap(p=>nativeDerivationResultStatements(p.env,p.source).map(captured.unwrap)),...packRecallGuards(captured.guards).map(g=>derivationAssertion(env,g))];
 }
 export function nativeSavedAssistantContextMatches(env:WorkerEnv,handle:NativeSavedAssistantContext,results:unknown){
  try{const count=nativeSavedAssistantContextStatements(env,handle).length;
@@ -184,8 +184,8 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
     }
     if(!derivationHash(jobId))throw Error('context_job');
     staging=profileJobIds.length?createMemoryReadBatch(env,current,Math.min(deadline-Date.now(),30000-(performance.now()-monotonic))):undefined;
-    const sourceEnv=staging?.env??env,unwrap=staging?.unwrap??((s:D1PreparedStatement)=>s);
-    const captureSource=async(id:string,profileOnly=false)=>{
+    const unwrap=staging?.unwrap??((s:D1PreparedStatement)=>s);
+    const captureSource=async(sourceEnv:WorkerEnv,id:string,profileOnly=false)=>{
       const handle=await prepareNativeDerivationResult(sourceEnv,actor.userId,id);if(!handle)throw Error('context_source');
       const bound=nativeDerivationResultBinding(sourceEnv,handle),source=bound.enrollment,presentation=nativeDerivationResultInputs(sourceEnv,handle);
       if(!source||source.actor_user_id!==target.actor_user_id||source.organization_id!==target.organization_id||profileOnly&&bound.purpose!=='profile')throw Error('context_partition');
@@ -200,12 +200,12 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
         guards.push(...related.guards);relation=related.relation;boundaryRevision=String(boundary.revision);hierarchyRevision=related.hierarchyRevision;
       }
       deadline=Math.min(deadline,Date.parse(presentation.candidate.validUntil));
-      return {handle,bound,source,presentation,relation,boundaryRevision,hierarchyRevision,expiresAt:[target.expires_at,presentation.expiresAt].sort()[0]!};
+      return {env:sourceEnv,handle,bound,source,presentation,relation,boundaryRevision,hierarchyRevision,expiresAt:[target.expires_at,presentation.expiresAt].sort()[0]!};
     };
-    const captures=await Promise.allSettled([jobId,...[...profileJobIds].sort()].map((id,index)=>captureSource(id,index>0)));
+    const captures=await Promise.allSettled([jobId,...[...profileJobIds].sort()].map((id,index)=>staging?staging.run(sourceEnv=>captureSource(sourceEnv,id,index>0)):captureSource(env,id,index>0)));
     if(captures.some(c=>c.status==='rejected'))throw Error('context_source');
     const selectedSources=captures.map(c=>{if(c.status!=='fulfilled')throw Error('context_source');return c.value;});
-    const primary=selectedSources[0]!,{handle,bound,source,relation,boundaryRevision,hierarchyRevision}=primary,profiles=selectedSources.slice(1);
+    const primary=selectedSources[0]!,{handle,bound,source,relation,boundaryRevision,hierarchyRevision}=primary,sourceEnv=primary.env,profiles=selectedSources.slice(1);
     if(new Set([source.enrollment_id,...profiles.map(p=>p.source.enrollment_id)]).size!==profiles.length+1)throw Error('context_duplicate_source');
     const expiresAt=[primary.expiresAt,...profiles.map(p=>p.expiresAt)].sort()[0]!;
     if(request.method==='GET'&&profiles.some((p,i)=>{
@@ -216,7 +216,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
     if(request.method==='GET'&&(old!.target_enrollment_id!==target.enrollment_id||old!.target_revision!==target.revision||old!.source_enrollment_id!==source.enrollment_id
       ||old!.source_revision!==source.revision||old!.output_sha256!==bound.outputSha256||old!.boundary_revision!==boundaryRevision||old!.hierarchy_revision!==hierarchyRevision
       ||old!.expires_at!==expiresAt))throw Error('context_retired');
-    const proof=[...nativeDerivationResultStatements(sourceEnv,handle).map(unwrap),...profiles.flatMap(p=>nativeDerivationResultStatements(sourceEnv,p.handle).map(unwrap)),...packRecallGuards(guards).map(g=>derivationAssertion(env,g))];
+    const proof=[...nativeDerivationResultStatements(sourceEnv,handle).map(unwrap),...profiles.flatMap(p=>nativeDerivationResultStatements(p.env,p.handle).map(unwrap)),...packRecallGuards(guards).map(g=>derivationAssertion(env,g))];
     if(request.method==='PUT'){
       const revision=crypto.randomUUID(),createdAt=new Date().toISOString();
       const values=[target.enrollment_id,actor.userId,target.revision,jobId,bound.outputSha256,source.enrollment_id,source.revision,boundaryRevision,hierarchyRevision,revision,'accepted',createdAt,expiresAt];
@@ -228,7 +228,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
       return answer({saved:true,refreshRequired:true});
     }
     const nativeHandle=Object.freeze({}) as NativeSavedAssistantContext;
-    savedContextCaptures.set(nativeHandle,{env,sourceEnv,unwrap,current,source:handle,profiles:profiles.map(p=>({source:p.handle,relation:p.relation,identity:recallSourceIdentity(p.source,p.relation.zoom,p.source.owner_user_id!==target.owner_user_id)})),consumersPresent:schema.consumersPresent&&schema.consumerSourcesPresent&&schema.consumerParentsPresent,guards:structuredClone(guards),selection:{
+    savedContextCaptures.set(nativeHandle,{env,sourceEnv,unwrap,current,source:handle,profiles:profiles.map(p=>({env:p.env,source:p.handle,relation:p.relation,identity:recallSourceIdentity(p.source,p.relation.zoom,p.source.owner_user_id!==target.owner_user_id)})),consumersPresent:schema.consumersPresent&&schema.consumerSourcesPresent&&schema.consumerParentsPresent,guards:structuredClone(guards),selection:{
       actorUserId:actor.userId,targetEnrollmentId:target.enrollment_id,targetRevision:target.revision,projectId,documentId,
       contextRevision:String(old!.revision),jobId,outputSha256:bound.outputSha256,sourceEnrollmentId:source.enrollment_id,
       sourceRevision:source.revision,boundaryRevision,hierarchyRevision,...(profiles.length?{profileJobIds:profiles.map(p=>p.presentation.jobId)}:{}),expiresAt,validUntil:new Date(deadline).toISOString(),relation:structuredClone(relation),

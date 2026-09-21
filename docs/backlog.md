@@ -524,3 +524,11 @@ counts and privacy retirement are verified:69 native plus2 erasure cases,265
 client/migration checks and10 browser journeys. Old0067 controls remain supported.
 No authored events, implicit enrollment or provider use. Semantic resource/profile
 consumers, direct private images and broader qualification stay in the matrix.
+
+## MEM-045 — Deterministic aggregate source read coordination
+
+Implemented locally: [independent read waves and truthful capacity accounting](forma-memory-aggregate-profile-context-2026-09-21.md#coordinated-independent-source-reads).
+41 unit and32 integrated native cases pass, plus four local D1 capacity cases.
+Three-source execution is now63/64 personal/shared binding calls with original
+source proofs intact. SQL statement counts are recorded separately. The50-call
+target and all other native matrix work remain assigned, not silently waived.

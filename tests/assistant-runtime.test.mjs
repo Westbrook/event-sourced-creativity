@@ -16762,10 +16762,10 @@ for(const fault of ['wall-rollback','monotonic-deadline','nonfinite'])test('nati
 });
 
 function semanticConsumerOperationCounter(state){
- const db=state.env.DB,originals=new WeakMap(),trace=[];let count=0;
- const wrap=(raw,sql=raw.sql)=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args),sql);if(['all','first','run','raw'].includes(key))return(...args)=>{count++;trace.push(String(sql??'native').slice(0,135));return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
- state.env.DB={prepare:sql=>wrap(db.prepare(sql),sql),batch:inputs=>{count++;trace.push('BATCH '+inputs.length+' '+String((originals.get(inputs[0])??inputs[0]).sql??'native').slice(0,100));return db.batch(inputs.map(input=>originals.get(input)??input));}};
- return {read:()=>count,trace,reset:()=>{count=0;trace.length=0;}};
+ const db=state.env.DB,originals=new WeakMap(),queries=new WeakMap(),trace=[];let count=0,statementCount=0;
+ const wrap=(raw,sql=raw.sql)=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args),sql);if(['all','first','run','raw'].includes(key))return(...args)=>{count++;statementCount++;trace.push(String(sql??'native').slice(0,135));return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);queries.set(proxy,sql);return proxy;};
+ state.env.DB={prepare:sql=>wrap(db.prepare(sql),sql),batch:inputs=>{count++;statementCount+=inputs.length;trace.push('BATCH '+inputs.length+' '+(process.env.FORMA_MEMORY_CAPACITY_TRACE==='1'?inputs.map(s=>String(queries.get(s)??s.sql??'native').replace(/\s+/gu,' ').slice(0,150)).join(' | '):String((originals.get(inputs[0])??inputs[0]).sql??'native').slice(0,100)));return db.batch(inputs.map(input=>originals.get(input)??input));}};
+ return {read:()=>count,statements:()=>statementCount,trace,reset:()=>{count=0;statementCount=0;trace.length=0;}};
 }
 
 for(const shared of [false,true])test('semantic assistant consumer: native paid quote binds accepted source without a provider call '+shared,async t=>{
@@ -19795,11 +19795,11 @@ for(const shared of [false,true])for(const maximum of [false,true])test('native 
  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['AggregateProfile'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());
  const db=await mf.getD1Database('AggregateProfile');await install(db,exportSynthetic(state.sqlite));state.env.DB={prepare:sql=>db.prepare(sql),batch:async statements=>{try{return await db.batch(statements);}catch(error){state.controls.lastDatabaseError=String(error);throw error;}}};
  const counter=semanticConsumerOperationCounter(state),start=performance.now();
- const quoted=await state.semanticQuote();assert.equal(quoted.response.status,200,JSON.stringify(quoted.body)+' '+state.controls.lastDatabaseError);const quoteCalls=counter.read();counter.reset();
+ const quoted=await state.semanticQuote();assert.equal(quoted.response.status,200,JSON.stringify(quoted.body)+' '+state.controls.lastDatabaseError);const quoteCalls=counter.read(),quoteStatements=counter.statements();if(process.env.FORMA_MEMORY_CAPACITY_TRACE==='1')t.diagnostic(JSON.stringify({phase:'quote',trace:counter.trace}));counter.reset();
  const original=globalThis.fetch,calls=[];globalThis.fetch=async(_url,init)=>{const request=JSON.parse(init.body);calls.push(request);assert.ok(JSON.stringify(request).includes('profileSources'));return specialistRawResponse(request);};t.after(()=>{globalThis.fetch=original;});
  const response=await specialistExecute(state,quoted.body,state.semanticOptions);assert.equal(response.status,202,await response.clone().text()+' '+state.controls.lastDatabaseError);await state.drainBackground();
- const executionCalls=counter.read();counter.reset();const retrieved=await specialistRetrieve(state,quoted.body,state.semanticOptions),body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');assert.equal(calls.length,1);
- const retrieveCalls=counter.read();t.diagnostic(JSON.stringify({shared,maximum,quoteCalls,executionCalls,retrieveCalls,elapsedMs:performance.now()-start}));
+ const executionCalls=counter.read(),executionStatements=counter.statements();if(process.env.FORMA_MEMORY_CAPACITY_TRACE==='1')t.diagnostic(JSON.stringify({phase:'execute',trace:counter.trace}));counter.reset();const retrieved=await specialistRetrieve(state,quoted.body,state.semanticOptions),body=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');assert.equal(calls.length,1);
+ const retrieveCalls=counter.read(),retrieveStatements=counter.statements();t.diagnostic(JSON.stringify({shared,maximum,quoteCalls,executionCalls,retrieveCalls,quoteStatements,executionStatements,retrieveStatements,elapsedMs:performance.now()-start}));
  assert.ok(quoteCalls<=85&&executionCalls<=90&&retrieveCalls<=70,'bounded three-source staging is synthetic qualification, not a hosted SLA');
  const retained=(await db.prepare('SELECT p.* FROM private_content p JOIN memory_derivation_consumer_contents c ON c.content_id=p.content_id').all()).results;
  assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.profileJob),true);
