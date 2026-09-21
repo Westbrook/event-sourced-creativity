@@ -15,7 +15,7 @@ export type Abilities = { author: boolean; generate: boolean; projectCreate: boo
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
 export const ACTIONS: readonly Action[] = [
   { id: 'refresh-generation', label: 'Refresh status', group: 'reflect', description: 'Reread the selected generation’s saved status. Does not reconcile a missing receipt, resume provider work, or start a new paid request.' },
-  { id: 'generate-again', label: 'Make new', group: 'make', description: 'Explicitly start a separate paid generation in the original format with current document context. This does not resume the original and may duplicate a charge when acceptance is unknown.' },
+  { id: 'generate-again', label: 'Try again', group: 'make', description: 'Explicitly start a separate paid generation in the original format with current document context. This does not resume the original and may duplicate a charge when acceptance is unknown.' },
   { id: 'projects', label: 'View projects', group: 'navigate', description: 'Browse and resume an accessible creative project.' },
   { id: 'documents', label: 'View documents', group: 'navigate', description: 'Browse documents in this project.' },
   { id: 'new-project', label: 'New project', group: 'write', description: 'Create a named Forma project. Documents and ideas are added separately.' },
@@ -84,7 +84,7 @@ export function evaluateEligibility(p: CreativeProjection, pos: Position, abilit
     if (a.id === 'reuse') return p.libraryBlocks.some(b => !b.removed && b.documentId !== pos.documentId) ? '' : 'No ideas in other documents';
     return '';
   };
-  return ACTIONS.map(a => { const reason = exclusion(a); if(a.id==='generate-again'&&pos.generation) a={...a,label:`Make new ${{slides:'slides',model3d:'3D model',short_story:'story'}[pos.generation.format]??pos.generation.format}`}; return { action: a.id === 'toggle-context' && block ? { ...a, label: Number(block.properties.weight ?? 1) > 0 ? 'Exclude idea' : 'Include idea' } : a, eligible: !reason, reason }; });
+  return ACTIONS.map(a => { const reason = exclusion(a); return { action: a.id === 'toggle-context' && block ? { ...a, label: Number(block.properties.weight ?? 1) > 0 ? 'Exclude idea' : 'Include idea' } : a, eligible: !reason, reason }; });
 }
 export function eligibleActions(p: CreativeProjection, pos: Position, abilities: Abilities): Action[] {
   return evaluateEligibility(p, pos, abilities).filter(row => row.eligible).map(row => row.action);

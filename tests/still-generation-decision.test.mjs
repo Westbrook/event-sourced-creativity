@@ -15,7 +15,7 @@ const projection={...foldEvents([]),documents:[{id:'doc',projectId:'project'}],b
 test('uncertain jobs offer explicit new work without treating status reads as recovery',()=>{
  const candidates=eligibleActions(projection,position,abilities),ids=candidates.map(a=>a.id);
  assert.ok(ids.includes('generate-again'));assert.ok(ids.includes('refresh-generation'));
- assert.equal(candidates.find(a=>a.id==='generate-again').label,'Make new slides');
+ assert.equal(candidates.find(a=>a.id==='generate-again').label,'Try again');
  assert.equal(position.generation.mayDuplicateCharge,true);
  assert.match(position.generation.refreshEffect,/does not reconcile/);assert.doesNotMatch(JSON.stringify(position.generation),/PRIVATE/);
  assert.equal(selectActions(candidates,position)[0].id,'context');
