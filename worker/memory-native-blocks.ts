@@ -10,12 +10,14 @@ export type NativeMemoryResourceScope = Pick<LiveMemoryEnrollment,'actor_user_id
 type Row = Record<string, unknown>;
 type Observation = { eventId:string; sequence:number; blockPointer:string|null; eventType:string; reference?:true };
 export type NativeMemoryBlockBinding = { eventId:string; blockId:string; scopeKey:string; revision:number; stateSha256:string; eventIds:string[] };
-export type NativeMemoryBlockBindings = { version:1; entries:NativeMemoryBlockBinding[]; unresolved:number };
+export type NativeMemoryBlockBindings = { version:1|2; entries:NativeMemoryBlockBinding[]; unresolved:number };
 const actions=new Set(['BlockCreated','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored']);
 const types=['BlockCreated','BlockRehomed','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked',
   'BlockRemoved','BlockRestored','ExtractionRequested','ExtractionCompleted','ExtractionFailed','ImageFocalPointCalculated'];
 const sqlTypes=types.map(type=>"'"+type+"'").join(',');
 const columns=['event_id','stream_id','sequence','occurred_at','recorded_at','actor','client_id','correlation_id','causation_id','compensates_event_id','schema_version','type','payload'];
+export const nativeMemoryBlockObservationEligible=(row:Observation)=>row.blockPointer!==null
+  &&(actions.has(row.eventType)||row.reference===true&&['BlockRelationAdded','BlockRelationRemoved','BlockInspected'].includes(row.eventType));
 const clean=(p:Record<string,unknown>)=>!p.simulation&&!p.synthetic&&!(p.origin&&typeof p.origin==='object'&&'synthetic' in p.origin&&p.origin.synthetic)
   &&p.mock_data_source==null&&p.replay_session_id==null&&p.fictional_user_id==null;
 
@@ -108,7 +110,7 @@ export function decodeNativeMemoryBlockHistory(rows:readonly Row[],scope:NativeM
  */
 export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:NativeMemoryResourceScope,
   observations:readonly Observation[],observer:NativeMemoryContextObserver,onCapacity?:()=>void,onVersion?:(binding:NativeMemoryBlockBinding,events:ReturnType<typeof decodeNativeMemoryBlockHistory>)=>void):Promise<NativeMemoryBlockBindings>{
-  const selected=observations.filter(row=>row.blockPointer!==null&&(actions.has(row.eventType)||row.reference===true&&['BlockRelationAdded','BlockRelationRemoved','BlockInspected'].includes(row.eventType)));
+  const selected=observations.filter(nativeMemoryBlockObservationEligible);
   const empty=()=>({version:1 as const,entries:[],unresolved:selected.length});
   if(!selected.length)return empty();
   const parent=nativeMemoryDocumentIdentity(e);if(!parent)throw Error('memory-block-scope');
@@ -123,9 +125,10 @@ export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:NativeMem
       'owner',s.owner_user_id,'stream',s.source_stream_id,'sequence',s.source_sequence)) FROM project_event_scopes s WHERE s.event_id=event.event_id) AS custody,
     (SELECT COUNT(*) FROM events compensation WHERE compensation.stream_id=event.stream_id AND compensation.compensates_event_id=event.event_id) AS compensated
     FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+      AND secret.owner_id=? AND secret.project_id=? AND secret.document_id=?
     WHERE event.stream_id=? AND event.sequence<=? AND event.type IN(${sqlTypes})
       AND json_extract(event.payload,'$.block_id') IN(SELECT value FROM json_each(?))
-    ORDER BY event.sequence,event.event_id LIMIT 257`,bindings:[stream,through,JSON.stringify(ids)]};
+    ORDER BY event.sequence,event.event_id LIMIT 257`,bindings:[e.owner_user_id,e.project_id,e.document_id,stream,through,JSON.stringify(ids)]};
   const placement={sql:`SELECT wanted.value AS block_id,
     (SELECT json_array(event.event_id,event.sequence,event.type,event.payload) FROM events event WHERE event.stream_id=?
       AND json_extract(event.payload,'$.block_id')=wanted.value AND event.type IN('BlockCreated','BlockRehomed','BlockRemoved','BlockRestored')
@@ -136,6 +139,7 @@ export async function observeNativeMemoryBlockBindings(env:WorkerEnv,e:NativeMem
     FROM json_each(?) wanted ORDER BY wanted.value`,bindings:[stream,e.owner_user_id,JSON.stringify(ids)]};
   const size={sql:`SELECT COUNT(*) AS count,COALESCE(SUM(length(CAST(event.payload AS BLOB))+length(CAST(COALESCE(secret.private_json,'') AS BLOB))),0) AS bytes
     FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+      AND secret.owner_id=? AND secret.project_id=? AND secret.document_id=?
     WHERE event.stream_id=? AND event.sequence<=? AND event.type IN(${sqlTypes})
       AND json_extract(event.payload,'$.block_id') IN(SELECT value FROM json_each(?))`,bindings:query.bindings};
   const sizeStatement=db.prepare(size.sql).bind(...size.bindings),measured=structuredClone(await sizeStatement.all<Row>());

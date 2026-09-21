@@ -1,7 +1,7 @@
 import { memoryDigest } from '../src/model/scoped-memory.ts';
 import { memoryCanonical } from './memory-sql.ts';
 import { nativeMemoryDocumentIdentity } from './memory-native-scope.ts';
-import { decodeNativeMemoryResourceEvent, observeNativeMemoryBlockBindings, type NativeMemoryBlockBinding } from './memory-native-blocks.ts';
+import { decodeNativeMemoryResourceEvent, nativeMemoryBlockObservationEligible, observeNativeMemoryBlockBindings, type NativeMemoryBlockBinding } from './memory-native-blocks.ts';
 import { derivationId, derivationInteger } from './memory-derivation-policy.ts';
 import type { LiveMemoryEnrollment } from './memory-live-authority.ts';
 import type { NativeMemoryContextObserver } from './memory-live-context.ts';
@@ -24,9 +24,10 @@ async function captureRelations(env:WorkerEnv,e:LiveMemoryEnrollment,observation
   const parent=nativeMemoryDocumentIdentity(e);if(!parent)throw Error('memory-relation-scope');
   const db=env.DB,stream='creative:'+e.owner_user_id,through=Math.max(...selected.map(row=>row.sequence));
   const where="event.stream_id=? AND event.sequence<=? AND event.type IN('BlockRelationAdded','BlockRelationRemoved') AND json_extract(event.payload,'$.relation_id') IN(SELECT value FROM json_each(?))",
-    bindings=[stream,through,JSON.stringify(ids)];
+    bindings=[e.owner_user_id,e.project_id,e.document_id,stream,through,JSON.stringify(ids)];
   const size={sql:`SELECT COUNT(*) AS count,COALESCE(SUM(length(CAST(event.payload AS BLOB))+length(CAST(COALESCE(secret.private_json,'') AS BLOB))),0) AS bytes
-    FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE ${where}`,bindings};
+    FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+      AND secret.owner_id=? AND secret.project_id=? AND secret.document_id=? WHERE ${where}`,bindings};
   const measure=db.prepare(size.sql).bind(...size.bindings),measured=structuredClone(await measure.all<Row>());
   if(env.DB!==db||!measured.success||!Array.isArray(measured.results)||measured.results.length!==1||!derivationInteger(measured.results[0]!.count)||!derivationInteger(measured.results[0]!.bytes))throw Error('memory-relation-size');
   observer.observe([measure],[measured],[size]);
@@ -35,7 +36,8 @@ async function captureRelations(env:WorkerEnv,e:LiveMemoryEnrollment,observation
     (SELECT json_group_array(json_object('organization',s.organization_id,'access',s.project_access_id,'project',s.project_id,
       'owner',s.owner_user_id,'stream',s.source_stream_id,'sequence',s.source_sequence)) FROM project_event_scopes s WHERE s.event_id=event.event_id) AS custody,
     (SELECT COUNT(*) FROM events compensation WHERE compensation.stream_id=event.stream_id AND compensation.compensates_event_id=event.event_id) AS compensated
-    FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE ${where}
+    FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+      AND secret.owner_id=? AND secret.project_id=? AND secret.document_id=? WHERE ${where}
       AND (?,?)=(SELECT count,bytes FROM (${size.sql})) ORDER BY event.sequence,event.event_id LIMIT 65`,
     bindings:[...bindings,Number(measured.results[0]!.count),Number(measured.results[0]!.bytes),...bindings]};
   const custody={sql:`SELECT wanted.value AS relation_id,
@@ -90,7 +92,7 @@ export async function observeNativeMemoryRelationBindings(env:WorkerEnv,e:LiveMe
  * cached block identity or caller-supplied binding becomes authority. */
 export async function observeNativeMemoryResourceBindings(env:WorkerEnv,e:LiveMemoryEnrollment,
   observations:Parameters<typeof observeNativeMemoryBlockBindings>[2],relations:readonly Observation[],observer:NativeMemoryContextObserver,
-  options:{blocks:boolean;relations:boolean}){
+  options:{blocks:boolean;relations:boolean;blockCoverageVersion?:1|2}){
   let allBlocks:Awaited<ReturnType<typeof observeNativeMemoryBlockBindings>>|undefined;
   const direct=options.blocks?observations:[];
   const relationBindings=options.relations?await captureRelations(env,e,relations,observer,async endpoints=>{
@@ -111,8 +113,10 @@ export async function observeNativeMemoryResourceBindings(env:WorkerEnv,e:LiveMe
   if(options.blocks&&!allBlocks)allBlocks=await observeNativeMemoryBlockBindings(env,e,direct,observer);
   const directIds=new Set(direct.map(row=>row.eventId));
   const entries=allBlocks?.entries.filter(row=>directIds.has(row.eventId))??[];
-  // Preserve the helper's exact direct-observation denominator, including null
-  // pointers and non-block event types that are not candidates in the first place.
-  const selected=direct.filter(row=>row.blockPointer!==null&&['BlockCreated','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored'].includes(row.eventType));
-  return {blockBindings:options.blocks?{version:1 as const,entries,unresolved:selected.length-entries.length}:undefined,relationBindings};
+  // Count the identical candidate set as the block reader, including genuine
+  // inspection references. A successful inspection cannot produce a negative
+  // unresolved count merely because it is not a new authoring event.
+  const version=options.blockCoverageVersion??2;if(version!==1&&version!==2)throw Error('memory-block-coverage-version');
+  const selected=version===2?direct.filter(nativeMemoryBlockObservationEligible):direct.filter(row=>row.blockPointer!==null&&['BlockCreated','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored'].includes(row.eventType));
+  return {blockBindings:options.blocks?{version,entries,unresolved:selected.length-entries.length}:undefined,relationBindings};
 }

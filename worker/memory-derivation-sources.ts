@@ -70,7 +70,7 @@ const clean = (payload: string) => `json_valid(${payload}) AND COALESCE(json_ext
  * remain incomplete; nothing is sliced, acknowledged as processed or deleted.
  * Typed observations are descriptive evidence, NOT original human quotations.
  */
-async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence, bindBlocks = true, bindRelations?:boolean, deferReplay=false, parentScope?:NativeMemoryDocumentScope,bindReuse?:boolean,reuseVersion:1|2=2) {
+async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDerivationEvidence, bindBlocks = true, bindRelations?:boolean, deferReplay=false, parentScope?:NativeMemoryDocumentScope,bindReuse?:boolean,reuseVersion:1|2=2,blockCoverageVersion:1|2=2) {
   try {
     if(nativeDerivationEvidenceInputs(env,lease).producer==='chat-studio')return await captureChatStudioDerivationWindow(env,lease,undefined,deferReplay);
     const db = env.DB, input = nativeDerivationEvidenceInputs(env, lease), { enrollment: e, grant: g, authority: a, job } = input;
@@ -277,7 +277,7 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
     observations.sort((left,right)=>left.sequence-right.sequence);
     const relationObservations=rows.map(row=>({eventId:String(row.event_id),sequence:Number(row.sequence),eventType:String(row.type),relationId:JSON.parse(String(JSON.parse(String(row.event_json))[12])).relation_id??null}));
     const {blockBindings,relationBindings}=await observeNativeMemoryResourceBindings(env,e,inspectionReferences(observations),relationObservations,witness,
-      {blocks:bindBlocks,relations:bindRelations!==false&&input.relationsPresent&&input.lifecyclePresent});
+      {blocks:bindBlocks,blockCoverageVersion,relations:bindRelations!==false&&input.relationsPresent&&input.lifecyclePresent});
     if(bindReuse===true&&(!input.reusePresent||!input.lifecyclePresent||!blockBindings))return unavailable();
     const reuseBindings=bindReuse!==false&&input.reusePresent&&input.lifecyclePresent&&blockBindings
       ?await observeNativeMemoryReuseBindings(env,e,observations,blockBindings,witness,reuseVersion):undefined;
@@ -450,7 +450,7 @@ async function captureChatStudioDerivationHistory(env:WorkerEnv,lease:NativeDeri
  * Bounds are explicit: no source truncation, hidden gap skipping, or claim of a
  * complete lifetime history. Legacy result reads may request their exact original
  * single-window contract; this option cannot grant spending or widen access. */
-async function captureNativeDerivationOriginalSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean; blockBindings?: boolean; relationBindings?:boolean; reuseBindings?:boolean;reuseVersion?:1|2; crossProducerHistory?:boolean; historySelection?:{jobIds:string[];boundary:NativeDerivationHistory['boundary']} } = {}, deferFinalReplay=false) {
+async function captureNativeDerivationOriginalSources(env: WorkerEnv, lease: NativeDerivationEvidence, options: { history?: boolean; blockBindings?: boolean; relationBindings?:boolean; reuseBindings?:boolean;reuseVersion?:1|2;blockCoverageVersion?:1|2; crossProducerHistory?:boolean; historySelection?:{jobIds:string[];boundary:NativeDerivationHistory['boundary']} } = {}, deferFinalReplay=false) {
   if(options.crossProducerHistory===true&&options.history!==false){
     try{const input=nativeDerivationEvidenceInputs(env,lease);if(input.historyPresent&&input.producersPresent){
       const cross=await captureCrossProducerHistory(env,lease,options);if(cross!==null)return cross;
@@ -458,7 +458,7 @@ async function captureNativeDerivationOriginalSources(env: WorkerEnv, lease: Nat
   }
   try{const input=nativeDerivationEvidenceInputs(env,lease);if(input.producer==='chat-studio'&&input.historyPresent&&options.history!==false)return await captureChatStudioDerivationHistory(env,lease);}catch{return unavailable();}
   let deferred=false;try{deferred=nativeDerivationEvidenceInputs(env,lease).historyPresent&&options.history!==false;}catch{return unavailable();}
-  const own = await captureNativeDerivationWindow(env, lease, deferred?false:options.blockBindings!==false,deferred?false:options.relationBindings,deferred||deferFinalReplay,undefined,deferred?false:options.reuseBindings,options.reuseVersion);
+  const own = await captureNativeDerivationWindow(env, lease, deferred?false:options.blockBindings!==false,deferred?false:options.relationBindings,deferred||deferFinalReplay,undefined,deferred?false:options.reuseBindings,options.reuseVersion,options.blockCoverageVersion);
   if (own.status !== 'captured' || options.history === false) return own;
   try {
     const db=env.DB, input=nativeDerivationEvidenceInputs(env,lease);
@@ -505,7 +505,7 @@ async function captureNativeDerivationOriginalSources(env: WorkerEnv, lease: Nat
           ...(data.some(value=>value.provenance.artifacts)?{artifacts:unique(data.flatMap(value=>value.provenance.artifacts??[]))}:{}),
           ...(data.some(value=>value.provenance.blockInspections)?{blockInspections:unique(data.flatMap(value=>value.provenance.blockInspections??[]))}:{}),
           ...(current.provenance.relationBindings?{relationBindings:{version:1 as const,entries:unique(data.flatMap(value=>value.provenance.relationBindings?.entries??[])),unresolved:data.reduce((sum,value)=>sum+(value.provenance.relationBindings?.unresolved??0),0)}}:{}),
-          ...(current.provenance.blockBindings?{blockBindings:{version:1 as const,entries:unique(data.flatMap(value=>value.provenance.blockBindings?.entries??[])),unresolved:data.reduce((sum,value)=>sum+(value.provenance.blockBindings?.unresolved??0),0)}}:{}),
+          ...(current.provenance.blockBindings?{blockBindings:{version:current.provenance.blockBindings.version,entries:unique(data.flatMap(value=>value.provenance.blockBindings?.entries??[])),unresolved:data.reduce((sum,value)=>sum+(value.provenance.blockBindings?.unresolved??0),0)}}:{}),
           sourceRowsSha256:await memoryDigest(memoryCanonical(data.map(value=>[value.jobId,value.provenance.sourceRowsSha256])))},
         coverage:{...current.coverage,originalPairs:originals.length/2,typedObservations:observations.length,
           ...(data.some(value=>value.coverage.excludedByUserControls)?{excludedByUserControls:data.reduce((n,value)=>n+(value.coverage.excludedByUserControls??0),0)}:{})}};
@@ -525,7 +525,7 @@ async function captureNativeDerivationOriginalSources(env: WorkerEnv, lease: Nat
  * before this job. All original identities and current scope proofs stay exact.
  * Null selects the byte-compatible legacy path when no mixed history is chosen. */
 async function captureCrossProducerHistory(env:WorkerEnv,lease:NativeDerivationEvidence,
-  options:{blockBindings?:boolean;relationBindings?:boolean;reuseBindings?:boolean;reuseVersion?:1|2;historySelection?:{jobIds:string[];boundary:NativeDerivationHistory['boundary']}}){
+  options:{blockBindings?:boolean;relationBindings?:boolean;reuseBindings?:boolean;reuseVersion?:1|2;blockCoverageVersion?:1|2;historySelection?:{jobIds:string[];boundary:NativeDerivationHistory['boundary']}}){
   try{
     const db=env.DB,input=nativeDerivationEvidenceInputs(env,lease),chat=Number(input.producer==='chat-studio');
     const query:Query={sql:`SELECT j.job_id,j.after_sequence,j.through_sequence,
@@ -620,13 +620,13 @@ async function captureCrossProducerHistory(env:WorkerEnv,lease:NativeDerivationE
  * identity is read once for the identical enrollment, and resource versions are
  * certified in one bounded union instead of once per historical window. */
 async function finalizeResourceHistory(env:WorkerEnv,lease:NativeDerivationEvidence,parts:NativeDerivationSourceCapture[],data:CaptureData,
-  witness:AssistantContextReadWitness<CaptureData>,options:{blockBindings?:boolean;relationBindings?:boolean;reuseBindings?:boolean;reuseVersion?:1|2},deferFinalReplay=false){
+  witness:AssistantContextReadWitness<CaptureData>,options:{blockBindings?:boolean;relationBindings?:boolean;reuseBindings?:boolean;reuseVersion?:1|2;blockCoverageVersion?:1|2},deferFinalReplay=false){
   try{
     const db=env.DB,input=nativeDerivationEvidenceInputs(env,lease);
     if(options.relationBindings===true&&(!input.relationsPresent||!input.lifecyclePresent))return unavailable();
     const {blockBindings,relationBindings}=await observeNativeMemoryResourceBindings(env,input.enrollment,inspectionReferences(data.observations),
       parts.flatMap(part=>captures.get(part)?.relationObservations??[]),witness,
-      {blocks:options.blockBindings!==false,relations:options.relationBindings!==false&&input.relationsPresent&&input.lifecyclePresent});
+      {blocks:options.blockBindings!==false,blockCoverageVersion:options.blockCoverageVersion,relations:options.relationBindings!==false&&input.relationsPresent&&input.lifecyclePresent});
     if(options.reuseBindings===true&&(!input.reusePresent||!input.lifecyclePresent||!blockBindings))return unavailable();
     const reuseBindings=options.reuseBindings!==false&&input.reusePresent&&input.lifecyclePresent&&blockBindings
       ?await observeNativeMemoryReuseBindings(env,input.enrollment,data.observations,blockBindings,witness,options.reuseVersion):undefined;

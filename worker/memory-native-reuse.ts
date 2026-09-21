@@ -38,6 +38,7 @@ export async function observeNativeMemoryReuseBindings(env:WorkerEnv,e:LiveMemor
       'stream',s.source_stream_id,'sequence',s.source_sequence)) FROM project_event_scopes s WHERE s.event_id=event.event_id) AS custody,
     (SELECT COUNT(*) FROM events compensation WHERE compensation.stream_id=event.stream_id AND compensation.compensates_event_id=event.event_id) AS compensated
     FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+      AND secret.owner_id=? AND secret.project_id=? AND (secret.document_id=? OR event.type='CollectionItemAdded' AND secret.document_id IS NULL)
     WHERE event.stream_id=? AND event.correlation_id=?||receipt.preview_id ORDER BY event.sequence,event.event_id`;
   const jsonObject=(names:string[])=>`json_object(${names.map(column=>"'"+column+"',"+column).join(',')})`;
   const rowJson=`json_insert(${jsonObject(columns)},${['owner_id','project_id','document_id','private_json','redacted_at','custody','compensated'].map(column=>"'$."+column+"',"+column).join(',')})`;
@@ -68,7 +69,7 @@ export async function observeNativeMemoryReuseBindings(env:WorkerEnv,e:LiveMemor
         AND event_count BETWEEN 1 AND 128 AND event_bytes<=196608
         AND (SELECT SUM(event_bytes+COALESCE(length(CAST(preview_content AS BLOB)),0)) FROM eligible)<=786432
       ORDER BY receipt.preview_id`,bindings:[prefix.length+1,stream,JSON.stringify(creationIds),'user:'+e.actor_user_id,prefix.length,prefix,
-      stream,prefix,stream,prefix,e.actor_user_id,e.project_id,e.document_id,...(version===2?[e.document_id]:[]),e.organization_id,e.project_access_id,e.actor_user_id,...custody.bindings,stream,prefix]};
+      stream,prefix,stream,prefix,e.actor_user_id,e.project_id,e.document_id,...(version===2?[e.document_id]:[]),e.organization_id,e.project_access_id,e.actor_user_id,...custody.bindings,e.owner_user_id,e.project_id,e.document_id,stream,prefix]};
   const statement=db.prepare(query.sql).bind(...query.bindings),result=structuredClone(await statement.all<Row>());
   if(env.DB!==db||!result.success||!Array.isArray(result.results)||result.results.length>8)throw Error('memory-reuse-read');
   observer.observe([statement],[result],[query]);

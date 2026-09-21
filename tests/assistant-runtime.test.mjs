@@ -13701,7 +13701,7 @@ test('native derivation delivery: conversation bookkeeping keeps exact reference
   state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.deepEqual(state.queue(),before);
 });
 
-async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,originalCount=1,termOverrides={},beforeEnrollment,beforeRun,reuseVersion}={}){
+async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,originalCount=1,termOverrides={},beforeEnrollment,beforeRun,reuseVersion,blockCoverageVersion}={}){
   const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides,beforeEnrollment:async state=>{
     state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
     if(recovery||results)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0046_memory_derivation_recovery_cursor.sql',import.meta.url),'utf8'));
@@ -13732,7 +13732,7 @@ async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,rec
   }
   if(deferClaim)return Object.assign(state,{admission,sources,finance,executionJob:job});
   const lease=await admission.claimNativeDerivationJob(state.env,job.job_id);assert.ok(lease,state.controls.lastDatabaseError);
-  const captured=await sources.captureNativeDerivationSources(state.env,lease,{reuseVersion});assert.equal(captured.status,'captured',state.controls.lastDatabaseError);
+  const captured=await sources.captureNativeDerivationSources(state.env,lease,{reuseVersion,blockCoverageVersion});assert.equal(captured.status,'captured',state.controls.lastDatabaseError);
   return Object.assign(state,{admission,sources,finance,executionJob:job,executionLease:lease,executionCapture:captured.capture});
 }
 for(const shared of [false,true])test('native derivation execution: original '+(shared?'shared':'personal')+' source proof reserves and claims once',{timeout:60000},async t=>{
@@ -19305,19 +19305,19 @@ async function nativeDuplicatedReuseFixture(t,{shared=false,folder=false,locked=
 }
 for(const shared of [false,true])for(const folder of [false,true])test('native duplicate recall: new consent and inspection certify retained copy history '+shared+'/'+folder,{timeout:120000},async t=>{
  const state=await nativeDuplicatedReuseFixture(t,{shared,folder,locked:folder}),manifest=JSON.parse(state.duplicateResult.manifest_json),bindings=manifest.provenance.reuseBindings;
- assert.equal(bindings.version,2);assert.equal(bindings.entries.length,2,JSON.stringify(bindings)+' '+state.controls.lastDatabaseError);assert.ok(bindings.entries.every(row=>row.previewRef===state.duplicatePreview.previewId));
+ assert.equal(manifest.provenance.blockBindings.unresolved,0,'Inspection references count in the same candidate denominator');assert.equal(bindings.version,2);assert.equal(bindings.entries.length,2,JSON.stringify(bindings)+' '+state.controls.lastDatabaseError);assert.ok(bindings.entries.every(row=>row.previewRef===state.duplicatePreview.previewId));
  assert.equal(manifest.observations.filter(row=>row.action==='reuse').length,0,'Inspecting an old duplicate is not a newly performed copy');assert.equal(manifest.observations.filter(row=>row.eventType==='BlockInspected').length,2);
  const response=await state.reuseRequest(state.duplicateTarget.documentId),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.deepEqual(body.sources.map(row=>row.enrollmentId),[state.reuseSource.id]);
  assert.equal(JSON.stringify(state.rollingRequests).includes('COPY_BODY_NOT_HUMAN'),false,'Copied content never becomes original human preference evidence');
 });
 
 for(const version of [1,2])test('native duplicate recall: retained reuse contract '+version+' replays without silent upgrade',async t=>{
- const state=await nativeDerivationResultFixture(t,{lifecycle:true,indexIntents:true,reuseVersion:version,beforeRun:async seed=>{
+ const state=await nativeDerivationResultFixture(t,{lifecycle:true,indexIntents:true,reuseVersion:version,blockCoverageVersion:version,beforeRun:async seed=>{
   for(const tag of ['0055_memory_derivation_relation_lifecycle','0056_memory_derivation_reuse_lifecycle'])seed.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/'+tag+'.sql',import.meta.url),'utf8'));
   await appendNativeMemoryApprovedCopies(seed,'compatibility');
  }});
  assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
- const manifest=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(state.executionJob.job_id).manifest_json);assert.equal(manifest.provenance.reuseBindings.version,version);assert.equal(manifest.provenance.reuseBindings.entries.length,2);
+ const manifest=JSON.parse(state.sqlite.prepare('SELECT manifest_json FROM memory_derivation_results WHERE job_id=?').get(state.executionJob.job_id).manifest_json);assert.equal(manifest.provenance.blockBindings.version,version);assert.equal(manifest.provenance.reuseBindings.version,version);assert.equal(manifest.provenance.reuseBindings.entries.length,2);
  assert.ok(await state.readResult(),state.controls.lastDatabaseError);assert.equal(state.sqlite.prepare('SELECT state FROM memory_derivation_results WHERE job_id=?').get(state.executionJob.job_id).state,'active');
 });
 for(const fault of ['original-consent','original-range','duplicate-consent','duplicate-approval','copied-body','original-removed'])test('native duplicate recall: '+fault+' preserves authored work without granting original memory',async t=>{
@@ -19352,4 +19352,26 @@ for(const fault of ['target','source-document','operation','source-stream','foot
  if(fault==='footprint'){const saved=JSON.parse(state.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(id).content),event=saved.plan.events.find(row=>row.type==='BlockCreated');await(await import('../worker/runtime.ts')).appendAuditEvent(state.env,'creative:'+state.reuseTarget.owner_user_id,'user:'+state.reuseTarget.actor_user_id,event.type,event.payload,'authoring:'+state.reuseTarget.actor_user_id+':'+id);}
  if(fault==='collection-reference')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.item_ref.document_id','other-document') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='CollectionItemAdded' AND correlation_id=?)").run('authoring:'+state.reuseTarget.actor_user_id+':'+id);
  const response=await state.reuseRequest(state.duplicateTarget.documentId),body=await response.json();assert.notEqual(response.status,200,JSON.stringify(body));assert.equal(Object.hasOwn(body,'sources'),false);
+});
+for(const kind of ['block-history','copy-footprint','relation-history','authored-profile'])for(const field of ['owner_id','project_id','document_id','library'])test('native Memory source hydration: '+kind+'/'+field+' withholds foreign private bytes in SQL',async t=>{
+ const state=await nativeMemoryReuseResultFixture(t),e=state.current(),entry=state.manifest.provenance.reuseBindings.entries[0],db=state.env.DB,batch=db.batch,prepare=db.prepare,marker='OUT_OF_SCOPE_PRIVATE_BODY_MUST_NOT_BE_HYDRATED';
+ if(kind==='relation-history'){const relation=state.manifest.provenance.relationBindings.entries[0];assert.ok(relation);entry.eventId=relation.eventId;entry.relationId=relation.relationId;}
+ const old=state.sqlite.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').get(entry.eventId);assert.ok(old);const changed=JSON.parse(old.private_json);changed.properties={...changed.properties,text:marker};
+ const column=field==='library'?'document_id':field,value=field==='library'?null:'foreign-scope';
+ state.sqlite.prepare('UPDATE event_private_payloads SET private_json=?,"'+column+'"=? WHERE private_event_id=?').run(JSON.stringify(changed),value,entry.eventId);
+ let observed=false;
+ const checkRows=rows=>{for(const row of rows??[]){if(Object.hasOwn(row,'private_json')&&row.event_id===entry.eventId){observed=true;assert.equal(row.private_json,null);assert.equal(Object.hasOwn(row,'owner_id')?row.owner_id:row.private_owner,null);}if(typeof row.footprint==='string'){const footprint=JSON.parse(row.footprint),source=footprint.find(event=>event.event_id===entry.eventId);if(source){observed=true;assert.equal(source.private_json,null);assert.equal(source.owner_id,null);}}assert.equal(JSON.stringify(row).includes(marker),false);}};
+ db.batch=async statements=>{const results=await batch.call(db,statements);for(const result of results)checkRows(result.results);return results;};
+ db.prepare=sql=>{const statement=prepare.call(db,sql),wrap=raw=>new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(key==='all')return async(...args)=>{const result=await target.all(...args);checkRows(result.results);return result;};return Reflect.get(target,key,target);}});return wrap(statement);};
+ t.after(()=>{db.batch=batch;db.prepare=prepare;});const {AssistantContextReadWitness}=await import('../worker/assistant-context-source.ts'),witness=new AssistantContextReadWitness(state.env);
+ if(kind==='block-history'){
+  const sequence=state.sqlite.prepare('SELECT sequence FROM events WHERE event_id=?').get(entry.eventId).sequence,bindings=await(await import('../worker/memory-native-blocks.ts')).observeNativeMemoryBlockBindings(state.env,e,[{eventId:entry.eventId,sequence,eventType:'BlockCreated',blockPointer:entry.targetBlockId}],witness);assert.deepEqual(bindings.entries,[]);
+ }else if(kind==='relation-history'){
+  const sequence=state.sqlite.prepare('SELECT sequence FROM events WHERE event_id=?').get(entry.eventId).sequence,bindings=await(await import('../worker/memory-native-relations.ts')).observeNativeMemoryRelationBindings(state.env,e,[{eventId:entry.eventId,sequence,eventType:'BlockRelationAdded',relationId:entry.relationId}],witness);assert.deepEqual(bindings.entries,[]);
+ }else if(kind==='authored-profile'){
+  const sequence=state.sqlite.prepare('SELECT MAX(sequence) n FROM events WHERE stream_id=?').get('creative:'+e.owner_user_id).n,q=(await import('../worker/memory-document-profile.ts')).nativeDocumentProfileHistoryQuery(e,[entry.targetBlockId],sequence);const rows=await db.prepare(q.sql).bind(...q.bindings).all();assert.ok(rows.results.length);
+ }else{
+  const bindings=await(await import('../worker/memory-native-reuse.ts')).observeNativeMemoryReuseBindings(state.env,e,state.manifest.observations,state.manifest.provenance.blockBindings,witness);assert.deepEqual(bindings.entries,[]);
+ }
+ assert.equal(observed,true,'Inspect the native DB transport, not just the final rejected presentation');
 });

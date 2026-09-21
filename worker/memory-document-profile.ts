@@ -151,6 +151,7 @@ export function nativeDocumentProfileHistoryQuery(e: LiveMemoryEnrollment, block
           AND (resource.visibility='collaborative_output' OR resource.visibility='actor_private' AND resource.actor_user_id=${b("actor")})) END AS resource_custody
     FROM events event JOIN (SELECT ? AS value) binding
     LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+      AND (secret.owner_id,secret.project_id,secret.document_id) IS (${b('owner')},${b('project')},${b('document')})
     WHERE event.stream_id=? AND event.sequence<=? AND (NOT json_valid(event.payload) OR length(CAST(event.payload AS BLOB))>8192
       OR EXISTS(SELECT 1 FROM json_tree(${publicJson}) member WHERE member.key='block_id'
         AND member.value IN(SELECT value FROM json_each(?)))

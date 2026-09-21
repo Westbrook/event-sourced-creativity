@@ -331,3 +331,9 @@ private inference. This closes native same-owner duplicate-document source
 certification, not cross-owner copy authoring, Library/Canvas enrollment, direct
 private Output or aggregate semantic-profile consumers.137 native and62 existing
 copy checks are distinct from the earlier2,399-test full run.
+
+
+## Pre-hydration source boundaries
+
+[Private history filtering](forma-memory-private-history-boundaries-2026-09-21.md)
+now excludes mismatched owner/project/document and Library bodies in the native database query, before private prose reaches application decoding. Inspection coverage uses a versioned consistent denominator without upgrading retained manifests.22 focused,126 history/recall and54 resource checks pass. This advances integrated privacy qualification; distinct-resource enrollment and the other native workstreams remain required.

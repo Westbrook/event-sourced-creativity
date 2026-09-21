@@ -451,3 +451,9 @@ native approval and the complete footprint, supports folder/lock copies and keep
 inspection separate from new reuse. Version1 replays unchanged.137 native and62
 existing authoring/model checks pass, including actual D1 retirement/restoration.
 Cross-owner and distinct-resource/consumer integration remains tracked, not waived.
+
+
+## MEM-037 — Scope filtering before private history hydration
+
+Implemented locally: [private history boundaries](forma-memory-private-history-boundaries-2026-09-21.md).
+Block, relation, copy and authored-profile readers withhold foreign private bodies in SQL. Native inspected-reference counts use version2 with retained-version1 replay.22 focused,126 history/recall and54 resource/mixed-producer checks pass. This closes a concrete source boundary, not Library/Canvas enrollment or the other native completion rows.
