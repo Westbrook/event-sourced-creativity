@@ -36,7 +36,7 @@ const PROJECT_EVENT_TYPES=new Set([
   ...OUTPUT_REQUIREMENT_EVENT_TYPES,
   "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","EmptyCanvasChosen",
   "BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRehomed",
-  "BlockRelationAdded","BlockRelationRemoved","ReferenceIngested","RightsAsserted","RegionPromoted","ExtractionRequested","ExtractionCompleted","ExtractionFailed","ExtractionSuperseded","ChipEdited",
+  "BlockRelationAdded","BlockRelationRemoved","ReferenceIngested","RightsAsserted","RegionPromoted","ExtractionRequested","ExtractionCompleted","ExtractionFailed","ExtractionSuperseded","ImageFocalPointCalculated","ChipEdited",
   "CollectionCreated","CollectionRenamed","CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved",
   "ContextCompiled","GenerationCompleted","IdeationPreviewCompleted","IdeationPromoted","DocumentRenderCompleted","DocumentArtifactEdited","DocumentArtifactExported","ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","ChatMessageSent","AssistantReasoned",
   "ObjectSaved","ObjectDiscarded","ObjectPinned","ObjectUnpinned","ObjectExported","OutputRenamed","PromptFanOutputPromoted","AddedToLibrary","RemovedFromLibrary",
@@ -133,6 +133,9 @@ function scopedEvent(event:CreativeEvent,index:ProjectIndex){
   const explicit=String(payload.project_id??"");
   if(explicit&&explicit!==index.projectId)return false;
   if(isOutputRequirementEvent(event.type))return explicit===index.projectId&&index.documentIds.has(String(payload.document_id??""));
+  if(event.type==="ImageFocalPointCalculated")return explicit===index.projectId&&payload.target_kind==="reference"
+    &&payload.target_id===payload.block_id&&index.blockIds.has(String(payload.block_id??""))
+    &&index.referenceIds.has(String(payload.reference_id??""))&&index.documentIds.has(String(payload.document_id??""));
   if(event.type==="OutputRenamed"){
     const documentId=String(payload.document_id??""),id=String(payload.output_id??"");
     if(explicit!==index.projectId||!documentId||!index.documentIds.has(documentId)||!id)return false;

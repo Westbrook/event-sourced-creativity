@@ -2331,3 +2331,19 @@ for(const kind of ['context_contains','action_participant'])for(const change of 
  assert.equal(seen.length,Number(change==='unchanged'));
  if(seen.length){assert.deepEqual(seen[0].payload.source_event_ids,fields);assert.equal(JSON.stringify(seen).includes('Authored'),false);}
 });
+
+for(const change of ['unchanged','focal-changed-before-publish'])test('Document Memory inspection retains extraction and focal field versions: '+change,async t=>{
+ const f=fixture(),seen=[];f.store.ui.instrumentation=true;const previous=documentPort.visibilityState;documentPort.visibilityState='visible';t.after(()=>{documentPort.visibilityState=previous;});
+ const last=f.state.events.at(-1),scope={project_id:'project-a',document_id:'document-a',block_id:'decision-1'};
+ const extracted=[['ExtractionRequested',{}],['ExtractionCompleted',{chips:[{property:'colors',value:['PRIVATE_EXTRACTED_COLOR'],confidence:1}]}],
+  ['ImageFocalPointCalculated',{target_kind:'reference',target_id:'decision-1',focal_point:{x:.4,y:.6,confidence:.7,method:'attention-region-v2',sampleWidth:4,sampleHeight:4}}]]
+  .map(([type,payload],index)=>({...last,type,eventId:'native-extracted-field-'+index,sequence:last.sequence+index+1,payload:{...scope,...payload}}));
+ f.state.events=[...f.state.events,...extracted];f.draw();await f.select('decision-1');const host=f.block('decision-1'),ids=[...host.block.sourceEvents];
+ assert.ok(extracted.every(event=>ids.includes(event.eventId)));
+ let resume;const update=new Promise(resolve=>{resume=resolve;});Object.defineProperty(host,'updateComplete',{configurable:true,get:()=>update});
+ f.store.hot=async(event,options)=>{if(options.current())seen.push(event);};
+ await f.renderer.handler(host,'button',node=>String(node.attributes.class).includes('context-controls-toggle'))();f.draw();host.querySelector('.context-controls-panel').getClientRects=()=>[{}];
+ if(change==='focal-changed-before-publish'){const focal=extracted.at(-1);f.state.events=[...f.state.events,{...focal,eventId:'changed-focal-field',sequence:focal.sequence+1,payload:{...focal.payload,focal_point:{...focal.payload.focal_point,x:.8}}}];f.draw();}
+ resume(true);for(let i=0;i<6;i++)await Promise.resolve();assert.equal(seen.length,Number(change==='unchanged'));
+ if(seen.length){assert.deepEqual(seen[0].payload.source_event_ids,ids);assert.doesNotMatch(JSON.stringify(seen),/PRIVATE_EXTRACTED_COLOR|focal_point/);}
+});

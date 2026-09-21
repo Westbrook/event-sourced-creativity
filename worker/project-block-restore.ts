@@ -8,7 +8,7 @@ import type { WorkerEnv } from './runtime.ts';
 type Row=Record<string,unknown>;
 type PreparedRestore=Readonly<{assertCurrent():void;precommitStatements():D1PreparedStatement[]}>;
 type Restore={type?:string;payload?:Record<string,unknown>;compensatesEventId?:string|null};
-const fields="'BlockCreated','BlockRehomed','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored','ExtractionRequested','ExtractionCompleted','ExtractionFailed'";
+const fields="'BlockCreated','BlockRehomed','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored','ExtractionRequested','ExtractionCompleted','ExtractionFailed','ImageFocalPointCalculated'";
 
 /** Restore an indexed-away Document block only by reversing its exact latest
  * retained same-author removal. Historical IDs are not current access grants.

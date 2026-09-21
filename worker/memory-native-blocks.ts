@@ -13,7 +13,7 @@ export type NativeMemoryBlockBinding = { eventId:string; blockId:string; scopeKe
 export type NativeMemoryBlockBindings = { version:1; entries:NativeMemoryBlockBinding[]; unresolved:number };
 const actions=new Set(['BlockCreated','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored']);
 const types=['BlockCreated','BlockRehomed','BlockRenamed','BlockPropertyEdited','ChipEdited','BlockWeightSet','BlockLocked','BlockUnlocked',
-  'BlockRemoved','BlockRestored','ExtractionRequested','ExtractionCompleted','ExtractionFailed'];
+  'BlockRemoved','BlockRestored','ExtractionRequested','ExtractionCompleted','ExtractionFailed','ImageFocalPointCalculated'];
 const sqlTypes=types.map(type=>"'"+type+"'").join(',');
 const columns=['event_id','stream_id','sequence','occurred_at','recorded_at','actor','client_id','correlation_id','causation_id','compensates_event_id','schema_version','type','payload'];
 const clean=(p:Record<string,unknown>)=>!p.simulation&&!p.synthetic&&!(p.origin&&typeof p.origin==='object'&&'synthetic' in p.origin&&p.origin.synthetic)

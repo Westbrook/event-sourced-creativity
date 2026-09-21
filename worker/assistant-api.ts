@@ -1265,7 +1265,7 @@ async function commitSharedAssistantApproval(env: WorkerEnv, actor: AuthorizedAs
 
 /** Authoritative mutation validation folds only exact graph/state events, never conversation or provider history. */
 async function assistantAuthoritativeProjection(env: WorkerEnv, actor: AuthorizedAssistant) {
-  const types = "'ProjectCreated','ProjectOpened','ProjectRenamed','DocumentCreated','DocumentOpened','DocumentForked','DocumentRenamed','DocumentRemoved','DocumentRestored','BlockCreated','BlockRehomed','BlockRenamed','BlockPropertyEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored','BlockRelationAdded','BlockRelationRemoved','ChipEdited','ExtractionRequested','ExtractionCompleted','ExtractionFailed'";
+  const types = "'ProjectCreated','ProjectOpened','ProjectRenamed','DocumentCreated','DocumentOpened','DocumentForked','DocumentRenamed','DocumentRemoved','DocumentRestored','BlockCreated','BlockRehomed','BlockRenamed','BlockPropertyEdited','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored','BlockRelationAdded','BlockRelationRemoved','ChipEdited','ExtractionRequested','ExtractionCompleted','ExtractionFailed','ImageFocalPointCalculated'";
   const selected = actor.project;
   const statement = selected
     ? env.DB.prepare(`SELECT event.*,secret.private_json FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id

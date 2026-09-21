@@ -1208,3 +1208,29 @@ for(const shared of [false,true])test('document rename memory: native edit refer
   const after=JSON.parse(await client.exportReferences(row));assert.ok(!after.sources.some(source=>source.eventId===renamed.eventId));
   assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_finance').get().n,0);
 });
+
+for(const shared of [false,true])test('native extracted block inspection: actual extraction retains full field history '+shared,async t=>{
+ const f=await memoryArtifactFixture(t,{shared}),blockId='memory-extracted-reference',referenceId='memory-extracted-source',scope={project_id:f.projectId,document_id:f.documentId,scope:'document'};
+ await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'ReferenceIngested',{...scope,reference_id:referenceId,media_url:'https://example.test/isolated-reference.png',rights_class:'owned'});
+ const created=await appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'BlockCreated',{...scope,block_id:blockId,type:'reference',properties:{reference_id:referenceId,media_url:'https://example.test/isolated-reference.png',rights_class:'owned'}});
+ if(shared)assert.equal((await f.request('/api/events?after=0&content=0')).status,200);
+ const {EXTRACTOR_EVAL_FIXTURES}=await import('../src/model/extractors.ts');
+ const accepted=await f.request('/api/document-jobs',f.json({kind:'extract_reference',documentId:f.documentId,sourceSurface:'document',payload:{blockId,referenceId,sample:EXTRACTOR_EVAL_FIXTURES[0].sample}}));
+ assert.equal(accepted.status,202,await accepted.clone().text());const queued=await accepted.json();await f.drainBackground();
+ const job=f.sqlite.prepare('SELECT status,error_message FROM document_jobs WHERE job_id=?').get(queued.job.jobId);assert.equal(job.status,'completed',JSON.stringify(job));
+ const rows=f.sqlite.prepare("SELECT event_id,type,payload FROM events WHERE json_extract(payload,'$.block_id')=? AND type IN('BlockCreated','ExtractionRequested','ExtractionCompleted','ImageFocalPointCalculated') ORDER BY sequence").all(blockId);
+ assert.deepEqual(rows.map(row=>row.type),['BlockCreated','ExtractionRequested','ExtractionCompleted','ImageFocalPointCalculated']);assert.equal(rows[0].event_id,created.eventId);
+ for(const row of rows){const payload=JSON.parse(row.payload);assert.equal(payload.project_id,f.projectId);assert.equal(payload.document_id,f.documentId);}
+ if(shared)assert.equal((await f.request('/api/events?after=0&content=0')).status,200);
+ const sourceIds=rows.map(row=>row.event_id),inspect=ids=>f.request('/api/events/hot',f.json({action:'hot',event:{type:'BlockInspected',payload:{project_id:f.projectId,document_id:f.documentId,block_id:blockId,source_event_ids:ids,source_surface:'document-context-controls'}}}));
+ assert.equal((await inspect(sourceIds.slice(0,-1))).status,409,'Focal fields cannot be silently omitted');
+ const observed=await inspect(sourceIds);assert.equal(observed.status,200,await observed.clone().text()+' '+JSON.stringify(f.sqlite.prepare("SELECT e.type,e.event_id,s.project_id,s.document_id,s.owner_id,(SELECT count(*) FROM project_event_scopes p WHERE p.event_id=e.event_id) AS scopes FROM events e LEFT JOIN event_private_payloads s ON s.private_event_id=e.event_id WHERE json_extract(e.payload,'$.block_id')=?").all(blockId)));const receipt=(await observed.json()).appended[0];assert.deepEqual(receipt.payload.source_event_ids,sourceIds);
+ assert.equal((await f.run()).status,'completed');assert.ok(f.sqlite.prepare('SELECT event_id FROM memory_live_sources WHERE event_id=?').get(receipt.eventId));
+ const removed=await f.request('/api/events',f.json({action:'append',event:{type:'BlockRemoved',payload:{...scope,block_id:blockId}}}));assert.equal(removed.status,200,await removed.clone().text());const removal=(await removed.json()).appended[0];
+ if(shared)assert.equal((await f.request('/api/events?after=0&content=0')).status,200);
+ const restored=await f.request('/api/events',f.json({action:'append',event:{type:'BlockRestored',payload:{...scope,block_id:blockId},compensatesEventId:removal.eventId}}));assert.equal(restored.status,200,await restored.clone().text());const restoration=(await restored.json()).appended[0];
+ if(shared)assert.equal((await f.request('/api/events?after=0&content=0')).status,200);
+ const restoredIds=[...sourceIds,removal.eventId,restoration.eventId],restoredInspection=await inspect(restoredIds);assert.equal(restoredInspection.status,200,await restoredInspection.clone().text());
+ f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(sourceIds.at(-1));
+ assert.equal((await inspect(restoredIds)).status,409,'Erased derived fields cannot certify an inspected block');
+});

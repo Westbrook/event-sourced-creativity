@@ -190,3 +190,11 @@ already-read event, sidecar and custody predicates now guard native quote,
 admission and final specialist dispatch. Native binding/depth limits retain
 same-transaction proofs. This is privacy implementation, not hosted capacity
 qualification or closure of the remaining native workstreams.
+
+## Extracted reference field histories
+
+[Extraction/focal-point integration](forma-memory-extracted-block-history-2026-09-21.md)
+now carries canonical scope through actual native extraction jobs, strict project
+classification, block inspection, specialist context and Undo restoration. It
+closes that unsupported document-field history without inventing Library/Canvas
+enrollment or treating extracted content as independent personal preference.
