@@ -1,6 +1,6 @@
 import { DecisionMemo, stableDecisionKey } from './decision-cache.ts';
 import { onboardingInput, ONBOARDING_VERSION, type OnboardingInput, type OnboardingResult } from './onboarding.ts';
-export type OnboardingStatus={source:'local'|'pending'|'model';reason?:string;model?:string;elapsedMs?:number;cache?:OnboardingResult['cache']};
+export type OnboardingStatus={source:'local'|'pending'|'model';reason?:string;model?:string;elapsedMs?:number;requestElapsedMs?:number;tipCount?:number;cache?:OnboardingResult['cache']};
 /** One batch per settled toolbar, opt-in only; route/scope changes fence late responses. */
 export class OnboardingController{
  private memo=new DecisionMemo<OnboardingResult>({accept:r=>r.source==='model',maxEntries:24,maxBytes:64000,ttl:r=>r.cache?.remainingMs??300000});
@@ -15,12 +15,12 @@ export class OnboardingController{
   if(key===this.key)return;
   this.key=key;this.cancel();this.changed();if(!input)return;
   const cached=this.memo.peek(key);
-  if(cached){this.tips=cached.value.tips;this.status={source:'model',model:cached.value.model,elapsedMs:0,cache:{...cached.cache,layer:'browser'}};this.changed();return;}
+  if(cached){this.tips=cached.value.tips;this.status={source:'model',model:cached.value.model,elapsedMs:0,requestElapsedMs:0,tipCount:Object.keys(cached.value.tips).length,cache:{...cached.cache,layer:'browser'}};this.changed();return;}
   const ticket=this.ticket;
-  this.timer=setTimeout(()=>{this.status={source:'pending'};this.changed();void this.memo.run(key,()=>this.request({...input,enabled:true})).then(({value,cache})=>{
+  this.timer=setTimeout(()=>{const started=performance.now();this.status={source:'pending'};this.changed();void this.memo.run(key,()=>this.request({...input,enabled:true})).then(({value,cache})=>{
    if(ticket!==this.ticket)return;
-   this.tips=value.tips;this.status={source:value.source,reason:value.reason,model:value.model,elapsedMs:value.requestElapsedMs??value.elapsedMs,cache:cache.status==='hit'||cache.status==='shared'?{...cache,layer:'browser'}:value.cache};this.changed();
-  }).catch(()=>{if(ticket===this.ticket){this.status={source:'local',reason:'unavailable'};this.changed();}});},this.delay);
+   this.tips=value.tips;this.status={source:value.source,reason:value.reason,model:value.model,elapsedMs:value.requestElapsedMs??value.elapsedMs,requestElapsedMs:Math.max(0,performance.now()-started),tipCount:Object.keys(value.tips).length,cache:cache.status==='hit'||cache.status==='shared'?{...cache,layer:'browser'}:value.cache};this.changed();
+  }).catch(()=>{if(ticket===this.ticket){this.status={source:'local',reason:'unavailable',requestElapsedMs:Math.max(0,performance.now()-started)};this.changed();}});},this.delay);
  }
  help(scope:string,id:string){return scope===this.scope?this.tips[id]:undefined;}
  private cancel(){clearTimeout(this.timer);++this.ticket;this.tips={};this.status={source:'local'};}

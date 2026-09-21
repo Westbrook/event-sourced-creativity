@@ -151,3 +151,32 @@ test('context changes fence late model wording and unchanged context does not re
  c.update('route',{...input,context:{available:{projects:2},hoverMs:50000}});await pause();assert.equal(pending.length,2);
  c.dispose();
 });
+
+test('onboarding state measures browser delivery, records captured tips and distinguishes cache reuse',async t=>{
+ let now=100,release; t.mock.method(performance,'now',()=>now);
+ const c=new OnboardingController(()=>new Promise(resolve=>release=resolve),()=>{},0);
+ c.update('route',input,'account');await pause();assert.equal(c.status.source,'pending');
+ now=2060;release({source:'model',tips:{projects:'Browse.', 'new-project':'Start.'},requestElapsedMs:500});await pause();
+ assert.equal(c.status.requestElapsedMs,1960);assert.equal(c.status.elapsedMs,500);assert.equal(c.status.tipCount,2);
+ c.update('elsewhere',null,'account');assert.deepEqual(c.status,{source:'local'});
+ c.update('route',input,'account');assert.equal(c.status.requestElapsedMs,0);assert.equal(c.status.cache.layer,'browser');assert.equal(c.status.tipCount,2);
+ c.dispose();
+});
+
+test('onboarding diagnostic states keep fallback and pending distinct from captured model copy',async()=>{
+ const {onboardingState}=await import('../src/still/onboarding-state.ts');
+ assert.deepEqual(onboardingState(undefined,false),{state:'Not Requested',note:'Off',timing:undefined});
+ assert.equal(onboardingState({source:'local'},true).state,'Not Requested');
+ assert.equal(onboardingState({source:'pending',requestElapsedMs:100},true).timing,undefined);
+ assert.equal(onboardingState({source:'pending'},true).state,'Pending');
+ const received=onboardingState({source:'model',requestElapsedMs:1960,elapsedMs:500,tipCount:3},true);
+ assert.equal(received.state,'Received');assert.equal(received.timing.label,'1.96 s total');assert.equal(received.note,'3 tooltips received');
+ assert.match(received.timing.description,/Browser delivery: 1.96 s/);assert.match(received.timing.description,/Server processing: 500 ms/);
+ for(const layer of ['browser','server']){
+  const cached=onboardingState({source:'model',requestElapsedMs:0,tipCount:2,cache:{layer,status:'hit',originalLatencyMs:900}},true);
+  assert.equal(cached.state,'Received');assert.equal(cached.timing.label,`0 ms ${layer} cache`);assert.match(cached.timing.description,/Original computation: 900 ms/);
+ }
+ const failed=onboardingState({source:'local',reason:'unavailable',requestElapsedMs:8000},true);
+ assert.equal(failed.state,'Fallback');assert.equal(failed.note,'Local wording · Request unavailable');assert.equal(failed.timing.label,'8.00 s total');
+ assert.equal(onboardingState({source:'model',tipCount:3,requestElapsedMs:900},false).timing,undefined);
+});
