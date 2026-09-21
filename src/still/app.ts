@@ -203,7 +203,12 @@ export class StillApp extends LitElement {
     const ids=formats?this.formatSuggestions:this.rankedActions.filter(a=>this.candidates().some(c=>c.id===a.id)).map(a=>a.id);
     return assessNextBest(this.nextBest,ids,formats?this.formatEmphasis:this.emphasis,this.nextBestEnabled,this.secondaryOnly());
   }
-  private preferredSuggestions(){return nextBestOrder(this.suggestions,this.rankedActions,this.nextBestAssessment());}
+  private emptyProject(){return this.client.position.view==='documents'&&!!this.client.position.projectId&&!this.client.projection.documents.some(d=>!d.removed);}
+  private preferredSuggestions(){
+    const ordered=nextBestOrder(this.suggestions,this.rankedActions,this.nextBestAssessment());
+    const start=this.emptyProject()?this.candidates().find(a=>a.id==='new-document'):undefined;
+    return start?[start,...ordered.filter(a=>a.id!==start.id)]:ordered;
+  }
   private onboarding=false;
   private onboardingDecisionPending=false;
   private onboardingHelp=new OnboardingController(input=>api<OnboardingResult>('/api/still/onboarding',input,'POST',8000),()=>this.changed());
@@ -214,7 +219,7 @@ export class StillApp extends LitElement {
     const ideas=pos.documentId?p.blocks.filter(b=>!b.removed):[],selected=ideas.find(b=>b.id===pos.blockId);
     return {
       surface:formats?'formats':this.moreOpen?'more':this.mode?'workflow':'main',
-      basis:Object.fromEntries(ids.map(id=>[id,this.moreOpen?'alternative':choice.accepted&&choice.choice===id?'next-best':evidence[id]?.score!==undefined?'model-ranked':pos.view==='projects'&&id==='new-project'?'page-default':'local'])),
+      basis:Object.fromEntries(ids.map(id=>[id,this.moreOpen?'alternative':this.emptyProject()&&id==='new-document'?'page-default':choice.accepted&&choice.choice===id?'next-best':evidence[id]?.score!==undefined?'model-ranked':pos.view==='projects'&&id==='new-project'?'page-default':'local'])),
       available:{...(pos.view==='projects'?{projects:p.projects.length}:{}),...(pos.view==='documents'?{documents:p.documents.filter(d=>!d.removed).length}:{}),...(pos.documentId?{ideas:ideas.length,activeIdeas:ideas.filter(b=>Number(b.properties.weight??1)>0).length,results:p.outputs.length+p.artifacts.length}:{})},
       ...(selected?{selectedIdea:{kind:selected.type,active:Number(selected.properties.weight??1)>0,locked:selected.locked}}:{}),
       recentActions:pos.recentActions,historyComplete:this.client.historyComplete,
@@ -536,7 +541,7 @@ export class StillApp extends LitElement {
   }
   private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button id=${this.dockId("still-help-"+a.id)} data-action-id=${a.id} data-tier=${e.tier} data-action-source=${this.decisionSource==='jev'&&e.score!==undefined?'Jev ranking':'Local fallback'} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.startGeneration(a.id):this.choose(a.id)}>${a.label}</en-button>${this.help("still-help-"+a.id,a.label)}`;}
   private secondaryOnly(){return ['refresh-generation',...(this.decisionPosition().generation?.mayDuplicateCharge?['generate-again','create',...Object.keys(FORMATS)]:[])];}
-  private toolbarPolicy(){const choice=this.nextBestAssessment();return {view:this.client.position.view,more:this.moreOpen,secondaryOnly:this.secondaryOnly(),nextBest:choice.accepted?choice.choice:undefined};}
+  private toolbarPolicy(){const choice=this.nextBestAssessment();return {view:this.client.position.view,emptyProject:this.emptyProject(),more:this.moreOpen,secondaryOnly:this.secondaryOnly(),nextBest:choice.accepted?choice.choice:undefined};}
   private toolbarSuggestions(actions:Action[]){const emphasis=presentToolbar(actions.map(a=>a.id),this.emphasis,this.toolbarPolicy());return actions.map(a=>this.suggestedButton(a,false,emphasis));}
   private paletteShortcut=(event:KeyboardEvent)=>{
     if(event.isComposing||event.keyCode===229)return;
@@ -743,8 +748,10 @@ export class StillApp extends LitElement {
     const c = this.client, p = c.projection;
     if (this.mode === 'new-project' || this.mode === 'new-document') {
       if (!this.titleDraft.trim()) throw new Error('Enter a name.');
-      const ids = this.mode === 'new-project' ? await c.createProject(this.titleDraft.trim(), this.bodyDraft.trim()) : await c.createDocument(this.titleDraft.trim(), this.bodyDraft.trim());
-      this.navigate('document', ids);
+      if(this.mode==='new-project') {
+        const ids=await c.createProject(this.titleDraft.trim());
+        this.navigate('documents',{...ids,documentId:''});
+      } else this.navigate('document',await c.createDocument(this.titleDraft.trim(),this.bodyDraft.trim()));
     } else if (this.mode === 'add-context') {
       if (!this.bodyDraft.trim()) throw new Error('Add an idea.');
       if (!c.hasUnconfirmedWrite || !this.pendingBlock) { const event = c.blockEvent(this.bodyDraft, this.titleDraft.trim() || 'A thought', this.kindDraft); if(this.pendingBlock) Object.assign(event.payload,{block_id:this.pendingBlock.payload.block_id,position:this.pendingBlock.payload.position}); this.pendingBlock = event; }
@@ -903,7 +910,7 @@ export class StillApp extends LitElement {
     if (this.mode) return this.renderMode();
     if (pos.view === 'projects' || pos.view === 'documents') {
       const projects = pos.view === 'projects', items = projects ? p.projects.map(x => ({ id: x.id, title: x.name, detail: `${x.documentCount} ${x.documentCount === 1 ? 'document' : 'documents'}` })) : p.documents.filter(d => !d.removed).map(d => ({ id: d.id, title: d.title, detail: '' }));
-      return html`<section class="library-page">${projects ? nothing : html`<span class="eyebrow">${p.projectName}</span>`}<h1>${projects ? 'Projects' : 'Documents'}</h1>${this.renderList(items,(x, i) => html`<a data-attention-id=${`${projects?'project':'document'}:${x.id}`} class="work-row" href=${projects?this.viewURL('documents',{projectId:x.id,documentId:''}):this.viewURL('document',{documentId:x.id})} @click=${(e:MouseEvent)=>projects?this.follow(e,'documents',{projectId:x.id,documentId:''}):this.follow(e,'document',{documentId:x.id})}><span class="work-number">${String(i + 1).padStart(2, '0')}</span><span><strong>${x.title}</strong>${x.detail ? html`<small>${x.detail}</small>` : nothing}</span><en-icon class="row-arrow" name="arrow-right" aria-hidden="true"></en-icon></a>`,'work-list')}${!items.length ? html`<p class="empty-copy">${projects ? 'No projects yet.' : 'No documents yet.'}</p>` : nothing}</section>`;
+      return html`<section class="library-page">${projects ? nothing : html`<span class="eyebrow">${p.projectName}</span>`}<h1>${projects ? 'Projects' : 'Documents'}</h1>${this.renderList(items,(x, i) => html`<a data-attention-id=${`${projects?'project':'document'}:${x.id}`} class="work-row" href=${projects?this.viewURL('documents',{projectId:x.id,documentId:''}):this.viewURL('document',{documentId:x.id})} @click=${(e:MouseEvent)=>projects?this.follow(e,'documents',{projectId:x.id,documentId:''}):this.follow(e,'document',{documentId:x.id})}><span class="work-number">${String(i + 1).padStart(2, '0')}</span><span><strong>${x.title}</strong>${x.detail ? html`<small>${x.detail}</small>` : nothing}</span><en-icon class="row-arrow" name="arrow-right" aria-hidden="true"></en-icon></a>`,'work-list')}${!items.length ? html`<p class="empty-copy">${projects ? 'No projects yet.' : this.client.abilities.author ? 'Create a document to collect your ideas.' : 'No documents yet.'}</p>` : nothing}</section>`;
     }
     if (pos.view === 'results') {
       const results = stillResults(p,c.jobs,c.events);
@@ -953,7 +960,7 @@ export class StillApp extends LitElement {
     if (mode === 'reuse') return html`<section class="form-page"><h1>Copy existing idea</h1><en-select class="select-label" label="Idea" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Choose an idea</en-select-option>${p.libraryBlocks.filter(b => !b.removed && b.documentId !== p.documentId).map(b => html`<en-select-option value=${b.id}>${b.handle} · ${b.type}</en-select-option>`)}</en-select><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p></section>`;
     const titles: Record<string, string> = { 'new-project': 'New project', 'new-document': 'New document', 'add-context': 'Add idea', 'edit-block': 'Edit idea', rename: 'Rename document', intent: 'Set next goal', 'edit-artifact': 'Edit result' };
     const named = ['new-project', 'new-document', 'add-context', 'rename'].includes(mode);
-    const fields=html`${p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}`;
+    const fields=html`${mode!=='new-project'&&p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' && mode !== 'new-project' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}`;
     return this.isCreationMode()
       ? html`<form id="still-create-form" class="form-page" @submit=${this.submitCreation} @keydown=${this.creationKeydown}>${fields}</form>`
       : html`<section class="form-page">${fields}</section>`;

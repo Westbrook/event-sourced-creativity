@@ -33,11 +33,22 @@ for (const shared of [false, true]) {
     await c.load();
     if (shared) c.position.projectId = f.projectId;
     else {
-      const ids = await c.createProject('Still integration project', 'A small ceramic observatory');
-      c.position = { ...c.position, ...ids, view: 'document' };
+      dropNextWrite = true;
+      await assert.rejects(c.createProject('Still integration project'), /lost committed receipt/);
+      const beforeRecoveryPosts = posts;
+      const ids = await c.createProject('Still integration project');
+      assert.equal(posts, beforeRecoveryPosts, 'Recover project creation without another POST');
+      c.position = { ...c.position, ...ids, documentId: '', view: 'documents' };
       assert.equal(c.projection.projectName, 'Still integration project');
-      assert.equal(c.projection.documentTitle, 'Still integration project');
-      assert.equal(c.projection.blocks[0].properties.text, 'A small ceramic observatory');
+      assert.equal(c.projection.documents.length, 0);
+      assert.equal(c.projection.blocks.length, 0);
+      assert.deepEqual(c.events.filter(e => e.payload.project_id === ids.projectId).map(e => e.type), ['ProjectCreated']);
+      const reopenedProject = new StillClient();
+      await reopenedProject.load();
+      reopenedProject.position = { ...c.position };
+      assert.equal(reopenedProject.projection.projectName, 'Still integration project');
+      assert.equal(reopenedProject.projection.documents.length, 0);
+      result.projectOnly = 'One project event; no automatic document or idea, including after reload and lost receipt';
     }
     const ids = await c.createDocument('Second document', 'Keep the surface unglazed');
     c.position = { ...c.position, ...ids, view: 'document' };

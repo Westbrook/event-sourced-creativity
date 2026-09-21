@@ -293,12 +293,12 @@ export class StillClient {
     this.retirePendingWrite();
     this.applyReceipt(result);
   }
-  async createProject(name: string, thought: string) {
-    const signature = JSON.stringify(['project', name, thought]);
-    if (!this.creation || this.creation.signature !== signature) { if(this.hasUnconfirmedWrite) { await this.refresh(); await this.recoverPendingWrite(); throw new Error(this.hasUnconfirmedWrite ? 'Check the earlier save before starting another project.' : 'Project saved. Open it in Projects.'); } this.creation = { signature, projectId: crypto.randomUUID(), documentId: crypto.randomUUID() }; }
-    const { projectId, documentId } = this.creation;
-    await this.append([{ type: 'ProjectCreated', payload: { project_id: projectId, name, state: 'active' } }, { type: 'DocumentCreated', payload: { project_id: projectId, document_id: documentId, handle: 'first-idea', title: name } }, ...(thought ? [{ ...this.blockEvent(thought, 'Creative direction', 'direction', projectId, documentId), payload: { ...this.blockEvent(thought, 'Creative direction', 'direction', projectId, documentId).payload, block_id: `first-${documentId}` } }] : [])]);
-    this.creation = null; return { projectId, documentId };
+  async createProject(name: string) {
+    const signature = JSON.stringify(['project', name]);
+    if (!this.creation || this.creation.signature !== signature) { if(this.hasUnconfirmedWrite) { await this.refresh(); await this.recoverPendingWrite(); throw new Error(this.hasUnconfirmedWrite ? 'Check the earlier save before starting another project.' : 'Project saved. Open it in Projects.'); } this.creation = { signature, projectId: crypto.randomUUID(), documentId: '' }; }
+    const { projectId } = this.creation;
+    await this.append([{ type: 'ProjectCreated', payload: { project_id: projectId, name, state: 'active' } }]);
+    this.creation = null; return { projectId };
   }
   async createDocument(title: string, thought: string) {
     const signature = JSON.stringify(['document', this.position.projectId, title, thought]);

@@ -36,7 +36,7 @@ export function workflowHelp(mode:string,id:string,label:string,unconfirmedSave=
  if(label==='Check save')return 'Check whether the earlier save completed before continuing.';
  if(label==='More actions')return 'See the remaining actions for this step.';
  const save:Record<string,string>={
-  'new-project':'Create this project and open its first document.',
+  'new-project':'Create this project. Add documents when you’re ready.',
   'new-document':'Create this document in the current project and open it.',
   'add-context':'Add this idea to the document so you can use it in your work.',
   'edit-block':'Save changes to this idea and return to your content.',
@@ -94,7 +94,7 @@ export function actionHelp(id:string,label:string){if(label.startsWith('Back to 
 export function readOnboardingFlag(url:string,storage:Pick<Storage,'getItem'>){const q=new URL(url).searchParams;return q.has('onboarding')||q.has('onbaording')||storage.getItem('still:flag:onboarding')==='true';}
 
 export const ONBOARDING_MODEL='gpt-5.6-luna' as const;
-export const ONBOARDING_VERSION=4;
+export const ONBOARDING_VERSION=5;
 export type OnboardingContext={
  surface?:'main'|'more'|'formats'|'workflow';
  basis?:Record<string,'next-best'|'model-ranked'|'page-default'|'local'|'alternative'>;

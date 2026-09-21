@@ -23,7 +23,7 @@ test('Still form workflows use one responsive toolbar with their original comman
    const raw=[['ProjectCreated',{project_id:'p',name:'Quiet hour'}],['DocumentCreated',{project_id:'p',document_id:'d',title:'Observatory'}],['BlockCreated',{project_id:'p',document_id:'d',block_id:'b',type:'subject',handle:'Subject',position:'1',properties:{text:'The subject',weight:1}}],['BlockCreated',{project_id:'p',document_id:'d',block_id:'x',type:'style',handle:'Style',position:'2',properties:{text:'Quiet',weight:1}}],['DocumentCreated',{project_id:'p',document_id:'d2',title:'Another document'}],['BlockCreated',{project_id:'p',document_id:'d2',block_id:'b2',type:'subject',handle:'Other idea',position:'1',properties:{text:'Another idea',weight:1}}]];
    const events=raw.map(([type,payload],i)=>({type,payload,sequence:i+1,eventId:'e'+i,streamId:'test',occurredAt:'2026-09-21T12:00:00Z',actor:'user'}));
    const app=window.app=new Fixture();window.writes=[];
-   app.loading=false;app.mode='new-project';app.client={epoch:1,head:events.length,scopeKey:'test',events,content:{},jobs:[],abilities:{author:true,generate:false,projectCreate:true,formats:[]},session:{policy:{accepted:true},projects:[]},position:{projectId:'p',documentId:'d',blockId:'b',outputId:'',view:'document',intent:'',recentActions:[]},projection:foldEvents(events,Infinity,'d','p'),verifyScope:async()=>()=>{},refresh:async()=>{},append:async events=>window.writes.push(events),createProject:async(name,body)=>{window.created={name,body};return {projectId:'created',documentId:'new'};}};
+   app.loading=false;app.mode='new-project';app.client={epoch:1,head:events.length,scopeKey:'test',events,content:{},jobs:[],abilities:{author:true,generate:false,projectCreate:true,formats:[]},session:{policy:{accepted:true},projects:[]},position:{projectId:'p',documentId:'d',blockId:'b',outputId:'',view:'document',intent:'',recentActions:[]},projection:foldEvents(events,Infinity,'d','p'),verifyScope:async()=>()=>{},refresh:async()=>{},append:async events=>window.writes.push(events),createProject:async name=>{window.created={name};return {projectId:'created'};}};
    document.body.append(app);await app.updateComplete;
   });
   const dock=page.locator('.action-dock'),button=name=>dock.getByRole('button',{name,exact:true});
@@ -34,8 +34,8 @@ test('Still form workflows use one responsive toolbar with their original comman
     assert.equal(await button(value==='intent'?'Suggest actions':value==='workspaces'?'Open':value==='reuse'?'Copy idea':'Save').count(),1,value);
    }
    await mode('new-project');await button('Save').click();assert.equal(await page.evaluate(()=>window.app.error),'Enter a name.');assert.equal(await page.evaluate(()=>window.created),undefined);
-   await page.getByRole('textbox',{name:'Name',exact:true}).fill('A new project');await page.getByRole('textbox',{name:'Idea',exact:true}).fill('A first idea');
-   await button('Save').focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>!!window.created);assert.deepEqual(await page.evaluate(()=>window.created),{name:'A new project',body:'A first idea'});
+   await page.getByRole('textbox',{name:'Name',exact:true}).fill('A new project');assert.equal(await page.getByRole('textbox',{name:'Idea',exact:true}).count(),0);
+   await button('Save').focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>!!window.created);assert.deepEqual(await page.evaluate(()=>window.created),{name:'A new project'});assert.deepEqual(await page.evaluate(()=>window.destination),{view:'documents',projectId:'created',documentId:''});
    await mode('rename');await page.evaluate(()=>{window.app.client.hasUnconfirmedWrite=true;window.app.changed();});await button('Check save').waitFor();await button('Back').click();assert.equal(await page.evaluate(()=>window.app.mode),'');
   });
   await t.test('creation submits the form from Save or Enter, preserving multiline and IME editing',async()=>{
@@ -51,8 +51,10 @@ test('Still form workflows use one responsive toolbar with their original comman
     });
     assert.equal(await dock.locator('en-button[form="still-create-form"]').count(),1);
     const name=page.getByRole('textbox',{name:'Name',exact:true}),idea=page.getByRole('textbox',{name:'Idea',exact:true});
-    await name.fill('A name');await idea.fill('First line');await idea.press('Enter');
-    assert.equal(await page.evaluate(()=>window.submits),0);assert.match(await idea.inputValue(),/\n/);
+    await name.fill('A name');
+    if(value==='new-project')assert.equal(await idea.count(),0);
+    else {await idea.fill('First line');await idea.press('Enter');assert.match(await idea.inputValue(),/\n/);}
+    assert.equal(await page.evaluate(()=>window.submits),0);
     await name.evaluate(el=>{el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,composed:true}));el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',repeat:true,bubbles:true,composed:true}));});
     assert.equal(await page.evaluate(()=>window.submits),0);
     if(value==='new-document')await button('Save').click();else await name.press('Enter');
@@ -103,7 +105,7 @@ test('Still form workflows use one responsive toolbar with their original comman
     const tip=tips.find(t=>document.getElementById(t.getAttribute('for'))?.textContent.trim()===label);return tip?.textContent.trim();
    },label);
    for(const [value,save,back] of [
-    ['new-project','Create this project and open its first document.','Return without creating a new project.'],
+    ['new-project','Create this project. Add documents when you’re ready.','Return without creating a new project.'],
     ['new-document','Create this document in the current project and open it.','Return without creating a new document.'],
     ['add-context','Add this idea to the document so you can use it in your work.','Return without adding a new idea.'],
     ['rename','Save the document’s new name.','Return without changing the document’s name.'],
@@ -113,6 +115,19 @@ test('Still form workflows use one responsive toolbar with their original comman
    await page.evaluate(()=>{window.app.client.hasUnconfirmedWrite=true;window.app.changed();});await button('Check save').waitFor();assert.match(await help('Check save'),/earlier save completed/);assert.match(await help('Back'),/still unconfirmed/);
    await mode('compose');await button('Continue').click();await button('Preview').waitFor();assert.equal(await help('Back'),'Return to choosing the ideas in this group.');
    await page.evaluate(()=>{window.app.onboarding=false;delete window.app.onboardingHelp.help;window.app.changed();});
+  });
+  await t.test('empty projects invite document creation even when model suggestions omit it',async()=>{
+   await page.evaluate(()=>{
+    const app=window.app;app.mode='';app.client.position={...app.client.position,view:'documents',documentId:'',blockId:''};
+    app.client.projection={...app.client.projection,documents:[],blocks:[]};
+    app.suggestions=[];app.rankedActions=[];app.moreOpen=false;app.changed();
+   });
+   await button('New document').waitFor();
+   assert.equal(await dock.locator('en-button[variant="primary"]').textContent(),'New document');
+   assert.match(await page.locator('main').textContent(),/Create a document to collect your ideas/);
+   await page.evaluate(()=>{window.app.client.abilities.author=false;window.app.changed();});
+   await page.waitForFunction(()=>!Array.from(document.querySelectorAll('.action-dock en-button')).some(b=>b.textContent.trim()==='New document'));
+   assert.match(await page.locator('main').textContent(),/No documents yet/);
   });
   assert.deepEqual(errors,[]);
  }finally{await browser?.close();await server.close();}

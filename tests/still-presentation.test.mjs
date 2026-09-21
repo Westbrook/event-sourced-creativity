@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { presentActions, presentEvidence } from '../src/still/presentation.ts';
+import { presentActions, presentEvidence, presentToolbar } from '../src/still/presentation.ts';
 const score=(value,confidence=.75)=>({type:'score',score:value,confidence,probabilities:{0:0,1:0,2:3-value,3:value-2}});
 const leads=rows=>Object.entries(rows).filter(([,v])=>v.variant==='primary').map(([id])=>id);
 test('moderate clear evidence earns one primary, even when policy placed it second',()=>{
@@ -46,4 +46,18 @@ test('toolbar alternatives are secondary and More never promotes a primary',asyn
   const more=presentToolbar(['image','video'],evidence,{more:true});
   assert.deepEqual(leads(more),[]);assert.ok(Object.values(more).every(row=>row.variant==='secondary'&&row.size==='medium'));
   assert.deepEqual(leads(presentToolbar(['new-project'],{},{view:'projects',more:true})),[]);
+});
+
+
+test('empty projects emphasize the first document, without model confidence or a second-page primary',()=>{
+ const ids=['projects','new-document'],evidence={projects:{score:3,confidence:1,usefulProbability:1}};
+ const options={view:'documents',emptyProject:true,nextBest:'projects'};
+ const result=presentToolbar(ids,evidence,options);
+ assert.equal(result['new-document'].variant,'primary');
+ assert.equal(result['new-document'].confidence,undefined);
+ assert.match(result['new-document'].reason,/Page default/);
+ assert.equal(result.projects.variant,'secondary');
+ assert.equal(presentToolbar(ids,evidence,{...options,more:true})['new-document'].variant,'secondary');
+ assert.equal(presentToolbar(ids,{}, {view:'documents',emptyProject:false})['new-document'].variant,'secondary');
+ assert.equal(presentToolbar(['projects'],{},options)['new-document'],undefined);
 });

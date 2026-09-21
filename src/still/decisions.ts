@@ -8,7 +8,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-15';
+export const POLICY_VERSION = 'still-16';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback; generation?:GenerationDecisionContext };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -17,8 +17,8 @@ export const ACTIONS: readonly Action[] = [
   { id: 'generate-again', label: 'Make new', group: 'make', description: 'Explicitly start a separate paid generation in the original format with current document context. This does not resume the original and may duplicate a charge when acceptance is unknown.' },
   { id: 'projects', label: 'View projects', group: 'navigate', description: 'Browse and resume an accessible creative project.' },
   { id: 'documents', label: 'View documents', group: 'navigate', description: 'Browse documents in this project.' },
-  { id: 'new-project', label: 'New project', group: 'write', description: 'Create a new shared Forma project from a name and an idea.' },
-  { id: 'new-document', label: 'New document', group: 'write', description: 'Create another document in the current project.' },
+  { id: 'new-project', label: 'New project', group: 'write', description: 'Create a named Forma project. Documents and ideas are added separately.' },
+  { id: 'new-document', label: 'New document', group: 'write', description: 'Create a document in the current project, optionally starting with an idea.' },
   { id: 'add-context', label: 'Add idea', group: 'context', description: 'Write an authored context block that will guide the creative work.' },
   { id: 'edit-block', label: 'Edit idea', group: 'write', description: 'Edit the selected context block without replacing other work.' },
   { id: 'split-context', label: 'Split idea', group: 'context', description: 'Review a cost, then extract independently useful decisions into editable child blocks while keeping their source and relationships.' },
