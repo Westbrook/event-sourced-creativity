@@ -202,3 +202,11 @@ enrollment or treating extracted content as independent personal preference.
 [Bounded field-history recall and final-delivery expiry](forma-memory-field-completion-2026-09-20.md#bounded-history-and-final-delivery--2026-09-21) now independently certify older saved field suggestions and recheck private delivery leases after serialization. The actual endpoint and task/quote/retrieve callers are covered; this does not replace newly generated completions or the other native workstreams.
 
 [Canvas selected-document guidance](forma-memory-semantic-assistant-2026-09-20.md#canvas-selected-document-qualification--2026-09-21) now has native personal/shared execution, changed-selection and withdrawal evidence. The selected enrolled document owns this Memory; Canvas enrollment and creative-output/live-preview remain separate native requirements.
+
+[Fresh exact-field generation](forma-memory-fresh-field-generation-2026-09-21.md)
+now joins the actual localized Document editor to a saved-field-bound free request,
+Memory-specific cost review, paid generation, target-filtered private replacement,
+explicit apply and non-destructive withdrawal. Longer-conversation final read proofs
+are split within the same transaction for native D1 parameter/depth bounds.
+Automatic pre-authorized background completion, broader resources, independently
+authorized reuse and the remaining native rows are still assigned.

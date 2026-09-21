@@ -14609,7 +14609,7 @@
           "tagName": "forma-memory-field-completion",
           "customElement": true,
           "summary": "Memory field completion application interface.",
-          "description": "Inline reuse of an already approved assistant result. This never captures a\nkeystroke, changes an unsent draft, starts a model request or auto-accepts.",
+          "description": "Inline saved-result reuse and explicit fresh-generation review. Neither\naction captures keystrokes, changes drafts, buys generation or auto-accepts.",
           "superclass": {
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
@@ -14691,6 +14691,13 @@
               "name": "forma-memory-field-applied",
               "type": {
                 "text": "CustomEvent<{ blockId: string; eventId: string; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "forma-memory-field-generate",
+              "type": {
+                "text": "CustomEvent<null>"
               },
               "description": "Bubbles and crosses component boundaries."
             }

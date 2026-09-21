@@ -1,3 +1,4 @@
+import { parseMemoryFieldRequest } from '../src/model/memory-field-request.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { personalMemoryMessage } from '../src/components/design-system/locales/personal-memory-messages.ts';
 import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
@@ -165,7 +166,7 @@ function fixture(t, locale = "en") {
   // Direct eval runs the actual production source in this lexical fixture scope.
   // Keep its otherwise implicit dependencies explicit without calling them.
   void [
-    parseMemoryEditReview, personalMemoryMessage, createMemoryElapsed, memoryPrivacyMutationActive, assistantInteractionForSurface, withDocumentInRoute, contextConsentAction, ensureNativeModalDialog,
+    parseMemoryFieldRequest, parseMemoryEditReview, personalMemoryMessage, createMemoryElapsed, memoryPrivacyMutationActive, assistantInteractionForSurface, withDocumentInRoute, contextConsentAction, ensureNativeModalDialog,
     document, location, requestAnimationFrame, cancelAnimationFrame, matchMedia, icon,
     consequentialPreview, assistantApprovedRequestCanRun, assistantApprovedRequestCanStop, Base,
     nextActionFacts, creativeNextActions, renderLifecycleNextActionCards, openCreativeNextActionDestination,
@@ -173,6 +174,7 @@ function fixture(t, locale = "en") {
   const Host = eval(stripTypeScriptTypes(classText(hostSyntax, "FormaCreativeAssistant", "Base", `
     async openForTest() { this.#open = true; return this.#load(); }
     closeForTest() { this.#open = false; this.#specialist = null; this.#reviewRevision += 1; }
+    fieldGenerationForTest(detail) { return this.#fieldGeneration({detail}); }
     sendForTest(message) { return this.#send({ message }); }
     loadForTest() { return this.#load(); }
     retryForTest() { return this.#deliverGuidance(); }
@@ -3201,4 +3203,24 @@ test('Memory authored edit UI: late success after withdrawal does not resurrect 
  const applying=f.host.actionForTest(control),call=await f.take();f.host.retireSemanticForTest();
  await f.reply(call,{status:'applied',executionId:'approval-a',blockId:'block-a',eventId:'authored-event'});await applying;
  assert.equal(refreshes,0);assert.equal(f.host.snapshotForTest().specialist.editReview,undefined);assert.doesNotMatch(f.render().markup,/PRIVATE_/u);
+});
+
+for(const locale of ['en','ar'])test('Memory field generation host: editor starts only free saved-target review '+locale,async t=>{
+ const f=fixture(t,locale);await f.open([]);let current=true;
+ const intent={projectId:'project-a',documentId:'doc-a',target:{blockId:'block-a',field:'text',revision:1,textHash:'a'.repeat(64)},current:()=>current,accepted:false};
+ f.host.fieldGenerationForTest(intent);assert.equal(intent.accepted,true);
+ const sent=await f.take();assert.deepEqual(sent.body.fieldTarget,intent.target);assert.equal(sent.body.message,ASSISTANT_MESSAGES[locale]['assistant.specialist.fieldGenerationPrompt']);
+ const turn=sampleTurn(sent.body.turnId,sent.body.message);turn.originalRequest.locale=locale;turn.originalRequest.fieldTarget=intent.target;
+ await f.reply(sent,{context:f.context,turn});const quote=await f.take();assert.deepEqual(quote.body,{action:'quote',turnId:turn.id,memory:'saved'});
+ const result=specialistResponse();result.turnId=turn.id;Object.assign(result.originalRequest,{turnId:turn.id,locale,fieldTarget:intent.target});
+ result.memory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+30000).toISOString(),independentEvidence:false};
+ await f.reply(quote,result);assert.equal(f.calls.length,3);assert.equal(f.host.snapshotForTest().specialist.memoryRequested,true);
+ current=false;await f.host.requestForTest('execute');assert.equal(f.calls.length,3);assert.equal(f.host.snapshotForTest().specialist.notice,'unavailable');
+});
+for(const boundary of ['draft','project','document','hidden','embedded','duplicate'])test('Memory field generation host: ignores unavailable initiating editor '+boundary,async t=>{
+ const f=fixture(t);await f.open([]);
+ const intent={projectId:'project-a',documentId:'doc-a',target:{blockId:'block-a',field:'text',revision:1,textHash:'a'.repeat(64)},current:()=>boundary!=='draft',accepted:boundary==='duplicate'};
+ if(boundary==='project')intent.projectId='other';if(boundary==='document')intent.documentId='other';if(boundary==='embedded')f.host.embedded=true;
+ if(boundary==='hidden')f.host.isConnected=false;
+ f.host.fieldGenerationForTest(intent);assert.equal(f.calls.length,1);assert.equal(intent.accepted,boundary==='duplicate');
 });

@@ -1,3 +1,4 @@
+import { parseMemoryFieldRequest,memoryFieldRequestCurrent } from '../src/model/memory-field-request.ts';
 import { readNativeControlBody } from "./native-control-body.ts";
 import { parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
@@ -1780,9 +1781,13 @@ export async function handleAssistant(request: Request, env: WorkerEnv, executio
     if(parsed.status!=="parsed")return json({error:parsed.status==="too-large"?"assistant_request_too_large":"assistant_request_invalid"},parsed.status==="too-large"?413:400);
     body=parsed.value;
   }
+  const fieldTarget=Object.hasOwn(body,'fieldTarget')?parseMemoryFieldRequest(body.fieldTarget):null;
+  if(Object.hasOwn(body,'fieldTarget')&&(!fieldTarget||Object.hasOwn(body,'memoryMode')))return json({error:'assistant_field_request_invalid'},400);
   const source=new AssistantContextReadWitness(env);
   const authorization=await authorizeAssistant(request,env,source);if(authorization.response||!authorization.authorized)return authorization.response!;
-  const actor=authorization.authorized;await ensureAssistantSchema(env);const state=await assistantContext(request,env,actor,source);
+  const actor=authorization.authorized;await ensureAssistantSchema(env);const state=await assistantContext(request,env,actor,source,fieldTarget?.blockId);
+  if(fieldTarget&&(!actor.surface.documentId||actor.surface.canvasId||!assistantActionsEnabled(env,actor)||!liveMemoryEnabled(env,actor.principal.userId)
+    ||!await memoryFieldRequestCurrent(state.context,fieldTarget)))return json({error:'assistant_field_unavailable',noAutomaticRetry:true},409);
   if(request.method==="GET"){await resumeAssistantTasks(request,env,actor,execution);return certifiedAssistantTaskFeed(env,actor,assistantScopeKey(actor),state,await recentAssistantTasks(env,actor));}
   const turnId=typeof body.turnId==="string"?body.turnId.trim():"",message=typeof body.message==="string"?body.message.trim():"";
   if(!/^[a-zA-Z0-9_-]{8,80}$/u.test(turnId))return json({error:"assistant_turn_invalid"},400);
@@ -1794,7 +1799,7 @@ export async function handleAssistant(request: Request, env: WorkerEnv, executio
   const selection=body.memoryMode==="recall"?await prepareNativeMemorySelection(env,memoryPrepared):undefined;
   if(body.memoryMode==="recall"&&!selection)return json({error:"assistant_memory_unavailable",noAutomaticRetry:true},409);
   const selectionOptions=selection?{memorySelection:selection}:{};
-  const selectedTurn=(turn:AssistantTurn)=>selection?turn.memory?.version===(selection.mode==="structured"?"native-memory-answer-v2":"native-memory-answer-v1"):!turn.memory;
+  const selectedTurn=(turn:AssistantTurn)=>JSON.stringify((turn.originalRequest as {fieldTarget?:unknown}|undefined)?.fieldTarget??null)===JSON.stringify(fieldTarget)&& (selection?turn.memory?.version===(selection.mode==="structured"?"native-memory-answer-v2":"native-memory-answer-v1"):!turn.memory);
   const recallConflict=(turn:AssistantTurn)=>{
     const changedProtocol=turn.user===message&&Boolean(turn.memory)===Boolean(selection)&&Boolean(selection);
     return json({error:changedProtocol?"assistant_memory_unavailable":"assistant_turn_conflict",...(changedProtocol?{noAutomaticRetry:true}:{})},409);
@@ -1832,9 +1837,9 @@ export async function handleAssistant(request: Request, env: WorkerEnv, executio
     return{statements:()=>nativeStructuredConversationContextPrecommitStatements(env,value.proof)??[],
       matches:(results:readonly D1Result<Record<string,unknown>>[])=>nativeStructuredConversationContextMatches(env,value,results)};
   })():memory?.source;
-  const actions=!memory&&assistantActionsEnabled(env,actor)?preparedAssistantActions(message,generationContext,turnId):[];
-  const actionProposals:AssistantProposal[]=actions.map(({id,turnId:sourceTurn,key,summary,action})=>({id,turnId:sourceTurn,key,summary,kind:action.kind})),proposal=memory?null:actionProposals[0]??proposalFor(generationContext,turnId,actor.canPropose);
-  const originalRequest={...savedAssistantRequest(request,actor,turnId,responseLocale(body.locale)),...(memory?{memoryMode:"recall"}:{})},requestJson=JSON.stringify(originalRequest);
+  const actions=!memory&&!fieldTarget&&assistantActionsEnabled(env,actor)?preparedAssistantActions(message,generationContext,turnId):[];
+  const actionProposals:AssistantProposal[]=actions.map(({id,turnId:sourceTurn,key,summary,action})=>({id,turnId:sourceTurn,key,summary,kind:action.kind})),proposal=memory||fieldTarget?null:actionProposals[0]??proposalFor(generationContext,turnId,actor.canPropose);
+  const originalRequest={...savedAssistantRequest(request,actor,turnId,responseLocale(body.locale)),...(memory?{memoryMode:"recall"}:{}),...(fieldTarget?{fieldTarget}:{})},requestJson=JSON.stringify(originalRequest);
   const expected={user:message,reply:localizedAnswer(reply,body.locale),requestJson,presentation:reply,actions,proposal};
   let prepared:Awaited<ReturnType<typeof prepareAssistantTurn>>|undefined;
   try{

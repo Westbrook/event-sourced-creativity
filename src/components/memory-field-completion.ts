@@ -1,3 +1,4 @@
+import { memoryFieldTextHash,type MemoryFieldRequest } from '../model/memory-field-request.ts';
 import { html,nothing } from 'lit';
 import { FormaElement } from './forma-element.ts';
 import type { CreativeBlock } from '../model/events.ts';
@@ -8,9 +9,10 @@ import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts
 import { readMemoryFieldResponse } from '../state/memory-field-response.ts';
 import type { CapturedSourceOwnership } from '../state/store.ts';
 
+export type MemoryFieldGenerationIntent={projectId:string;documentId:string;target:MemoryFieldRequest;current:()=>boolean;accepted:boolean};
 type ReadOwner={controller:AbortController;source:CapturedSourceOwnership;identity:string};
-/** Inline reuse of an already approved assistant result. This never captures a
- * keystroke, changes an unsent draft, starts a model request or auto-accepts. */
+/** Inline saved-result reuse and explicit fresh-generation review. Neither
+ * action captures keystrokes, changes drafts, buys generation or auto-accepts. */
 export class MemoryFieldCompletion extends FormaElement{
  static override properties={block:{attribute:false},draft:{attribute:false},composing:{type:Boolean},disabled:{type:Boolean},fieldCurrent:{attribute:false}};
  block!:CreativeBlock;draft='';composing=false;disabled=false;fieldCurrent:()=>boolean=()=>false;
@@ -24,7 +26,7 @@ export class MemoryFieldCompletion extends FormaElement{
    &&this.ownerDocument.visibilityState==='visible'&&session?.assistant?.phase==='actions'&&this.block?.scope==='document'&&!this.block.locked&&!this.block.removed
    &&this.block.documentId===projection.documentId&&this.block.projectId===projection.projectId&&current&&!current.locked&&!current.removed
    &&current.sourceEvents.length===this.block.sourceEvents.length&&current.properties.text===this.block.properties.text
-   &&this.draft===String(this.block.properties.text??''));
+   &&this.draft===String(this.block.properties.text??'')&&Array.from(this.draft).length<=1200);
  }
  #current(owner:ReadOwner){return this.#owner===owner&&!owner.controller.signal.aborted&&this.#eligible()&&this.#identity()===owner.identity&&this.store.sourceOwnershipActive(owner.source);}
  #clear(){this.#generation++;this.#owner?.controller.abort();this.#owner=null;this.#view=null;this.#clock?.retire();this.#clock=null;clearTimeout(this.#timer);this.#timer=undefined;this.#busy=false;}
@@ -38,6 +40,19 @@ export class MemoryFieldCompletion extends FormaElement{
  protected override willUpdate(){if(this.#owner&&!this.#current(this.#owner))this.#clear();this.#expire();}
  #expire(){if(this.#clock&&this.#duration-this.#clock.elapsed({wall:Date.now(),monotonic:performance.now()})<=0){this.#clear();this.#notice=this.#t('fieldExpired');}}
  #url(path:string){const query=new URLSearchParams({route:this.store.route.get(),projectId:this.block.projectId});return path+'?'+query;}
+ async #generate(){
+  if(this.#busy||!this.#eligible())return;this.#clear();this.#notice='';
+  const generation=this.#generation,identity=this.#identity(),target=this.#target();
+  const current=()=>generation===this.#generation&&this.#eligible()&&identity===this.#identity();
+  try{
+   const textHash=await memoryFieldTextHash(target.text);if(!current())return;
+   const detail:MemoryFieldGenerationIntent={projectId:target.projectId,documentId:target.documentId,
+    target:{blockId:target.blockId,field:'text',revision:target.revision,textHash},current,accepted:false};
+   window.dispatchEvent(new CustomEvent('forma-memory-field-generate',{detail}));
+   this.#notice=this.#t(detail.accepted?'fieldGenerationReview':'fieldUnavailable');
+  }catch{if(current())this.#notice=this.#t('fieldUnavailable');}
+  this.requestUpdate();
+ }
  async #read(){
   if(this.#busy||!this.#eligible())return;this.#clear();this.#notice='';
   const source=this.store.captureSourceOwnership();if(!source)return;
@@ -85,6 +100,7 @@ export class MemoryFieldCompletion extends FormaElement{
   const view=this.#view;
   return html`<aside class="memory-field-completion" aria-label=${this.#t('fieldTitle')} @keydown=${(event:KeyboardEvent)=>{if(event.key==='Escape'&&!event.isComposing&&(view||this.#busy)){event.preventDefault();event.stopPropagation();this.retire();}}}>
    <button type="button" class="button ghost compact" ?disabled=${this.#busy||!this.#eligible()} @click=${()=>void this.#read()}>${this.#t('fieldCheck')}</button>
+   <button type="button" class="button ghost compact" ?disabled=${this.#busy||!this.#eligible()} @click=${()=>void this.#generate()}>${this.#t('fieldGenerate')}</button>
    ${this.#notice?html`<p role="status">${this.#notice}</p>`:nothing}
    ${view?html`<p>${this.#t('fieldDetail')}</p><p dir="auto" style="white-space:pre-wrap;overflow-wrap:anywhere">${view.review.edits[0]!.suggestedText}</p>
     <p>${this.#t('editPublishDetail')}</p><button type="button" class="button secondary compact" ?disabled=${this.#busy||!this.#eligible()} @click=${()=>void this.#apply()}>${this.#t('editApply')}</button>

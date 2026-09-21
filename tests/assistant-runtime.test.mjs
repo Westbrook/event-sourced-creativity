@@ -17986,3 +17986,71 @@ test('Memory original ingress: maximum escaped multilingual text remains a preci
  assert.equal(response.status,201,JSON.stringify(result));assert.equal(result.turn.user,text);assert.equal(state.calls.length,0);
  const retained=state.sqlite.prepare("SELECT content FROM private_content WHERE content_id=(SELECT user_content_ref FROM assistant_turns WHERE turn_id='memory-original-escaped')").get();assert.equal(retained.content,text);
 });
+
+for(const shared of [false,true])for(const native of [false,true])test('Memory field generation: exact saved target creates a free turn, separately approved private replacement '+shared+'/'+native,{timeout:120000},async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared,assets:true}),projectId=state.current().project_id,documentId=state.recallTarget.documentId;
+ state.env.FORMA_ASSISTANT_ACTION_USER_IDS=state.current().actor_user_id;
+ const {memoryFieldTextHash}=await import('../src/model/memory-field-request.ts');
+ for(const blockId of ['fresh-field','other-field']){
+  const response=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:projectId,document_id:documentId,block_id:blockId,scope:'document',type:'direction',properties:{text:blockId+' original'}}}},state.owner));assert.equal(response.status,200,await response.clone().text());
+ }
+ const fieldTarget={blockId:'fresh-field',field:'text',revision:1,textHash:await memoryFieldTextHash('fresh-field original')},turnId='fresh-memory-field-turn';
+ const before=adaptiveReentryFinancialState(state),turn=await specialistFreeTurn(state,turnId,'Suggest a replacement for this saved field.',{...state.semanticOptions,fieldTarget});
+ assert.deepEqual(turn.originalRequest.fieldTarget,fieldTarget);assert.deepEqual(turn.proposals??[],[]);assert.equal(turn.proposal,null);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+ const refused=await specialistProtocolRequest(state,{action:'quote',turnId},state.semanticOptions);assert.equal(refused.status,409);assert.equal((await refused.json()).error,'assistant_field_memory_required');
+ if(native){
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+  const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['FreshField'],
+   script:"export default {fetch(){return new Response('Synthetic only',{status:404});}};",outboundService(){throw Error('No external requests');}});
+  t.after(()=>mf.dispose());const db=await mf.getD1Database('FreshField');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+  state.env.DB={prepare:sql=>db.prepare(sql),batch:async statements=>{try{return await db.batch(statements);}catch(error){state.controls.lastDatabaseError=String(error);throw error;}},exec:sql=>db.exec(sql)};
+ }
+ const quoted=await specialistProtocolRequest(state,{action:'quote',turnId,memory:'saved'},state.semanticOptions),review=await quoted.json();assert.equal(quoted.status,200,JSON.stringify(review));
+ assert.deepEqual(review.originalRequest.fieldTarget,fieldTarget);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+ const original=globalThis.fetch;let calls=0;
+ globalThis.fetch=async(url,init)=>{
+  if(native&&String(url)!=='https://api.openai.com/v1/responses')return original(url,init);
+  assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;const request=JSON.parse(init.body),input=JSON.parse(request.input);
+  const target=input.blocks.find(block=>block.text==='fresh-field original').id,other=input.blocks.find(block=>block.text==='other-field original').id;
+  assert.deepEqual(input.field_request,{target_block_id:target,field:'text',mode:'suggest-replacement-for-review'});assert.ok(input.memory_evidence);
+  assert.doesNotMatch(JSON.stringify(input.field_request),/fresh-field|textHash/);
+  return specialistRawResponse(request,{output:[{type:'message',id:'field-generation-message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Review a suggested replacement.',actions:[target,other].map(id=>({kind:'context.edit',block_type:'direction',target_block_id:id,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:'PRIVATE FRESH '+id}))})}]}]});
+ };t.after(()=>{globalThis.fetch=original;});
+ const executed=await specialistExecute(state,review,state.semanticOptions);assert.equal(executed.status,202,await executed.clone().text());await state.drainBackground();
+ const retrieved=await specialistRetrieve(state,review,state.semanticOptions),result=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(result));assert.equal(calls,1);assert.deepEqual(result.result.actions,[]);
+ assert.equal(result.result.editReview.edits.length,1);assert.equal(result.result.editReview.edits[0].blockId,'fresh-field');
+ const endpointPath=endpoint(state.semanticOptions.route,projectId).replace('/api/assistant?','/api/assistant/field-suggestion?')+'&blockId=fresh-field&locale=en';
+ const suggestionResponse=await state.request(endpointPath,{headers:state.owner??{}}),suggestion=await suggestionResponse.json();assert.equal(suggestionResponse.status,200,JSON.stringify(suggestion)+" SQL: "+state.controls.lastDatabaseError);assert.ok(suggestion.suggestion,JSON.stringify(suggestion));assert.equal(suggestion.suggestion.review.edits[0].blockId,'fresh-field');assert.equal(calls,1);
+ const {memoryEditApprovalHash}=await import('../src/model/memory-edit-review.ts');
+ const applied=await specialistProtocolRequest(state,{action:'apply-edit',turnId,executionId:review.executionId,approvedBindingHash:review.quote.bindingHash,
+  blockId:'fresh-field',approvedEditHash:await memoryEditApprovalHash(result.result.editReview,'fresh-field'),publishToDocument:true},state.semanticOptions);
+ assert.equal(applied.status,200,await applied.clone().text());const publication=await applied.json();
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ assert.equal((await specialistRetrieve(state,review,state.semanticOptions)).status,404);assert.equal(calls,1);
+ const authored=await state.env.DB.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').bind(publication.eventId).first();
+ assert.equal(JSON.parse(authored.private_json).new_value,result.result.editReview.edits[0].suggestedText);
+});
+for(const fault of ['revision','text','extra','memory-mode','disabled','locked'])test('Memory field generation: rejects '+fault+' before creating a turn',async t=>{
+ const state=await semanticPaidConsumerFixture(t),projectId=state.current().project_id,documentId=state.recallTarget.documentId;state.env.FORMA_ASSISTANT_ACTION_USER_IDS=state.current().actor_user_id;
+ const {memoryFieldTextHash}=await import('../src/model/memory-field-request.ts');
+ assert.equal((await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:projectId,document_id:documentId,block_id:'field-negative',scope:'document',type:'direction',properties:{text:'Exact text'},locked:fault==='locked'}}},state.owner))).status,200);
+ if(fault==='locked')assert.equal((await state.request('/api/events',json({action:'append',event:{type:'BlockPropertyEdited',payload:{project_id:projectId,document_id:documentId,block_id:'field-negative',property_path:'locked',old_value:false,new_value:true}}},state.owner))).status,200);
+ const fieldTarget={blockId:'field-negative',field:'text',revision:1,textHash:await memoryFieldTextHash('Exact text')};
+ if(fault==='revision')fieldTarget.revision=2;if(fault==='text')fieldTarget.textHash=await memoryFieldTextHash('local draft');if(fault==='extra')fieldTarget.text='local draft';if(fault==='disabled')state.env.FORMA_MEMORY_ENABLED='false';
+ const before=adaptiveReentryFinancialState(state),count=state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_turns').get().n;
+ const response=await state.request(endpoint(state.semanticOptions.route,projectId),json({turnId:'negative-field-request',message:'Suggest a replacement.',fieldTarget,...(fault==='memory-mode'?{memoryMode:'recall'}:{})},state.owner));
+ assert.ok(response.status>=400,await response.clone().text());assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM assistant_turns').get().n,count);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+for(const shared of [false,true])for(const phase of ['quote','execute'])test('Memory field generation race: exact original field change blocks '+phase+' '+shared,async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),projectId=state.current().project_id,documentId=state.recallTarget.documentId;state.env.FORMA_ASSISTANT_ACTION_USER_IDS=state.current().actor_user_id;
+ const {memoryFieldTextHash}=await import('../src/model/memory-field-request.ts');
+ const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:projectId,document_id:documentId,block_id:'race-field',scope:'document',type:'direction',properties:{text:'Exact saved original'}}}},state.owner));assert.equal(created.status,200);
+ const fieldTarget={blockId:'race-field',field:'text',revision:1,textHash:await memoryFieldTextHash('Exact saved original')},turnId='race-field-generation';
+ await specialistFreeTurn(state,turnId,'Suggest a replacement.',{...state.semanticOptions,fieldTarget});
+ let review;if(phase==='execute'){const quoted=await specialistProtocolRequest(state,{action:'quote',turnId,memory:'saved'},state.semanticOptions);review=await quoted.json();assert.equal(quoted.status,200,JSON.stringify(review));}
+ // Deliberately change private bytes without advancing the public revision.
+ state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Concurrent source replacement') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')='race-field')").run();
+ const before=adaptiveReentryFinancialState(state),response=phase==='quote'?await specialistProtocolRequest(state,{action:'quote',turnId,memory:'saved'},state.semanticOptions):await specialistExecute(state,review,state.semanticOptions);
+ assert.equal(response.status,409,await response.clone().text());assert.equal((await response.json()).error,'assistant_field_source_changed');assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});

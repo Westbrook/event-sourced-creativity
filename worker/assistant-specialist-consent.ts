@@ -1,3 +1,4 @@
+import { parseMemoryFieldRequest,memoryFieldRequestCurrent,type MemoryFieldRequest } from '../src/model/memory-field-request.ts';
 import { prepareAuthoringSourceProof,packAuthoringSourceProof } from './context-authoring-source.ts';
 import { memoryAssistantEditReview } from './memory-assistant-edits.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview,type MemoryEditReview } from '../src/model/memory-edit-review.ts';
@@ -53,7 +54,7 @@ export type SpecialistTaskRecord={
   task_kind:string;selected_model:string;token_reservation_id:string;cost_reservation_id:string;estimated_microusd:number;maximum_input_tokens:number;maximum_output_tokens:number;locale:string;permission_epoch:string;
   status:string;error_code:string|null;lease_expires_at:string|null;provider_submitted:number;result_json:string|null;created_at:string;started_at:string|null;
 };
-export type SpecialistOriginalRequest={schema:1;turnId:string;route:string;projectId:string|null;documentId:string|null;canvasId:string|null;selectedItemIds:string[];locale:string};
+export type SpecialistOriginalRequest={fieldTarget?:MemoryFieldRequest;schema:1;turnId:string;route:string;projectId:string|null;documentId:string|null;canvasId:string|null;selectedItemIds:string[];locale:string};
 type SavedTurn={turn_id:string;scope_key:string;actor_user_id:string;organization_id:string|null;project_access_id:string|null;project_id:string|null;document_id:string|null;request_json:string;user_content_ref:string;assistant_content_ref:string;created_at:string;user_content:string;assistant_content:string};
 type ConversationEntry={turnId:string;userRef:string;answerRef:string;user:string;assistant:string};
 type SpecialistRequest={schema:1;memory?:SemanticAssistantMemoryBinding;turnId:string;scopeKey:string;originalRequest:SpecialistOriginalRequest;taskKind:AssistantTask;explicitModel:AssistantModel|null;providerRequest:Record<string,unknown>;aliases:AssistantProviderAliases;context:AssistantContext;conversation:ConversationEntry[];pricing:ConsentedTextPricing;sourceRightsValidUntil:string|null;turn:Pick<SavedTurn,"user_content_ref"|"assistant_content_ref"|"request_json"|"document_id">};
@@ -274,6 +275,7 @@ export function assistantMemoryPreparedDocument(actor:SpecialistActor):NativeMem
 function metadata(turn:SavedTurn):SpecialistOriginalRequest{
   let value:SpecialistOriginalRequest;try{value=JSON.parse(turn.request_json);}catch{fail("assistant_turn_snapshot_unavailable");}
   if(!value||value.schema!==1||value.turnId!==turn.turn_id||typeof value.route!=="string"||!Array.isArray(value.selectedItemIds)||value.selectedItemIds.some(id=>typeof id!=="string"||!id||id.length>160)||typeof value.locale!=="string"||value.projectId!==turn.project_id)fail("assistant_turn_snapshot_unavailable");
+  if(Object.hasOwn(value,'fieldTarget')&&!parseMemoryFieldRequest(value.fieldTarget))fail('assistant_field_request_invalid');
   return value;
 }
 
@@ -459,6 +461,7 @@ async function sourcePreparation(request:Request,env:WorkerEnv,actor:SpecialistA
       return{...(block.sourceEvents.some(id=>memoryAuthored.has(id))?{memoryAssisted:true as const}:{}),id:block.id,type:block.type,text:String(block.properties.text??block.properties.label??block.handle),intent:blockIntentFor(block.type,block.properties),locked:block.locked,protected:protectedAssistantDecision(block),focused:block.id===surface.focusedBlockId,version:block.sourceEvents.length,immutable,providerEligible:promptFactIsActive(block),providerVisibility:block.type==="reference"||block.type==="model3d"||block.type==="audio"&&immutable?"restricted":governed?"governed":immutable?"restricted":"editable"};}),
     relationships:relationships.map(relation=>({id:relation.id,from:relation.fromBlockId,to:relation.toBlockId,kind:relation.kind})),
     totals:{...base.totals,decisions:blocks.length,protectedDecisions:blocks.filter(block=>promptFactIsActive(block)&&protectedAssistantDecision(block)).length,unsafeRightsDecisions:0,truncatedProtectedDecisions:0},truncated:false};
+  if(original.fieldTarget&&!await memoryFieldRequestCurrent(context,original.fieldTarget))fail('assistant_field_source_changed');
   const source:AssistantProviderSource={blocks:blocks.map(block=>({id:block.id,type:block.type,properties:block.properties,locked:block.locked,intent:blockIntentFor(block.type,block.properties),document_id:block.documentId,canvas_id:block.canvasId??null,scope:block.scope})),relationships:relationships.map(relation=>({id:relation.id,from_block_id:relation.fromBlockId,to_block_id:relation.toBlockId,kind:relation.kind,properties:relation.properties}))};
   const sourceHash=await consentHash({projectId:original.projectId,documentId,canvasId:original.canvasId,title:context.documentTitle,blocks,relationships,rights:rights.map(event=>({id:event.eventId,payload:event.payload})),selected,
     ...(memoryAuthored.size?{memoryAuthoredEvents:[...memoryAuthored].sort()}: {})});
@@ -471,7 +474,8 @@ function modelEligibility(env:WorkerEnv,actor:SpecialistActor,host:AssistantSpec
   return reasons;
 }
 async function prepareQuote(request:Request,env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,turn:SavedTurn,requestedModel:unknown,useMemory=false){
-  const original=metadata(turn),conversation=await conversationWindow(env,actor,turn,useMemory);
+  const original=metadata(turn);if(original.fieldTarget&&!useMemory)fail('assistant_field_memory_required');
+  const conversation=await conversationWindow(env,actor,turn,useMemory);
   const memory=useMemory?await prepareSemanticAssistantMemory(env,actor.principal,{projectId:original.projectId!,documentId:await documentForRequest(env,actor,original),scopeKey:host.scopeKey(actor),turnId:turn.turn_id,priorTurnIds:conversation.filter(row=>row.turnId!==turn.turn_id).map(row=>row.turnId),scope:actorScope(actor)}):null;
   const memoryInput=memory?semanticAssistantMemoryInputs(env,memory):null;
   const prepared=await sourcePreparation(request,env,actor,original,conversation,undefined,memoryInput?.binding.parents),kind=host.kind(turn.user_content,prepared.context,turn.turn_id);
@@ -479,7 +483,10 @@ async function prepareQuote(request:Request,env:WorkerEnv,actor:SpecialistActor,
   const explicit=requestedModel===undefined?null:requestedModel as AssistantModel,selection=selectAssistantModel(kind,{allowedModels:ASSISTANT_MODELS,remainingMicrousd:Infinity,premiumApproved:true,...(explicit?{requestedModel:explicit}:{})});if(!selection.model)fail("assistant_model_invalid");
   const model=selection.model,snapshot=snapshotAssistantProviderInput(prepared.context,turn.user_content,prepared.source);
   const visible=new Set(Object.values(snapshot.aliases));if(prepared.context.decisionAtoms.some(atom=>atom.providerEligible&&(atom.protected||atom.locked||atom.intent==="prohibit")&&!visible.has(atom.id)))fail("assistant_protected_source_unavailable");
-  const providerRequest=await buildAssistantProviderRequest(actor.principal.userId,{model,locale:original.locale,maximumOutputTokens:OUTPUT_TOKENS,view:memoryInput?{...snapshot.view,memory_evidence:memoryInput.evidence}:snapshot.view}),bytes=new TextEncoder().encode(JSON.stringify(providerRequest)).byteLength;
+  const fieldAlias=original.fieldTarget?Object.entries(snapshot.aliases).find(([,id])=>id===original.fieldTarget!.blockId)?.[0]:undefined;
+  if(original.fieldTarget&&!fieldAlias)fail('assistant_field_source_changed');
+  const providerView={...snapshot.view,...(memoryInput?{memory_evidence:memoryInput.evidence}:{}),...(fieldAlias?{field_request:{target_block_id:fieldAlias,field:'text',mode:'suggest-replacement-for-review'}}:{})};
+  const providerRequest=await buildAssistantProviderRequest(actor.principal.userId,{model,locale:original.locale,maximumOutputTokens:OUTPUT_TOKENS,view:providerView}),bytes=new TextEncoder().encode(JSON.stringify(providerRequest)).byteLength;
   if(bytes>MAX_ASSISTANT_PROVIDER_REQUEST_BYTES)fail("assistant_source_too_large");const inputTokens=bytes+1_024,pricing=consentedTextPricing(model),maximumMicrousd=maximumConsentedTextMicrousd(pricing,inputTokens,OUTPUT_TOKENS);
   const stored:SpecialistRequest={schema:1,turnId:turn.turn_id,scopeKey:host.scopeKey(actor),originalRequest:{...original,documentId:prepared.binding.documentId},taskKind:kind,explicitModel:explicit,providerRequest,aliases:snapshot.aliases,context:prepared.context,conversation,pricing,sourceRightsValidUntil:prepared.sourceRightsValidUntil,turn:{user_content_ref:turn.user_content_ref,assistant_content_ref:turn.assistant_content_ref,request_json:turn.request_json,document_id:turn.document_id}};
   if(memory&&memoryInput){stored.memory=memoryInput.binding;semanticMemoryReads.set(stored,memory);}
@@ -556,7 +563,7 @@ async function canonicalResult(env:WorkerEnv,actor:SpecialistActor,task:Speciali
   if(result.editReview){
     const review=result.editReview,rebuilt=memoryAssistantEditReview({...result.providerResult,actions:review.edits.map(edit=>({kind:'context.edit',
       target_block_id:edit.blockId,block_type:'direction',text:edit.suggestedText,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include'}))},retained.request.context,
-      {executionId:task.task_id,turnId:retained.request.turnId,projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale});
+      {executionId:task.task_id,turnId:retained.request.turnId,projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale},retained.request.originalRequest.fieldTarget?.blockId);
     if(canonicalConsent(rebuilt)!==canonicalConsent(review))fail("assistant_result_invalid");
   }
   const exact:BudgetReservationGuard={sql:`EXISTS(SELECT 1 FROM consequential_executions execution JOIN private_content content ON content.content_id=execution.result_ref AND content.owner_id=execution.actor_user_id WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.status='completed' AND content.content_id=? AND content.kind='context-proposal' AND content.content=? AND content.redacted_at IS NULL AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${contained.sql})`,bindings:[task.task_id,actor.principal.userId,retained.row.binding_hash,row.result_ref,saved.content,...contained.bindings]};
@@ -703,7 +710,8 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
       &&entry.record.actor_user_id===actor.principal.userId&&entry.record.scope_key===scopeKey
       &&entry.record.organization_id===(scope?.organizationId??null)&&entry.record.project_access_id===(scope?.projectAccessId??null)
       &&entry.record.project_id===actor.projectId;
-    let review:AssistantCompletedReview|null=null,proof:BudgetReservationGuard={sql:"0",bindings:[]},semantic:SemanticAssistantMemory|null=null;
+    let review:AssistantCompletedReview|null=null,proof:BudgetReservationGuard={sql:"0",bindings:[]},proofParts:BudgetReservationGuard[]=[proof],semantic:SemanticAssistantMemory|null=null;
+    let splitProof=false;
     const unavailable=signed?assistantFeedRetentionProof(actor,scopeKey,entry,hash as string):{sql:"0",bindings:[]};
     if(signed){
       try{
@@ -721,7 +729,8 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
               JOIN assistant_action_commits receipt ON receipt.commit_id='task:'||task.task_id AND receipt.verified=1
               WHERE task.task_id=? AND task.status='completed' AND turn.assistant_content_ref=? AND answer.content=?)`,
               bindings:[entry.record.task_id,retained.request.turn.assistant_content_ref,saved.result.reply]};
-            proof=join(readAuthority(actor,retained),saved.proof,complete);
+            proofParts=[readAuthority(actor,retained),saved.proof,complete];proof=join(...proofParts);
+            splitProof=retained.request.conversation.length>1;
             review={turnId:retained.request.turnId,executionId:entry.record.task_id,
               quote:{...retained.preview,status:"completed",providerAvailable:Boolean(env.OPENAI_API_KEY),canExecute:false},
               originalRequest:{...retained.request.originalRequest,model,taskKind:retained.request.taskKind,
@@ -732,7 +741,7 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
         }
       }catch{/* An unreadable or invalid retained record is not a completion certificate. */}
     }
-    return{entry,hash:typeof hash==="string"?hash:null,review,proof,unavailable,semantic};
+    return{entry,hash:typeof hash==="string"?hash:null,review,proof,proofParts,splitProof,unavailable,semantic};
   }));
   const contextSource=assistantContextReadWitness(state.context),contextReads=contextSource?.statements()??[];
   // Use the immutable context paired with the original reads, never a mutable
@@ -740,13 +749,25 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
   const capturedContext=contextSource?.context()??compileAssistantContext({route:actor.surface.route,events:[],projection:foldEvents([]),
     actorUserId:actor.principal.userId,projectId:actor.projectId,capabilities:actor.project?.permissions??actor.principal.access.capabilities,
     ...(actor.project?{organizationId:actor.project.organizationId,projectAccessId:actor.project.projectAccessId}:{})});
-  const contextOffset=1+candidates.length+feedTurns.length;
+  // A shared result with a longer conversation can exceed D1's100 bindings
+  // when its independent positive and negative proofs share one SELECT; a
+  // multi-turn source also approaches the100-depth limit. Split
+  // only that pair, in the SAME final read transaction; neither proof is omitted.
+  const candidateReads:D1PreparedStatement[]=[],candidateOffsets:number[]=[];
+  for(const candidate of candidates){
+    candidateOffsets.push(candidateReads.length);
+    if(candidate.splitProof||candidate.proof.bindings.length+candidate.unavailable.bindings.length>100){
+      candidateReads.push(...candidate.proofParts.map(proof=>env.DB.prepare(`SELECT CASE WHEN ${proof.sql} THEN 1 ELSE 0 END AS certified_completed`).bind(...proof.bindings)),
+        env.DB.prepare(`SELECT CASE WHEN ${candidate.unavailable.sql} THEN 1 ELSE 0 END AS retention_unavailable`).bind(...candidate.unavailable.bindings));
+    }else candidateReads.push(env.DB.prepare(`SELECT CASE WHEN ${candidate.proof.sql} THEN 1 ELSE 0 END AS certified_completed,
+      CASE WHEN ${candidate.unavailable.sql} THEN 1 ELSE 0 END AS retention_unavailable`).bind(...candidate.proof.bindings,...candidate.unavailable.bindings));
+  }
+  candidateOffsets.push(candidateReads.length);
+  const contextOffset=1+candidateReads.length+feedTurns.length;
   const memoryReads=assistantMemoryFeedReads(feedTurns),memoryOffset=contextOffset+contextReads.length;
   const statements=[
     env.DB.prepare("SELECT CASE WHEN "+authority.sql+" THEN 1 ELSE 0 END AS feed_authorized").bind(...authority.bindings),
-    ...candidates.map(candidate=>env.DB.prepare(`SELECT CASE WHEN ${candidate.proof.sql} THEN 1 ELSE 0 END AS certified_completed,
-      CASE WHEN ${candidate.unavailable.sql} THEN 1 ELSE 0 END AS retention_unavailable`)
-      .bind(...candidate.proof.bindings,...candidate.unavailable.bindings)),
+    ...candidateReads,
     ...feedTurns.map(turn=>{const proof=assistantFeedTurnProof(actor,scopeKey,turn);return env.DB.prepare("SELECT CASE WHEN ("+proof.sql+") THEN 1 ELSE 0 END AS feed_turn_retained").bind(...proof.bindings);}),
     ...contextReads,
     ...memoryReads.statements,
@@ -764,7 +785,9 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
     return json({error:"assistant_read_scope_denied"},403);
   const hidden=new Set<string>();
   const tasks=candidates.map((candidate,index)=>{
-    const row=reads[index+1]?.results[0],display={...candidate.entry.display,...(candidate.entry.display.executionId?{canExecute:false}:{})};
+    const results=reads.slice(1+candidateOffsets[index]!,1+candidateOffsets[index+1]!).map(read=>read.results[0]);
+    const row=results.length===1?results[0]:{certified_completed:results.slice(0,-1).every(result=>result?.certified_completed===1)?1:0,
+      retention_unavailable:results.at(-1)?.retention_unavailable},display={...candidate.entry.display,...(candidate.entry.display.executionId?{canExecute:false}:{})};
     if(row?.retention_unavailable===1){
       hidden.add(candidate.entry.record.turn_id);
       return{...display,executionId:candidate.entry.record.task_id,bindingHash:candidate.hash,canExecute:false,retentionUnavailable:true};
@@ -776,7 +799,7 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
     if(candidate.review||candidate.entry.record.status==="completed")hidden.add(candidate.entry.record.turn_id);
     return display;
   });
-  for(const [index,turn]of feedTurns.entries())if(reads[1+candidates.length+index]?.results[0]?.feed_turn_retained!==1
+  for(const [index,turn]of feedTurns.entries())if(reads[1+candidateReads.length+index]?.results[0]?.feed_turn_retained!==1
     ||!memoryReads.matches(turn,reads.slice(memoryOffset,memoryOffset+memoryReads.statements.length),env,actor.principal.userId))hidden.add(turn.id);
   let visibleTurns=feedTurns.filter(turn=>!hidden.has(turn.id));
   const contextCurrent=Boolean(contextSource&&contextSource.matches(reads.slice(contextOffset,contextOffset+contextReads.length)));
@@ -911,7 +934,7 @@ async function recoverResult(env:WorkerEnv,actor:SpecialistActor,host:AssistantS
     const decoded=decodeAssistantProviderResult(paid.body,{model:limit.model as AssistantModel,maximumInputTokens:limit.inputTokens,maximumOutputTokens:limit.outputTokens,aliases:retained.request.aliases});
     const memory=semanticMemory(env,retained.request),result=memory?{...decoded,actions:[]}:decoded;
     const editReview=memory?memoryAssistantEditReview(decoded,retained.request.context,{executionId:task.task_id,turnId:retained.request.turnId,
-      projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale}):null;
+      projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale},retained.request.originalRequest.fieldTarget?.blockId):null;
     const canonical:CanonicalResult={...(editReview?{editReview}:{}),schema:1,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:retained.request.turnId,reply:result.reply,actions:result.actions,providerResult:result,sourceStatus:memory?"semantic-memory-assisted":"original-approved-source",sourceHash:retained.binding.sourceHash,maximumMicrousd:limit.maximumMicrousd,accountedMicrousd:paid.cost,billingStatus:paid.billingPending?"pending":"settled",noAutomaticRetry:true};
     await completeConsequentialExecution(env,actor.principal,retained.binding,task.task_id,canonical,raw.proof,memory?{
       precommit:()=>semanticAssistantMemoryStatements(env,memory),

@@ -175,3 +175,37 @@ for(const locale of ['en','ar'])test.describe('Inline saved Memory field '+local
   await page.locator('forma-workspace .document-actions > button').first().click();await expect(block).toContainText(original);expect(writes).toHaveLength(1);expect(errors).toEqual([]);
  });
 });
+
+for(const locale of ['en','ar'])test.describe('Fresh Memory field generation '+locale,()=>{
+ test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
+ test('saved field opens explicit cost review without sending drafts or buying generation',async({page,context,baseURL})=>{
+  expect(syntheticNetworkEnabled(baseURL)).toBe(true);const {syntheticReadBody}=await import('./helpers/synthetic-network.mjs');
+  const calls=[],errors=[],original='A quiet interior that feels held between dusk and night.',label=key=>ASSISTANT_MESSAGES[locale]['assistant.specialist.'+key];let savedTurn;
+  page.on('pageerror',error=>errors.push(error.message));
+  await context.route('**/api/session',request=>{const body=JSON.parse(syntheticReadBody('/api/session'));body.assistant.phase='actions';return request.fulfill({json:body});});
+  await context.route('**/api/events/hot',request=>request.fulfill({status:503,json:{error:'synthetic_observation_not_saved'}}));
+  await context.route('**/api/memory/settings',request=>request.fulfill({status:503,json:{error:'synthetic_memory_settings_unavailable'}}));
+  await context.route('**/api/assistant?*',request=>{
+   const body=JSON.parse(syntheticReadBody('/api/assistant?'+new URLSearchParams({route:'/document/doc-atmosphere/atmosphere-studies',projectId:'project-atmosphere'})));
+   if(request.request().method()==='GET')return request.fulfill({json:{...body,turns:savedTurn?[savedTurn]:[],tasks:[]}});
+   const input=request.request().postDataJSON();calls.push(input);expect(input.message).toBe(label('fieldGenerationPrompt'));
+   expect(Object.keys(input).sort()).toEqual(['turnId','message','locale','fieldTarget'].sort());expect(input.fieldTarget).toMatchObject({blockId:'block-direction',field:'text',revision:1});expect(input.fieldTarget.textHash).toMatch(/^[a-f0-9]{64}$/u);
+   expect(JSON.stringify(input)).not.toMatch(/UNSENT|quiet interior/);
+   savedTurn={id:input.turnId,user:input.message,reply:{text:'Free request saved.'},proposal:null,originalRequest:{schema:1,turnId:input.turnId,route:'/document/doc-atmosphere/atmosphere-studies',projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,selectedItemIds:[],locale,fieldTarget:input.fieldTarget}};
+   return request.fulfill({status:201,json:{context:body.context,turn:savedTurn,retiredTurnIds:[]}});
+  });
+  await context.route('**/api/assistant/specialist?*',request=>{
+   const input=request.request().postDataJSON();calls.push(input);expect(input).toEqual({action:'quote',turnId:savedTurn.id,memory:'saved'});
+   const quote={executionId:'fresh-field-execution',bindingHash:'a'.repeat(64),operation:'assistant-specialist',status:'quoted',actorLabel:'Synthetic principal',workspaceId:null,period:'2026-09',projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,blockId:'',sourceHash:'b'.repeat(64),provider:'openai',models:['gpt-5.6-luna'],maximumMicrousd:15000,maximumTokens:1600,providerCalls:1,searchCalls:0,publicQuery:'',privateInput:{source:'Synthetic approved Memory'},expiresAt:new Date(Date.now()+600000).toISOString(),providerAvailable:true,budgetAvailable:true,canExecute:true,availableMicrousd:100000,unavailableReasons:[]};
+   return request.fulfill({json:{turnId:savedTurn.id,executionId:quote.executionId,quote,originalRequest:{...savedTurn.originalRequest,model:'gpt-5.6-luna',taskKind:'clarify',sourceHash:quote.sourceHash,conversationTurnIds:[savedTurn.id]},memory:{version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+30000).toISOString(),independentEvidence:false},noAutomaticRetry:true}});
+  });
+  await page.goto('/document/doc-atmosphere/atmosphere-studies');await expect(page.locator('forma-workspace')).toBeVisible();
+  const block=page.locator('forma-context-block:has([id="context-controls-document-block-direction"])');await block.getByRole('radio').check();await block.locator('.context-controls-toggle').click();
+  const editor=block.locator('#block-copy-block-direction'),field=block.locator('forma-memory-field-completion'),generate=field.getByRole('button',{name:label('fieldGenerate'),exact:true});
+  await expect(generate).toBeEnabled();await editor.fill('UNSENT local revision');await expect(generate).toBeDisabled();expect(calls).toHaveLength(0);
+  await editor.fill(original);await editor.dispatchEvent('compositionstart');await expect(generate).toBeDisabled();await editor.dispatchEvent('compositionend');
+  await generate.click();const dialog=page.locator('.forma-assistant-specialist');await expect(dialog).toBeVisible();await expect(dialog.locator('button').filter({hasText:label('approve')})).toBeEnabled();
+  expect(calls).toHaveLength(2);await expect(editor).toHaveValue(original);expect(await dialog.evaluate(el=>el.scrollWidth>el.clientWidth+1)).toBe(false);
+  await page.screenshot({path:'.wrangler/memory-field-generation-'+locale+'.png'});await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);expect(calls).toHaveLength(2);expect(errors).toEqual([]);
+ });
+});

@@ -80,3 +80,11 @@ misrepresented as a full-suite run of these later changes.
 This closes bounded saved-field-history selection and final private delivery
 expiry. New automatically generated field suggestions, broader resources and
 the remaining native completion matrix are still assigned for implementation.
+
+## Fresh field generation — 2026-09-21
+
+The editor now also opens [fresh exact-field generation review](forma-memory-fresh-field-generation-2026-09-21.md).
+The earlier saved-read-only description applies to **Check saved suggestion**;
+**Review new suggestion** creates a free exact-field request and cost preview,
+with separate explicit generation and publication approvals. It never submits
+unsaved draft text or silently purchases generation.

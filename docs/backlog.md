@@ -301,3 +301,10 @@ byte/encoding/key/deadline/cancellation validation before persistence; see
 [exact original ingress](forma-memory-native-capacity-2026-09-20.md#exact-original-chat-ingress--2026-09-21).
 The native completion matrix remains assigned; next work is fresh field-bound
 suggestion generation through existing explicit spending and publication review.
+
+Memory continuation (2026-09-21): [fresh exact-field suggestions](forma-memory-fresh-field-generation-2026-09-21.md)
+now have an actual editor caller, saved field/revision/hash binding, explicit cost
+review, provider alias restriction and separate canonical replacement acceptance.
+Native personal/shared D1 withdrawal preserves accepted text. Automatic background
+completion, broader resources/reuse and all other completion-matrix native work
+remain assigned; no deployment, scheduling or enrollment is implied.

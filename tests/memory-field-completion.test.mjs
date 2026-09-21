@@ -32,3 +32,17 @@ test('field response abort releases a stalled read without awaiting producer can
 test('field response refuses non-JSON and already-aborted reads',async()=>{
  await assert.rejects(readMemoryFieldResponse(new Response('plain'),signal()));const controller=new AbortController();controller.abort();await assert.rejects(readMemoryFieldResponse(Response.json({}),controller.signal));
 });
+
+const {parseMemoryFieldRequest,memoryFieldTextHash,memoryFieldRequestCurrent}=await import('../src/model/memory-field-request.ts');
+test('field generation binds exact saved Unicode text and clones closed target data',async()=>{
+ const text='静かな方向 اقتراح',request={blockId:'block',field:'text',revision:2,textHash:await memoryFieldTextHash(text)};
+ const parsed=parseMemoryFieldRequest(request);assert.deepEqual(parsed,request);assert.notEqual(parsed,request);
+ const atom={id:'block',type:'direction',text,version:2,providerEligible:true,providerVisibility:'editable',intent:'include'};
+ assert.equal(await memoryFieldRequestCurrent({decisionAtoms:[atom]},parsed),true);
+ for(const patch of [{text:'x'.repeat(1201)},{text:text+' '},{version:3},{locked:true},{protected:true},{immutable:true},{providerEligible:false},{providerVisibility:'restricted'},{intent:'prohibit'},{type:'reference'}])
+  assert.equal(await memoryFieldRequestCurrent({decisionAtoms:[{...atom,...patch}]},parsed),false);
+ assert.equal(await memoryFieldRequestCurrent({decisionAtoms:[atom,atom]},parsed),false);
+ for(const patch of [{field:'label'},{revision:0},{revision:1.1},{textHash:'invalid'},{blockId:'\ud800'},{draft:'never accepted'}])assert.equal(parseMemoryFieldRequest({...request,...patch}),null);
+ const getter={...request};Object.defineProperty(getter,'blockId',{enumerable:true,get(){assert.fail('do not run getters');}});assert.equal(parseMemoryFieldRequest(getter),null);
+ await assert.rejects(memoryFieldTextHash('\ud800'));
+});

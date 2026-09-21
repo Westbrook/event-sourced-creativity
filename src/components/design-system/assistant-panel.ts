@@ -1,3 +1,4 @@
+import type { MemoryFieldRequest } from '../../model/memory-field-request.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview,type MemoryEditReview } from '../../model/memory-edit-review.ts';
 import { parseSemanticMemoryAnswerPresentation,type SemanticMemoryAnswerPresentation } from '../../model/memory-answer.ts';
 import { html, nothing, type PropertyValues, type TemplateResult } from "lit";
@@ -139,11 +140,13 @@ export type AssistantDisplayedTask = {
 };
 export type AssistantDisplayedModel = { id: "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol"; maximumMicrousd: number; premiumApprovalRequired: boolean };
 export type AssistantTurnOriginalRequest = {
+  fieldTarget?:MemoryFieldRequest;
   schema: 1; turnId: string; route: string; projectId: string; documentId: string | null;
   canvasId: string | null; selectedItemIds: string[]; locale: string;
 };
 type SpecialistReply = { key?: string; values?: Record<string, string | number>; text?: string };
 export type AssistantSpecialistOriginalRequest = {
+  fieldTarget?:MemoryFieldRequest;
   turnId: string; route: string; projectId: string; documentId: string; canvasId: string | null;
   selectedItemIds: string[]; locale: string; model: string; taskKind: string; sourceHash: string; conversationTurnIds: string[];
 };
@@ -1626,6 +1629,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         <header><h2 id=${this.#specialistDialogId}>${this.i18n.t("assistant.specialist.title")}</h2></header>
         <p id=${this.#specialistDialogId + "-detail"}>${this.i18n.t("assistant.specialist.summary")}</p>
         <p dir="auto">${this.i18n.t("assistant.specialist.reference", "", { id: state.turnId, task: state.task?.id || state.executionId || "—" })}</p>
+        ${state.originalRequest?.fieldTarget?html`<p dir="auto">${this.i18n.t('assistant.specialist.fieldGenerationTarget','',{id:state.originalRequest.fieldTarget.blockId,revision:state.originalRequest.fieldTarget.revision})}</p>`:nothing}
         ${quote ? consequentialPreview(quote, this.i18n) : nothing}
         ${!state.retrievalOnly && this.canSpecialist && this.models.length && (quote || state.selectedModel) ? html`<div class="forma-assistant-model">
           <label><span>${this.i18n.t("assistant.model.choose")}</span>
@@ -1636,7 +1640,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
             </select>
           </label>
           ${state.originalRequest?.documentId ? html`<label><input type="checkbox" .checked=${state.memoryRequested??false}
-            ?disabled=${state.working||!this.#modalReady||Boolean(quote&&quote.status!=="quoted")}
+            ?disabled=${state.working||!this.#modalReady||Boolean(quote&&quote.status!=="quoted")||Boolean(state.originalRequest?.fieldTarget)}
             @change=${(event:Event)=>this.#specialistControl({...modelControl,model:quote?.models[0]??state.selectedModel,memory:(event.currentTarget as HTMLInputElement).checked},true)}>
             <span>${this.i18n.t("assistant.specialist.memoryInclude")}</span></label>`:nothing}
           ${quote && selected?.premiumApprovalRequired ? html`<p>${this.i18n.t("assistant.specialist.premium", "", { amount: this.#amount(quote.maximumMicrousd) })}</p>` : nothing}
