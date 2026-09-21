@@ -10,7 +10,7 @@ export const ACTION_HELP:Record<string,string>={
  'intent':'Tell Still your next goal to guide its action suggestions.',
  'edit-block':'Change this idea without rewriting the rest of the document.',
  'split-context':'Break this idea into smaller pieces you can edit and reuse separately.',
- 'research-context':'Research this idea and review information to add as context.',
+ 'research-context':'Find sourced details that make this idea more precise, then review what to add.',
  'find-references':'Find files that clarify this idea, then review their sources before adding.',
  'supply-reference':'Attach a file you already have to make this idea more precise.',
  'use-in':'Choose another document where this idea could be useful.',
@@ -71,8 +71,9 @@ export function workflowHelp(mode:string,id:string,label:string,unconfirmedSave=
   'Keep original':'Keep the original shared direction and finish.',
   'Edit shared direction':'Refine the shared direction now that the smaller ideas are saved.',
   'Explore again':'Start another exploration of this idea.',
-  'Review cost':'Prepare a cost estimate before deciding whether to run the analysis.',
-  'Approve analysis':'Approve the displayed cost and run this analysis.',
+  'Split idea':ACTION_HELP['split-context'],
+  'Research idea':ACTION_HELP['research-context'],
+  'Find reference':ACTION_HELP['find-references'],
   'Check analysis':'Check the status of the existing analysis.',
   'Add reference':'Review this reference before adding it to your document.',
   'Apply':'Save the reviewed changes to your document.',
@@ -91,7 +92,7 @@ export function workflowHelp(mode:string,id:string,label:string,unconfirmedSave=
  if(label.startsWith('Review ('))return 'Review your selected suggestions before applying them.';
  return help[label];
 }
-export function actionHelp(id:string,label:string){if(label.startsWith('Back to '))return `Return to the ${label.slice(8)} without starting a generation.`;return ACTION_HELP[id]??({'Back':'Return to the previous view.','Save':'Save your changes.','Check save':'Check whether the earlier save completed before continuing.','More actions':'See the next suggested actions.','Other outputs':'Choose another available output format.','Next page':'Show the next set of items.','Previous page':'Show the previous set of items.','New project':ACTION_HELP['new-project'],'View document':ACTION_HELP.document,'View results':ACTION_HELP.results,'Find action':ACTION_HELP['ui:palette'],'Download':'Download this result to your device.','Estimate cost':'Get a cost estimate before deciding whether to generate.','Check request':'Look for the existing request; an existing queued job may resume.','Review new request':'Prepare a separate request to review before generating.','Review ideas':'Review the ideas contributing to this request.','Acknowledge & send':'Acknowledge the displayed review and send the request. Usage may be charged.','Previous slide':'View the previous slide.','Next slide':'View the next slide.','Previous frame':'View the previous storyboard frame.','Next frame':'View the next storyboard frame.'} as Record<string,string>)[label]??ACTIONS.find(a=>a.id===id)?.description??`Choose “${label}”.`;}
+export function actionHelp(id:string,label:string){if(label.startsWith('Back to '))return `Return to the ${label.slice(8)} without starting a generation.`;return ACTION_HELP[id]??({'Back':'Return to the previous view.','Save':'Save your changes.','Check save':'Check whether the earlier save completed before continuing.','More actions':'See the next suggested actions.','Other outputs':'Choose another available output format.','Next page':'Show the next set of items.','Previous page':'Show the previous set of items.','New project':ACTION_HELP['new-project'],'View document':ACTION_HELP.document,'View results':ACTION_HELP.results,'Find action':ACTION_HELP['ui:palette'],'Download':'Download this result to your device.','Estimate cost':'Get a cost estimate before deciding whether to generate.','Check request':'Look for the existing request; an existing queued job may resume.','Review new request':'Prepare a separate request to review before generating.','Review ideas':'Review the ideas contributing to this request.','Acknowledge & send':'Acknowledge the displayed review and send the request. Usage may be charged.','Previous slide':'View the previous slide.','Next slide':'View the next slide.','Previous frame':'View the previous storyboard frame.','Next frame':'View the next storyboard frame.'} as Record<string,string>)[label]??ACTION_HELP[ACTIONS.find(a=>a.label===label)?.id??'']??ACTIONS.find(a=>a.id===id)?.description??`Choose “${label}”.`;}
 export function readOnboardingFlag(url:string,storage:Pick<Storage,'getItem'>){const q=new URL(url).searchParams;return q.has('onboarding')||q.has('onbaording')||storage.getItem('still:flag:onboarding')==='true';}
 
 export const ONBOARDING_MODEL='gpt-5.6-luna' as const;
