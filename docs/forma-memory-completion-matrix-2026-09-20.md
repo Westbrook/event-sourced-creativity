@@ -248,3 +248,15 @@ author permissions, consent-limited Memory ranking and private descendant
 retirement. Additive0066 has no backfill or access inheritance. The Library/Canvas,
 profile promotion, independently authorized original-source reuse and remaining
 consumer/capacity work stay assigned; this does not close their matrix rows.
+
+## Exact fields and bounded profile loading
+
+[Exact multiline fields](forma-memory-background-fields-2026-09-21.md#exact-multiline-fields-and-typed-metadata)
+now use canonical saved text instead of a compressed context excerpt and support
+ordinary typed plain-text metadata without overwriting it. Protected/disabled/
+governed fields are excluded before background selection.
+[Bounded profile assembly](forma-memory-profile-history-2026-09-20.md#bounded-automatic-reads--2026-09-21)
+adds a whole-operation deadline and four-read concurrency while retaining
+independent access checks, listing order, corrections and the original expiry.
+These close concrete field and loading gaps, not the remaining scope-promotion,
+resource enrollment, reuse or direct private-output integrations above.

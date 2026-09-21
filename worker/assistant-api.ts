@@ -733,6 +733,15 @@ async function assistantContext(request: Request, env: WorkerEnv, actor: Authori
     selectedItemIds: new URL(request.url).searchParams.getAll("selected"),
     ...(focusedBlockId?{focusedBlockId}:{}),
   });
+  // An explicit field request binds the exact saved value, not the ordinary
+  // compressed context excerpt. Otherwise multiline or >320-character fields
+  // cannot match the editor's native hash/revision even when unchanged. This is
+  // still the already-authorized projection; drafts never enter this path.
+  if(focusedBlockId){
+    const atom=context.decisionAtoms.find(item=>item.id===focusedBlockId),blocks=projection.blocks.filter(block=>block.id===focusedBlockId);
+    const text=blocks.length===1?blocks[0]!.properties.text:undefined;
+    if(atom&&typeof text==='string'&&text.isWellFormed()&&Array.from(text).length<=1200)atom.text=text;
+  }
   if(actor.project){
     if(source){
       const rights=await governedPackageSourceRightsValidity(env,actor.project.organizationId,projection.blocks,(scope)=>synchronizeProjectScope(env,scope));

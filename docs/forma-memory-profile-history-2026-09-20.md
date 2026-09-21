@@ -64,3 +64,25 @@ No migration, main push, production deployment, provider call or real-user
 enrollment was performed by this change. Hosted services, qualification and
 rollout remain separately tracked in the
 [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
+
+## Bounded automatic reads — 2026-09-21
+
+Automatic document/profile assembly now has a 60-second deadline covering the
+whole operation, not merely a freshness check after a response arrives. Aborted
+or timed-out headers/bodies are canceled; a late response cannot recreate the
+private view. Caller cancellation remains connected for the returned lease.
+
+Historical profile pages overlap at most four independently authorized result
+reads at a time. Each read has its own strict client, while the bundle retains
+one scope/cancellation boundary and the earliest original expiry. Results stay
+in native listing order. Any failed result rejects the group and prevents
+advancing to another group or substituting older evidence. The existing
+16-result/two-page cap and correction/withdrawal behavior are unchanged.
+
+224 strict-client/actual-component checks and 11 native endpoint journeys pass,
+including an 18-window source, explicit older pages, per-invocation database
+limits and correction priority. All eight English/Arabic profile and rolling-summary
+browser journeys pass, including behavioral expiry. Types, changed-source lint
+and the production build also pass (existing chunk warnings). No
+publication, processing enrollment, external service or background polling added.
+This improves loading and freshness; it does not implement scope promotion.

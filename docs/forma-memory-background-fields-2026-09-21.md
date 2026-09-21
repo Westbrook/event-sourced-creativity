@@ -57,7 +57,7 @@ privacy mutation and changed native source ownership retire the inline view.
 - Four final rebuilt inline-editor browser checks also passed after the localized
   background-origin disclosure was added.
 - TypeScript, changed-path lint and production build passed (existing chunk-size
-  advisory). The broader native derivation, worker, finance, privacy, profile and field regression passed613/613 in383.3seconds.
+  advisory). The broader native derivation, worker, finance, privacy, profile and field regression passed 613/613 in 383.3 seconds.
 
 These tests use synthetic qualifications and provider replies. No real provider
 call, spending, scheduling registration, enrollment, migration or deployment.
@@ -74,6 +74,30 @@ profile promotion and integrated capacity/freshness remain in the
 Hosted scheduling qualification and registration remain in the
 [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
 
-Full native runtime regression at`0bc453f9`: **2125/2125 pass** in974.9seconds.
+Full native runtime regression at `0bc453f9`: **2,125/2,125 pass** in 974.9 seconds.
 This verifies the background-field checkpoint; later admission changes have
 separate evidence. No production data or actual provider requests were used.
+
+## Exact multiline fields and typed metadata
+
+The actual field endpoint and free request now retain the exact saved value for
+the selected block instead of the ordinary assistant's 320-character compressed
+excerpt. Newlines, repeated spaces and longer Unicode fields no longer produce a
+false stale-field failure. Existing authorization, revision/hash checks and
+1,200-character/whole-context byte limits remain mandatory; no draft is sent.
+
+Background capture now accepts ordinary authored plain-text blocks with explicit
+subtype, intent, active state and valid nonzero weight. Only the text goes to the
+replacement recipe. The existing native authoring transaction preserves these
+properties when the user accepts. Protected exclusions, prohibitions, exact text,
+governed or unknown metadata, inferred sources, disabled/zero-weight blocks and
+media/structured types remain excluded before provider selection.
+
+Verification: 60 native field checks (including personal/shared local D1), 173
+overlapping assistant/result/authoring checks, 37 field client/model checks and
+six synthetic inline-editor browser journeys pass. The fresh-generation native
+journey now uses exact multiline text beyond the prior excerpt limit through
+free request, quote, provider payload, retained review, acceptance and withdrawal.
+TypeScript, changed-worker lint and build pass. The assistant API retains its
+28 pre-existing whole-file lint findings; this change adds none. No deployment,
+enrollment or actual provider call.

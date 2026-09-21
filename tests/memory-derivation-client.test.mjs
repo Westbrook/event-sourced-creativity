@@ -547,3 +547,42 @@ for(const fault of ['wrong-purpose','extra-authority','invalid-hash','duplicate-
  if(fault==='duplicate-field')f.result.candidate.items.push({...structuredClone(f.item),claimKey:'derived:'+hash('duplicate-field')});
  await assert.rejects(()=>createMemoryDerivationClient(async()=>Response.json(f.result)).inspectResult(f.entry));
 });
+
+
+for(const stalled of ['headers','body'])test('automatic brief bounds stalled '+stalled+' and cancels late private bytes',async t=>{
+ const f=briefFixture();let release,observedSignal,canceled=0;
+ t.mock.timers.enable({apis:['setTimeout']});
+ const response=new Response(new ReadableStream({pull(){return new Promise(()=>{});},cancel(){canceled++;return new Promise(()=>{});}}),{headers:{'content-type':'application/json'}});
+ const transport=(_input,init)=>{observedSignal=init.signal;return stalled==='headers'?new Promise(resolve=>{release=resolve;}):Promise.resolve(response);};
+ const pending=readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal);
+ const rejected=assert.rejects(pending,/memory-brief-stale/);
+ for(let i=0;i<8;i++)await Promise.resolve();
+ t.mock.timers.tick(60000);await rejected;assert.equal(observedSignal.aborted,true);
+ release?.(response);for(let i=0;i<8;i++)await Promise.resolve();assert.ok(canceled>=1);assert.equal(response.body.locked,false);
+});
+test('automatic brief keeps caller withdrawal connected after read completion',async()=>{
+ const f=briefFixture(),lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal);assert.ok(lease.current());
+ const signal=f.calls[0].init.signal;assert.notEqual(signal,f.controller.signal);assert.equal(signal.aborted,false);
+ f.controller.abort();assert.equal(signal.aborted,true);assert.equal(lease.current(),null);lease.retire();
+});
+test('automatic profile overlaps at most four independent reads and preserves native order',async()=>{
+ const f=extendedProfileFixture();let active=0,maximum=0;
+ const transport=async(input,init)=>{
+  const url=new URL(String(input),'https://fixture.invalid');
+  if(!url.pathname.endsWith('/result'))return f.transport(input,init);
+  active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,1));
+  try{return await f.transport(input,init);}finally{active--;}
+ };
+ const lease=await readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal),section=lease.current().sections[0];
+ assert.equal(maximum,4);assert.equal(active,0);assert.deepEqual(section.items.map(item=>item.profileOrigin.jobId),f.entries.slice(0,16).map(entry=>entry.jobId));lease.retire();
+});
+test('automatic profile does not advance beyond a rejected concurrent group',async()=>{
+ const f=extendedProfileFixture(),reads=[];
+ const transport=async(input,init)=>{
+  const url=new URL(String(input),'https://fixture.invalid');
+  if(url.pathname.endsWith('/result')){const id=url.searchParams.get('jobId');reads.push(id);if(id===f.entries[2].jobId)return Response.json({error:'withdrawn'},{status:404});}
+  return f.transport(input,init);
+ };
+ await assert.rejects(readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal));
+ assert.deepEqual(reads,f.entries.slice(0,5).map(entry=>entry.jobId));assert.deepEqual(f.pages,[null]);
+});

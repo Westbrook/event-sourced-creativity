@@ -15592,17 +15592,19 @@ for(const shared of [false,true])for(const paid of [false,true])for(const purpos
   const parent=state.current(),scope={projectId:parent.project_id,documentId:parent.document_id,custody:state.preferences.expectedCustody,view:'document'};
   const usage=state.sqlite.prepare('SELECT * FROM memory_derivation_usage').all(),providerCalls=state.rollingRequests.length,calls=[];
   const readState=()=>Object.fromEntries(['events','event_private_payloads','project_resource_scopes','project_event_scopes','project_migration_states','memory_derivation_results','memory_derivation_result_dependencies'].map(table=>[table,state.sqlite.prepare('SELECT * FROM '+table+' ORDER BY rowid').all()]));
-  const unchanged=readState(),db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap();let operations=0;
-  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{operations++;return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
-  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){operations++;return batch.call(this,inputs.map(input=>originals.get(input)??input));};t.after(()=>{db.prepare=prepare;db.batch=batch;});
-  const transport=async(path,init)=>{
+  const unchanged=readState(),db=state.env.DB,prepare=db.prepare,batch=db.batch,originals=new WeakMap(),{AsyncLocalStorage}=await import('node:async_hooks'),measurement=new AsyncLocalStorage();
+  const count=()=>{const request=measurement.getStore();if(request)request.operations++;};
+  const wrap=raw=>{const proxy=new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{count();return target[key](...args);};return Reflect.get(target,key,target);}});originals.set(proxy,raw);return proxy;};
+  db.prepare=function(sql){return wrap(prepare.call(this,sql));};db.batch=function(inputs){count();return batch.call(this,inputs.map(input=>originals.get(input)??input));};t.after(()=>{db.prepare=prepare;db.batch=batch;});
+  // Concurrent HTTP reads retain separate per-invocation counters.
+  const transport=async(path,init)=>measurement.run({operations:0},async()=>{
     assert.equal(init.method,'GET');const headers=new Headers(init.headers);for(const [key,value] of Object.entries(state.owner??{}))headers.set(key,value);
     const request=new Request(state.derivationOrigin+path,{...init,headers}),url=new URL(request.url);calls.push(url.pathname);
-    const before=operations;const response=url.pathname==='/api/memory/settings'?await handleLiveMemory(request,state.env,'settings'):
+    const response=url.pathname==='/api/memory/settings'?await handleLiveMemory(request,state.env,'settings'):
       url.pathname==='/api/memory/recall-scopes'?await(await import('../worker/memory-recall-boundary-api.ts')).handleMemoryRecallBoundary(request,state.env):
       await api[{settings:'handleMemoryDerivationSettings',results:'handleMemoryDerivationResults',result:'handleMemoryDerivationResult',controls:'handleMemoryDerivationUserControls'}[url.pathname.split('/').at(-1)]](request,state.env);
-    assert.ok(operations-before<50,url.pathname+' D1 calls: '+(operations-before));if(response.status!==200)t.diagnostic(url.pathname+' '+response.status+' '+await response.clone().text());return response;
-  };
+    assert.ok(measurement.getStore().operations<50,url.pathname+' D1 calls: '+measurement.getStore().operations);if(response.status!==200)t.diagnostic(url.pathname+' '+response.status+' '+await response.clone().text());return response;
+  });
   const controller=new AbortController(),lease=await readDocumentMemoryBrief(scope,transport,()=>true,controller.signal);assert.ok(lease);
   const retainedTotal=unchanged.memory_derivation_results.filter(row=>row.state==='active').length,retainedCount=Math.min(16,retainedTotal);
   const value=lease.current();assert.equal(value.sections.length,1);assert.equal(value.sections[0].history.windowCount,3);assert.equal(value.sections[0].items.length,purpose==='profile'?retainedCount:1);
@@ -18051,11 +18053,12 @@ test('Memory original ingress: maximum escaped multilingual text remains a preci
 for(const shared of [false,true])for(const native of [false,true])test('Memory field generation: exact saved target creates a free turn, separately approved private replacement '+shared+'/'+native,{timeout:120000},async t=>{
  const state=await semanticPaidConsumerFixture(t,{shared,assets:true}),projectId=state.current().project_id,documentId=state.recallTarget.documentId;
  state.env.FORMA_ASSISTANT_ACTION_USER_IDS=state.current().actor_user_id;
+ const savedField='  Saved\n\n原稿  '+('long exact field '.repeat(30))+'\n';
  const {memoryFieldTextHash}=await import('../src/model/memory-field-request.ts');
  for(const blockId of ['fresh-field','other-field']){
-  const response=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:projectId,document_id:documentId,block_id:blockId,scope:'document',type:'direction',properties:{text:blockId+' original'}}}},state.owner));assert.equal(response.status,200,await response.clone().text());
+  const response=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:projectId,document_id:documentId,block_id:blockId,scope:'document',type:'direction',properties:{text:blockId==='fresh-field'?savedField:blockId+' original'}}}},state.owner));assert.equal(response.status,200,await response.clone().text());
  }
- const fieldTarget={blockId:'fresh-field',field:'text',revision:1,textHash:await memoryFieldTextHash('fresh-field original')},turnId='fresh-memory-field-turn';
+ const fieldTarget={blockId:'fresh-field',field:'text',revision:1,textHash:await memoryFieldTextHash(savedField)},turnId='fresh-memory-field-turn';
  const before=adaptiveReentryFinancialState(state),turn=await specialistFreeTurn(state,turnId,'Suggest a replacement for this saved field.',{...state.semanticOptions,fieldTarget});
  assert.deepEqual(turn.originalRequest.fieldTarget,fieldTarget);assert.deepEqual(turn.proposals??[],[]);assert.equal(turn.proposal,null);assert.deepEqual(adaptiveReentryFinancialState(state),before);
  const refused=await specialistProtocolRequest(state,{action:'quote',turnId},state.semanticOptions);assert.equal(refused.status,409);assert.equal((await refused.json()).error,'assistant_field_memory_required');
@@ -18073,14 +18076,14 @@ for(const shared of [false,true])for(const native of [false,true])test('Memory f
  globalThis.fetch=async(url,init)=>{
   if(native&&String(url)!=='https://api.openai.com/v1/responses')return original(url,init);
   assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;const request=JSON.parse(init.body),input=JSON.parse(request.input);
-  const target=input.blocks.find(block=>block.text==='fresh-field original').id,other=input.blocks.find(block=>block.text==='other-field original').id;
+  const target=input.blocks.find(block=>block.text===savedField).id,other=input.blocks.find(block=>block.text==='other-field original').id;
   assert.deepEqual(input.field_request,{target_block_id:target,field:'text',mode:'suggest-replacement-for-review'});assert.ok(input.memory_evidence);
   assert.doesNotMatch(JSON.stringify(input.field_request),/fresh-field|textHash/);
   return specialistRawResponse(request,{output:[{type:'message',id:'field-generation-message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Review a suggested replacement.',actions:[target,other].map(id=>({kind:'context.edit',block_type:'direction',target_block_id:id,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:'PRIVATE FRESH '+id}))})}]}]});
  };t.after(()=>{globalThis.fetch=original;});
  const executed=await specialistExecute(state,review,state.semanticOptions);assert.equal(executed.status,202,await executed.clone().text());await state.drainBackground();
  const retrieved=await specialistRetrieve(state,review,state.semanticOptions),result=await retrieved.json();assert.equal(retrieved.status,200,JSON.stringify(result));assert.equal(calls,1);assert.deepEqual(result.result.actions,[]);
- assert.equal(result.result.editReview.edits.length,1);assert.equal(result.result.editReview.edits[0].blockId,'fresh-field');
+ assert.equal(result.result.editReview.edits.length,1);assert.equal(result.result.editReview.edits[0].blockId,'fresh-field');assert.equal(result.result.editReview.edits[0].beforeExcerpt,savedField);
  const endpointPath=endpoint(state.semanticOptions.route,projectId).replace('/api/assistant?','/api/assistant/field-suggestion?')+'&blockId=fresh-field&locale=en';
  const suggestionResponse=await state.request(endpointPath,{headers:state.owner??{}}),suggestion=await suggestionResponse.json();assert.equal(suggestionResponse.status,200,JSON.stringify(suggestion)+" SQL: "+state.controls.lastDatabaseError);assert.ok(suggestion.suggestion,JSON.stringify(suggestion));assert.equal(suggestion.suggestion.review.edits[0].blockId,'fresh-field');assert.equal(calls,1);
  const {memoryEditApprovalHash}=await import('../src/model/memory-edit-review.ts');
@@ -18515,22 +18518,22 @@ for(const fault of ['partial-schema','unknown-trigger','oversized-edge','expired
  const response=await state.nesting();assert.equal(response.status,503,await response.clone().text());const body=await response.json();assert.equal(Object.hasOwn(body,'ancestors'),false);assert.equal(Object.hasOwn(body,'candidates'),false);
 });
 
-async function appendNativeBackgroundField(seed){
+async function appendNativeBackgroundField(seed,{type='direction',properties={text:'Saved original field.'}}={}){
  const blockId='background-field';
-   const e=seed.current(),created=await seed.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:e.project_id,document_id:e.document_id,block_id:blockId,scope:'document',type:'direction',properties:{text:'Saved original field.'}}}},seed.owner));
+   const e=seed.current(),created=await seed.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:e.project_id,document_id:e.document_id,block_id:blockId,scope:'document',type,properties}}},seed.owner));
    assert.equal(created.status,200,await created.clone().text());const event=(await created.json()).appended.find(row=>row.type==='BlockCreated');
    const inspected=await seed.request('/api/events/hot',json({action:'hot',event:{type:'BlockInspected',payload:{project_id:e.project_id,document_id:e.document_id,block_id:blockId,source_event_ids:[event.eventId],source_surface:'document-context-controls'}}},seed.owner));assert.equal(inspected.status,200,await inspected.clone().text());
 }
-async function nativeBackgroundFieldFixture(t,{shared=false,hosted=false}={}){
+async function nativeBackgroundFieldFixture(t,{shared=false,hosted=false,type='direction',properties={text:'Saved original field.'}}={}){
  const blockId='background-field',state=await nativeDerivationExecutionFixture(t,{shared,hosted,results:true,userControls:true,lifecycle:true,completion:true,observationControls:true,
-  termOverrides:{purpose:'suggestion',recipeVersion:'memory-field-suggestions-v1',maximumInputTokens:32768},beforeRun:appendNativeBackgroundField
+  termOverrides:{purpose:'suggestion',recipeVersion:'memory-field-suggestions-v1',maximumInputTokens:32768},beforeRun:seed=>appendNativeBackgroundField(seed,{type,properties})
   });
- const source=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture);assert.equal(source.fieldTargets.length,1);assert.equal(source.fieldTargets[0].text,'Saved original field.');
+ const source=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture);assert.equal(source.fieldTargets.length,1);assert.equal(source.fieldTargets[0].text,properties.text);
  const provider=await import('../worker/memory-derivation-provider.ts'),store=await import('../worker/memory-derivation-results.ts'),index=source.originals.findIndex(value=>value.role==='user'),human=source.originals[index];
  const output={version:'memory-field-suggestions-v1',items:[{operation:'assert',target:null,category:'proposal',text:'A tentative field adjustment.',supports:[{sourceIndex:index,start:0,end:12,text:Array.from(human.text).slice(0,12).join('')}],counterevidence:[],fieldIndex:0,replacement:'Explicitly accepted background direction.',locale:'en'}]};
  const original=globalThis.fetch;let calls=0;state.env.OPENAI_API_KEY='isolated-not-a-credential';
  globalThis.fetch=async(url,init)=>{if(String(url)!=='https://api.openai.com/v1/responses')return original(url,init);calls++;const request=JSON.parse(init.body),input=JSON.parse(request.input);
-  assert.equal(input.fields.length,1);assert.deepEqual(Object.keys(input.fields[0]).sort(),['field','fieldIndex','independentEvidence','text']);assert.equal(input.fields[0].text,'Saved original field.');
+  assert.equal(input.fields.length,1);assert.deepEqual(Object.keys(input.fields[0]).sort(),['field','fieldIndex','independentEvidence','text']);assert.equal(input.fields[0].text,properties.text);
   return Response.json({id:'isolated-background-field',object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
    usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify(output)}]}]});};t.after(()=>{globalThis.fetch=original;});
  const result=await provider.executeNativeDerivationProvider(state.env,state.executionLease,state.executionCapture);assert.equal(result.status,'candidate',JSON.stringify(result)+' '+state.controls.lastDatabaseError);
@@ -18563,6 +18566,35 @@ for(const shared of [false,true])for(const hosted of [false,true])test('backgrou
   assert.equal(JSON.parse(retained.payload).memory_authored_version,1);assert.equal(JSON.parse(retained.private_json).new_value,newValue);
  }
 });
+for(const shared of [false,true])test('background Memory field: exact multiline typed text preserves authored metadata '+shared,async t=>{
+ const properties={text:'  Saved\n\n原稿  '+('long saved direction '.repeat(30))+'\n',subtype:'Campaign goal',intent:'include',weight:.8,authority:'authored',active:true};
+ const state=await nativeBackgroundFieldFixture(t,{shared,properties}),response=await state.request(state.fieldPath,{headers:state.owner}),body=await response.json();
+ assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);const view=body.suggestion;assert.ok(view,JSON.stringify(body));assert.equal(view.beforeExcerpt,properties.text);
+ const {memoryBackgroundFieldApprovalHash}=await import('../src/model/memory-background-field.ts');
+ const applied=await state.request(state.fieldPath,json({jobId:view.jobId,claimKey:view.claimKey,approvedEditHash:await memoryBackgroundFieldApprovalHash(view),validUntil:view.validUntil,publishToDocument:true},state.owner));
+ assert.equal(applied.status,200,await applied.clone().text()+' '+state.controls.lastDatabaseError);
+ const rows=(await state.env.DB.prepare("SELECT e.*,p.private_json FROM events e LEFT JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.stream_id=? ORDER BY e.sequence").bind('creative:'+state.current().owner_user_id).all()).results;
+ const {serializeEvent}=await import('../worker/runtime.ts'),{createCreativeEventFold}=await import('../src/model/events.ts'),fold=createCreativeEventFold();rows.map(serializeEvent).forEach(event=>fold.accept(event));
+ const block=fold.blockSnapshot(state.fieldBlock);assert.equal(block.properties.text,'Explicitly accepted background direction.');
+ for(const key of ['subtype','intent','weight','authority','active'])assert.equal(block.properties[key],properties[key]);
+ assert.equal(state.providerCalls(),1);
+});
+for(const [name,type,patch]of [
+ ['protected exclusion','exclusion',{}],['prohibition','direction',{intent:'prohibit'}],['protected text','direction',{exact_text:'Do not change'}],
+ ['governed package','direction',{organization_context_package_id:'package'}],['disabled','direction',{active:false}],['zero weight','direction',{weight:0}],
+ ['inferred source','direction',{authority:'inferred'}],['media reference','reference',{}],['unknown block','future-unknown',{}],['unknown metadata','direction',{new_governance:true}],
+])test('background Memory field: target capture excludes '+name,async t=>{
+ const state=await nativeDerivationExecutionFixture(t,{results:true,userControls:true,lifecycle:true,completion:true,observationControls:true,
+  termOverrides:{purpose:'suggestion',recipeVersion:'memory-field-suggestions-v1',maximumInputTokens:32768},
+  beforeRun:async seed=>{
+   await appendNativeBackgroundField(seed,{type,properties:{text:'Saved original field.',...(name==='governed package'?{}:patch)}});
+   // Public authoring rejects forged governance metadata. Inject only into this
+   // isolated retained-source fixture to exercise the capture boundary as well.
+   if(name==='governed package')seed.sqlite.exec("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.organization_context_package_id','package') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')='background-field')");
+  }});
+ assert.deepEqual(state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture).fieldTargets,[]);assert.equal(state.calls.length,0);
+});
+
 for(const shared of [false,true])test('background Memory field: missing lifecycle cannot offer or enroll saved-field recipe '+shared,async t=>{
  const state=await nativeDerivationFixture(t,{shared,termOverrides:{purpose:'suggestion',recipeVersion:'memory-field-suggestions-v1'}});
  const view=await(await state.derivationRequest()).json();assert.equal(view.available,false);assert.deepEqual(view.qualifications,[]);

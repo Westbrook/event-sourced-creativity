@@ -1,4 +1,6 @@
-import { blockIntentFor } from '../src/model/block-types.ts';
+import { protectedAssistantDecision } from '../src/model/conversation-context.ts';
+import { promptFactIsActive } from '../src/model/prompt-policy.ts';
+import { isBlockKind,isBlockIntent } from '../src/model/block-types.ts';
 import { createCreativeEventFold } from '../src/model/events.ts';
 import { memoryFieldTextHash } from '../src/model/memory-field-request.ts';
 import { observeNativeMemoryBlockBindings,type NativeMemoryResourceScope } from './memory-native-blocks.ts';
@@ -10,7 +12,9 @@ export type NativeMemoryFieldTarget={blockId:string;field:'text';revision:number
 /** Current plain authored fields encountered in the explicitly consented action
  * window. This never expands to unobserved blocks, drafts, media, governed
  * context or private generated materializations. All exact historical reads and
- * latest-version absence/presence are added to the native job witness. */
+ * latest-version absence/presence are added to the native job witness. Ordinary
+ * typed-block metadata stays in that witness; only the saved text is sent as a
+ * replacement target. Protected/disabled/derived/media fields remain excluded. */
 export async function observeNativeMemoryFieldTargets(env:WorkerEnv,scope:NativeMemoryResourceScope,
  observations:Parameters<typeof observeNativeMemoryBlockBindings>[2],observer:NativeMemoryContextObserver){
  const db=env.DB,versions=new Map<string,NativeMemoryFieldTarget>();let overloaded=false;
@@ -18,9 +22,14 @@ export async function observeNativeMemoryFieldTargets(env:WorkerEnv,scope:Native
   if(events.some(event=>Object.hasOwn(event.payload,'memory_origin_version')))return;
   const fold=createCreativeEventFold();for(const event of events)fold.accept(event);
   const block=fold.blockSnapshot(binding.blockId);
-  if(!block||block.removed||block.locked||block.scope!=='document'||blockIntentFor(block.type,block.properties)==='prohibit'
+  if(!block||block.removed||block.scope!=='document'||!isBlockKind(block.type)||protectedAssistantDecision(block)||!promptFactIsActive(block)
    ||['reference','model3d','sketch','output','palette'].includes(block.type)
-   ||Object.keys(block.properties).some(key=>!['text','subtype'].includes(key))||typeof block.properties.text!=='string'
+   ||Object.keys(block.properties).some(key=>!['text','subtype','weight','intent','authority','active'].includes(key))
+   ||block.properties.subtype!==undefined&&(typeof block.properties.subtype!=='string'||block.properties.subtype.length>240)
+   ||block.properties.weight!==undefined&&(typeof block.properties.weight!=='number'||!Number.isFinite(block.properties.weight)||block.properties.weight<=0||block.properties.weight>1)
+   ||block.properties.intent!==undefined&&(typeof block.properties.intent!=='string'||!isBlockIntent(block.properties.intent))
+   ||block.properties.authority!==undefined&&block.properties.authority!=='authored'
+   ||block.properties.active!==undefined&&block.properties.active!==true||typeof block.properties.text!=='string'
    ||!block.properties.text.isWellFormed()||Array.from(block.properties.text).length>1200)return;
   const previous=versions.get(block.id);if(previous&&previous.sequence>=binding.revision)return;
   versions.set(block.id,{blockId:block.id,field:'text',revision:block.sourceEvents.length,sequence:binding.revision,textHash:'',text:block.properties.text,eventIds:[...binding.eventIds]});

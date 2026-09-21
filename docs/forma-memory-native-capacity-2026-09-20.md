@@ -223,7 +223,8 @@ including real isolated workerd/D1 three-generation replay. The 15 cover UTF-8
 byte limits, admission acknowledgement faults, late withdrawal, history handle
 separation and committed-publication recovery including a concurrent winner.
 TypeScript, changed-worker lint and production build pass at this source
-(existing chunk warnings). A full runtime run is in progress and is not yet
-claimed as passed. The earlier background-field checkpoint separately passed
+(existing chunk warnings). The full runtime run launched at admission checkpoint `cd995ff4` passes
+2,188/2,188 tests (1,027 seconds). Later exact-field/profile-loading changes have
+separate focused evidence; that full run is not an exact-final-tree claim. The earlier background-field checkpoint separately passed
 2,125 tests at `0bc453f9`. No actual provider calls, enrollment, production
 migration, deployment or external provisioning.

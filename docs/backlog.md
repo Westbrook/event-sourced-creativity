@@ -354,7 +354,18 @@ authorization, atomic publication-row acknowledgement and admission-bound,
 SQLite-byte-limited result reads. Current whole execution is 67/71 personal/shared
 calls, still above the conservative 50-call target. See
 [versioned capacity evidence](forma-memory-native-capacity-2026-09-20.md#native-approval-replay-and-paired-admission--2026-09-21)
-for distinct regression checkpoints and the ongoing full run. Types, changed-worker
+for distinct regression checkpoints and the 2,188-test admission full run. Types, changed-worker
 lint and build pass. MEM-003 and the full native completion matrix remain assigned;
 no deployment or enrollment occurred. Background-field checkpoint `0bc453f9`
 separately passes the full 2,125-test runtime suite.
+
+## MEM-028 — Exact saved fields and bounded profile loading
+
+Implemented locally: [multiline/typed plain-text field coverage](forma-memory-background-fields-2026-09-21.md#exact-multiline-fields-and-typed-metadata)
+and [bounded concurrent retained-profile reads](forma-memory-profile-history-2026-09-20.md#bounded-automatic-reads--2026-09-21).
+The exact saved value survives request/review/application; protected and disabled
+fields stay excluded. Whole-brief timeout, cancellation and four-read concurrency
+retain original expiry, source order and no older fallback on failure. Native,
+client/component and field browser checks pass; all eight English/Arabic profile
+and rolling-summary browser journeys also pass. All other native completion-matrix requirements stay assigned here.
+External scheduling/provider/rollout gates are unchanged; no production activation.

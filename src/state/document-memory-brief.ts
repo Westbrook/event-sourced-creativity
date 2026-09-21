@@ -21,7 +21,35 @@ const sample=()=>({monotonic:performance.now(),wall:Date.now()});
  * a reusable prompt. No enrollment, provider call, event, edit, retry or storage.
  * A bounded/incomplete controls page cannot authorize automatic presentation.
  */
+export const MEMORY_BRIEF_READ_TIMEOUT_MS=60000;
+/** Bound the entire multi-page read, including a transport that never settles.
+ * The original caller's cancellation remains connected throughout the lease;
+ * no late body or timed-out operation can recreate a retired presentation. */
 export async function readDocumentMemoryBrief(selection:Selection,transport:typeof fetch,
+  current:()=>boolean,signal:AbortSignal):Promise<DocumentMemoryBriefLease|null>{
+  const controller=new AbortController();let retained=false;
+  let reject!:(error:Error)=>void;
+  const interrupted=new Promise<never>((_,fail)=>{reject=fail;});void interrupted.catch(()=>undefined);
+  const abort=()=>{controller.abort();signal.removeEventListener('abort',abort);reject(Error('memory-brief-stale'));};
+  signal.addEventListener('abort',abort,{once:true});
+  const timer=setTimeout(abort,MEMORY_BRIEF_READ_TIMEOUT_MS);
+  try{
+    if(signal.aborted||!current()){controller.abort();throw Error('memory-brief-stale');}
+    const pending=assembleDocumentMemoryBrief(selection,transport,current,controller.signal).then(lease=>{
+      if(controller.signal.aborted){lease?.retire();throw Error('memory-brief-stale');}return lease;
+    });
+    const lease=await Promise.race([pending,interrupted]);if(!lease)return null;
+    const retire=()=>{lease.retire();controller.abort();signal.removeEventListener('abort',abort);};
+    retained=true;
+    return Object.freeze({retire,current:()=>{
+      const value=controller.signal.aborted?null:lease.current();if(!value)retire();return value;
+    }});
+  }finally{
+    clearTimeout(timer);if(!retained){controller.abort();signal.removeEventListener('abort',abort);}
+  }
+}
+
+async function assembleDocumentMemoryBrief(selection:Selection,transport:typeof fetch,
   current:()=>boolean,signal:AbortSignal):Promise<DocumentMemoryBriefLease|null>{
   const selected=structuredClone(selection),custody=parseMemoryCustody(selected.custody),started=sample(),elapsed=createMemoryElapsed(started);
   if(!custody||!selected.projectId||!selected.documentId)throw Error('memory-brief-scope');
@@ -30,7 +58,12 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
   const guarded:typeof fetch=(input,init)=>{check();const headers=new Headers(init?.headers);
     headers.set('x-forma-memory-consumer','document-brief-v1');return transport(input,{...init,headers});};
   const base=createLiveMemoryClient(guarded),client=createMemoryDerivationClient(guarded);
-  const inspect=selected.view?client.inspectResultResources:client.inspectResult;
+  const inspect=(entry:Parameters<typeof client.inspectResult>[0],readSignal:AbortSignal)=>{
+    // Each independent result has its own strict latest-request client. The
+    // shared owner signal/current predicate still cancels the whole bundle.
+    const reader=createMemoryDerivationClient(guarded);
+    return selected.view?reader.inspectResultResources(entry,readSignal):reader.inspectResult(entry,readSignal);
+  };
   let cursor:string|undefined,enrollment:Awaited<ReturnType<typeof base.settings>>['enrollments'][number]|undefined;
   const cursors=new Set<string>();
   // Metadata only: don't scan an unbounded account to populate a small document card.
@@ -72,8 +105,18 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
         for(const older of pageEntries){
           if(seenJobs.has(older.jobId))throw Error('memory-profile-pagination');
           seenJobs.add(older.jobId);
-          const prior=await inspect(older,signal);check();
-          deadlines.push(Date.parse(prior.validUntil),Date.parse(prior.expiresAt));views.push(prior);
+        }
+        // At most four independent native result reads overlap. Preserve the
+        // listing order and inspect every outcome before advancing the cursor.
+        // A failed/withdrawn result aborts the page, never an older fallback.
+        for(let offset=0;offset<pageEntries.length;offset+=4){
+          check();const batch=await Promise.allSettled(pageEntries.slice(offset,offset+4).map(async older=>{
+            check();const prior=await inspect(older,signal);check();return prior;
+          }));
+          check();const failure=batch.find(row=>row.status==='rejected');if(failure?.status==='rejected')throw failure.reason;
+          for(const row of batch)if(row.status==='fulfilled'){
+            const prior=row.value;deadlines.push(Date.parse(prior.validUntil),Date.parse(prior.expiresAt));views.push(prior);
+          }
         }
         nextAfter=pageEntries.length<olderEntries.length?pageEntries.at(-1)?.jobId??null:retained.next;
         if(!nextAfter||views.length===MEMORY_PROFILE_REVIEW_LIMIT)break;
