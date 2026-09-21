@@ -28,7 +28,7 @@ import { OUTPUT_REQUIREMENT_EVENT_TYPES, isOutputRequirementEvent } from "../src
 import { outputAuthoringBlocksFromEvents, outputRequirementHeadGuard, prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
 import { validateModel3dAssetEvents } from "./model3d-event-guards.ts";
 import { assistantStructuredOwnSendGuard, assistantStructuredOwnSendProjectIndexGuard, type AssistantContextReadObserver, type AssistantContextReadDescriptor, type AssistantStructuredOwnSendFootprint } from "./assistant-context-source.ts";
-import { projectSourceProjectionAssertion, projectSourceProjectionCurrentAssertion, prepareProjectSourceEventsStatement, type ProjectSourceScope } from "./project-source-read.ts";
+import { projectSourceProjectionAssertion, projectSourceProjectionCurrentAssertion, projectSourceEventsDescriptor, prepareProjectSourceEventsStatement, type ProjectSourceScope } from "./project-source-read.ts";
 export { projectSourceProjectionCurrentAssertion, prepareProjectSourceEventsStatement };
 export type { ProjectSourceScope };
 
@@ -912,7 +912,7 @@ export function projectSourceProjectionPublicationAssertion(scope:ProjectSourceS
 
 
 /** Internal generation receives exact project history, never an owner's account-wide stream. */
-export async function readProjectSourceEvents(env:WorkerEnv,scope:ProjectSourceScope,options:{synchronize?:boolean;sourceProof?:EventReadProof}={}){
+export async function readProjectSourceEvents(env:WorkerEnv,scope:ProjectSourceScope,options:{synchronize?:boolean;sourceProof?:EventReadProof;sourceObserver?:AssistantContextReadObserver}={}){
   const readonlyHead=options.synchronize===false?await env.DB.prepare("SELECT migration.last_owner_sequence AS indexed_head,(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS source_head FROM project_migration_states migration WHERE migration.project_access_id=? AND migration.organization_id=? AND migration.owner_user_id=? AND migration.status='active'")
     .bind("creative:"+scope.ownerUserId,scope.projectAccessId,scope.organizationId,scope.ownerUserId).first<{indexed_head:number;source_head:number}>():null;
   if(options.synchronize!==false)await synchronizeProjectScope(env,scope);
@@ -929,6 +929,7 @@ export async function readProjectSourceEvents(env:WorkerEnv,scope:ProjectSourceS
   // Verify after the final awaited index check so expiry cannot cross the
   // remaining round trip and still permit serialization of these captured rows.
   proof?.verify(sourceChecks);
+  options.sourceObserver?.([sourceStatement],[rows],[projectSourceEventsDescriptor(scope)]);
   return rows.results.map((row)=>serializeEvent(row));
 }
 

@@ -1,3 +1,4 @@
+import type { AssistantContextReadObserver } from "./assistant-context-source.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { foldEvents, type CreativeBlock, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
@@ -11,8 +12,17 @@ export const contextSourceHash=(projectId:string,documentId:string,target:Creati
   rights:events.filter((event)=>["RightsAsserted","ReferenceIngested"].includes(event.type)).map((event)=>({id:event.eventId,payload:event.payload})),
 });
 
+
+/** Capture the exact already-read private bytes for atomic provider admission. */
+async function personalSourceEvents(env:WorkerEnv,owner:string,stream:string,sourceObserver?:AssistantContextReadObserver){
+  const descriptor={sql:`SELECT event.*,secret.private_json,secret.owner_id AS private_owner_id,secret.project_id AS private_project_id,secret.document_id AS private_document_id FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.owner_id=? AND secret.redacted_at IS NULL WHERE event.stream_id=? AND event.type IN(${ASSISTANT_STATE_EVENT_SQL}) ORDER BY event.sequence`,bindings:[owner,stream]};
+  const statement=env.DB.prepare(descriptor.sql).bind(...descriptor.bindings),rows=await statement.all<Record<string,unknown>>();
+  sourceObserver?.([statement],[rows],[descriptor]);
+  return rows.results.map(serializeEvent);
+}
+
 /** Read history and human authorship do not inherit paid-generation eligibility, text limits, or target mutability. */
-async function prepareCreativeAuthority(request:Request,env:WorkerEnv,body:Record<string,unknown>,authority:"read"|"author",targetKind:"block"|"document"){
+async function prepareCreativeAuthority(request:Request,env:WorkerEnv,body:Record<string,unknown>,authority:"read"|"author",targetKind:"block"|"document",sourceObserver?:AssistantContextReadObserver){
   const deny=(error:string,status=403)=>Response.json({error},{status,headers:{"cache-control":"private, no-store"}});
   const auth=await requireUser(request,env,"viewer",{account:"principal"});if(auth.response||!auth.user)return auth.response??deny("authentication_required",401);
   const principal=auth.user,consent=requireConsent(principal);if(consent)return consent;
@@ -23,9 +33,9 @@ async function prepareCreativeAuthority(request:Request,env:WorkerEnv,body:Recor
   let scope:ProjectExecutionScope|undefined=shared?{organizationId:shared.organizationId,projectAccessId:shared.projectAccessId,actorUserId:principal.userId,projectId,ownerUserId:shared.ownerUserId}:undefined;
   const streamId=shared?`creative:${shared.ownerUserId}`:principal.streamId,sourceHead=await streamHead(env,streamId);
   const events:CreativeEvent[]=[];
-  if(shared&&targetKind==="document")events.push(...await readProjectSourceEvents(env,scope!));
+  if(shared&&targetKind==="document")events.push(...await readProjectSourceEvents(env,scope!,{sourceObserver}));
   else if(shared){let after=0;for(;;){const page=await readProjectEventPage(env,shared,after,5000,false);events.push(...page.events.filter((event)=>event.type!=="ProjectResourceRestricted"));if(!page.hasMore)break;if(page.nextAfter<=after)return deny("context_project_history_unavailable",503);after=page.nextAfter;}}
-  else events.push(...(await env.DB.prepare(`SELECT event.*,secret.private_json FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.owner_id=? AND secret.redacted_at IS NULL WHERE event.stream_id=? AND event.type IN(${ASSISTANT_STATE_EVENT_SQL}) ORDER BY event.sequence`).bind(principal.userId,streamId).all<Record<string,unknown>>()).results.map(serializeEvent));
+  else events.push(...await personalSourceEvents(env,principal.userId,streamId,sourceObserver));
   const projection=foldEvents(events,Number.POSITIVE_INFINITY,documentId,projectId);
   const history=authority==="read"?foldEvents(events.filter((event)=>!["DocumentRemoved","BlockRemoved"].includes(event.type)),Number.POSITIVE_INFINITY,documentId,projectId):projection;
   if(history.projectId!==projectId||!history.documents.some((document)=>document.id===documentId&&document.projectId===projectId))return deny("context_document_denied");
@@ -53,17 +63,17 @@ export async function prepareContextAuthority(request:Request,env:WorkerEnv,body
 }
 
 /** Document-level operations work without inventing a target block or unlocking authored facts. */
-export async function prepareDocumentAuthority(request:Request,env:WorkerEnv,body:Record<string,unknown>,authority:"read"|"author"){
-  return prepareCreativeAuthority(request,env,{...body,blockId:""},authority,"document");
+export async function prepareDocumentAuthority(request:Request,env:WorkerEnv,body:Record<string,unknown>,authority:"read"|"author",sourceObserver?:AssistantContextReadObserver){
+  return prepareCreativeAuthority(request,env,{...body,blockId:""},authority,"document",sourceObserver);
 }
 
 /** A durable executor rechecks its original real session/custody, then reads exact canonical history. */
-export async function readDocumentExecutionAuthority(env:WorkerEnv,principal:PilotUser,binding:ConsequentialBinding){
+export async function readDocumentExecutionAuthority(env:WorkerEnv,principal:PilotUser,binding:ConsequentialBinding,sourceObserver?:AssistantContextReadObserver){
   if(principal.userId!==binding.actorUserId||!await executionAuthorityCurrent(env,principal,binding,null))throw new Error("context_authorization_changed");
   const scope=binding.scope??undefined;
   if(!(scope?hasCapability(principal,"project.author",scope)&&hasCapability(principal,"project.output.request",scope):principal.access.capabilities.includes("project.author")&&principal.access.capabilities.includes("project.output.request")))throw new Error("context_authorization_changed");
   const sourceHead=await streamHead(env,binding.streamId);
-  const events=scope?await readProjectSourceEvents(env,scope):(await env.DB.prepare(`SELECT event.*,secret.private_json FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.owner_id=? AND secret.redacted_at IS NULL WHERE event.stream_id=? AND event.type IN(${ASSISTANT_STATE_EVENT_SQL}) ORDER BY event.sequence`).bind(principal.userId,binding.streamId).all<Record<string,unknown>>()).results.map(serializeEvent);
+  const events=scope?await readProjectSourceEvents(env,scope,{sourceObserver}):await personalSourceEvents(env,principal.userId,binding.streamId,sourceObserver);
   const projection=foldEvents(events,Infinity,binding.documentId,binding.projectId);
   if(!projection.documents.some((item)=>item.id===binding.documentId&&item.projectId===binding.projectId&&!item.removed))throw new Error("context_document_denied");
   if(binding.canvasId&&(!(scope?hasCapability(principal,"project.canvas.use",scope):principal.access.canvasAccess)||!foldCanvasEvents(events,binding.projectId,binding.canvasId).canvases.some((item)=>item.id===binding.canvasId&&item.projectId===binding.projectId)))throw new Error("context_canvas_unavailable");

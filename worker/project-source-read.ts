@@ -29,9 +29,13 @@ export function projectSourceProjectionCurrentAssertion(scope:ProjectSourceScope
 }
 
 /** Shared source SELECT for ordinary refresh and guarded read-only Output execution. */
-export function prepareProjectSourceEventsStatement(env:WorkerEnv,scope:ProjectSourceScope){
-  return env.DB.prepare(`SELECT event.*,secret.private_json FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
-    LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.redacted_at IS NULL
+export function projectSourceEventsDescriptor(scope:ProjectSourceScope){
+  return {sql:`SELECT event.*,secret.private_json,secret.owner_id AS private_owner_id,secret.project_id AS private_project_id,secret.document_id AS private_document_id FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id
+    LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id AND secret.owner_id=scope.owner_user_id AND secret.redacted_at IS NULL
     WHERE scope.project_access_id=? AND scope.organization_id=? AND scope.project_id=? AND scope.owner_user_id=?
-    ORDER BY scope.project_sequence`).bind(scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId);
+    ORDER BY scope.project_sequence`,bindings:[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId]};
+}
+export function prepareProjectSourceEventsStatement(env:WorkerEnv,scope:ProjectSourceScope){
+  const descriptor=projectSourceEventsDescriptor(scope);
+  return env.DB.prepare(descriptor.sql).bind(...descriptor.bindings);
 }

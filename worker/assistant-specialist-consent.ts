@@ -12,7 +12,7 @@ import { assistantSurfaceForRoute, assistantPlaybookForSurface, type AssistantSu
 import { blockIntentFor } from "../src/model/block-types.ts";
 import { compileAssistantContext,memoryAuthoredEventIds, protectedAssistantDecision, ASSISTANT_CONTEXT_LIMITS, type AssistantContext } from "../src/model/conversation-context.ts";
 import { creativeContextRightsValidity } from "../src/model/context-health.ts";
-import { assistantContextReadWitness, unavailableAssistantPageContext, type AssistantContextReadWitness } from "./assistant-context-source.ts";
+import { assistantContextReadWitness, unavailableAssistantPageContext, AssistantContextReadWitness } from "./assistant-context-source.ts";
 import { promptFactIsActive } from "../src/model/prompt-policy.ts";
 import { consentedTextPricing, assertConsentedTextPricing, maximumConsentedTextMicrousd, priceConsentedTextUsageMicrousd, type ConsentedTextPricing } from "../src/model/consented-text-pricing.ts";
 import { contextSourceHash,prepareDocumentAuthority, readDocumentExecutionAuthority } from "./context-authoring-authority.ts";
@@ -407,7 +407,8 @@ async function documentForRequest(env:WorkerEnv,actor:SpecialistActor,original:S
 async function sourcePreparation(request:Request,env:WorkerEnv,actor:SpecialistActor,original:SpecialistOriginalRequest,conversation:ConversationEntry[],binding?:ConsequentialBinding,parents:readonly SemanticAssistantParent[]=[]){
   const documentId=binding?.documentId??await documentForRequest(env,actor,original);
   if(!original.projectId)fail("assistant_source_document_required");
-  const authority=binding?await readDocumentExecutionAuthority(env,actor.principal,binding):await prepareDocumentAuthority(request,env,{projectId:original.projectId,documentId,canvasId:original.canvasId},"author");
+  const sourceWitness=new AssistantContextReadWitness<null>(env);
+  const authority=binding?await readDocumentExecutionAuthority(env,actor.principal,binding,sourceWitness.observe):await prepareDocumentAuthority(request,env,{projectId:original.projectId,documentId,canvasId:original.canvasId},"author",sourceWitness.observe);
   if(authority instanceof Response){const error=record(await authority.json());fail(typeof error.error==="string"?error.error:"assistant_source_denied");}
   if(canonicalConsent(authority.scope??null)!==canonicalConsent(actorScope(actor)))fail("assistant_turn_custody_unavailable");
   const {projection,events,scope}=authority,blocks=projection.blocks.filter(block=>block.projectId===original.projectId&&block.documentId===documentId&&!block.removed),blockIds=new Set(blocks.map(block=>block.id));
@@ -424,11 +425,12 @@ async function sourcePreparation(request:Request,env:WorkerEnv,actor:SpecialistA
     if(block.properties.source_evidence_hash&&!governed&&!await verifySourceDocumentEvidence(env,scope?.ownerUserId??actor.principal.userId,block.properties.media_url,block.properties))fail("assistant_source_evidence_unavailable");
     const mime=String(block.properties.source_mime_type??"");if((mime==="application/pdf"||mime.includes("officedocument"))&&(!String(block.properties.text??"").trim()||block.properties.extraction_status==="unavailable"))fail("assistant_source_evidence_unavailable");
   }
-  let sourceProof:BudgetReservationGuard={sql:"1",bindings:[]};
+  sourceWitness.seal(null);
+  let sourceProof:BudgetReservationGuard=join(...sourceWitness.precommitGuards());
   if(blocks.some(block=>block.properties.organization_context_package_id||block.properties.organization_context_package_version_id)){
     if(!scope)fail("assistant_source_rights_unavailable");
     const validity=await governedPackageSourceRightsValidity(env,scope.organizationId,blocks.filter(promptFactIsActive),source=>synchronizeProjectScope(env,source));
-    if(!validity.current)fail("assistant_source_rights_unavailable");if(validity.validUntil)sourceDeadlines.push(validity.validUntil);sourceProof=sourceRightsDispatchGuard(validity);
+    if(!validity.current)fail("assistant_source_rights_unavailable");if(validity.validUntil)sourceDeadlines.push(validity.validUntil);sourceProof=join(sourceProof,sourceRightsDispatchGuard(validity));
   }
   const sourceRightsValidUntil=sourceDeadlines.length?new Date(Math.min(...sourceDeadlines.map(value=>Date.parse(value)))).toISOString():null;
   const allowance=await pilotExecutionAllowance(env,actor.principal.userId,scope),unavailableReasons:string[]=[];
@@ -477,7 +479,7 @@ async function prepareQuote(request:Request,env:WorkerEnv,actor:SpecialistActor,
   const binding:ConsequentialBinding={...prepared.binding,version:ASSISTANT_SPECIALIST_CONSENT_VERSION,intentHash,operation:OPERATION,blockId:"",sourceHash:prepared.sourceHash,period:new Date().toISOString().slice(0,7),pilotCohortId:prepared.allowance.pilot?.cohort_id??null,steps:[{name:"specialist",provider:"OpenAI",model,inputTokens,outputTokens:OUTPUT_TOKENS,maximumMicrousd,toolCalls:0}],publicQuery:"",request:stored};
   await assertNoPaidMemory(env,await rememberPaidMemoryProof(env,binding,stored));
   // Keep remembered negative ancestry explicit while balancing the four complete quote guards.
-  const quoteProof=join(join(prepared.sourceProof,turnProof(binding,stored,true,false)),join(noMemoryProof(stored),conversationProof(binding,stored)));
+  const quoteProof=join(prepared.sourceProof,turnProof(binding,stored,true,false),noMemoryProof(stored),conversationProof(binding,stored));
   const privateInput={turnId:turn.turn_id,originalRequest:{...stored.originalRequest,model,taskKind:kind,sourceHash:binding.sourceHash,conversationTurnIds:conversation.map(item=>item.turnId)},sourceRightsValidUntil:prepared.sourceRightsValidUntil,conversationWindow:{turns:conversation.length,maximumTurns:CONVERSATION_TURNS,throughTurnId:turn.turn_id},providerRequest,pricing,authorship:"Private guidance and separately reviewable proposals only. No authored decision is changed."};
   return{...prepared,binding,privateInput,quoteProof,memory,unavailableReasons:[...prepared.unavailableReasons,...modelEligibility(env,actor,host,kind,model,explicit)]};
 }
@@ -1025,7 +1027,7 @@ async function purchasePreparation(request:Request,env:WorkerEnv,actor:Specialis
   const reasons=[...source.unavailableReasons,...modelEligibility(env,actor,host,retained.request.taskKind,retained.binding.steps[0]!.model as AssistantModel,retained.request.explicitModel)];
   if(reasons.length)fail(reasons[0]!);if(!env.OPENAI_API_KEY)fail("assistant_provider_unavailable");
   const consentGuard=consentProof(retained),turnGuard=turnProof(retained.binding,retained.request,true),conversationGuard=conversationProof(retained.binding,retained.request);
-  const proof=join(consentGuard,turnGuard,join(conversationGuard,source.sourceProof));
+  const proof=join(consentGuard,turnGuard,conversationGuard,source.sourceProof);
   if(!await env.DB.prepare("SELECT 1 AS current WHERE "+proof.sql).bind(...proof.bindings).first()){await assertNoPaidMemory(env,noMemoryProof(retained.request));fail("assistant_consent_source_changed");}
   return{...source,proof};
 }
@@ -1066,7 +1068,7 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
     const live=await host.authorize(request,env);if(live.response||!live.authorized)fail("assistant_authorization_changed");
     const currentActor=live.authorized,current=await purchasePreparation(request,env,currentActor,host,retained);
     const dispatch=join(current.proof,join(taskRetention,lease));
-    await beginConsequentialStep(env,currentActor.principal,retained.binding,taskId,0,current.sourceHead,dispatch);ownsSubmission=true;
+    await beginConsequentialStep(env,currentActor.principal,retained.binding,taskId,0,current.sourceHead,dispatch,{separateSourceProof:true});ownsSubmission=true;
     const marked=await env.DB.prepare("UPDATE assistant_specialist_tasks SET provider_submitted=1,updated_at=? WHERE task_id=? AND actor_user_id=? AND status='running' AND json_extract(result_json,'$.leaseToken')=?").bind(new Date().toISOString(),taskId,currentActor.principal.userId,leaseToken).run();if(Number(marked.meta.changes??0)!==1)fail("assistant_dispatch_authorization_changed");
     const finalAuthority=executionAdmissionGuard(currentActor.principal,retained.binding,current.sourceHead,true);
     const readyProof=join(current.proof,join(taskRetention,lease,finalAuthority));

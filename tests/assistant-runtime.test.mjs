@@ -21,7 +21,7 @@ function database() {
   const sqlite = new DatabaseSync(":memory:");
   const controls = { failAssistantTurnInsert: false, failAssistantActionCommit: false, failAssistantBillingAudit: false,
     failAssistantBillingCostSettlement: false, failPlatformAssistantCommit: false, forbidCreatorContentReads: false,
-    failPlatformPrivacyErase: false, beforePlatformCommit: null, beforeDeletionClaim: null, beforeConsequentialClaim:null, beforeConsequentialSubmit:null,beforeConsequentialResultRead:null,failAfterConsequentialComplete:false,failNextConsequentialPrincipalRead:false, beforeAuthoringCommit:null,failAuthoringCommit:false,failAuthoringEventAt:0, skipAssistantTaskClaimOnce: false, lastDatabaseError: "" };
+    failPlatformPrivacyErase: false, beforePlatformCommit: null, beforeDeletionClaim: null, beforeConsequentialClaim:null, beforeConsequentialSubmit:null,beforeSpecialistDispatchMark:null,beforeConsequentialResultRead:null,failAfterConsequentialComplete:false,failNextConsequentialPrincipalRead:false, beforeAuthoringCommit:null,failAuthoringCommit:false,failAuthoringEventAt:0, skipAssistantTaskClaimOnce: false, lastDatabaseError: "" };
   class Statement {
     constructor(sql, values = []) { this.sql = sql; this.values = values; }
     bind(...values) { if(values.length>100)controls.lastDatabaseError="D1 binding limit: "+values.length+" "+this.sql.slice(0,180); assert.ok(values.length <= 100,controls.lastDatabaseError); return new Statement(this.sql, values); }
@@ -36,7 +36,7 @@ function database() {
       }
       if(controls.failNextConsequentialPrincipalRead&&this.sql===PRINCIPAL_WITH_ACCESS_SQL){controls.failNextConsequentialPrincipalRead=false;throw new Error("injected_post_complete_read_failure");}
       if(controls.failAfterConsequentialComplete&&/^\s*UPDATE consequential_executions SET status='completed'/iu.test(this.sql)){controls.failAfterConsequentialComplete=false;controls.failNextConsequentialPrincipalRead=true;}
-      for(const [key,pattern] of [["beforeConsequentialClaim",/^\s*UPDATE consequential_executions SET status='reserved'/iu],["beforeConsequentialSubmit",/^\s*UPDATE consequential_execution_steps SET status='submitting'/iu],["beforeConsequentialResultRead",/^\s*SELECT content FROM private_content WHERE .*kind='context-proposal'/iu]]){
+      for(const [key,pattern] of [["beforeConsequentialClaim",/^\s*UPDATE consequential_executions SET status='reserved'/iu],["beforeConsequentialSubmit",/^\s*UPDATE consequential_execution_steps SET status='submitting'/iu],["beforeSpecialistDispatchMark",/^\s*UPDATE assistant_specialist_tasks SET provider_submitted=1/iu],["beforeConsequentialResultRead",/^\s*SELECT content FROM private_content WHERE .*kind='context-proposal'/iu]]){
         if(controls[key]&&pattern.test(this.sql)){const callback=controls[key];controls[key]=null;callback();}
       }
       if (controls.failAssistantTurnInsert && /^\s*INSERT INTO assistant_turns\b/iu.test(this.sql)) {
@@ -6530,7 +6530,7 @@ test("specialist consent: existing paid reader recovers after source, model, key
     }finally{clock.close();}
   }finally{await state.cleanup();}
 });
-for(const[seam,kind,pattern]of[["step claim","run",/^\s*UPDATE consequential_execution_steps SET status='reserved'/u],["token INSERT","batch",/^\s*INSERT OR IGNORE INTO budget_reservations\b/u],["cost INSERT","batch",/^\s*INSERT OR IGNORE INTO cost_budget_reservations\b/u],["begin","run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u],["final read","first",/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u]]){
+for(const[seam,kind,pattern]of[["step claim","run",/^\s*UPDATE consequential_execution_steps SET status='reserved'/u],["token INSERT","batch",/^\s*INSERT OR IGNORE INTO budget_reservations\b/u],["cost INSERT","batch",/^\s*INSERT OR IGNORE INTO cost_budget_reservations\b/u],["begin","batch",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u],["final read","first",/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u]]){
   test("specialist consent: cancellation before "+seam+" releases only proven-unused holds",{timeout:15_000},async()=>{
     const state=await specialistMockFixture();let gate;
     try{
@@ -6616,7 +6616,7 @@ for(const change of["source","permission","board"]){
     const state=await specialistMockFixture();let restore;
     try{
       const options=change==="board"?specialistCanvasEvents(state):{},turn=await specialistFreeTurn(state,"specialist-dispatch-"+change,"What should I do next?",options),review=await specialistQuote(state,turn.id,undefined,options);
-      restore=interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,()=>{
+      restore=interceptConsequentialDb(state,"batch",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,()=>{
         if(change==="permission")state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id='dev-local-creative'").run();
         else appendFixtureEvents(state.sqlite,"creative:dev-local-creative",[change==="board"?["CanvasRemoved",{project_id:"project-atmosphere",canvas_id:"specialist-exact-board"}]:["BlockPropertyEdited",{project_id:"project-atmosphere",document_id:"doc-atmosphere",block_id:"block-direction",property_path:"text",new_value:"Source changed during admission."}]]);
       });
@@ -6632,7 +6632,7 @@ for(const boundary of["claim","begin","final read"])for(const change of["expiry"
       const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);clock=consequentialDbClock(state);
       const nextMonth=new Date(Date.UTC(Number(review.quote.period.slice(0,4)),Number(review.quote.period.slice(5,7)),1)),later=change==="month"?nextMonth.toISOString():new Date(Date.parse(review.quote.expiresAt)+1).toISOString();
       if(change==="month")state.sqlite.prepare("UPDATE consequential_executions SET expires_at=? WHERE execution_id=?").run(new Date(nextMonth.getTime()+86_400_000).toISOString(),review.quote.executionId);
-      restore=interceptConsequentialDb(state,boundary==="claim"?"batch":boundary==="begin"?"run":"first",boundary==="claim"?/^\s*UPDATE consequential_executions SET status='reserved'/u:boundary==="begin"?/^\s*UPDATE consequential_execution_steps SET status='submitting'/u:/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>clock.set(later));
+      restore=interceptConsequentialDb(state,boundary==="claim"?"batch":boundary==="begin"?"batch":"first",boundary==="claim"?/^\s*UPDATE consequential_executions SET status='reserved'/u:boundary==="begin"?/^\s*UPDATE consequential_execution_steps SET status='submitting'/u:/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>clock.set(later));
       const response=await specialistExecute(state,review);assert.equal(response.status,boundary==="claim"?409:202,JSON.stringify(await response.clone().json()));await state.drainBackground();
       const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(state.calls.length,0);assert.equal(receipt.balances.tokens.reserved,0);assert.equal(receipt.balances.cost.reserved,0);
       assert.equal(receipt.steps[0].status,boundary==="claim"?"quoted":"not-submitted");
@@ -6651,7 +6651,7 @@ for(const source of["owned","owned_or_licensed","governed-upstream"])for(const s
       const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);assert.equal(review.quote.privateInput.sourceRightsValidUntil,validUntil);
       assert.match(review.quote.privateInput.providerRequest.input,source.startsWith("governed")?/protected contractual tail/u:/FULL_PROTECTED_LICENSED_TAIL/u);
       clock=consequentialDbClock(state);
-      restore=interceptConsequentialDb(state,seam==="begin"?"run":"first",seam==="begin"?/^\s*UPDATE consequential_execution_steps SET status='submitting'/u:/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>{
+      restore=interceptConsequentialDb(state,seam==="begin"?"batch":"first",seam==="begin"?/^\s*UPDATE consequential_execution_steps SET status='submitting'/u:/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>{
         clock.set(validUntil);if(seam==="final read response")Date.now=()=>Date.parse(validUntil);
       },seam==="begin"?"before":"after");
       const approved=await specialistExecute(state,review);assert.equal(approved.status,202,JSON.stringify(await approved.clone().json()));await state.drainBackground();
@@ -6744,7 +6744,7 @@ for(const seam of["begin","final read response"])test("specialist consent: origi
   try{
     const expiresAt=new Date(Date.now()+45_000).toISOString();state.sqlite.prepare("UPDATE project_context_sessions SET expires_at=? WHERE principal_user_id='assistant-owner'").run(expiresAt);
     const turn=await specialistFreeTurn(state),review=await specialistQuote(state,turn.id);clock=consequentialDbClock(state);
-    restore=interceptConsequentialDb(state,seam==="begin"?"run":"first",seam==="begin"?/^\s*UPDATE consequential_execution_steps SET status='submitting'/u:/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>{clock.set(expiresAt);if(seam==="final read response")Date.now=()=>Date.parse(expiresAt);},seam==="begin"?"before":"after");
+    restore=interceptConsequentialDb(state,seam==="begin"?"batch":"first",seam==="begin"?/^\s*UPDATE consequential_execution_steps SET status='submitting'/u:/^\s*SELECT MIN\(execution\.expires_at,task\.lease_expires_at/u,()=>{clock.set(expiresAt);if(seam==="final read response")Date.now=()=>Date.parse(expiresAt);},seam==="begin"?"before":"after");
     const admitted=await specialistExecute(state,review);assert.equal(admitted.status,202,JSON.stringify(await admitted.clone().json()));await state.drainBackground();assert.equal(state.calls.length,0);assert.equal(consequentialReceipt(state,review.quote.executionId).steps[0].status,"not-submitted");
     assert.deepEqual(consequentialBalances(state,"assistant-owner"),{tokens:{used:0,reserved:0},cost:{used:0,reserved:0}});
   }finally{Date.now=nativeNow;restore?.();clock?.close();await state.cleanup();}
@@ -6942,7 +6942,7 @@ for(const source of["canonical","consent"]){
         const withdraw=()=>{state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),reference);fired=true;};
         restore=boundary==="final dispatch read"
           ?interceptConsequentialDb(state,"first",/^\s*SELECT MIN\(execution.expires_at,task.lease_expires_at/u,withdraw)
-          :interceptConsequentialDb(state,"run",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,withdraw,boundary==="after submitting SQL response"?"after":"before");
+          :interceptConsequentialDb(state,"batch",/^\s*UPDATE consequential_execution_steps SET status='submitting'/u,withdraw,boundary==="after submitting SQL response"?"after":"before");
         const accepted=await specialistExecute(state,review);assert.equal(accepted.status,202,JSON.stringify(await accepted.clone().json()));await state.drainBackground();assert.equal(fired,true,boundary);
         assert.equal(state.calls.length,before,"A withdrawn paid answer must never reach another provider request");
         const receipt=consequentialReceipt(state,review.quote.executionId);assert.equal(receipt.execution.status,"failed");assert.equal(receipt.execution.result_ref,null);assert.equal(receipt.steps[0].status,"not-submitted");
@@ -17812,4 +17812,49 @@ for(const shared of [false,true])test('authored Memory downstream: creative chat
   if(index===0){for(const blockId of [state.authoredBlock,JSON.parse(created.payload).block_id]){const removed=await state.request('/api/events',json({action:'append',event:{type:'BlockRemoved',payload:{project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:blockId}}},state.owner));assert.equal(removed.status,200,await removed.clone().text());}}
  }
  assert.equal(requests.length,2);assert.equal(state.providerCalls(),1,'No retired Memory provider work is repeated');
+});
+
+for(const shared of [false,true])for(const fault of ['body','redaction','custody','document-custody','project-custody','deleted','public-payload'])for(const stage of ['admission','final-dispatch'])test('specialist exact source: private field race before provider dispatch '+shared+'/'+fault+'/'+stage,async()=>{
+ const state=await specialistMockFixture({shared});let restore;
+ try{
+  const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:'exact-private-dispatch',scope:'document',type:'direction',properties:{text:'Private field captured for this request.'}}}},state.owner));
+  assert.equal(created.status,200,await created.clone().text());const source=(await created.json()).appended.find(row=>row.type==='BlockCreated');assert.ok(source);
+  const turn=await specialistFreeTurn(state,'specialist-private-race-'+fault,'Review this document.'),review=await specialistQuote(state,turn.id);let hit=false;
+  const seam=stage==='admission'?'beforeConsequentialSubmit':'beforeSpecialistDispatchMark';
+  state.controls[seam]=()=>{
+   hit=true;if(fault==='body')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Private field replaced during dispatch') WHERE private_event_id=?").run(source.eventId);
+   else if(fault==='custody')state.sqlite.prepare("UPDATE event_private_payloads SET owner_id='different-owner' WHERE private_event_id=?").run(source.eventId);
+   else if(fault==='document-custody')state.sqlite.prepare("UPDATE event_private_payloads SET document_id='different-document' WHERE private_event_id=?").run(source.eventId);
+   else if(fault==='project-custody')state.sqlite.prepare("UPDATE event_private_payloads SET project_id='different-project' WHERE private_event_id=?").run(source.eventId);
+   else if(fault==='deleted')state.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(source.eventId);
+   else if(fault==='public-payload')state.sqlite.prepare("UPDATE events SET payload=json_set(payload,'$.memory_authored_version',1) WHERE event_id=?").run(source.eventId);
+   else state.sqlite.prepare("UPDATE event_private_payloads SET private_json='{}',redacted_at=? WHERE private_event_id=?").run(new Date().toISOString(),source.eventId);
+  };
+  restore=()=>{state.controls[seam]=null;};
+  const response=await specialistExecute(state,review);assert.equal(response.status,202,await response.clone().text());await state.drainBackground();assert.equal(hit,true,JSON.stringify(state.sqlite.prepare("SELECT status,error_code FROM assistant_specialist_tasks").all())+" SQL "+state.controls.lastDatabaseError);
+  assert.equal(state.calls.length,0,'Changed or erased current private fields cannot cross the provider boundary');
+  const result=consequentialReceipt(state,review.quote.executionId);assert.equal(result.balances.tokens.reserved,0);assert.equal(result.balances.cost.reserved,0);
+ }finally{restore?.();await state.cleanup();}
+});
+
+for(const shared of [false,true])test('specialist exact source D1: private-field mutation after admission never dispatches '+shared,{timeout:120000},async t=>{
+ const state=await specialistMockFixture({shared});t.after(()=>state.cleanup());
+ const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:'d1-private-dispatch',scope:'document',type:'direction',properties:{text:'Synthetic private direction.'}}}},state.owner));
+ assert.equal(created.status,200,await created.clone().text());const source=(await created.json()).appended.find(row=>row.type==='BlockCreated');assert.ok(source);
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['ExactSource'],script:"export default {fetch(){return new Response('Synthetic only',{status:404});}}",outboundService(){throw Error('No external network');}});
+ t.after(()=>mf.dispose());const db=await mf.getD1Database('ExactSource');await install(db,exportSynthetic(state.sqlite));
+ let mutate=false,hit=false;const originals=new WeakMap(),wrap=(raw,sql)=>{const wrapped={bind:(...args)=>wrap(raw.bind(...args),sql)};
+  for(const key of ['first','all','run','raw'])wrapped[key]=async(...args)=>{if(mutate&&!hit&&/^\s*UPDATE assistant_specialist_tasks SET provider_submitted=1/u.test(sql)){hit=true;await db.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Concurrent private change') WHERE private_event_id=?").bind(source.eventId).run();}return raw[key](...args);};
+  originals.set(wrapped,raw);return wrapped;};
+ state.env.DB={prepare:sql=>wrap(db.prepare(sql),sql),batch:statements=>db.batch(statements.map(s=>originals.get(s)??s))};
+ for(let index=0;index<2;index++){
+  const turn=await specialistFreeTurn(state,'d1-private-'+index,'Review the current direction.'),review=await specialistQuote(state,turn.id);mutate=index===1;
+  const accepted=await specialistExecute(state,review);assert.equal(accepted.status,202,await accepted.clone().text());await state.drainBackground();
+  assert.equal(state.calls.length,1,'Only the unchanged request may dispatch');
+  const task=await db.prepare('SELECT status,error_code FROM assistant_specialist_tasks WHERE task_id=?').bind(review.quote.executionId).first();
+  if(index===0)assert.equal(task.status,'completed',JSON.stringify(task));else {assert.equal(hit,true);assert.notEqual(task.status,'completed');}
+  assert.equal((await db.prepare('SELECT COALESCE(SUM(reserved_tokens),0) AS n FROM budget_counters').first()).n,0);
+  assert.equal((await db.prepare('SELECT COALESCE(SUM(reserved_microusd),0) AS n FROM cost_budget_counters').first()).n,0);
+ }
 });

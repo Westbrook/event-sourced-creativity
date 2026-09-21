@@ -277,3 +277,7 @@ Implemented [exact-field saved suggestion reuse](forma-memory-field-completion-2
 ### MEM-003 authored downstream attribution
 
 [Downstream attribution](forma-memory-authored-downstream-2026-09-20.md) now survives canonical Output/Canvas context, legacy creative-chat mutations/history and optional preview direction. Legacy taste inference cannot count assisted descendants as independent evidence or revive them through an old cached model. Authored work survives withdrawal. Direct private-semantic output integration remains separate work.
+
+### MEM-003 exact current-source dispatch
+
+[Exact dispatch binding](forma-memory-exact-dispatch-source-2026-09-20.md) covers private-body and custody changes that do not advance the event head. Verified with 166 native regressions and actual local D1; the [completion matrix](forma-memory-completion-matrix-2026-09-20.md) remains assigned and external operational work stays separately tracked.

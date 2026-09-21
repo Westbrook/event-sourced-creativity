@@ -45,11 +45,20 @@ export function executionContentCustodyGuard(binding:Pick<ConsequentialBinding,"
 export async function quoteConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,privateInput:unknown,sourceHead:number,availableMicrousd:number,additional?:BudgetReservationGuard,publicationEvidence?:(executionId:string,contentId:string)=>D1PreparedStatement[]){
   const executionId=uuidV7(),bindingHash=await consentHash(binding),now=new Date().toISOString(),expiresAt=new Date(Date.now()+10*60_000).toISOString();
   const admission=executionAdmissionGuard(user,binding,sourceHead),guard=additional?{sql:`(${admission.sql}) AND (${additional.sql})`,bindings:[...admission.bindings,...additional.bindings]}:admission,contentCustody=executionContentCustodyGuard(binding,"content");
-  const existing=await env.DB.prepare(`SELECT execution.status,content.content FROM consequential_executions execution JOIN private_content content
+  const splitReuse=Boolean(additional)&&5+contentCustody.bindings.length+guard.bindings.length>100;
+  const reuseGuard=splitReuse?admission:guard;
+  const existingStatement=env.DB.prepare(`SELECT execution.status,content.content FROM consequential_executions execution JOIN private_content content
     ON content.content_id=execution.consent_ref AND content.owner_id=execution.actor_user_id AND content.kind='execution-consent' AND content.redacted_at IS NULL AND content.expires_at>? AND ${contentCustody.sql}
     WHERE execution.actor_user_id=? AND((execution.intent_hash=? AND ${reusableExecutionSql("execution")})
-      OR execution.binding_hash=? AND execution.status='quoted' AND execution.expires_at>?) AND ${guard.sql} ORDER BY execution.created_at DESC LIMIT 1`)
-    .bind(now,...contentCustody.bindings,user.userId,binding.intentHash,bindingHash,now,...guard.bindings).first<{status:string;content:string}>();
+      OR execution.binding_hash=? AND execution.status='quoted' AND execution.expires_at>?) AND ${reuseGuard.sql} ORDER BY execution.created_at DESC LIMIT 1`)
+    .bind(now,...contentCustody.bindings,user.userId,binding.intentHash,bindingHash,now,...reuseGuard.bindings);
+  // Preserve the exact current private-source proof in the same native read
+  // transaction without repeating its bindings in the shared-custody SELECT.
+  const existing=splitReuse?(await env.DB.batch<{status:string;content:string}>([
+    env.DB.prepare(`SELECT CASE WHEN (${additional!.sql}) THEN 1 ELSE json('context_quote_source_changed') END AS verified`).bind(...additional!.bindings),
+    existingStatement,
+    env.DB.prepare(`SELECT CASE WHEN (${additional!.sql}) THEN 1 ELSE json('context_quote_source_changed') END AS verified`).bind(...additional!.bindings),
+  ]))[1]?.results[0]:await existingStatement.first<{status:string;content:string}>();
   if(existing)return{...(JSON.parse(existing.content).preview as ConsequentialPreview),status:existing.status};
   const preview:ConsequentialPreview={executionId,bindingHash,expiresAt,operation:binding.operation,actorLabel:user.displayName||user.userId,workspaceId:binding.scope?.organizationId??null,period:binding.period,projectId:binding.projectId,documentId:binding.documentId,canvasId:binding.canvasId,blockId:binding.blockId,sourceHash:binding.sourceHash,
     provider:[...new Set(binding.steps.map((step)=>step.provider))].join(", "),models:[...new Set(binding.steps.map((step)=>step.model))],maximumMicrousd:binding.steps.reduce((sum,step)=>sum+step.maximumMicrousd,0),maximumTokens:binding.steps.reduce((sum,step)=>sum+step.inputTokens+step.outputTokens,0),providerCalls:binding.steps.length,searchCalls:binding.steps.reduce((sum,step)=>sum+step.toolCalls,0),publicQuery:binding.publicQuery,privateInput,status:"quoted"};
@@ -167,12 +176,12 @@ export async function reserveConsequentialSteps(env:WorkerEnv,user:PilotUser,bin
   }
 }
 
-export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,index:number,sourceHead:number,additional:BudgetReservationGuard={sql:"1",bindings:[]}){
+export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,index:number,sourceHead:number,additional:BudgetReservationGuard={sql:"1",bindings:[]},options:{separateSourceProof?:boolean}={}){
   const guard=executionAdmissionGuard(user,binding,sourceHead,true),reservation=consequentialReservationGuard(user.userId,binding,id,index,await consentHash(binding)),now=new Date().toISOString();
-  // A shared-project source can exceed D1's 100-bind limit when authority,
-  // reservation and source proofs are combined. Replay the additional proof in
+  // Source consumers may also require separation for SQLite expression depth.
+  // A shared source can exceed D1's 100-bind limit when proofs combine. Replay in
   // the same atomic batch, never as an earlier positive authorization cache.
-  const split=8+reservation.bindings.length+guard.bindings.length+additional.bindings.length>100;
+  const split=options.separateSourceProof===true||8+reservation.bindings.length+guard.bindings.length+additional.bindings.length>100;
   const inline=split?{sql:"1",bindings:[]}:additional;
   const statement=env.DB.prepare(`UPDATE consequential_execution_steps SET status='submitting',updated_at=? WHERE execution_id=? AND step_index=? AND status='reserved'
     AND ${reservation.sql} AND ${guard.sql} AND (${inline.sql})
