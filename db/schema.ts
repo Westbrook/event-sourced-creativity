@@ -2840,3 +2840,14 @@ export const memoryDerivationProfileContexts=sqliteTable('memory_derivation_prof
  check('memory_profile_context_expiry',sql.raw("length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at")),
  check('memory_profile_context_range',sql.raw("(target_enrollment_id=source_enrollment_id AND boundary_revision IS NULL AND hierarchy_revision IS NULL) OR (target_enrollment_id<>source_enrollment_id AND length(boundary_revision)=36 AND length(hierarchy_revision)=71)")),
 ]);
+
+/** Private resource-opening receipts; never an assertion about consumed content. */
+export const memoryResourceOpenings=sqliteTable('memory_resource_openings',{
+ enrollmentId:text('enrollment_id').notNull().references(()=>memoryResourceEnrollments.enrollmentId,{onDelete:'cascade'}),
+ openingId:text('opening_id').notNull(),enrollmentRevision:integer('enrollment_revision').notNull(),sourceHead:integer('source_head').notNull(),recordedAt:text('recorded_at').notNull(),expiresAt:text('expires_at').notNull(),
+},t=>[primaryKey({columns:[t.enrollmentId,t.openingId]}),index('idx_memory_resource_openings_expiry').on(t.expiresAt),
+ check('memory_resource_opening_id',sql.raw('length(opening_id)=36')),
+ check('memory_resource_opening_revision',sql.raw("typeof(enrollment_revision)='integer' AND enrollment_revision>0")),
+ check('memory_resource_opening_head',sql.raw("typeof(source_head)='integer' AND source_head>=0")),
+ check('memory_resource_opening_recorded',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',recorded_at) IS recorded_at")),
+ check('memory_resource_opening_expiry',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>recorded_at"))]);

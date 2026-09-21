@@ -252,3 +252,12 @@ requirement only, not a plan or a paid generation. Native source/privacy and
 localized browser tests pass. Private image/live-preview still belongs to native
 implementation; hosted scheduling, provider qualification and rollout remain
 separate operational gates.
+
+## Resource opening consumption continuation
+
+[Private Library/Canvas opening history](forma-memory-resource-openings-2026-09-21.md)
+now connects actual visible-resource entry to independent existing consent and
+bounded7/30-day counts. These private observations do not assert content reading
+or preferences; forget/renewal/expiry and old-schema compatibility are verified.
+Additive0069 is local only. Semantic resource/profile consumers, direct private
+image/live-preview and integrated qualification remain assigned native work.

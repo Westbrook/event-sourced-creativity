@@ -78,16 +78,24 @@ async function recall(env:WorkerEnv,e:MemoryResourceEnrollment,handle:NativeMemo
  const db=env.DB,s=nativeMemoryResourceScopeInputs(env,handle),schema=await memoryResourceSchema(env),guards=[schema,...nativeMemoryResourceScopeGuards(env,handle),memoryResourceEnrollmentGuard(e),purpose(e,'recall')],q=sourceQuery(e);
  const descriptor={sql:`SELECT event.event_id,event.sequence,event.type,event.recorded_at ${q.from} JOIN memory_resource_history history ON history.event_id=event.event_id AND history.enrollment_id=?
   WHERE ${q.condition} AND history.sequence=event.sequence AND history.event_type=event.type AND history.recorded_at=event.recorded_at AND history.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY event.sequence DESC LIMIT 257`,bindings:[e.enrollment_id,...q.bindings]};
- const read=db.prepare(descriptor.sql).bind(...descriptor.bindings),frames=structuredClone(await db.batch<Record<string,unknown>>([...guards.map(g=>derivationAssertion(env,g)),read]));
- if(env.DB!==db||!derivationResults(frames,guards.length+1)||!frames.slice(0,guards.length).every(derivationVerified))throw Error('resource_recall_read');
- const result=frames.at(-1)!,rows=result.results as unknown as Source[];if(rows.length>257||rows.some(r=>!derivationExact(r,sourceColumns)||!Object.hasOwn(actions,r.type)))throw Error('resource_recall_rows');
- const witness=new AssistantContextReadWitness<null>(env);witness.observe([read],[result],[descriptor]);witness.before(s.validUntil);witness.seal(null);
+ const openingDescriptor={sql:`SELECT opening_id,source_head,recorded_at,expires_at FROM memory_resource_openings WHERE enrollment_id=? AND enrollment_revision=? AND recorded_at>=? AND recorded_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') AND source_head>=? AND source_head<=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY recorded_at DESC,opening_id DESC LIMIT 257`,bindings:[e.enrollment_id,e.revision,e.enrolled_at,e.source_after_sequence,s.sourceHead]};
+ const openingRead=schema.openings?db.prepare(openingDescriptor.sql).bind(...openingDescriptor.bindings):null;
+ const read=db.prepare(descriptor.sql).bind(...descriptor.bindings),frames=structuredClone(await db.batch<Record<string,unknown>>([...guards.map(g=>derivationAssertion(env,g)),read,...(openingRead?[openingRead]:[])]));
+ if(env.DB!==db||!derivationResults(frames,guards.length+1+(openingRead?1:0))||!frames.slice(0,guards.length).every(derivationVerified))throw Error('resource_recall_read');
+ const result=frames[guards.length]!,rows=result.results as unknown as Source[];if(rows.length>257||rows.some(r=>!derivationExact(r,sourceColumns)||!Object.hasOwn(actions,r.type)))throw Error('resource_recall_rows');
+ const openingResult=openingRead?frames[guards.length+1]!:null,openingRows=openingResult?.results??[];
+ if(openingRows.length>257||openingRows.some(r=>!derivationExact(r,['opening_id','source_head','recorded_at','expires_at'])||typeof r.opening_id!=='string'||r.opening_id.length!==36||!Number.isSafeInteger(r.source_head)||typeof r.recorded_at!=='string'||!Number.isFinite(Date.parse(r.recorded_at))||typeof r.expires_at!=='string'||!Number.isFinite(Date.parse(r.expires_at))))throw Error('resource_opening_rows');
+ const openings=openingRows.slice(0,256);
+ const witness=new AssistantContextReadWitness<null>(env);witness.observe([read],[result],[descriptor]);
+ if(openingRead&&openingResult)witness.observe([openingRead],[openingResult],[openingDescriptor]);
+ witness.before(s.validUntil);witness.seal(null);
  const proof=[...guards,...witness.precommitGuards().map(g=>({condition:g.sql,bindings:g.bindings}))].map(g=>derivationAssertion(env,g));
  const checked=await db.batch(proof);if(env.DB!==db||!derivationResults(checked,proof.length)||!checked.every(derivationVerified))throw Error('resource_recall_changed');nativeMemoryResourceScopeInputs(env,handle);
- const sources=rows.slice(0,256),at=Date.now(),validUntil=new Date(Math.min(Date.parse(s.validUntil),Date.parse(e.expires_at),...sources.map(r=>Date.parse(r.recorded_at)+e.retention_days*86400000))).toISOString();
+ const sources=rows.slice(0,256),at=Date.now(),validUntil=new Date(Math.min(Date.parse(s.validUntil),Date.parse(e.expires_at),...sources.map(r=>Date.parse(r.recorded_at)+e.retention_days*86400000),...openings.map(r=>Date.parse(String(r.expires_at))))).toISOString();
  return {scope:s.identity,validUntil,method:'action-counts-not-semantic',independentPreferenceEvidence:false,linkedContentRead:false,
   coverage:{since:e.enrolled_at,throughSequence:e.cursor_sequence,currentHead:s.sourceHead,completeFromStart:false,sourceLimit:256,sourceLimitReached:rows.length>256},
-  windows:[7,30].map(days=>({days,counts:sources.filter(r=>Date.parse(r.recorded_at)>at-days*86400000).reduce<Record<string,number>>((out,r)=>{const action=actions[r.type];out[action]=(out[action]??0)+1;return out;},{})})),sources:sources.map(r=>({eventId:r.event_id,type:r.type,recordedAt:r.recorded_at}))};
+  openings:{method:'resource-surface-open-not-content-consumption',limit:256,limitReached:openingRows.length>256,available:schema.openings},
+  windows:[7,30].map(days=>({days,resourceOpenings:openings.filter(r=>Date.parse(String(r.recorded_at))>at-days*86400000).length,counts:sources.filter(r=>Date.parse(r.recorded_at)>at-days*86400000).reduce<Record<string,number>>((out,r)=>{const action=actions[r.type];out[action]=(out[action]??0)+1;return out;},{})})),sources:sources.map(r=>({eventId:r.event_id,type:r.type,recordedAt:r.recorded_at}))};
 }
 export async function handleMemoryResourceHistory(request:Request,env:WorkerEnv){
  const url=new URL(request.url);if(!['GET','POST'].includes(request.method))return reply({error:'method_not_allowed'},405);
@@ -119,6 +127,6 @@ export async function runResourceMemoryScheduled(env:WorkerEnv){
  * bounded. Missing optional schema is handled by the maintenance caller. */
 export async function sweepResourceMemory(env:WorkerEnv){
  const db=env.DB,present=await db.prepare(`SELECT name FROM sqlite_schema WHERE ${memoryResourceSchemaFamily} LIMIT 1`).all();if(!derivationResults([present],1))throw Error('resource_schema_inventory');if(!present.results.length)return;
- const schema=await memoryResourceSchema(env),checked=await db.batch([derivationAssertion(env,schema),db.prepare("DELETE FROM memory_resource_enrollments WHERE enrollment_id IN(SELECT enrollment_id FROM memory_resource_enrollments WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') LIMIT 64)"),db.prepare("DELETE FROM memory_resource_history WHERE rowid IN(SELECT rowid FROM memory_resource_history WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') LIMIT 256)")]);
- if(env.DB!==db||!derivationResults(checked,3)||!derivationVerified(checked[0]!))throw Error('resource_expiry_unconfirmed');
+ const schema=await memoryResourceSchema(env),checked=await db.batch([derivationAssertion(env,schema),db.prepare("DELETE FROM memory_resource_enrollments WHERE enrollment_id IN(SELECT enrollment_id FROM memory_resource_enrollments WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') LIMIT 64)"),db.prepare("DELETE FROM memory_resource_history WHERE rowid IN(SELECT rowid FROM memory_resource_history WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') LIMIT 256)"),...(schema.openings?[db.prepare("DELETE FROM memory_resource_openings WHERE rowid IN(SELECT rowid FROM memory_resource_openings WHERE expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') LIMIT 256)")]:[])]);
+ if(env.DB!==db||!derivationResults(checked,schema.openings?4:3)||!derivationVerified(checked[0]!))throw Error('resource_expiry_unconfirmed');
 }

@@ -398,4 +398,14 @@ authorize a plan or generation. Source/privacy races and actual Output snapshots
 are verified, including shared projects and D1. This closes that Output authoring
 path, not the separately required private image/live-preview path. Broad panel
 fixtures are reconciled:611 combined checks pass. The independent full native
-regression is running; the remaining native workstreams are unchanged.
+regression at1009d386 passes2,614/2,614; subsequent resource-opening work has
+separate focused evidence. The remaining native workstreams are unchanged.
+
+## Resource opening consumption continuation
+
+[Private Library/Canvas opening history](forma-memory-resource-openings-2026-09-21.md)
+now connects actual visible-resource entry to independent existing consent and
+bounded7/30-day counts. These private observations do not assert content reading
+or preferences; forget/renewal/expiry and old-schema compatibility are verified.
+Additive0069 is local only. Semantic resource/profile consumers, direct private
+image/live-preview and integrated qualification remain assigned native work.

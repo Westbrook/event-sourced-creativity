@@ -14812,7 +14812,7 @@
           "tagName": "forma-memory-resource-controls",
           "customElement": true,
           "summary": "Memory resource controls application interface.",
-          "description": "Explicit native-resource controls. A mount, focus or refresh never enrolls,\nlearns, follows linked documents or invokes a model. No private local storage.",
+          "description": "Explicit native-resource controls. Visible openings require existing resource\nconsent. No automatic enrollment, linked content, model call or local storage.",
           "superclass": {
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"

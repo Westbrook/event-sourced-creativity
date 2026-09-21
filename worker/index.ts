@@ -1,3 +1,4 @@
+import { handleMemoryResourceOpening } from './memory-resource-openings.ts';
 import { sweepSemanticAssistantMemory } from './memory-assistant-consumer.ts';
 import { handleMemoryAssistantContext, sweepAssistantMemoryContexts } from './memory-assistant-context-api.ts';
 import { handleMemoryRecallBoundary } from './memory-recall-boundary-api.ts';
@@ -190,6 +191,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
     if(url.pathname==="/api/internal/memory-benchmark"||url.pathname==="/api/internal/memory-benchmark/approval"||url.pathname==="/api/internal/memory-benchmark/reconcile"||url.pathname==="/api/internal/memory-benchmark/release-undispatched")return handleNativeMemoryBenchmark(request,env);
     if(url.pathname==="/api/memory/resource-enrollments")return handleMemoryResourceEnrollments(request,env);
+    if(url.pathname==="/api/memory/resource-opening")return handleMemoryResourceOpening(request,env);
     if(url.pathname==="/api/memory/resource-history")return handleMemoryResourceHistory(request,env);
     if(url.pathname==="/api/memory/resource-settings")return handleMemoryResourceSettings(request,env);
     if(url.pathname==="/api/memory/resource-scope")return handleMemoryResourceScope(request,env);

@@ -3,7 +3,7 @@ const messages: Record<string, string> = {
   "system.auto.49pzob.48": "Interface de l’inventaire de mémoire des ressources.",
   "system.auto.nedhwo.102": "Inventaire des consentements indépendant des sources. L’oubli ne nécessite jamais un nouvel accès aux sources ni une inscription.",
   "system.auto.1bblc11.47": "Interface des commandes de mémoire des ressources.",
-  "system.auto.4fj5we.154": "Commandes explicites pour les ressources natives. Le montage, le focus ou l’actualisation ne déclenchent ni inscription, ni apprentissage, ni lecture de documents liés, ni modèle. Aucun stockage privé local.",
+  "system.auto.15seryi.156": "Commandes explicites de mémoire des ressources. Les ouvertures visibles nécessitent un consentement existant pour la ressource. Aucune inscription automatique, lecture de contenu lié, requête de modèle ni conservation locale.",
   "system.auto.1ajba9u.47": "Interface de contexte de mémoire de l’assistant.",
   "system.auto.1tlq4uh.152": "Contexte privé de l’assistant composé uniquement de références. Choisir une note n’envoie pas de requête et ne modifie pas les champs rédigés ; les références enregistrées sont revérifiées nativement.",
 

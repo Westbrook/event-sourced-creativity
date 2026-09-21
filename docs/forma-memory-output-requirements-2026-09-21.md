@@ -60,4 +60,7 @@ was an unchanged block-history expectation that still required version1 instead
 of the current default version2. That expectation is corrected and the same test
 now separately verifies explicit legacy-version1 capture. The focused rerun and
 changed-test lint pass. This does not relabel the original broad run as passing.
-The full native run at immutable1009d386 is still running.
+The full native run at immutable1009d386 passes2,614/2,614, with zero
+failures (1,916,666.945333ms). This includes aggregate read batching, its original
+request deadline and Output requirements. It excludes the later fixture changes
+and current resource-opening integration.

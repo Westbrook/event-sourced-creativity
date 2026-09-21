@@ -1929,3 +1929,17 @@ test('resource nightly due time handles local midnight, quarter-hour zones and D
  for(const [now,zone,expected] of [['2026-09-21T00:30:00.000Z','UTC','2026-09-21T01:00:00.000Z'],['2026-09-21T01:00:00.001Z','UTC','2026-09-22T01:00:00.000Z'],['2026-09-21T18:00:00.000Z','Asia/Kathmandu','2026-09-21T19:15:00.000Z'],['2026-11-01T07:00:00.000Z','America/New_York','2026-11-02T06:00:00.000Z']])assert.equal(nextResourceMemoryNight(now,zone),expected);
  assert.throws(()=>nextResourceMemoryNight('invalid','UTC'));assert.throws(()=>nextResourceMemoryNight(new Date().toISOString(),'not-a-zone'));
 });
+
+for(const recorded of [false,true])test('resource opening client sends only an opaque visit ID and never retries '+recorded,async()=>{
+ const {createMemoryResourceClient}=await import('../src/state/memory-resource-client.ts');const calls=[],scope={kind:'library',projectId:'p',resourceId:'p'},openingId=crypto.randomUUID();
+ const client=createMemoryResourceClient(async(url,init)=>{calls.push({url,body:JSON.parse(init.body)});return Response.json({version:'memory-resource-opening-v1',recorded,noAutomaticRetry:true});});
+ assert.equal(await client.opening(scope,new AbortController().signal,openingId),recorded);assert.deepEqual(calls,[{url:'/api/memory/resource-opening?kind=library&projectId=p&resourceId=p',body:{openingId}}]);
+ await assert.rejects(()=>client.opening(scope,new AbortController().signal,'not-valid'));assert.equal(calls.length,1);
+});
+for(const fault of ['missing-ack','unbounded','semantic','unpaired'])test('resource opening client rejects '+fault+' observation disclosure',async()=>{
+ const {createMemoryResourceClient}=await import('../src/state/memory-resource-client.ts'),{memoryResourceIdentity}=await import('../src/model/memory-resource-scope.ts');const selector={kind:'library',projectId:'p',resourceId:'p'},scope=memoryResourceIdentity(selector,{actorUserId:'a',ownerUserId:'a',organizationId:null,projectAccessId:null});
+ const body={version:'memory-resource-history-v1',scope,validUntil:new Date(Date.now()+25000).toISOString(),method:'action-counts-not-semantic',independentPreferenceEvidence:false,linkedContentRead:false,windows:[7,30].map(days=>({days,resourceOpenings:1,counts:{}})),coverage:{since:now(),throughSequence:1,currentHead:1,completeFromStart:false,sourceLimit:256,sourceLimitReached:false},sources:[],openings:{method:'resource-surface-open-not-content-consumption',limit:256,limitReached:false,available:true}};
+ if(fault==='unbounded')body.windows[0].resourceOpenings=257;if(fault==='semantic')body.openings.method='comprehension';if(fault==='unpaired')delete body.openings;
+ let calls=0;const client=createMemoryResourceClient(async()=>{calls++;return Response.json(fault==='missing-ack'?{version:'memory-resource-opening-v1',recorded:true}:body);});
+ await assert.rejects(()=>fault==='missing-ack'?client.opening(selector,new AbortController().signal,crypto.randomUUID()):client.recall(selector,new AbortController().signal));assert.equal(calls,1);
+});

@@ -1,2 +1,3 @@
-/** Exact optional0067 resource schema, including retirement triggers. */
-export const memoryResourceSchemaDigest="a0d5ff8e29c96f72caf487b6a868cd07d5a7ab2cbb37c6fe8d70a63770f0bbb4";
+/** Exact optional resource schema, including retirement triggers. */
+export const memoryResourceLegacySchemaDigest="a0d5ff8e29c96f72caf487b6a868cd07d5a7ab2cbb37c6fe8d70a63770f0bbb4";
+export const memoryResourceSchemaDigest="6ec457d2c84495cd006aa30087c95b81c59782fd9b95b0f7fa862f04cc57e227";

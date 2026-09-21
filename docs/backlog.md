@@ -513,6 +513,14 @@ Implemented locally: [actual Assistant/Chat review and native Output authoring](
 Versioned exact approval creates an unconfirmed authored requirement only, with
 separate shared-project validation and durable negative attribution. No plan,
 spending or generation approval is inherited.18 native,67 model,114 focused UI
-and12 browser checks pass (overlapping scopes). Reconcile55 reproduced baseline
-panel-fixture failures. Private image/live-preview, semantic resource/profile
+and12 browser checks pass (overlapping scopes). Baseline panel fixtures are reconciled;611 combined checks pass. Private image/live-preview, semantic resource/profile
 integration and the other completion-matrix work remain assigned.
+
+## MEM-044 — Consent-bound native resource openings
+
+Implemented locally: [Library/Canvas opening receipts and rolling counts](forma-memory-resource-openings-2026-09-21.md).
+Additive0069, exact native admission, actual visible-resource callers, four-language
+counts and privacy retirement are verified:69 native plus2 erasure cases,265
+client/migration checks and10 browser journeys. Old0067 controls remain supported.
+No authored events, implicit enrollment or provider use. Semantic resource/profile
+consumers, direct private images and broader qualification stay in the matrix.
