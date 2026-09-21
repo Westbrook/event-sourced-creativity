@@ -13701,7 +13701,7 @@ test('native derivation delivery: conversation bookkeeping keeps exact reference
   state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.deepEqual(state.queue(),before);
 });
 
-async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,originalCount=1,termOverrides={}}={}){
+async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,originalCount=1,termOverrides={},beforeEnrollment}={}){
   const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides,beforeEnrollment:async state=>{
     state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
     if(recovery||results)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0046_memory_derivation_recovery_cursor.sql',import.meta.url),'utf8'));
@@ -13711,6 +13711,7 @@ async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,rec
     if(lifecycle)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0050_memory_derivation_lifecycle.sql',import.meta.url),'utf8'));
     if(indexIntents)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0054_memory_derivation_index_intents.sql',import.meta.url),'utf8'));
     if(observationControls)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0057_memory_derivation_observation_controls.sql',import.meta.url),'utf8'));
+    if(beforeEnrollment)await beforeEnrollment(state);
   }});
   if(behavioralOnly){
     const e=state.current(),blockId='native-behavioral-fixture-block',created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:e.project_id,document_id:e.document_id,block_id:blockId,scope:'document',type:'direction',properties:{text:'Private block body must never be sent as authored behavioral intent.'}}}},state.owner));
@@ -16763,10 +16764,10 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  // interval is a stable invocation measurement; phase counts are diagnostic.
  const combinedExecuteOperations=executeOperations+counter.read();
  t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),combinedExecuteOperations,...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
- assert.ok(combinedExecuteOperations<=(shared?130:120),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
+ assert.ok(combinedExecuteOperations<=(shared?126:116),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
  const response=await specialistRetrieve(state,review,options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
- t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=39);
+ t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=36);
  assert.equal(calls.length,1,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  assert.equal(body.result?.sourceStatus,'semantic-memory-assisted',JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  assert.equal(body.materializationPending,false,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
@@ -16778,8 +16779,8 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  const replay=await specialistRetrieve(state,review,options);assert.equal(replay.status,404);assert.equal(calls.length,1);
 });
 
-async function semanticPaidConsumerFixture(t,{shared=false,prior=false,chat=false,assets=false}={}){
- const state=await semanticAssistantContextFixture(t,{shared,crossScope:true});
+async function semanticPaidConsumerFixture(t,{shared=false,prior=false,chat=false,assets=false,seed=null}={}){
+ const state=await semanticAssistantContextFixture(t,{shared,crossScope:true,seed});
  state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=state.current().actor_user_id;state.env.OPENAI_API_KEY='fixture-provider-key';
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0061_memory_derivation_consumers.sql',import.meta.url),'utf8'));
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0062_memory_derivation_consumer_sources.sql',import.meta.url),'utf8'));
@@ -17912,4 +17913,52 @@ for(const surface of ['quote','retrieve'])test('Memory final delivery: private p
  const text=await response.text();assert.equal(hit,true);assert.ok(response.status>=400,text);
  assert.doesNotMatch(text,/Explicitly accepted authored direction|Consider this change|PRIVATE_JOB_QUES|privateInput/);
  if(surface==='retrieve')assert.equal(state.providerCalls(),1);
+});
+
+for(const shared of [false,true])test('Memory field history: fixed eight-task search neither trusts newer metadata nor scans past its bound '+shared,async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared});
+ const record=state.sqlite.prepare('SELECT * FROM assistant_specialist_tasks WHERE task_id=?').get(state.authoredReview.executionId);
+ const columns=Object.keys(record),insert=state.sqlite.prepare('INSERT INTO assistant_specialist_tasks('+columns.join(',')+') VALUES('+columns.map(()=>'?').join(',')+')');
+ // These are deliberately unqualified metadata rows, not a saved answer.
+ // Equal timestamps also exercise the stable task-id tie breaker.
+ const add=index=>insert.run(...columns.map(key=>({task_id:'zz-field-inventory-'+index,turn_id:'field-inventory-'+index,
+  token_reservation_id:'no-tokens-'+index,cost_reservation_id:'no-cost-'+index,result_json:'{}'})[key]??record[key]));
+ for(let index=0;index<7;index++)add(index);
+ const before=adaptiveReentryFinancialState(state),path=endpoint(state.semanticOptions.route,state.semanticOptions.project)
+  .replace('/api/assistant?','/api/assistant/field-suggestion?')+'&blockId='+state.authoredBlock+'&locale=en';
+ const first=await state.request(path,{headers:state.owner??{}}),body=await first.json();
+ assert.equal(first.status,200,JSON.stringify(body));assert.equal(body.suggestion?.review.executionId,state.authoredReview.executionId);
+ add(7);const bounded=await state.request(path,{headers:state.owner??{}}),value=await bounded.json();
+ assert.equal(bounded.status,200,JSON.stringify(value));assert.equal(value.suggestion,null,'Do not scan a ninth task or trust an unqualified latest marker');
+ assert.equal(state.providerCalls(),1);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const shared of [false,true])test('Canvas semantic Memory: selected document owns the private guidance and late selection drift cannot purchase '+shared,async t=>{
+ const seed=await nativeDerivationResultFixture(t,{shared,userControls:true,lifecycle:true,indexIntents:true,beforeEnrollment:async state=>{
+  const actor=(await nativeMemoryPrepare(state)).principal.userId;
+  state.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run(actor);
+ }});
+ assert.equal((await seed.resultStore.publishNativeDerivationResult(seed.env,seed.resultReceipt)).status,'stored');
+ const state=await semanticPaidConsumerFixture(t,{shared,seed}),projectId=state.current().project_id,documentId=state.recallTarget.documentId;
+ const canvasId='memory-selected-board',itemId='memory-selected-document';
+ for(const event of [
+  {type:'CanvasCreated',payload:{project_id:projectId,canvas_id:canvasId,name:'Synthetic Memory board'}},
+  {type:'CanvasItemPlaced',payload:{project_id:projectId,canvas_id:canvasId,item_id:itemId,source_kind:'document',source_id:documentId,title:'Selected enrolled document',frame:{x:0,y:0,w:240,h:160,z:'a0'}}},
+ ]){const response=await state.request('/api/events',json({action:'append',event},state.owner));assert.equal(response.status,200,await response.clone().text());}
+ const options={route:'/canvas/'+canvasId+'/memory-board',project:projectId,selected:[itemId]};
+ const turn=await specialistFreeTurn(state,'canvas-memory-exact-source','Review the selected document using saved context.',options);
+ const response=await specialistProtocolRequest(state,{action:'quote',turnId:turn.id,memory:'saved'},options),review=await response.json();
+ assert.equal(response.status,200,JSON.stringify(review)+' SQL '+state.controls.lastDatabaseError);
+ assert.equal(review.quote.documentId,documentId);assert.equal(review.quote.canvasId,canvasId);assert.equal(review.memory.independentEvidence,false);
+ assert.deepEqual(review.originalRequest.selectedItemIds,[itemId]);assert.ok(JSON.parse(review.quote.privateInput.providerRequest.input).memory_evidence);
+ const original=globalThis.fetch;let calls=0;globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{globalThis.fetch=original;});
+ const execute=await specialistExecute(state,review,options);assert.equal(execute.status,202,await execute.clone().text());await state.drainBackground();
+ const resultResponse=await specialistRetrieve(state,review,options),result=await resultResponse.json();assert.equal(resultResponse.status,200,JSON.stringify(result));
+ assert.equal(calls,1);assert.equal(result.result?.sourceStatus,'semantic-memory-assisted');assert.deepEqual(result.result.actions,[]);
+ const later=await specialistFreeTurn(state,'canvas-memory-late-source','Review this selected document again.',options);
+ const pending=await specialistProtocolRequest(state,{action:'quote',turnId:later.id,memory:'saved'},options),pendingReview=await pending.json();assert.equal(pending.status,200,JSON.stringify(pendingReview));
+ const removed=await state.request('/api/events',json({action:'append',event:{type:'CanvasItemRemoved',payload:{project_id:projectId,canvas_id:canvasId,item_id:itemId}}},state.owner));assert.equal(removed.status,200,await removed.clone().text());
+ const denied=await specialistExecute(state,pendingReview,options);await state.drainBackground();assert.ok(denied.status>=400,await denied.clone().text());assert.equal(calls,1);
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ const retired=await specialistRetrieve(state,review,options),text=await retired.text();assert.doesNotMatch(text,/PRIVATE_VERIFIED_SPECIALIST_REPLY|PRIVATE_JOB_QUES/);assert.ok(retired.status>=400,text);assert.equal(calls,1);
 });

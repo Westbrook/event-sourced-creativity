@@ -1501,7 +1501,7 @@ async function recentAssistantTasks(env: WorkerEnv, actor: AuthorizedAssistant):
       AND json_extract(task.result_json,'$.specialistConsentVersion')=1 AND execution.binding_hash=json_extract(task.result_json,'$.bindingHash')
       AND task.token_reservation_id=task.task_id||':tokens:0' AND task.cost_reservation_id=task.task_id||':usd:0'
     LEFT JOIN consequential_execution_steps step ON step.execution_id=execution.execution_id AND step.step_index=0
-    WHERE task.actor_user_id=? AND task.scope_key IN(${keys.map(()=>"?").join(",")}) ORDER BY task.created_at DESC LIMIT 8`)
+    WHERE task.actor_user_id=? AND task.scope_key IN(${keys.map(()=>"?").join(",")}) ORDER BY task.created_at DESC,task.task_id DESC LIMIT 8`)
     .bind(actor.principal.userId,...keys).all<SpecialistTaskRecord&{consent_execution_id:string|null;consent_binding_hash:string|null;step_status:string|null}>();
   return rows.results.map(row=>({record:row,display:{id:row.task_id,turnId:row.turn_id,kind:row.task_kind,model:row.selected_model,status:row.status,error:row.error_code,estimatedMicrousd:Number(row.estimated_microusd),
     ...(row.consent_execution_id?{executionId:row.consent_execution_id,bindingHash:row.consent_binding_hash,canExecute:false,submission:assistantSubmissionStatus(row.step_status)}:{})}}));

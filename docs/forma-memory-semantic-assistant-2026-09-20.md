@@ -88,3 +88,18 @@ reduce database work but do not yet close whole-invocation capacity qualificatio
 now retains immutable input-reference inverses and retires all dependent private
 copies when an input turn or body is erased or rebound. Full three-turn D1
 journeys also fix binding/expression limits without removing atomic assertions.
+
+## Canvas selected-document qualification — 2026-09-21
+
+The actual Canvas specialist caller is now exercised with saved semantic Memory
+for its one explicitly selected enrolled document. Personal and shared synthetic
+journeys create the native Canvas and placement through the event API, quote the
+exact selected document/Canvas, execute once, retrieve the private guidance, and
+then prove that removing the selected item blocks a later purchase. Withdrawal
+of the original Memory retires the previously saved answer. Canvas access is
+explicitly present before the synthetic user's Memory enrollment; tests do not
+change permissions after consent or bypass the Canvas access gate.
+
+Both native journeys pass. This verifies the existing selected-document guidance
+path, not independent Canvas enrollment, multi-document synthesis, live previews
+or private creative-output publication. Those remain separate assigned work.

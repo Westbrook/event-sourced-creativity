@@ -534,10 +534,19 @@ async function accountRaw(env:WorkerEnv,actor:SpecialistActor,retained:Retained,
   return{body,observed,cost,billingPending};
 }
 async function canonicalResult(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTaskRecord,retained:Retained){
-  const row=await readConsequentialExecution(env,actor.principal.userId,task.task_id);if(!row?.result_ref)return null;
   const base=retentionProof(task,retained),authority=readAuthority(actor,retained),contained=custody(retained.binding,"content");
-  const saved=await env.DB.prepare(`SELECT content.content FROM private_content content WHERE content.content_id=? AND content.owner_id=? AND content.kind='context-proposal' AND content.redacted_at IS NULL AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${authority.sql} AND ${base.sql} AND ${contained.sql}`)
-    .bind(row.result_ref,actor.principal.userId,...authority.bindings,...base.bindings,...contained.bindings).first<{content:string}>();if(!saved)return null;
+  // Read the canonical pointer and its authorized retained body in one
+  // snapshot. A pointer whose body is no longer readable is NOT an absent
+  // result that raw recovery or a new purchase may replace.
+  const row=await env.DB.prepare(`SELECT execution.result_ref,content.content FROM consequential_executions execution
+    LEFT JOIN private_content content ON content.content_id=execution.result_ref AND content.owner_id=execution.actor_user_id
+      AND content.kind='context-proposal' AND content.redacted_at IS NULL AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      AND ${authority.sql} AND ${base.sql} AND ${contained.sql}
+    WHERE execution.execution_id=? AND execution.actor_user_id=?`)
+    .bind(...authority.bindings,...base.bindings,...contained.bindings,task.task_id,actor.principal.userId).first<{result_ref:string|null;content:string|null}>();
+  if(!row?.result_ref)return null;
+  if(typeof row.content!=="string")fail("assistant_result_unavailable");
+  const saved={content:row.content};
   let result:CanonicalResult;try{result=JSON.parse(saved.content);}catch{fail("assistant_result_invalid");}
   if(result.schema!==1||result.executionId!==task.task_id||result.bindingHash!==retained.row.binding_hash||result.turnId!==retained.request.turnId||result.sourceHash!==retained.binding.sourceHash||result.providerResult?.model!==retained.binding.steps[0]!.model||result.reply!==result.providerResult.reply||result.sourceStatus!==(retained.request.memory?"semantic-memory-assisted":"original-approved-source"))fail("assistant_result_invalid");
   if(result.editReview!==undefined&&(!retained.request.memory||!parseMemoryEditReview(result.editReview,{
@@ -895,7 +904,6 @@ async function recoverResult(env:WorkerEnv,actor:SpecialistActor,host:AssistantS
   await reconcileConsequentialUsage(env,actor.principal.userId,task.task_id);
   let saved=await canonicalResult(env,actor,task,retained);
   if(!saved){
-    const completed=await readConsequentialExecution(env,actor.principal.userId,task.task_id);if(completed?.result_ref)fail("assistant_result_unavailable");
     const raw=await readRaw(env,actor,task,retained);if(!raw)return null;
     const paid=await accountRaw(env,actor,retained,raw),limit=retained.binding.steps[0]!;
     if(raw.receipt.httpStatus<200||raw.receipt.httpStatus>=300)fail("assistant_provider_failed_after_usage");

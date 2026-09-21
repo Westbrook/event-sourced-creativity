@@ -76,3 +76,20 @@ binding round trips**; the conservative target remains unmet.
 71 focused runtime/privacy tests, TypeScript, changed-worker lint and the
 production build pass (existing chunk warnings). These are local, mocked-provider
 checks, not hosted qualification or a claim about the later full-suite run.
+
+## Canonical result snapshot — 2026-09-21
+
+Canonical specialist result lookup now reads the execution pointer and its
+authorized retained body in one native snapshot. A non-null pointer with an
+unreadable body remains an unavailable result, never a missing result eligible
+for repurchase or replacement. Final retained-byte and authority assertions
+remain mandatory. The redundant recovery pointer read is removed.
+
+Complete synthetic execution is **116 personal /126 shared binding calls**,
+and retrieval is **36/36**. The conservative capacity target is still unmet.
+301 specialist/semantic regression checks pass, including real local D1,
+withdrawal, original/follow-up retirement, finance and crash recovery.98 focused
+checks overlap that run. Four final capacity/inventory checks pass after
+tightening the ceilings and adding deterministic eight-task selection.
+TypeScript, changed-worker lint and production build pass (existing warnings).
+No provider spending, deployment or hosted-capacity qualification occurred.
