@@ -189,7 +189,7 @@ test('Memory creation preview preserves exact private text and separately hashes
  assert.notEqual(await memoryCreationApprovalHash(review,'create-0'),await memoryCreationApprovalHash(copy,'create-0'));
  assert.equal(await memoryCreationApprovalHash(review,'create-1'),null);
  assert.equal(memoryAssistantCreationReview(memoryCreationResult,memoryEditContext,memoryEditTarget,'direction-a'),null);
- for(const block_type of ['reference','model3d','audio','output','brand','exclusion','accessibility'])assert.equal(memoryAssistantCreationReview({actions:[{...memoryCreationResult.actions[0],block_type}]},memoryEditContext,memoryEditTarget),null);
+ for(const block_type of ['reference','model3d','audio','brand','exclusion','accessibility'])assert.equal(memoryAssistantCreationReview({actions:[{...memoryCreationResult.actions[0],block_type}]},memoryEditContext,memoryEditTarget),null);
 });
 for(const fault of ['documentId','locale','sourceHash','executionId','extra','independence','duplicate','oversized','sparse','getter','array-getter','media','target','intent','malformed-unicode'])test('Memory creation preview rejects '+fault,()=>{
  const r=memoryAssistantCreationReview(memoryCreationResult,memoryEditContext,memoryEditTarget);
@@ -206,4 +206,32 @@ for(const fault of ['documentId','locale','sourceHash','executionId','extra','in
  if(fault==='intent')r.creations[0].intent='prohibit';
  if(fault==='malformed-unicode')r.creations[0].text=String.fromCharCode(0xd800);
  assert.equal(parseMemoryCreationReview(r,memoryEditTarget),null);
+});
+
+test('Memory Output creation uses a versioned explicit unconfirmed-requirement approval',async()=>{
+ const action={...memoryCreationResult.actions[0],block_type:'output',text:'Output images: one image.'};
+ const review=memoryAssistantCreationReview({actions:[action]},memoryEditContext,memoryEditTarget);
+ assert.equal(review.version,'memory-creation-review-v2');assert.equal(review.creations[0].blockType,'output');
+ assert.deepEqual(parseMemoryCreationReview(review,memoryEditTarget),review);assert.match(await memoryCreationApprovalHash(review,'create-0'),/^[a-f0-9]{64}$/);
+ assert.equal(parseMemoryCreationReview({...review,version:'memory-creation-review-v1'},memoryEditTarget),null);
+ assert.equal(memoryAssistantCreationReview({actions:[{...action,intent:'avoid'}]},memoryEditContext,memoryEditTarget),null);
+ assert.equal(memoryAssistantCreationReview({actions:[{...action,intent:'prohibit'}]},memoryEditContext,memoryEditTarget),null);
+ const changed=structuredClone(review);changed.creations[0].text+=' Another image.';assert.notEqual(await memoryCreationApprovalHash(review,'create-0'),await memoryCreationApprovalHash(changed,'create-0'));
+ const regular=memoryAssistantCreationReview(memoryCreationResult,memoryEditContext,memoryEditTarget);
+ assert.notEqual(await memoryCreationApprovalHash(regular,'create-0'),await memoryCreationApprovalHash({...regular,version:'memory-creation-review-v2'},'create-0'));
+ assert.equal(memoryAssistantCreationReview({actions:[action]},memoryEditContext,memoryEditTarget,'direction-a'),null);
+});
+
+const {memoryOutputCreation}=await import('../src/model/memory-creation-review.ts');
+const {normalizeOutputRequirementCreation}=await import('../src/model/output-requirement-creation.ts');
+const {blockTypeDefinition}=await import('../src/model/block-types.ts');
+function nativeMemoryOutputPayload(){return normalizeOutputRequirementCreation({block_id:'memory-output-a',type:'output',source_chat_turn_id:'turn-a',properties:{text:'Output images: one image.',subtype:blockTypeDefinition('output').subtypes[0],authority:'authored',created_from:'assistant',source_chat_turn_id:'turn-a',intent:'include',weight:.7}});}
+test('Memory Output native operation accepts only the exact unconfirmed prose interpretation',()=>{assert.equal(memoryOutputCreation(nativeMemoryOutputPayload()),true);});
+for(const fault of ['type','weight','intent','status','spec','source','identity','text','settings','getter'])test('Memory Output native operation refuses '+fault,()=>{
+ const value=nativeMemoryOutputPayload();
+ if(fault==='type')value.type='direction';if(fault==='weight')value.properties.weight=1;if(fault==='intent')value.properties.intent='include';
+ if(fault==='status')value.properties.output_confirmed=true;if(fault==='spec')value.properties.output_spec.deliverables[0].quantity.value=99;
+ if(fault==='source')value.source_chat_turn_id='different';if(fault==='identity')value.properties.output_spec.id='different';if(fault==='text')value.properties.text='Different exact wording';
+ if(fault==='settings')value.properties.provider='openai';if(fault==='getter')Object.defineProperty(value.properties,'text',{get(){throw Error('not data');},enumerable:true});
+ assert.equal(memoryOutputCreation(value),false);
 });

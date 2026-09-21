@@ -243,3 +243,12 @@ hosted receipts; no production migration has run. Measure the integrated maximum
 source set against the actual host's request, byte, CPU and database ceilings
 before enrollment. Existing scheduler/provider/index/retention/privacy gates and
 explicit consent requirements remain unchanged.
+
+### Native Output requirement integration
+
+[Memory-assisted Output wording](forma-memory-output-requirements-2026-09-21.md)
+is implemented locally without external services. It saves an unconfirmed
+requirement only, not a plan or a paid generation. Native source/privacy and
+localized browser tests pass. Private image/live-preview still belongs to native
+implementation; hosted scheduling, provider qualification and rollout remain
+separate operational gates.

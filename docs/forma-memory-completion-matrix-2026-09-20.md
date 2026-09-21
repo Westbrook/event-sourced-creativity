@@ -388,3 +388,13 @@ splitting atomic caller reads. Maximum-three-source real local D1 execution and
 privacy retirement pass. The63–66-call execution still exceeds the conservative
 local50-call target; this does not close aggregate capacity or the other native
 workstreams.
+
+## Explicit Output requirement authoring
+
+[Private Output proposals](forma-memory-output-requirements-2026-09-21.md) now
+connect actual Assistant/Chat review to exact, independently approved native
+Output requirements. The authored requirement remains unconfirmed and does not
+authorize a plan or generation. Source/privacy races and actual Output snapshots
+are verified, including shared projects and D1. This closes that Output authoring
+path, not the separately required private image/live-preview path. Broad panel
+fixture failures are reproduced and remain in integrated qualification work.

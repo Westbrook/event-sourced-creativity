@@ -3226,13 +3226,13 @@ for(const boundary of ['draft','project','document','hidden','embedded','duplica
  f.host.fieldGenerationForTest(intent);assert.equal(f.calls.length,1);assert.equal(intent.accepted,boundary==='duplicate');
 });
 
-async function retainedMemoryCreationReview(f){
+async function retainedMemoryCreationReview(f,output=false){
  await f.open();await review(f);
  const changing=f.host.requestForTest('quote','gpt-5.6-luna',true),call=await f.take();
  const memory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+20000).toISOString(),independentEvidence:false};
  await f.reply(call,specialistResponse(preview({sourceHash:'a'.repeat(64)}),{memory}));await changing;
- const creationReview={version:'memory-creation-review-v1',executionId:'approval-a',turnId:'turn-a',projectId:'project-a',documentId:'doc-a',sourceHash:'a'.repeat(64),locale:'en',mode:'review-only',independentEvidence:false,
-  creations:[{proposalId:'create-0',blockType:'direction',intent:'include',text:'PRIVATE_ACCEPTED_TEXT'}]};
+ const creationReview={version:output?'memory-creation-review-v2':'memory-creation-review-v1',executionId:'approval-a',turnId:'turn-a',projectId:'project-a',documentId:'doc-a',sourceHash:'a'.repeat(64),locale:'en',mode:'review-only',independentEvidence:false,
+  creations:[{proposalId:'create-0',blockType:output?'output':'direction',intent:'include',text:'PRIVATE_ACCEPTED_TEXT'}]};
  const reading=f.host.requestForTest('retrieve'),get=await f.take();
  await f.reply(get,specialistResponse(preview({status:'completed',canExecute:false,sourceHash:'a'.repeat(64)}),{
   memory,result:{reply:'Tentative guidance',sourceStatus:'semantic-memory-assisted',creationReview},task:savedTask({status:'completed',submission:'settled',canExecute:false})}));await reading;
@@ -3267,4 +3267,16 @@ test('Memory authored creation UI: late success after withdrawal does not resurr
  const applying=f.host.actionForTest(control),call=await f.take();f.host.retireSemanticForTest();
  await f.reply(call,{status:'applied',executionId:'approval-a',proposalId:'create-0',blockId:'block-a',eventId:'authored-event'});await applying;
  assert.equal(refreshes,0);assert.equal(f.host.snapshotForTest().specialist.creationReview,undefined);assert.doesNotMatch(f.render().markup,/PRIVATE_/u);
+});
+
+for(const locale of ['en','fr','ar','ja'])test('Memory Output requirement UI: deliberate publication does not offer generic block Undo '+locale,async t=>{
+ const f=fixture(t,locale),control=await retainedMemoryCreationReview(f,true);let refreshed=0;f.store.refreshEvents=async()=>{refreshed++;};
+ const shown=f.render();assert.ok(shown.markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.outputCreationDetail']));
+ assert.ok(shown.buttons.some(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.outputCreationApply']&&!b.disabled));
+ const applying=f.host.actionForTest(control),call=await f.take();assert.equal(call.body.action,'apply-creation');assert.equal(call.body.publishToDocument,true);
+ assert.doesNotMatch(JSON.stringify(call.body),/PRIVATE_ACCEPTED_TEXT/);
+ await f.reply(call,{status:'applied',executionId:'approval-a',proposalId:'create-0',blockId:'output-a',eventId:'output-event'});await applying;
+ assert.equal(refreshed,1);assert.equal(f.trace.some(row=>row[0]==='remember-memory-edit'),false);
+ assert.ok(f.trace.some(row=>row[0]==='toast'&&row[1]===ASSISTANT_MESSAGES[locale]['assistant.specialist.outputCreationApplied']));
+ assert.equal(f.host.snapshotForTest().specialist.creationReview,undefined);
 });

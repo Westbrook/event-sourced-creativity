@@ -28,9 +28,9 @@ export function memoryAssistantCreationReview(result:AssistantProviderResult,con
   if(fieldBlockId||context.scope.projectId!==target.projectId||context.scope.documentId!==target.documentId)return null;
   const creations:MemoryCreationReview['creations']=[];
   for(const [index,action]of result.actions.entries()){
-    if(action.kind!=='context.create'||!memoryCreationKind(action.block_type)||!['include','avoid'].includes(action.intent)
+    if(action.kind!=='context.create'||!(memoryCreationKind(action.block_type)||action.block_type==='output'&&action.intent==='include')||!['include','avoid'].includes(action.intent)
       ||action.target_block_id!==null||action.from_block_id!==null||action.to_block_id!==null||action.relation_kind!=='')continue;
-    creations.push({proposalId:'create-'+index,blockType:action.block_type,intent:action.intent as 'include'|'avoid',text:action.text.trim()});
+    creations.push({proposalId:'create-'+index,blockType:action.block_type as MemoryCreationReview['creations'][number]['blockType'],intent:action.intent as 'include'|'avoid',text:action.text.trim()});
   }
-  return parseMemoryCreationReview({version:'memory-creation-review-v1',...target,mode:'review-only',independentEvidence:false,creations},target);
+  return parseMemoryCreationReview({version:creations.some(item=>item.blockType==='output')?'memory-creation-review-v2':'memory-creation-review-v1',...target,mode:'review-only',independentEvidence:false,creations},target);
 }

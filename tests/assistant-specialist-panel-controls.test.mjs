@@ -3868,3 +3868,18 @@ for(const locale of ['en','fr','ar','ja'])test('Memory authored creation panel: 
  assert.equal(control.approvedCreationHash,await memoryCreationApprovalHash(state.creationReview,'create-0'));assert.equal(control.reviewId,state.id);
  f.panel.canMemoryEdit=false;assert.equal(f.render().buttons.some(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.creationApply']),false);
 });
+
+for(const locale of ['en','fr','ar','ja'])test('Memory Output requirement panel: disclosure and exact rendered approval '+locale,async()=>{
+ const f=fixture(locale),state=review('retrieve');state.originalRequest.sourceHash=state.quote.sourceHash='a'.repeat(64);
+ state.resultSource='semantic-memory-assisted';state.semanticMemory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false};
+ state.creationReview={version:'memory-creation-review-v2',executionId:state.executionId,turnId:state.turnId,projectId:state.originalRequest.projectId,
+  documentId:state.originalRequest.documentId,sourceHash:state.originalRequest.sourceHash,locale:'en',mode:'review-only',independentEvidence:false,
+  creations:[{proposalId:'create-0',blockType:'output',intent:'include',text:'Exact new creative block <script>literal</script>'}]};
+ f.panel.canMemoryEdit=true;f.setReview(state);const shown=f.render();
+ assert.ok(shown.markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.outputCreationDetail']));
+ assert.match(shown.markup,/&lt;script&gt;literal&lt;\/script&gt;/u);
+ const button=shown.buttons.find(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.outputCreationApply']);assert.ok(button);assert.equal(button.disabled,false);
+ await button.click();const control=f.emitted.at(-1).detail;assert.equal(control.action,'apply-creation');assert.equal(control.proposalId,'create-0');
+ assert.equal(control.approvedCreationHash,await memoryCreationApprovalHash(state.creationReview,'create-0'));assert.equal(control.reviewId,state.id);
+ f.panel.canMemoryEdit=false;assert.equal(f.render().buttons.some(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.outputCreationApply']),false);
+});

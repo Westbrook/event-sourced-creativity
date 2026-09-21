@@ -506,3 +506,13 @@ Implemented locally: [request-local aggregate reads](forma-memory-aggregate-prof
 local D1 execution. No positive-access cache or source-proof removal. Actual
 aggregate execution63–66calls remains above the conservative50-call target;
 capacity and the other completion-matrix rows stay assigned. No deployment.
+
+## MEM-043 — Private Memory review to unconfirmed Output requirements
+
+Implemented locally: [actual Assistant/Chat review and native Output authoring](forma-memory-output-requirements-2026-09-21.md).
+Versioned exact approval creates an unconfirmed authored requirement only, with
+separate shared-project validation and durable negative attribution. No plan,
+spending or generation approval is inherited.18 native,67 model,114 focused UI
+and12 browser checks pass (overlapping scopes). Reconcile55 reproduced baseline
+panel-fixture failures. Private image/live-preview, semantic resource/profile
+integration and the other completion-matrix work remain assigned.

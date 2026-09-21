@@ -1677,9 +1677,10 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         </section>`:nothing}
         ${creationReview?html`<section class="forma-assistant-memory-creation-review" aria-label=${this.i18n.t('assistant.specialist.creationTitle')}>
           <h3>${this.i18n.t('assistant.specialist.creationTitle')}</h3><p>${this.i18n.t('assistant.specialist.creationDetail')}</p>
-          ${creationReview.creations.map(item=>html`<article><h4>${this.i18n.system(item.blockType[0]!.toUpperCase()+item.blockType.slice(1))} · ${this.i18n.system(item.intent==='include'?'Include':'Avoid')}</h4><p dir="auto">${item.text}</p>
+          ${creationReview.creations.map(item=>html`<article><h4>${this.i18n.system(item.blockType[0]!.toUpperCase()+item.blockType.slice(1))}${item.blockType==='output'?nothing:html` · ${this.i18n.system(item.intent==='include'?'Include':'Avoid')}`}</h4><p dir="auto">${item.text}</p>
+            ${item.blockType==='output'?html`<p>${this.i18n.t('assistant.specialist.outputCreationDetail')}</p>`:nothing}
             ${this.canMemoryEdit?html`<button type="button" class="button secondary" ?disabled=${state.working||!this.#modalReady}
-              @click=${()=>this.#applyReviewedMemoryCreation(target,creationReview,item.proposalId)}>${this.i18n.t('assistant.specialist.creationApply')}</button>`:nothing}</article>`)}
+              @click=${()=>this.#applyReviewedMemoryCreation(target,creationReview,item.proposalId)}>${this.i18n.t(item.blockType==='output'?'assistant.specialist.outputCreationApply':'assistant.specialist.creationApply')}</button>`:nothing}</article>`)}
         </section>`:nothing}
         ${reply ? html`<section class="forma-assistant-specialist-result"><h3>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryResult":"assistant.specialist.originalResult")}</h3><p dir="auto">${reply}</p><small>${this.i18n.t(state.resultSource==="semantic-memory-assisted"?"assistant.specialist.memoryReview":"assistant.specialist.resultReview")}</small></section>` : nothing}
         <footer>

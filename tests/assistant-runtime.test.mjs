@@ -17678,7 +17678,7 @@ async function semanticAuthoredEditFixture(t,{shared=false,native=false,creation
   assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;
   const request=JSON.parse(init.body),alias=JSON.parse(request.input).blocks.find(b=>b.text==='Original authored direction.').id;
   return specialistRawResponse(request,{output:[{type:'message',id:'edit-message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Consider this change.',actions:[
-   {kind:creation?'context.create':'context.edit',block_type:'direction',target_block_id:creation?null:alias,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:'Explicitly accepted authored direction.'}]})}]}]});
+   {kind:creation?'context.create':'context.edit',block_type:creation==='output'?'output':'direction',target_block_id:creation?null:alias,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:creation==='output'?'Output images: one image of the current scene.':'Explicitly accepted authored direction.'}]})}]}]});
  };t.after(()=>{globalThis.fetch=original;});
  const executed=await specialistExecute(state,review,state.semanticOptions);assert.equal(executed.status,202,await executed.clone().text());await state.drainBackground();
  const read=await specialistRetrieve(state,review,state.semanticOptions),result=await read.json();assert.equal(read.status,200,JSON.stringify(result));assert.ok(creation?result.result?.creationReview:result.result?.editReview,JSON.stringify(result));
@@ -19862,4 +19862,51 @@ for(const fault of ['source','missing-extension','trigger-drift','profile-remova
  }
  let calls=0;const original=globalThis.fetch;globalThis.fetch=async()=>{calls++;throw Error('Retired aggregate cannot dispatch');};t.after(()=>{globalThis.fetch=original;});
  const response=await specialistExecute(state,quote.body,state.semanticOptions);assert.ok(response.status>=400,await response.clone().text());await state.drainBackground();assert.equal(calls,0);
+});
+
+for(const shared of [false,true])for(const native of [false,true])test('Memory Output requirement: private proposal becomes only an unconfirmed authored requirement '+shared+'/'+native,{timeout:120000},async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared,native,creation:'output'}),db=state.env.DB,review=state.authoredResult.result.creationReview;
+ assert.equal(review.version,'memory-creation-review-v2');assert.equal(review.creations[0].blockType,'output');
+ const before=(await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n;
+ const applied=await state.applyAuthored(),body=await applied.json();assert.equal(applied.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,before+1);
+ const row=await db.prepare('SELECT event.payload,secret.private_json FROM events event JOIN event_private_payloads secret ON secret.private_event_id=event.event_id WHERE event.event_id=?').bind(body.eventId).first();
+ const publicBody=JSON.parse(row.payload),properties=JSON.parse(row.private_json).properties;
+ assert.equal(publicBody.type,'output');assert.equal(publicBody.memory_authored_version,1);assert.equal(publicBody.source_chat_turn_id,state.authoredReview.turnId);
+ assert.equal(properties.text,review.creations[0].text);assert.equal(properties.output_spec.id,body.blockId);
+ for(const key of ['weight','intent','effect','influence','output_confirmed','output_approved'])assert.equal(Object.hasOwn(properties,key),false);
+ assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM events WHERE type LIKE 'Output%' OR type IN('GenerationRequested','DocumentRenderRequested')").first()).n,0);
+ assert.equal((await state.applyAuthored()).status,409);assert.equal(state.providerCalls(),1);
+ const output=await state.request('/api/output-requirements?documentId='+state.recallTarget.documentId,{headers:state.owner}),snapshot=await output.json();
+ assert.equal(output.status,200,JSON.stringify(snapshot));assert.equal(snapshot.confirmedPlan,null);
+ assert.ok(snapshot.requirements.some(r=>r.blockId===body.blockId));
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ assert.equal((await db.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').bind(body.eventId).first()).private_json,row.private_json);
+ assert.equal((await state.applyAuthored()).status,404);assert.equal(state.providerCalls(),1);
+ const undo=await state.request('/api/events',json({action:'append',event:{type:'BlockRemoved',compensatesEventId:body.eventId,payload:{project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:body.blockId}}},state.owner));
+ assert.ok(undo.status>=400,'Output changes must retain the dedicated requirement revision/commitment boundary');
+});
+
+for(const shared of [false,true])for(const fault of ['approval','destination','unknown-field','withdrawal','source-race','private-field-race','access-race'])test('Memory Output requirement boundary: denies '+fault+' before any authored change '+shared,async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared,creation:'output'}),db=state.env.DB,approval={...state.authoredApproval};
+ const before=(await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n;
+ if(fault==='approval')approval.approvedCreationHash='f'.repeat(64);
+ if(fault==='destination')approval.publishToDocument=false;
+ if(fault==='unknown-field')approval.text='UNAPPROVED';
+ if(fault==='withdrawal')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+ let hit=false;
+ if(['source-race','private-field-race','access-race'].includes(fault)){
+  const batch=db.batch;db.batch=async statements=>{
+   if(!hit&&statements.some(s=>s.sql?.includes('INSERT INTO event_client_receipts')&&s.values?.includes('memory-create:'+approval.executionId+':'+approval.proposalId))){
+    hit=true;
+    if(fault==='source-race')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+    if(fault==='private-field-race')state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Concurrent changed field') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')=?)").run(state.authoredBlock);
+    if(fault==='access-race')state.sqlite.prepare("UPDATE users SET role='viewer',updated_at=? WHERE user_id=?").run(new Date().toISOString(),state.current().actor_user_id);
+   }
+   return batch.call(db,statements);
+  };t.after(()=>{db.batch=batch;});
+ }
+ const applied=await state.applyAuthored(approval);assert.ok(applied.status>=400,await applied.clone().text());
+ if(['source-race','private-field-race','access-race'].includes(fault))assert.equal(hit,true);
+ assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM events').first()).n,before);assert.equal(state.providerCalls(),1);
 });

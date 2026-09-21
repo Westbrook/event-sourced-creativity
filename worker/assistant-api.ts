@@ -1723,7 +1723,7 @@ async function publishMemoryAuthoredField(env:WorkerEnv,actor:AuthorizedAssistan
   let eventId:string;
   if(actor.project){
     const response=await appendProjectEvents(env,actor.project,actor.principal,{action:'batch',events:[mutation],clientId:'web:assistant-memory',correlationId:requestId},undefined,{
-      preserveGovernance:true,authoringOperation:creation?'memory-create':'memory-edit',expectedOwnerHead:sourceHead,guardSql:guard.sql,guardBindings:guard.bindings,preconditions,
+      preserveGovernance:true,authoringOperation:creation?creation.action.blockType==='output'?'memory-output-create':'memory-create':'memory-edit',expectedOwnerHead:sourceHead,guardSql:guard.sql,guardBindings:guard.bindings,preconditions,
       buildStatements:(lastId,proof,events)=>{if(!proof)throw Error('assistant_memory_edit_stale');return [assertProof(proof),...receipts(lastId,events!.at(-1)!.sequence)];},
     });
     if(!response.ok)return response;

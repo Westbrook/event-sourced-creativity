@@ -1179,6 +1179,7 @@ export class FormaCreativeAssistant extends FormaElement {
     this.#pruneSemanticReceipts();
     const state=this.#specialist,source=this.store.captureSourceOwnership(),creating=control.action==='apply-creation';
     const review=creating?state?.creationReview:state?.editReview;
+    const outputRequirement=creating&&state?.creationReview?.creations.find(item=>item.proposalId===control.proposalId)?.blockType==='output';
     if(!state||!review||state.working||!this.#open||!this.#canAuthor()||this.store.session.get()?.assistant?.phase!=='actions'
       ||memoryPrivacyMutationActive()||state.scope!==this.#scope()||state.id!==control.reviewId
       ||state.executionId!==control.executionId||state.turnId!==control.turnId||state.quote?.bindingHash!==control.bindingHash
@@ -1203,9 +1204,11 @@ export class FormaCreativeAssistant extends FormaElement {
       this.#retireSemanticReviews();this.requestUpdate();
       await this.store.refreshEvents();
       if(state.scope===this.#scope()&&this.store.sourceOwnershipScopeActive(source)){
-        this.store.rememberMemoryAuthoredEdit({eventId:body.eventId,executionId:state.executionId,turnId:state.turnId,blockId:body.blockId,
+        // Output has its own revision-bound edit/removal flow. Never offer the
+        // generic block Undo path, which must not bypass Output commitments.
+        if(!outputRequirement)this.store.rememberMemoryAuthoredEdit({eventId:body.eventId,executionId:state.executionId,turnId:state.turnId,blockId:body.blockId,
           projectId:review.projectId,documentId:review.documentId});
-        this.store.toast(this.i18n.t(creating?'assistant.specialist.creationApplied':'assistant.specialist.editApplied'));
+        this.store.toast(this.i18n.t(outputRequirement?'assistant.specialist.outputCreationApplied':creating?'assistant.specialist.creationApplied':'assistant.specialist.editApplied'));
       }
     }catch{
       if(current()){this.#retireSemanticReviews();this.store.toast(this.i18n.t('assistant.specialist.editNotConfirmed'));}
