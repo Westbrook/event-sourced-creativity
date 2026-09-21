@@ -240,6 +240,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
     const final=nativeSavedAssistantContextInputs(env,nativeHandle);
     const response=answer({...metadata(),context:{revision:old!.revision,state:'accepted',jobId,source:{...recallSourceIdentity(source,relation.zoom,source.owner_user_id!==target.owner_user_id),...relation},purpose:bound.purpose,expiresAt,...profileMetadata()},
       presentation:final.presentation,...(final.profiles.length?{profiles:final.profiles}:{}),independentEvidence:false,completeHistory:false});
+    nativeSavedAssistantContextInputs(env,nativeHandle);
     savedContextResponses.set(response,nativeHandle);return response;
   }catch{return answer({error:request.method==='GET'?'assistant_context_unavailable':'assistant_context_commit_unconfirmed',noAutomaticRetry:true},503);}finally{staging?.close();}
 }

@@ -340,3 +340,25 @@ The immutable `763e91c2` snapshot passes **2,399/2,399** native runtime tests
 (zero failures, 1,136.079 seconds). This includes the corrected metadata fault
 hooks and committed original-discovery integration. Newer profile and multi-hop
 changes are separately verified and are not attributed to this full pass.
+
+## Final private-response delivery — 2026-09-21
+
+Saved assistant context (including aggregate profile sources), retained derivation
+results, user corrections, result inventories, selected-source recall, recall
+catalogs and boundary metadata now recheck their original request lease after
+JSON serialization. A database replacement, elapsed deadline, non-finite clock
+or backwards wall clock cannot disclose a response prepared under an older
+lease. Correction controls also bound their advertised lifetime by the earliest
+retained correction expiry, not only the request timeout. This adds no source
+cache and does not bypass the existing final transactional source proofs.
+
+Verification:41 new adversarial delivery cases and122 selected integrated native
+cases pass, including personal/shared scopes and correction expiry during
+serialization. TypeScript and the unchanged production build pass. No migration,
+provider call, deployment or enrollment occurred. The initial unprivileged
+integrated attempt could not start the local D1 runtime; the qualified rerun
+completed with122 passes and zero failures.
+
+A separately frozen full native run at`a6e690e6` passes2641/2641. That older receipt
+does **not** verify the subsequent coordinated-read, resource-recall or current
+final-delivery changes. The native completion matrix remains the full scope.

@@ -540,3 +540,10 @@ The actual endpoint retains native proofs and rejects post-serialization expiry;
 rolling counts stop at their next window transition.104 integrated native tests
 pass, including13 new lifetime/authority/D1 cases. This does not grant provider
 consent or replace the still-required durable semantic resource consumer.
+
+## MEM-047 — Final private-response delivery
+
+Implemented locally: [post-serialization privacy checks](forma-memory-native-capacity-2026-09-20.md#final-private-response-delivery--2026-09-21).
+Eight native read surfaces now retain the original lease through serialization;
+correction text expires at its own retention boundary.41 new cases and122
+integrated native checks pass. No source cache, migration or deployment.

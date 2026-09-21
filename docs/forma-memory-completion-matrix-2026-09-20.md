@@ -413,3 +413,9 @@ image/live-preview and integrated qualification remain assigned native work.
 ## Resource recall delivery and native evidence
 
 [Resource recall evidence](forma-memory-resource-integration-2026-09-21.md#native-downstream-recall-evidence-and-final-delivery) now keeps exact predicates with the actual resource-history reader, rejects expired serialized responses and bounds rolling-count freshness to the next window transition.104 integrated native checks pass. The separate integrated Memory regression at4af22be3 is2172/2172. Neither receipt is a claim that durable semantic resource consumers or the full matrix are complete.
+
+[Final private-response delivery](forma-memory-native-capacity-2026-09-20.md#final-private-response-delivery--2026-09-21)
+now covers eight native read surfaces through JSON serialization and bounds
+correction disclosure by retained expiry.122 integrated native checks pass.
+This closes those delivery races, not the remaining semantic consumers or the
+full native scope.

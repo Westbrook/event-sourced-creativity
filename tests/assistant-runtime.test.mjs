@@ -20012,3 +20012,41 @@ test('native distinct Memory scope: final serialization cannot disclose an expir
  t.mock.method(Response,'json',(value,init)=>{const response=json.call(Response,value,init);if(value?.version==='memory-resource-scope-v1'&&value.scope){hit=true;t.mock.method(Date,'now',()=>wall()+60000);}return response;});
  try{const response=await state.request(state.resourceUrl,{headers:state.owner}),body=await response.json();assert.equal(hit,true);assert.equal(response.status,403,JSON.stringify(body));assert.equal(Object.hasOwn(body,'scope'),false);}finally{t.mock.restoreAll();}
 });
+
+async function memoryDisclosureFixture(t,surface,shared){
+ const api=await import('../worker/memory-derivation-api.ts');
+ if(surface==='aggregate-context'){
+  const state=await semanticProfileAggregateFixture(t,{shared});assert.equal((await state.saveProfileAggregate(await state.contextGet())).status,200);return {state,request:()=>state.contextRequest(),matches:v=>v?.version==='memory-assistant-context-v1'&&v.profiles?.length};
+ }
+ if(surface==='context'){
+  const state=await semanticAssistantContextFixture(t,{shared});assert.equal((await state.contextAccept(await state.contextGet())).status,200);return {state,request:()=>state.contextRequest(),matches:v=>v?.version==='memory-assistant-context-v1'&&v.presentation};
+ }
+ const state=await nativeCrossScopeRecallFixture(t,{shared}),e=state.current(),query=new URLSearchParams({projectId:e.project_id,documentId:e.document_id});
+ if(surface==='result')return {state,request:()=>api.handleMemoryDerivationResult(new Request(state.derivationOrigin+'/api/memory/derivation/result?jobId='+state.executionJob.job_id,{headers:state.owner}),state.env),matches:v=>v?.version==='memory-derivation-control-v1'&&v.candidate};
+ if(surface==='controls'){
+  const store=state.resultStore,read=await store.readNativeDerivationResult(state.env,e.actor_user_id,state.executionJob.job_id),item=store.nativeDerivationResultInputs(state.env,read).candidate.items[0];
+  await(await import('../worker/memory-derivation-user-controls.ts')).controlNativeDerivationResult(state.env,read,item.claimKey,'corrected','PRIVATE_CORRECTION_DELIVERY',Object.fromEntries(item.lineageIds.map(id=>[id,0])));
+  return {state,request:()=>api.handleMemoryDerivationUserControls(new Request(state.derivationOrigin+'/api/memory/derivation/user-controls?'+query,{headers:state.owner}),state.env),matches:v=>v?.version==='memory-derivation-control-v1'&&v.controls?.length};
+ }
+ if(surface==='results')return {state,request:()=>api.handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?'+query,{headers:state.owner}),state.env),matches:v=>v?.version==='memory-derivation-control-v1'&&v.results};
+ await state.widen();
+ return {state,request:()=>surface==='boundary'?state.recallRequest('recall-boundary',e.document_id):surface==='catalog'?state.recallRequest():state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose:'rolling-summary'}}),matches:v=>v?.version==='memory-scope-recall-v1'&&(v.presentation||v.sources||v.boundary)};
+}
+for(const surface of ['context','aggregate-context','result','controls','results','recall','catalog','boundary'])for(const shared of [false,true])for(const fault of shared?['monotonic-expiry']:['monotonic-expiry','wall-rollback','nonfinite','binding'])test('Memory native final disclosure: '+surface+'/'+shared+' denies '+fault,async t=>{
+ const {state,request,matches}=await memoryDisclosureFixture(t,surface,shared),finance=adaptiveReentryFinancialState(state),db=state.env.DB,stringify=JSON.stringify,json=Response.json;let hit=false;
+ const change=value=>{if(hit||!matches(value))return;hit=true;
+  if(fault==='monotonic-expiry'){const late=performance.now()+120000;t.mock.method(performance,'now',()=>late);}
+  if(fault==='wall-rollback')t.mock.method(Date,'now',()=>0);if(fault==='nonfinite')t.mock.method(Date,'now',()=>NaN);if(fault==='binding')state.env.DB={...db};
+ };
+ t.mock.method(JSON,'stringify',function(value,...args){const result=stringify.call(this,value,...args);change(value);return result;});
+ t.mock.method(Response,'json',function(value,...args){const result=json.call(this,value,...args);change(value);return result;});
+ try{const response=await request(),body=await response.json();assert.equal(hit,true);assert.equal(response.status,503,stringify(body));assert.equal(Object.hasOwn(body,'presentation'),false);assert.equal(Object.hasOwn(body,'candidate'),false);assert.equal(Object.hasOwn(body,'controls'),false);assert.equal(Object.hasOwn(body,'sources'),false);assert.equal(Object.hasOwn(body,'results'),false);assert.doesNotMatch(stringify(body),/PRIVATE_CORRECTION_DELIVERY/);}
+ finally{state.env.DB=db;t.mock.restoreAll();}
+ assert.deepEqual(adaptiveReentryFinancialState(state),finance);
+});
+test('Memory native final disclosure: correction expiry bounds the response and cannot escape serialization',async t=>{
+ const {state,request,matches}=await memoryDisclosureFixture(t,'controls',false),expiry=Date.now()+20000;state.sqlite.prepare('UPDATE memory_derivation_user_controls SET expires_at=?,revision=revision+1').run(new Date(expiry).toISOString());
+ const response=await request(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.equal(Date.parse(body.validUntil),expiry);
+ const stringify=JSON.stringify;let hit=false;t.mock.method(JSON,'stringify',function(value,...args){const result=stringify.call(this,value,...args);if(!hit&&matches(value)){hit=true;t.mock.method(Date,'now',()=>expiry);}return result;});
+ try{const expired=await request();assert.equal(hit,true);assert.equal(expired.status,503,await expired.clone().text());assert.equal(Object.hasOwn(await expired.json(),'controls'),false);}finally{t.mock.restoreAll();}
+});

@@ -27,10 +27,11 @@ import type { WorkerEnv } from "./runtime.ts";
 
 type Row = Record<string, unknown>;
 const headers = { "cache-control": "private, no-store", vary: "Cookie, oai-authenticated-user-id, oai-authenticated-user-email" };
-const reply = (value: Row, status = 200) => {
+const reply = (value: Row, status = 200, current?:()=>boolean) => {
   const body = JSON.stringify({ version: MEMORY_DERIVATION_CONTROL, ...value });
-  return new TextEncoder().encode(body).byteLength <= 524288 ? new Response(body, { status, headers: { ...headers, "content-type": "application/json" } })
+  const response=new TextEncoder().encode(body).byteLength <= 524288 ? new Response(body, { status, headers: { ...headers, "content-type": "application/json" } })
     : Response.json({ version: MEMORY_DERIVATION_CONTROL, error: "memory_derivation_response_too_large" }, { status: 503, headers });
+  if(current&&!current())throw Error('memory_derivation_delivery_expired');return response;
 };
 const deny = (error: string, status = 400) => reply({ error }, status);
 const privateResponse = (response: Response) => new Response(response.body, { status: response.status, headers: { ...Object.fromEntries(response.headers), ...headers } });
@@ -277,6 +278,7 @@ const sameOrigin=(request:Request)=>request.headers.get('origin')===new URL(requ
 /** Private inspection and explicit user changes only. Never provider dispatch. */
 export async function handleMemoryDerivationResult(request:Request,env:WorkerEnv):Promise<Response>{
   const db=env.DB,started=Date.now(),configuration=settingsKey(env);
+  const elapsed=createMemoryElapsed({wall:started,monotonic:performance.now()});
   const auth=await requireUser(request,env,'viewer',{account:'principal'});
   if(auth.response||!auth.user)return privateResponse(auth.response??deny('authentication_required',401));
   const actor=auth.user,identity=principalGuard(actor),url=new URL(request.url),jobId=url.searchParams.get('jobId');
@@ -286,7 +288,7 @@ export async function handleMemoryDerivationResult(request:Request,env:WorkerEnv
   if(!derivationHash(jobId)||url.searchParams.getAll('jobId').length!==1||[...url.searchParams.keys()].some(key=>!['jobId','resources'].includes(key)))return deny('memory_result_request_invalid');
   const resources=url.searchParams.get('resources');
   if(resources!==null&&(resources!=='1'||request.method!=='GET'||url.searchParams.getAll('resources').length!==1))return deny('memory_result_request_invalid');
-  const current=()=>env.DB===db&&Date.now()-started<60000&&settingsKey(env)===configuration;
+  const current=()=>env.DB===db&&elapsed.elapsed({wall:Date.now(),monotonic:performance.now()})<60000&&settingsKey(env)===configuration;
   try{
     if(request.method==='DELETE'){
       const body=await bodyOf(request);
@@ -315,18 +317,18 @@ export async function handleMemoryDerivationResult(request:Request,env:WorkerEnv
     const statements=[derivationAssertion(env,identity),...nativeDerivationResultStatements(env,read),...(schema.userControlsPresent?[derivationAssertion(env,{condition:`(SELECT json_group_array(json_array(lineage_id,revision)) FROM (${controlQuery}))=?`,bindings:[...controlBindings,JSON.stringify(controls.map(row=>[row.lineage_id,row.revision]))]})]:[])];
     const checked=structuredClone(await db.batch<Record<string,unknown>>(statements));
     if(!current()||!derivationResults(checked,statements.length)||!checked.every(row=>derivationVerified(row)||row.results.length===1&&row.results[0]?.context_source_asserted===1))return deny('memory_result_unavailable',503);
-    nativeDerivationResultInputs(env,read);return reply({...input,controlRevisions,...(resources==='1'?{resourceEvidence:nativeDerivationResultResources(env,read)}:{})});
+    nativeDerivationResultInputs(env,read);return reply({...input,controlRevisions,...(resources==='1'?{resourceEvidence:nativeDerivationResultResources(env,read)}:{})},200,()=>{nativeDerivationResultInputs(env,read);return current();});
   }catch{return request.method==='GET'?deny('memory_result_unavailable',503):failure();}
 }
 
 export async function handleMemoryDerivationUserControls(request:Request,env:WorkerEnv):Promise<Response>{
-  const db=env.DB,started=Date.now();const auth=await requireUser(request,env,'viewer',{account:'principal'});
+  const db=env.DB,started=Date.now(),elapsed=createMemoryElapsed({wall:started,monotonic:performance.now()});const auth=await requireUser(request,env,'viewer',{account:'principal'});
   if(auth.response||!auth.user)return privateResponse(auth.response??deny('authentication_required',401));
   const actor=auth.user,identity=principalGuard(actor),url=new URL(request.url);
   if(actor.fictional||!identity)return deny('principal_account_required',403);
   if(!['GET','PUT'].includes(request.method))return deny('method_not_allowed',405);
   if(request.method==='PUT'&&!sameOrigin(request))return deny('same_origin_required',403);
-  const current=()=>env.DB===db&&Date.now()-started<60000;
+  const current=()=>env.DB===db&&elapsed.elapsed({wall:Date.now(),monotonic:performance.now()})<60000;
   try{
     if(request.method==='PUT'){
       const body=await bodyOf(request,16384);
@@ -355,8 +357,9 @@ export async function handleMemoryDerivationUserControls(request:Request,env:Wor
     const checked=await db.batch([schema.guard,identity,...selected.guards,guard].map(value=>derivationAssertion(env,value)));
     if(!current()||records.some(row=>String(row.expires_at)<=new Date().toISOString())||!derivationResults(checked,selected.guards.length+3)||!checked.every(derivationVerified))return deny('memory_user_control_unavailable',503);
     const parent=selected.parent;
-    return reply({available:true,scope:{projectId,documentId,custody:parent.organization_id===null?{kind:'personal'}:{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}},enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,validUntil:new Date(started+60000).toISOString(),controls:records.slice(0,128).map(row=>({controlId:row.control_id,claimKey:row.claim_key,lineageId:row.lineage_id,
-      revision:row.revision,action:row.action,correctionText:row.correction_text,expiresAt:row.expires_at,purpose:row.purpose,textAvailable:canReadText})),next:records.length>128?records[127]!.control_id:null});
+    const deadline=Math.min(started+60000,...records.map(row=>Date.parse(String(row.expires_at))));
+    return reply({available:true,scope:{projectId,documentId,custody:parent.organization_id===null?{kind:'personal'}:{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}},enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,validUntil:new Date(deadline).toISOString(),controls:records.slice(0,128).map(row=>({controlId:row.control_id,claimKey:row.claim_key,lineageId:row.lineage_id,
+      revision:row.revision,action:row.action,correctionText:row.correction_text,expiresAt:row.expires_at,purpose:row.purpose,textAvailable:canReadText})),next:records.length>128?records[127]!.control_id:null},200,()=>current()&&Date.now()<deadline);
   }catch{return request.method==='GET'?deny('memory_user_control_unavailable',503):failure();}
 }
 
@@ -459,6 +462,7 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
     const parent=selected.parent;
     return reply({scope:{projectId,documentId,custody:parent.organization_id===null?{kind:'personal'}:{kind:'organization',organizationId:parent.organization_id,projectAccessId:parent.project_access_id,ownerUserId:parent.owner_user_id}},
       enrollmentId:parent.enrollment_id,enrollmentRevision:parent.revision,
-      checkedAt:now,progress:presentedProgress,...(diagnostics?{diagnostics:MEMORY_DERIVATION_HEALTH}:{}),...(purpose?{purpose}:{}),...(latest?{latest:true}:{}),results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null});
+      checkedAt:now,progress:presentedProgress,...(diagnostics?{diagnostics:MEMORY_DERIVATION_HEALTH}:{}),...(purpose?{purpose}:{}),...(latest?{latest:true}:{}),results:found.slice(0,8).map(row=>({jobId:row.job_id,purpose:row.purpose,scopeKey:row.scope_key,expiresAt:row.expires_at})),next:found.length>8?found[7]!.job_id:null},200,
+      ()=>env.DB===db&&settingsKey(env)===configuration&&elapsed.elapsed({wall:Date.now(),monotonic:performance.now()})<60000&&found.every(row=>Date.now()<Date.parse(String(row.expires_at))));
   }catch{return deny('memory_result_unavailable',503);}
 }

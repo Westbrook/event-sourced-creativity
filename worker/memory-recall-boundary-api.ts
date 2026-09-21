@@ -22,11 +22,12 @@ import type { WorkerEnv } from './runtime.ts';
 type Row = Record<string, unknown>;
 const version = 'memory-scope-recall-v1';
 const headers = { 'cache-control': 'private, no-store', vary: 'Cookie, oai-authenticated-user-id, oai-authenticated-user-email' };
-const reply = (value: Row, status = 200) => {
+const reply = (value: Row, status = 200, current?:()=>boolean) => {
   const body = JSON.stringify({ version, ...value });
-  return new TextEncoder().encode(body).byteLength <= 524288
+  const response=new TextEncoder().encode(body).byteLength <= 524288
     ? new Response(body, { status, headers: { ...headers, 'content-type': 'application/json' } })
     : Response.json({ version, error: 'recall_response_capacity' }, { status: 503, headers });
+  if(current&&!current())throw Error('recall_delivery_expired');return response;
 };
 const columns = ['enrollment_id', 'enrollment_revision', 'boundary', 'revision', 'consented_at'] as const;
 const organizationColumns = ['enrollment_id','enrollment_revision','boundary_revision','actor_user_id','organization_id','consented_at'] as const;
@@ -219,7 +220,7 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
       const checks = packRecallGuards(guards).map(g => derivationAssertion(env, g)), checked = await db.batch(checks);
       if (!current() || !derivationResults(checked, checks.length) || !checked.every(derivationVerified)) throw Error('recall_changed');
       return reply({ enrollmentId: parent.enrollment_id, enrollmentRevision: parent.revision, boundary: boundary?.boundary ?? 'document', revision: boundary?.revision ?? null,
-        validUntil: new Date(presentationDeadline).toISOString(),...(schema.organizationRangesPresent?{organizationAvailable:parent.organization_id!==null&&parent.learn_enabled===1}:{}) });
+        validUntil: new Date(presentationDeadline).toISOString(),...(schema.organizationRangesPresent?{organizationAvailable:parent.organization_id!==null&&parent.learn_enabled===1}:{}) },200,()=>current()&&Date.now()<presentationDeadline);
     }
     if (!memoryDerivationEnabled(env, actor.userId)) return reply({ error: 'derived_memory_disabled' }, 403);
     const trees=new Map<string,RecallTree>();
@@ -267,13 +268,13 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
       if (!presentation || !current()) return reply({ error: 'recall_source_unavailable' }, 503);
       return reply({ source: { ...recallSourceIdentity(chosen.e,chosen.relation.zoom,chosen.e.owner_user_id!==parent.owner_user_id), ...chosen.relation },
         presentation, validUntil: new Date(Math.min(responseDeadline, Date.parse(presentation.candidate.validUntil))).toISOString(),
-        independentEvidence: false, completeHistory: false, presentationOnly: true });
+        independentEvidence: false, completeHistory: false, presentationOnly: true },200,()=>current()&&Date.now()<Date.parse(presentation.candidate.validUntil));
     }
     if (purpose !== null) return reply({ error: 'recall_scope_required' }, 400);
     guards.push(...eligible.map(source => source.authority.guard));
     const checks = packRecallGuards(guards).map(g => derivationAssertion(env, g)), checked = await db.batch(checks);
     if (!current() || !derivationResults(checked, checks.length) || !checked.every(derivationVerified)) throw Error('recall_changed');
     return reply({ sources: eligible.map(source => ({ ...recallSourceIdentity(source.e,source.relation.zoom,source.e.owner_user_id!==parent.owner_user_id), ...source.relation })),
-      validUntil: new Date(Math.min(responseDeadline, ...eligible.map(source => Date.parse(source.e.expires_at)))).toISOString(), complete: true });
+      validUntil: new Date(Math.min(responseDeadline, ...eligible.map(source => Date.parse(source.e.expires_at)))).toISOString(), complete: true },200,()=>current()&&eligible.every(source=>Date.now()<Date.parse(source.e.expires_at)));
   } catch { return reply({ error: request.method === 'GET' ? 'recall_unavailable' : 'recall_commit_unconfirmed' }, 503); }
 }
