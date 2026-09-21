@@ -1,3 +1,4 @@
+import { isIdeaPage, pageToolbarCandidates, withDocumentReturn, DOCUMENT_RETURN_REASON } from './local-policy.ts';
 import {matchingIdeaAssessment,cachedIdeaAssessment,type IdeaAssessment} from './idea-assessment.ts';
 import type { WorkflowAction, WorkflowToolbar } from './workflow-toolbar.ts';
 import './all-list.ts';
@@ -236,7 +237,7 @@ export class StillApp extends LitElement {
     const ideas=pos.documentId?p.blocks.filter(b=>!b.removed):[],selected=ideas.find(b=>b.id===pos.blockId);
     return {
       surface:formats?'formats':this.moreOpen?'more':this.mode?'workflow':'main',
-      basis:Object.fromEntries(ids.map(id=>[id,this.moreOpen?'alternative':this.emptyProject()&&id==='new-document'?'page-default':choice.accepted&&choice.choice===id?'next-best':evidence[id]?.score!==undefined?'model-ranked':pos.view==='projects'&&id==='new-project'?'page-default':'local'])),
+      basis:Object.fromEntries(ids.map(id=>[id,this.moreOpen?'alternative':id==='context'&&isIdeaPage(this.decisionPosition())?'page-default':this.emptyProject()&&id==='new-document'?'page-default':choice.accepted&&choice.choice===id?'next-best':evidence[id]?.score!==undefined?'model-ranked':pos.view==='projects'&&id==='new-project'?'page-default':'local'])),
       available:{...(pos.view==='projects'?{projects:p.projects.length}:{}),...(pos.view==='documents'?{documents:p.documents.filter(d=>!d.removed).length}:{}),...(pos.documentId?{ideas:ideas.length,activeIdeas:ideas.filter(b=>Number(b.properties.weight??1)>0).length,results:p.outputs.length+p.artifacts.length}:{})},
       ...(selected?{selectedIdea:{kind:selected.type,active:Number(selected.properties.weight??1)>0,locked:selected.locked}}:{}),
       recentActions:pos.recentActions,historyComplete:this.client.historyComplete,
@@ -562,7 +563,7 @@ export class StillApp extends LitElement {
       if (!this.disposed) this.poll();
     }, 2000);
   }
-  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button id=${this.dockId("still-help-"+a.id)} data-action-id=${a.id} data-tier=${e.tier} data-action-source=${this.decisionSource==='jev'&&e.score!==undefined?'Jev ranking':'Local fallback'} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.startGeneration(a.id):this.choose(a.id)}>${a.label}</en-button>${this.help("still-help-"+a.id,a.label)}`;}
+  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button id=${this.dockId("still-help-"+a.id)} data-action-id=${a.id} data-tier=${e.tier} data-action-source=${!format&&a.id==='context'&&isIdeaPage(this.decisionPosition())?DOCUMENT_RETURN_REASON:this.decisionSource==='jev'&&e.score!==undefined?'Jev ranking':'Local fallback'} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.startGeneration(a.id):this.choose(a.id)}>${a.label}</en-button>${this.help("still-help-"+a.id,a.label)}`;}
   private secondaryOnly(){return ['refresh-generation',...(this.decisionPosition().generation?.mayDuplicateCharge?['generate-again','create',...Object.keys(FORMATS)]:[])];}
   private toolbarPolicy(){const choice=this.nextBestAssessment();return {view:this.client.position.view,emptyProject:this.emptyProject(),more:this.moreOpen,secondaryOnly:this.secondaryOnly(),nextBest:choice.accepted?choice.choice:undefined};}
   private toolbarSuggestions(actions:Action[]){const emphasis=presentToolbar(actions.map(a=>a.id),this.emphasis,this.toolbarPolicy());return actions.map(a=>this.suggestedButton(a,false,emphasis));}
@@ -1049,7 +1050,7 @@ export class StillApp extends LitElement {
     if(this.mode==='generate')return this.renderGenerationDock();
     if(this.mode)return this.renderWorkflowDock();
     if(view==='generation'&&(this.isInlineGeneration()||this.canAcknowledgeSafety(this.selectedGeneration())))return this.renderGenerationStatusDock();
-    const limit=this.toolbarLimit,firstLimit=this.moreOpen?this.firstDockLimit:limit,eligible=this.candidates(),job=view==='generation'?this.selectedGeneration():undefined;
+    const limit=this.toolbarLimit,firstLimit=this.moreOpen?this.firstDockLimit:limit,eligible=pageToolbarCandidates(this.candidates(),this.decisionPosition()),job=view==='generation'?this.selectedGeneration():undefined;
     const generationProgress=job&&generationActive(job)?generationStatus(job):'';
     const selected=this.preferredSuggestions();
     const pool=[...selected,...(firstLimit>5&&this.decisionSource==='jev'?this.rankedActions.filter(a=>!selected.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
@@ -1058,16 +1059,18 @@ export class StillApp extends LitElement {
     const browsing=!!this.listKind();
     const listOptions=this.listOptions(),toggle=listOptions.find(a=>a.id==='ui:show-all'||a.id==='ui:show-less');
     const pageControls=listOptions.filter(a=>a!==toggle).map(a=>({...a,run:()=>this.runListAction(a.id)}));
-    const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,Math.max(0,firstLimit-1-(slides?2:pageControls.length)));
+    const visible=withDocumentReturn(pool.filter(a=>!browsing||a.id!==view),eligible,this.decisionPosition(),Math.max(0,firstLimit-1-(slides?2:pageControls.length)));
     const visibleIds=visible.map(a=>a.id);
     if(this.moreOpen&&limit<3){
       const alternatives=nextToolbarActions(this.rankedActions,visibleIds,eligible,this.rankedActions.length);
       return this.compactDock([...(toggle?[{...toggle,run:()=>this.runListAction(toggle.id),variant:'secondary' as const}]:[]),...alternatives.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>void this.replaceToolbar(false)},{id:'ui:palette',label:'Find action',variant:'ghost',run:()=>this.openFinder('more')}],'More actions',generationProgress);
     }
     if(limit<3){
-      const choices=[...pool,...this.rankedActions.filter(a=>!pool.some(p=>p.id===a.id))].filter(a=>eligible.some(e=>e.id===a.id)&&(!browsing||a.id!==view)),emphasis=presentToolbar(choices.map(a=>a.id),this.emphasis,this.toolbarPolicy());
+      const compactPool=[...pool,...this.rankedActions.filter(a=>!pool.some(p=>p.id===a.id))].filter(a=>eligible.some(e=>e.id===a.id)&&(!browsing||a.id!==view));
+      const first=withDocumentReturn(compactPool,eligible,this.decisionPosition(),1);
+      const choices=[...first,...compactPool.filter(a=>!first.some(f=>f.id===a.id))],emphasis=presentToolbar(choices.map(a=>a.id),this.emphasis,this.toolbarPolicy());
       return this.compactDock([
-        ...choices.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:emphasis[a.id]?.variant,source:this.decisionSource==='jev'&&emphasis[a.id]?.score!==undefined?'Jev ranking':'Local fallback'})),
+        ...choices.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:emphasis[a.id]?.variant,source:a.id==='context'&&isIdeaPage(this.decisionPosition())?DOCUMENT_RETURN_REASON:this.decisionSource==='jev'&&emphasis[a.id]?.score!==undefined?'Jev ranking':'Local fallback'})),
         ...(slides?[{id:'ui:previous',label:a!.kind==='slides'?'Previous slide':'Previous frame',run:()=>this.turnItem(this.itemIndex-1),disabled:this.itemIndex===0},{id:'ui:next',label:a!.kind==='slides'?'Next slide':'Next frame',run:()=>this.turnItem(this.itemIndex+1),disabled:this.itemIndex>=a!.items.length-1}]:[]),
         ...pageControls,
         ...(toggle?[{...toggle,run:()=>this.runListAction(toggle.id),variant:'secondary' as const}]:[]),

@@ -1,6 +1,20 @@
 import type { CreativeProjection } from '../model/events.ts';
 import type { Action, Position, RankingRow } from './decisions.ts';
 import { editableIdea } from './composition.ts';
+export const DOCUMENT_RETURN_REASON='Page navigation: return from the selected idea to review the whole document or choose an output.';
+export function isIdeaPage(pos:Pick<Position,'view'|'blockId'|'palette'>){return pos.view==='document'&&!!pos.blockId&&!pos.palette;}
+/** Document-wide maintenance stays in the palette while one idea is in focus. */
+export function pageToolbarCandidates<T extends {id:string}>(actions:T[],pos:Pick<Position,'view'|'blockId'|'palette'>):T[]{
+  return isIdeaPage(pos)?actions.filter(a=>a.id!=='rename'):actions;
+}
+/** Reserve parent navigation without altering Jev scores or claiming a generation intent. */
+export function withDocumentReturn<T extends {id:string}>(actions:T[],eligible:T[],pos:Pick<Position,'view'|'blockId'|'palette'>,limit=4):T[]{
+  const ordered=pageToolbarCandidates(actions,pos),parent=isIdeaPage(pos)?eligible.find(a=>a.id==='context'):undefined;
+  if(!parent||limit<1)return ordered.slice(0,Math.max(0,limit));
+  const rest=ordered.filter(a=>a.id!=='context');
+  const index=ordered[0]?.id==='context'||limit===1?0:Math.min(1,rest.length);
+  rest.splice(index,0,parent);return rest.slice(0,limit);
+}
 export type LocalRule={id:string;reason:string};
 const formats=['image','short_story','scene','slides','storyboard','video','audio','model3d'];
 /** Deliberately narrow: only a whole, explicit format instruction, never a mention in prose. */
@@ -44,7 +58,7 @@ export function localActionRules(p:CreativeProjection,pos:Position):LocalRule[]{
   else if(done==='find-references'||done==='research-context'||done==='supply-reference'){add('context','Review the reference or research you just saved');add('use-in','Use the enriched idea elsewhere');add('create','Try the updated context in an output');}
   else if(['compose','replace-part','edit-block','add-context','reuse'].includes(done??'')){add('context','Review your saved context changes');add('create','Try the updated context');if(hasResults)add('results','Compare with existing results');}
   if(block){
-    add('edit-block','An editable idea is selected');
+    add('edit-block','An editable idea is selected');add('context',DOCUMENT_RETURN_REASON);
     if(blocks.filter(editableIdea).length>1)add('compose','Other editable ideas are available to arrange');
     add('use-in','Use this idea in another document or composition');add('create','Create from the active document context');add('context','Review the whole document');
   }else{
@@ -55,7 +69,7 @@ export function localActionRules(p:CreativeProjection,pos:Position):LocalRule[]{
 }
 export function evaluateLocalActions(candidates:Action[],p:CreativeProjection,pos:Position){
   const rules=localActionRules(p,pos),selected:Action[]=[];
-  const ranked=[...candidates].filter(a=>a.id!=='intent'&&!formats.includes(a.id)).sort((a,b)=>{
+  const ranked=pageToolbarCandidates([...candidates],pos).filter(a=>a.id!=='intent'&&!formats.includes(a.id)).sort((a,b)=>{
     const left=rules.findIndex(r=>r.id===a.id),right=rules.findIndex(r=>r.id===b.id);
     return (left<0?Infinity:left)-(right<0?Infinity:right)||a.label.localeCompare(b.label);
   });

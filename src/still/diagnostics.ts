@@ -1,5 +1,5 @@
 import type {IdeaAssessment} from './idea-assessment.ts';
-import { evaluateLocalActions, localFormatRules } from './local-policy.ts';
+import { evaluateLocalActions, localFormatRules, isIdeaPage, DOCUMENT_RETURN_REASON } from './local-policy.ts';
 import type { DecisionCacheInfo } from './decision-cache.ts';
 import type { compactHistoryEvent } from './history.ts';
 import type { Emphasis } from './presentation.ts';
@@ -62,6 +62,7 @@ export function decisionDiagnostics(p: CreativeProjection, position: Position, a
     }
   }
   return {
+    toolbarNavigation:isIdeaPage(position)&&candidates.some(a=>a.id==='context')?DOCUMENT_RETURN_REASON:undefined,
     localStartingPoint:formats?localFormatRules(p,position).filter(r=>candidates.some(a=>a.id===r.id)).slice(0,3):evaluateLocalActions(candidates,p,position).rows.filter(r=>r.selected).sort((a,b)=>a.selected!-b.selected!).map(r=>({id:r.id,reason:r.localReason??'Local page rule'})),
     version:1 as const, policy:POLICY_VERSION, source:options.source, reason:options.reason, model:typeof options.model==='string'?options.model.slice(0,100):undefined, head:options.head,
     opportunities:options.opportunities,
