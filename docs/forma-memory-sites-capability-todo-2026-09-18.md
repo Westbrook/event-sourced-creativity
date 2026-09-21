@@ -293,3 +293,8 @@ is wired to the native callback, with bounded work, privacy cleanup, source
 revalidation and inaccessible-target backoff. Local migration0072 is additive.
 This closes the native callback implementation, not hosted registration,
 no-visitor delivery, hosted capacity/recovery qualification or consented rollout.
+
+Resource intent draft completions are [implemented natively](forma-memory-resource-intent-drafts-2026-09-21.md)
+without another service, schema or model request. Existing hosted provider/model
+qualification and explicit enrollment gates still apply. This implementation
+receipt does not qualify hosted scheduling or production deployment.

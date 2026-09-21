@@ -615,3 +615,13 @@ and25 HTTP calls. No private prose is duplicated in0072, no provider is called,
 and no enrollment, production migration or hosted schedule is activated.
 Remaining consumers and full integration evidence stay assigned in the completion
 matrix; external/operational requirements remain separately tracked.
+
+## MEM-055 — Private resource intent draft completions
+
+Implemented locally: [Library/Canvas next-question drafts](forma-memory-resource-intent-drafts-2026-09-21.md).
+The approved private response can supply optional bounded drafts to the actual
+resource UI. Selection only fills an empty field without sending, spending,
+overwriting a draft or extending private retention. 43 native,336 provider/client
+and10 browser checks pass. The12 stale full-regression race hooks are repaired and
+pass at real transaction boundaries; a full current rerun remains assigned.
+No deployment or enrollment; other native matrix work continues here.

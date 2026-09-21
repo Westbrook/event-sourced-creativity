@@ -1,8 +1,9 @@
+import { memoryResourceNextQuestions } from '../model/memory-resource-next-questions.ts';
 import { createMemoryPrivateRequest } from './memory-private-request.ts';
 import { memoryResourceIdentity,type MemoryResourceSelector } from '../model/memory-resource-scope.ts';
 
 export type ResourceAssistantQuote={executionId:string;validUntil:string;quote:{bindingHash:string;expiresAt:string;maximumMicrousd:number;models:string[];privateInput:unknown;canExecute:boolean;status:string}};
-export type ResourceAssistantResult={executionId:string;status:string;validUntil:string;asOf:string;result?:{reply:string;mode:'private-review';independentEvidence:false}};
+export type ResourceAssistantResult={executionId:string;status:string;validUntil:string;asOf:string;result?:{reply:string;nextQuestions?:string[];mode:'private-review';independentEvidence:false}};
 export type ResourceAssistantRun={execution_id:string;state:'active'|'retired';created_at:string;expires_at:string;status:string;owner_user_id:string};
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
 const id=(v:unknown)=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[47][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(v);
@@ -27,7 +28,7 @@ export function createResourceAssistantClient(transport:typeof fetch){
    check(id(executionId)&&(['retrieve','resume'].includes(action)||typeof approvedBindingHash==='string'&&/^[a-f0-9]{64}$/.test(approvedBindingHash)));
    const v=await call(scope,signal,{action,executionId,...(action==='execute'?{approvedBindingHash}:{})});deadline(v.validUntil);
    check(v.executionId===executionId&&status(v.status)&&time(v.asOf)&&Date.parse(v.asOf)<=Date.now()&&object(v.scope));const identity=memoryResourceIdentity(scope,v.scope as never);check(identity&&Object.entries(identity).every(([key,value])=>v.scope[key]===value));
-   if(v.result!==undefined){check(v.status==='completed'&&object(v.result)&&Object.keys(v.result).length===3&&v.result.mode==='private-review'&&v.result.independentEvidence===false&&typeof v.result.reply==='string'&&v.result.reply.isWellFormed()&&Array.from(v.result.reply).length<=2400);}
+   if(v.result!==undefined){check(v.status==='completed'&&object(v.result)&&Object.keys(v.result).sort().join(',')===['reply','mode','independentEvidence',...(Object.hasOwn(v.result,'nextQuestions')?['nextQuestions']:[])].sort().join(',')&&(!Object.hasOwn(v.result,'nextQuestions')||memoryResourceNextQuestions(v.result.nextQuestions)!==null)&&v.result.mode==='private-review'&&v.result.independentEvidence===false&&typeof v.result.reply==='string'&&v.result.reply.isWellFormed()&&Array.from(v.result.reply).length<=2400);}
    return v as ResourceAssistantResult;
   },
   async controls(scope:MemoryResourceSelector,signal:AbortSignal):Promise<{runs:ResourceAssistantRun[];more:boolean}>{

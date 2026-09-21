@@ -475,3 +475,13 @@ never turns inferred prose into policy or independent evidence. Local D1 covers
 24-call scheduling and25-call complete reads, plus cross-owner organization use.
 Scope promotion and its native scheduled publication are implemented; remaining
 Output/resource consumers and integrated qualification still stay in scope.
+
+## Native resource intent completions — 2026-09-21
+
+[Private next-question drafts](forma-memory-resource-intent-drafts-2026-09-21.md)
+connect Library/Canvas activity guidance to optional actual-UI autocomplete.
+Selection preserves existing drafts, independent cost approval and the original
+private lifetime. Native invalid receipts settle verified usage without publishing
+or retrying. This closes that resource draft consumer, not private Output/live-preview
+or all integrated qualification. The frozen full run completed with12 stale test
+hooks; repaired real-transaction race tests all pass, pending a full current rerun.

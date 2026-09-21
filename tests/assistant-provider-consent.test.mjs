@@ -178,3 +178,11 @@ for(const qualified of [false,true])test('profile synthesis response format is e
  else assert.throws(()=>decode(body(output)));
  assert.throws(()=>decode(body({...output,profile_synthesis:[{...output.profile_synthesis[0],references:['profile_1','profile_1']}]}),{profileSynthesis:true}));
 });
+test('resource draft completion schema is separately selected and cannot become a profile synthesis',async()=>{
+ const payload=await buildAssistantProviderRequest('fixture-actor',{model,locale:'ar',maximumOutputTokens:1200,view:{resource_activity:{kind:'canvas'}},resourceFollowups:true});assert.equal(payload.text.format.name,'forma_resource_assistant');assert.deepEqual(payload.text.format.schema.required,['reply','actions','next_questions']);assert.equal(payload.text.format.schema.properties.next_questions.maxItems,3);assert.match(payload.instructions,/not current user intent/);assert.deepEqual(payload.tools,[]);assert.equal(payload.store,false);
+ await assert.rejects(()=>buildAssistantProviderRequest('fixture-actor',{model,locale:'en',maximumOutputTokens:1200,view:{},resourceFollowups:true,profileSynthesis:true}));
+});
+for(const [name,value,valid]of [['empty',[],true],['bounded',['What next?','What could I compare?'],true],['duplicate',['Why?','Why?'],false],['long',['x'.repeat(241)],false],['many',['a','b','c','d'],false],['newline',['One\nTwo'],false],['surrogate',['\ud800'],false],['object',{question:'Why?'},false],['blank',[' '],false]])test('resource draft completion decoder '+name,()=>{
+ const run=()=>decode(body({...result(),next_questions:value}),{resourceFollowups:true});if(valid)assert.deepEqual(run().resourceNextQuestions,value);else assert.throws(run);
+ assert.throws(()=>decode(body({...result(),next_questions:value})),undefined,'Ordinary calls do not accept the extension');
+});

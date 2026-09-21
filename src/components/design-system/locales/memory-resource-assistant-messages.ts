@@ -1,6 +1,8 @@
 /** Separately approved resource guidance and source-free recovery. */
 export const resourceAssistantMessages={
   "en": {
+    "nextQuestions": "Possible next questions",
+    "nextQuestionsDetail": "Optional draft completions from this private review, not inferred intent. Choosing one fills an empty question field only; edit it before separately reviewing and approving any request.",
     "heading": "Private activity assistant",
     "intro": "Review tentative guidance using your last selected activity snapshot, not newer activity or linked documents. No authored work will change.",
     "question": "Your question (up to 2,000 characters)",
@@ -29,6 +31,8 @@ export const resourceAssistantMessages={
     "expired": "The private view expired. Review again to continue."
   },
   "fr": {
+    "nextQuestions": "Questions suivantes possibles",
+    "nextQuestionsDetail": "Propositions facultatives issues de cette revue privée, pas une intention déduite. Le choix remplit uniquement un champ vide ; modifiez-le avant de vérifier et d’approuver séparément une requête.",
     "heading": "Assistant privé d’activité",
     "intro": "Examinez des suggestions provisoires à partir du dernier instantané sélectionné, sans activité ultérieure ni documents liés. Aucun travail rédigé ne sera modifié.",
     "question": "Votre question (2 000 caractères maximum)",
@@ -57,6 +61,8 @@ export const resourceAssistantMessages={
     "expired": "La vue privée a expiré. Examinez à nouveau pour continuer."
   },
   "ar": {
+    "nextQuestions": "أسئلة تالية محتملة",
+    "nextQuestionsDetail": "مسودات اختيارية من هذه المراجعة الخاصة وليست نية مستنتجة. يملأ الاختيار حقل سؤال فارغاً فقط؛ عدّله قبل مراجعة أي طلب والموافقة عليه بشكل منفصل.",
     "heading": "مساعد النشاط الخاص",
     "intro": "راجع إرشادات مبدئية باستخدام آخر لقطة نشاط اخترتها، دون النشاط الأحدث أو المستندات المرتبطة. لن يتغير العمل المؤلَّف.",
     "question": "سؤالك (حتى ٢٠٠٠ حرف)",
@@ -85,6 +91,8 @@ export const resourceAssistantMessages={
     "expired": "انتهت صلاحية العرض الخاص. راجع مجدداً للمتابعة."
   },
   "ja": {
+    "nextQuestions": "次の質問候補",
+    "nextQuestionsDetail": "非公開の確認からの任意の入力候補であり、意図の推定ではありません。選択すると空の質問欄だけに入力します。編集してから、リクエストを別途確認・承認してください。",
     "heading": "非公開の活動アシスタント",
     "intro": "最後に選択した活動スナップショットから暫定的な提案を確認します。新しい活動やリンク先文書は含まれません。作成した内容は変更しません。",
     "question": "質問（2,000文字まで）",
