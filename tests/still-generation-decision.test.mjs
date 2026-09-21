@@ -1,3 +1,4 @@
+import { pageToolbarCandidates, withDocumentReturn } from '../src/still/local-policy.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -70,10 +71,10 @@ test('generation pages render the shared ranked toolbar and More alternatives',a
  const method=app.members.find(n=>n.name?.getText(source)==='renderDock');
  const code=ts.transpileModule(`function renderDock()${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
  const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
- const render=new Function('html','nothing','generationActive','generationStatus','stillResults','nextToolbarActions','presentToolbar',code+';return renderDock;')(html,'',generationActive,generationStatus,stillResults,nextToolbarActions,presentToolbar);
+ const render=new Function('html','nothing','generationActive','generationStatus','stillResults','nextToolbarActions','presentToolbar','pageToolbarCandidates','withDocumentReturn',code+';return renderDock;')(html,'',generationActive,generationStatus,stillResults,nextToolbarActions,presentToolbar,pageToolbarCandidates,withDocumentReturn);
  const candidates=eligibleActions(projection,position,abilities);
  const view={client:{projection,position,session:{policy:{accepted:true}},jobs:[failed],events:[]},pageActionLimit:5,toolbarLimit:5,firstDockLimit:5,currentRouteProblem:()=>false,isInlineGeneration:()=>false,canAcknowledgeSafety:()=>false,candidates:()=>candidates,suggestions:selectActions(candidates,position),rankedActions:candidates,toolbarStatus:()=>'',toolbarSuggestions:xs=>xs.map(x=>`<button>${x.label}</button>`),button:label=>`<button>${label}</button>`,paletteButton:()=>'<button>Palette</button>',selectedGeneration:()=>failed,renderGenerationStatusDock:()=>assert.fail('Normal job page must use shared actions')};
- view.preferredSuggestions=()=>view.suggestions;view.listKind=()=>undefined;view.listOptions=()=>[];
+ view.decisionPosition=()=>position;view.preferredSuggestions=()=>view.suggestions;view.listKind=()=>undefined;view.listOptions=()=>[];
  const first=render.call(view);assert.match(first,/More/);assert.doesNotMatch(first,/Palette/);assert.ok((first.match(/<button>/g)??[]).length<=5);
  view.moreOpen=true;const more=render.call(view);assert.match(more,/Back/);assert.match(more,/Palette/);assert.ok((more.match(/<button>/g)??[]).length<=5);
 });
