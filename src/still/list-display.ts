@@ -10,7 +10,7 @@ export class ListDisplay {
  constructor(private storage?:Pick<Storage,'getItem'|'setItem'|'removeItem'>){
   try{this.remember=storage?.getItem('still:flag:remember-lists')==='true';if(this.remember){const raw=JSON.parse(storage?.getItem('still:list-display')??'{}');for(const type of types)if(typeof raw?.[type]==='boolean')this.cached[type]=raw[type];}}catch{}
  }
- enter(key:string,type?:ListType){if(key===this.key&&type===this.type)return;this.key=key;this.type=type;this.all=!!(type&&this.remember&&this.cached[type]);}
+ enter(key:string,type?:ListType){if(key===this.key&&type===this.type)return;this.key=key;this.type=type;this.all=type ? (this.remember ? this.cached[type] : undefined) ?? (type==='ideas') : false;}
  leave(){this.key='';this.type=undefined;this.all=false;}
  set(all:boolean){this.all=all;if(this.remember&&this.type){this.cached[this.type]=all;this.save();}}
  setRemember(value:boolean){this.remember=value;if(value&&this.type)this.cached[this.type]=this.all;if(!value)this.cached={};try{this.storage?.setItem('still:flag:remember-lists',String(value));}catch{}this.save();}

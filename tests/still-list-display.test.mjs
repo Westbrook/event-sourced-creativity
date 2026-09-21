@@ -10,10 +10,19 @@ test('show all resets on leaving by default and never writes preferences',()=>{
  display.enter('p','projects');display.set(true);display.enter('p','projects');assert.equal(display.all,true);
  display.leave();display.enter('p','projects');assert.equal(display.all,false);display.set(true);display.enter('d','documents');display.enter('p','projects');assert.equal(display.all,false);assert.equal(store.getItem('still:list-display'),null);
 });
+test('documents show all context blocks by default and restore that default on return',()=>{
+ const display=new ListDisplay(storage());
+ display.enter('document-a',listType('document'));assert.equal(display.all,true);
+ assert.deepEqual(listControls('ideas',display.all,0,40).map(a=>a.id),['ui:show-less']);
+ display.set(false);display.enter('document-a','ideas');assert.equal(display.all,false);
+ display.leave();display.enter('document-a','ideas');assert.equal(display.all,true);
+ display.enter('document-b','ideas');assert.equal(display.all,true);
+ for(const type of ['projects','documents','results']){display.enter(type,type);assert.equal(display.all,false);}
+});
 test('opt-in remembers each type independently across destinations and reloads, and off clears it',()=>{
  const store=storage(),display=new ListDisplay(store);display.enter('p','projects');display.setRemember(true);display.set(true);
  display.enter('docs-a','documents');assert.equal(display.all,false);display.set(true);
- display.enter('ideas-a','ideas');assert.equal(display.all,false);display.set(false);
+ display.enter('ideas-a','ideas');assert.equal(display.all,true);display.set(false);
  display.enter('docs-b','documents');assert.equal(display.all,true);
  const reloaded=new ListDisplay(store);reloaded.enter('projects','projects');assert.equal(reloaded.all,true);reloaded.enter('ideas-b','ideas');assert.equal(reloaded.all,false);
  reloaded.setRemember(false);reloaded.enter('docs-b','documents');assert.equal(reloaded.all,false);assert.equal(store.getItem('still:list-display'),null);
