@@ -85,7 +85,7 @@ export class DocumentMemoryBrief extends FormaElement {
         ${value.sections.filter(section=>section.items.length||section.corrections.length).map(section=>html`<section>
           <h3>${this.#t('purpose.'+section.purpose)}</h3>
           ${section.jobId&&section.items.length?html`<forma-memory-assistant-context .candidateJobId=${section.jobId}></forma-memory-assistant-context>`:nothing}
-          ${section.source?html`<p>${section.source.documentId} · ${this.#t('recallBoundary.'+section.source.zoom)}</p><p class="memory-brief-disclosure">${this.#t('recallBoundaryPreview')} ${this.#t('briefSourceWeight',{weight:Math.round(section.source.weight*1000)/1000})}</p>`:nothing}
+          ${section.source?html`<p>${section.source.documentId}${section.source.ownerId?` (${section.source.ownerId})`:""} · ${this.#t('recallBoundary.'+section.source.zoom)}</p><p class="memory-brief-disclosure">${this.#t('recallBoundaryPreview')} ${this.#t('briefSourceWeight',{weight:Math.round(section.source.weight*1000)/1000})}</p>`:nothing}
           ${section.corrections.map(control=>html`<p class="memory-brief-correction"><strong>${this.#t('reviewAction.corrected')}</strong> ${control.correctionText}</p>`)}
           ${section.retainedProfile?html`<p class="memory-brief-disclosure">${this.#t('profileRetained',{count:section.retainedProfile.results})}
             ${section.retainedProfile.historicalPage?this.#t('profileHistoryPage'):nothing}</p>`:nothing}

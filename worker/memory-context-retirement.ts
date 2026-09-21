@@ -26,8 +26,9 @@ export async function prepareMemoryContextRetirement(env:WorkerEnv,input:Selecto
  }else if(selector.kind==='hierarchy'){
   if(!derivationExact(selector,['kind','ownerUserId'])||!derivationId(selector.ownerUserId))throw Error('context_retirement_selector');
   // The saved hierarchy revision covers this owner's complete native forest,
-  // not only the edited node. Invalidate all cross-scope uses of that revision.
-  condition='target_enrollment_id<>source_enrollment_id AND source_enrollment_id IN(SELECT enrollment_id FROM memory_live_enrollments WHERE owner_user_id=?)';bindings=[selector.ownerUserId];
+  // not only the edited node. Cross-owner organization recall binds both
+  // forests, so either endpoint's owner invalidates the private use.
+  condition='target_enrollment_id<>source_enrollment_id AND (source_enrollment_id IN(SELECT enrollment_id FROM memory_live_enrollments WHERE owner_user_id=?) OR target_enrollment_id IN(SELECT enrollment_id FROM memory_live_enrollments WHERE owner_user_id=?))';bindings=[selector.ownerUserId,selector.ownerUserId];
  }else if(selector.kind==='result'){
   if(!derivationExact(selector,['kind','actorUserId','jobId'])||!derivationId(selector.actorUserId)||!derivationHash(selector.jobId))throw Error('context_retirement_selector');
   condition='actor_user_id=? AND job_id=?';bindings=[selector.actorUserId,selector.jobId];

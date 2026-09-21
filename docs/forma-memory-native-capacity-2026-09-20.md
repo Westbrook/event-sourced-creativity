@@ -147,5 +147,5 @@ Whole synthetic execution is now **98 personal /102 shared binding calls**,
 quote50/54 and retrieve35/35. The conservative50-call whole-execution target remains
 assigned.33 focused source/clock/admission checks plus two actual local D1
 three-generation/withdrawal journeys pass;42 Memory field/paired settlement/D1
-checks passed before the final reservation-bind split. Full regression is being
-rerun at the final source. No hosted qualification, deployment or enrollment.
+checks passed before the final reservation-bind split. Full native regression at`e836e547` passes2055/2055
+in915.3seconds. No hosted qualification, deployment or enrollment.

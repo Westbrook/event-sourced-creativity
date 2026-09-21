@@ -2766,3 +2766,17 @@ export const memoryDerivationAssetEdges=sqliteTable('memory_derivation_asset_edg
  check('memory_asset_state',sql.raw("(state='active' AND retired_at IS NULL) OR (state='retired' AND retired_at IS NOT NULL)")),
  check('memory_asset_time',sql.raw("length(created_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at AND length(expires_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at AND (retired_at IS NULL OR length(retired_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',retired_at) IS retired_at AND retired_at>=created_at)")),
 ]);
+
+/** Additional explicit organization-wide recall for this actor, never team-shared inference. */
+export const memoryRecallOrganizationRanges = sqliteTable('memory_recall_organization_ranges', {
+  enrollmentId: text('enrollment_id').primaryKey().notNull().references(() => memoryRecallBoundaries.enrollmentId, { onDelete: 'cascade' }),
+  enrollmentRevision: integer('enrollment_revision').notNull(),
+  boundaryRevision: text('boundary_revision').notNull(),
+  actorUserId: text('actor_user_id').notNull(),
+  organizationId: text('organization_id').notNull(),
+  consentedAt: text('consented_at').notNull(),
+}, () => [
+  check('memory_organization_revision', sql.raw("typeof(enrollment_revision)='integer' AND enrollment_revision>=1")),
+  check('memory_organization_boundary', sql.raw('length(boundary_revision)=36')),
+  check('memory_organization_time', sql.raw("length(consented_at)=24 AND strftime('%Y-%m-%dT%H:%M:%fZ',consented_at) IS consented_at")),
+]);

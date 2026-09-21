@@ -14,7 +14,7 @@ not close an end-to-end consumer.
 | Assistant and Chat Studio consumption | Actual consent-bound specialist and embedded Chat guidance prompts; bounded follow-up ancestry; historical readers, source/target replay and withdrawal/erasure; private historical text-edit review and explicitly accepted exact-field authoring with native Undo/Redo; browser privacy coverage | Finished creative-output/live-preview integration and independently authorized reuse; conservative whole-invocation capacity and broader latency/freshness qualification. Read-only guidance is not the legacy creative-edit/live-preview consumer. |
 | Exact-field autocomplete | Native versioned block history and exact-field saved suggestion endpoint; actual localized Document text editor; cancellable byte/deadline-limited reads, IME/keyboard/draft protection, explicit accept/dismiss and native Undo; fresh exact-field generation through separate cost and publication review; non-destructive assisted ancestry through later edits | Pre-authorized automatic/nightly field suggestions and independently authorized source reuse; broader field/resource coverage and integrated freshness qualification. Fresh field generation does not substitute for pre-authorized automatic production. |
 | Unified evolving profile | Qualified derivation, rolling original-backed windows, private controls, paginated retained profile and a separately qualified original-backed semantic revision/contradiction recipe with lifecycle-bound quotation anchors | Scope-specific promotion with independent support; broader consumer integration and integrated lifecycle/freshness qualification. Consolidation remains source-bounded and relationships remain tentative, never an automatic overwrite of user corrections. |
-| Complete native resource/zoom coverage | Document/page/block identities and inspection; artifact revisions; same-owner nesting; certified approved-copy outcomes | Library/Canvas resource identity and history, remaining unsupported block histories, cross-owner nesting with independent permissions, and original-source recall across reuse relationships. Nesting must not grant access. |
+| Complete native resource/zoom coverage | Document/page/block identities and inspection; artifact revisions; same-owner nesting; explicitly consented organization recall across independently authorized project owners; certified approved-copy outcomes | Library/Canvas resource identity and history, remaining unsupported block histories, cross-owner nesting with independent permissions, and original-source recall across reuse relationships. Nesting must not grant access. |
 | Durable downstream lifecycle | Native result/index-intent retirement, saved-reference retirement and transitive specialist generated-answer provenance | Direct accepted text and subsequent assistant prompts now retain non-destructive negative provenance. Generic event readers now withhold marked private inference even before an expiry sweep or after body restoration. Remaining: output/index/reuse consumers and their browser/restore/rebuild/non-resurrection journeys. Authored work must not be erased by Memory withdrawal. |
 | Integrated qualification and operations | [Private retained-job diagnostics](forma-memory-processing-health-2026-09-20.md), budget/finance/recovery tests and migration reconciliation | End-to-end journeys across the above consumers, expanded privacy/request/byte bounds, consumer latency and source-evidence freshness qualification; reconcile all failures and update deployment/handoff evidence. |
 
@@ -224,3 +224,13 @@ source predicates at claim/reservation/dispatch. Current access/policy reads rem
 mandatory. The actual local D1 three-generation journey includes the repaired
 101-bind reservation boundary. Whole execution is98/102 calls, with native capacity
 and all other remaining rows still assigned.
+
+## Explicit organization recall continuation
+
+[Organization recall](forma-memory-organization-recall-2026-09-21.md) now connects
+separate owner/project inventories to private preview, saved assistant context,
+document briefs and the actual approved specialist prompt. Additive migration0065
+is explicit opt-in only; old partition consent remains unchanged. Both endpoints
+retain independent authority and retirement, including both hierarchy revisions.
+Browser testing also fixes consent-write self-abort under the privacy barrier.
+Cross-owner nesting, profile promotion and all other native rows remain assigned.

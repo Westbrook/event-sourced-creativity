@@ -18208,3 +18208,118 @@ for(const shared of [false,true])test('Memory native source handoff: real D1 thr
  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE state='active'").first()).n,0);
  const response=await specialistRetrieve(state,state.followupReviews[2],state.semanticOptions);assert.equal(response.status,404);assert.equal(state.followupCalls.length,3);
 });
+
+async function organizationRecallFixture(t){
+ let targetHeaders,targetAccessId;const targetOwner={'oai-authenticated-user-id':'memory-target-owner','oai-authenticated-user-email':'memory-target-owner@example.test'},projectId='organization-recall-target',documentId='organization-recall-target-document';
+ const state=await nativeDerivationResultFixture(t,{shared:true,userControls:true,lifecycle:true,indexIntents:true,beforeEnrollment:async seed=>{
+  assert.equal((await seed.request('/api/session',{headers:targetOwner})).status,200);
+  seed.sqlite.prepare("UPDATE users SET consent_version='pilot-2026-08-10',role='creator' WHERE user_id='memory-target-owner'").run();
+  const invited=await seed.request(`/api/workspaces/${seed.organizationId}/members`,json({email:targetOwner['oai-authenticated-user-email'],role:'administrator'},seed.owner));
+  assert.equal(invited.status,201,await invited.clone().text());const invitation=await invited.json(),token=new URL(invitation.invitationUrl).searchParams.get('token');
+  const accepted=await seed.request(`/api/workspaces/${seed.organizationId}/invitations/${invitation.invitationId}/accept`,json({token},targetOwner));assert.equal(accepted.status,200,await accepted.clone().text());
+  for(const [type,payload] of [['ProjectCreated',{project_id:projectId,name:'Independently owned recall project'}],['DocumentCreated',{project_id:projectId,document_id:documentId,title:'Separate owner document',slug:documentId}]]){
+   const created=await seed.request('/api/events',json({action:'append',event:{type,payload}},targetOwner));assert.equal(created.status,200,await created.clone().text());
+  }
+  const migrated=await seed.request(`/api/workspaces/${seed.organizationId}/projects`,json({projectId},targetOwner));assert.equal(migrated.status,201,await migrated.clone().text());targetAccessId=(await migrated.json()).projectAccessId;
+  const permitted=await seed.request(`/api/workspaces/${seed.organizationId}/projects/${targetAccessId}/members`,json({userId:'assistant-owner',role:'editor'},targetOwner));assert.equal(permitted.status,201,await permitted.clone().text());
+
+ }});
+ assert.equal((await state.resultStore.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored');
+ const {readFile}=await import('node:fs/promises');for(const name of ['0058_project_containment','0059_memory_recall_boundaries','0060_memory_derivation_contexts','0061_memory_derivation_consumers','0062_memory_derivation_consumer_sources','0063_memory_derivation_consumer_parents','0064_memory_derivation_asset_edges','0065_memory_recall_organization_ranges'])state.sqlite.exec(await readFile(new URL('../drizzle/'+name+'.sql',import.meta.url),'utf8'));
+ const opened=await state.request(`/api/workspaces/${state.organizationId}/projects/${targetAccessId}/context`,{method:'POST',headers:state.owner});assert.equal(opened.status,200,await opened.clone().text());
+ targetHeaders={...state.owner,cookie:opened.headers.get('set-cookie')?.split(';')[0]??''};
+ const enrolled=await state.handleLiveMemory(new Request('http://localhost/api/memory/settings',{...json({...state.preferences,projectId,documentId,revision:0,expectedCustody:{kind:'organization',organizationId:state.organizationId,projectAccessId:targetAccessId,ownerUserId:'memory-target-owner'}},targetHeaders),method:'PUT'}),state.env,'settings');
+ assert.equal(enrolled.status,200,await enrolled.clone().text()+' '+state.controls.lastDatabaseError);const target=(await enrolled.json()).enrollment;
+ const {handleMemoryRecallBoundary}=await import('../worker/memory-recall-boundary-api.ts'),{handleMemoryAssistantContext}=await import('../worker/memory-assistant-context-api.ts');
+ const request=async(route='recall-scopes',{source=false,method='GET',body,query={}}={})=>{
+  const selected=await state.request(`/api/workspaces/${state.organizationId}/projects/${source?state.projectAccessId:targetAccessId}/context`,{method:'POST',headers:{'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'}});assert.equal(selected.status,200,await selected.clone().text());
+  const cookie=selected.headers.get('set-cookie')?.split(';')[0]??'';
+  const e=state.current(),url='http://localhost/api/memory/'+route+'?'+new URLSearchParams({projectId:source?e.project_id:projectId,documentId:source?e.document_id:documentId,...query});
+  return (route==='assistant-context'?handleMemoryAssistantContext:handleMemoryRecallBoundary)(new Request(url,{method,headers:{cookie,'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test',origin:'http://localhost',...(body?{'content-type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})}),state.env);
+ };
+ const widen=async(boundary='organization')=>{const view=await(await request('recall-boundary',{source:true})).json();const response=await request('recall-boundary',{source:true,method:'PUT',body:{version:'memory-scope-recall-v1',enrollmentId:state.current().enrollment_id,enrollmentRevision:state.current().revision,boundary,revision:view.revision,confirmation:'CHANGE_RECALL_BOUNDARY'}});assert.equal(response.status,200,await response.clone().text()+' '+state.controls.lastDatabaseError);};
+ return Object.assign(state,{organizationRequest:request,organizationWiden:widen,organizationTarget:target,targetHeaders,targetAccessId});
+}
+
+test('native organization recall: explicit cross-owner consent, preview, saved context and reset',async t=>{
+ const state=await organizationRecallFixture(t),before=adaptiveReentryFinancialState(state);
+ let r=await state.organizationRequest(),body=await r.json();assert.equal(r.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.deepEqual(body.sources,[]);
+ await state.organizationWiden('partition');assert.deepEqual((await(await state.organizationRequest()).json()).sources,[],'old partition does not widen to another owner');
+ await state.organizationWiden();r=await state.organizationRequest();body=await r.json();assert.equal(r.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+ assert.equal(body.sources.length,1);assert.equal(body.sources[0].ownerId,'assistant-owner');assert.equal(body.sources[0].zoom,'organization');assert.equal(body.sources[0].weight,.0125);
+ r=await state.organizationRequest('recall-scopes',{query:{source:state.current().enrollment_id,purpose:'rolling-summary'}});assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);assert.equal((await r.json()).presentationOnly,true);
+ const current=await(await state.organizationRequest('assistant-context')).json();r=await state.organizationRequest('assistant-context',{method:'PUT',body:{jobId:state.executionJob.job_id,revision:null,targetEnrollmentId:current.targetEnrollmentId,targetRevision:current.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'}});
+ assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);
+ r=await state.organizationRequest('assistant-context');body=await r.json();assert.equal(r.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.context.source.zoom,'organization');
+ r=await state.organizationRequest('recall-boundary',{source:true,method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});assert.equal(r.status,200,await r.clone().text()+' '+state.controls.lastDatabaseError);
+ assert.equal(state.sqlite.prepare('SELECT count(*) n FROM memory_recall_organization_ranges').get().n,0);assert.equal(state.sqlite.prepare('SELECT count(*) n FROM memory_derivation_contexts').get().n,0);
+ assert.equal((await(await state.organizationRequest('assistant-context')).json()).context,null);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const fault of ['opt-in','source-custody','target-membership','target-custody','schema'])test('native organization recall: late '+fault+' cannot disclose private source',async t=>{
+ const state=await organizationRecallFixture(t);await state.organizationWiden();const db=state.env.DB,batch=db.batch;let hit=false;const before=adaptiveReentryFinancialState(state);
+ db.batch=async function(statements){
+  if(!hit&&statements.some(s=>s.sql.includes('memory_recall_organization_ranges'))&&statements.some(s=>s.sql.includes('memory_derivation_results'))){hit=true;
+   if(fault==='opt-in')state.sqlite.exec('DELETE FROM memory_recall_organization_ranges');
+   if(fault==='source-custody')assert.equal(state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='document' AND resource_id=? AND owner_user_id='assistant-owner'").run(state.current().document_id).changes,1);
+   if(fault==='target-membership')state.sqlite.prepare("UPDATE project_memberships SET status='revoked',revoked_at=? WHERE user_id='assistant-owner' AND project_access_id=?").run(new Date().toISOString(),state.targetAccessId);
+   if(fault==='target-custody')state.sqlite.prepare("DELETE FROM project_resource_scopes WHERE resource_kind='document' AND resource_id=?").run(state.organizationTarget.documentId);
+   if(fault==='schema')state.sqlite.exec('DROP TRIGGER memory_recall_organization_ranges_immutable');
+  }
+  return batch.call(this,statements);
+ };
+ let response;try{response=await state.organizationRequest('recall-scopes',{query:{source:state.current().enrollment_id,purpose:'rolling-summary'}});}finally{db.batch=batch;}
+ assert.equal(hit,true);assert.equal(response.status,503,await response.clone().text());assert.equal(Object.hasOwn(await response.json(),'presentation'),false);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const retirement of ['raw-opt-in','source-forget','target-forget','target-hierarchy','source-hierarchy'])test('native organization recall: '+retirement+' retires saved private use',async t=>{
+ const state=await organizationRecallFixture(t);await state.organizationWiden();const current=await(await state.organizationRequest('assistant-context')).json();
+ const accepted=await state.organizationRequest('assistant-context',{method:'PUT',body:{jobId:state.executionJob.job_id,revision:null,targetEnrollmentId:current.targetEnrollmentId,targetRevision:current.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'}});assert.equal(accepted.status,200,await accepted.clone().text());
+ if(retirement==='raw-opt-in')state.sqlite.exec('DELETE FROM memory_recall_organization_ranges');
+ else if(retirement.endsWith('-hierarchy')){
+  const {prepareMemoryContextRetirement}=await import('../worker/memory-context-retirement.ts');const inverse=await prepareMemoryContextRetirement(state.env,{kind:'hierarchy',ownerUserId:retirement==='target-hierarchy'?'memory-target-owner':'assistant-owner'});
+  assert.equal(inverse.count,1);const results=await state.env.DB.batch([...inverse.assertions,...inverse.statements]);assert.equal(inverse.acknowledge(results.slice(0,inverse.assertions.length),results.slice(inverse.assertions.length)),true);
+ }else{
+  const row=state.sqlite.prepare('SELECT * FROM memory_live_enrollments WHERE enrollment_id=?').get(retirement==='source-forget'?state.current().enrollment_id:state.organizationTarget.id);
+  const result=await(await import('../worker/memory-live-store.ts')).revokeLiveMemoryCounted(state.env,row,'forgotten');assert.equal(result.revoked,true,JSON.stringify(result)+' '+state.controls.lastDatabaseError);
+ }
+ const active=state.sqlite.prepare("SELECT count(*) n FROM memory_derivation_contexts WHERE state='accepted'").get().n;assert.equal(active,0);
+ if(retirement==='raw-opt-in'){
+  const view=await(await state.organizationRequest('assistant-context')).json();assert.equal(view.context.state,'dismissed');assert.equal(view.presentation,null);
+  // Restoring the same still-live explicit range cannot resurrect a dismissed selection.
+  await state.organizationWiden();const restored=await(await state.organizationRequest('assistant-context')).json();assert.equal(restored.context,null);
+ }
+});
+
+for(const fault of ['missing','unknown'])test('native organization recall: '+fault+' extension schema fails closed',async t=>{
+ const state=await organizationRecallFixture(t);
+ if(fault==='missing')state.sqlite.exec('DROP TRIGGER memory_recall_organization_ranges_insert');else state.sqlite.exec('CREATE TRIGGER memory_recall_organization_unknown AFTER INSERT ON memory_recall_organization_ranges BEGIN SELECT 1; END');
+ assert.equal((await state.organizationRequest('recall-boundary',{source:true})).status,503);
+ await assert.rejects((await import('../worker/memory-derivation-store.ts')).memoryDerivationSchema(state.env));
+});
+
+for(const native of [false,true])test('native organization consumer: independent cross-owner dispatch and withdrawal '+native,{timeout:120000},async t=>{
+ const state=await organizationRecallFixture(t);await state.organizationWiden();const view=await(await state.organizationRequest('assistant-context')).json();
+ const accepted=await state.organizationRequest('assistant-context',{method:'PUT',body:{jobId:state.executionJob.job_id,revision:null,targetEnrollmentId:view.targetEnrollmentId,targetRevision:view.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'}});assert.equal(accepted.status,200,await accepted.clone().text());
+ if(native){
+  const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['OrganizationRecall'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});
+  t.after(()=>mf.dispose());const db=await mf.getD1Database('OrganizationRecall');await install(db,exportSynthetic(state.sqlite));
+  state.env.DB={prepare:sql=>db.prepare(sql),batch:async statements=>{try{return await db.batch(statements);}catch(error){state.controls.lastDatabaseError=String(error);throw error;}}};
+ }
+ const opened=await state.request(`/api/workspaces/${state.organizationId}/projects/${state.targetAccessId}/context`,{method:'POST',headers:{'oai-authenticated-user-id':'assistant-owner','oai-authenticated-user-email':'assistant-owner@example.test'}});assert.equal(opened.status,200,await opened.clone().text());
+ const options={route:'/document/'+state.organizationTarget.documentId,project:state.organizationTarget.projectId,headers:{...state.owner,cookie:opened.headers.get('set-cookie')?.split(';')[0]??''}};
+ state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=state.current().actor_user_id;state.env.OPENAI_API_KEY='isolated-not-a-credential';
+ const original=globalThis.fetch;let calls=0;
+ globalThis.fetch=async(url,init)=>{if(String(url)!=='https://api.openai.com/v1/responses')return original(url,init);calls++;const payload=JSON.parse(init.body);assert.ok(JSON.stringify(payload).includes('organization'));return specialistRawResponse(payload);};t.after(()=>{globalThis.fetch=original;});
+ const turn=await specialistFreeTurn(state,'organization-memory-consumer','Use my separately reviewed context.',options);
+ const quote=await specialistProtocolRequest(state,{action:'quote',turnId:turn.id,memory:'saved'},options),review=await quote.json();assert.equal(quote.status,200,JSON.stringify(review)+' '+state.controls.lastDatabaseError);
+ const execute=await specialistExecute(state,review,options);assert.equal(execute.status,202,await execute.clone().text()+' '+state.controls.lastDatabaseError);await state.drainBackground();
+ const result=await specialistRetrieve(state,review,options),body=await result.json();assert.equal(result.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.result?.sourceStatus,'semantic-memory-assisted',JSON.stringify(body));assert.equal(calls,1);
+ const copies=(await state.env.DB.prepare('SELECT content_id FROM memory_derivation_consumer_contents').all()).results;assert.equal(copies.length,3);
+ await state.env.DB.prepare('DELETE FROM memory_recall_organization_ranges').run();
+ for(const copy of copies)assert.equal((await state.env.DB.prepare('SELECT content FROM private_content WHERE content_id=?').bind(copy.content_id).first()).content,'');
+ assert.equal((await specialistRetrieve(state,review,options)).status,404);assert.equal(calls,1);
+ assert.equal((await state.env.DB.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').bind(review.executionId).first()).verified_tokens,1300);
+ assert.deepEqual((await state.env.DB.prepare('PRAGMA foreign_key_check').all()).results,[]);
+});

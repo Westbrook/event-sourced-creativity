@@ -1,12 +1,13 @@
 import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import { bodyOf, parentColumns, readScope } from './memory-derivation-api.ts';
 import { nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery } from './memory-native-deadlines.ts';
-import { requireUser, hasCapability } from './pilot-policy.ts';
+import { requireUser, hasCapability, type PilotUser } from './pilot-policy.ts';
 import { liveMemoryEnabled } from './memory-live-store.ts';
 import { liveMemoryAuthorityFromPrincipal, liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from './memory-live-authority.ts';
 import { memoryCanonical, type MemorySqlGuard } from './memory-sql.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
-import { memoryRecallBoundary, memoryRecallRelation, type MemoryRecallScope } from '../src/model/memory-recall-boundary.ts';
+import { memoryRecallBoundary, memoryRecallRelation, type MemoryRecallBoundary, type MemoryRecallScope } from '../src/model/memory-recall-boundary.ts';
+import { memoryRecallOrganizationSchemaProfile as organizationProfile } from './memory-recall-organization-schema.ts';
 import { memoryRecallBoundarySchemaProfile as profile } from './memory-recall-boundary-schema.ts';
 import { readNativeProjectContainment } from './project-containment-api.ts';
 import { derivationAssertion, derivationResults, derivationVerified, memoryDerivationEnabled, memoryDerivationBinding } from './memory-derivation-store.ts';
@@ -24,8 +25,10 @@ const reply = (value: Row, status = 200) => {
     : Response.json({ version, error: 'recall_response_capacity' }, { status: 503, headers });
 };
 const columns = ['enrollment_id', 'enrollment_revision', 'boundary', 'revision', 'consented_at'] as const;
+const organizationColumns = ['enrollment_id','enrollment_revision','boundary_revision','actor_user_id','organization_id','consented_at'] as const;
 const family = "name LIKE 'memory_recall_boundaries%' OR tbl_name='memory_recall_boundaries' OR instr(lower(COALESCE(sql,'')),'memory_recall_boundaries')>0";
-const schemaQuery = `SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${family} ORDER BY name,type LIMIT 4`;
+const extendedFamily = `(${family}) OR name LIKE 'memory_recall_organization_%' OR tbl_name='memory_recall_organization_ranges' OR instr(lower(COALESCE(sql,'')),'memory_recall_organization_ranges')>0`;
+const schemaQuery = `SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${extendedFamily} ORDER BY name,type LIMIT 10`;
 async function rows(env: WorkerEnv, sql: string, bindings: readonly (string | number | null)[] = []) {
   const db = env.DB, result = structuredClone(await db.prepare(sql).bind(...bindings).all<Row>());
   if (env.DB !== db || !derivationResults([result], 1)) throw Error('recall_read');
@@ -36,14 +39,22 @@ function inventory(sql: string, bindings: readonly (string | number | null)[], f
     bindings: [...bindings, JSON.stringify(found.map(row => keys.map(key => row[key])))] };
 }
 async function certifyRecallBoundarySchema(found: Row[]) {
-  const explicit = found.filter(row => row.sql !== null);
-  if (found.length !== profile.count + 1 || explicit.length !== profile.count
-    || found.some(row => row.sql === null && row.name !== profile.automaticIndexes[0])
-    || 'sha256:' + await memoryDigest(memoryCanonical(explicit.map(row => ({ ...row, sql: String(row.sql).trim().replace(/;$/u, '').replace(/\bIF\s+NOT\s+EXISTS\s+/giu, '') })))) !== profile.digest) throw Error('recall_schema');
-  return inventory(schemaQuery, [], found, ['name', 'sql', 'table', 'type']);
+  const profiles=[profile,organizationProfile];
+  const explicit=found.filter(row=>row.sql!==null),names:readonly string[]=profiles.flatMap(p=>[...p.names]);
+  if(found.some(row=>!derivationExact(row,['name','sql','table','type'])) || explicit.some(row=>!names.includes(String(row.name))))throw Error('recall_schema');
+  const organizationRangesPresent=explicit.some(row=>(organizationProfile.names as readonly string[]).includes(String(row.name)));
+  const installed=organizationRangesPresent?profiles:[profile];
+  const automatic:readonly string[]=installed.flatMap(p=>[...p.automaticIndexes]);
+  if(found.length!==installed.reduce((sum,p)=>sum+p.count+p.automaticIndexes.length,0)
+    || found.some(row=>row.sql===null&&(!automatic.includes(String(row.name))||row.type!=='index')))throw Error('recall_schema');
+  for(const p of installed){
+    const selected=explicit.filter(row=>(p.names as readonly string[]).includes(String(row.name)));
+    if(selected.length!==p.count||'sha256:'+await memoryDigest(memoryCanonical(selected.map(row=>({...row,sql:String(row.sql).trim().replace(/;$/u,'').replace(/\bIF\s+NOT\s+EXISTS\s+/giu,'')}))))!==p.digest)throw Error('recall_schema');
+  }
+  return {guard:inventory(schemaQuery,[],found,['name','sql','table','type']),organizationRangesPresent};
 }
 export async function readNativeRecallBoundarySchema(env: WorkerEnv) {
-  return certifyRecallBoundarySchema(await rows(env, schemaQuery));
+  return (await certifyRecallBoundarySchema(await rows(env,schemaQuery))).guard;
 }
 /** One source-free read for independently certified schema and exact consent.
  * The returned data is not access authority; consumers replay both guards with
@@ -55,7 +66,15 @@ export async function readNativeRecallBoundarySnapshot(env: WorkerEnv, enrollmen
   if(env.DB!==db||!derivationResults(results,2))throw Error('recall_read');
   const schema=await certifyRecallBoundarySchema(results[0]!.results),found=results[1]!.results;
   if(env.DB!==db||found.length>1||found.some(row=>!derivationExact(row,columns)))throw Error('recall_boundary');
-  return {boundary:found[0]??null,guards:[schema,inventory(query,[enrollmentId],found,columns)]};
+  const guards=[schema.guard,inventory(query,[enrollmentId],found,columns)],boundary=found[0]??null;
+  if(schema.organizationRangesPresent){
+    const q=`SELECT ${organizationColumns.join(',')} FROM memory_recall_organization_ranges WHERE enrollment_id=? LIMIT 2`,organization=await rows(env,q,[enrollmentId]);
+    guards.push(inventory(q,[enrollmentId],organization,organizationColumns));
+    if(organization.length>1||organization.some(row=>!derivationExact(row,organizationColumns)||!boundary||boundary.boundary!=='partition'
+      ||row.enrollment_revision!==boundary.enrollment_revision||row.boundary_revision!==boundary.revision))throw Error('recall_organization_consent');
+    if(organization.length)return {boundary:{...boundary!,boundary:'organization'} as Row,organization:organization[0]!,guards,organizationRangesPresent:true};
+  }
+  return {boundary,organization:null,guards,organizationRangesPresent:schema.organizationRangesPresent};
 }
 /** Keep each assertion's expression tree separate and below native bind limits. */
 export function packRecallGuards(guards: readonly MemorySqlGuard[]): MemorySqlGuard[] {
@@ -71,6 +90,28 @@ export function packRecallGuards(guards: readonly MemorySqlGuard[]): MemorySqlGu
 }
 const identity = (e: LiveMemoryEnrollment): MemoryRecallScope => ({ actorId: e.actor_user_id, ownerId: e.owner_user_id,
   organizationId: e.organization_id, projectId: e.project_id, documentId: e.document_id });
+
+type RecallTree = Awaited<ReturnType<typeof readNativeProjectContainment>>;
+/** Each owner has a separate native forest. Equal bare project IDs cannot
+ * borrow another owner's access or ancestry. This cache lives for one request
+ * only; every captured proof is replayed at disclosure/dispatch. */
+export async function readNativeRecallRelation(env:WorkerEnv,actor:PilotUser,source:LiveMemoryEnrollment,target:LiveMemoryEnrollment,
+  boundary:MemoryRecallBoundary,trees=new Map<string,RecallTree>()){
+  const tree=async(owner:string)=>{let value=trees.get(owner);if(!value){if(trees.size>=8)throw Error('recall_owner_capacity');value=await readNativeProjectContainment(env,owner,true);trees.set(owner,value);}return value;};
+  const targetTree=await tree(target.owner_user_id),sourceTree=source.owner_user_id===target.owner_user_id?targetTree:await tree(source.owner_user_id);
+  const readable=(owner:string,t:RecallTree)=>new Set([...t.forest.values()].filter(node=>{
+    const access=t.access.get(node.id)!;return access.active&&(node.organizationId===null?owner===actor.userId:hasCapability(actor,'project.read',{organizationId:node.organizationId,projectAccessId:access.accessId}));
+  }).map(node=>node.id));
+  const relation=memoryRecallRelation(identity(source),identity(target),boundary,targetTree.forest,readable(target.owner_user_id,targetTree),
+    {forest:sourceTree.forest,readable:readable(source.owner_user_id,sourceTree)});
+  const distinct=sourceTree===targetTree?[targetTree]:[sourceTree,targetTree];
+  return {relation,guards:distinct.flatMap(t=>t.guards.map(g=>({condition:g.sql,bindings:g.bindings}))),
+    hierarchyRevision:sourceTree===targetTree?targetTree.revision:'sha256:'+await memoryDigest(memoryCanonical([
+      [source.owner_user_id,sourceTree.revision],[target.owner_user_id,targetTree.revision]]))};
+}
+export function recallSourceIdentity(e:LiveMemoryEnrollment,zoom:string){
+  return {enrollmentId:e.enrollment_id,projectId:e.project_id,documentId:e.document_id,...(zoom==='organization'?{ownerId:e.owner_user_id}: {})};
+}
 
 /** Consent and ephemeral cross-scope presentation. No provider, scheduling,
  * automatic enrollment, durable answer, remote index or document mutation. */
@@ -90,7 +131,8 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
     if (request.headers.get('sec-fetch-site') === 'cross-site' || request.method !== 'GET' && request.headers.get('origin') !== url.origin) return reply({ error: 'same_origin_required' }, 403);
     const projectId = url.searchParams.get('projectId'), documentId = url.searchParams.get('documentId');
     if (!derivationId(projectId) || !derivationId(documentId) || [...url.searchParams.keys()].some(key => !(control ? ['projectId', 'documentId'] : ['projectId', 'documentId', 'source', 'purpose']).includes(key) || url.searchParams.getAll(key).length !== 1)) return reply({ error: 'recall_scope_required' }, 400);
-    const guards: MemorySqlGuard[] = [await readNativeRecallBoundarySchema(env), { condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema) AND EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [new Date(started + 30000).toISOString()] }];
+    const schema=await certifyRecallBoundarySchema(await rows(env,schemaQuery));
+    const guards: MemorySqlGuard[] = [schema.guard, { condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema) AND EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [new Date(started + 30000).toISOString()] }];
     // Withdrawal remains possible after source access, qualification or learning ends.
     if (control && request.method === 'DELETE') {
       const body = await bodyOf(request);
@@ -129,52 +171,60 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
     if (parent.recall_enabled !== 1) return reply({ error: 'recall_consent_required' }, 403);
     guards.push(...selected.guards, liveMemoryEnrollmentGuard(parent, 'recall'));
     if (control) {
-    const query = `SELECT ${columns.join(',')} FROM memory_recall_boundaries WHERE enrollment_id=?`, bindings = [parent.enrollment_id];
-    const found = await rows(env, query, bindings); guards.push(inventory(query, bindings, found, columns));
-    const boundary = found[0];
-    if (found.length > 1 || boundary && (!derivationExact(boundary, columns) || boundary.enrollment_revision !== parent.revision || !memoryRecallBoundary(boundary.boundary))) throw Error('recall_boundary');
+    const recalled=await readNativeRecallBoundarySnapshot(env,parent.enrollment_id),boundary=recalled.boundary;
+    guards.push(...recalled.guards);
+    if(boundary&&(boundary.enrollment_revision!==parent.revision||!memoryRecallBoundary(boundary.boundary))
+      ||recalled.organization&&(recalled.organization.actor_user_id!==parent.actor_user_id||recalled.organization.organization_id!==parent.organization_id))throw Error('recall_boundary');
       if (request.method === 'PUT') {
         const body = await bodyOf(request);
         if (!body || !derivationExact(body, ['version', 'enrollmentId', 'enrollmentRevision', 'boundary', 'revision', 'confirmation']) || body.version !== version
           || body.enrollmentId !== parent.enrollment_id || body.enrollmentRevision !== parent.revision || !memoryRecallBoundary(body.boundary)
           || body.confirmation !== 'CHANGE_RECALL_BOUNDARY') return reply({ error: 'explicit_recall_boundary_required' }, 400);
+        if(body.boundary==='organization'&&(!schema.organizationRangesPresent||!parent.organization_id||parent.learn_enabled!==1))return reply({error:'organization_recall_unavailable'},409);
         if (body.revision !== (boundary?.revision ?? null)) return reply({ error: 'recall_boundary_changed' }, 409);
         const revision = crypto.randomUUID(), checks = packRecallGuards(guards).map(g => derivationAssertion(env, g));
         const retired=await prepareMemoryContextRetirement(env,{kind:'boundary',actorUserId:actor.userId,projectId,documentId});
+        const organizationWrites=body.boundary==='organization'?[db.prepare(`INSERT INTO memory_recall_organization_ranges(${organizationColumns.join(',')}) VALUES(?,?,?,?,?,?)`)
+          .bind(parent.enrollment_id,parent.revision,revision,actor.userId,parent.organization_id,new Date().toISOString()),
+          derivationAssertion(env,{condition:'changes()=1',bindings:[]})]:[];
         const all = await db.batch([...retired.assertions,...checks, db.prepare(`INSERT INTO memory_recall_boundaries(${columns.join(',')}) VALUES(?,?,?,?,?)
           ON CONFLICT(enrollment_id) DO UPDATE SET enrollment_revision=excluded.enrollment_revision,boundary=excluded.boundary,revision=excluded.revision,consented_at=excluded.consented_at`)
-          .bind(parent.enrollment_id, parent.revision, body.boundary, revision, new Date().toISOString()),
-          derivationAssertion(env, { condition: 'EXISTS(SELECT 1 FROM memory_recall_boundaries WHERE enrollment_id=? AND revision=?)', bindings: [parent.enrollment_id, revision] }),...retired.statements]);
-        if(!retired.acknowledge(all.slice(0,retired.assertions.length),all.slice(retired.assertions.length+checks.length+2)))throw Error('recall_retirement_unconfirmed');
-        const result=all.slice(retired.assertions.length,retired.assertions.length+checks.length+2);
-        if (!current() || !derivationResults(result, checks.length + 2) || !result.slice(0, checks.length).every(derivationVerified) || !derivationVerified(result.at(-1)!)) throw Error('recall_unconfirmed');
+          .bind(parent.enrollment_id, parent.revision, body.boundary==='organization'?'partition':body.boundary, revision, new Date().toISOString()),
+          derivationAssertion(env, { condition: 'EXISTS(SELECT 1 FROM memory_recall_boundaries WHERE enrollment_id=? AND revision=?)', bindings: [parent.enrollment_id, revision] }),...organizationWrites,...retired.statements]);
+        if(!retired.acknowledge(all.slice(0,retired.assertions.length),all.slice(retired.assertions.length+checks.length+2+organizationWrites.length)))throw Error('recall_retirement_unconfirmed');
+        const result=all.slice(retired.assertions.length,retired.assertions.length+checks.length+2+organizationWrites.length);
+        if (!current() || !derivationResults(result, checks.length + 2 + organizationWrites.length) || !result.slice(0, checks.length).every(derivationVerified) || !derivationVerified(result[checks.length+1]!) || !derivationVerified(result.at(-1)!)) throw Error('recall_unconfirmed');
         return reply({ saved: true, refreshRequired: true });
       }
       const checks = packRecallGuards(guards).map(g => derivationAssertion(env, g)), checked = await db.batch(checks);
       if (!current() || !derivationResults(checked, checks.length) || !checked.every(derivationVerified)) throw Error('recall_changed');
       return reply({ enrollmentId: parent.enrollment_id, enrollmentRevision: parent.revision, boundary: boundary?.boundary ?? 'document', revision: boundary?.revision ?? null,
-        validUntil: new Date(presentationDeadline).toISOString() });
+        validUntil: new Date(presentationDeadline).toISOString(),...(schema.organizationRangesPresent?{organizationAvailable:parent.organization_id!==null&&parent.learn_enabled===1}:{}) });
     }
     if (!memoryDerivationEnabled(env, actor.userId)) return reply({ error: 'derived_memory_disabled' }, 403);
-    const hierarchy = await readNativeProjectContainment(env, parent.owner_user_id, true);
-    guards.push(...hierarchy.guards.map(g => ({ condition: g.sql, bindings: g.bindings })));
-    const readable = new Set([...hierarchy.forest.values()].filter(node => {
-      const native = hierarchy.access.get(node.id)!;
-      return native.active && (node.organizationId === null ? parent.owner_user_id === actor.userId : hasCapability(actor, 'project.read', { organizationId: node.organizationId, projectAccessId: native.accessId }));
-    }).map(node => node.id));
-    const sourcesQuery = `SELECT ${parentColumns.map(c => 'e.' + c).join(',')},b.boundary,b.revision AS boundary_revision FROM memory_live_enrollments e
-      JOIN memory_recall_boundaries b ON b.enrollment_id=e.enrollment_id AND b.enrollment_revision=e.revision
-      WHERE e.actor_user_id=? AND e.owner_user_id=? AND e.organization_id IS ? AND e.enrollment_id<>? AND e.learn_enabled=1 AND e.recall_enabled=1
+    const trees=new Map<string,RecallTree>();
+    // Capture the target's native project inventory even for an empty catalog.
+    const hierarchy=await readNativeProjectContainment(env,parent.owner_user_id,true);trees.set(parent.owner_user_id,hierarchy);
+    guards.push(...hierarchy.guards.map(g=>({condition:g.sql,bindings:g.bindings})));
+    const organizationJoin=schema.organizationRangesPresent?'LEFT JOIN memory_recall_organization_ranges o ON o.enrollment_id=e.enrollment_id AND o.enrollment_revision=e.revision AND o.boundary_revision=b.revision AND o.actor_user_id=e.actor_user_id AND o.organization_id=e.organization_id': '';
+    const effectiveBoundary=schema.organizationRangesPresent?"CASE WHEN o.enrollment_id IS NOT NULL AND b.boundary='partition' THEN 'organization' ELSE b.boundary END":'b.boundary';
+    const sourcesQuery = `SELECT ${parentColumns.map(c => 'e.' + c).join(',')},${effectiveBoundary} AS boundary,b.revision AS boundary_revision FROM memory_live_enrollments e
+      JOIN memory_recall_boundaries b ON b.enrollment_id=e.enrollment_id AND b.enrollment_revision=e.revision ${organizationJoin}
+      WHERE e.actor_user_id=? AND (e.owner_user_id=? ${schema.organizationRangesPresent?"OR o.enrollment_id IS NOT NULL AND b.boundary='partition'":''})
+        AND e.organization_id IS ? AND e.enrollment_id<>? AND e.learn_enabled=1 AND e.recall_enabled=1
         AND e.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND b.boundary<>'document' ORDER BY e.enrollment_id LIMIT 33`;
     const sourceBindings = [actor.userId, parent.owner_user_id, parent.organization_id, parent.enrollment_id], sources = await rows(env, sourcesQuery, sourceBindings);
     if (sources.length > 32) return reply({ error: 'recall_scope_capacity' }, 409);
     guards.push(inventory(sourcesQuery, sourceBindings, sources, [...parentColumns, 'boundary', 'boundary_revision']));
-    const eligible = sources.flatMap(row => {
-      const e = Object.fromEntries(parentColumns.map(key => [key, row[key]])) as unknown as LiveMemoryEnrollment;
-      if (!memoryRecallBoundary(row.boundary) || ['forgotten', 'erased', 'access-changed', 'revoked'].includes(e.failure_code ?? '')) return [];
-      const authority = liveMemoryAuthorityFromPrincipal(env, e, actor), relation = memoryRecallRelation(identity(e), identity(parent), row.boundary, hierarchy.forest, readable);
-      return authority && relation ? [{ e, relation, authority }] : [];
-    }).sort((a, b) => b.relation.weight - a.relation.weight || a.e.enrollment_id.localeCompare(b.e.enrollment_id));
+    const eligible=[];
+    for(const row of sources){
+      const e=Object.fromEntries(parentColumns.map(key=>[key,row[key]])) as unknown as LiveMemoryEnrollment;
+      if(!memoryRecallBoundary(row.boundary)||['forgotten','erased','access-changed','revoked'].includes(e.failure_code??''))continue;
+      const authority=liveMemoryAuthorityFromPrincipal(env,e,actor);if(!authority)continue;
+      const related=await readNativeRecallRelation(env,actor,e,parent,row.boundary,trees);guards.push(...related.guards);
+      if(related.relation)eligible.push({e,relation:related.relation,authority});
+    }
+    eligible.sort((a,b)=>b.relation.weight-a.relation.weight||a.e.enrollment_id.localeCompare(b.e.enrollment_id));
     const sourceId = url.searchParams.get('source'), purpose = url.searchParams.get('purpose');
     if (sourceId !== null) {
       const chosen = eligible.find(source => source.e.enrollment_id === sourceId);
@@ -190,7 +240,7 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
       const presentation = await readNativeDerivationPresentation(env, actor.userId, String(latest[0].job_id), { enrollmentId: chosen.e.enrollment_id,
         enrollmentRevision: chosen.e.revision, guards: packRecallGuards(guards) });
       if (!presentation || !current()) return reply({ error: 'recall_source_unavailable' }, 503);
-      return reply({ source: { enrollmentId: chosen.e.enrollment_id, projectId: chosen.e.project_id, documentId: chosen.e.document_id, ...chosen.relation },
+      return reply({ source: { ...recallSourceIdentity(chosen.e,chosen.relation.zoom), ...chosen.relation },
         presentation, validUntil: new Date(Math.min(presentationDeadline, Date.parse(presentation.candidate.validUntil))).toISOString(),
         independentEvidence: false, completeHistory: false, presentationOnly: true });
     }
@@ -198,7 +248,7 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
     guards.push(...eligible.map(source => source.authority.guard));
     const checks = packRecallGuards(guards).map(g => derivationAssertion(env, g)), checked = await db.batch(checks);
     if (!current() || !derivationResults(checked, checks.length) || !checked.every(derivationVerified)) throw Error('recall_changed');
-    return reply({ sources: eligible.map(source => ({ enrollmentId: source.e.enrollment_id, projectId: source.e.project_id, documentId: source.e.document_id, ...source.relation })),
+    return reply({ sources: eligible.map(source => ({ ...recallSourceIdentity(source.e,source.relation.zoom), ...source.relation })),
       validUntil: new Date(Math.min(presentationDeadline, ...eligible.map(source => Date.parse(source.e.expires_at)))).toISOString(), complete: true });
   } catch { return reply({ error: request.method === 'GET' ? 'recall_unavailable' : 'recall_commit_unconfirmed' }, 503); }
 }

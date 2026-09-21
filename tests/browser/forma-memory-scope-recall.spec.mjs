@@ -4,11 +4,11 @@ import {FORMA_PERSONAL_MEMORY_MESSAGES} from '../../src/components/design-system
 const m=(locale,key)=>FORMA_PERSONAL_MEMORY_MESSAGES[locale]['memory.live.'+key];
 for(const locale of ['en','ar'])test.describe('Memory cross-scope '+locale,()=>{
  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
- for(const uncertain of [false,true])test('Explicit scope consent and ephemeral preview '+locale+'/'+uncertain,async({page,context,baseURL})=>{
-  expect(syntheticNetworkEnabled(baseURL)).toBe(true);let boundary='document',revision=null;const writes=[],reads=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
+ for(const organization of [false,true])for(const uncertain of [false,true])test('Explicit scope consent and ephemeral preview '+locale+'/'+uncertain+'/'+organization,async({page,context,baseURL})=>{
+  expect(syntheticNetworkEnabled(baseURL)).toBe(true);let boundary='document',revision=null,settleWrite;const writes=[],reads=[],errors=[];page.on('pageerror',e=>errors.push(e.message));
   const enrollment={id:'a'.repeat(64),projectId:'project-atmosphere',documentId:'doc-atmosphere',organizationId:null,revision:1,learn:true,recall:true,background:true,
    retentionDays:30,timeZone:'UTC',expiresAt:new Date(Date.now()+86400000).toISOString(),policyVersion:'personal-memory-v2',lastAdmittedAt:null,throughSequence:24,cutoffSequence:null,backlog:false,nextDueAt:new Date().toISOString(),attempts:0,status:'ready'};
-  const source={enrollmentId:'b'.repeat(64),projectId:'project-atmosphere',documentId:'synthetic-other-document',zoom:'project',distance:0,weight:.7};
+  const source={...(organization?{ownerId:'synthetic-independent-owner'}:{}),enrollmentId:'b'.repeat(64),projectId:'project-atmosphere',documentId:'synthetic-other-document',zoom:organization?'organization':'project',distance:0,weight:organization?.0125:.7};
   await context.route('**/api/memory/assistant-context?*',route=>route.fulfill({status:503,json:{error:'synthetic_assistant_context_unavailable'}}));
   await context.route('**/api/memory/**',async route=>{
    const request=route.request(),url=new URL(request.url());expect(url.origin).toBe(new URL(baseURL).origin);
@@ -17,7 +17,8 @@ for(const locale of ['en','ar'])test.describe('Memory cross-scope '+locale,()=>{
    if(url.pathname==='/api/memory/settings')return route.fulfill({json:{enabled:true,policyVersion:'personal-memory-v2',writeContractVersion:'memory-settings-custody-v1',reviewContract:{timing:'daily-with-daytime-catch-up',preferredLocalWindow:{startHour:1,endHour:5},freshDaytimeCatchUpAllowed:true,savedPagesMayContinueOutsideWindow:true,strictlyOvernight:false,deliverySlaVerified:false},enrollments:[enrollment],nextAfter:null}});
    if(url.pathname==='/api/memory/derivation/settings')return route.fulfill({json:{version:'memory-derivation-control-v1',enabled:false,available:false,reason:'disabled',policyVersion:'personal-memory-derivation-v1',scope:{projectId:enrollment.projectId,documentId:enrollment.documentId,custody:{kind:'personal'}},enrollmentId:enrollment.id,enrollmentRevision:1,grants:[],qualifications:[],capScope:'payer-utc-calendar-month-all-memory-purposes',sourceWindow:'future-originals',processingImplemented:false,financial:null}});
    if(url.pathname==='/api/memory/recall-boundary'){
-    if(request.method()==='GET')return route.fulfill({json:{version:'memory-scope-recall-v1',enrollmentId:enrollment.id,enrollmentRevision:1,boundary,revision,validUntil:new Date(Date.now()+25000).toISOString()}});
+    if(request.method()==='GET')return route.fulfill({json:{version:'memory-scope-recall-v1',enrollmentId:enrollment.id,enrollmentRevision:1,boundary,revision,validUntil:new Date(Date.now()+25000).toISOString(),...(organization?{organizationAvailable:true}:{})}});
+    await new Promise(resolve=>{settleWrite=resolve;});
     if(uncertain)return route.fulfill({status:503,json:{version:'memory-scope-recall-v1',error:'recall_commit_unconfirmed'}});
     boundary=request.method()==='DELETE'?'document':request.postDataJSON().boundary;revision='12345678-1234-1234-1234-123456789abc';return route.fulfill({json:{version:'memory-scope-recall-v1',saved:true,refreshRequired:true}});
    }
@@ -38,12 +39,15 @@ for(const locale of ['en','ar'])test.describe('Memory cross-scope '+locale,()=>{
   expect(reads.filter(p=>p.includes('recall-boundary')||p.includes('recall-scopes'))).toEqual([]);expect(writes).toEqual([]);
   await control.getByRole('button',{name:m(locale,'recallBoundaryLoad'),exact:true}).click();
   const select=control.getByRole('combobox',{name:m(locale,'recallBoundaryRange'),exact:true});await expect(select).toHaveValue('document');
-  await select.selectOption('project-tree');const save=control.getByRole('button',{name:m(locale,'recallBoundarySave'),exact:true});await expect(save).toBeDisabled();
-  await control.getByRole('checkbox').check();await save.click();await expect(control.getByRole('status')).toHaveText(m(locale,uncertain?'recallBoundaryUncertain':'recallBoundarySaved'));expect(writes).toHaveLength(1);
-  await expect(save).toHaveCount(0);await control.getByRole('button',{name:m(locale,'recallBoundaryLoad'),exact:true}).click();await expect(select).toHaveValue(uncertain?'document':'project-tree');expect(writes).toHaveLength(1);
+  await expect(select.locator('option[value=organization]')).toHaveCount(organization?1:0);
+  await select.selectOption(organization?'organization':'project-tree');const save=control.getByRole('button',{name:m(locale,'recallBoundarySave'),exact:true});await expect(save).toBeDisabled();
+  await control.getByRole('checkbox').check();await save.click();await expect.poll(()=>writes.length).toBe(1);
+  await expect(control).toBeAttached();await expect(control).not.toBeVisible();expect(typeof settleWrite).toBe('function');settleWrite();
+  await expect(control.getByRole('status')).toHaveText(m(locale,uncertain?'recallBoundaryUncertain':'recallBoundarySaved'));expect(writes).toHaveLength(1);
+  await expect(save).toHaveCount(0);await control.getByRole('button',{name:m(locale,'recallBoundaryLoad'),exact:true}).click();await expect(select).toHaveValue(uncertain?'document':organization?'organization':'project-tree');expect(writes).toHaveLength(1);
   await control.getByRole('button',{name:m(locale,'recallBoundarySources'),exact:true}).click();await expect(control.getByRole('combobox',{name:m(locale,'recallBoundarySource'),exact:true})).toHaveValue(source.enrollmentId);
   await control.getByRole('button',{name:m(locale,'reviewInspect'),exact:true}).click();await expect(control).toContainText('Private cross-scope proposal <script>not code</script>');await expect(control.locator('script')).toHaveCount(0);
-  await control.getByText('Private cross-scope proposal <script>not code</script>',{exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:'.wrangler/memory-recall-'+locale+'-'+uncertain+'.png'});
+  await control.getByText('Private cross-scope proposal <script>not code</script>',{exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:'.wrangler/memory-recall-'+locale+'-'+uncertain+'-'+organization+'.png'});
   expect(await control.evaluate(e=>e.scrollWidth>e.clientWidth+1)).toBe(false);
   if(uncertain)await page.evaluate(()=>window.dispatchEvent(new Event('blur')));else await control.locator('details > summary').click();
   await expect(control).not.toContainText('Private cross-scope proposal');

@@ -442,6 +442,13 @@
       "when": 1789951723611,
       "tag": "0064_memory_derivation_asset_edges",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "6",
+      "when": 1789951723612,
+      "tag": "0065_memory_recall_organization_ranges",
+      "breakpoints": true
     }
   ]
 }

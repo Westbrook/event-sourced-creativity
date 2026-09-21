@@ -322,3 +322,11 @@ fresh policy and transactional source/access checks. Exact field/custody mutatio
 with an unchanged event head is denied, and actual D1 three-generation recovery
 passes. Whole execution is98/102 calls; the native capacity target and remaining
 resource/profile/consumer work stay assigned, separately from external rollout.
+
+Memory organization continuation (2026-09-21): [explicit cross-owner recall](forma-memory-organization-recall-2026-09-21.md)
+now reaches native private previews, saved contexts, document briefs and the
+approved specialist prompt through independent source/target project authority.
+Additive migration0065 never broadens existing partition consent. Withdrawal
+retires private copies without deleting usage, and the actual consent control now
+survives its own privacy barrier while hidden/inert. Native matrix work remains
+in progress; this is local implementation, not deployment or enrollment.

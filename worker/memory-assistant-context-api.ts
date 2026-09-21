@@ -1,14 +1,13 @@
 import type { WorkerEnv } from './runtime.ts';
-import { requireUser, hasCapability, type PilotUser } from './pilot-policy.ts';
+import { requireUser, type PilotUser, type ProjectExecutionScope } from './pilot-policy.ts';
 import { liveMemoryEnabled } from './memory-live-store.ts';
-import { liveMemoryEnrollmentGuard, type LiveMemoryEnrollment } from './memory-live-authority.ts';
+import { liveMemoryEnrollmentGuard } from './memory-live-authority.ts';
 import { bodyOf, readScope } from './memory-derivation-api.ts';
 import { derivationAssertion, derivationResults, derivationVerified, memoryDerivationSchema, memoryDerivationEnabled, memoryDerivationBinding } from './memory-derivation-store.ts';
 import { derivationExact, derivationHash, derivationId } from './memory-derivation-policy.ts';
 import { readNativeDerivationResult, prepareNativeDerivationResult, nativeDerivationResultBinding, nativeDerivationResultInputs, nativeDerivationResultGuards, nativeDerivationResultStatements } from './memory-derivation-results.ts';
-import { readNativeProjectContainment } from './project-containment-api.ts';
-import { packRecallGuards, readNativeRecallBoundarySnapshot } from './memory-recall-boundary-api.ts';
-import { memoryRecallBoundary, memoryRecallRelation } from '../src/model/memory-recall-boundary.ts';
+import { packRecallGuards, readNativeRecallBoundarySnapshot, readNativeRecallRelation, recallSourceIdentity } from './memory-recall-boundary-api.ts';
+import { memoryRecallBoundary } from '../src/model/memory-recall-boundary.ts';
 import { nativeMemoryGrantDeadline, nativeMemoryPilotDeadline, nativeMemoryPilotQuery } from './memory-native-deadlines.ts';
 import { memoryCanonical, type MemorySqlGuard } from './memory-sql.ts';
 
@@ -73,7 +72,6 @@ export function nativeSavedAssistantContextMatches(env:WorkerEnv,handle:NativeSa
  }catch{return false;}
 }
 
-const identity = (e: LiveMemoryEnrollment) => ({actorId:e.actor_user_id,ownerId:e.owner_user_id,organizationId:e.organization_id,projectId:e.project_id,documentId:e.document_id});
 function snapshot(sql:string, bindings:readonly (string|number|null)[], rows:Row[], keys:readonly string[]):MemorySqlGuard {
   return {condition:`(SELECT json_group_array(json_array(${keys.map(k=>'"'+k+'"').join(',')})) FROM (${sql}))=?`,
     bindings:[...bindings,JSON.stringify(rows.map(row=>keys.map(k=>row[k])))]};
@@ -96,13 +94,13 @@ export async function handleMemoryAssistantContext(request:Request,env:WorkerEnv
  * Custody is resolved independently, without borrowing a browser session.
  * This is staging evidence: native assertions must run atomically with every
  * consuming disclosure, dispatch or write. It does not issue a read receipt. */
-export async function prepareNativeSavedAssistantContextForPrincipal(env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string){
+export async function prepareNativeSavedAssistantContextForPrincipal(env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string,scope?:ProjectExecutionScope|null){
  const selector=new Request('https://native.invalid/api/memory/assistant-context?'+new URLSearchParams({projectId,documentId}));
- const response=await readAssistantContext(selector,env,actor,true),handle=savedContextResponses.get(response);
+ const response=await readAssistantContext(selector,env,actor,true,scope),handle=savedContextResponses.get(response);
  if(!handle)return null;
  try{contextCapture(env,handle);return handle;}catch{return null;}
 }
-async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUser,native=false):Promise<Response>{
+async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUser,native=false,nativeScope?:ProjectExecutionScope|null):Promise<Response>{
   const db=env.DB,started=Date.now(),monotonic=performance.now();
   const config=()=>memoryCanonical([env.FORMA_MEMORY_ENABLED,env.FORMA_MEMORY_USER_IDS,env.FORMA_MEMORY_DERIVATION_ENABLED,
     env.FORMA_MEMORY_DERIVATION_USER_IDS,env.FORMA_PILOT_COHORT_ID,env.FORMA_ADMIN_EMAILS,memoryDerivationBinding(env)]),configured=config();
@@ -148,7 +146,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
       return answer({saved:true,refreshRequired:true});
     }
     if(!liveMemoryEnabled(env,actor.userId)||!memoryDerivationEnabled(env,actor.userId))return answer({error:'memory_disabled'},403);
-    const selected=await readScope(native?null:request,env,actor,projectId,documentId);if(selected instanceof Response)return selected;
+    const selected=await readScope(native?null:request,env,actor,projectId,documentId,nativeScope);if(selected instanceof Response)return selected;
     const target=selected.parent;
     if(target.recall_enabled!==1)throw Error('context_consent');
     guards.push(...selected.guards,liveMemoryEnrollmentGuard(target,'recall'));
@@ -172,18 +170,17 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
     if(!derivationHash(jobId))throw Error('context_job');
     const handle=await (native?prepareNativeDerivationResult:readNativeDerivationResult)(env,actor.userId,jobId);if(!handle)throw Error('context_source');
     const bound=nativeDerivationResultBinding(env,handle),source=bound.enrollment,presentation=nativeDerivationResultInputs(env,handle);
-    if(!source||source.actor_user_id!==target.actor_user_id||source.owner_user_id!==target.owner_user_id||source.organization_id!==target.organization_id)throw Error('context_partition');
+    if(!source||source.actor_user_id!==target.actor_user_id||source.organization_id!==target.organization_id)throw Error('context_partition');
     let boundaryRevision:string|null=null,hierarchyRevision:string|null=null;
     let relation:{zoom:string;distance:number;weight:number}={zoom:'document',distance:0,weight:1};
     if(source.enrollment_id!==target.enrollment_id){
       const recalled=await readNativeRecallBoundarySnapshot(env,source.enrollment_id),boundary=recalled.boundary;
       if(!boundary||boundary.enrollment_revision!==source.revision||!memoryRecallBoundary(boundary.boundary))throw Error('context_boundary');
       guards.push(...recalled.guards);
-      const tree=await readNativeProjectContainment(env,target.owner_user_id,true);
-      const readable=new Set([...tree.forest.values()].filter(node=>{const access=tree.access.get(node.id)!;return access.active&&(node.organizationId===null?target.owner_user_id===actor.userId:hasCapability(actor,'project.read',{organizationId:node.organizationId,projectAccessId:access.accessId}));}).map(node=>node.id));
-      const related=memoryRecallRelation(identity(source),identity(target),boundary.boundary,tree.forest,readable);if(!related)throw Error('context_ancestry');
-      guards.push(...tree.guards.map(g=>({condition:g.sql,bindings:g.bindings})));
-      relation=related;boundaryRevision=String(boundary.revision);hierarchyRevision=tree.revision;
+      if(recalled.organization&&(recalled.organization.actor_user_id!==source.actor_user_id||recalled.organization.organization_id!==source.organization_id))throw Error('context_organization');
+      const related=await readNativeRecallRelation(env,actor,source,target,boundary.boundary);if(!related.relation)throw Error('context_ancestry');
+      guards.push(...related.guards);
+      relation=related.relation;boundaryRevision=String(boundary.revision);hierarchyRevision=related.hierarchyRevision;
     }
     deadline=Math.min(deadline,Date.parse(presentation.candidate.validUntil));
     const expiresAt=[target.expires_at,presentation.expiresAt].sort()[0]!;
@@ -211,7 +208,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
       if(!nativeSavedAssistantContextMatches(env,nativeHandle,result))throw Error('context_changed');
     }
     const final=nativeSavedAssistantContextInputs(env,nativeHandle);
-    const response=answer({...metadata(),context:{revision:old!.revision,state:'accepted',jobId,source:{enrollmentId:source.enrollment_id,projectId:source.project_id,documentId:source.document_id,...relation},purpose:bound.purpose,expiresAt},
+    const response=answer({...metadata(),context:{revision:old!.revision,state:'accepted',jobId,source:{...recallSourceIdentity(source,relation.zoom),...relation},purpose:bound.purpose,expiresAt},
       presentation:final.presentation,independentEvidence:false,completeHistory:false});
     savedContextResponses.set(response,nativeHandle);return response;
   }catch{return answer({error:request.method==='GET'?'assistant_context_unavailable':'assistant_context_commit_unconfirmed',noAutomaticRetry:true},503);}

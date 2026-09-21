@@ -1402,7 +1402,10 @@ export class FormaPersonalMemory extends FormaElement {
 
   override render() {
     if (this.#presentationSuspended) return nothing;
-    if (memoryPrivacyMutationActive()) return html`<section class="creator-settings-card personal-memory-card" aria-busy="true" aria-label=${this.#t('heading')}><p role="status">${this.#t('busy')}</p></section>`;
+    // Keep the consent-control host connected while its own write settles.
+    // The barrier synchronously retires all private views; hide and inert the
+    // remaining metadata without aborting an already-dispatched mutation.
+    const privacyPending = memoryPrivacyMutationActive();
     this.#syncOwner();
     this.#retireRecall();
     const owner = this.#owner, session = this.store.session.get(), selected = this.#selected();
@@ -1410,7 +1413,8 @@ export class FormaPersonalMemory extends FormaElement {
     const writeDisabled = disabled || this.#settings?.writeContractVersion !== MEMORY_WRITE_CONTRACT;
     const document = owner?.sourceCurrent() ? this.store.projection.get().documents.find(item => item.id === owner.documentId && item.projectId === owner.projectId) : null;
     const choices = owner?.canSelect() ? this.store.projection.get().documents.filter(item => item.projectId === owner.projectId) : [];
-    return html`<section class="creator-settings-card personal-memory-card" lang=${this.i18n.locale} dir=${this.i18n.direction} aria-label=${this.#t("heading")} aria-busy=${this.#busy || this.#exportRequest ? "true" : "false"}>
+    return html`<p role="status" ?hidden=${!privacyPending}>${privacyPending ? this.#t("busy") : ""}</p>
+      <section class="creator-settings-card personal-memory-card" ?inert=${privacyPending} style=${privacyPending ? "display:none" : ""} lang=${this.i18n.locale} dir=${this.i18n.direction} aria-label=${this.#t("heading")} aria-busy=${this.#busy || this.#exportRequest ? "true" : "false"}>
       <header><h2 tabindex="-1" data-memory-focus="heading">${this.#t("heading")}</h2><p>${this.#t("intro")}</p></header>
       ${session?.impersonation ? html`<p>${this.#t("impersonation")}</p>` : nothing}
       ${this.#busy ? html`<p class="personal-memory-status" role="status">${this.#t(this.#busy === "save" ? "saving" : this.#busy === "read" ? "loading" : "busy")}</p>` : nothing}

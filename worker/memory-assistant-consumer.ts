@@ -22,7 +22,7 @@ function current(env:WorkerEnv,handle:SemanticAssistantMemory){
  * is an identity to revalidate, not an execution or access capability. */
 export async function prepareSemanticAssistantMemory(env:WorkerEnv,actor:PilotUser,target:{projectId:string;documentId:string;scopeKey:string;turnId:string;priorTurnIds?:string[];scope?:ProjectExecutionScope|null},saved?:SemanticAssistantMemoryBinding){
  const db=env.DB;
- const source=await prepareNativeSavedAssistantContextForPrincipal(env,actor,target.projectId,target.documentId);
+ const source=await prepareNativeSavedAssistantContextForPrincipal(env,actor,target.projectId,target.documentId,target.scope);
  if(!source)throw Error('assistant_memory_unavailable');
  const {selection,consumersPresent}=nativeSavedAssistantContextInputs(env,source);
  if(!consumersPresent)throw Error('assistant_memory_schema_unavailable');

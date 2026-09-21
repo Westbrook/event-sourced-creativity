@@ -7,7 +7,7 @@ type Scope={projectId:string;documentId:string};
 type Row=Record<string,unknown>;
 export type AssistantMemoryContextView={targetEnrollmentId:string;targetRevision:number;validUntil:string;
  context:null|{revision:string;state:'dismissed'|'unavailable';jobId:string}|{revision:string;state:'accepted';jobId:string;purpose:MemoryDerivationPurpose;expiresAt:string;
- source:{enrollmentId:string;projectId:string;documentId:string;zoom:string;distance:number;weight:number}};presentation:DerivationResultView|null};
+ source:{ownerId?:string;enrollmentId:string;projectId:string;documentId:string;zoom:string;distance:number;weight:number}};presentation:DerivationResultView|null};
 const check=(value:unknown):void=>{if(!value)throw Error('memory-assistant-context-response');};
 function object(value:unknown,keys:string[]):Row{check(value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).sort().join(',')===[...keys].sort().join(','));return value as Row;}
 const uuid=(value:unknown)=>typeof value==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(value);
@@ -24,9 +24,11 @@ export function createAssistantMemoryContextClient(transport:typeof fetch=fetch)
    check(uuid(c.revision)&&derivationHash(c.jobId));
    if(!accepted){check((c.state==='dismissed'||controls&&c.state==='unavailable')&&row.presentation===null);return {...row,presentation:null} as AssistantMemoryContextView;}
    check(row.independentEvidence===false&&row.completeHistory===false&&MEMORY_DERIVATION_PURPOSES.includes(c.purpose as MemoryDerivationPurpose)&&derivationTime(c.expiresAt)&&Date.parse(c.expiresAt as string)>Date.now());
-   const source=object(c.source,['enrollmentId','projectId','documentId','zoom','distance','weight']);
+   const organization=(c.source as Row)?.zoom==='organization';
+   const source=object(c.source,['enrollmentId','projectId','documentId','zoom','distance','weight',...(organization?['ownerId']:[])]);
+   check(!organization||derivationId(source.ownerId));
    check([source.enrollmentId,source.projectId,source.documentId].every(derivationId)&&memoryRecallBoundary(source.zoom)&&Number.isSafeInteger(source.distance)&&Number(source.distance)>=0&&Number(source.distance)<=30);
-   check(source.weight===(source.zoom==='document'?1:source.zoom==='project'?.7:source.zoom==='partition'?.01:.5/(1+Number(source.distance)))
+   check(source.weight===(source.zoom==='document'?1:source.zoom==='project'?.7:source.zoom==='partition'?.01:source.zoom==='organization'?.0125:.5/(1+Number(source.distance)))
     &&(source.zoom==='project-tree'?Number(source.distance)>0:source.distance===0)
     &&(source.zoom==='document'?(source.documentId===scope.documentId&&source.projectId===scope.projectId&&source.enrollmentId===row.targetEnrollmentId):source.enrollmentId!==row.targetEnrollmentId));
    const p=row.presentation as Row,candidate=p?.candidate as Row;check(p&&candidate&&p.jobId===c.jobId&&typeof candidate.scopeKey==='string'&&derivationTime(p.expiresAt));

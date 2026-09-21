@@ -79,7 +79,7 @@ export class MemoryAssistantContext extends FormaElement{
   return html`<aside class="document-memory-brief" data-memory-assistant-context aria-label=${this.#t('assistantContextHeading')}><header><h2>${this.#t('assistantContextHeading')}</h2><button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${this.#refresh}>${this.#t('briefRefresh')}</button></header>
    <p class="memory-brief-disclosure">${this.#t('assistantContextDisclosure')}</p>
    ${this.#notice?html`<p role="status">${this.#t(this.#notice)}</p>`:nothing}
-   ${view?.context?.state==='accepted'?html`<p>${view.context.source.documentId} · ${this.#t('recallBoundary.'+view.context.source.zoom)}</p><ul>${view.presentation?.items.map(item=>html`<li>${item.text}</li>`)}</ul>`:nothing}
+   ${view?.context?.state==='accepted'?html`<p>${view.context.source.documentId}${view.context.source.ownerId?` (${view.context.source.ownerId})`:""} · ${this.#t('recallBoundary.'+view.context.source.zoom)}</p><ul>${view.presentation?.items.map(item=>html`<li>${item.text}</li>`)}</ul>`:nothing}
    ${view?.context?view.context.state==='dismissed'?html`<p>${this.#t('assistantContextDismissed')}</p><button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${()=>this.#act('accept')}>${this.#t('assistantContextUndo')}</button>`:html`<button type="button" class="button ghost compact" ?disabled=${this.#busy} @click=${()=>this.#act('dismiss')}>${this.#t('assistantContextDismiss')}</button>`:nothing}
   </aside>`;
  }

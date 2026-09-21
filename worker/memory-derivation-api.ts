@@ -8,7 +8,7 @@ import { readNativeDerivationResult,nativeDerivationResultInputs,nativeDerivatio
 import { controlNativeDerivationResult,reviseNativeDerivationUserControl } from "./memory-derivation-user-controls.ts";
 import { DERIVATION_USER_CONTROL_COLUMNS, derivationControlRelation } from "./memory-derivation-user-control-schema.ts";
 import { memoryDerivationFinanceView, memoryDerivationFinanceViewStatement } from "./memory-derivation-finance-view.ts";
-import { requireUser, requireConsent, type PilotUser } from "./pilot-policy.ts";
+import { requireUser, requireConsent, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { prepareDocumentAuthority } from "./context-authoring-authority.ts";
 import { executionAdmissionGuard } from "./consequential-consent.ts";
 import { parseMemoryCustody, memoryCustodyMatches } from "../src/model/memory-custody.ts";
@@ -90,13 +90,18 @@ async function scope(request: Request, env: WorkerEnv, actor: PilotUser, project
 /** Read-only inventory/control authority. Source identities and current custody
  * are proved natively; a presentation GET never hydrates the whole project or
  * rebuilds its index (which can retire otherwise valid retained results). */
-export async function readScope(request:Request|null,env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string){
+export async function readScope(request:Request|null,env:WorkerEnv,actor:PilotUser,projectId:string,documentId:string,nativeScope?:ProjectExecutionScope|null){
   const db=env.DB,consent=requireConsent(actor);if(consent)return privateResponse(consent);
   if(actor.projectExecution||actor.billingUserId&&actor.billingUserId!==actor.userId)return deny('memory_derivation_self_payer_required',403);
+  nativeScope=nativeScope?structuredClone(nativeScope):nativeScope;
+  // Internal selectors are identities, not authority. Re-prove exact custody,
+  // enrollment and principal permissions below; HTTP never supplies this argument.
+  if(nativeScope&&(request!==null||!derivationExact(nativeScope,['organizationId','projectAccessId','projectId','ownerUserId','actorUserId'])
+    ||!Object.values(nativeScope).every(derivationId)||nativeScope.actorUserId!==actor.userId||nativeScope.projectId!==projectId))return deny('memory_derivation_scope_unavailable',403);
   const selected=request?await readProjectRequestContext(request,env,actor):{context:null,response:null};if(selected.response)return privateResponse(selected.response);
   const context=selected.context;if(context&&context.projectId!==projectId)return deny('context_project_denied',403);
   const custody=context?{scope:{organizationId:context.organizationId,projectAccessId:context.projectAccessId,projectId,ownerUserId:context.ownerUserId,actorUserId:actor.userId},denied:false}
-    :await resolveOwnerExecutionScope(env,actor,documentId,projectId,'read');
+    :nativeScope?{scope:nativeScope,denied:false}:await resolveOwnerExecutionScope(env,actor,documentId,projectId,'read');
   if(custody.denied)return deny('context_custody_unavailable',403);
   const shared=custody.scope,parents=await rows(env,`SELECT ${parentColumns.join(',')} FROM memory_live_enrollments WHERE
     (actor_user_id,owner_user_id,organization_id,project_access_id,project_id,document_id) IS (?,?,?,?,?,?) LIMIT 2`,

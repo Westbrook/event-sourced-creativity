@@ -90,3 +90,27 @@ for(const stage of ['transport','body'])test('recall client ends a stalled '+sta
  if(stage==='body')assert.equal(cancelled,true);
  else{finish(new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{'content-type':'application/json'}}));await Promise.resolve();await Promise.resolve();await Promise.resolve();assert.equal(cancelled,true);}
 });
+
+const organizationScope=(ownerId,projectId='same',documentId='same')=>({actorId:'actor',ownerId,organizationId:'org',projectId,documentId});
+const organizationForest=projectContainmentForest([{id:'same',parentId:null,organizationId:'org'}]);
+test('organization recall needs separate owner inventories and never aliases equal project/document IDs',()=>{
+ const source=organizationScope('owner-one'),target=organizationScope('owner-two'),readable=new Set(['same']);
+ assert.equal(memoryRecallRelation(source,target,'partition',organizationForest,readable,{forest:organizationForest,readable}),null);
+ assert.equal(memoryRecallRelation(source,target,'organization',organizationForest,readable),null);
+ assert.equal(memoryRecallRelation(source,target,'organization',organizationForest,readable,{forest:organizationForest,readable:new Set()}),null);
+ assert.deepEqual(memoryRecallRelation(source,target,'organization',organizationForest,readable,{forest:organizationForest,readable}),{zoom:'organization',distance:0,weight:.0125});
+ for(const field of ['actorId','organizationId'])assert.equal(memoryRecallRelation(source,{...target,[field]:'different'},'organization',organizationForest,readable,{forest:organizationForest,readable}),null);
+ assert.equal(memoryRecallRelation({...source,organizationId:null},{...target,organizationId:null},'organization',organizationForest,readable,{forest:organizationForest,readable}),null);
+ assert.ok(.5/31>.0125&&.0125>.01);
+});
+test('organization consent client requires an explicitly advertised eligible scope',async()=>{
+ let calls=0;const client=createRecallBoundaryClient(async()=>{calls++;return Response.json({version:'memory-scope-recall-v1',saved:true,refreshRequired:true});});
+ for(const organizationAvailable of [undefined,false])await assert.rejects(client.save(selected,{...response(),organizationAvailable},'organization',signal()));
+ assert.equal(calls,0);await client.save(selected,{...response(),organizationAvailable:true},'organization',signal());assert.equal(calls,1);
+});
+test('organization source catalogs keep different owners with equal bare IDs distinct',async()=>{
+ const sources=['owner-one','owner-two'].map((ownerId,index)=>({enrollmentId:'enrollment-'+index,ownerId,projectId:selected.projectId,documentId:selected.documentId,zoom:'organization',distance:0,weight:.0125}));
+ const client=createRecallBoundaryClient(async()=>Response.json({version:'memory-scope-recall-v1',sources,validUntil:new Date(Date.now()+20000).toISOString(),complete:true}));
+ assert.equal((await client.sources(selected,signal())).sources.length,2);
+ delete sources[0].ownerId;await assert.rejects(client.sources(selected,signal()));
+});

@@ -97,7 +97,7 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
     items.sort((a,b)=>rank(a)-rank(b));
     return {...section,corrections,items};
   });
-  // One independently eligible source per relevance band, at most three.
+  // One independently eligible source per relevance band, at most four.
   // These are separate facets, not fallback evidence or a blended personality.
   // Source boundaries and access are proved again for every actual result.
   const related:DocumentMemoryBrief['sections'][number][]=[];
@@ -106,7 +106,7 @@ export async function readDocumentMemoryBrief(selection:Selection,transport:type
     const bands=new Set<string>(),chosen=catalog.sources.filter(source=>{
       if(bands.has(source.zoom))return false;bands.add(source.zoom);return true;
     });
-    if(chosen.length>3)throw Error('memory-brief-source-capacity');
+    if(chosen.length>4)throw Error('memory-brief-source-capacity');
     const relatedDeadlines=[Date.parse(catalog.validUntil)];
     for(const source of chosen){
       // The source's existing purpose consent governs presentation. This does
