@@ -102,3 +102,15 @@ The aggregate execution still exceeds the previous conservative50-call local
 target. That target is not silently waived or described as a verified Sites
 limit. The separate full run of preceding commit a2523f8b does not qualify this
 subsequent batching change. No deployment, migration, enrollment or provider call.
+
+### Final full-suite receipt and stalled-read deadline
+
+The immutable a2523f8b native runtime snapshot passes2,594/2,594 tests with
+zero failures in1,495,773.923417ms. It precedes read multiplexing and Output
+requirement proposals; those changes have separate focused evidence.
+
+Read multiplexing also rejects in-flight callers at the remainder of the
+original30-second wall/monotonic lease, even if a binding never acknowledges.
+Closing a capture immediately rejects queued and in-flight groups; an eventual
+read result is discarded. No database cancellation is claimed.34 unit and36
+aggregate/Output native cases pass with this deadline in place.

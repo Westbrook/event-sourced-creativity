@@ -183,7 +183,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
       return answer({...metadata(),context:old?{revision:old.revision,state:'dismissed',jobId:old.job_id,...profileMetadata()}:null,presentation:null});
     }
     if(!derivationHash(jobId))throw Error('context_job');
-    staging=profileJobIds.length?createMemoryReadBatch(env,current):undefined;
+    staging=profileJobIds.length?createMemoryReadBatch(env,current,Math.min(deadline-Date.now(),30000-(performance.now()-monotonic))):undefined;
     const sourceEnv=staging?.env??env,unwrap=staging?.unwrap??((s:D1PreparedStatement)=>s);
     const captureSource=async(id:string,profileOnly=false)=>{
       const handle=await prepareNativeDerivationResult(sourceEnv,actor.userId,id);if(!handle)throw Error('context_source');

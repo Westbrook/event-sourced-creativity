@@ -38,7 +38,20 @@ test('native Memory staging close rejects queued and late reads without renewed 
 });
 test('native Memory staging close during an outstanding acknowledgement withholds all rows',async()=>{
  const f=fixture();let resume;f.hook(rows=>new Promise(resolve=>{resume=()=>resolve(rows);}));const read=f.batch.env.DB.prepare('SELECT 1').all();
- while(!resume)await new Promise(resolve=>setTimeout(resolve,1));f.batch.close();resume();await assert.rejects(read);assert.equal(f.calls.length,1);
+ while(!resume)await new Promise(resolve=>setTimeout(resolve,1));f.batch.close();await assert.rejects(read);resume();assert.equal(f.calls.length,1);
+});
+test('native Memory staging deadline rejects in-flight and queued chunks without awaiting the database',async()=>{
+ const f=fixture();let resume;
+ f.hook(rows=>new Promise(resolve=>{resume=()=>resolve(rows);}));
+ const batch=createMemoryReadBatch(f.env,()=>true,20),db=batch.env.DB;
+ const groups=Array.from({length:3},()=>Array.from({length:130},()=>db.prepare('SELECT 1')));
+ const results=await Promise.allSettled(groups.map(group=>db.batch(group)));
+ assert.deepEqual(results.map(r=>r.status),['rejected','rejected','rejected']);assert.equal(f.calls.length,1);
+ resume();await new Promise(resolve=>setTimeout(resolve,1));assert.equal(f.calls.length,1);
+ await assert.rejects(db.prepare('SELECT 2').all());batch.close();f.batch.close();
+});
+for(const wait of [0,-1,30001,Infinity,NaN])test('native Memory staging refuses an invalid or renewed deadline '+wait,()=>{
+ const f=fixture();assert.throws(()=>createMemoryReadBatch(f.env,()=>true,wait));f.batch.close();
 });
 test('native Memory staging retains exact environment and native statement identity for final replay',async()=>{
  const f=fixture(),db=f.batch.env.DB,s=db.prepare('SELECT ? AS value').bind('guard');assert.equal(f.batch.unwrap(s).values[0],'guard');

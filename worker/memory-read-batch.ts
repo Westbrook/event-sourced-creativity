@@ -17,15 +17,25 @@ function readOnly(sql:string){
  * Every original query still runs, and its native proof still replays at use.
  * A fresh live environment view preserves DB/config identity checks. Partial,
  * failed, late or replaced acknowledgements never produce successful reads. */
-export function createMemoryReadBatch(env:WorkerEnv,current:()=>boolean){
+export function createMemoryReadBatch(env:WorkerEnv,current:()=>boolean,maximumWaitMs=30000){
+ if(!Number.isFinite(maximumWaitMs)||maximumWaitMs<=0||maximumWaitMs>30000)throw Error('memory_read_batch_unavailable');
  const db=env.DB,statements=new WeakMap<D1PreparedStatement,D1PreparedStatement>();
+ const active=new Set<Pending>();
  let queue:Pending[]=[],scheduled:ReturnType<typeof setTimeout>|undefined,closed=false;
  const fail=()=>Error('memory_read_batch_unavailable');
  const live=()=>{try{return env.DB===db&&current();}catch{return false;}};
  const reject=(pending:Pending[],error:unknown)=>{for(const item of pending)item.reject(error);};
+ function close(){
+  closed=true;clearTimeout(scheduled);clearTimeout(deadline);scheduled=undefined;
+  const pending=[...queue,...active];queue=[];active.clear();reject(pending,fail());
+ }
+ // D1 reads cannot be cancelled, but callers must not await a hung binding
+ // beyond the original request lease. Reject in-flight consumers immediately;
+ // an eventual acknowledgement is discarded and cannot trigger another read.
+ const deadline=setTimeout(close,maximumWaitMs);
  async function flush(){
   scheduled=undefined;const waiting=queue;queue=[];
-  if(closed||!live()){reject(waiting,fail());return;}
+  if(closed||!live()){close();return;}
   // Preserve each caller's entire atomic read batch, even at the chunk boundary.
   while(waiting.length){
    const chunk:Pending[]=[];let size=0;
@@ -35,14 +45,15 @@ export function createMemoryReadBatch(env:WorkerEnv,current:()=>boolean){
     const raw=structuredClone(await db.batch<Row>(chunk.flatMap(item=>item.statements)));
     if(closed||!live()||!derivationResults(raw,size))throw fail();
     let offset=0;for(const item of chunk){item.resolve(structuredClone(raw.slice(offset,offset+item.statements.length)));offset+=item.statements.length;}
-   }catch(error){reject(chunk,error);reject(waiting,error);return;}
+   }catch{close();return;}
+   finally{for(const item of chunk)active.delete(item);}
   }
  }
  function enqueue(inputs:D1PreparedStatement[]):Promise<D1Result<Row>[]>{
   if(closed||!live()||inputs.length<1||inputs.length>MAX_BATCH)return Promise.reject(fail());
-  if(queue.reduce((n,item)=>n+item.statements.length,0)+inputs.length>MAX_BATCH*3)return Promise.reject(fail());
+  if([...active].reduce((n,item)=>n+item.statements.length,0)+inputs.length>MAX_BATCH*3)return Promise.reject(fail());
   return new Promise((resolve,reject)=>{
-   queue.push({statements:inputs,resolve,reject});
+   const pending={statements:inputs,resolve,reject};queue.push(pending);active.add(pending);
    // One event-loop turn lets independent source stages meet without delaying
    // them beyond the original lease or adding a timer that renews that lease.
    scheduled??=setTimeout(()=>{void flush();},0);
@@ -74,5 +85,5 @@ export function createMemoryReadBatch(env:WorkerEnv,current:()=>boolean){
   if(key==='DB'){if(target.DB!==db)throw fail();return view;}return Reflect.get(target,key,target);
  },set(){throw fail();}});
  return {env:sourceEnv,unwrap:(statement:D1PreparedStatement)=>statements.get(statement)??statement,
-  close(){closed=true;clearTimeout(scheduled);scheduled=undefined;const pending=queue;queue=[];reject(pending,fail());}};
+  close};
 }
