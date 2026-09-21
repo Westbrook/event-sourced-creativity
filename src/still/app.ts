@@ -178,7 +178,7 @@ export class StillApp extends LitElement {
     if(!this.listOptions().some(a=>a.id===id))return false;
     if(id==='ui:previous-page')this.turnPage(this.page-1);
     else if(id==='ui:next-page')this.turnPage(this.page+1);
-    else {this.listDisplay.set(id==='ui:show-all');this.page=0;this.writeRoute(true);this.changed();this.focusContent();}
+    else {this.listDisplay.set(id==='ui:show-all');this.page=0;this.moreOpen=false;++this.toolbarHelpEpoch;this.writeRoute(true);this.changed();this.focusContent();}
     return true;
   }
   private setRememberLists=(e:CustomEvent<{value:boolean}>)=>{this.listKind();this.listDisplay.setRemember(e.detail.value===true);this.changed();};

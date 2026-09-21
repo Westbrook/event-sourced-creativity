@@ -21,14 +21,15 @@ test('Still list toolbar, palette, navigation and En Reve virtual collections',a
    window.virtualItems=Array.from({length:1000},(_,i)=>({id:'item-'+i,content:html`<a href=${'#item-'+i}>Item ${i}</a>`}));
   });
   const button=name=>page.getByRole('button',{name,exact:true});
-  await t.test('Show all is reserved in the second toolbar, then becomes Show less',async()=>{
+  await t.test('Show all and Show less return to the first toolbar after changing the list',async()=>{
    assert.equal(await page.locator('.work-row').count(),3);assert.equal(await button('Show all').count(),0);
    await button('More').click();await button('Show all').click();
    await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===7);
-   assert.equal(await button('Show less').count(),1);assert.equal(await button('More results').count(),0);
+   assert.equal(await button('Show less').count(),0);assert.equal(await button('Back').count(),0);assert.equal(await button('More').count(),1);assert.equal(await button('More results').count(),0);
    const ids=await page.evaluate(()=>window.app.paletteOptions().map(a=>a.id));assert.ok(ids.includes('ui:show-less'));assert.ok(!ids.includes('ui:next-page'));assert.ok(!ids.includes('ui:previous-page'));
-   await button('Show less').click();await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===3);
-   await button('Back').click();await button('More results').click();
+   await button('More').click();await button('Show less').click();await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===3);
+   assert.equal(await button('Show all').count(),0);assert.equal(await button('Back').count(),0);assert.equal(await button('More').count(),1);
+   await button('More results').click();
    assert.equal(await page.locator('.work-row').first().textContent().then(s=>s.includes('Project 3')),true);
    assert.ok((await page.evaluate(()=>window.app.paletteOptions().map(a=>a.id))).includes('ui:previous-page'));
   });
