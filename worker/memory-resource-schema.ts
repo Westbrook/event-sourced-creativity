@@ -1,3 +1,5 @@
 /** Exact optional resource schema, including retirement triggers. */
 export const memoryResourceLegacySchemaDigest="a0d5ff8e29c96f72caf487b6a868cd07d5a7ab2cbb37c6fe8d70a63770f0bbb4";
 export const memoryResourceSchemaDigest="6ec457d2c84495cd006aa30087c95b81c59782fd9b95b0f7fa862f04cc57e227";
+
+export const memoryResourceContextSchemaDigest="fb80f003d6fac809fafc0e9e92a83d031d7d5d57e47f1fef454bc6bf68163d48";

@@ -1,4 +1,6 @@
 import { nextResourceMemoryNight } from './memory-resource-schedule.ts';
+import { memoryCanonical } from './memory-sql.ts';
+import { snapshotMemoryDerivationInput } from './memory-derivation-result.ts';
 import { memoryResourceSelector } from '../src/model/memory-resource-scope.ts';
 import { prepareNativeMemoryResourceAuthority,prepareScheduledResourceAuthority,nativeMemoryResourceScopeInputs,nativeMemoryResourceScopeGuards,type NativeMemoryResourceAuthority } from './memory-resource-authority.ts';
 import { memoryResourceSchemaFamily,memoryResourceSchema,memoryResourceEnrollmentGuard,resourceEnrollmentColumns,type MemoryResourceEnrollment } from './memory-resource-settings.ts';
@@ -16,7 +18,8 @@ const sourceColumns=['event_id','sequence','type','recorded_at'];
 const reply=(body:Record<string,unknown>,status=200)=>Response.json({version:'memory-resource-history-v1',...body},{status,headers:{'cache-control':'private, no-store',vary:'Cookie, oai-authenticated-user-id, oai-authenticated-user-email'}});
 declare const resourceRecallBrand:unique symbol;
 export type NativeResourceMemoryRecall=Readonly<{[resourceRecallBrand]:true}>;
-type ResourceRecallCapture={env:WorkerEnv;db:WorkerEnv['DB'];authority:NativeMemoryResourceAuthority;guards:MemorySqlGuard[];value:Awaited<ReturnType<typeof captureResourceRecall>>['value']};
+export type ResourceMemorySnapshot={version:1;resourceKey:string;enrollmentId:string;revision:number;asOf:string;expiresAt:string;throughSequence:number;sourceHead:number;sourceLimitReached:boolean;openingLimitReached:boolean;openingsAvailable:boolean;sources:Source[];openings:Array<{opening_id:string;source_head:number;recorded_at:string;expires_at:string}>};
+type ResourceRecallCapture={snapshot:ResourceMemorySnapshot;env:WorkerEnv;db:WorkerEnv['DB'];authority:NativeMemoryResourceAuthority;guards:MemorySqlGuard[];value:Awaited<ReturnType<typeof captureResourceRecall>>['value']};
 const recalls=new WeakMap<NativeResourceMemoryRecall,ResourceRecallCapture>();
 function currentRecall(env:WorkerEnv,handle:NativeResourceMemoryRecall){
  const c=recalls.get(handle);if(!c||c.env!==env||c.db!==env.DB)throw Error('resource_recall_expired');
@@ -30,7 +33,18 @@ export async function prepareNativeResourceMemoryRecall(env:WorkerEnv,authority:
  const db=env.DB,e=await enrollment(env,authority),captured=await captureResourceRecall(env,e,authority);
  if(env.DB!==db)throw Error('resource_recall_changed');
  const handle=Object.freeze({}) as NativeResourceMemoryRecall;
- recalls.set(handle,{env,db,authority,guards:structuredClone(captured.guards),value:structuredClone(captured.value)});currentRecall(env,handle);return handle;
+ recalls.set(handle,{env,db,authority,guards:structuredClone(captured.guards),value:structuredClone(captured.value),snapshot:structuredClone(captured.snapshot)});currentRecall(env,handle);return handle;
+}
+/** Stored identity/data, not authority. A downstream consumer must retain this
+ * exact snapshot with its native precommit proof and independently obtain model
+ * consent. A new read never substitutes today's activity for approved inputs. */
+export function nativeResourceMemoryRecallSnapshot(env:WorkerEnv,handle:NativeResourceMemoryRecall){return structuredClone(currentRecall(env,handle).snapshot);}
+export async function prepareNativeResourceMemorySnapshot(env:WorkerEnv,authority:NativeMemoryResourceAuthority,input:unknown):Promise<NativeResourceMemoryRecall>{
+ const db=env.DB,e=await enrollment(env,authority),snapshot=snapshotMemoryDerivationInput(input,256) as ResourceMemorySnapshot;
+ if(!snapshot||typeof snapshot!=='object'||Array.isArray(snapshot))throw Error('resource_snapshot_invalid');
+ const captured=await captureResourceRecall(env,e,authority,snapshot);
+ if(env.DB!==db)throw Error('resource_recall_changed');const handle=Object.freeze({}) as NativeResourceMemoryRecall;
+ recalls.set(handle,{env,db,authority,guards:structuredClone(captured.guards),value:structuredClone(captured.value),snapshot:structuredClone(captured.snapshot)});currentRecall(env,handle);return handle;
 }
 export function nativeResourceMemoryRecallInputs(env:WorkerEnv,handle:NativeResourceMemoryRecall){return structuredClone(currentRecall(env,handle).value);}
 export function nativeResourceMemoryRecallGuards(env:WorkerEnv,handle:NativeResourceMemoryRecall){return structuredClone(currentRecall(env,handle).guards);}
@@ -101,32 +115,54 @@ export async function processResourceMemory(env:WorkerEnv,e:MemoryResourceEnroll
  if(env.DB!==db||!derivationResults(checked,statements.length)||!checked.slice(0,proofCount).every(derivationVerified)||!derivationVerified(checked[proofCount+1]!)||!derivationVerified(checked[proofCount+3]!))throw Error('resource_capture_unconfirmed');
  nativeMemoryResourceScopeInputs(env,handle);return {captured:page.length,throughSequence:through,more:rows.length>64};
 }
-async function captureResourceRecall(env:WorkerEnv,e:MemoryResourceEnrollment,handle:NativeMemoryResourceAuthority){
+async function captureResourceRecall(env:WorkerEnv,e:MemoryResourceEnrollment,handle:NativeMemoryResourceAuthority,snapshot?:ResourceMemorySnapshot){
  const db=env.DB,s=nativeMemoryResourceScopeInputs(env,handle),schema=await memoryResourceSchema(env),guards=[schema,...nativeMemoryResourceScopeGuards(env,handle),memoryResourceEnrollmentGuard(e),purpose(e,'recall')],q=sourceQuery(e);
+ if(snapshot){
+  const time=(v:unknown)=>typeof v==='string'&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString()===v;
+  if(!derivationExact(snapshot,['version','resourceKey','enrollmentId','revision','asOf','expiresAt','throughSequence','sourceHead','sourceLimitReached','openingLimitReached','openingsAvailable','sources','openings'])
+   ||snapshot.version!==1||snapshot.resourceKey!==s.identity.resourceKey||snapshot.enrollmentId!==e.enrollment_id||snapshot.revision!==e.revision
+   ||!time(snapshot.asOf)||Date.parse(snapshot.asOf)>Date.now()||snapshot.asOf<e.enrolled_at||!time(snapshot.expiresAt)||Date.parse(snapshot.expiresAt)<=Date.now()||snapshot.expiresAt>e.expires_at
+   ||!Number.isSafeInteger(snapshot.throughSequence)||snapshot.throughSequence<e.source_after_sequence||snapshot.throughSequence>e.cursor_sequence
+   ||!Number.isSafeInteger(snapshot.sourceHead)||snapshot.sourceHead<snapshot.throughSequence||snapshot.sourceHead>s.sourceHead
+   ||typeof snapshot.sourceLimitReached!=='boolean'||typeof snapshot.openingLimitReached!=='boolean'||snapshot.openingsAvailable!==schema.openings
+   ||!Array.isArray(snapshot.sources)||snapshot.sources.length>256||!Array.isArray(snapshot.openings)||snapshot.openings.length>256
+   ||new TextEncoder().encode(JSON.stringify(snapshot)).byteLength>196608)throw Error('resource_snapshot_invalid');
+  for(const row of snapshot.sources)if(!derivationExact(row,sourceColumns)||typeof row.event_id!=='string'||row.event_id.length<1||row.event_id.length>240||!Number.isSafeInteger(row.sequence)||row.sequence<=e.source_after_sequence||row.sequence>snapshot.throughSequence
+   ||!Object.hasOwn(actions,row.type)||!time(row.recorded_at)||row.recorded_at>snapshot.asOf||row.recorded_at<e.enrolled_at)throw Error('resource_snapshot_invalid');
+  for(const row of snapshot.openings)if(!derivationExact(row,['opening_id','source_head','recorded_at','expires_at'])||typeof row.opening_id!=='string'||!/^[a-f0-9-]{36}$/u.test(row.opening_id)
+   ||!Number.isSafeInteger(row.source_head)||row.source_head<e.source_after_sequence||row.source_head>snapshot.sourceHead||!time(row.recorded_at)||row.recorded_at>snapshot.asOf||row.recorded_at<e.enrolled_at
+   ||!time(row.expires_at)||row.expires_at<snapshot.expiresAt)throw Error('resource_snapshot_invalid');
+  if(new Set(snapshot.sources.map(row=>row.event_id)).size!==snapshot.sources.length||new Set(snapshot.openings.map(row=>row.opening_id)).size!==snapshot.openings.length)throw Error('resource_snapshot_invalid');
+ }
  const descriptor={sql:`SELECT event.event_id,event.sequence,event.type,event.recorded_at ${q.from} JOIN memory_resource_history history ON history.event_id=event.event_id AND history.enrollment_id=?
-  WHERE ${q.condition} AND history.sequence=event.sequence AND history.event_type=event.type AND history.recorded_at=event.recorded_at AND history.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY event.sequence DESC LIMIT 257`,bindings:[e.enrollment_id,...q.bindings]};
- const openingDescriptor={sql:`SELECT opening_id,source_head,recorded_at,expires_at FROM memory_resource_openings WHERE enrollment_id=? AND enrollment_revision=? AND recorded_at>=? AND recorded_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') AND source_head>=? AND source_head<=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') ORDER BY recorded_at DESC,opening_id DESC LIMIT 257`,bindings:[e.enrollment_id,e.revision,e.enrolled_at,e.source_after_sequence,s.sourceHead]};
+  WHERE ${q.condition} AND history.sequence=event.sequence AND history.event_type=event.type AND history.recorded_at=event.recorded_at AND history.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') ${snapshot?'AND event.event_id IN(SELECT value FROM json_each(?))':''} ORDER BY event.sequence DESC LIMIT 257`,bindings:[e.enrollment_id,...q.bindings,...(snapshot?[JSON.stringify(snapshot.sources.map(row=>row.event_id))]:[])]};
+ const openingDescriptor={sql:`SELECT opening_id,source_head,recorded_at,expires_at FROM memory_resource_openings WHERE enrollment_id=? AND enrollment_revision=? AND recorded_at>=? AND recorded_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') AND source_head>=? AND source_head<=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') ${snapshot?'AND opening_id IN(SELECT value FROM json_each(?))':''} ORDER BY recorded_at DESC,opening_id DESC LIMIT 257`,bindings:[e.enrollment_id,e.revision,e.enrolled_at,e.source_after_sequence,s.sourceHead,...(snapshot?[JSON.stringify(snapshot.openings.map(row=>row.opening_id))]:[])]};
  const openingRead=schema.openings?db.prepare(openingDescriptor.sql).bind(...openingDescriptor.bindings):null;
  const read=db.prepare(descriptor.sql).bind(...descriptor.bindings),frames=structuredClone(await db.batch<Record<string,unknown>>([...guards.map(g=>derivationAssertion(env,g)),read,...(openingRead?[openingRead]:[])]));
  if(env.DB!==db||!derivationResults(frames,guards.length+1+(openingRead?1:0))||!frames.slice(0,guards.length).every(derivationVerified))throw Error('resource_recall_read');
  const result=frames[guards.length]!,rows=result.results as unknown as Source[];if(rows.length>257||rows.some(r=>!derivationExact(r,sourceColumns)||!Object.hasOwn(actions,r.type)))throw Error('resource_recall_rows');
  const openingResult=openingRead?frames[guards.length+1]!:null,openingRows=openingResult?.results??[];
  if(openingRows.length>257||openingRows.some(r=>!derivationExact(r,['opening_id','source_head','recorded_at','expires_at'])||typeof r.opening_id!=='string'||r.opening_id.length!==36||!Number.isSafeInteger(r.source_head)||typeof r.recorded_at!=='string'||!Number.isFinite(Date.parse(r.recorded_at))||typeof r.expires_at!=='string'||!Number.isFinite(Date.parse(r.expires_at))))throw Error('resource_opening_rows');
- const openings=openingRows.slice(0,256);
+ const openings=openingRows.slice(0,256) as ResourceMemorySnapshot['openings'];
+ if(snapshot&&(memoryCanonical(rows)!==memoryCanonical(snapshot.sources)||memoryCanonical(openings)!==memoryCanonical(snapshot.openings)))throw Error('resource_snapshot_source_changed');
  const witness=new AssistantContextReadWitness<null>(env);witness.observe([read],[result],[descriptor]);
  if(openingRead&&openingResult)witness.observe([openingRead],[openingResult],[openingDescriptor]);
  witness.before(s.validUntil);witness.seal(null);
  const sourceGuards=[...guards,...witness.precommitGuards().map(g=>({condition:g.sql,bindings:g.bindings}))];
  const proof=sourceGuards.map(g=>derivationAssertion(env,g));
  const checked=await db.batch(proof);if(env.DB!==db||!derivationResults(checked,proof.length)||!checked.every(derivationVerified))throw Error('resource_recall_changed');nativeMemoryResourceScopeInputs(env,handle);
- const sources=rows.slice(0,256),at=Date.now();
+ const sources=rows.slice(0,256),at=snapshot?Date.parse(snapshot.asOf):Date.now();
+ const retentionUntil=new Date(Math.min(Date.parse(e.expires_at),...sources.map(r=>Date.parse(r.recorded_at)+e.retention_days*86400000),...openings.map(r=>Date.parse(r.expires_at)))).toISOString();
+ if(snapshot&&snapshot.expiresAt>retentionUntil)throw Error('resource_snapshot_retention_changed');
+ const frozen:ResourceMemorySnapshot=snapshot??{version:1,resourceKey:s.identity.resourceKey,enrollmentId:e.enrollment_id,revision:e.revision,asOf:new Date(at).toISOString(),expiresAt:retentionUntil,
+  throughSequence:e.cursor_sequence,sourceHead:s.sourceHead,sourceLimitReached:rows.length>256,openingLimitReached:openingRows.length>256,openingsAvailable:schema.openings,sources:structuredClone(sources),openings:structuredClone(openings)};
  const transitions=[...sources,...openings].flatMap(r=>[7,30].map(days=>Date.parse(String(r.recorded_at))+days*86400000)).filter(time=>time>at);
- const validUntil=new Date(Math.min(Date.parse(s.validUntil),Date.parse(e.expires_at),...sources.map(r=>Date.parse(r.recorded_at)+e.retention_days*86400000),...openings.map(r=>Date.parse(String(r.expires_at))),...transitions)).toISOString();
- const value={scope:s.identity,validUntil,method:'action-counts-not-semantic',independentPreferenceEvidence:false,linkedContentRead:false,
-  coverage:{since:e.enrolled_at,throughSequence:e.cursor_sequence,currentHead:s.sourceHead,completeFromStart:false,sourceLimit:256,sourceLimitReached:rows.length>256},
-  openings:{method:'resource-surface-open-not-content-consumption',limit:256,limitReached:openingRows.length>256,available:schema.openings},
+ const validUntil=new Date(Math.min(Date.parse(s.validUntil),Date.parse(e.expires_at),...sources.map(r=>Date.parse(r.recorded_at)+e.retention_days*86400000),...openings.map(r=>Date.parse(String(r.expires_at))),...(snapshot?[Date.parse(snapshot.expiresAt)]:transitions))).toISOString();
+ const value={scope:s.identity,validUntil,...(snapshot?{asOf:snapshot.asOf}:{}),method:'action-counts-not-semantic',independentPreferenceEvidence:false,linkedContentRead:false,
+  coverage:{since:e.enrolled_at,throughSequence:frozen.throughSequence,currentHead:frozen.sourceHead,completeFromStart:false,sourceLimit:256,sourceLimitReached:frozen.sourceLimitReached},
+  openings:{method:'resource-surface-open-not-content-consumption',limit:256,limitReached:frozen.openingLimitReached,available:frozen.openingsAvailable},
   windows:[7,30].map(days=>({days,resourceOpenings:openings.filter(r=>Date.parse(String(r.recorded_at))>at-days*86400000).length,counts:sources.filter(r=>Date.parse(r.recorded_at)>at-days*86400000).reduce<Record<string,number>>((out,r)=>{const action=actions[r.type];out[action]=(out[action]??0)+1;return out;},{})})),sources:sources.map(r=>({eventId:r.event_id,type:r.type,recordedAt:r.recorded_at}))};
- return {value,guards:[...sourceGuards,{condition:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[validUntil]}]};
+ return {value,snapshot:frozen,guards:[...sourceGuards,{condition:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now')",bindings:[validUntil]}]};
 }
 export async function handleMemoryResourceHistory(request:Request,env:WorkerEnv){
  const url=new URL(request.url);if(!['GET','POST'].includes(request.method))return reply({error:'method_not_allowed'},405);

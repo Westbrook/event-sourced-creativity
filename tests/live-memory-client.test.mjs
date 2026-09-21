@@ -1966,3 +1966,23 @@ for(const fault of ['none','unenrolled','learn-off','expired-enrollment','stale-
  assert.equal(calls.length,['none','lost-ack'].includes(fault)?2:1);
  if(calls.length===2)assert.deepEqual(calls[1],{url:'/api/memory/resource-opening?kind=library&projectId=p&resourceId=p',method:'POST',body:{openingId}});
 });
+
+async function resourceAssistantPreview(){
+ const {memoryResourceIdentity}=await import('../src/model/memory-resource-scope.ts'),{memoryDigest}=await import('../src/model/scoped-memory.ts'),{memoryCanonical}=await import('../worker/memory-sql.ts');
+ const selector={kind:'library',projectId:'p',resourceId:'p'},scope=memoryResourceIdentity(selector,{actorUserId:'a',ownerUserId:'a',organizationId:null,projectAccessId:null}),at=new Date().toISOString();
+ const snapshot={version:1,resourceKey:scope.resourceKey,enrollmentId:crypto.randomUUID(),revision:1,asOf:at,expiresAt:new Date(Date.now()+86400000).toISOString(),throughSequence:2,sourceHead:2,sourceLimitReached:false,openingLimitReached:false,openingsAvailable:true,sources:[{event_id:'event',sequence:2,type:'BlockCreated',recorded_at:at}],openings:[]};
+ const history={scope,validUntil:new Date(Date.now()+25000).toISOString(),method:'action-counts-not-semantic',independentPreferenceEvidence:false,linkedContentRead:false,windows:[7,30].map(days=>({days,resourceOpenings:0,counts:{edit:1}})),coverage:{since:at,throughSequence:2,currentHead:2,completeFromStart:false,sourceLimit:256,sourceLimitReached:false},openings:{method:'resource-surface-open-not-content-consumption',limit:256,available:true,limitReached:false},sources:[{eventId:'event',type:'BlockCreated',recordedAt:at}]};
+ return {selector,body:{version:'memory-resource-context-v1',policyVersion:'resource-assistant-context-v1',spendingAuthorized:false,snapshot,snapshotSha256:await memoryDigest(memoryCanonical(snapshot)),expectedContextId:null,history}};
+}
+test('resource assistant context client preserves exact reviewed metadata with explicit confirmation',async()=>{
+ const {createMemoryResourceClient}=await import('../src/state/memory-resource-client.ts'),f=await resourceAssistantPreview(),calls=[],id=crypto.randomUUID();
+ const client=createMemoryResourceClient(async(url,init)=>{calls.push({url,init});return Response.json(init.method==='GET'?f.body:init.method==='PUT'?{version:'memory-resource-context-v1',saved:true,contextId:id,snapshotSha256:f.body.snapshotSha256,spendingAuthorized:false,noAutomaticRetry:true}:{version:'memory-resource-context-v1',forgotten:true,authoredResourcesPreserved:true,noAutomaticRetry:true});});
+ assert.equal(calls.length,0);const signal=new AbortController().signal,preview=await client.contextPreview(f.selector,signal);assert.equal(await client.selectContext(f.selector,signal,preview),id);
+ assert.deepEqual(JSON.parse(calls[1].init.body),{confirmation:'USE_RESOURCE_ACTIVITY_IN_ASSISTANT',snapshot:f.body.snapshot,snapshotSha256:f.body.snapshotSha256,expectedContextId:null});await client.forgetContext(f.selector,signal,id);assert.equal(calls.length,3);assert.equal(calls[2].init.method,'DELETE');assert.ok(calls.every(c=>!c.url.includes('documentId')));
+});
+for(const fault of ['hash','scope','semantic','expired','spend','unknown-policy','empty','snapshot-time','oversized','missing-ack'])test('resource assistant context client rejects '+fault,async()=>{
+ const {createMemoryResourceClient}=await import('../src/state/memory-resource-client.ts'),f=await resourceAssistantPreview();
+ if(fault==='hash')f.body.snapshotSha256='0'.repeat(64);if(fault==='scope')f.body.snapshot.resourceKey='other';if(fault==='semantic')f.body.history.independentPreferenceEvidence=true;if(fault==='expired')f.body.history.validUntil='2000-01-01T00:00:00.000Z';if(fault==='spend')f.body.spendingAuthorized=true;if(fault==='unknown-policy')f.body.policyVersion='future';if(fault==='empty')f.body.snapshot.sources=[];if(fault==='snapshot-time')f.body.snapshot.asOf=new Date(Date.now()+60000).toISOString();if(fault==='oversized')f.body.snapshot.padding='x'.repeat(60000);
+ let calls=0;const client=createMemoryResourceClient(async(_url,init)=>{calls++;return Response.json(init.method==='GET'?f.body:{version:'memory-resource-context-v1',saved:true});}),signal=new AbortController().signal;
+ if(fault==='missing-ack'){const preview=await client.contextPreview(f.selector,signal);await assert.rejects(()=>client.selectContext(f.selector,signal,preview));assert.equal(calls,2);}else{await assert.rejects(()=>client.contextPreview(f.selector,signal));assert.equal(calls,1);}
+});

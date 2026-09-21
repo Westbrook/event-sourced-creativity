@@ -563,3 +563,13 @@ original identities, derives scope/relevance natively, and retains a localized
 private review with durable withdrawal.752 integrated client/provider checks,34
 native aggregate checks,6 final native cases and8 browser journeys pass (native
 counts overlap). Automatic nightly unified-profile evolution remains assigned.
+
+## MEM-050 — Independently selected resource assistant history
+
+Implemented locally: [explicit frozen activity selection](forma-memory-resource-assistant-context-2026-09-21.md).
+The actual Library/Canvas controls now separately review/select/forget exact
+resource activity, with native source proof, immutable retention and non-resurrecting
+retirement.0070 is additive and local only.146 integrated native,27 final native,
+287 client/migration and10 browser checks pass (native counts overlap). Actual
+paid semantic resource consumption remains assigned native implementation, not an
+external-service prerequisite or an implied model-use enrollment.

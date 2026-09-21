@@ -477,6 +477,13 @@
       "when": 1789951723616,
       "tag": "0069_memory_resource_openings",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "6",
+      "when": 1789951723617,
+      "tag": "0070_memory_resource_contexts",
+      "breakpoints": true
     }
   ]
 }

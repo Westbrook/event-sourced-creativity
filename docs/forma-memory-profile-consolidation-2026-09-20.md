@@ -88,3 +88,10 @@ lint and build pass. No migration, real provider request, deployment or enrollme
 This is a durable **private synthesis consumer**, not an automatic nightly
 cross-project profile store. Scheduled unified-profile evolution, resource
 semantic consumers and remaining output integration stay in the native matrix.
+
+### Full native regression at7a3573d0
+
+The immutable7a3573d0 snapshot passes2,701/2,701 native tests, zero failures
+(1,853,615ms). This includes cross-scope synthesis and preceding private-disclosure
+changes, but excludes the later frozen resource selection/0070 work, whose focused
+and browser evidence is recorded separately. No live provider or deployment.

@@ -427,3 +427,10 @@ least-local relevance. It cannot publish policy or replace a user correction.
 This closes the semantic review consumer, not nightly unified-profile evolution,
 resource semantic consumption, direct private output integration or all native
 qualification.
+
+[Explicit frozen resource selection](forma-memory-resource-assistant-context-2026-09-21.md)
+now supplies independent resource-to-assistant consent, exact historical inputs,
+permanent source retirement and actual localized controls. This closes the
+selection boundary, not the separately required semantic execution/publication
+consumer. Resource semantics, nightly unified-profile evolution, direct private
+Output/live-preview and integrated qualification remain assigned here.

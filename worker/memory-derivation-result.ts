@@ -58,7 +58,8 @@ const requireValue = (condition: unknown): void => { if (!condition) throw new E
 
 /** Reject accessors/proxies that throw, sparse arrays, custom prototypes, cycles,
  * malformed strings and excess input without calling user-defined toJSON. */
-function snapshot(input: unknown): unknown {
+function snapshot(input: unknown, maximumArrayLength:128|256=128): unknown {
+  requireValue(maximumArrayLength===128||maximumArrayLength===256);
   let bytes = 0, nodes = 0;
   const ancestors = new Set<object>(), encoder = new TextEncoder();
   const copy = (value: unknown, depth: number): unknown => {
@@ -76,7 +77,7 @@ function snapshot(input: unknown): unknown {
       requireValue(Object.getPrototypeOf(source) === (array ? Array.prototype : Object.prototype));
       if (array) {
         const length = Object.getOwnPropertyDescriptor(source, "length");
-        requireValue(length && Object.hasOwn(length, "value") && integer(length.value) && length.value <= 128 && keys.length === length.value + 1);
+        requireValue(length && Object.hasOwn(length, "value") && integer(length.value) && length.value <= maximumArrayLength && keys.length === length.value + 1);
         for (let i = 0; i < length!.value; i++) {
           const entry = Object.getOwnPropertyDescriptor(source, String(i));
           requireValue(entry?.enumerable && Object.hasOwn(entry, "value"));

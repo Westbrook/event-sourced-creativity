@@ -2851,3 +2851,19 @@ export const memoryResourceOpenings=sqliteTable('memory_resource_openings',{
  check('memory_resource_opening_head',sql.raw("typeof(source_head)='integer' AND source_head>=0")),
  check('memory_resource_opening_recorded',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',recorded_at) IS recorded_at")),
  check('memory_resource_opening_expiry',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>recorded_at"))]);
+
+/** Separately accepted resource activity; no provider purchase or document alias. */
+export const memoryResourceContexts=sqliteTable('memory_resource_contexts',{
+ contextId:text('context_id').primaryKey().notNull(),actorUserId:text('actor_user_id').notNull().references(()=>users.userId,{onDelete:'cascade'}),
+ enrollmentId:text('enrollment_id').notNull().references(()=>memoryResourceEnrollments.enrollmentId,{onDelete:'cascade'}),enrollmentRevision:integer('enrollment_revision').notNull(),
+ policyVersion:text('policy_version').notNull(),snapshotSha256:text('snapshot_sha256').notNull(),snapshotJson:text('snapshot_json'),state:text('state').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),retiredAt:text('retired_at'),
+},t=>[uniqueIndex('idx_memory_resource_context_active').on(t.enrollmentId).where(sql`state='active'`),index('idx_memory_resource_context_expiry').on(t.state,t.expiresAt),
+ check('memory_resource_context_id',sql.raw('length(context_id)=36')),
+ check('memory_resource_context_revision',sql.raw("typeof(enrollment_revision)='integer' AND enrollment_revision>0")),
+ check('memory_resource_context_policy',sql.raw("policy_version='resource-assistant-context-v1'")),
+ check('memory_resource_context_hash',sql.raw("length(snapshot_sha256)=64 AND snapshot_sha256 NOT GLOB '*[^a-f0-9]*'")),
+ check('memory_resource_context_snapshot',sql.raw("snapshot_json IS NULL OR (json_valid(snapshot_json) AND length(CAST(snapshot_json AS BLOB))<=196608 AND json_extract(snapshot_json,'$.version')=1 AND json_extract(snapshot_json,'$.enrollmentId')=enrollment_id AND json_extract(snapshot_json,'$.revision')=enrollment_revision)")),
+ check('memory_resource_context_state',sql.raw("state IN('active','retired')")),
+ check('memory_resource_context_created',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),
+ check('memory_resource_context_expiry',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at")),
+ check('memory_resource_context_retirement',sql.raw("(state='active' AND snapshot_json IS NOT NULL AND retired_at IS NULL) OR (state='retired' AND snapshot_json IS NULL AND retired_at>=created_at)"))]);
