@@ -1,3 +1,4 @@
+import { parseMemoryProfileSynthesis } from '../model/memory-profile-synthesis.ts';
 import { memoryCreationApprovalHash,parseMemoryCreationReview } from '../model/memory-creation-review.ts';
 import { parseMemoryFieldRequest,type MemoryFieldRequest } from '../model/memory-field-request.ts';
 import type { MemoryFieldGenerationIntent } from './memory-field-completion.ts';
@@ -158,7 +159,7 @@ export class FormaCreativeAssistant extends FormaElement {
     this.#retentionVersions.set("withdrawal:scope", ++this.#withdrawalRevision);
     this.#context = null; this.#turns = []; this.#messages = []; this.#localToolMessages = []; this.#proposals = [];
     if (this.#guidance) this.#guidance = { ...this.#guidance, message: "", sourceRetired: true, status: "uncertain" };
-    if (active) this.#specialist = { ...active, quote: null, originalRequest: null, creationReview:undefined,editReview:undefined,resultReply: null, unusedExecution: false,
+    if (active) this.#specialist = { ...active, quote: null, originalRequest: null, profileSynthesis:undefined,creationReview:undefined,editReview:undefined,resultReply: null, unusedExecution: false,
       task: this.#tasks.find(task => task.executionId === active.executionId) ?? null, working: false, stopping: false,
       retrievalOnly: true, notice: "unavailable" };
     this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.clearConversationDrafts();
@@ -560,7 +561,10 @@ export class FormaCreativeAssistant extends FormaElement {
     const creationReview=review.result.creationReview===undefined?null:parseMemoryCreationReview(review.result.creationReview,{executionId:review.executionId,
       turnId:task.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
     if(review.result.creationReview!==undefined&&(!memory||!creationReview||original.fieldTarget))return null;
-    return { quote, original, reply: review.result.reply,creationReview:creationReview??undefined,editReview:editReview??undefined,memory:memory??undefined,sourceStatus:review.result.sourceStatus };
+    const profileSynthesis=review.result.profileSynthesis===undefined?null:parseMemoryProfileSynthesis(review.result.profileSynthesis,{executionId:review.executionId,
+      turnId:task.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
+    if(review.result.profileSynthesis!==undefined&&(!memory||!profileSynthesis||original.fieldTarget))return null;
+    return { quote, original, reply: review.result.reply,profileSynthesis:profileSynthesis??undefined,creationReview:creationReview??undefined,editReview:editReview??undefined,memory:memory??undefined,sourceStatus:review.result.sourceStatus };
   }
 
   async #load() {
@@ -589,7 +593,7 @@ export class FormaCreativeAssistant extends FormaElement {
         && this.#negativeReadCurrent(task.turnId, task.executionId, withdrawalRevision)) {
         const active = this.#specialist?.turnId === task.turnId ? this.#specialist : null;
         this.#withdrawSpecialist({ id: active?.id ?? "", scope, turnId: task.turnId, executionId: task.executionId,
-          quote: null, originalRequest: null, task, working: false, stopping: false, retrievalOnly: true, notice: "unavailable", creationReview:undefined,editReview:undefined,resultReply: null }, false, withdrawalRevision);
+          quote: null, originalRequest: null, task, working: false, stopping: false, retrievalOnly: true, notice: "unavailable", profileSynthesis:undefined,creationReview:undefined,editReview:undefined,resultReply: null }, false, withdrawalRevision);
       }
       if (!canMerge) return;
       // Page context has a separate source proof from retained conversation and
@@ -625,7 +629,7 @@ export class FormaCreativeAssistant extends FormaElement {
         // resume must not restore its receipt after this currently retained result.
         this.#invalidateSpecialistReceipt(active.turnId, active.executionId);
         this.#specialist = { ...active, task: { ...latest, canExecute: false }, quote: completed.quote,
-          originalRequest: completed.original, resultReply: completed.reply,creationReview:completed.creationReview,editReview:completed.editReview,semanticMemory:completed.memory,resultSource:completed.sourceStatus, working: false, stopping: false,
+          originalRequest: completed.original, resultReply: completed.reply,profileSynthesis:completed.profileSynthesis,creationReview:completed.creationReview,editReview:completed.editReview,semanticMemory:completed.memory,resultSource:completed.sourceStatus, working: false, stopping: false,
           retrievalOnly: true, notice: "" };
       } else if (active && latest && !this.#retentionUnavailable(latest) && latest.turnId === active.turnId
         && latest.bindingHash === activeHash && active.quote?.status !== "completed"
@@ -864,7 +868,7 @@ export class FormaCreativeAssistant extends FormaElement {
         if (!preservePending) this.querySelector<FormaAssistantPanel>("forma-assistant-panel")?.clearConversationDrafts();
       }
       this.#specialist = { ...active, executionId: state.executionId || active.executionId,
-        quote: null, originalRequest: null, creationReview:undefined,editReview:undefined,resultReply: null, unusedExecution: false,
+        quote: null, originalRequest: null, profileSynthesis:undefined,creationReview:undefined,editReview:undefined,resultReply: null, unusedExecution: false,
         task: this.#tasks.find((task) => task.executionId === state.executionId) ?? null,
         working: preservePending, stopping: false, retrievalOnly: true, notice: "unavailable" };
     }
@@ -905,7 +909,7 @@ export class FormaCreativeAssistant extends FormaElement {
     this.#specialistUrl = url.href;
     this.#specialist = { id: crypto.randomUUID(), scope, turnId: detail.turnId, executionId: existing?.executionId ?? "",
       task: existing ?? null, quote: null, originalRequest: null, working: false, stopping: false, retrievalOnly: Boolean(existing),
-      notice: "", creationReview:undefined,editReview:undefined,resultReply: null };
+      notice: "", profileSynthesis:undefined,creationReview:undefined,editReview:undefined,resultReply: null };
     this.requestUpdate();
     await this.#requestSpecialist(existing ? "resume" : "quote",undefined,detail.memory);
   }
@@ -973,7 +977,7 @@ export class FormaCreativeAssistant extends FormaElement {
       ...(action === "execute" || action === "retrieve" ? { approvedBindingHash: approvedHash } : {}) };
     if (action === "execute" || refreshUnused) this.#rememberSpecialistExecution(state);
     this.#specialist = { ...state, working: true, stopping: action === "stop", notice: "",
-      ...(action === "quote" ? { quote: null, originalRequest: null,memoryRequested,semanticMemory:undefined,resultSource:undefined,creationReview:undefined,editReview:undefined,resultReply:null,
+      ...(action === "quote" ? { quote: null, originalRequest: null,memoryRequested,semanticMemory:undefined,resultSource:undefined,profileSynthesis:undefined,creationReview:undefined,editReview:undefined,resultReply:null,
         executionId: refreshUnused ? state.executionId : "",
         task: refreshUnused ? this.#tasks.find((task) => task.executionId === state.executionId) ?? null : null,
         selectedModel: model, unusedExecution: false } : {}),
@@ -1072,7 +1076,7 @@ export class FormaCreativeAssistant extends FormaElement {
         const active = this.#specialist;
         if (active?.id === state.id && (revision === this.#reviewRevision || !active.working && !active.quote)) this.#specialist = { ...active,
           executionId: quote.executionId, task: retained, working: false,
-          originalRequest: null, creationReview:undefined,editReview:undefined,resultReply: null, quote: null, unusedExecution: false, stopping: false, retrievalOnly: true, notice: "unavailable" };
+          originalRequest: null, profileSynthesis:undefined,creationReview:undefined,editReview:undefined,resultReply: null, quote: null, unusedExecution: false, stopping: false, retrievalOnly: true, notice: "unavailable" };
         return;
       }
       const canonicalCompletion = quote.status === "completed" && Boolean(payload.result&&["original-approved-source","semantic-memory-assisted"].includes(payload.result.sourceStatus));
@@ -1092,6 +1096,9 @@ export class FormaCreativeAssistant extends FormaElement {
       const creationReview=payload.result?.creationReview===undefined?null:parseMemoryCreationReview(payload.result.creationReview,{executionId:quote.executionId,
         turnId:state.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
       if(payload.result?.creationReview!==undefined&&(!semantic||!creationReview||original.fieldTarget))throw new Error('assistant_memory_unavailable');
+      const profileSynthesis=payload.result?.profileSynthesis===undefined?null:parseMemoryProfileSynthesis(payload.result.profileSynthesis,{executionId:quote.executionId,
+        turnId:state.turnId,projectId:original.projectId,documentId:original.documentId,sourceHash:original.sourceHash,locale:original.locale});
+      if(payload.result?.profileSynthesis!==undefined&&(!semantic||!profileSynthesis||original.fieldTarget))throw new Error('assistant_memory_unavailable');
       const latestTask = this.#tasks.find((task) => task.executionId === quote.executionId);
       const certifiedTask = [latestTask, this.#specialist?.task].find((task) => task?.executionId === quote.executionId
         && task.turnId === state.turnId && task.bindingHash === quote.bindingHash && this.#certifiedSpecialistCompletion(task));
@@ -1123,7 +1130,7 @@ export class FormaCreativeAssistant extends FormaElement {
         this.#invalidateSpecialistReceipt(state.turnId, quote.executionId);
       }
       this.#readRevision += 1; // An older positive GET cannot replace this response.
-      this.#specialist = { ...this.#specialist!,creationReview:certificate?.creationReview??creationReview??undefined,editReview:certificate?.editReview??editReview??undefined,semanticMemory:certificate?.memory??semantic??undefined,resultSource:certificate?.sourceStatus??payload.result?.sourceStatus, quote: currentQuote, originalRequest: certificate?.original ?? original, executionId: quote.executionId,
+      this.#specialist = { ...this.#specialist!,profileSynthesis:certificate?.profileSynthesis??profileSynthesis??undefined,creationReview:certificate?.creationReview??creationReview??undefined,editReview:certificate?.editReview??editReview??undefined,semanticMemory:certificate?.memory??semantic??undefined,resultSource:certificate?.sourceStatus??payload.result?.sourceStatus, quote: currentQuote, originalRequest: certificate?.original ?? original, executionId: quote.executionId,
         task: task ? reusedQuote ? { ...task, canExecute: false } : task : null, working: false, stopping: false,
         unusedExecution, retrievalOnly: action === "quote" && !reusedQuote ? quote.status !== "quoted" || Boolean(payload.task)
           : this.#specialist!.retrievalOnly || redirected || reusedQuote || quote.status !== "quoted" || Boolean(payload.task),
@@ -1143,7 +1150,7 @@ export class FormaCreativeAssistant extends FormaElement {
       if (exactRead && this.#retentionVersions.get("pending-read:" + readKey) === withdrawalRevision) this.#retentionVersions.delete("pending-read:" + readKey);
       if (receiptScope() && revision === this.#reviewRevision && !this.store.sourceOwnershipActive(source) && this.#specialist) {
         this.#specialist = { ...this.#specialist, working: false, stopping: false, quote: null, originalRequest: null,
-          creationReview:undefined,editReview:undefined,resultReply: null, unusedExecution: false, retrievalOnly: true, notice: "unavailable" };
+          profileSynthesis:undefined,creationReview:undefined,editReview:undefined,resultReply: null, unusedExecution: false, retrievalOnly: true, notice: "unavailable" };
       }
       if (state.scope === this.#scope()) this.requestUpdate();
     }

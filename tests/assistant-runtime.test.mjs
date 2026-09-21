@@ -6347,7 +6347,7 @@ function specialistRetrieve(state,review,options={}){
 }
 function specialistRawResponse(payload,override={}){
   return Response.json({id:"specialist-provider-response",model:payload.model,service_tier:"default",status:"completed",
-    output:[{type:"message",id:"specialist-provider-message",role:"assistant",status:"completed",content:[{type:"output_text",text:JSON.stringify({reply:"PRIVATE_VERIFIED_SPECIALIST_REPLY",actions:[]})}]}],
+    output:[{type:"message",id:"specialist-provider-message",role:"assistant",status:"completed",content:[{type:"output_text",text:JSON.stringify({reply:"PRIVATE_VERIFIED_SPECIALIST_REPLY",actions:[],...(payload.text?.format?.schema?.properties?.profile_synthesis?{profile_synthesis:[]}: {})})}]}],
     usage:{input_tokens:1000,output_tokens:300,total_tokens:1300},...override});
 }
 async function specialistMockFixture(options={}){
@@ -20049,4 +20049,38 @@ test('Memory native final disclosure: correction expiry bounds the response and 
  const response=await request(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.equal(Date.parse(body.validUntil),expiry);
  const stringify=JSON.stringify;let hit=false;t.mock.method(JSON,'stringify',function(value,...args){const result=stringify.call(this,value,...args);if(!hit&&matches(value)){hit=true;t.mock.method(Date,'now',()=>expiry);}return result;});
  try{const expired=await request();assert.equal(hit,true);assert.equal(expired.status,503,await expired.clone().text());assert.equal(Object.hasOwn(await expired.json(),'controls'),false);}finally{t.mock.restoreAll();}
+});
+
+for(const shared of [false,true])test('native semantic profile synthesis: paid review retains exact original scopes and retires on withdrawal '+shared,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t,{shared});assert.equal((await state.saveProfileAggregate(await state.contextGet())).status,200);
+ const quoted=await state.semanticQuote();assert.equal(quoted.response.status,200,JSON.stringify(quoted.body));
+ const original=globalThis.fetch,calls=[];globalThis.fetch=async(_url,init)=>{
+  const request=JSON.parse(init.body),view=JSON.parse(request.input);calls.push(request);assert.ok(request.text.format.schema.required.includes('profile_synthesis'));
+  const sources=view.profile_synthesis_sources;assert.equal(sources.length,2);assert.ok(sources.every(s=>!Object.hasOwn(s,'ownerId')&&!Object.hasOwn(s,'originalIds')));
+  const proposal={text:'PRIVATE_CROSS_SCOPE_SYNTHESIS',category:'preference-hypothesis',references:sources.map(s=>s.alias)};
+  return specialistRawResponse(request,{output:[{type:'message',id:'profile-synthesis-message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Private profile review',actions:[],profile_synthesis:[proposal]})}]}]});
+ };t.after(()=>{globalThis.fetch=original;});
+ const execution=await specialistExecute(state,quoted.body,state.semanticOptions);assert.equal(execution.status,202,await execution.clone().text());await state.drainBackground();
+ const response=await specialistRetrieve(state,quoted.body,state.semanticOptions),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+ const synthesis=body.result.profileSynthesis;assert.equal(synthesis.items[0].text,'PRIVATE_CROSS_SCOPE_SYNTHESIS');assert.equal(synthesis.items[0].originalCount,3);assert.equal(synthesis.items[0].zoom,'project');assert.equal(synthesis.items[0].weight,.7);assert.equal(synthesis.independentEvidence,false);assert.deepEqual(body.result.actions,[]);assert.equal(calls.length,1);
+ const contents=state.sqlite.prepare('SELECT p.* FROM private_content p JOIN memory_derivation_consumer_contents c ON c.content_id=p.content_id').all();
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.profileJob),true);
+ assert.equal((await specialistRetrieve(state,quoted.body,state.semanticOptions)).status,404);
+ for(const row of contents)state.sqlite.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').run(row.content,row.content_id);
+ const restored=await specialistRetrieve(state,quoted.body,state.semanticOptions);assert.equal(restored.status,409);assert.doesNotMatch(await restored.text(),/PRIVATE_CROSS_SCOPE_SYNTHESIS/);assert.equal(calls.length,1);
+});
+
+for(const fault of ['unknown-alias','duplicate','too-little-evidence','category'])test('native semantic profile synthesis: invalid paid hypothesis is settled once without disclosure '+fault,{timeout:120000},async t=>{
+ const state=await semanticProfileAggregateFixture(t);assert.equal((await state.saveProfileAggregate(await state.contextGet())).status,200);const quoted=await state.semanticQuote();
+ const original=globalThis.fetch;let calls=0;globalThis.fetch=async(_url,init)=>{
+  calls++;const request=JSON.parse(init.body),sources=JSON.parse(request.input).profile_synthesis_sources;
+  const proposal={text:'DO_NOT_DISCLOSE_INVALID_PROFILE',category:fault==='category'?'workflow-hypothesis':'preference-hypothesis',references:sources.map(s=>s.alias)};
+  if(fault==='unknown-alias')proposal.references[1]='profile_99';if(fault==='duplicate')proposal.references[1]=proposal.references[0];if(fault==='too-little-evidence')proposal.references.pop();
+  return specialistRawResponse(request,{output:[{type:'message',id:'bad-profile',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Invalid profile',actions:[],profile_synthesis:[proposal]})}]}]});
+ };t.after(()=>{globalThis.fetch=original;});
+ assert.equal((await specialistExecute(state,quoted.body,state.semanticOptions)).status,202);await state.drainBackground();
+ const settled=consequentialReceipt(state,quoted.body.quote.executionId);assert.equal(settled.execution.status,'failed');assert.equal(settled.steps[0].status,'settled');assert.ok(settled.steps[0].verified_microusd>0);assert.equal(settled.cost.length,1);assert.equal(settled.cost[0].used_microusd,settled.steps[0].verified_microusd);assert.equal(settled.cost[0].status,'settled');
+ const financial=adaptiveReentryFinancialState(state);
+ for(let i=0;i<2;i++){const response=await specialistRetrieve(state,quoted.body,state.semanticOptions),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.result,undefined);assert.ok(body.recoveryError);assert.doesNotMatch(JSON.stringify(body),/DO_NOT_DISCLOSE_INVALID_PROFILE/);}
+ assert.equal(calls,1);assert.deepEqual(adaptiveReentryFinancialState(state),financial);
 });

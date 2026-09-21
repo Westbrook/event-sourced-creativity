@@ -169,3 +169,12 @@ test('actual assistant provider snapshots distinguish authored Memory text witho
  assert.match(built.instructions,/not independent evidence of a personal preference/);
  assert.equal(JSON.parse(built.input).blocks[0].authorship,'accepted-memory-assisted');
 });
+
+for(const qualified of [false,true])test('profile synthesis response format is explicitly bound to the approved request '+qualified,async()=>{
+ const request=await buildAssistantProviderRequest('actor',{model,locale:'en',maximumOutputTokens:1000,view:{},profileSynthesis:qualified});
+ assert.equal(request.text.format.schema.required.includes('profile_synthesis'),qualified);
+ const output={...result(),profile_synthesis:[{text:'A tentative connection.',category:'workflow-hypothesis',references:['profile_1','profile_2']}]};
+ if(qualified){assert.equal(decode(body(output),{profileSynthesis:true}).profileSynthesis[0].text,output.profile_synthesis[0].text);assert.throws(()=>decode(body(),{profileSynthesis:true}));}
+ else assert.throws(()=>decode(body(output)));
+ assert.throws(()=>decode(body({...output,profile_synthesis:[{...output.profile_synthesis[0],references:['profile_1','profile_1']}]}),{profileSynthesis:true}));
+});

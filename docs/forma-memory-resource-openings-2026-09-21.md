@@ -71,4 +71,4 @@ now includes its required immutable media hash, native video preload respects
 manual mode, and superseded navigation returns false even if its opening receipt
 committed. An unavailable source has finished loading and correctly reports
 aria-busy=false while keeping private content absent. The full navigation suite
-is tracked separately from the36 selected checks. No deployment or enrollment.
+now passes327/327 with zero failures (the36 selected checks overlap). No deployment or enrollment.

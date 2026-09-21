@@ -52,3 +52,39 @@ Continue scope-specific promotion, remaining native consumers and resource
 coverage in the [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
 No provider calls, migration, new service, automatic real-user enrollment or
 production deployment was performed during synthetic qualification.
+
+## Cross-scope semantic review — 2026-09-21
+
+The actual consent-bound specialist can now propose semantic connections between
+differently worded, independently selected original-backed profiles. The exact
+approved request opts into a strict additional response field only when at least
+two authorized documents and three distinct original identities are available.
+Old approved requests keep their original response contract. Behavioral counts,
+counterevidence, proposed revisions and challenged interpretations are not
+promoted as original support.
+
+The model selects request-local aliases and proposes tentative text. Native code
+validates those aliases, original/document independence and matching categories;
+it derives the scope and least-local relevance weight itself. Duplicate originals
+across documents cannot inflate support. The review retains each source
+interpretation and exact original quotations. The provider receives neither the
+internal owner IDs nor original-identity ledger. No extra provider call is added.
+
+Document Assistant and Chat Studio present this private synthesis in all four
+languages, with scope and context relevance explicitly distinguished from
+confidence. It has no Apply, generation or policy-publication control. Current
+instructions/corrections retain precedence. The existing native private-result
+ancestry retires the review and its saved consent on source withdrawal; restoring
+old private bytes cannot resurrect it. Invalid paid hypotheses retain their
+verified usage and settle exactly once, without disclosure or retry.
+
+Verification:752 integrated model/provider/host/panel checks;34 native aggregate
+and synthesis checks;6 final native success/invalid-output/privacy checks (two
+overlap with the34);8 actual Chromium Document/Chat journeys across English and
+320px Arabic, blur and expiry. Arabic review screenshot inspected: readable RTL,
+literal markup, bounded wrapping and no horizontal overflow. TypeScript, scoped
+lint and build pass. No migration, real provider request, deployment or enrollment.
+
+This is a durable **private synthesis consumer**, not an automatic nightly
+cross-project profile store. Scheduled unified-profile evolution, resource
+semantic consumers and remaining output integration stay in the native matrix.

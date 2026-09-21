@@ -1,3 +1,4 @@
+import { parseMemoryProfileSynthesis } from '../src/model/memory-profile-synthesis.ts';
 import { memoryCreationApprovalHash,parseMemoryCreationReview } from '../src/model/memory-creation-review.ts';
 import { parseSemanticMemoryAnswerPresentation } from '../src/model/memory-answer.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
@@ -102,6 +103,7 @@ function fixture(locale = "en", nativeWindow = { addEventListener() {}, removeEv
   const previewExports = {};
   new Function("require", "exports", previewCode)(name => { assert.equal(name, "lit"); return lit; }, previewExports);
   const dependencies = {
+    "../../model/memory-profile-synthesis.ts": {parseMemoryProfileSynthesis},
     "../../model/memory-creation-review.ts": {memoryCreationApprovalHash,parseMemoryCreationReview},
     "../../model/memory-edit-review.ts": {memoryEditApprovalHash,parseMemoryEditReview},
     "../../model/memory-answer.ts": {parseSemanticMemoryAnswerPresentation},
@@ -3895,4 +3897,14 @@ for(const locale of ['en','fr','ar','ja'])test('Memory Output requirement panel:
  await button.click();const control=f.emitted.at(-1).detail;assert.equal(control.action,'apply-creation');assert.equal(control.proposalId,'create-0');
  assert.equal(control.approvedCreationHash,await memoryCreationApprovalHash(state.creationReview,'create-0'));assert.equal(control.reviewId,state.id);
  f.panel.canMemoryEdit=false;assert.equal(f.render().buttons.some(b=>b.label===ASSISTANT_MESSAGES[locale]['assistant.specialist.outputCreationApply']),false);
+});
+
+for(const locale of ['en','fr','ar','ja'])test('cross-scope profile review is localized, private and non-actionable '+locale,()=>{
+ const f=fixture(locale),state=review('retrieve');state.originalRequest.sourceHash=state.quote.sourceHash='a'.repeat(64);
+ state.resultSource='semantic-memory-assisted';state.semanticMemory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+10000).toISOString(),independentEvidence:false};
+ state.profileSynthesis={version:'memory-profile-synthesis-v1',executionId:state.executionId,turnId:state.turnId,projectId:state.originalRequest.projectId,documentId:state.originalRequest.documentId,sourceHash:state.originalRequest.sourceHash,locale:'en',mode:'review-only',independentEvidence:false,
+  items:[{text:'Tentative <script>private</script>',category:'preference-hypothesis',zoom:'project',weight:.7,originalCount:3,sources:['a','b'].map(documentId=>({projectId:'p',documentId,interpretation:'Different original interpretation',quotes:['PRIVATE_ORIGINAL_QUOTATION']}))}]};
+ f.setReview(state);const shown=f.render();assert.ok(shown.markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.profileSynthesisTitle']));assert.match(shown.markup,/&lt;script&gt;private&lt;\/script&gt;/u);assert.match(shown.markup,/PRIVATE_ORIGINAL_QUOTATION/u);
+ assert.equal(shown.buttons.some(b=>['assistant.specialist.creationApply','assistant.specialist.editApply'].some(k=>ASSISTANT_MESSAGES[locale][k]===b.label)),false);
+ state.semanticMemory=undefined;assert.doesNotMatch(f.render().markup,/PRIVATE_ORIGINAL_QUOTATION/u);
 });

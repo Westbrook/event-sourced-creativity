@@ -6,7 +6,7 @@ import type { PilotUser,ProjectExecutionScope } from './pilot-policy.ts';
 import { memoryCanonical } from './memory-sql.ts';
 import { derivationAssertion,derivationResults,derivationVerified,memoryDerivationSchema } from './memory-derivation-store.ts';
 import { packRecallGuards } from './memory-recall-boundary-api.ts';
-import { prepareNativeSavedAssistantContextForPrincipal,nativeSavedAssistantContextInputs,nativeSavedAssistantContextGuards,type NativeSavedAssistantContext } from './memory-assistant-context-api.ts';
+import { prepareNativeSavedAssistantContextForPrincipal,nativeSavedAssistantContextInputs,nativeSavedAssistantProfileSources,nativeSavedAssistantContextGuards,type NativeSavedAssistantContext } from './memory-assistant-context-api.ts';
 
 export type SemanticAssistantMemoryBinding={version:1;parents?:SemanticAssistantParent[];profileJobIds?:string[];originId:string;targetEnrollmentId:string;contextRevision:string;
  jobId:string;outputSha256:string;expiresAt:string;projectId:string;documentId:string};
@@ -62,6 +62,9 @@ export function semanticAssistantMemoryInputs(env:WorkerEnv,handle:SemanticAssis
   priorAnswersAreIndependentEvidence:false,items:presentation.candidate.items,history:presentation.history??null,
   ...(profiles.length?{profileSources:profiles.map(p=>({source:p.source,items:p.presentation.candidate.items,history:p.presentation.history??null})),
     profileGuidance:'These independently authorized profile sources are tentative interpretations, not additional original evidence. Weight their scope relevance below current document facts. Do not count repeated citations or copied/reused work as independent support; retain contradictions and explicit user corrections. Do not turn cross-scope similarities into an asserted personal preference.'}: {})}};
+}
+export function semanticAssistantProfileSources(env:WorkerEnv,handle:SemanticAssistantMemory){
+ return nativeSavedAssistantProfileSources(env,current(env,handle).source);
 }
 export function semanticAssistantMemoryStatements(env:WorkerEnv,handle:SemanticAssistantMemory){
  const c=current(env,handle);

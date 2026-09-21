@@ -1,3 +1,4 @@
+import { parseMemoryProfileSynthesis } from '../src/model/memory-profile-synthesis.ts';
 import { memoryCreationApprovalHash,parseMemoryCreationReview } from '../src/model/memory-creation-review.ts';
 import { parseMemoryFieldRequest } from '../src/model/memory-field-request.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview } from '../src/model/memory-edit-review.ts';
@@ -167,7 +168,7 @@ function fixture(t, locale = "en") {
   // Direct eval runs the actual production source in this lexical fixture scope.
   // Keep its otherwise implicit dependencies explicit without calling them.
   void [
-    parseMemoryFieldRequest, parseMemoryEditReview, parseMemoryCreationReview, personalMemoryMessage, createMemoryElapsed, memoryPrivacyMutationActive, assistantInteractionForSurface, withDocumentInRoute, contextConsentAction, ensureNativeModalDialog,
+    parseMemoryProfileSynthesis, parseMemoryFieldRequest, parseMemoryEditReview, parseMemoryCreationReview, personalMemoryMessage, createMemoryElapsed, memoryPrivacyMutationActive, assistantInteractionForSurface, withDocumentInRoute, contextConsentAction, ensureNativeModalDialog,
     document, location, requestAnimationFrame, cancelAnimationFrame, matchMedia, icon,
     consequentialPreview, assistantApprovedRequestCanRun, assistantApprovedRequestCanStop, Base,
     nextActionFacts, creativeNextActions, renderLifecycleNextActionCards, openCreativeNextActionDestination,
@@ -3279,4 +3280,15 @@ for(const locale of ['en','fr','ar','ja'])test('Memory Output requirement UI: de
  assert.equal(refreshed,1);assert.equal(f.trace.some(row=>row[0]==='remember-memory-edit'),false);
  assert.ok(f.trace.some(row=>row[0]==='toast'&&row[1]===ASSISTANT_MESSAGES[locale]['assistant.specialist.outputCreationApplied']));
  assert.equal(f.host.snapshotForTest().specialist.creationReview,undefined);
+});
+
+for(const fault of ['none','foreign-target','late-blur'])test('cross-scope profile host validates original target and retires private synthesis '+fault,async t=>{
+ const f=fixture(t);await retainedMemoryCreationReview(f);
+ const memory={version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+20000).toISOString(),independentEvidence:false};
+ const profileSynthesis={version:'memory-profile-synthesis-v1',executionId:'approval-a',turnId:'turn-a',projectId:'project-a',documentId:fault==='foreign-target'?'foreign':'doc-a',sourceHash:'a'.repeat(64),locale:'en',mode:'review-only',independentEvidence:false,
+  items:[{text:'PRIVATE_SCOPE_HYPOTHESIS',category:'workflow-hypothesis',zoom:'project',weight:.7,originalCount:3,sources:['a','b'].map(documentId=>({projectId:'p',documentId,interpretation:'PRIVATE_INTERPRETATION',quotes:['PRIVATE_QUOTATION']}))}]};
+ const pending=f.host.requestForTest('retrieve'),call=await f.take();if(fault==='late-blur')f.host.retireSemanticForTest();
+ await f.reply(call,specialistResponse(preview({status:'completed',canExecute:false,sourceHash:'a'.repeat(64)}),{memory,result:{reply:'Profile review',sourceStatus:'semantic-memory-assisted',profileSynthesis},task:savedTask({status:'completed',submission:'settled',canExecute:false})}));await pending;
+ if(fault==='none'){assert.equal(f.host.snapshotForTest().specialist.profileSynthesis.items[0].text,'PRIVATE_SCOPE_HYPOTHESIS');assert.match(f.render().markup,/PRIVATE_SCOPE_HYPOTHESIS/);f.host.retireSemanticForTest();}
+ assert.equal(f.host.snapshotForTest().specialist.profileSynthesis,undefined);assert.doesNotMatch(f.render().markup,/PRIVATE_SCOPE_HYPOTHESIS/);
 });

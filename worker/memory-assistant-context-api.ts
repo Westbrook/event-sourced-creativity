@@ -1,4 +1,5 @@
 import { createMemoryReadBatch } from './memory-read-batch.ts';
+import type { ProfileSynthesisSource } from '../src/model/memory-profile-synthesis.ts';
 import type { WorkerEnv } from './runtime.ts';
 import { requireUser, type PilotUser, type ProjectExecutionScope } from './pilot-policy.ts';
 import { liveMemoryEnabled } from './memory-live-store.ts';
@@ -55,6 +56,26 @@ export async function prepareNativeSavedAssistantContext(request:Request,env:Wor
 export function nativeSavedAssistantContextInputs(env:WorkerEnv,handle:NativeSavedAssistantContext){
  const captured=contextCapture(env,handle);
  return {selection:structuredClone(captured.selection),consumersPresent:captured.consumersPresent,presentation:nativeDerivationResultInputs(captured.sourceEnv,captured.source),profiles:captured.profiles.map(p=>({source:{...p.identity,...p.relation},presentation:nativeDerivationResultInputs(p.env,p.source)}))};
+}
+/** Alias only eligible original-backed profiles already included by the user's
+ * exact saved selection. No new source discovery, permission or provider call. */
+export function nativeSavedAssistantProfileSources(env:WorkerEnv,handle:NativeSavedAssistantContext):ProfileSynthesisSource[]{
+ const c=contextCapture(env,handle),sources:ProfileSynthesisSource[]=[];
+ for(const selected of [{env:c.sourceEnv,source:c.source,relation:c.selection.relation},...c.profiles]){
+  const {candidate}=nativeDerivationResultInputs(selected.env,selected.source);
+  if(candidate.purpose!=='profile'||!['memory-derivation-candidates-v1','memory-profile-consolidation-v1'].includes(candidate.version))continue;
+  const {enrollment:e}=nativeDerivationResultBinding(selected.env,selected.source);
+  const challenged=new Set(candidate.items.flatMap(item=>'reconciles'in item?item.reconciles.map(link=>link.claimKey):[]));
+  for(const item of candidate.items){
+   if(!['preference-hypothesis','workflow-hypothesis'].includes(item.category)||item.citationStatus!=='support-cited'
+    ||item.counterevidence.length||'reconciles'in item&&item.reconciles.length||challenged.has(item.claimKey)||!item.supports.length)continue;
+   sources.push({alias:'profile_'+(sources.length+1),ownerId:e.owner_user_id,projectId:e.project_id,documentId:e.document_id,
+    zoom:selected.relation.zoom,weight:selected.relation.weight,category:item.category as ProfileSynthesisSource['category'],text:item.text,
+    originalIds:item.sourceBindings.map(binding=>binding.sourceId),quotes:item.supports.map(q=>q.text)});
+   if(sources.length===24)return sources;
+  }
+ }
+ return sources;
 }
 /** Replay source, target, hierarchy, boundary, consent and saved-reference DB
  * checks inside the consumer's atomic publication transaction. Environment and

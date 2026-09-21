@@ -419,3 +419,11 @@ now covers eight native read surfaces through JSON serialization and bounds
 correction disclosure by retained expiry.122 integrated native checks pass.
 This closes those delivery races, not the remaining semantic consumers or the
 full native scope.
+
+[Cross-scope semantic review](forma-memory-profile-consolidation-2026-09-20.md#cross-scope-semantic-review--2026-09-21)
+now connects differently worded original-backed profile interpretations to an
+approved, durable private assistant review with native evidence counting and
+least-local relevance. It cannot publish policy or replace a user correction.
+This closes the semantic review consumer, not nightly unified-profile evolution,
+resource semantic consumption, direct private output integration or all native
+qualification.

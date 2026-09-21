@@ -235,3 +235,24 @@ for(const fault of ['type','weight','intent','status','spec','source','identity'
  if(fault==='settings')value.properties.provider='openai';if(fault==='getter')Object.defineProperty(value.properties,'text',{get(){throw Error('not data');},enumerable:true});
  assert.equal(memoryOutputCreation(value),false);
 });
+
+const {buildMemoryProfileSynthesis,parseMemoryProfileSynthesis,parseProfileSynthesisProposals}=await import('../src/model/memory-profile-synthesis.ts');
+const synthesisSources=()=>[{alias:'profile_1',ownerId:'actor',projectId:'p',documentId:'a',zoom:'document',weight:1,category:'preference-hypothesis',text:'Quiet scenes',originalIds:['original-a','original-b'],quotes:['I prefer quiet scenes.']},{alias:'profile_2',ownerId:'actor',projectId:'p',documentId:'b',zoom:'project',weight:.7,category:'preference-hypothesis',text:'Low-key scenes',originalIds:['original-c'],quotes:['Keep this scene low-key.']}];
+const synthesisProposal=()=>[{category:'preference-hypothesis',text:'A tentative preference for restrained scenes.',references:['profile_1','profile_2']}];
+test('cross-scope profile synthesis uses distinct originals and least-local relevance, not model counts',()=>{
+ const sources=synthesisSources(),view=buildMemoryProfileSynthesis(synthesisProposal(),sources,memoryEditTarget);
+ assert.equal(view.items[0].originalCount,3);assert.equal(view.items[0].weight,.7);assert.equal(view.items[0].zoom,'project');assert.equal(view.independentEvidence,false);
+ assert.equal(view.items[0].sources[0].quotes[0],sources[0].quotes[0]);sources[0].quotes[0]='changed';assert.notEqual(view.items[0].sources[0].quotes[0],'changed');
+ const copy=parseMemoryProfileSynthesis(view,memoryEditTarget);copy.items[0].text='changed';assert.notEqual(view.items[0].text,'changed');
+ for(const [zoom,weight]of [['project-tree',.25],['organization',.0125],['partition',.01]]){const broad=synthesisSources();broad[1].zoom=zoom;broad[1].weight=weight;broad[1].projectId='other-project';assert.equal(buildMemoryProfileSynthesis(synthesisProposal(),broad,memoryEditTarget).items[0].weight,weight);}
+});
+for(const fault of ['unknown','duplicate','repeated-group','same-document','copied-original','insufficient','category','weight','extra','getter','sparse','target','authority'])test('cross-scope profile synthesis rejects '+fault,()=>{
+ const sources=synthesisSources(),proposal=synthesisProposal();
+ if(fault==='unknown')proposal[0].references[1]='profile_99';if(fault==='duplicate')proposal[0].references[1]='profile_1';if(fault==='repeated-group')proposal.push({...proposal[0]});
+ if(fault==='same-document')sources[1].documentId='a';if(fault==='copied-original')sources[1].originalIds=['original-a'];if(fault==='insufficient')sources[0].originalIds=['original-a'];
+ if(fault==='category')sources[1].category='workflow-hypothesis';if(fault==='weight')sources[1].weight=NaN;if(fault==='extra')proposal[0].confidence=1;
+ if(fault==='getter')Object.defineProperty(proposal[0],'text',{enumerable:true,get(){return assert.fail('never invoke an accessor');}});if(fault==='sparse')delete proposal[0].references[0];
+ if(fault==='target'||fault==='authority'){const view=buildMemoryProfileSynthesis(proposal,sources,memoryEditTarget);if(fault==='target')view.documentId='other';else view.independentEvidence=true;assert.equal(parseMemoryProfileSynthesis(view,memoryEditTarget),null);return;}
+ assert.equal(buildMemoryProfileSynthesis(proposal,sources,memoryEditTarget),null);
+});
+test('cross-scope profile synthesis empty proposals do not manufacture a preference',()=>{assert.deepEqual(parseProfileSynthesisProposals([]),[]);assert.equal(buildMemoryProfileSynthesis([],synthesisSources(),memoryEditTarget),null);});

@@ -41,7 +41,7 @@ for(const locale of ['en','ar'])test.describe('Saved assistant context '+locale,
 
 // Actual whole-app modal and privacy lifecycle with synthetic transport only.
 // Native authorization, finance and D1 are verified separately by runtime tests.
-for(const creation of [false,true,'output'])for(const surface of ['document','chat'])for(const locale of ['en','ar'])for(const boundary of ['blur','expiry','apply'])test.describe('Semantic assistant '+(creation==='output'?'output':creation?'creation':'result')+' '+surface+' '+locale+' '+boundary,()=>{
+for(const creation of [false,true,'output','profile'])for(const surface of ['document','chat'])for(const locale of ['en','ar'])for(const boundary of creation==='profile'?['blur','expiry']:['blur','expiry','apply'])test.describe('Semantic assistant '+(creation==='profile'?'profile':creation==='output'?'output':creation?'creation':'result')+' '+surface+' '+locale+' '+boundary,()=>{
  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
  test('historical result retires its private modal without a new purchase',async({page,context,baseURL})=>{
   expect(syntheticNetworkEnabled(baseURL)).toBe(true);
@@ -56,7 +56,10 @@ for(const creation of [false,true,'output'])for(const surface of ['document','ch
     documentId:originalRequest.documentId,sourceHash:originalRequest.sourceHash,locale,mode:'review-only',independentEvidence:false,
     edits:[{blockId:'synthetic-block',field:'text',revision:3,beforeExcerpt:'Synthetic approved field excerpt',suggestedText:'Synthetic edit suggestion <script>not executable</script> اقتراح 日本語'}]}};
   const privateText=creation?'Synthetic new creative block <script>not executable</script> اقتراح 日本語':result.editReview.edits[0].suggestedText;
-  if(creation){result.creationReview={version:creation==='output'?'memory-creation-review-v2':'memory-creation-review-v1',executionId:quote.executionId,turnId:originalRequest.turnId,
+  if(creation==='profile'){
+   result.profileSynthesis={version:'memory-profile-synthesis-v1',executionId:quote.executionId,turnId:originalRequest.turnId,projectId:originalRequest.projectId,documentId:originalRequest.documentId,sourceHash:quote.sourceHash,locale,mode:'review-only',independentEvidence:false,
+    items:[{text:privateText,category:'preference-hypothesis',zoom:'project',weight:.7,originalCount:3,sources:['first','second'].map(documentId=>({projectId:originalRequest.projectId,documentId,interpretation:'Private earlier interpretation',quotes:['PRIVATE_PROFILE_QUOTATION']}))}]};delete result.editReview;
+  }else if(creation){result.creationReview={version:creation==='output'?'memory-creation-review-v2':'memory-creation-review-v1',executionId:quote.executionId,turnId:originalRequest.turnId,
     projectId:originalRequest.projectId,documentId:originalRequest.documentId,sourceHash:originalRequest.sourceHash,locale,mode:'review-only',independentEvidence:false,
     creations:[{proposalId:'create-0',blockType:creation==='output'?'output':'direction',intent:'include',text:privateText}]};delete result.editReview;}
   const createdEvents=creation&&boundary==='apply'?JSON.parse(syntheticReadBody('/api/events?after=0&limit=5000&content=1')).events:null;
@@ -111,11 +114,12 @@ for(const creation of [false,true,'output'])for(const surface of ['document','ch
   }
   await owner.locator('[data-assistant-execution-id="synthetic-semantic-execution"]').click();
   const dialog=owner.locator('dialog.forma-assistant-specialist');await expect(dialog).toBeVisible();await expect(dialog).toContainText(result.reply);await expect(dialog.locator('script')).toHaveCount(0);
-  const editReview=dialog.locator(creation?'.forma-assistant-memory-creation-review':'.forma-assistant-memory-edit-review');await expect(editReview).toContainText(privateText);
+  const editReview=dialog.locator(creation==='profile'?'.forma-assistant-memory-profile-synthesis':creation?'.forma-assistant-memory-creation-review':'.forma-assistant-memory-edit-review');await expect(editReview).toContainText(privateText);
+  if(creation==='profile'){await editReview.locator('summary').click();await expect(editReview).toContainText('PRIVATE_PROFILE_QUOTATION');}
   await expect(editReview.locator('button,input,textarea,select,a')).toHaveCount(boundary==='apply'?1:0);await editReview.scrollIntoViewIfNeeded();
-  await page.screenshot({path:'.wrangler/memory-'+(creation==='output'?'output':creation?'creation':'edit')+'-review-'+surface+'-'+locale+'-'+boundary+'.png'});
+  await page.screenshot({path:'.wrangler/memory-'+(creation==='profile'?'profile':creation==='output'?'output':creation?'creation':'edit')+'-review-'+surface+'-'+locale+'-'+boundary+'.png'});
   await dialog.locator('.forma-assistant-specialist-result').scrollIntoViewIfNeeded();expect(await dialog.evaluate(el=>el.scrollWidth>el.clientWidth+1)).toBe(false);
-  await page.screenshot({path:'.wrangler/memory-semantic-'+(creation==='output'?'output':creation?'creation':'result')+'-'+surface+'-'+locale+'-'+boundary+'.png'});
+  await page.screenshot({path:'.wrangler/memory-semantic-'+(creation==='profile'?'profile':creation==='output'?'output':creation?'creation':'result')+'-'+surface+'-'+locale+'-'+boundary+'.png'});
   if(boundary==='apply'){await expect(editReview).toContainText(ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationDetail':creation?'creationDetail':'editPublishDetail')]);await editReview.getByRole('button',{name:ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationApply':creation?'creationApply':'editApply')],exact:true}).click();}
   if(boundary==='blur')await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
   await expect(dialog).not.toContainText(result.reply,{timeout:15000});await expect(dialog).not.toContainText('Synthetic private approved Memory context');await expect(dialog).not.toContainText(privateText);if(!creation)await expect(dialog).not.toContainText(result.editReview.edits[0].beforeExcerpt);

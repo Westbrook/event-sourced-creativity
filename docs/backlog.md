@@ -554,3 +554,12 @@ Implemented locally: [client preflight and navigation regression](forma-memory-r
 Native resource openings make no collection POST without a fresh affirmative
 learning enrollment.206 client/model checks,36 integrated navigation checks and10
 synthetic browser journeys pass; server authority remains mandatory.
+
+## MEM-049 — Original-backed semantic profile synthesis
+
+Implemented locally: [cross-scope semantic review](forma-memory-profile-consolidation-2026-09-20.md#cross-scope-semantic-review--2026-09-21).
+The approved specialist groups eligible profile interpretations using verified
+original identities, derives scope/relevance natively, and retains a localized
+private review with durable withdrawal.752 integrated client/provider checks,34
+native aggregate checks,6 final native cases and8 browser journeys pass (native
+counts overlap). Automatic nightly unified-profile evolution remains assigned.

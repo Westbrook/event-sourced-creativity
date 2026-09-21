@@ -1,3 +1,4 @@
+import { buildMemoryProfileSynthesis,parseMemoryProfileSynthesis,type MemoryProfileSynthesis,type ProfileSynthesisSource } from '../src/model/memory-profile-synthesis.ts';
 import { memoryCreationApprovalHash,parseMemoryCreationReview,type MemoryCreationReview } from '../src/model/memory-creation-review.ts';
 import { configuredPilotAdmissionGuard,nonPilotExecutionGuard } from "./intake-authority.ts";
 import { parseMemoryFieldRequest,memoryFieldRequestCurrent,type MemoryFieldRequest } from '../src/model/memory-field-request.ts';
@@ -6,7 +7,7 @@ import { memoryAssistantEditReview, memoryAssistantCreationReview } from './memo
 import { memoryEditApprovalHash,parseMemoryEditReview,type MemoryEditReview } from '../src/model/memory-edit-review.ts';
 import { bodyOf as readMemoryControlBody } from './memory-derivation-api.ts';
 import type { SemanticAssistantParent } from './memory-assistant-parents.ts';
-import { prepareSemanticAssistantMemory,semanticAssistantMemoryLeaseCurrent,semanticAssistantMemoryRetentionGuard,semanticAssistantMemoryInputs,semanticAssistantMemoryStatements,semanticAssistantMemoryQuoteStatements,semanticAssistantMemoryContentStatements,type SemanticAssistantMemory,type SemanticAssistantMemoryBinding } from './memory-assistant-consumer.ts';
+import { prepareSemanticAssistantMemory,semanticAssistantProfileSources,semanticAssistantMemoryLeaseCurrent,semanticAssistantMemoryRetentionGuard,semanticAssistantMemoryInputs,semanticAssistantMemoryStatements,semanticAssistantMemoryQuoteStatements,semanticAssistantMemoryContentStatements,type SemanticAssistantMemory,type SemanticAssistantMemoryBinding } from './memory-assistant-consumer.ts';
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { canvasDocumentTarget } from "../src/model/canvas-document-target.ts";
 import { foldEvents } from "../src/model/events.ts";
@@ -59,7 +60,7 @@ export type SpecialistTaskRecord={
 export type SpecialistOriginalRequest={fieldTarget?:MemoryFieldRequest;schema:1;turnId:string;route:string;projectId:string|null;documentId:string|null;canvasId:string|null;selectedItemIds:string[];locale:string};
 type SavedTurn={turn_id:string;scope_key:string;actor_user_id:string;organization_id:string|null;project_access_id:string|null;project_id:string|null;document_id:string|null;request_json:string;user_content_ref:string;assistant_content_ref:string;created_at:string;user_content:string;assistant_content:string};
 type ConversationEntry={turnId:string;userRef:string;answerRef:string;user:string;assistant:string};
-type SpecialistRequest={schema:1;memory?:SemanticAssistantMemoryBinding;turnId:string;scopeKey:string;originalRequest:SpecialistOriginalRequest;taskKind:AssistantTask;explicitModel:AssistantModel|null;providerRequest:Record<string,unknown>;aliases:AssistantProviderAliases;context:AssistantContext;conversation:ConversationEntry[];pricing:ConsentedTextPricing;sourceRightsValidUntil:string|null;turn:Pick<SavedTurn,"user_content_ref"|"assistant_content_ref"|"request_json"|"document_id">};
+type SpecialistRequest={profileSynthesisSources?:ProfileSynthesisSource[];schema:1;memory?:SemanticAssistantMemoryBinding;turnId:string;scopeKey:string;originalRequest:SpecialistOriginalRequest;taskKind:AssistantTask;explicitModel:AssistantModel|null;providerRequest:Record<string,unknown>;aliases:AssistantProviderAliases;context:AssistantContext;conversation:ConversationEntry[];pricing:ConsentedTextPricing;sourceRightsValidUntil:string|null;turn:Pick<SavedTurn,"user_content_ref"|"assistant_content_ref"|"request_json"|"document_id">};
 type Retained={row:ExecutionRow;binding:ConsequentialBinding;preview:ConsequentialPreview;request:SpecialistRequest;serialized:string};
 const paidMemoryProofs=new WeakMap<SpecialistRequest,BudgetReservationGuard>();
 const semanticMemoryReads=new WeakMap<SpecialistRequest,SemanticAssistantMemory>();
@@ -162,7 +163,7 @@ async function rememberPaidMemoryProof(env:WorkerEnv,binding:ConsequentialBindin
   paidMemoryProofs.set(request,proof);return proof;
 }
 type RawReceipt={schema:1;executionId:string;bindingHash:string;providerRequestHash:string;httpStatus:number;responseBody:string;receivedAt:string;latencyMs:number};
-type CanonicalResult={creationReview?:MemoryCreationReview;editReview?:MemoryEditReview;schema:1;executionId:string;bindingHash:string;turnId:string;reply:string;actions:AssistantProviderResult["actions"];providerResult:AssistantProviderResult;sourceStatus:"original-approved-source"|"semantic-memory-assisted";sourceHash:string;maximumMicrousd:number;accountedMicrousd:number;billingStatus:"settled"|"pending";noAutomaticRetry:true};
+type CanonicalResult={profileSynthesis?:MemoryProfileSynthesis;creationReview?:MemoryCreationReview;editReview?:MemoryEditReview;schema:1;executionId:string;bindingHash:string;turnId:string;reply:string;actions:AssistantProviderResult["actions"];providerResult:AssistantProviderResult;sourceStatus:"original-approved-source"|"semantic-memory-assisted";sourceHash:string;maximumMicrousd:number;accountedMicrousd:number;billingStatus:"settled"|"pending";noAutomaticRetry:true};
 export type MemoryEditPublication={review:MemoryEditReview;blockId:string;approvalHash:string;context:AssistantContext;sourceHead:number;
   preconditions:D1PreparedStatement[]};
 export type MemoryCreationPublication={review:MemoryCreationReview;proposalId:string;approvalHash:string;context:AssistantContext;sourceHead:number;preconditions:D1PreparedStatement[]};
@@ -489,10 +490,14 @@ async function prepareQuote(request:Request,env:WorkerEnv,actor:SpecialistActor,
   const visible=new Set(Object.values(snapshot.aliases));if(prepared.context.decisionAtoms.some(atom=>atom.providerEligible&&(atom.protected||atom.locked||atom.intent==="prohibit")&&!visible.has(atom.id)))fail("assistant_protected_source_unavailable");
   const fieldAlias=original.fieldTarget?Object.entries(snapshot.aliases).find(([,id])=>id===original.fieldTarget!.blockId)?.[0]:undefined;
   if(original.fieldTarget&&!fieldAlias)fail('assistant_field_source_changed');
-  const providerView={...snapshot.view,...(memoryInput?{memory_evidence:memoryInput.evidence}:{}),...(fieldAlias?{field_request:{target_block_id:fieldAlias,field:'text',mode:'suggest-replacement-for-review'}}:{})};
-  const providerRequest=await buildAssistantProviderRequest(actor.principal.userId,{model,locale:original.locale,maximumOutputTokens:OUTPUT_TOKENS,view:providerView}),bytes=new TextEncoder().encode(JSON.stringify(providerRequest)).byteLength;
+  const profileSources=memory&&!original.fieldTarget?semanticAssistantProfileSources(env,memory):[];
+  const synthesis=profileSources.length>=2&&new Set(profileSources.map(s=>JSON.stringify([s.ownerId,s.projectId,s.documentId]))).size>=2
+    &&new Set(profileSources.flatMap(s=>s.originalIds.map(id=>JSON.stringify([s.ownerId,id])))).size>=3;
+  const providerView={...(synthesis?{profile_synthesis_sources:profileSources.map(s=>({alias:s.alias,category:s.category,interpretation:s.text,quotes:s.quotes,relevance:{zoom:s.zoom,weight:s.weight}}))}:{}),...snapshot.view,...(memoryInput?{memory_evidence:memoryInput.evidence}:{}),...(fieldAlias?{field_request:{target_block_id:fieldAlias,field:'text',mode:'suggest-replacement-for-review'}}:{})};
+  const providerRequest=await buildAssistantProviderRequest(actor.principal.userId,{model,locale:original.locale,maximumOutputTokens:OUTPUT_TOKENS,view:providerView,profileSynthesis:synthesis}),bytes=new TextEncoder().encode(JSON.stringify(providerRequest)).byteLength;
   if(bytes>MAX_ASSISTANT_PROVIDER_REQUEST_BYTES)fail("assistant_source_too_large");const inputTokens=bytes+1_024,pricing=consentedTextPricing(model),maximumMicrousd=maximumConsentedTextMicrousd(pricing,inputTokens,OUTPUT_TOKENS);
   const stored:SpecialistRequest={schema:1,turnId:turn.turn_id,scopeKey:host.scopeKey(actor),originalRequest:{...original,documentId:prepared.binding.documentId},taskKind:kind,explicitModel:explicit,providerRequest,aliases:snapshot.aliases,context:prepared.context,conversation,pricing,sourceRightsValidUntil:prepared.sourceRightsValidUntil,turn:{user_content_ref:turn.user_content_ref,assistant_content_ref:turn.assistant_content_ref,request_json:turn.request_json,document_id:turn.document_id}};
+  if(synthesis)stored.profileSynthesisSources=structuredClone(profileSources);
   if(memory&&memoryInput){stored.memory=memoryInput.binding;semanticMemoryReads.set(stored,memory);}
   const intentHash=await consentHash({version:ASSISTANT_SPECIALIST_CONSENT_VERSION,actor:actor.principal.userId,scopeKey:stored.scopeKey,turnId:turn.turn_id});
   const binding:ConsequentialBinding={...prepared.binding,version:ASSISTANT_SPECIALIST_CONSENT_VERSION,intentHash,operation:OPERATION,blockId:"",sourceHash:prepared.sourceHash,period:new Date().toISOString().slice(0,7),pilotCohortId:prepared.allowance.pilot?.cohort_id??null,steps:[{name:"specialist",provider:"OpenAI",model,inputTokens,outputTokens:OUTPUT_TOKENS,maximumMicrousd,toolCalls:0}],publicQuery:"",request:stored};
@@ -605,6 +610,12 @@ async function canonicalResult(env:WorkerEnv,actor:SpecialistActor,task:Speciali
   const saved={content:row.content};
   let result:CanonicalResult;try{result=JSON.parse(saved.content);}catch{fail("assistant_result_invalid");}
   if(result.schema!==1||result.executionId!==task.task_id||result.bindingHash!==retained.row.binding_hash||result.turnId!==retained.request.turnId||result.sourceHash!==retained.binding.sourceHash||result.providerResult?.model!==retained.binding.steps[0]!.model||result.reply!==result.providerResult.reply||result.sourceStatus!==(retained.request.memory?"semantic-memory-assisted":"original-approved-source"))fail("assistant_result_invalid");
+  if(result.profileSynthesis!==undefined){
+    const target={executionId:task.task_id,turnId:retained.request.turnId,projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale};
+    if(!retained.request.memory||!retained.request.profileSynthesisSources||!parseMemoryProfileSynthesis(result.profileSynthesis,target)
+      ||canonicalConsent(buildMemoryProfileSynthesis(result.providerResult.profileSynthesis,retained.request.profileSynthesisSources,target))!==canonicalConsent(result.profileSynthesis))fail('assistant_result_invalid');
+  }
+  if(result.providerResult.profileSynthesis?.length&&!result.profileSynthesis)fail('assistant_result_invalid');
   if(result.editReview!==undefined&&(!retained.request.memory||!parseMemoryEditReview(result.editReview,{
     executionId:task.task_id,turnId:retained.request.turnId,projectId:retained.binding.projectId,documentId:retained.binding.documentId,
     sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale})))fail("assistant_result_invalid");
@@ -629,7 +640,7 @@ export type AssistantTaskFeedEntry={
 type AssistantCompletedReview={
   turnId:string;executionId:string;quote:ConsequentialPreview&{providerAvailable:boolean;canExecute:false};
   originalRequest:SpecialistOriginalRequest&{model:string;taskKind:AssistantTask;sourceHash:string;conversationTurnIds:string[]};
-  result:{reply:string;creationReview?:MemoryCreationReview;editReview?:MemoryEditReview;sourceStatus:"original-approved-source"|"semantic-memory-assisted"};
+  result:{reply:string;profileSynthesis?:MemoryProfileSynthesis;creationReview?:MemoryCreationReview;editReview?:MemoryEditReview;sourceStatus:"original-approved-source"|"semantic-memory-assisted"};
   memory?:{version:"semantic-memory-answer-v1";validUntil:string;independentEvidence:false};
 };
 
@@ -787,7 +798,7 @@ export async function certifiedAssistantTaskFeed(env:WorkerEnv,actor:SpecialistA
               quote:{...retained.preview,status:"completed",providerAvailable:Boolean(env.OPENAI_API_KEY),canExecute:false},
               originalRequest:{...retained.request.originalRequest,model,taskKind:retained.request.taskKind,
                 sourceHash:retained.binding.sourceHash,conversationTurnIds:retained.request.conversation.map(item=>item.turnId)},
-              result:{reply:saved.result.reply,sourceStatus:saved.result.sourceStatus,...(saved.result.creationReview?{creationReview:saved.result.creationReview}:{}),...(saved.result.editReview?{editReview:saved.result.editReview}:{})},
+              result:{reply:saved.result.reply,...(saved.result.profileSynthesis?{profileSynthesis:saved.result.profileSynthesis}:{}),sourceStatus:saved.result.sourceStatus,...(saved.result.creationReview?{creationReview:saved.result.creationReview}:{}),...(saved.result.editReview?{editReview:saved.result.editReview}:{})},
               ...(semantic?{memory:{version:'semantic-memory-answer-v1' as const,validUntil:semanticAssistantMemoryInputs(env,semantic).validUntil,independentEvidence:false as const}}:{})};
           }
         }
@@ -979,13 +990,16 @@ export async function certifiedAssistantTurnResponse(env:WorkerEnv,actor:Special
 function canonicalProviderResult(env:WorkerEnv,task:SpecialistTaskRecord,retained:Retained,
  paid:{body:unknown;cost:number;billingPending:boolean}):CanonicalResult{
  const limit=retained.binding.steps[0]!;
- const decoded=decodeAssistantProviderResult(paid.body,{model:limit.model as AssistantModel,maximumInputTokens:limit.inputTokens,maximumOutputTokens:limit.outputTokens,aliases:retained.request.aliases});
+ const decoded=decodeAssistantProviderResult(paid.body,{model:limit.model as AssistantModel,maximumInputTokens:limit.inputTokens,maximumOutputTokens:limit.outputTokens,aliases:retained.request.aliases,profileSynthesis:!!retained.request.profileSynthesisSources});
  const memory=semanticMemory(env,retained.request),result=memory?{...decoded,actions:[]}:decoded;
+ const profileSynthesis=memory&&decoded.profileSynthesis?.length?buildMemoryProfileSynthesis(decoded.profileSynthesis,retained.request.profileSynthesisSources??[],{
+  executionId:task.task_id,turnId:retained.request.turnId,projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale}):null;
+ if(decoded.profileSynthesis?.length&&!profileSynthesis)fail('assistant_profile_synthesis_invalid');
  const editReview=memory?memoryAssistantEditReview(decoded,retained.request.context,{executionId:task.task_id,turnId:retained.request.turnId,
    projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale},retained.request.originalRequest.fieldTarget?.blockId):null;
  const creationReview=memory?memoryAssistantCreationReview(decoded,retained.request.context,{executionId:task.task_id,turnId:retained.request.turnId,
    projectId:retained.binding.projectId,documentId:retained.binding.documentId,sourceHash:retained.binding.sourceHash,locale:retained.request.originalRequest.locale},retained.request.originalRequest.fieldTarget?.blockId):null;
- return {...(creationReview?{creationReview}:{}),...(editReview?{editReview}:{}),schema:1,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:retained.request.turnId,reply:result.reply,actions:result.actions,providerResult:result,sourceStatus:memory?"semantic-memory-assisted":"original-approved-source",sourceHash:retained.binding.sourceHash,maximumMicrousd:limit.maximumMicrousd,accountedMicrousd:paid.cost,billingStatus:paid.billingPending?"pending":"settled",noAutomaticRetry:true};
+ return {...(profileSynthesis?{profileSynthesis}:{}),...(creationReview?{creationReview}:{}),...(editReview?{editReview}:{}),schema:1,executionId:task.task_id,bindingHash:retained.row.binding_hash,turnId:retained.request.turnId,reply:result.reply,actions:result.actions,providerResult:result,sourceStatus:memory?"semantic-memory-assisted":"original-approved-source",sourceHash:retained.binding.sourceHash,maximumMicrousd:limit.maximumMicrousd,accountedMicrousd:paid.cost,billingStatus:paid.billingPending?"pending":"settled",noAutomaticRetry:true};
 }
 /** Fresh Memory completion replays the exact retained raw receipt and recorded
  * accounting before atomically publishing the result, private inverse and task

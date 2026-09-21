@@ -1,3 +1,4 @@
+import { parseMemoryProfileSynthesis,type MemoryProfileSynthesis } from '../../model/memory-profile-synthesis.ts';
 import { memoryCreationApprovalHash,parseMemoryCreationReview,type MemoryCreationReview } from '../../model/memory-creation-review.ts';
 import type { MemoryFieldRequest } from '../../model/memory-field-request.ts';
 import { memoryEditApprovalHash,parseMemoryEditReview,type MemoryEditReview } from '../../model/memory-edit-review.ts';
@@ -156,7 +157,7 @@ export type AssistantSpecialistResponse = {
   turnId: string; executionId: string; quote?: AvailableConsequentialPreview; originalRequest?: AssistantSpecialistOriginalRequest;
   task?: AssistantDisplayedTask;
   turn?: { id: string; user: string; reply: SpecialistReply; proposal: AssistantDisplayedProposal | null; proposals?: AssistantDisplayedProposal[]; originalRequest?: AssistantTurnOriginalRequest };
-  result?: { creationReview?:MemoryCreationReview;editReview?:MemoryEditReview; reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
+  result?: { profileSynthesis?:MemoryProfileSynthesis;creationReview?:MemoryCreationReview;editReview?:MemoryEditReview; reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
   requestedExecutionId?: string; reusedExecutionId?: string; winnerExecutionId?: string; noAutomaticRetry?: boolean; reused?: boolean;
   /** Present only after an exact successful read proves no task, provider submission, or reservation exists. */
   unusedExecution?: boolean;
@@ -166,10 +167,10 @@ export type AssistantSpecialistCompletedReview = {
   memory?: SemanticMemoryAnswerPresentation;
   turnId: string; executionId: string; quote: AvailableConsequentialPreview;
   originalRequest: AssistantSpecialistOriginalRequest;
-  result: { creationReview?:MemoryCreationReview;editReview?:MemoryEditReview; reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
+  result: { profileSynthesis?:MemoryProfileSynthesis;creationReview?:MemoryCreationReview;editReview?:MemoryEditReview; reply: SpecialistReply | string; sourceStatus: "original-approved-source" | "semantic-memory-assisted" };
 };
 export type AssistantSpecialistReview = {
-  creationReview?:MemoryCreationReview;editReview?:MemoryEditReview; memoryRequested?: boolean; semanticMemory?: SemanticMemoryAnswerPresentation; resultSource?: "original-approved-source" | "semantic-memory-assisted";
+  profileSynthesis?:MemoryProfileSynthesis;creationReview?:MemoryCreationReview;editReview?:MemoryEditReview; memoryRequested?: boolean; semanticMemory?: SemanticMemoryAnswerPresentation; resultSource?: "original-approved-source" | "semantic-memory-assisted";
   id: string; scope: string; turnId: string; executionId: string; task: AssistantDisplayedTask | null;
   quote: AvailableConsequentialPreview | null; originalRequest: AssistantSpecialistOriginalRequest | null;
   working: boolean; stopping?: boolean; retrievalOnly: boolean; selectedModel?: string; unusedExecution?: boolean;
@@ -1632,6 +1633,9 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const creationReview=state.resultSource==='semantic-memory-assisted'&&parseSemanticMemoryAnswerPresentation(state.semanticMemory)&&state.originalRequest&&quote?.status==='completed'
       ?parseMemoryCreationReview(state.creationReview,{executionId:state.executionId,turnId:state.turnId,projectId:state.originalRequest.projectId,
         documentId:state.originalRequest.documentId,sourceHash:state.originalRequest.sourceHash,locale:state.originalRequest.locale}):null;
+    const profileSynthesis=state.resultSource==='semantic-memory-assisted'&&parseSemanticMemoryAnswerPresentation(state.semanticMemory)&&state.originalRequest&&quote?.status==='completed'
+      ?parseMemoryProfileSynthesis(state.profileSynthesis,{executionId:state.executionId,turnId:state.turnId,projectId:state.originalRequest.projectId,
+        documentId:state.originalRequest.documentId,sourceHash:state.originalRequest.sourceHash,locale:state.originalRequest.locale}):null;
     // Native cancel/close tasks target an element, not a render-time callback.
     // Give each review its own element even when close and reopen coalesce.
     return keyed(state.id, html`<dialog class="modal forma-assistant-specialist" aria-labelledby=${this.#specialistDialogId} aria-describedby=${this.#specialistDialogId + "-detail"}
@@ -1666,6 +1670,14 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
         ${purchase && expired ? html`<p role="status">${this.i18n.t("assistant.specialist.expired")}</p>` : nothing}
         ${state.task && !state.task.recoveryOnly ? html`<p role="status">${this.#taskStatus(state.task)}</p>` : nothing}
         ${state.retrievalOnly || state.task ? html`<p role="status">${this.#specialistFinancial(state.task)}</p>` : nothing}
+        ${profileSynthesis?html`<section class="forma-assistant-memory-profile-synthesis" aria-label=${this.i18n.t('assistant.specialist.profileSynthesisTitle')}>
+          <h3>${this.i18n.t('assistant.specialist.profileSynthesisTitle')}</h3><p>${this.i18n.t('assistant.specialist.profileSynthesisDetail')}</p>
+          ${profileSynthesis.items.map(item=>html`<article><p dir="auto">${item.text}</p><p>${this.i18n.t('assistant.specialist.profileSynthesisEvidence','',{count:item.originalCount})}</p><p>${this.i18n.t('assistant.specialist.profileSynthesisScope','',{scope:this.i18n.t('assistant.specialist.profileZoom.'+item.zoom),weight:this.i18n.number(item.weight)})}</p>
+            <details><summary>${this.i18n.t('assistant.specialist.profileSynthesisSources')}</summary>
+              ${item.sources.map(source=>html`<div><p><bdi>${source.projectId}</bdi> · <bdi>${source.documentId}</bdi></p><p dir="auto">${source.interpretation}</p>
+                ${source.quotes.map(quote=>html`<blockquote dir="auto">${quote}</blockquote>`)}</div>`)}
+            </details></article>`)}
+        </section>`:nothing}
         ${editReview?html`<section class="forma-assistant-memory-edit-review" aria-label=${this.i18n.t('assistant.specialist.editReviewTitle')}>
           <h3>${this.i18n.t('assistant.specialist.editReviewTitle')}</h3><p>${this.i18n.t('assistant.specialist.editReviewDetail')}</p>
           ${this.canMemoryEdit?html`<p>${this.i18n.t('assistant.specialist.editPublishDetail')}</p>`:nothing}
