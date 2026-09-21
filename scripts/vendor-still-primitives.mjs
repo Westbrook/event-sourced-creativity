@@ -22,8 +22,16 @@ function visit(file) {
   }).replace(/^\/\/# sourceMappingURL=.*$/gm, '');
   fs.mkdirSync(path.dirname(destination(file)), { recursive: true });
   fs.writeFileSync(destination(file), code);
+  if(file.endsWith('.js')){const types=file.replace(/\.js$/,'.d.ts');if(fs.existsSync(types))visit(types);}
 }
-for (const name of ['button', 'toolbar', 'textarea', 'drawer', 'badge', 'select', 'checkbox', 'search-input', 'number-field', 'text-field', 'tooltip', 'switch', 'menu', 'menu-item', 'toast', 'toast-region', 'skeleton']) visit(path.join(source, `packages/elements/dist/define/${name}.js`));
+const virtualOnly=process.argv.includes('--virtual-only');
+for (const name of virtualOnly ? [] : ['button', 'toolbar', 'textarea', 'drawer', 'badge', 'select', 'checkbox', 'search-input', 'number-field', 'text-field', 'tooltip', 'switch', 'menu', 'menu-item', 'toast', 'toast-region', 'skeleton']) visit(path.join(source, `packages/elements/dist/define/${name}.js`));
+for(const layer of ['state','interactions','templates']) visit(path.join(source, `packages/primitives/dist/${layer}/virtual-collection.js`));
+if(virtualOnly){
+ fs.writeFileSync(path.join(target,'virtual-collection-provenance.json'),JSON.stringify({source:'design-system',modules:[...visited].map(f=>path.relative(source,f)),builtClosureSha256:createHash('sha256').update([...visited].sort().map(f=>fs.readFileSync(f,'utf8')).join('')).digest('hex')},null,2)+'\n');
+ console.log(`Copied ${visited.size} virtual collection modules.`);
+ process.exit(0);
+}
 fs.mkdirSync(path.join(target, 'tokens'), { recursive: true });
 fs.copyFileSync(path.join(source, 'packages/tokens/dist/default.css'), path.join(target, 'tokens/default.css'));
 fs.copyFileSync(path.join(source, 'LICENSE'), path.join(target, 'LICENSE'));

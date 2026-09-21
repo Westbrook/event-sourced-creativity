@@ -4,15 +4,18 @@ export type OnboardingStatus={source:'local'|'pending'|'model';reason?:string;mo
 /** One batch per settled toolbar, opt-in only; route/scope changes fence late responses. */
 export class OnboardingController{
  private memo=new DecisionMemo<OnboardingResult>({accept:r=>r.source==='model',maxEntries:24,maxBytes:64000,ttl:r=>r.cache?.remainingMs??300000});
- private key='';private scope='';private ticket=0;private timer:ReturnType<typeof setTimeout>|undefined;
+ private key='';private scope='';private securityScope='';private ticket=0;private timer:ReturnType<typeof setTimeout>|undefined;
  private tips:Record<string,string>={};
  status:OnboardingStatus={source:'local'};
- constructor(private request:(input:OnboardingInput&{enabled:true})=>Promise<OnboardingResult>,private changed:()=>void,private delay=350){}
- update(scope:string,raw:unknown){
-  if(scope!==this.scope){this.memo.clear();this.scope=scope;this.key='';this.cancel();}
+ constructor(private request:(input:OnboardingInput&{enabled:true})=>Promise<OnboardingResult>,private changed:()=>void,private delay=150){}
+ update(scope:string,raw:unknown,securityScope=scope){
+  if(securityScope!==this.securityScope){this.memo.clear();this.securityScope=securityScope;this.key='';this.cancel();}
+  if(scope!==this.scope){this.scope=scope;this.key='';this.cancel();}
   const input=onboardingInput(raw),key=input?stableDecisionKey({version:ONBOARDING_VERSION,scope,input}):'';
   if(key===this.key)return;
   this.key=key;this.cancel();this.changed();if(!input)return;
+  const cached=this.memo.peek(key);
+  if(cached){this.tips=cached.value.tips;this.status={source:'model',model:cached.value.model,elapsedMs:0,cache:{...cached.cache,layer:'browser'}};this.changed();return;}
   const ticket=this.ticket;
   this.timer=setTimeout(()=>{this.status={source:'pending'};this.changed();void this.memo.run(key,()=>this.request({...input,enabled:true})).then(({value,cache})=>{
    if(ticket!==this.ticket)return;
@@ -21,5 +24,5 @@ export class OnboardingController{
  }
  help(scope:string,id:string){return scope===this.scope?this.tips[id]:undefined;}
  private cancel(){clearTimeout(this.timer);++this.ticket;this.tips={};this.status={source:'local'};}
- dispose(){this.cancel();this.key='';this.scope='';this.memo.clear();}
+ dispose(){this.cancel();this.key='';this.scope='';this.securityScope='';this.memo.clear();}
 }

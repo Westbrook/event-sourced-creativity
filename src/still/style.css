@@ -222,3 +222,12 @@ still-app .dock-measure en-button[size="large"]::part(control) { min-block-size:
 }
 
 still-app .developer-panel[hidden]{display:none!important}
+
+still-all-list { display:block; width:100%; }
+still-app .all-list-viewport { max-height:calc(100dvh - 230px); min-height:160px; overflow:auto; overscroll-behavior:contain; padding:4px 16px; margin-inline:-16px; scrollbar-gutter:stable; }
+still-app .all-list-viewport:focus-visible { outline:2px solid var(--en-color-brand); outline-offset:4px; }
+still-app .all-list-rows { margin:0; padding:0; list-style:none; }
+still-app .all-list-rows > li { margin:0; padding:0; }
+still-app .all-list-rows .context-block { margin-left:0; }
+still-app .all-list-rows .result { display:grid; grid-template-columns:100px minmax(0,1fr); gap:20px; align-items:center; padding:20px 0; border-top:1px solid var(--en-color-line); }
+still-app .all-list-rows .result img, still-app .all-list-rows .result-word, still-app .all-list-rows .pending-thumbnail { width:100px; height:100px; object-fit:cover; }

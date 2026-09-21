@@ -42,7 +42,7 @@ test('legacy links resolve the same selection and canonicalize without another h
 });
 
 test('malformed paths and executing actions are never recognized as Still pages',()=>{
-  for(const path of ['/stillish','/still/project','/still/project/p/document','/still/project//document/d','/still/project/%ZZ','/still/project/a%2Fb','/still/project/a%5Cb','/still/project/a%00b','/still/project/p/document/d/extra','/still/project/p/document/d/create/invented','/still/project/p/document/d/result/r/item/0','/still/project/p/document/d/result/r/item/1002','/still/project/p/document/d/page/2','/still/project/p/page/-1','/still/page/0','/still/action/generate','/still/action/lock','/still/action/export','/still/action/save','/still/unknown.js','/still?project=p&project=q','/still?work=r','/still?project='])assert.equal(parseStillRoute(path),null,path);
+  for(const path of ['/stillish','/still/project','/still/project/p/document','/still/project//document/d','/still/project/%ZZ','/still/project/a%2Fb','/still/project/a%5Cb','/still/project/a%00b','/still/project/p/document/d/extra','/still/project/p/document/d/create/invented','/still/project/p/document/d/result/r/item/0','/still/project/p/document/d/result/r/item/1002','/still/project/p/document/d/block/b/page/2','/still/project/p/page/-1','/still/page/0','/still/action/generate','/still/action/lock','/still/action/export','/still/action/save','/still/unknown.js','/still?project=p&project=q','/still?work=r','/still?project='])assert.equal(parseStillRoute(path),null,path);
 });
 
 test('route ownership never accepts the fold fallback or another document’s blocks/results',()=>{
