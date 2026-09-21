@@ -54,7 +54,7 @@ test("finalized private chat counts as human activity without copying prose or i
 test("assisted, copied, compensated and unresolved mutations never become independent preference support", () => {
   const f = memoryFixture();
   const cases = [
-    f.receipt({ type: "ProposalAccepted" }), f.receipt({ payload: { source_surface: "assistant" } }),
+    f.receipt({ type: "ProposalAccepted" }), f.receipt({ payload: { memory_authored_version: 1 } }), f.receipt({ payload: { source_surface: "assistant" } }),
     f.receipt({ payload: { source_chat_turn_id: "turn-1" } }), f.receipt({ payload: { source_surface: "autocomplete" } }),
     f.receipt({ payload: { properties: { copied_from_block_id: "original" } } }),
     f.receipt({ type: "BlockRelationAdded", payload: { properties: { copied_from_relation_id: "original-relation" } } }),

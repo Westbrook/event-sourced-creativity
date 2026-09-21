@@ -1123,3 +1123,19 @@ test("main170 repeated 100-decision copies retain full SQL proofs within the rea
     } finally { state.controls.queryLimit = 0; await state.close(); }
   }
 });
+
+for(const mode of ['personal','shared','editor'])test('native document duplication retains authored Memory attribution without private support '+mode,async()=>{
+ const state=await fixture({mode});
+ try{
+  await state.seed([['BlockPropertyEdited',{project_id:scope.projectId,document_id:scope.documentId,block_id:'copy-source-0',property_path:'text',old_value:'PRIVATE_SOURCE_0',new_value:'Accepted Memory text',memory_authored_version:1}]]);
+  const proposed=await preview(state),marked=proposed.events.filter(event=>event.type==='BlockCreated'&&event.payload.memory_authored_version===1);
+  assert.equal(marked.length,1);assert.equal(marked[0].payload.copied_from_block_id,'copy-source-0');
+  assert.equal(Object.hasOwn(marked[0].payload,'source_chat_turn_id'),false);
+  const applied=await inspect(await state.copy(confirm(proposed))),events=await runtime.readEvents(state.env,state.stream);
+  const created=events.find(event=>event.type==='BlockCreated'&&event.payload.document_id===applied.documentId&&event.payload.copied_from_block_id==='copy-source-0');
+  assert.equal(created.payload.memory_authored_version,1);assert.equal(created.payload.properties.text,'Accepted Memory text');
+  const {memoryAuthoredEventIds}=await import('../src/model/memory-authorship.ts');assert.equal(memoryAuthoredEventIds(events).has(created.eventId),true);
+  // Already authored copies are not disposable private Memory descendants.
+  assert.equal(created.payload.memory_origin_version,undefined);
+ }finally{await state.close();}
+});

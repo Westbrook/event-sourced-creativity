@@ -1,3 +1,4 @@
+import { preserveMemoryAuthoredCopies } from '../src/model/memory-authorship.ts';
 import { audioRightsAllowed } from "../src/model/audio.ts";
 import { creativeContextRightsValidity } from "../src/model/context-health.ts";
 import {
@@ -593,7 +594,7 @@ export async function handleDocumentDuplication(request: Request, env: WorkerEnv
       if (saved.plan.binding.sourceHash !== current.sourceHash || saved.plan.expiresAt <= new Date().toISOString()) throw new Error("authoring_preview_stale");
       const checked = prepareOutputRequirementClientEvents(saved.plan.events, outputAuthoringBlocksFromEvents(author.events));
       if (!checked.ok) return response({ error: checked.error, message: checked.message, status: "not-applied", ...(checked.blockId ? { blockId: checked.blockId } : {}) }, checked.status);
-      if (JSON.stringify(checked.events) !== JSON.stringify(saved.plan.events)) throw new Error("authoring_preview_stale");
+      if (JSON.stringify(preserveMemoryAuthoredCopies(checked.events,author.projection.libraryBlocks,author.events)) !== JSON.stringify(saved.plan.events)) throw new Error("authoring_preview_stale");
       const source = await sourceAdmission(env, author, intent);
       const result = await commitAuthoringPlan(env, author.principal, current, author.shared, id, approvalHash, saved.plan, author.sourceHead, source.commitGuard);
       if (!await executionAuthorityCurrent(env, author.principal, current, null)) return response({ error: "authoring_result_read_unavailable", previewId: id }, 403);
@@ -622,7 +623,7 @@ export async function handleDocumentDuplication(request: Request, env: WorkerEnv
     });
     const checked = prepareOutputRequirementClientEvents(planned.events, outputAuthoringBlocksFromEvents(author.events));
     if (!checked.ok) return response({ error: checked.error, message: checked.message, status: "not-applied", ...(checked.blockId ? { blockId: checked.blockId } : {}) }, checked.status);
-    planned.events = checked.events;
+    planned.events = preserveMemoryAuthoredCopies(checked.events,author.projection.libraryBlocks,author.events);
     const intent: CopyIntent = { operationId: requested.operationId, title: planned.title, collectionId: planned.collectionId,
       collectionMode: Object.hasOwn(requested, "collectionId") ? "explicit" : "source" };
     const current = await bindIntent(author.binding, intent);

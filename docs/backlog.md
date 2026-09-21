@@ -265,3 +265,7 @@ user enrollment is claimed.
 ### Memory inline field consumer and generic-reader privacy — 2026-09-20
 
 Implemented [exact-field saved suggestion reuse](forma-memory-field-completion-2026-09-20.md) in the actual Document editor, with canonical acceptance/Undo and draft/IME/privacy retirement. Ordinary event feeds no longer hydrate marked private inference. Native and browser evidence is in the checkpoint. [Remaining native work](forma-memory-completion-matrix-2026-09-20.md) stays assigned; [external qualification and rollout](forma-memory-sites-capability-todo-2026-09-18.md) remains separate. No deployment or enrollment.
+
+### Memory authored-copy attribution — 2026-09-20
+
+[Approved copies and document duplication](forma-memory-authored-copy-provenance-2026-09-20.md) now retain negative Memory attribution in the native reviewed authoring transaction, without copying private support or creating erasure dependencies. Verified locally; original-source recall and the other native completion-matrix work remain assigned.

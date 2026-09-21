@@ -1,3 +1,5 @@
+import { memoryAuthoredEventIds } from './memory-authorship.ts';
+export { memoryAuthoredEventIds } from './memory-authorship.ts';
 import type { CanvasProjection } from "../canvas/model.ts";
 import type { FormaCapability } from "../platform/capabilities.ts";
 import { assistantSurfaceForRoute, assistantPlaybookForSurface, type AssistantSurface } from "./assistant-route-policy.ts";
@@ -76,14 +78,6 @@ const displayText = (block: CreativeBlock) => protectedAssistantDecision(block)
   ?String(block.properties.text??block.properties.label??block.handle).trim().slice(0,ASSISTANT_CONTEXT_LIMITS.decisionChars)
   :clip(block.properties.text??block.properties.label??block.handle,ASSISTANT_CONTEXT_LIMITS.decisionChars);
 const eventDocument = (event: CreativeEvent) => String(event.payload.document_id ?? "") || null;
-
-/** Negative authorship provenance, not a private Memory body or positive proof
- * of independent intent. Later manual changes/Undo do not erase this history.
- * Callers use only their authorized events and the block's native source IDs. */
-export function memoryAuthoredEventIds(events:readonly CreativeEvent[]):ReadonlySet<string>{
-  return new Set(events.filter(event=>event.type==='BlockPropertyEdited'&&event.payload.property_path==='text'
-    &&event.payload.memory_authored_version===1).map(event=>event.eventId));
-}
 
 /** Compile small, explicitly scoped views. Never forward payload maps, media URLs, or raw streams. */
 export function compileAssistantContext(input: AssistantContextInput): AssistantContext {

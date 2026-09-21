@@ -1,3 +1,4 @@
+import { preserveMemoryAuthoredCopies } from '../src/model/memory-authorship.ts';
 import { buildContextApplicationPlan, type ApprovedContextProposal, type ContextProposalSelection } from "../src/model/context-proposal-application.ts";
 import type { ContextResearchReport, DecompositionPlan } from "../src/model/context-intelligence.ts";
 import { researchBlockText } from "../src/model/context-intelligence.ts";
@@ -27,7 +28,7 @@ function normalizeContextOutputEvents(events:AuthoringPlan["events"],prepared:Ex
   if(isOutputContextType(prepared.target.type))throw outputEditorRequired(prepared.target.id);
   const checked=prepareOutputRequirementClientEvents(events,outputAuthoringBlocksFromEvents(prepared.events));
   if(!checked.ok)throw new OutputApplicationError(checked);
-  return checked.events;
+  return preserveMemoryAuthoredCopies(checked.events,prepared.projection.libraryBlocks,prepared.events);
 }
 
 
@@ -103,7 +104,7 @@ export async function handleContextApplication(request:Request,env:WorkerEnv){
   let body:Record<string,unknown>;try{body=record(await request.json());}catch{return response({error:"invalid_request"},400);}
   if(!["preview","apply","retrieve","resume","dismiss"].includes(String(body.action)))return response({error:"authoring_action_required"},400);
   const prepared=await prepareContextAuthority(request,env,body,body.action==="preview"?"author":"read");if(prepared instanceof Response)return prepared;
-  const {principal,binding,sourceHead,projection,target,shared}=prepared;
+  const {principal,binding,sourceHead,projection,target}=prepared;
   let previewId=typeof body.previewId==="string"?body.previewId:"",approvalHash=typeof body.approvalHash==="string"?body.approvalHash:"";
   if(body.action==="resume"){
     const existing=await latestAuthoringPreview(env,principal,binding);

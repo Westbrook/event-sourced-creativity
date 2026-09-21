@@ -168,3 +168,12 @@ the ordinary event-private-body path. Existing operational references remain
 available for native scope reconstruction; private content readers independently
 exclude those bodies. Active, expired-unswept and withdrawn personal/shared
 fixtures pass. Neither change enrolls users or purchases a completion.
+
+## Authored-copy continuation
+
+[Non-destructive copy attribution](forma-memory-authored-copy-provenance-2026-09-20.md)
+now survives approved context reuse and document duplication, including repeated
+copies and later Assistant prompts. Ordinary observation/profile readers exclude
+these marked events from independent preference support. This closes attribution
+loss in those native copy paths, not independently authorized recall of the
+original private source or the remaining Output/Library/Canvas integrations.

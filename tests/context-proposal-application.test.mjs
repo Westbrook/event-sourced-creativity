@@ -193,3 +193,19 @@ test("Phase3E context research retains the original locked, licensed and cross-p
     assert.throws(()=>buildContextApplicationPlan({projection:{libraryBlocks:[target,protectedSource],libraryBlockRelations:[]},target,proposals:[suggestion(source.id)]}),/source_protected/);
   }
 });
+
+test('approved context copies preserve only native negative Memory authorship through repeated copies',async()=>{
+ const {preserveMemoryAuthoredCopies,memoryAuthoredEventIds}=await import('../src/model/memory-authorship.ts');
+ const target=block('target'),source=block('source','doc-b');source.sourceEvents=['accepted'];
+ const original={eventId:'accepted',type:'BlockPropertyEdited',payload:{block_id:'source',property_path:'text',memory_authored_version:1,source_chat_turn_id:'PRIVATE_TURN'}};
+ const proposal={key:'copy',executionId:'research',proposalId:'copy',research:{blockId:'source',type:'subject',label:'Source',text:'Source',area:'related'}};
+ const planned=buildContextApplicationPlan({projection:{libraryBlocks:[target,source],libraryBlockRelations:[]},target,proposals:[proposal]}),raw=JSON.stringify(planned);
+ const marked=preserveMemoryAuthoredCopies(planned.events,[target,source],[original]),copied=marked.find(event=>event.type==='BlockCreated');
+ assert.equal(copied.payload.memory_authored_version,1);assert.doesNotMatch(JSON.stringify(marked),/PRIVATE_TURN|source_chat_turn_id/);assert.equal(JSON.stringify(planned),raw);
+ const nextSource={...source,id:copied.payload.block_id,sourceEvents:['copy-created']},created={...copied,eventId:'copy-created'};
+ const again=preserveMemoryAuthoredCopies([{type:'BlockCreated',payload:{block_id:'copy-again',copied_from_block_id:nextSource.id,properties:{text:'Copy'}}}],[nextSource],[created]);
+ assert.equal(again[0].payload.memory_authored_version,1);assert.equal(memoryAuthoredEventIds([created]).has('copy-created'),true);
+ // A loose pointer or mutable property never supplies missing source authority.
+ assert.equal(preserveMemoryAuthoredCopies(planned.events,[],[original]).find(event=>event.type==='BlockCreated').payload.memory_authored_version,undefined);
+ assert.equal(preserveMemoryAuthoredCopies(planned.events,[{...source,sourceEvents:[],properties:{memory_authored_version:1}}],[original]).find(event=>event.type==='BlockCreated').payload.memory_authored_version,undefined);
+});

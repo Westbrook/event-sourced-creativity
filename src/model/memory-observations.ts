@@ -128,7 +128,7 @@ function observationOrigin(event: CreativeEvent, source: MemorySource): MemoryOr
   if (source.origin !== "user") return source.origin;
   const payload = event.payload, properties = asRecord(payload.properties);
   if (payload.source_surface === "autocomplete") return "autocomplete";
-  if (ASSISTED.has(event.type) || payload.source_surface === "assistant" || payload.source_chat_turn_id || payload.proposal_id) return "assistant";
+  if (payload.memory_authored_version === 1 || ASSISTED.has(event.type) || payload.source_surface === "assistant" || payload.source_chat_turn_id || payload.proposal_id) return "assistant";
   if (COPY_FIELDS.some((key) => payload[key] || properties[key])) return "copy";
   return "user";
 }

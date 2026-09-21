@@ -250,7 +250,7 @@ export async function nativeDocumentPaletteProfileValue(rows: readonly Row[], se
     const editPath = row.type === "BlockPropertyEdited" ? value.property_path : row.type === "ChipEdited" ? value.property : null;
     if ([value, properties].some(item => copyKeys.some(key => item[key] != null))
       || typeof editPath === "string" && copyKeys.includes(editPath) && value.new_value != null) block.lineage = "copy";
-    else if (block.lineage !== "copy" && ([value, properties].some(item => assistedKeys.some(key => item[key] != null))
+    else if (block.lineage !== "copy" && (value.memory_authored_version===1 || [value, properties].some(item => assistedKeys.some(key => item[key] != null))
       || typeof editPath === "string" && assistedKeys.includes(editPath) && value.new_value != null
       || /assistant|quick-edit|adaptive|context-proposal/u.test(String(value.source_surface ?? "") + " " + String(row.client_id)))) block.lineage = "assisted";
     if (row.compensates_event_id !== null) {
