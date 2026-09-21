@@ -192,9 +192,9 @@ still-app .generation-notifications en-toast {
   --en-toast-radius: 29px; --en-toast-shadow: 0 5px 26px var(--still-dock-shadow);
   --en-icon-size: 16px;
 }
-still-app .generation-notifications en-toast::part(base) { min-block-size: 58px; padding-inline-start: 16px; column-gap: var(--en-space-2, 8px); }
+still-app .generation-notifications en-toast[open]::part(base) { display: flex; min-block-size: 58px; padding-inline-start: 16px; column-gap: var(--en-space-2, 8px); }
 still-app .generation-notifications en-toast::part(content) { font-size: 13px; line-height: 1.5; padding-block: 5px; }
-still-app .generation-notifications en-toast::part(actions) { grid-column: 2 / -1; gap: 5px; }
+still-app .generation-notifications en-toast::part(actions) { gap: 5px; }
 still-app .generation-notifications en-toast::part(close) { min-inline-size: 44px; min-block-size: 44px; padding: 0; border-radius: var(--en-radius-pill, 9999px); background: transparent; }
 still-app .generation-notifications en-button[slot="actions"] { margin-block: 0; }
 still-app .generation-notifications en-button[slot="actions"]::part(control) { padding-inline: 12px; }

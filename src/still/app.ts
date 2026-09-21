@@ -1067,7 +1067,7 @@ export class StillApp extends LitElement {
   private notification(key:string,message:string,variant:'info'|'success'|'warning'|'danger',actions:{label:string;run:()=>void;disabled?:boolean}[],dismiss?:()=>void,documentId=this.client.position.documentId) {
     const identity=`${this.client.scopeKey}:${documentId}:${key}`;
     if(this.dismissedNotifications.has(identity))return nothing;
-    return keyed(identity,html`<en-toast .announcement=${message} variant=${variant} priority="polite" duration="0" dismiss-label="Dismiss message" @en-change=${(event:CustomEvent<{proposed:boolean}>)=>{
+    return keyed(identity,html`<en-toast swipe .announcement=${message} variant=${variant} priority="polite" duration="0" dismiss-label="Dismiss message" @en-change=${(event:CustomEvent<{proposed:boolean}>)=>{
       if(event.target!==event.currentTarget||event.detail.proposed!==false)return;
       const focused=(event.currentTarget as HTMLElement).matches(':focus-within');
       queueMicrotask(()=>{
