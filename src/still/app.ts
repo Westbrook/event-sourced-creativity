@@ -14,7 +14,7 @@ import './vendor/elements/define/tooltip.js';
 import { DecisionMemo, stableDecisionKey } from './decision-cache.ts';
 import { StillAttentionObserver } from './attention-observer.ts';
 import { generationActive, generationPreview, generationFormat, generationResult, generationStatus, stillResults } from './results.ts';
-import { failureNotification, canContinueReview } from './notifications.ts';
+import { failureNotification, canContinueReview, quietNotification } from './notifications.ts';
 import { generationCompletion, generationNoticeKey } from './generation-activity.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
 import './form-elements.js';
@@ -106,6 +106,7 @@ export class StillApp extends LitElement {
   private get notice() { return this.noticeMessage; }
   private set notice(value:string) { this.noticeMessage=value; ++this.noticeVersion; }
   private dismissedNotifications = new Set<string>();
+  private expandedNotification = '';
   private reviewVersion = 0;
   private mode = '';
   private routeMode = '';
@@ -133,7 +134,7 @@ export class StillApp extends LitElement {
   private measureDock(){
     const dock=this.querySelector<HTMLElement>('.action-dock');
     if(!dock)return;
-    this.style.setProperty('--dock-height', `${dock.getBoundingClientRect().height+70}px`);
+    this.style.setProperty('--dock-height', `${(this.querySelector('.dock-stack')??dock).getBoundingClientRect().height+70}px`);
     const padding=getComputedStyle(dock);
     const available=dock.clientWidth-parseFloat(padding.paddingLeft)-parseFloat(padding.paddingRight);
     const probes=[...this.querySelectorAll<HTMLElement>('.toolbar-probes [data-fit-limit]')];
@@ -329,7 +330,7 @@ export class StillApp extends LitElement {
     const attentionEnabled=!this.loading&&!this.startupFailed&&!!this.client.session?.policy.accepted;
     this.attention?.refresh(`${this.client.epoch}/${this.client.scopeKey}`,attentionEnabled?attentionPage:'',attentionEnabled,this.paletteOpen);
     const dock = this.querySelector('.action-dock'); this.dockObserver.disconnect();
-    if(dock){this.dockObserver.observe(dock);for(const probe of this.querySelectorAll('.toolbar-probes en-toolbar'))this.dockObserver.observe(probe);this.scheduleDockFit();}
+    if(dock){this.dockObserver.observe(this.querySelector('.dock-stack')??dock);this.dockObserver.observe(dock);for(const probe of this.querySelectorAll('.toolbar-probes en-toolbar'))this.dockObserver.observe(probe);this.scheduleDockFit();}
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
@@ -1067,21 +1068,24 @@ export class StillApp extends LitElement {
   private notification(key:string,message:string,variant:'info'|'success'|'warning'|'danger',actions:{label:string;run:()=>void;disabled?:boolean}[],dismiss?:()=>void,documentId=this.client.position.documentId) {
     const identity=`${this.client.scopeKey}:${documentId}:${key}`;
     if(this.dismissedNotifications.has(identity))return nothing;
-    return keyed(identity,html`<en-toast swipe .announcement=${message} variant=${variant} priority="polite" duration="0" dismiss-label="Dismiss message" @en-change=${(event:CustomEvent<{proposed:boolean}>)=>{
+    const {summary,label}=quietNotification(message,variant),expanded=this.expandedNotification===identity,details=summary!==message||actions.length>0;
+    const detailId=`notification-${encodeURIComponent(identity)}`;
+    return keyed(identity,html`<en-toast class="quiet-notification" swipe .announcement=${message} variant=${variant} priority="polite" duration="0" dismiss-label="Dismiss message" @en-change=${(event:CustomEvent<{proposed:boolean}>)=>{
       if(event.target!==event.currentTarget||event.detail.proposed!==false)return;
       const focused=(event.currentTarget as HTMLElement).matches(':focus-within');
       queueMicrotask(()=>{
         if(event.defaultPrevented)return;
         this.dismissedNotifications.add(identity);
         if(this.dismissedNotifications.size>200)this.dismissedNotifications.delete(this.dismissedNotifications.values().next().value!);
+        if(this.expandedNotification===identity)this.expandedNotification='';
         dismiss?.();this.changed();
         if(focused)void this.updateComplete.then(()=>this.focusContent());
       });
-    }}>${message}${actions.map(action=>html`<en-button slot="actions" variant="secondary" size="small" ?disabled=${this.busy||this.composing||action.disabled} @click=${()=>{this.dismissedNotifications.add(identity);action.run();this.changed();}}>${action.label}</en-button>`)}</en-toast>`);
+    }}><span class="notification-summary">${summary}</span>${details?html`<section id=${detailId} class="notification-detail" ?hidden=${!expanded} aria-label="Message details" @keydown=${(event:KeyboardEvent)=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.expandedNotification='';this.changed();(event.currentTarget as HTMLElement).parentElement?.querySelector<HTMLElement>('.notification-review')?.focus();}}}><p>${message}</p><div class="notification-detail-actions">${actions.map(action=>html`<en-button variant="secondary" size="small" ?disabled=${this.busy||this.composing||action.disabled} @click=${()=>{this.dismissedNotifications.add(identity);this.expandedNotification='';action.run();this.changed();}}>${action.label}</en-button>`)}</div></section><en-button class="notification-review" slot="actions" variant="ghost" size="small" aria-expanded=${String(expanded)} aria-controls=${detailId} @click=${(event:MouseEvent)=>{this.expandedNotification=expanded?'':identity;this.changed();if(!expanded&&event.detail===0)void this.updateComplete.then(()=>this.querySelector<HTMLElement>(`[id="${detailId}"] en-button`)?.focus());}}>${expanded?'Close':label}</en-button>`:nothing}</en-toast>`);
   }
   private renderNotifications(failed?:DocumentJob) {
     const inline=this.isInlineGeneration(),review=inline?null:this.generationGate, failure=failed?failureNotification(failed):null;
-    return html`<en-toast-region class="generation-notifications" placement="block-start-end" label="Notifications" max="2">
+    return html`<en-toast-region class="generation-notifications" placement="inline" label="Notifications" max="2">
       ${this.renderGenerationCompletions()}
       ${this.error&&!inline?this.notification(`error:${this.errorVersion}`,this.error,'danger',[
         this.generation?.attempted?{label:'Check request',run:()=>void this.run(()=>this.generate())}:
@@ -1131,7 +1135,7 @@ export class StillApp extends LitElement {
   render() {
     const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
     const failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId && j.jobId !== displayedGeneration);
-    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-remember-lists=${this.setRememberLists} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report <en-icon name="arrow-right" aria-hidden="true"></en-icon></a>` : nothing}</div>${this.renderNotifications(failed)}`;
+    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main><div class="dock-stack">${this.renderNotifications(failed)}${this.renderDock()}</div>${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-remember-lists=${this.setRememberLists} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report <en-icon name="arrow-right" aria-hidden="true"></en-icon></a>` : nothing}</div>`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

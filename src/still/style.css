@@ -181,23 +181,33 @@ still-app .palette-result[aria-selected="true"], still-app .palette-result:hover
 still-app .palette-find { border-top: 1px solid var(--en-color-line); margin-top: 8px; }
 still-app .palette-hint { color: var(--en-color-text-muted); font-size: 12px; }
 
-/* Fixed library region: notifications do not participate in content layout. */
-still-app .generation-notifications { --en-toast-region-width: 30rem; --en-toast-region-layer: 40; --en-toast-region-max-size: 55dvh; --en-toast-region-gap: var(--en-space-2, 8px); }
-still-app .generation-notifications::part(region) { justify-items: end; scrollbar-gutter: auto; padding: var(--en-space-2, 8px); }
+/* A quiet notification line shares the toolbar's fixed, measured footprint. */
+still-app .dock-stack { position: fixed; z-index: 5; bottom: 0; left: 0; right: 0; padding: 36px 24px max(25px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--en-color-canvas) 24%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+still-app .dock-stack > .action-dock { position: static; width: 100%; padding: 0; background: none; }
+still-app .has-developer .dock-stack { right: var(--developer-width); }
+still-app .generation-notifications { width: min(100%, 36rem); --en-toast-region-max-size: min(45dvh, 24rem); --en-toast-region-gap: 4px; }
+still-app .generation-notifications:not(:has(en-toast)) { display: none; }
+still-app .generation-notifications::part(region) { justify-items: center; scrollbar-gutter: auto; padding: 6px; }
 still-app .generation-notifications en-toast {
-  inline-size: fit-content; max-inline-size: 100%;
-  --en-toast-background: var(--en-color-surface); --en-toast-color: var(--en-color-text);
-  --en-toast-border-color: var(--en-color-line); --en-toast-padding: 6px;
-  /* Half the compact toolbar height; longer messages retain readable corners. */
-  --en-toast-radius: 29px; --en-toast-shadow: 0 5px 26px var(--still-dock-shadow);
-  --en-icon-size: 16px;
+  --en-toast-background: transparent; --en-toast-color: var(--en-color-text-muted);
+  --en-toast-icon-color: var(--en-color-text-muted); --en-toast-warning-icon-color: var(--en-color-text-muted); --en-toast-danger-icon-color: var(--en-color-text-muted); --en-toast-success-icon-color: var(--en-color-text-muted);
+  --en-toast-border-color: transparent; --en-toast-padding: 0; --en-toast-radius: 0; --en-toast-shadow: none; --en-toast-stack-offset: 0px;
 }
-still-app .generation-notifications en-toast[open]::part(base) { display: flex; min-block-size: 58px; padding-inline-start: 16px; column-gap: var(--en-space-2, 8px); }
-still-app .generation-notifications en-toast::part(content) { font-size: 13px; line-height: 1.5; padding-block: 5px; }
-still-app .generation-notifications en-toast::part(actions) { gap: 5px; }
-still-app .generation-notifications en-toast::part(close) { min-inline-size: 44px; min-block-size: 44px; padding: 0; border-radius: var(--en-radius-pill, 9999px); background: transparent; }
-still-app .generation-notifications en-button[slot="actions"] { margin-block: 0; }
-still-app .generation-notifications en-button[slot="actions"]::part(control) { padding-inline: 12px; }
+still-app .generation-notifications en-toast[open]::part(base) { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 8px; max-width: 100%; border: 0; min-block-size: 36px; }
+still-app .generation-notifications en-toast::part(content) { display: contents; }
+still-app .generation-notifications en-toast::part(icon) { flex: none; --en-icon-size: 16px; }
+still-app .notification-summary { flex: 0 1 auto; min-width: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+still-app .generation-notifications en-toast::part(actions) { flex: none; }
+still-app .generation-notifications en-toast::part(close) { min-inline-size: 36px; min-block-size: 36px; padding: 0; border-radius: var(--en-radius-pill, 9999px); background: transparent; }
+still-app .generation-notifications en-button[slot="actions"] { margin: 0; }
+still-app .notification-review::part(control) { min-height: 36px; padding-inline: 6px; background: transparent; border-color: transparent; text-decoration: underline; text-underline-offset: 3px; }
+still-app .notification-detail { order: -1; flex: 1 0 100%; min-width: 0; margin-bottom: 8px; padding: var(--en-space-4, 16px); background: var(--en-color-surface); color: var(--en-color-text); border: 1px solid var(--en-color-line); border-radius: var(--en-radius-container, 16px); box-shadow: 0 0 6px var(--still-shadow); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+still-app .notification-detail[hidden] { display: none; }
+still-app .notification-detail-actions { display: flex; justify-content: end; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+still-app .notification-detail-actions:empty { display: none; }
+@media(max-width: 1023px) { still-app .has-developer .dock-stack { right: 0; } }
+@media(max-width: 600px) { still-app .dock-stack { padding-inline: 12px; padding-bottom: max(20px, env(safe-area-inset-bottom)); } }
+
 
 
 still-app .pending-thumbnail { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--en-color-surface-subtle); overflow: hidden; }
