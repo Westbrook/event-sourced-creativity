@@ -96,6 +96,24 @@ test('Still form workflows use one responsive toolbar with their original comman
    await page.setViewportSize({width:360,height:700});await mode('new-project');await page.evaluate(()=>{window.app.density=5;window.app.changed();});await button('Back').waitFor();
    assert.equal(await dock.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
   });
+  await t.test('workflow tooltips describe final saves, cancellation and real review steps',async()=>{
+   await page.setViewportSize({width:900,height:700});
+   await page.evaluate(()=>{window.app.onboarding=true;window.app.density=5;window.app.onboardingHelp.help=()=> 'Wrong generic next step';window.app.changed();});
+   const help=label=>dock.locator('en-tooltip').filter({has:page.locator('[slot="content"]')}).evaluateAll((tips,label)=>{
+    const tip=tips.find(t=>document.getElementById(t.getAttribute('for'))?.textContent.trim()===label);return tip?.textContent.trim();
+   },label);
+   for(const [value,save,back] of [
+    ['new-project','Create this project and open its first document.','Cancel this project and return without saving.'],
+    ['new-document','Create this document in the current project and open it.','Cancel this document and return without saving.'],
+    ['add-context','Add this idea to the document so you can use it in your work.','Return without adding this idea.'],
+    ['rename','Save the document’s new name.','Return without changing the document’s name.'],
+   ]){
+    await mode(value);await button('Save').waitFor();assert.equal(await help('Save'),save);assert.equal(await help('Back'),back);
+   }
+   await page.evaluate(()=>{window.app.client.hasUnconfirmedWrite=true;window.app.changed();});await button('Check save').waitFor();assert.match(await help('Check save'),/earlier save completed/);assert.match(await help('Back'),/still unconfirmed/);
+   await mode('compose');await button('Continue').click();await button('Preview').waitFor();assert.equal(await help('Back'),'Return to choosing the ideas in this group.');
+   await page.evaluate(()=>{window.app.onboarding=false;delete window.app.onboardingHelp.help;window.app.changed();});
+  });
   assert.deepEqual(errors,[]);
  }finally{await browser?.close();await server.close();}
 });
