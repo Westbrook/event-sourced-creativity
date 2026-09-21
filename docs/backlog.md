@@ -594,3 +594,13 @@ correction checks. Retired heads never fall back to older interpretations.
 uses6/30 calls. No new enrollment, provider work or migration. Remaining native
 cross-scope publication, aggregate capacity, direct private Output and broader
 integration stay assigned in the completion matrix; external rollout remains gated.
+
+## MEM-053 — Aggregate native capacity and restored-head continuity
+
+Implemented locally: [atomic source/receipt qualification](forma-memory-native-capacity-2026-09-20.md#aggregate-capacity-immediate-receipts-and-restored-heads--2026-09-21).
+Maximum-three-source execution meets48/50 personal/shared calls with immediate
+completion; missing publication acknowledgements still prevent dispatch/disclosure.
+Automatic current views cannot promote an older result after partial restoration.
+410 native,27 subsequent restore/recall,363 client/model and20 browser checks pass.
+The preceding full run has two fixture timeouts, separately investigated and not
+waived; a current clean full regression remains assigned. No production changes.

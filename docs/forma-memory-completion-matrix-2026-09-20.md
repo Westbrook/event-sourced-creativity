@@ -452,3 +452,15 @@ never fall back; existing corrections retain precedence.38 integrated native and
 232 client checks pass, including actual D1 catalog/current inspection at6/30
 calls. This closes unified discovery/review, not automatic cross-scope publication,
 aggregate capacity, direct private Output or the remaining integrated journeys.
+
+## Aggregate capacity and partial-restore continuation
+
+[Aggregate native qualification](forma-memory-native-capacity-2026-09-20.md#aggregate-capacity-immediate-receipts-and-restored-heads--2026-09-21)
+closes the maximum-three-source50-call local target at48/50, including fresh
+publication before recovery.410 integrated native checks pass.27 subsequent
+cross-scope/current-head checks include partial-restore non-resurrection;
+363 client/model and20 browser cases pass. The earlier full run's two fixture
+timeouts remain explicitly recorded pending a clean current full rerun.
+Cross-scope automatic profile publication, broader resource/autocomplete consumers
+and private Output/live-preview remain native implementation assignments, not
+external-service blockers. No production or enrollment action was taken.

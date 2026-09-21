@@ -1,3 +1,4 @@
+import { nativeDerivationHeadRelation } from './memory-result-head.ts';
 import { memoryProfileContextBoundarySchemaProfile as profileContextBoundary } from './memory-derivation-profile-context-schema.ts';
 import { prepareNativeReuseRecall } from './memory-reuse-recall.ts';
 import { readNativeOrganizationNesting } from './organization-project-nesting.ts';
@@ -14,7 +15,7 @@ import { memoryRecallBoundary, memoryRecallRelation, type MemoryRecallBoundary, 
 import { memoryRecallOrganizationSchemaProfile as organizationProfile } from './memory-recall-organization-schema.ts';
 import { memoryRecallBoundarySchemaProfile as profile } from './memory-recall-boundary-schema.ts';
 import { readNativeProjectContainment } from './project-containment-api.ts';
-import { derivationAssertion, derivationResults, derivationVerified, memoryDerivationEnabled, memoryDerivationBinding } from './memory-derivation-store.ts';
+import { derivationAssertion, derivationResults, derivationVerified, memoryDerivationEnabled, memoryDerivationBinding, memoryDerivationSchema } from './memory-derivation-store.ts';
 import { derivationExact, derivationId, MEMORY_DERIVATION_PURPOSES } from './memory-derivation-policy.ts';
 import { readNativeDerivationPresentation } from './memory-derivation-results.ts';
 import type { WorkerEnv } from './runtime.ts';
@@ -256,8 +257,9 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
       const chosen = eligible.find(source => source.e.enrollment_id === sourceId);
       if (!chosen || !MEMORY_DERIVATION_PURPOSES.some(p => p === purpose)) return reply({ error: 'recall_source_unavailable' }, 404);
       guards.push(chosen.authority.guard, liveMemoryEnrollmentGuard(chosen.e, 'recall'));
+      const derivationSchema=await memoryDerivationSchema(env);guards.push(derivationSchema.guard);
       const latestQuery = `SELECT j.job_id FROM memory_derivation_jobs j JOIN memory_derivation_grants g ON g.consent_id=j.consent_id
-        JOIN memory_derivation_results r ON r.job_id=j.job_id WHERE g.enrollment_id=? AND g.enrollment_revision=? AND g.actor_user_id=? AND g.purpose=?
+        JOIN ${nativeDerivationHeadRelation(derivationSchema.completionPresent)} r ON r.job_id=j.job_id WHERE g.enrollment_id=? AND g.enrollment_revision=? AND g.actor_user_id=? AND g.purpose=?
         AND g.revoked_at IS NULL AND g.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
         ORDER BY j.through_sequence DESC,j.job_id LIMIT 1`;
       const latestBindings = [chosen.e.enrollment_id, chosen.e.revision, actor.userId, purpose], latest = await rows(env, latestQuery, latestBindings);

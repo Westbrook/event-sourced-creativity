@@ -135,3 +135,12 @@ the maximum-three-source shared case runs528 quote,408 execution and284
 retrieval statements. These are local synthetic measurements, not a hosted SLA.
 The conservative50-binding-call execution target remains unmet and assigned.
 No positive-access cache, native proof removal, enrollment or deployment.
+
+## Qualified aggregate local capacity
+
+[Immediate receipt and atomic-source verification](forma-memory-native-capacity-2026-09-20.md#aggregate-capacity-immediate-receipts-and-restored-heads--2026-09-21)
+now meets the50-call target for the full maximum-three-source invocation:
+personal48/shared50, with completion proven before any retrieval/recovery.410
+integrated native checks pass; source/privacy/finance proofs are retained.
+This supersedes the earlier63–66-call measurement, not the remaining native
+consumer/profile work or the separate hosted qualification gates.

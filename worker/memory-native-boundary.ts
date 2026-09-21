@@ -114,12 +114,24 @@ export async function captureNativeMemoryTurnExclusions(env: WorkerEnv, semantic
   const handle=await local.capture;
   nativeMemoryTurnExclusionInputs(env,handle);return handle;
 }
-async function captureTurnExclusions(env:WorkerEnv,semanticParents:readonly string[]=[]):Promise<NativeMemoryTurnExclusions>{
-  const db=env.DB,observations=structuredClone(await db.batch(nativeMemorySchemaReads(db,'turn')));
+/** Prepare only negative-origin schema reads for an existing native read batch.
+ * Acceptance binds the resulting guards to this exact environment/database;
+ * every consuming SQL statement still replays the catalog and origin predicates. */
+export function prepareNativeMemoryTurnExclusions(env:WorkerEnv,semanticParents:readonly string[]=[]){
+ const db=env.DB,parents=[...semanticParents];
+ if(parents.length>2||parents.some(id=>!/^[-0-9a-f]{36}$/u.test(id))||new Set(parents).size!==parents.length)throw Error('memory_boundary_parent_invalid');
+ return {statements:nativeMemorySchemaReads(db,'turn'),async accept(observations:D1Result<unknown>[]):Promise<NativeMemoryTurnExclusions>{
+  if(env.DB!==db)throw Error('memory_boundary_database_changed');
+  const captured=structuredClone(observations);
   const guards=await Promise.all((['authored','answer','content'] as const).map(alias=>
-    qualifyNativeMemoryAnswerExclusion(env,db,alias,'turn',observations,semanticParents)));
-  if(env.DB!==db)throw new Error('memory_boundary_database_changed');
+   qualifyNativeMemoryAnswerExclusion(env,db,alias,'turn',captured,parents)));
+  if(env.DB!==db)throw Error('memory_boundary_database_changed');
   const handle=Object.freeze({}) as NativeMemoryTurnExclusions;turnExclusions.set(handle,{env,db,guards});return handle;
+ }};
+}
+async function captureTurnExclusions(env:WorkerEnv,semanticParents:readonly string[]=[]):Promise<NativeMemoryTurnExclusions>{
+ const prepared=prepareNativeMemoryTurnExclusions(env,semanticParents);
+ return prepared.accept(await env.DB.batch(prepared.statements));
 }
 export function nativeMemoryTurnExclusionInputs(env:WorkerEnv,handle:NativeMemoryTurnExclusions) {
   const captured=turnExclusions.get(handle);

@@ -96,12 +96,13 @@ export async function observeNativeDerivationHistoryJob(env: WorkerEnv, anchor: 
   try {
     const source=lookup(env,anchor),db=env.DB;
     if(!source.historyPresent||source.enrollment.recall_enabled!==1||!derivationHash(jobId)||jobId===source.job.job_id)return null;
-    const result=structuredClone(await db.batch<Row>([
+    const assertions=source.guards.map(guard=>derivationAssertion(env,guard));
+    const result=structuredClone(await db.batch<Row>([...assertions,
       db.prepare(`SELECT ${DERIVATION_JOB_COLUMNS.join(',')},${producerProjection(source.producersPresent)} FROM memory_derivation_jobs WHERE job_id=? LIMIT 2`).bind(jobId),
       db.prepare(`SELECT ${DERIVATION_JOB_SOURCE_COLUMNS.join(',')} FROM memory_derivation_job_sources WHERE job_id=? ORDER BY sequence,event_id LIMIT 129`).bind(jobId),
     ]));
-    if(lookup(env,anchor)!==source||!derivationResults(result,2)||result[0]!.results.length!==1)return null;
-    const {chat_studio:chat,...job}=result[0]!.results[0]!,references=result[1]!.results;
+    if(lookup(env,anchor)!==source||!derivationResults(result,assertions.length+2)||!result.slice(0,assertions.length).every(derivationVerified)||result[assertions.length]!.results.length!==1)return null;
+    const {chat_studio:chat,...job}=result[assertions.length]!.results[0]!,references=result[assertions.length+1]!.results;
     if(chat!==0&&chat!==1)return null;
     if(!jobShape(job)||job.state!=='leased'||job.consent_id!==source.grant.consent_id||job.purpose!==source.grant.purpose
       ||job.after_sequence<source.grant.source_after_sequence
@@ -116,8 +117,11 @@ export async function observeNativeDerivationHistoryJob(env: WorkerEnv, anchor: 
     // A lookback is a distinct job, not a transfer of the anchor's result bytes.
     delete admission.observedResult;
     if(!current(admission,env))return null;
-    const checked=structuredClone(await db.batch<Row>(admission.guards.map(guard=>derivationAssertion(env,guard))));
-    if(lookup(env,anchor)!==source||!current(admission,env)||!derivationResults(checked,admission.guards.length)||!checked.every(derivationVerified))return null;
+    // The anchor's full authority was replayed before these bounded metadata
+    // reads in the same transaction. The validated job/reference snapshots add
+    // exact predicates to this distinct handle; all source/consumer reads still
+    // replay them. No body or result authority is inherited from the anchor.
+    if(lookup(env,anchor)!==source||!current(admission,env))return null;
     const handle=Object.freeze({}) as NativeDerivationRead;issued.set(handle,admission);return handle;
   }catch{return null;}
 }

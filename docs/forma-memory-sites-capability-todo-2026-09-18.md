@@ -278,3 +278,10 @@ is implemented natively with existing tables and source authority. No external
 service is needed for its explicit review UI. Automatic cross-scope publication,
 remaining native consumers and qualification stay on the implementation matrix;
 this catalog is not a substitute for those tasks or hosted schedule qualification.
+
+## Local aggregate-capacity receipt
+
+[Aggregate execution now meets48/50 local D1 calls](forma-memory-native-capacity-2026-09-20.md#aggregate-capacity-immediate-receipts-and-restored-heads--2026-09-21), with immediate publication and partial-restore head checks. This is
+synthetic local evidence, not hosted scheduler/no-visitor capacity or deployment
+qualification. External provisioning, real-provider qualification, production-owner
+integration and affirmative enrollment gates above remain open and separately tracked.

@@ -1,3 +1,4 @@
+import { nativeDerivationHeadRelation } from './memory-result-head.ts';
 import { currentProfileHeadGuard } from './memory-profile-catalog.ts';
 import { memoryDerivationSourceWindow } from "../src/model/memory-derivation-policy.ts";
 import { readNativeControlBody } from "./native-control-body.ts";
@@ -402,7 +403,7 @@ export async function handleMemoryDerivationResults(request:Request,env:WorkerEn
       JOIN memory_derivation_jobs j ON j.job_id=r.job_id JOIN memory_derivation_grants g ON g.consent_id=j.consent_id
       WHERE g.enrollment_id=? AND g.actor_user_id=? AND g.revoked_at IS NULL AND g.expires_at>?
         AND r.state='active' AND r.expires_at>?${purpose?' AND g.purpose=?':''} AND (j.through_sequence<? OR j.through_sequence=? AND j.job_id>?)
-        ${latest?`AND NOT EXISTS(SELECT 1 FROM memory_derivation_results newer
+        ${latest?`AND NOT EXISTS(SELECT 1 FROM ${nativeDerivationHeadRelation(schema.completionPresent)} newer
           JOIN memory_derivation_jobs newer_job ON newer_job.job_id=newer.job_id
           JOIN memory_derivation_grants newer_grant ON newer_grant.consent_id=newer_job.consent_id
           WHERE newer_grant.enrollment_id=g.enrollment_id AND newer_grant.actor_user_id=g.actor_user_id

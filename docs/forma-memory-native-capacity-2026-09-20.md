@@ -362,3 +362,39 @@ completed with122 passes and zero failures.
 A separately frozen full native run at`a6e690e6` passes2641/2641. That older receipt
 does **not** verify the subsequent coordinated-read, resource-recall or current
 final-delivery changes. The native completion matrix remains the full scope.
+
+## Aggregate capacity, immediate receipts and restored heads — 2026-09-21
+
+The actual two/three-source assistant now completes in **48 personal / 50 shared
+D1 binding calls**, with quote at47/48 and retrieval at32/30. Every phase is
+asserted at or below50. Tests require the task to be completed **before retrieval**;
+a later recovery response cannot hide a fresh-publication failure.
+
+D1 mutation metadata counts trigger side effects. Raw-response retention now
+uses a separately checked SQLite `changes()` assertion after each publication
+write, in the same atomic batch. Missing or false assertions, zero direct writes,
+changed sources and late authority changes still fail closed. This fixes a real
+fresh-publication failure that previously recovered only during retrieval.
+
+Independent original-message, paid-consent, negative-origin schema and correction
+reads share an atomic source snapshot. Request-local history and target metadata
+staging reuses no positive access result. Exact consent/source predicates remain
+in the claim, reservation and dispatch transactions, under the original deadline.
+
+Automatic latest-result lists and cross-scope readers now keep stored completion
+identities as head markers if a partial restore omitted a newer result row.
+Ordinary deletion already requires tombstones; the additional restore defense
+never grants body access. Explicit independently authorized history remains usable.
+
+Evidence:410 integrated native tests,27 subsequent current-head/cross-scope
+native tests (including four partial-restore cases),363 client/model checks and
+20 actual synthetic Memory-panel browser journeys pass. TypeScript, changed-worker
+lint and production build pass with the existing bundle-size warnings. Counts
+from overlapping suites are not a distinct-test total. All providers are mocked.
+
+The separate full run atcf5b1f31 finished with2,806 passes,zero assertion failures
+and two30-second test timeouts among2,808 tests. All three150-row deletion scenarios
+pass in isolation. Only the two expensive fixture setup budgets are raised to120s;
+production deadlines, query bounds and deletion chunk assertions are unchanged.
+A clean full rerun is still required; that earlier run is not called a full pass.
+No hosted capacity, scheduling, activation, enrollment or deployment is implied.

@@ -150,7 +150,21 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
     if(found.length>1||old&&!derivationExact(old,columns))throw Error('context_inventory');
     guards.push(snapshot(query,bindings,found,columns));
     const profilesQuery=`SELECT ${profileColumns.join(',')} FROM memory_derivation_profile_contexts WHERE target_enrollment_id=? ORDER BY job_id LIMIT 3`;
-    const storedProfiles=schema.profileContextsPresent&&old?await read(env,profilesQuery,[String(old.target_enrollment_id)]):[];
+    let preparedTarget:Awaited<ReturnType<typeof readScope>>|undefined;
+    let storedProfiles:Row[]=[];
+    if(native&&request.method==='GET'&&controls===null&&schema.profileContextsPresent&&old&&liveMemoryEnabled(env,actor.userId)&&memoryDerivationEnabled(env,actor.userId)){
+      // Own selection metadata and fresh target custody are independent. Keep
+      // their original SQL/snapshots while coalescing the first native read wave.
+      const targetReads=createMemoryReadBatch(env,current,Math.min(deadline-Date.now(),30000-(performance.now()-monotonic)));
+      try{
+        const parts=await Promise.allSettled([
+          targetReads.run(local=>readScope(null,local,actor,projectId,documentId,nativeScope)),
+          targetReads.run(local=>read(local,profilesQuery,[String(old.target_enrollment_id)])),
+        ]);
+        if(parts[0].status!=='fulfilled'||parts[1].status!=='fulfilled')throw Error('context_target');
+        preparedTarget=parts[0].value;storedProfiles=parts[1].value;
+      }finally{targetReads.close();}
+    }else storedProfiles=schema.profileContextsPresent&&old?await read(env,profilesQuery,[String(old.target_enrollment_id)]):[];
     if(storedProfiles.length>2||storedProfiles.some(p=>!derivationExact(p,profileColumns)||p.context_revision!==old?.revision))throw Error('context_profiles');
     if(schema.profileContextsPresent&&old)guards.push(snapshot(profilesQuery,[String(old.target_enrollment_id)],storedProfiles,profileColumns));
     const profileMetadata=()=>storedProfiles.length?{profileJobIds:storedProfiles.map(p=>String(p.job_id))}:{};
@@ -178,7 +192,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
       return answer({saved:true,refreshRequired:true});
     }
     if(!liveMemoryEnabled(env,actor.userId)||!memoryDerivationEnabled(env,actor.userId))return answer({error:'memory_disabled'},403);
-    const selected=await readScope(native?null:request,env,actor,projectId,documentId,nativeScope);if(selected instanceof Response)return selected;
+    const selected=preparedTarget??await readScope(native?null:request,env,actor,projectId,documentId,nativeScope);if(selected instanceof Response)return selected;
     const target=selected.parent;
     if(target.recall_enabled!==1)throw Error('context_consent');
     guards.push(...selected.guards,liveMemoryEnrollmentGuard(target,'recall'));

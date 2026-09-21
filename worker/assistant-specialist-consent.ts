@@ -560,15 +560,19 @@ async function retainRaw(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTask
     // from final interpretation so decoding/publication failures remain recoverable.
     const content=await preparePrivateContent(env,actor.principal.userId,'provider-response',serialized,retained.binding.scope??undefined,undefined,proof);
     const precommit=semanticAssistantMemoryStatements(env,memory),publications=publish(content),publicationOffset=precommit.length+content.statements.length;
-    const statements=[...precommit,...content.statements,...publications,
-      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('assistant_raw_receipt_not_retained') END AS verified"),
-      rawReadStatement(env,actor,task,retained)];
+    // D1 meta.changes includes retention/inverse trigger writes. Verify each
+    // direct publication with SQLite changes() in the same transaction instead
+    // of rejecting a successful write merely because its privacy trigger ran.
+    const publicationStatements=publications.flatMap(statement=>[statement,
+      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('assistant_raw_receipt_not_retained') END AS verified")]);
+    const statements=[...precommit,...content.statements,...publicationStatements,rawReadStatement(env,actor,task,retained)];
     if(env.DB!==db)fail('assistant_provider_receipt_unavailable');
     const rows=structuredClone(await db.batch<Record<string,unknown>>(statements));
+    const verifiedIndices=[...precommit.map((_,index)=>index),...publications.map((_,index)=>publicationOffset+index*2+1)];
     if(env.DB!==db||!Array.isArray(rows)||rows.length!==statements.length||!Array.from(rows).every(row=>row&&row.success===true&&(!('error' in row)||row.error===undefined)&&Array.isArray(row.results))
-      ||[...precommit.map((_,index)=>index),statements.length-2].some(index=>rows[index]!.results.length!==1||Array.isArray(rows[index]!.results[0])||Object.keys(rows[index]!.results[0]!).join(',')!=='verified'||rows[index]!.results[0]!.verified!==1)
+      ||verifiedIndices.some(index=>rows[index]!.results.length!==1||Array.isArray(rows[index]!.results[0])||Object.keys(rows[index]!.results[0]!).join(',')!=='verified'||rows[index]!.results[0]!.verified!==1)
       ||Array.from({length:content.requiredInserts},(_,index)=>index+precommit.length).some(index=>rows[index]!.meta?.changes!==1)
-      ||publications.some((_,index)=>rows[publicationOffset+index]!.meta?.changes!==1)
+      ||publications.some((_,index)=>{const row=rows[publicationOffset+index*2]!;return row.results.length!==0||!Number.isSafeInteger(row.meta?.changes)||Number(row.meta?.changes)<1;})
       ||rows.at(-1)!.results.length!==1)fail('assistant_provider_receipt_unavailable');
     const saved=rows.at(-1)!.results[0] as RawRead;
     if(saved.content_id!==content.contentId||saved.content!==serialized)fail('assistant_provider_receipt_unavailable');
@@ -1245,6 +1249,15 @@ async function purchasePreparation(request:Request,env:WorkerEnv,actor:Specialis
   if(reasons.length)fail(reasons[0]!);if(!env.OPENAI_API_KEY)fail("assistant_provider_unavailable");
   const consentGuard=consentProof(retained),turnGuard=turnProof(retained.binding,retained.request,true),conversationGuard=conversationProof(retained.binding,retained.request);
   const proof=join(consentGuard,turnGuard,conversationGuard,source.sourceProof,...(continued?[nonPilotExecutionGuard(actor.principal.userId,actorScope(actor)?.organizationId??null)]:[]));
+  if(retained.request.memory){
+    // Every Memory caller immediately places this exact proof in its native
+    // claim, task CAS or dispatch transaction (and passes authority as a required
+    // dispatch assertion). Compile here; do not spend a separate earlier read
+    // whose positive result could not authorize the later mutation anyway.
+    // This does not renew the source lease or omit any consuming SQL predicate.
+    if(handoff)purchaseSourceCurrent(env,retained,handoff);
+    return {...source,proof,handoff,authority};
+  }
   const selected=env.DB.prepare("SELECT 1 AS current WHERE "+proof.sql).bind(...proof.bindings);
   const checked=authority?await env.DB.batch<Record<string,unknown>>([
     env.DB.prepare(`SELECT CASE WHEN (${authority.sql}) THEN 1 ELSE json('assistant_authorization_changed') END AS verified`).bind(...authority.bindings),selected,
