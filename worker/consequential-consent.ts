@@ -1,6 +1,6 @@
 import { executionAdmissionGuard } from "./intake-authority.ts";
 export { executionAdmissionGuard };
-import { claimCostBudgetReservation, prepareBudgetReservation, prepareCostBudgetReservation, prepareCostBudgetClaim, preparePrivateContent, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, settleSpecialistBudgetPair, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
+import { claimCostBudgetReservation, prepareProjectBudgetObservation, prepareBudgetReservation, prepareCostBudgetReservation, prepareCostBudgetClaim, preparePrivateContent, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, settleSpecialistBudgetPair, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { uuidV7, type WorkerEnv } from "./runtime.ts";
 
 export type ExecutionStepLimit={name:string;provider:string;model:string;inputTokens:number;outputTokens:number;maximumMicrousd:number;toolCalls:number};
@@ -179,8 +179,9 @@ function consequentialReservationGuard(userId:string,binding:ConsequentialBindin
 async function reserveNativeSpecialistPair(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,index:number,hash:string,source:BudgetReservationGuard){
   const db=env.DB,step=binding.steps[index]!,tokenId=`${id}:tokens:${index}`,costId=`${id}:usd:${index}`;
   const quoted=consequentialReservationGuard(user.userId,binding,id,index,hash,'quoted'),reserved=consequentialReservationGuard(user.userId,binding,id,index,hash);
+  const policy=binding.scope?await prepareProjectBudgetObservation(env,user.userId,binding.scope):undefined;
   const context={batchCounterInitialization:true,streamId:binding.streamId,correlationId:id,operation:`${binding.operation}:${step.name}:${step.model}`,period:binding.period,
-    reservationGuard:reserved,...(binding.scope?{projectScope:binding.scope}:{})};
+    reservationGuard:reserved,...(binding.scope?{projectScope:binding.scope,projectBudgetObservation:policy}:{})};
   const token=await prepareBudgetReservation(env,user.userId,step.inputTokens+step.outputTokens,{...context,reservationId:tokenId});
   if(!token.ok)throw Error('context_token_budget_unavailable');
   const cost=await prepareCostBudgetReservation(env,user.userId,step.maximumMicrousd,{...context,reservationId:costId,maximumMicrousd:step.maximumMicrousd,allowUserOverage:false});

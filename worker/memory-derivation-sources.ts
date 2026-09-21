@@ -15,7 +15,7 @@ import { decodeRetainedSpecialistConsent, paidMemoryBatchProof, type PaidMemoryA
 import { liveMemorySourceQueryParts } from "./memory-live-sources.ts";
 import { liveMemoryLifetimeProjection, liveMemorySourceDeadline } from "./memory-live-source-lifetime.ts";
 import { captureNativeMemoryTurnExclusions, nativeMemoryTurnExclusionInputs } from "./memory-native-boundary.ts";
-import { observeNativeMemoryDocumentScope, nativeMemoryDocumentIdentity, nativeMemoryArtifactIdentity, type NativeMemoryDocumentScope } from "./memory-native-scope.ts";
+import { observeNativeMemoryDocumentScope, prepareNativeMemoryDocumentScopeObservation, nativeMemoryDocumentIdentity, nativeMemoryArtifactIdentity, type NativeMemoryDocumentScope } from "./memory-native-scope.ts";
 import { memoryCanonical, type MemorySqlGuard } from "./memory-sql.ts";
 import { derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from "./memory-derivation-policy.ts";
 import { derivationResults, derivationVerified } from "./memory-derivation-store.ts";
@@ -130,7 +130,7 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
     // jobs need explicit processing-window progress before any partial result.
     if (pairs.length > 64 || sizes.some(row => Number(row.user_bytes) > 16384 || Number(row.answer_bytes) > 16384)
       || sizes.reduce((sum, row) => sum + Number(row.user_bytes) + Number(row.answer_bytes) + Number(row.event_bytes), 0) > 524288) return capacity();
-    const rows = await read({ sql: `SELECT event.event_id,event.sequence,event.type,event.recorded_at,json_extract(event.payload,'$.block_id') AS block_id,
+    const sourceQuery = { sql: `SELECT event.event_id,event.sequence,event.type,event.recorded_at,json_extract(event.payload,'$.block_id') AS block_id,
       turn.turn_id,authored.content_id AS user_ref,answer.content_id AS answer_ref,authored.content AS user_text,answer.content AS assistant_text,
       ${originalEvent("event")} AS event_json,
       CASE WHEN turn.turn_id IS NULL THEN NULL ELSE json_array(turn.actor_user_id,turn.scope_key,turn.turn_id,turn.organization_id,turn.project_access_id,
@@ -143,13 +143,24 @@ async function captureNativeDerivationWindow(env: WorkerEnv, lease: NativeDeriva
           AND json_extract(measured.value,'$.user_bytes')=length(CAST(COALESCE(authored.content,'') AS BLOB))
           AND json_extract(measured.value,'$.answer_bytes')=length(CAST(COALESCE(answer.content,'') AS BLOB))
           AND json_extract(measured.value,'$.event_bytes')=length(CAST(event.payload AS BLOB)))
-      ORDER BY event.sequence,event.event_id LIMIT 129`, bindings: [...bindings, JSON.stringify(sizes)] });
+      ORDER BY event.sequence,event.event_id LIMIT 129`, bindings: [...bindings, JSON.stringify(sizes)] };
+    const scopeRead=parentScope?null:prepareNativeMemoryDocumentScopeObservation(env,{principal:a.principal,binding:a.binding},e,witness);
+    if(!parentScope&&!scopeRead)return unavailable();
+    // Scope metadata and bounded source hydration share one native snapshot.
+    // Admission has already been replayed above, and both complete observed
+    // results remain in the exact final source witness.
+    const sourceStatement=db.prepare(sourceQuery.sql).bind(...sourceQuery.bindings);
+    const sourceReads=structuredClone(await db.batch<Row>([sourceStatement,...(scopeRead?[scopeRead.statement]:[])]));
+    if(env.DB!==db||!derivationResults(sourceReads,scopeRead?2:1))return unavailable();
+    nativeDerivationEvidenceInputs(env,lease);
+    witness.observe([sourceStatement],[sourceReads[0]!],[sourceQuery]);
+    const rows=sourceReads[0]!.results;
+    const scope=parentScope?nativeMemoryDocumentIdentity(e):scopeRead!.accept(sourceReads[1]!);
     if (rows.length !== sizes.length || rows.some((row, index) => !derivationExact(row, sourceColumns)
       || row.event_id !== sizes[index]!.event_id || row.sequence !== sizes[index]!.sequence || row.type !== sizes[index]!.type)) return unavailable();
     const conversations = rows.filter(row => row.type === "AssistantReasoned");
     const expected = conversations.map(row => ({ turnId: row.turn_id, userRef: row.user_ref, answerRef: row.answer_ref, sequence: row.sequence }));
     if (expected.some(row => ![row.turnId, row.userRef, row.answerRef].every(derivationId)) || new Set(expected.map(row => row.turnId)).size !== expected.length) return unavailable();
-    const scope = parentScope?nativeMemoryDocumentIdentity(e):await observeNativeMemoryDocumentScope(env, { principal: a.principal, binding: a.binding }, e, witness);
     if(parentScope&&memoryCanonical(parentScope)!==memoryCanonical(scope))return unavailable();
     if (!scope || env.DB !== db) return unavailable();
     const scopeKey = memoryCanonical([scope.partitionKey, scope.documentKey]);

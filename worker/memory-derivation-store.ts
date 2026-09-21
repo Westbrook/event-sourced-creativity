@@ -82,7 +82,17 @@ export function derivationVerified(result: D1Result<Row>): boolean {
   return result.results.length === 1 && derivationExact(result.results[0], ["verified"]) && result.results[0].verified === 1;
 }
 export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; recoveryPresent: boolean; resultsPresent: boolean; userControlsPresent: boolean; completionPresent: boolean; lifecyclePresent: boolean; splitPresent: boolean; historyPresent: boolean; producersPresent: boolean; indexPresent: boolean; relationsPresent: boolean; reusePresent: boolean; observationControlsPresent: boolean; contextsPresent: boolean; consumersPresent: boolean; consumerSourcesPresent: boolean; consumerParentsPresent: boolean; assetsPresent: boolean; guard: MemorySqlGuard }> {
-  const db = env.DB, result = structuredClone(await db.prepare(`SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${family} ORDER BY name,type LIMIT ${maximumSchemaRows + 1}`).all<Row>());
+  const prepared=prepareMemoryDerivationSchemaRead(env);
+  return prepared.accept(await prepared.statement.all<Row>());
+}
+
+/** Prepare schema metadata for a bounded native read bundle. The returned
+ * qualification still includes the exact schema predicate, which each consumer
+ * must replay before reading/disclosing source or committing a write. */
+export function prepareMemoryDerivationSchemaRead(env:WorkerEnv) {
+  const db=env.DB,statement=db.prepare(`SELECT name,sql,tbl_name AS 'table',type FROM sqlite_schema WHERE ${family} ORDER BY name,type LIMIT ${maximumSchemaRows + 1}`);
+  const accept=async(observed:D1Result<Row>):Promise<{ present: boolean; jobsPresent: boolean; financePresent: boolean; recoveryPresent: boolean; resultsPresent: boolean; userControlsPresent: boolean; completionPresent: boolean; lifecyclePresent: boolean; splitPresent: boolean; historyPresent: boolean; producersPresent: boolean; indexPresent: boolean; relationsPresent: boolean; reusePresent: boolean; observationControlsPresent: boolean; contextsPresent: boolean; consumersPresent: boolean; consumerSourcesPresent: boolean; consumerParentsPresent: boolean; assetsPresent: boolean; guard: MemorySqlGuard }>=>{
+  const result=structuredClone(observed);
   if (env.DB !== db || !derivationResults([result], 1) || result.results.length > maximumSchemaRows) fail();
   const rows = result.results;
   if (rows.some(row => !derivationExact(row, ["name", "sql", "table", "type"]) || !derivationId(row.name) || !derivationId(row.table)
@@ -103,6 +113,8 @@ export async function memoryDerivationSchema(env: WorkerEnv): Promise<{ present:
   if (installed[1] && !installed[0] || installed[2] && !installed[1] || installed[3] && !installed[2] || installed[4] && !installed[2] || installed[5] && !installed[4] || installed[6] && !installed[5] || installed[7] && !installed[4] || installed[8] && !installed[6] || installed[9] && !installed[6] || installed[10] && (!installed[8] || !installed[9]) || installed[11] && !installed[4] || installed[12] && !installed[4] || installed[13] && !installed[4] || installed[14] && !installed[5] || installed[15] && !installed[4] || installed[16] && !installed[15] || installed[17] && !installed[16] || installed[18] && !installed[17] || installed[19] && !installed[18] || installed[20] && !installed[15] || installed[21] && !installed[15] || env.DB !== db) fail();
   return { present: installed[0]!, jobsPresent: installed[1]!, financePresent: installed[2]!, recoveryPresent: installed[3]!, resultsPresent: installed[4]!, userControlsPresent: installed[5]!, completionPresent: installed[6]!, lifecyclePresent: installed[7]!, splitPresent: installed[8]!, historyPresent: installed[9]!, producersPresent: installed[10]!, indexPresent: installed[11]!, relationsPresent: installed[12]!, reusePresent: installed[13]!, observationControlsPresent: installed[14]!, contextsPresent: installed[15]!, consumersPresent: installed[16]!, consumerSourcesPresent: installed[17]!, consumerParentsPresent: installed[18]!, assetsPresent: installed[19]!, guard: { condition: `${snapshot}=? AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema)${splitInstalled ? ' AND NOT EXISTS(SELECT 1 FROM memory_derivation_split_commands)' : ''}`,
     bindings: [JSON.stringify(rows.map(row => ({ name: row.name, sql: row.sql, table: row.table, type: row.type })))] } };
+  };
+  return {statement,accept};
 }
 export function memoryDerivationBinding(env: WorkerEnv) {
   const sourceSha256 = env.FORMA_MEMORY_DERIVATION_SOURCE_SHA256, origin = env.FORMA_MEMORY_DERIVATION_ORIGIN,

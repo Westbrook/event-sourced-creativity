@@ -11,7 +11,7 @@ not close an end-to-end consumer.
 
 | Workstream | Implemented foundation | Work required before closing it |
 | --- | --- | --- |
-| Assistant and Chat Studio consumption | Actual consent-bound specialist and embedded Chat guidance prompts; bounded follow-up ancestry; historical readers, source/target replay and withdrawal/erasure; private historical text-edit review and explicitly accepted exact-field authoring with native Undo/Redo; browser privacy coverage | Finished creative-output/live-preview integration and independently authorized reuse; conservative whole-invocation capacity and broader latency/freshness qualification. Read-only guidance is not the legacy creative-edit/live-preview consumer. |
+| Assistant and Chat Studio consumption | Actual consent-bound specialist and embedded Chat guidance prompts; bounded follow-up ancestry; historical readers, source/target replay and withdrawal/erasure; private historical text-edit review and explicitly accepted exact-field authoring with native Undo/Redo; browser privacy coverage | Finished creative-output/live-preview integration and independently authorized reuse; broader latency/freshness and whole-system capacity qualification. The existing local invocation now meets its conservative 50-call target. Read-only guidance is not the legacy creative-edit/live-preview consumer. |
 | Exact-field autocomplete | Native versioned block history and exact-field saved suggestion endpoint; actual localized Document text editor; cancellable byte/deadline-limited reads, IME/keyboard/draft protection, explicit accept/dismiss and native Undo; fresh exact-field generation through separate cost and publication review; [pre-authorized background plain-text proposals](forma-memory-background-fields-2026-09-21.md) through qualified consent, native jobs and exact inline application; non-destructive assisted ancestry through later edits | Independently authorized source reuse; broader field/resource coverage and integrated freshness qualification. Native background production is implemented; hosted schedule registration and real recipe qualification remain separate external gates. |
 | Unified evolving profile | Qualified derivation, rolling original-backed windows, private controls, paginated retained profile and a separately qualified original-backed semantic revision/contradiction recipe with lifecycle-bound quotation anchors | Scope-specific promotion with independent support; broader consumer integration and integrated lifecycle/freshness qualification. Consolidation remains source-bounded and relationships remain tentative, never an automatic overwrite of user corrections. |
 | Complete native resource/zoom coverage | Document/page/block identities and inspection; artifact revisions; owner-qualified same/cross-owner nesting with independent permissions; explicitly consented organization recall across independently authorized project owners; certified approved-copy outcomes | Library/Canvas resource identity and history, remaining unsupported block histories and original-source recall across reuse relationships. Nesting must not grant access. |
@@ -281,3 +281,10 @@ image generation keep their separate authorization paths. This closes creation
 review/application and the corresponding created-block history gap, not the
 remaining private image/output, independent reuse, Library/Canvas, promotion or
 integrated qualification rows above.
+
+
+[Bounded metadata and atomic dispatch](forma-memory-native-capacity-2026-09-20.md#bounded-native-metadata-and-atomic-dispatch--2026-09-21)
+now meet the existing synthetic whole-execution target at48 personal/50 shared
+native calls, preserving exact current source, policy, authority and receipt
+checks. This closes that measured local capacity defect, not hosted qualification
+or the other consumer/resource/lifecycle implementation rows above.

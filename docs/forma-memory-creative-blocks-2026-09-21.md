@@ -48,12 +48,13 @@ creation and its exact lifecycle history.
   339/340: its one navigation-history failure is reproduced with the unchanged
   pre-change Store and test file.
 - Broader Assistant panel checks retain the baseline failure set: 55 failures on
-  the final run, all within the 56 failures reproduced with the pre-change panel.
+  the final run, exactly matching the 55 failures reproduced with the pre-change panel.
   These are not claimed fixed or waived by the Memory checks.
 - TypeScript and changed-file lint pass. `assistant-api.ts` retains its same 28
   baseline diagnostics; the native runtime test retains its same 16 diagnostics.
   The production build passes with its existing large-chunk warnings.
-- A full native runtime run is in progress and is not yet claimed as passed.
+- Full native runtime regression at `9f6b67df`: **2,304/2,304 pass**, zero failures
+  in 1,173.3 seconds. Later native read-batching changes are tested separately.
 
 All provider transports and data used here are synthetic. No migration, provider
 spend, real-user enrollment, push, deployment or hosted schedule was performed.

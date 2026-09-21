@@ -1,6 +1,7 @@
+import { PRINCIPAL_WITH_ACCESS_SQL } from './access-policy.ts';
 import { nativeDerivationResultRowSql,nativeDerivationStoredRow,type NativeDerivationStoredRow } from './memory-derivation-result-row.ts';
 import { memoryCanonical, type MemorySqlGuard } from "./memory-sql.ts";
-import { liveMemoryAuthority, liveMemoryEnrollmentGuard, type LiveMemoryAuthority, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
+import { liveMemoryAuthority, liveMemoryAuthorityFromPrincipal, decodeLiveMemoryPrincipal, liveMemoryEnrollmentGuard, type LiveMemoryAuthority, type LiveMemoryEnrollment } from "./memory-live-authority.ts";
 import { DERIVATION_JOB_COLUMNS, DERIVATION_JOB_SOURCE_COLUMNS } from "./memory-derivation-job-schema.ts";
 import { DERIVATION_GRANT_COLUMNS, derivationAssertion, derivationChanged, derivationResults, derivationVerified,
   derivationRowGuard, derivationQualificationGuard, memoryDerivationBinding, memoryDerivationEnabled, memoryDerivationSchema,
@@ -148,8 +149,9 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
   // predicate is still replayed in the final transaction below.
   const observed=mode==='read'?structuredClone(await db.batch<Row>([
     db.prepare(jobQuery).bind(jobId),db.prepare(referenceQuery).bind(jobId),db.prepare(grantQuery).bind(jobId,readActorId!),
+    db.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(readActorId!),
   ])):null;
-  if(observed&&(env.DB!==db||configured!==configuration(env)||!derivationResults(observed,3)))fail();
+  if(observed&&(env.DB!==db||configured!==configuration(env)||!derivationResults(observed,4)))fail();
   const jobs = observed ? observed[0]!.results : await read(jobQuery, [jobId]);
   if (jobs.length !== 1) return null;
   const {chat_studio:chat,...job}=jobs[0]!;
@@ -186,7 +188,12 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
   if(env.DB!==db||configured!==configuration(env))fail();
   if (!qualification || ['memory-profile-consolidation-v1','memory-field-suggestions-v1'].includes(qualification.terms.recipeVersion)&&(!schema.userControlsPresent||!schema.lifecyclePresent) || ['memory-derivation-candidates-v2','memory-field-suggestions-v1'].includes(qualification.terms.recipeVersion)&&(!schema.observationControlsPresent||!schema.lifecyclePresent) || qualification.row.terms_sha256 !== grant.terms_sha256 || qualification.terms.purpose !== grant.purpose
     || qualification.terms.monthlyCapMicroUsd !== grant.monthly_cap_microusd) return null;
-  const authority = await liveMemoryAuthority(env, e);
+  // The principal row was observed with the job's metadata, not reused from a
+  // browser or prior request. Its exact authority guard still runs before the
+  // result-body SELECT and in every subsequent source/publication transaction.
+  if(observed&&observed[3]!.results.length!==1)return null;
+  const authority = observed ? liveMemoryAuthorityFromPrincipal(env,e,await decodeLiveMemoryPrincipal(e.actor_user_id,observed[3]!.results[0]!))
+    : await liveMemoryAuthority(env, e);
   if (!authority) return null;
   const authorityAt = Date.now(), grantDeadline = nativeMemoryGrantDeadline(authority.principal, authorityAt);
   if (grantDeadline === undefined) return null;

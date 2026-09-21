@@ -62,6 +62,31 @@ export async function nativePrivateContentCleanupExclusion(env: WorkerEnv): Prom
   return structuredClone(result);
 }
 
+/** First governed content preparation may observe retention metadata beside
+ * the request-local negative boundary. Only the exclusion SQL is reusable;
+ * retention remains a fresh observation whose version is checked by INSERT. */
+export async function readNativePrivateContentPreparation(env:WorkerEnv,organizationId:string) {
+  const local=cleanupReads.get(env);
+  if(!local||local.result)return null;
+  const db=env.DB;if(db!==local.db)throw Error('memory_boundary_database_changed');
+  const captured=db.batch<Record<string,unknown>>([...nativeMemorySchemaReads(db),
+    db.prepare('SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?').bind(organizationId),
+  ]).then(raw=>{
+    const rows=structuredClone(raw);
+    if(env.DB!==db)throw Error('memory_boundary_database_changed');
+    if(!Array.isArray(rows)||rows.length!==4||Array.from(rows).some(row=>!row||row.success!==true||('error' in row&&row.error!==undefined)||!Array.isArray(row.results)))throw Error('memory_boundary_schema_unavailable');
+    const policy=rows[3]!.results;
+    if(policy.length>1||policy.length===1&&(!policy[0]||Array.isArray(policy[0])||Object.keys(policy[0]).sort().join(',')!=='evidence_days,transient_days,version'
+      ||!Object.values(policy[0]).every(value=>typeof value==='number'&&Number.isSafeInteger(value))))throw Error('private_content_retention_unavailable');
+    return rows;
+  });
+  local.result=captured.then(rows=>qualifyNativeMemoryAnswerExclusion(env,db,'private_content',undefined,rows.slice(0,3)));
+  const settled=local.result.then(value=>({status:'fulfilled',value}) as const,reason=>({status:'rejected',reason}) as const);
+  const [rows,cleanup]=await Promise.all([captured,settled]);
+  if(env.DB!==db)throw Error('memory_boundary_database_changed');
+  return {policy:(rows[3]!.results[0]??null) as {transient_days:number;evidence_days:number;version:number}|null,cleanup};
+}
+
 declare const nativeTurnExclusionsBrand: unique symbol;
 export type NativeMemoryTurnExclusions = Readonly<{[nativeTurnExclusionsBrand]:true}>;
 const turnExclusions=new WeakMap<NativeMemoryTurnExclusions,{env:WorkerEnv;db:WorkerEnv['DB'];guards:BudgetReservationGuard[]}>();
@@ -71,7 +96,8 @@ const requestTurnExclusions=new WeakMap<WorkerEnv,{db:WorkerEnv['DB'];capture?:P
  * the exact catalog and current negative-origin predicates. A schema change
  * fails closed for this operation; a new request captures the new catalog. */
 export function nativeMemoryTurnInspectionEnvironment(env:WorkerEnv):WorkerEnv {
- const local={...env};requestTurnExclusions.set(local,{db:env.DB});return local;
+ const local=nativePrivateContentCleanupEnvironment(env);
+ requestTurnExclusions.set(local,{db:env.DB});return local;
 }
 /** One request-local native schema observation covers the closed turn aliases.
  * These are exclusions only. Every returned predicate still checks exact schema

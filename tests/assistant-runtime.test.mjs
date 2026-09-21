@@ -16779,7 +16779,7 @@ for(const shared of [false,true])test('semantic assistant consumer: native paid 
  const response=await specialistProtocolRequest(state,{action:'quote',turnId:turn.id,memory:'saved'},options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  t.diagnostic(JSON.stringify({semanticQuoteOperations:counter.read(),...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
- assert.ok(counter.read()<=(shared?52:50),'Native quote round-trip regression ceiling, not hosted capacity qualification');
+ assert.ok(counter.read()<=(shared?45:44),'Native quote round-trip regression ceiling, not hosted capacity qualification');
  assert.ok(body.quote?.privateInput.providerRequest);
  const consent=state.sqlite.prepare("SELECT content FROM private_content WHERE kind='execution-consent' ORDER BY created_at DESC LIMIT 1").get();
  const request=JSON.parse(consent.content).binding.request;
@@ -16811,10 +16811,10 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  // interval is a stable invocation measurement; phase counts are diagnostic.
  const combinedExecuteOperations=executeOperations+counter.read();
  t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),combinedExecuteOperations,...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
- assert.ok(combinedExecuteOperations<=(shared?64:60),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
+ assert.ok(combinedExecuteOperations<=(shared?50:48),'Synthetic native round-trip ceiling; not hosted capacity qualification');counter.reset();
  const response=await specialistRetrieve(state,review,options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
- t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=(shared?33:35));
+ t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=(shared?27:29));
  assert.equal(calls.length,1,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  assert.equal(body.result?.sourceStatus,'semantic-memory-assisted',JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  assert.equal(body.materializationPending,false,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
@@ -18999,4 +18999,93 @@ for(const shared of [false,true])test('authored Memory creation downstream: crea
   if(index===0){for(const blockId of [state.authoredBlock,JSON.parse(created.payload).block_id]){const removed=await state.request('/api/events',json({action:'append',event:{type:'BlockRemoved',payload:{project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:blockId}}},state.owner));assert.equal(removed.status,200,await removed.clone().text());}}
  }
  assert.equal(requests.length,2);assert.equal(state.providerCalls(),1,'No retired Memory provider work is repeated');
+});
+
+for(const shared of [false,true])for(const phase of ['context','target','source','principal','hierarchy'])for(const fault of ['missing','failed','extra','late-access'])test('Memory read bundle: '+shared+'/'+phase+'/'+fault+' cannot mint disclosure',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),db=state.env.DB,batch=db.batch;let hit=false;
+ const matches=statements=>phase==='context'?statements.length===2&&statements.some(s=>s.sql.startsWith('SELECT c.target_enrollment_id'))
+  :phase==='target'?statements.length===2&&statements.some(s=>s.sql.startsWith('SELECT enrollment_id,actor_user_id'))&&statements.some(s=>s.sql.includes(' AS declaration,'))
+  :phase==='source'?statements.length===2&&statements.some(s=>s.sql.startsWith('SELECT event.event_id,event.sequence,event.type,event.recorded_at,json_extract'))&&statements.some(s=>s.sql.includes(' AS declaration,'))
+  :phase==='principal'?statements.length===4&&statements.some(s=>s.sql===PRINCIPAL_WITH_ACCESS_SQL)
+  :statements.length===4&&statements[0].sql.includes("name LIKE 'project_containment%'");
+ db.batch=async statements=>{
+  const selected=!hit&&matches(statements),rows=await batch.call(db,statements);if(!selected)return rows;hit=true;
+  if(fault==='missing')return rows.slice(0,-1);
+  if(fault==='failed')return rows.map((row,index)=>index===rows.length-1?{...row,success:false}:row);
+  if(fault==='extra')return [...rows,rows[0]];
+  state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run(state.current().actor_user_id);return rows;
+ };t.after(()=>{db.batch=batch;});
+ const before=adaptiveReentryFinancialState(state),calls=state.calls.length,response=await state.semanticQuote();
+ assert.equal(hit,true,phase+' was not exercised');assert.notEqual(response.response.status,200,JSON.stringify(response.body));
+ assert.equal(state.calls.length,calls);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_consumers').get().n,0);
+});
+
+for(const fault of ['copy','environment','actor','scope','period','non-atomic','wall-clock','monotonic'])test('Memory budget observation: '+fault+' is not reusable reservation authority',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared:true}),policy=await import('../worker/pilot-policy.ts'),e=state.current();
+ const scope={organizationId:e.organization_id,projectAccessId:e.project_access_id,actorUserId:e.actor_user_id};
+ const observation=await policy.prepareProjectBudgetObservation(state.env,e.actor_user_id,scope),before=adaptiveReentryFinancialState(state);
+ const options={batchCounterInitialization:true,projectScope:scope,projectBudgetObservation:observation,period:new Date().toISOString().slice(0,7)};
+ let env=state.env,actor=e.actor_user_id;
+ if(fault==='copy')options.projectBudgetObservation={};
+ if(fault==='environment')env={...state.env};
+ if(fault==='actor')actor='different-actor';
+ if(fault==='scope')options.projectScope={...scope,projectAccessId:'different-project-access'};
+ if(fault==='period')options.period='2000-01';
+ if(fault==='non-atomic')options.batchCounterInitialization=false;
+ if(fault==='wall-clock')t.mock.timers.enable({apis:['Date'],now:Date.now()-1000});
+ if(fault==='monotonic'){const elapsed=performance.now()+31000;t.mock.method(performance,'now',()=>elapsed);}
+ await assert.rejects(policy.prepareBudgetReservation(env,actor,100,options),/project_budget_observation_unavailable/);
+ await assert.rejects(policy.prepareCostBudgetReservation(env,actor,100,{...options,maximumMicrousd:100,allowUserOverage:false}),/project_budget_observation_unavailable/);
+ assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+for(const field of ['token_limit','microusd_limit'])test('Memory budget observation: late '+field+' rolls back both ledgers',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared:true}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));const db=state.env.DB,batch=db.batch,original=globalThis.fetch;let hit=false,calls=0;
+ db.batch=async statements=>{if(!hit&&statements.some(s=>s.sql.startsWith('INSERT OR IGNORE INTO budget_reservations'))&&statements.some(s=>s.sql.startsWith('INSERT OR IGNORE INTO cost_budget_reservations'))){hit=true;state.sqlite.prepare('UPDATE budget_scope_policies SET '+field+'='+field+'+1 WHERE organization_id=?').run(state.current().organization_id);}return batch.call(db,statements);};
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{db.batch=batch;globalThis.fetch=original;});
+ await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();assert.equal(hit,true);assert.equal(calls,0);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM budget_reservations WHERE reservation_id=?').get(review.executionId+':tokens:0').n,0);
+ assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM cost_budget_reservations WHERE reservation_id=?').get(review.executionId+':usd:0').n,0);
+});
+
+for(const fault of ['none','missing','failed','extra','sparse','nested','string'])test('Memory idle retention: bounded empty snapshot '+fault,async t=>{
+ const state=await fixture();await state.drainBackground();const runtime=await import('../worker/runtime.ts'),db=state.env.DB,prepare=db.prepare;let hit=false;
+ db.prepare=sql=>{const statement=prepare.call(db,sql);if(!sql.includes('AS retention_idle'))return statement;
+  const wrap=raw=>new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(key==='all')return async(...args)=>{hit=true;const result=await target.all(...args);assert.equal(result.results[0].retention_idle,1);
+   if(fault==='missing')result.results=[];if(fault==='failed')result.success=false;if(fault==='extra')result.results.push(result.results[0]);
+   if(fault==='sparse')delete result.results[0];if(fault==='nested')result.results[0].unexpected={private:'not authority'};if(fault==='string')result.results[0].retention_idle='1';return result;};return Reflect.get(target,key,target);}});return wrap(statement);};t.after(()=>{db.prepare=prepare;});
+ const before=state.sqlite.prepare('SELECT content_id,content,redacted_at FROM private_content ORDER BY content_id').all();
+ if(fault==='none')assert.equal(await runtime.sweepExpiredPrivateContent(state.env),0);else await assert.rejects(runtime.sweepExpiredPrivateContent(state.env),/retention-cleanup-unavailable/);
+ assert.equal(hit,true);assert.deepEqual(state.sqlite.prepare('SELECT content_id,content,redacted_at FROM private_content ORDER BY content_id').all(),before);
+});
+
+for(const shared of [false,true])for(const fault of ['missing','failed','zero-change','extra-row','skipped-mark','late-access'])test('Memory dispatch marker: '+shared+'/'+fault+' never dispatches without its atomic receipt',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),quoted=await state.semanticQuote();assert.equal(quoted.response.status,200,JSON.stringify(quoted.body));
+ const db=state.env.DB,batch=db.batch,original=globalThis.fetch;let hit=false,calls=0;
+ db.batch=async statements=>{
+  const index=statements.findIndex(s=>s.sql.startsWith('UPDATE assistant_specialist_tasks SET provider_submitted=1'));
+  if(hit||index<0||!statements.some(s=>s.sql.includes(' AS deadline')))return batch.call(db,statements);hit=true;
+  if(fault==='late-access')state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run(state.current().actor_user_id);
+  if(fault==='skipped-mark')statements=statements.map((s,i)=>i===index?db.prepare('UPDATE assistant_specialist_tasks SET provider_submitted=1 WHERE 0'):s);
+  const rows=await batch.call(db,statements);
+  if(fault==='missing')delete rows[index];if(fault==='failed')rows[index].success=false;
+  if(fault==='zero-change')rows[index].meta.changes=0;if(fault==='extra-row')rows[index].results=[{verified:1}];return rows;
+ };
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{db.batch=batch;globalThis.fetch=original;});
+ await specialistExecute(state,quoted.body,state.semanticOptions);await state.drainBackground();assert.equal(hit,true);assert.equal(calls,0);
+ const result=await specialistRetrieve(state,quoted.body,state.semanticOptions);assert.notEqual((await result.json()).result?.sourceStatus,'semantic-memory-assisted');
+});
+
+for(const fault of ['missing','failed','extra','policy-extra-key','policy-string','database'])test('Memory governed preparation: '+fault+' rejects combined metadata',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared:true}),boundary=await import('../worker/memory-native-boundary.ts');
+ const env=boundary.nativeMemoryTurnInspectionEnvironment(state.env),db=env.DB,batch=db.batch;let hit=false;
+ db.batch=async statements=>{const rows=await batch.call(db,statements);if(hit||statements.length!==4||!statements.at(-1).sql.startsWith('SELECT transient_days,evidence_days,version'))return rows;hit=true;
+  if(fault==='missing')return rows.slice(0,-1);if(fault==='failed')rows[0].success=false;if(fault==='extra')rows.push(rows[0]);
+  if(fault==='policy-extra-key')rows[3].results=[{transient_days:1,evidence_days:1,version:1,extra:true}];
+  if(fault==='policy-string')rows[3].results=[{transient_days:'1',evidence_days:1,version:1}];if(fault==='database')env.DB={...db};return rows;
+ };t.after(()=>{db.batch=batch;});
+ await assert.rejects(boundary.readNativePrivateContentPreparation(env,state.current().organization_id),/memory_boundary_|private_content_retention_/);assert.equal(hit,true);
+ await assert.rejects(boundary.nativePrivateContentCleanupExclusion(env),/memory_boundary_|private_content_retention_/);
 });

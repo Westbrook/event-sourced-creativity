@@ -27,11 +27,14 @@ export type LiveMemoryAuthority = { principal:PilotUser; binding:ConsequentialBi
 /** A database identity is not a browser sign-in. Restrictive identity policies fail closed. */
 export async function liveMemoryPrincipal(env:WorkerEnv,id:string):Promise<PilotUser|null> {
   const row=await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(id).first<Record<string,unknown>>();
-  return liveMemoryPrincipalFromRow(id,row);
+  return decodeLiveMemoryPrincipal(id,row);
 }
 
-async function liveMemoryPrincipalFromRow(id:string,row:Record<string,unknown>|null):Promise<PilotUser|null> {
-  if(!row || !["admin","creator","viewer"].includes(String(row.role)) || row.consent_version!==POLICY_VERSION)return null;
+/** Decode a native metadata observation, not a sign-in or access grant. Every
+ * resulting authority includes the exact principal predicates and must be
+ * checked in the consuming native transaction before source hydration. */
+export async function decodeLiveMemoryPrincipal(id:string,row:Record<string,unknown>|null):Promise<PilotUser|null> {
+  if(!row || row.user_id!==id || !["admin","creator","viewer"].includes(String(row.role)) || row.consent_version!==POLICY_VERSION)return null;
   const access=await principalAccessFromRow(row,String(row.role));
   if(access.identityPolicyDeniedCustody)return null;
   return {userId:id,email:String(row.email),displayName:String(row.display_name),role:row.role as PilotUser["role"],
@@ -259,7 +262,7 @@ export function createLiveMemoryMaintenanceAttempt(env:WorkerEnv){
         if(enrollments.length!==1||!maintenanceEnrollment(enrollments[0])||maintenanceEnrollmentKey(enrollments[0])!==key)return{status:"unavailable"};
         const principals=await read({sql:MAINTENANCE_PRINCIPAL_SQL,bindings:[e.actor_user_id]},true);
         if(principals.length!==1||!maintenancePrincipalRow(principals[0]!,e.actor_user_id))return{status:"unavailable"};
-        const row=principals[0]!,principal=row.memory_principal_count===0?null:await liveMemoryPrincipalFromRow(e.actor_user_id,row);
+        const row=principals[0]!,principal=row.memory_principal_count===0?null:await decodeLiveMemoryPrincipal(e.actor_user_id,row);
         // Only validated, successfully captured inputs reach native policy. Null
         // here is either explicit count-zero absence or native consent/custody
         // denial, never a transport/parser fallback. Scope shape was validated.

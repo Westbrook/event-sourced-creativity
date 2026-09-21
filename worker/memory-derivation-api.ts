@@ -4,7 +4,7 @@ export { NATIVE_CONTROL_READ_TIMEOUT_MS as MEMORY_CONTROL_READ_TIMEOUT_MS } from
 import { createMemoryElapsed } from '../src/model/memory-lifetime.ts';
 import { MEMORY_DERIVATION_HEALTH, parseMemoryDerivationHealth } from '../src/model/memory-derivation-health.ts';
 import { readProjectRequestContext, resolveOwnerExecutionScope } from './project-access.ts';
-import { nativeMemoryDocumentIdentity, observeNativeMemoryDocumentScope } from "./memory-native-scope.ts";
+import { nativeMemoryDocumentIdentity, nativeMemoryDocumentScopeQuery, prepareNativeMemoryDocumentScopeObservation } from "./memory-native-scope.ts";
 import { readNativeDerivationResult,nativeDerivationResultInputs,nativeDerivationResultResources,nativeDerivationResultStatements,withdrawNativeDerivationResult } from "./memory-derivation-results.ts";
 import { controlNativeDerivationResult,reviseNativeDerivationUserControl } from "./memory-derivation-user-controls.ts";
 import { DERIVATION_USER_CONTROL_COLUMNS, derivationControlRelation } from "./memory-derivation-user-control-schema.ts";
@@ -104,9 +104,13 @@ export async function readScope(request:Request|null,env:WorkerEnv,actor:PilotUs
   const custody=context?{scope:{organizationId:context.organizationId,projectAccessId:context.projectAccessId,projectId,ownerUserId:context.ownerUserId,actorUserId:actor.userId},denied:false}
     :nativeScope?{scope:nativeScope,denied:false}:await resolveOwnerExecutionScope(env,actor,documentId,projectId,'read');
   if(custody.denied)return deny('context_custody_unavailable',403);
-  const shared=custody.scope,parents=await rows(env,`SELECT ${parentColumns.join(',')} FROM memory_live_enrollments WHERE
-    (actor_user_id,owner_user_id,organization_id,project_access_id,project_id,document_id) IS (?,?,?,?,?,?) LIMIT 2`,
-    [actor.userId,shared?.ownerUserId??actor.userId,shared?.organizationId??null,shared?.projectAccessId??null,projectId,documentId]);
+  const shared=custody.scope,parentQuery=`SELECT ${parentColumns.join(',')} FROM memory_live_enrollments WHERE
+    (actor_user_id,owner_user_id,organization_id,project_access_id,project_id,document_id) IS (?,?,?,?,?,?) LIMIT 2`;
+  const parentBindings=[actor.userId,shared?.ownerUserId??actor.userId,shared?.organizationId??null,shared?.projectAccessId??null,projectId,documentId];
+  const scopeQuery=nativeMemoryDocumentScopeQuery(shared?.ownerUserId??actor.userId,documentId);
+  const observed=structuredClone(await db.batch<Row>([db.prepare(parentQuery).bind(...parentBindings),db.prepare(scopeQuery.sql).bind(...scopeQuery.bindings)]));
+  if(env.DB!==db||!derivationResults(observed,2))throw Error('memory-scope-unavailable');
+  const parents=observed[0]!.results;
   if(parents.length!==1||!derivationExact(parents[0],parentColumns))return deny('memory_derivation_parent_required',409);
   const parent=parents[0] as unknown as LiveMemoryEnrollment;
   if(parent.policy_version!=='personal-memory-v2'||parent.permission_epoch!==actor.access.permissionEpoch||parent.learn_enabled!==1
@@ -116,12 +120,13 @@ export async function readScope(request:Request|null,env:WorkerEnv,actor:PilotUs
   const binding={...authority.binding,contextSessionId:context?.contextId??null},admission=executionAdmissionGuard(actor,binding,null);
   const guards:MemorySqlGuard[]=[{condition:admission.sql,bindings:admission.bindings},authority.guard,liveMemoryEnrollmentGuard(parent,'learn'),
     derivationRowGuard('memory_live_enrollments',parentColumns,parent)];
-  const identity=await observeNativeMemoryDocumentScope(env,{principal:actor,binding},parent,{require:guard=>guards.push({condition:guard.sql,bindings:guard.bindings}),before:deadline=>{if(deadline!==null)guards.push(clock(deadline));},observe:(_statements,results,descriptors)=>{
+  const scopeRead=prepareNativeMemoryDocumentScopeObservation(env,{principal:actor,binding},parent,{require:guard=>guards.push({condition:guard.sql,bindings:guard.bindings}),before:deadline=>{if(deadline!==null)guards.push(clock(deadline));},observe:(_statements,results,descriptors)=>{
     if(descriptors?.length!==1||results.length!==1)throw Error('memory-scope-unavailable');
     const query=descriptors[0]!;
     guards.push({condition:`(SELECT json_group_array(json_array(declaration,lifecycle,custody)) FROM (${query.sql}))=?`,
       bindings:[...query.bindings,JSON.stringify(results[0]!.results.map(row=>[row.declaration,row.lifecycle,row.custody]))]});
   }});
+  const identity=scopeRead?.accept(observed[1]!);
   if(!identity||env.DB!==db)return deny('memory_derivation_scope_unavailable',403);
   return {parent,prepared:{principal:actor,binding,sourceHead:null},guards,accessDeadline:context?.expiresAt??null};
 }

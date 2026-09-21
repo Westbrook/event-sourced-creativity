@@ -1346,7 +1346,8 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
     const current=await purchasePreparation(request,env,currentActor,host,retained,initial.handoff,compiledAuthority);
     const dispatch=join(current.proof,join(taskRetention,lease));
     await beginConsequentialStep(env,currentActor.principal,retained.binding,taskId,0,current.sourceHead,dispatch,{separateSourceProof:true,...(current.authority?{additionalAssertions:[current.authority]}:{})});ownsSubmission=true;
-    const marked=await env.DB.prepare("UPDATE assistant_specialist_tasks SET provider_submitted=1,updated_at=? WHERE task_id=? AND actor_user_id=? AND status='running' AND json_extract(result_json,'$.leaseToken')=?").bind(new Date().toISOString(),taskId,currentActor.principal.userId,leaseToken).run();if(Number(marked.meta.changes??0)!==1)fail("assistant_dispatch_authorization_changed");
+    const submissionMark=env.DB.prepare("UPDATE assistant_specialist_tasks SET provider_submitted=1,updated_at=? WHERE task_id=? AND actor_user_id=? AND status='running' AND json_extract(result_json,'$.leaseToken')=?").bind(new Date().toISOString(),taskId,currentActor.principal.userId,leaseToken);
+    if(!retained.request.memory){const marked=await submissionMark.run();if(Number(marked.meta.changes??0)!==1)fail("assistant_dispatch_authorization_changed");}
     const finalAuthority=executionAdmissionGuard(currentActor.principal,retained.binding,current.sourceHead,true);
     const readyProof=join(current.proof,join(taskRetention,lease,finalAuthority));
     const splitReady=Boolean(retained.request.memory)||6+readyProof.bindings.length>100;
@@ -1360,10 +1361,17 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
         AND ?=strftime('%Y-%m','now') AND ${inlineReady.sql}`)
       .bind(current.sourceRightsValidUntil,retained.binding.contextSessionId,retained.binding.pilotCohortId,taskId,currentActor.principal.userId,retained.binding.period,...inlineReady.bindings);
     const memory=semanticMemory(env,retained.request);
-    const readyStatements=[...(memory?semanticAssistantMemoryStatements(env,memory):[]),...readyChecks,readyStatement];
-    const readyRows=memory||splitReady?structuredClone(await env.DB.batch<Record<string,unknown>>(readyStatements)):null;
-    if(readyRows&&(!Array.isArray(readyRows)||readyRows.length!==readyStatements.length||readyRows.some((row,index)=>!row||row.success!==true||('error' in row&&row.error!==undefined)||!Array.isArray(row.results)
-      ||row.results.length!==1||!row.results[0]||Object.keys(row.results[0]).length!==1||(index<readyRows.length-1?row.results[0].verified!==1:typeof row.results[0].deadline!=='string'))))fail('assistant_dispatch_authorization_changed');
+    const readyProofs=[...(memory?semanticAssistantMemoryStatements(env,memory):[]),...readyChecks];
+    // The Memory dispatch marker and final native authority/source proof share
+    // one transaction. A denied proof or failed marker rolls back that marker;
+    // every proof, mutation and final deadline has its own required receipt.
+    const markIndex=memory?readyProofs.length:-1;
+    const readyStatements=[...readyProofs,...(memory?[submissionMark,
+      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('assistant_dispatch_authorization_changed') END AS verified")]:[]),readyStatement];
+    const readyDb=env.DB,readyRows=memory||splitReady?structuredClone(await readyDb.batch<Record<string,unknown>>(readyStatements)):null;
+    if(env.DB!==readyDb||readyRows&&(!Array.isArray(readyRows)||readyRows.length!==readyStatements.length||Array.from(readyRows).some((row,index)=>!row||row.success!==true||('error' in row&&row.error!==undefined)||!Array.isArray(row.results)
+      ||(index===markIndex?row.results.length!==0||row.meta?.changes!==1
+        :row.results.length!==1||!row.results[0]||Array.isArray(row.results[0])||Object.keys(row.results[0]).length!==1||(index<readyRows.length-1?row.results[0].verified!==1:typeof row.results[0].deadline!=='string')))))fail('assistant_dispatch_authorization_changed');
     const ready=readyRows?readyRows.at(-1)!.results[0] as {deadline:string}:await readyStatement.first<{deadline:string}>();
     if(!ready||!Number.isFinite(Date.parse(ready.deadline))||Date.now()>=Date.parse(ready.deadline)||new Date().toISOString().slice(0,7)!==retained.binding.period||!env.OPENAI_API_KEY||modelEligibility(env,currentActor,host,retained.request.taskKind,retained.binding.steps[0]!.model as AssistantModel,retained.request.explicitModel).length){await assertNoPaidMemory(env,noMemoryProof(retained.request));fail("assistant_dispatch_authorization_changed");}
     const started=Date.now(),remaining=Math.min(60_000,Date.parse(ready.deadline)-started);

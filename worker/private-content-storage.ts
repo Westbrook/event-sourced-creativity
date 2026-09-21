@@ -1,3 +1,4 @@
+import { readNativePrivateContentPreparation } from './memory-native-boundary.ts';
 import { DOCUMENT_JOB_ORIGIN_MANIFEST_LIMITS } from "./memory-document-job-origin-manifest.ts";
 import { intEnv, activeProjectBillingSql } from "./pilot-policy-primitives.ts";
 import { privateContentIdentityAllowed } from "./private-content-identity.ts";
@@ -89,7 +90,9 @@ async function preparePrivateContentInternal(env: WorkerEnv, ownerId: string, ki
   if(identity&&!privateContentIdentityAllowed(kind,identity))throw new Error("private_content_identity_invalid");
   if(projectScope&&projectScope.actorUserId!==ownerId)throw new Error("project_private_content_actor_mismatch");
   assertOutputAdmissionActor(admissionReads,env,ownerId,projectScope?.organizationId??null,projectScope?.projectAccessId??null);
-  const policy=projectScope?await readOutputAdmissionValue(admissionReads,"private-retention-policy",()=>env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
+  const nativePreparation=projectScope&&!admissionReads&&!storyCleanupRead&&!audioCleanupRead&&!privateCleanupRead
+    ?await readNativePrivateContentPreparation(env,projectScope.organizationId):null;
+  const policy=nativePreparation?nativePreparation.policy:projectScope?await readOutputAdmissionValue(admissionReads,"private-retention-policy",()=>env.DB.prepare("SELECT transient_days,evidence_days,version FROM organization_retention_policies WHERE organization_id=?")
     .bind(projectScope.organizationId).first<{transient_days:number;evidence_days:number;version:number}>()):null;
   if ((boundedMemory || boundedExperienceDraft || boundedStageHistory || boundedResultHistory) && env.DB !== preparationDb) throw new Error("private_content_preparation_database_changed");
   const contentId = identity?.contentId ?? uuidV7(); const createdAt = new Date(); const category=privateContentRetentionClass(kind);

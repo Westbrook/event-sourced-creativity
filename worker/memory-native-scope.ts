@@ -43,20 +43,11 @@ export function nativeMemoryArtifactIdentity(input: Parameters<typeof nativeMemo
       'artifact',parent.projectId,parent.documentId,artifactId])});
 }
 
-/** Add a narrow native identity proof to the caller's existing authenticated
- * document/enrollment witness. The caller must still enforce its original
- * principal/session/grant guards and seal/replay that witness before use.
- * No whole-stream head is pinned: an unrelated or own-answer append is not a move. */
-export async function observeNativeMemoryDocumentScope(env: WorkerEnv, prepared: NativeMemoryPreparedDocument,
-  expected: Pick<LiveMemoryEnrollment,"actor_user_id"|"owner_user_id"|"organization_id"|"project_access_id"|"project_id"|"document_id"|"permission_epoch">, observer: NativeMemoryContextObserver): Promise<NativeMemoryDocumentScope | null> {
-  const db = env.DB, original = memoryCanonical({ prepared, expected }), e = structuredClone(expected), identity = nativeMemoryDocumentIdentity(e);
-  const { principal, binding } = prepared;
-  if (!identity || !observer || principal.fictional || principal.userId !== e.actor_user_id || binding.actorUserId !== e.actor_user_id
-    || binding.projectId !== e.project_id || binding.documentId !== e.document_id || binding.streamId !== `creative:${e.owner_user_id}`
-    || principal.access.permissionEpoch !== e.permission_epoch || binding.permissionEpoch !== e.permission_epoch
-    || (binding.scope?.organizationId ?? null) !== e.organization_id || (binding.scope?.projectAccessId ?? null) !== e.project_access_id
-    || (binding.scope?.ownerUserId ?? principal.userId) !== e.owner_user_id) return null;
-  const query = { sql: `SELECT
+/** Identity metadata only, never resource access or permission to read prose.
+ * Consumers must validate it against their own authenticated scope and retain
+ * the exact observation in their final native proof. */
+export function nativeMemoryDocumentScopeQuery(ownerUserId:string,documentId:string) {
+  return { sql: `SELECT
     (SELECT json_object('eventId',created.event_id,'sequence',created.sequence,'projectId',
       COALESCE(json_extract(created.payload,'$.project_id'),created_scope.project_id,
         (SELECT json_extract(previous.payload,'$.project_id') FROM events previous WHERE previous.stream_id=created.stream_id
@@ -73,9 +64,26 @@ export async function observeNativeMemoryDocumentScope(env: WorkerEnv, prepared:
       'projectId',project_id,'ownerUserId',owner_user_id,'visibility',visibility,'actorUserId',actor_user_id))
       FROM (SELECT * FROM project_resource_scopes WHERE owner_user_id=? AND resource_kind='document' AND resource_id=?
         ORDER BY organization_id,project_access_id LIMIT 3)) AS custody`,
-  bindings: [binding.streamId, e.document_id, binding.streamId, e.document_id, e.owner_user_id, e.document_id] };
+  bindings: [`creative:${ownerUserId}`, documentId, `creative:${ownerUserId}`, documentId, ownerUserId, documentId] };
+}
+
+/** Add a narrow native identity proof to the caller's existing authenticated
+ * document/enrollment witness. The caller must still enforce its original
+ * principal/session/grant guards and seal/replay that witness before use.
+ * No whole-stream head is pinned: an unrelated or own-answer append is not a move. */
+export function prepareNativeMemoryDocumentScopeObservation(env: WorkerEnv, prepared: NativeMemoryPreparedDocument,
+  expected: Pick<LiveMemoryEnrollment,"actor_user_id"|"owner_user_id"|"organization_id"|"project_access_id"|"project_id"|"document_id"|"permission_epoch">, observer: NativeMemoryContextObserver) {
+  const db = env.DB, original = memoryCanonical({ prepared, expected }), e = structuredClone(expected), identity = nativeMemoryDocumentIdentity(e);
+  const { principal, binding } = prepared;
+  if (!identity || !observer || principal.fictional || principal.userId !== e.actor_user_id || binding.actorUserId !== e.actor_user_id
+    || binding.projectId !== e.project_id || binding.documentId !== e.document_id || binding.streamId !== `creative:${e.owner_user_id}`
+    || principal.access.permissionEpoch !== e.permission_epoch || binding.permissionEpoch !== e.permission_epoch
+    || (binding.scope?.organizationId ?? null) !== e.organization_id || (binding.scope?.projectAccessId ?? null) !== e.project_access_id
+    || (binding.scope?.ownerUserId ?? principal.userId) !== e.owner_user_id) return null;
+  const query = nativeMemoryDocumentScopeQuery(e.owner_user_id,e.document_id);
   const statement = db.prepare(query.sql).bind(...query.bindings);
-  const result = structuredClone(await statement.all<Record<string, unknown>>());
+  const accept = (observed: D1Result<Record<string, unknown>>): NativeMemoryDocumentScope | null => {
+  const result = structuredClone(observed);
   if (env.DB !== db || memoryCanonical({ prepared, expected }) !== original || result.success !== true || "error" in result && result.error !== undefined
     || !Array.isArray(result.results) || result.results.length !== 1) return null;
   const row = result.results[0];
@@ -94,4 +102,16 @@ export async function observeNativeMemoryDocumentScope(env: WorkerEnv, prepared:
   } catch { return null; }
   observer.observe([statement], [result], [query]);
   return identity;
+  };
+  // Metadata preparation is not an authority token. The caller supplies this
+  // exact statement's result and replays the observer with its own native
+  // permission proof before disclosing or consuming any source.
+  return {statement, query, accept};
+}
+
+export async function observeNativeMemoryDocumentScope(env: WorkerEnv, prepared: NativeMemoryPreparedDocument,
+  expected: Pick<LiveMemoryEnrollment,"actor_user_id"|"owner_user_id"|"organization_id"|"project_access_id"|"project_id"|"document_id"|"permission_epoch">,
+  observer: NativeMemoryContextObserver): Promise<NativeMemoryDocumentScope | null> {
+  const read=prepareNativeMemoryDocumentScopeObservation(env,prepared,expected,observer);
+  return read?read.accept(await read.statement.all<Record<string,unknown>>()):null;
 }

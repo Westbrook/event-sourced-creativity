@@ -654,6 +654,26 @@ export async function sweepExpiredPrivateContent(env: WorkerEnv, limit = 250): P
   const { prepareStructuredConversationRetentionStep } = await import("./memory-live-store.ts");
   const { prepareNativeStructuredOriginRetentionStep } = await import("./memory-native-origin.ts");
   bindingCurrent();
+  // A source-free empty snapshot can finish the common no-work case without
+  // separately preparing four cleanup classes. Any optional structured or
+  // platform schema, dedicated residue, or expired ordinary body falls through
+  // to the original per-class proof/hold/fairness machinery. This path performs
+  // no write, remembers no absence and never authorizes a content read.
+  const idle=structuredClone(await db.prepare(`SELECT CASE WHEN
+    NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE tbl_name IN
+      ('memory_structured_conversation_heads','memory_structured_conversation_revisions',
+       'memory_structured_answer_origins','memory_structured_answer_originals','memory_structured_answer_ledger_revisions',
+       'platform_assistant_private_content'))
+    AND NOT EXISTS(SELECT 1 FROM private_content WHERE kind IN('memory-structured-ledger','memory-structured-origin'))
+    AND NOT EXISTS(SELECT 1 FROM private_content WHERE redacted_at IS NULL AND kind<>'document-artifact' AND expires_at<=?)
+    AND NOT EXISTS(SELECT 1 FROM artifact_revisions WHERE redacted_at IS NULL AND expires_at<=?)
+    AND NOT EXISTS(SELECT 1 FROM events event WHERE event.type='AssistantReasoned' AND CASE WHEN json_valid(event.payload)
+      THEN json_extract(event.payload,'$.memory_origin_version') IS 2 ELSE 0 END)
+    THEN 1 ELSE 0 END AS retention_idle`).bind(now,now).all<Record<string,unknown>>());
+  bindingCurrent();
+  if(!idle||idle.success!==true||('error' in idle&&idle.error!==undefined)||!Array.isArray(idle.results)||idle.results.length!==1
+    ||!idle.results[0]||Array.isArray(idle.results[0])||Object.keys(idle.results[0]).join(',')!=='retention_idle'||![0,1].includes(idle.results[0].retention_idle as number))throw Error('retention-cleanup-unavailable');
+  if(idle.results[0].retention_idle===1)return 0;
   let processed = 0;
   const preparationErrors: unknown[] = [];
   let ledgerUnavailable = false, originUnavailable = false;

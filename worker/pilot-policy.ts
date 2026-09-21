@@ -213,7 +213,7 @@ async function budgetReservationAssertionStatements(env:WorkerEnv,assertions:rea
   const {outputAssertionStatements}=await import("./output-command-core.ts");
   return captured.flatMap(assertion=>outputAssertionStatements(env,assertion));
 }
-type BudgetReservationContext = { batchCounterInitialization?:boolean;outputAdmissionReads?:OutputAdmissionReads;reservationGuard?:BudgetReservationGuard;reservationAssertions?:readonly OutputSqlAssertion[]; streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope };
+type BudgetReservationContext = { projectBudgetObservation?:ProjectBudgetObservation;batchCounterInitialization?:boolean;outputAdmissionReads?:OutputAdmissionReads;reservationGuard?:BudgetReservationGuard;reservationAssertions?:readonly OutputSqlAssertion[]; streamId?: string; correlationId?: string; operation?: string; period?: string; createdAt?: string;reservationId?:string;projectScope?:ProjectBudgetScope };
 
 async function projectBudgetPolicy(env:WorkerEnv,userId:string,scope:ProjectBudgetScope){
   if(!scope.organizationId||!scope.projectAccessId||scope.actorUserId!==userId)return null;
@@ -221,6 +221,29 @@ async function projectBudgetPolicy(env:WorkerEnv,userId:string,scope:ProjectBudg
     WHERE scope='workspace' AND scope_id=? AND organization_id=? AND ${activeProjectBillingSql}`)
     .bind(scope.organizationId,scope.organizationId,userId,userId,scope.projectAccessId,scope.organizationId,userId)
     .first<{token_limit:number;microusd_limit:number}>();
+}
+
+declare const projectBudgetObservationBrand:unique symbol;
+export type ProjectBudgetObservation=Readonly<{[projectBudgetObservationBrand]:true}>;
+const projectBudgetObservations=new WeakMap<ProjectBudgetObservation,{env:WorkerEnv;db:WorkerEnv['DB'];userId:string;scope:string;wall:number;mono:number;period:string;policy:{token_limit:number;microusd_limit:number}|null}>();
+const projectBudgetIdentity=(scope:ProjectBudgetScope)=>JSON.stringify([scope.organizationId,scope.projectAccessId,scope.actorUserId]);
+/** One native policy observation for an atomic two-currency preparation. It is
+ * not allowance or reservation authority: both INSERTs retain current exact
+ * policy/permission predicates in the caller's single checked transaction. */
+export async function prepareProjectBudgetObservation(env:WorkerEnv,userId:string,scope:ProjectBudgetScope):Promise<ProjectBudgetObservation>{
+  const db=env.DB,key=projectBudgetIdentity(scope),wall=Date.now(),mono=performance.now(),observed=await projectBudgetPolicy(env,userId,scope);
+  if(env.DB!==db||scope.actorUserId!==userId||projectBudgetIdentity(scope)!==key
+    ||![wall,mono].every(Number.isFinite)||observed&&(Object.keys(observed).sort().join(',')!=='microusd_limit,token_limit'
+      ||!Object.values(observed).every(value=>Number.isSafeInteger(value)&&value>=0)))throw Error('project_budget_observation_unavailable');
+  const token=Object.freeze({}) as ProjectBudgetObservation;
+  projectBudgetObservations.set(token,{env,db,userId,scope:key,wall,mono,period:new Date(wall).toISOString().slice(0,7),policy:structuredClone(observed)});return token;
+}
+function readProjectBudgetObservation(token:ProjectBudgetObservation,env:WorkerEnv,userId:string,scope:ProjectBudgetScope|undefined,period:string,batch:boolean|undefined,output:OutputAdmissionReads|undefined){
+  const captured=projectBudgetObservations.get(token),wall=Date.now(),mono=performance.now();
+  if(!captured||!scope||batch!==true||output||captured.env!==env||captured.db!==env.DB||captured.userId!==userId
+    ||captured.scope!==projectBudgetIdentity(scope)||captured.period!==period||![wall,mono].every(Number.isFinite)
+    ||new Date(wall).toISOString().slice(0,7)!==period||wall<captured.wall||mono<captured.mono||wall-captured.wall>=30000||mono-captured.mono>=30000)throw Error('project_budget_observation_unavailable');
+  return structuredClone(captured.policy);
 }
 
 /** Avoid conflict INSERTs against retained financial targets. A real missing
@@ -280,7 +303,8 @@ export async function prepareBudgetReservation(env: WorkerEnv, userId: string, t
   const amount = Math.max(0, Math.floor(tokens)); const limits = budgetLimits(env); const reservationPeriod = context.period ?? period();
   const scope=context.projectScope;
   assertOutputAdmissionBudget(context.outputAdmissionReads,env,userId,reservationPeriod,scope);
-  const policy=scope?await readOutputAdmissionValue(context.outputAdmissionReads,"project-budget-policy",()=>projectBudgetPolicy(env,userId,scope)):null;
+  const policy=context.projectBudgetObservation?readProjectBudgetObservation(context.projectBudgetObservation,env,userId,scope,reservationPeriod,context.batchCounterInitialization,context.outputAdmissionReads)
+    :scope?await readOutputAdmissionValue(context.outputAdmissionReads,"project-budget-policy",()=>projectBudgetPolicy(env,userId,scope)):null;
   if(scope&&!policy)return{ok:false as const,scope:"workspace" as const};
   const counterInitialization:Array<ReturnType<WorkerEnv["DB"]["prepare"]>>=[];
   if(context.outputAdmissionReads&&!reservationChecks.length)await initializeOutputAdmissionCounters(env,userId,reservationPeriod,scope,policy,context.outputAdmissionReads);
@@ -879,6 +903,7 @@ export type CostBudgetReservationRow = {
 };
 
 type CostReservationOptions = {
+  projectBudgetObservation?:ProjectBudgetObservation;
   batchCounterInitialization?:boolean;
   outputAdmissionReads?:OutputAdmissionReads;
   reservationGuard?:BudgetReservationGuard;
@@ -953,7 +978,8 @@ export async function prepareCostBudgetReservation(env: WorkerEnv, userId: strin
   if(!allowance.allowed)return{ok:false as const,scope:"authorization" as const};
   const pilot=allowance.pilot;
   const userOverageAllowed=options.allowUserOverage&&!pilot;
-  const policy=scope?await readOutputAdmissionValue(options.outputAdmissionReads,"project-budget-policy",()=>projectBudgetPolicy(env,userId,scope)):null;
+  const policy=options.projectBudgetObservation?readProjectBudgetObservation(options.projectBudgetObservation,env,userId,scope,reservationPeriod,options.batchCounterInitialization,options.outputAdmissionReads)
+    :scope?await readOutputAdmissionValue(options.outputAdmissionReads,"project-budget-policy",()=>projectBudgetPolicy(env,userId,scope)):null;
   if(scope&&!policy)return{ok:false as const,scope:"workspace" as const};
   const workspaceId=scope?.organizationId??"forma";
   let userBefore:Record<string,unknown>|null=null;

@@ -401,6 +401,16 @@ withdrawal preserves authored work and its negative attribution. Shared-project
 Redo now restores a verified creation lifecycle rather than recreating its ID.
 Native, localized control, browser and history checks pass; reproduced pre-change
 panel/navigation test failures remain separately recorded. Full runtime
-verification is in progress. No production activation or enrollment. Remaining
+verification at`9f6b67df` passes2,304/2,304 (before subsequent metadata batching). No production activation or enrollment. Remaining
 native work stays in the completion matrix; external gates are not relabeled as
 implementation completion.
+
+
+## MEM-032 — Native execution capacity and batched metadata
+
+Implemented locally: [bounded metadata and atomic dispatch](forma-memory-native-capacity-2026-09-20.md#bounded-native-metadata-and-atomic-dispatch--2026-09-21).
+The existing synthetic invocation meets its conservative50-call target at48/50
+personal/shared, with explicit regression ceilings and adversarial receipt,
+policy, authority and retention checks. Full native verification of this source
+is running; earlier complete suites are not attributed to it. Hosted qualification
+and the remaining native completion-matrix rows remain separate, tracked work.

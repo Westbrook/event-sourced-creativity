@@ -296,3 +296,36 @@ purchase: retrieval recovers that same paid execution without another provider c
 The full runtime checkpoint at `8ee293ab` is separate from this later disclosure
 change. No UI, migration, enrollment, scheduling registration, provider charge or
 deployment was added. The remaining native completion matrix is unchanged.
+
+
+## Bounded native metadata and atomic dispatch — 2026-09-21
+
+Whole approved execution now measures **48 personal / 50 shared native binding
+calls** in the existing synthetic journey, down from 60/64. Quote is44/45 and
+retrieval29/27. Regression ceilings enforce these values. This meets the local
+50-call target for this journey, not hosted quota, latency or capacity qualification.
+
+Document enrollment/identity, bounded source/identity, context/schema and current
+principal metadata share native read snapshots. Project hierarchy inventory has
+a same-statement byte/count gate. Every original custody, access, source, schema
+and lifecycle predicate still participates in final disclosure/write proofs.
+No positive access decision is cached between requests.
+
+The final Memory dispatch marker now commits with its exact source/authority
+assertions; every mutation and proof receipt is required before calling a provider.
+Shared two-currency reservation observes the native project policy once through
+an opaque, environment/scope/clock-bound handle; both ledger INSERTs still enforce
+the exact current limits and permissions atomically. Negative private-origin
+cleanup guards may be reused only within the execution; governed retention
+policy remains fresh and its version is checked by the write. A source-free
+empty-expiry snapshot avoids unnecessary cleanup preparation only when all
+optional Memory/platform retention classes and expiry work are absent.
+
+Verification:22 final dispatch/retention-metadata/capacity checks,73 overlapping
+read-bundle/budget/idle-retention/pair checks, and54 adjacent product/private
+retention checks pass. Earlier148 source/hierarchy/D1 and34 dispatch/authority
+checks cover intermediate versions and are not an exact-final-tree full pass.
+The new full native runtime run is in progress and will be recorded separately.
+The preceding creative checkpoint at`9f6b67df` passed2,304/2,304 and excludes
+this subsequent batching implementation. No provider traffic, deployment,
+enrollment, migration or external service registration was performed.

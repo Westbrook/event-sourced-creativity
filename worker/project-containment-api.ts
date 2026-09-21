@@ -57,7 +57,22 @@ export async function readNativeProjectContainment(env: WorkerEnv, owner: string
       AND NOT EXISTS(SELECT 1 FROM events compensation WHERE compensation.stream_id=event.stream_id AND compensation.compensates_event_id=event.event_id)
     ORDER BY event.sequence LIMIT ${PROJECT_CONTAINMENT_LIMIT + 1})`, bindings: ['creative:' + owner] };
   const schema = { sql: schemaQuery, bindings: [] };
-  const [schemaRows, measured] = batched ? await readBatch(env, [schema,size]) : [await read(env,schema),await read(env,size)];
+  const declarations: Query = { sql: `SELECT event.event_id AS declaration,event.payload,event.sequence,
+    (SELECT json_group_array(json_array(project.organization_id,project.project_access_id,project.status,
+      (SELECT json_group_array(json_array(migration.organization_id,migration.owner_user_id,migration.status)) FROM project_migration_states migration WHERE migration.project_access_id=project.project_access_id)))
+      FROM (SELECT * FROM organization_projects WHERE owner_user_id=? AND project_id=json_extract(event.payload,'$.project_id') ORDER BY project_access_id LIMIT 2) project) AS custody
+    FROM events event WHERE event.stream_id=? AND event.type='ProjectCreated'
+      AND NOT EXISTS(SELECT 1 FROM events compensation WHERE compensation.stream_id=event.stream_id AND compensation.compensates_event_id=event.event_id)
+    ORDER BY event.sequence LIMIT ${PROJECT_CONTAINMENT_LIMIT + 1}`, bindings: [owner,'creative:' + owner] };
+  const edges: Query = { sql: `SELECT project_id,declaration_ref,parent_project_id,parent_declaration_ref,organization_id,revision,updated_at
+    FROM project_containment WHERE owner_user_id=? ORDER BY project_id LIMIT ${PROJECT_CONTAINMENT_LIMIT + 1}`, bindings: [owner] };
+  // The aggregate count/byte gate is evaluated before body hydration inside
+  // the same native read snapshot. All four exact observations are retained;
+  // no positive access decision or earlier size measurement is cached.
+  const boundedDeclarations: Query = {sql:`SELECT * FROM (${declarations.sql}) WHERE EXISTS(SELECT 1 FROM (${size.sql}) WHERE count<=${PROJECT_CONTAINMENT_LIMIT} AND bytes<=1048576)`,
+    bindings:[...declarations.bindings,...size.bindings]};
+  const [schemaRows,measured,declared,links]=batched?await readBatch(env,[schema,size,boundedDeclarations,edges])
+    :[await read(env,schema),await read(env,size),await read(env,boundedDeclarations),await read(env,edges)];
   const explicit = schemaRows.filter(row => row.sql !== null);
   const crossOwner=explicit.some(row=>(organizationProjectNestingSchemaProfile.names as readonly string[]).includes(String(row.name)));
   const profiles=crossOwner?[projectContainmentSchemaProfile,organizationProjectNestingSchemaProfile]:[projectContainmentSchemaProfile];
@@ -70,19 +85,6 @@ export async function readNativeProjectContainment(env: WorkerEnv, owner: string
   }
   if (measured.length !== 1 || !Number.isSafeInteger(measured[0].count) || !Number.isSafeInteger(measured[0].bytes)
     || Number(measured[0].count) > PROJECT_CONTAINMENT_LIMIT || Number(measured[0].bytes) > 1_048_576) throw new Error('containment_capacity');
-  const declarations: Query = { sql: `SELECT event.event_id AS declaration,event.payload,event.sequence,
-    (SELECT json_group_array(json_array(project.organization_id,project.project_access_id,project.status,
-      (SELECT json_group_array(json_array(migration.organization_id,migration.owner_user_id,migration.status)) FROM project_migration_states migration WHERE migration.project_access_id=project.project_access_id)))
-      FROM (SELECT * FROM organization_projects WHERE owner_user_id=? AND project_id=json_extract(event.payload,'$.project_id') ORDER BY project_access_id LIMIT 2) project) AS custody
-    FROM events event WHERE event.stream_id=? AND event.type='ProjectCreated'
-      AND NOT EXISTS(SELECT 1 FROM events compensation WHERE compensation.stream_id=event.stream_id AND compensation.compensates_event_id=event.event_id)
-    ORDER BY event.sequence LIMIT ${PROJECT_CONTAINMENT_LIMIT + 1}`, bindings: [owner,'creative:' + owner] };
-  const edges: Query = { sql: `SELECT project_id,declaration_ref,parent_project_id,parent_declaration_ref,organization_id,revision,updated_at
-    FROM project_containment WHERE owner_user_id=? ORDER BY project_id LIMIT ${PROJECT_CONTAINMENT_LIMIT + 1}`, bindings: [owner] };
-  // Repeat the measured bound in the body query so late growth is not hydrated.
-  const boundedDeclarations: Query = {sql:`SELECT * FROM (${declarations.sql}) WHERE (?,?)=(SELECT count,bytes FROM (${size.sql}))`,
-    bindings:[...declarations.bindings,Number(measured[0].count),Number(measured[0].bytes),...size.bindings]};
-  const [declared, links] = batched ? await readBatch(env,[boundedDeclarations,edges]) : await Promise.all([read(env,boundedDeclarations),read(env,edges)]);
   if (declared.length !== measured[0].count) throw new Error('containment_declaration_changed');
   if (declared.length > PROJECT_CONTAINMENT_LIMIT || links.length > PROJECT_CONTAINMENT_LIMIT || new TextEncoder().encode(JSON.stringify([declared,links])).byteLength > 1_048_576) throw new Error('containment_capacity');
   const nodes: ProjectContainmentNode[] = [], access = new Map<string, { declaration: string; accessId: string | null; active: boolean }>();

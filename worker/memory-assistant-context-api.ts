@@ -3,7 +3,7 @@ import { requireUser, type PilotUser, type ProjectExecutionScope } from './pilot
 import { liveMemoryEnabled } from './memory-live-store.ts';
 import { liveMemoryEnrollmentGuard } from './memory-live-authority.ts';
 import { bodyOf, readScope } from './memory-derivation-api.ts';
-import { derivationAssertion, derivationResults, derivationVerified, memoryDerivationSchema, memoryDerivationEnabled, memoryDerivationBinding } from './memory-derivation-store.ts';
+import { derivationAssertion, derivationResults, derivationVerified, memoryDerivationSchema, prepareMemoryDerivationSchemaRead, memoryDerivationEnabled, memoryDerivationBinding } from './memory-derivation-store.ts';
 import { derivationExact, derivationHash, derivationId } from './memory-derivation-policy.ts';
 import { readNativeDerivationResult, prepareNativeDerivationResult, nativeDerivationResultBinding, nativeDerivationResultInputs, nativeDerivationResultGuards, nativeDerivationResultStatements } from './memory-derivation-results.ts';
 import { packRecallGuards, readNativeRecallBoundarySnapshot, readNativeRecallRelation, recallSourceIdentity } from './memory-recall-boundary-api.ts';
@@ -115,11 +115,15 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
     const projectId=url.searchParams.get('projectId'),documentId=url.searchParams.get('documentId');
     if(!derivationId(projectId)||!derivationId(documentId)||[...url.searchParams.keys()].some(k=>!['projectId','documentId','controls'].includes(k)||url.searchParams.getAll(k).length!==1))return answer({error:'context_scope_required'},400);
     const controls=url.searchParams.get('controls');if(controls!==null&&(controls!=='1'||request.method!=='GET'))return answer({error:'context_request_invalid'},400);
-    const schema=await memoryDerivationSchema(env);if(!schema.contextsPresent||!schema.resultsPresent)throw Error('context_schema');
-    const guards:MemorySqlGuard[]=[schema.guard,{condition:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)",bindings:[new Date(deadline).toISOString()]}];
     const query=`SELECT ${columns.map(c=>'c.'+c).join(',')} FROM memory_derivation_contexts c JOIN memory_live_enrollments e ON e.enrollment_id=c.target_enrollment_id
       WHERE c.actor_user_id=? AND e.actor_user_id=? AND e.project_id=? AND e.document_id=? LIMIT 2`;
-    const bindings=[actor.userId,actor.userId,projectId,documentId],found=await read(env,query,bindings),old=found[0];
+    const bindings=[actor.userId,actor.userId,projectId,documentId];
+    const schemaRead=prepareMemoryDerivationSchemaRead(env);
+    const observed=structuredClone(await db.batch<Row>([schemaRead.statement,db.prepare(query).bind(...bindings)]));
+    if(env.DB!==db||!derivationResults(observed,2))throw Error('context_read');
+    const schema=await schemaRead.accept(observed[0]!);if(!schema.contextsPresent||!schema.resultsPresent)throw Error('context_schema');
+    const found=observed[1]!.results,old=found[0];
+    const guards:MemorySqlGuard[]=[schema.guard,{condition:"?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)",bindings:[new Date(deadline).toISOString()]}];
     if(found.length>1||old&&!derivationExact(old,columns))throw Error('context_inventory');
     guards.push(snapshot(query,bindings,found,columns));
     // Source-free control metadata remains available after permission or qualification loss.
