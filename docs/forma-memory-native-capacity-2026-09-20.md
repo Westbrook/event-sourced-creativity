@@ -268,7 +268,9 @@ not hosted quota or latency qualification.
 
 Verification: the final-source execution/recovery/D1 regression passes 151/151;
 15 rebuilt-worker retention/hold/scheduled-handler checks pass. The complete
-native suite is running. All 29 product/privacy/retention checks pass, including eight new
+native runtime checkpoint at `8ee293ab` passes **2,254/2,254** (1,052 seconds).
+This full run is separate from the later `63e91938` disclosure fix below.
+All 29 product/privacy/retention checks pass, including eight new
 candidate-acknowledgement and late expiry/durable/schema/hold races. Types,
 changed-worker/test-file lint and build pass, apart from the separately verified
 unchanged 16-finding runtime-test lint baseline. No production migration,

@@ -379,7 +379,8 @@ preflight](forma-memory-native-capacity-2026-09-20.md#atomic-admissionresponse-r
 Lost acknowledgements cannot authorize dispatch or repurchase; raw paid responses
 remain separately recoverable. Current synthetic whole execution is 60/64
 personal/shared calls, above the conservative 50-call target. 151 final-source execution/D1, 29 product/retention and 15 rebuilt-worker
-retention checks pass; the full native regression is running. The complete native matrix
+retention checks pass. The full native checkpoint at `8ee293ab` passes 2,254/2,254;
+MEM-030 has separate later-source verification. The complete native matrix
 remains assigned to this task. External service and rollout gates remain separate.
 
 
