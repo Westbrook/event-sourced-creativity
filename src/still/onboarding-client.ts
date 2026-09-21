@@ -1,6 +1,6 @@
 import { DecisionMemo, stableDecisionKey } from './decision-cache.ts';
 import { onboardingInput, ONBOARDING_VERSION, type OnboardingInput, type OnboardingResult } from './onboarding.ts';
-export type OnboardingStatus={source:'local'|'pending'|'model';reason?:string;model?:string;elapsedMs?:number;requestElapsedMs?:number;tipCount?:number;cache?:OnboardingResult['cache']};
+export type OnboardingStatus={source:'local'|'pending'|'model';reason?:string;model?:string;elapsedMs?:number;requestElapsedMs?:number;tipCount?:number;cache?:OnboardingResult['cache'];timing?:OnboardingResult['timing']};
 /** One batch per settled toolbar, opt-in only; route/scope changes fence late responses. */
 export class OnboardingController{
  private memo=new DecisionMemo<OnboardingResult>({accept:r=>r.source==='model',maxEntries:24,maxBytes:64000,ttl:r=>r.cache?.remainingMs??300000});
@@ -19,7 +19,7 @@ export class OnboardingController{
   const ticket=this.ticket;
   this.timer=setTimeout(()=>{const started=performance.now();this.status={source:'pending'};this.changed();void this.memo.run(key,()=>this.request({...input,enabled:true})).then(({value,cache})=>{
    if(ticket!==this.ticket)return;
-   this.tips=value.tips;this.status={source:value.source,reason:value.reason,model:value.model,elapsedMs:value.requestElapsedMs??value.elapsedMs,requestElapsedMs:Math.max(0,performance.now()-started),tipCount:Object.keys(value.tips).length,cache:cache.status==='hit'||cache.status==='shared'?{...cache,layer:'browser'}:value.cache};this.changed();
+   this.tips=value.tips;this.status={source:value.source,reason:value.reason,model:value.model,elapsedMs:value.requestElapsedMs??value.elapsedMs,timing:value.timing,requestElapsedMs:Math.max(0,performance.now()-started),tipCount:Object.keys(value.tips).length,cache:cache.status==='hit'||cache.status==='shared'?{...cache,layer:'browser'}:value.cache};this.changed();
   }).catch(()=>{if(ticket===this.ticket){this.status={source:'local',reason:'unavailable',requestElapsedMs:Math.max(0,performance.now()-started)};this.changed();}});},this.delay);
  }
  help(scope:string,id:string){return scope===this.scope?this.tips[id]:undefined;}

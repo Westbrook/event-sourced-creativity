@@ -97,7 +97,7 @@ export function actionHelp(id:string,label:string){if(label.startsWith('Back to 
 export function readOnboardingFlag(url:string,storage:Pick<Storage,'getItem'>){const q=new URL(url).searchParams;return q.has('onboarding')||q.has('onbaording')||storage.getItem('still:flag:onboarding')==='true';}
 
 export const ONBOARDING_MODEL='gpt-5.6-luna' as const;
-export const ONBOARDING_VERSION=5;
+export const ONBOARDING_VERSION=6;
 export type OnboardingContext={
  surface?:'main'|'more'|'formats'|'workflow';
  basis?:Record<string,'next-best'|'model-ranked'|'page-default'|'local'|'alternative'>;
@@ -131,7 +131,8 @@ export function onboardingContext(raw:unknown,actions:string[]):OnboardingContex
  if(Array.isArray(r.recentActions))out.recentActions=r.recentActions.slice(-12).filter((id):id is string=>typeof id==='string'&&(ACTIONS.some(a=>a.id===id||`completed:${a.id}`===id)||['ui:more','ui:palette'].includes(id))).slice(-4);
  return out;
 }
-export type OnboardingResult={source:'local'|'model';reason?:string;tips:Record<string,string>;model?:string;elapsedMs?:number;requestElapsedMs?:number;cache?:import('./decision-cache.ts').DecisionCacheInfo};
+export type OnboardingTiming={authorizationMs:number;preparationMs:number;cacheReadMs:number;reservationMs:number;providerMs:number;settlementMs:number;cacheWriteMs:number;serverMs:number;cacheSource:'none'|'memory'|'durable'|'shared'};
+export type OnboardingResult={source:'local'|'model';reason?:string;tips:Record<string,string>;model?:string;elapsedMs?:number;requestElapsedMs?:number;timing?:OnboardingTiming;cache?:import('./decision-cache.ts').DecisionCacheInfo};
 export const ONBOARDING_VIEWS=['projects','documents','document','block','results','result','generation','choose-format','edit','create','other'];
 export function onboardingInput(raw:unknown):OnboardingInput|null{
  if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;

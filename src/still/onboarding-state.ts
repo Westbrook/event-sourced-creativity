@@ -25,6 +25,7 @@ export function onboardingState(status:OnboardingStatus|undefined,enabled:boolea
    :`Server processing: ${format(ms)}. Browser delivery was not measured.`];
   if(hit&&cache?.layer==='browser')detail.push('No network request.');
   else if(duration(status?.elapsedMs))detail.push(`Server processing: ${format(status.elapsedMs)}.`);
+  if(status?.timing){const t=status.timing;detail.push(`Authorization: ${format(t.authorizationMs)}; preparation: ${format(t.preparationMs)}; cache read: ${format(t.cacheReadMs)}; allowance reservation: ${format(t.reservationMs)}; model response: ${format(t.providerMs)}; accounting: ${format(t.settlementMs)}; cache write: ${format(t.cacheWriteMs)}. Cache source: ${t.cacheSource}.`);}
   if(cache){detail.push(`${cache.layer} cache: ${cache.status}.`);if(duration(cache.originalLatencyMs))detail.push(`Original computation: ${format(cache.originalLatencyMs)}.`);}
   timing={label:`${format(ms)} ${suffix}`,description:detail.join(' ')};
  }

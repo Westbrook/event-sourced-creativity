@@ -19,6 +19,6 @@ export async function writeStoredDecision(env:WorkerEnv,key:string,owner:string,
  try{await env.DB.batch([
   env.DB.prepare('DELETE FROM still_decision_cache WHERE expires_at<=?').bind(now),
   env.DB.prepare('INSERT OR REPLACE INTO still_decision_cache(cache_key,owner_id,created_at,expires_at,body) VALUES(?,?,?,?,?)').bind(key,owner,now,now+DECISION_TTL_MS,body),
-  env.DB.prepare("DELETE FROM still_decision_cache WHERE owner_id=? AND cache_key NOT LIKE 'idea:%' AND cache_key NOT IN(SELECT cache_key FROM still_decision_cache WHERE owner_id=? AND cache_key NOT LIKE 'idea:%' ORDER BY created_at DESC LIMIT 12)").bind(owner,owner),
+  env.DB.prepare("DELETE FROM still_decision_cache WHERE owner_id=? AND cache_key NOT LIKE 'idea:%' AND cache_key NOT LIKE 'onboarding:%' AND cache_key NOT IN(SELECT cache_key FROM still_decision_cache WHERE owner_id=? AND cache_key NOT LIKE 'idea:%' AND cache_key NOT LIKE 'onboarding:%' ORDER BY created_at DESC LIMIT 12)").bind(owner,owner),
  ]);}catch{/* Cache writes are expendable. */}
 }

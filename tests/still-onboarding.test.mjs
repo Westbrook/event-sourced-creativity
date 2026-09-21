@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import { createSceneCostFixture } from './helpers/scene-cost-fixture.mjs';
 import {DecisionMemo} from '../src/still/decision-cache.ts';
@@ -179,4 +180,69 @@ test('onboarding diagnostic states keep fallback and pending distinct from captu
  const failed=onboardingState({source:'local',reason:'unavailable',requestElapsedMs:8000},true);
  assert.equal(failed.state,'Fallback');assert.equal(failed.note,'Local wording · Request unavailable');assert.equal(failed.timing.label,'8.00 s total');
  assert.equal(onboardingState({source:'model',tipCount:3,requestElapsedMs:900},false).timing,undefined);
+});
+
+test('durable onboarding survives a fresh worker cache and unrelated profile changes, but expires and respects context',async()=>{
+ const f=await createSceneCostFixture(),saved=globalThis.fetch;let calls=0;
+ globalThis.fetch=async(_url,init)=>{calls++;return valid(JSON.parse(init.body).model);};
+ f.sqlite.exec(readFileSync(new URL('../drizzle/0041_still_decision_cache.sql',import.meta.url),'utf8'));
+ const cold=()=>{f.env.DB={...f.env.DB};};
+ const call=async(value=input)=>{const response=await f.request('/api/still/onboarding',f.json(value));assert.match(response.headers.get('server-timing'),/authorization;dur=/);return response.json();};
+ try{
+  const first=await call();assert.equal(first.timing.cacheSource,'none');assert.ok(first.timing.serverMs>=first.timing.providerMs);
+  const row=f.sqlite.prepare("SELECT cache_key,body FROM still_decision_cache WHERE cache_key LIKE 'onboarding:%'").get();assert.ok(row);assert.ok(!row.body.includes('fixture-standard-key'));
+  f.sqlite.prepare("UPDATE users SET display_name='Changed profile name'").run();cold();
+  const hit=await call();assert.equal(hit.cache.status,'hit');assert.equal(hit.timing.cacheSource,'durable');assert.equal(hit.timing.providerMs,0);assert.equal(hit.timing.reservationMs,0);assert.equal(calls,1);
+  assert.equal(f.sqlite.prepare("SELECT count(*) AS n FROM budget_reservations WHERE operation='still-onboarding'").get().n,1);
+  cold();const changed=await call({...input,context:{available:{projects:4}}});assert.equal(changed.timing.cacheSource,'none');assert.equal(calls,2);
+  f.sqlite.prepare("UPDATE still_decision_cache SET expires_at=0 WHERE cache_key LIKE 'onboarding:%'").run();cold();
+  assert.equal((await call()).timing.cacheSource,'none');assert.equal(calls,3);
+ }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
+});
+
+test('durable onboarding cannot cross owners, permissions, or corrupt stored content',async()=>{
+ const f=await createSceneCostFixture(),saved=globalThis.fetch;let calls=0;
+ globalThis.fetch=async(_url,init)=>{calls++;return valid(JSON.parse(init.body).model);};
+ try{
+  f.sqlite.exec(readFileSync(new URL('../drizzle/0041_still_decision_cache.sql',import.meta.url),'utf8'));
+  const call=async()=>{f.env.DB={...f.env.DB};return (await f.request('/api/still/onboarding',f.json(input))).json();};
+  await call();
+  f.sqlite.prepare("UPDATE still_decision_cache SET owner_id='someone-else' WHERE cache_key LIKE 'onboarding:%'").run();assert.equal((await call()).cache.status,'miss');
+  f.sqlite.prepare("UPDATE still_decision_cache SET body='invalid' WHERE cache_key LIKE 'onboarding:%'").run();assert.equal((await call()).cache.status,'miss');
+  f.sqlite.prepare("UPDATE users SET role='viewer'").run();assert.equal((await call()).cache.status,'miss');
+  f.sqlite.prepare("UPDATE users SET consent_version=NULL").run();assert.equal((await f.request('/api/still/onboarding',f.json(input))).status,428);assert.equal(calls,4);
+ }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
+});
+
+test('denied token allowance releases concurrent dollar reservation and never calls provider',async()=>{
+ const f=await createSceneCostFixture(),saved=globalThis.fetch;let calls=0;
+ globalThis.fetch=async()=>{calls++;throw new Error('no spend');};
+ try{
+  await f.request('/api/session');f.sqlite.prepare("UPDATE budget_counters SET used_tokens=hard_limit_tokens WHERE scope='user'").run();
+  const value=await(await f.request('/api/still/onboarding',f.json(input))).json();assert.equal(value.reason,'budget');assert.equal(calls,0);
+  assert.equal(f.sqlite.prepare("SELECT count(*) AS n FROM cost_budget_reservations WHERE operation='still-onboarding' AND status='active'").get().n,0);
+ }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
+});
+
+test('token and dollar reservation batches overlap before provider submission',{timeout:5000},async()=>{
+ const f=await createSceneCostFixture(),saved=globalThis.fetch;let release,calls=0;
+ const entered=new Set(),gate=new Promise(resolve=>release=resolve);
+ f.controls.beforeBatch=async statements=>{
+  const kind=statements.some(s=>/INSERT.*INTO budget_reservations\b/.test(s.sql))?'tokens':statements.some(s=>/INSERT.*INTO cost_budget_reservations\b/.test(s.sql))?'dollars':null;
+  if(!kind)return;entered.add(kind);if(entered.size===2)release();await gate;
+ };
+ globalThis.fetch=async(_url,init)=>{calls++;assert.equal(entered.size,2);return valid(JSON.parse(init.body).model);};
+ try{
+  const result=await(await f.request('/api/still/onboarding',f.json(input))).json();assert.equal(result.source,'model');assert.equal(calls,1);
+ }finally{release();f.controls.beforeBatch=null;globalThis.fetch=saved;await f.drainBackground();f.close();}
+});
+
+test('a failed dollar reservation releases the independently acquired token hold',async()=>{
+ const f=await createSceneCostFixture(),saved=globalThis.fetch;let calls=0;
+ globalThis.fetch=async()=>{calls++;throw new Error('no spend');};
+ f.controls.beforeBatch=statements=>{if(statements.some(s=>/INSERT.*INTO cost_budget_reservations\b/.test(s.sql)))throw new Error('database unavailable');};
+ try{
+  const value=await(await f.request('/api/still/onboarding',f.json(input))).json();assert.equal(value.reason,'budget');assert.equal(calls,0);
+  assert.equal(f.sqlite.prepare("SELECT count(*) AS n FROM budget_reservations WHERE operation='still-onboarding' AND status='active'").get().n,0);
+ }finally{f.controls.beforeBatch=null;globalThis.fetch=saved;await f.drainBackground();f.close();}
 });

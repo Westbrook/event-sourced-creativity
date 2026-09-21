@@ -17,11 +17,15 @@ test('Developer Panel renders live onboarding state in host, detached and remote
   });
   const row=page.getByRole('status',{name:'Onboarding state'});
   const set=async(status,extra={})=>page.evaluate(async({status,extra})=>{Object.assign(window.panel,extra);window.panel.context={...window.panel.context,onboarding:true,onboardingText:status};await window.panel.updateComplete;},{status,extra});
-  assert.equal(await row.locator('en-badge[variant=success]').textContent(),'Not Requested');assert.match(await row.textContent(),/Off/);
-  await set({source:'pending'});assert.equal(await row.locator('en-badge[variant=success]').textContent(),'Pending');assert.equal(await row.locator('.jev-timing').count(),0);
-  await set({source:'model',tipCount:3,requestElapsedMs:1960,elapsedMs:500});assert.equal(await row.locator('en-badge[variant=success]').textContent(),'Received');assert.equal(await row.locator('en-badge[variant=neutral]').count(),2);assert.match(await row.textContent(),/1.96 s total/);assert.match(await row.textContent(),/3 tooltips received/);
+  assert.equal(await row.locator('en-badge[variant=success]').textContent(),'●Not Requested');assert.match(await row.textContent(),/Off/);
+  await set({source:'pending'});assert.equal(await row.locator('en-badge[variant=success]').textContent(),'●Pending');assert.equal(await row.locator('.jev-timing').count(),0);
+  await set({source:'model',tipCount:3,requestElapsedMs:1960,elapsedMs:500});assert.equal(await row.locator('en-badge[variant=success]').textContent(),'●Received');assert.equal(await row.locator('en-badge[variant=neutral]').count(),2);assert.match(await row.textContent(),/1.96 s total/);assert.match(await row.textContent(),/3 tooltips received/);
   await set({source:'model',tipCount:3,requestElapsedMs:0,cache:{layer:'browser',status:'hit',originalLatencyMs:1960}},{detached:true});assert.match(await row.textContent(),/0 ms browser cache/);
-  await set({source:'local',reason:'unavailable',requestElapsedMs:8000},{remote:true});assert.equal(await row.locator('en-badge[variant=warning]').textContent(),'Fallback');assert.match(await row.textContent(),/Local wording/);assert.equal(await row.locator('en-badge[variant=success]').count(),0);
+  await set({source:'local',reason:'unavailable',requestElapsedMs:8000},{remote:true});assert.equal(await row.locator('en-badge[variant=warning]').textContent(),'●Fallback');assert.match(await row.textContent(),/Local wording/);assert.equal(await row.locator('en-badge[variant=success]').count(),0);
+  await set({source:'model',tipCount:3,requestElapsedMs:120,elapsedMs:95,timing:{authorizationMs:15,preparationMs:2,cacheReadMs:78,reservationMs:0,providerMs:0,settlementMs:0,cacheWriteMs:0,serverMs:95,cacheSource:'durable'}});
+  await row.getByText('Request timing · durable cache',{exact:true}).click();
+  assert.match(await row.locator('.onboarding-timing').textContent(),/Model response0 ms/);
+  assert.match(await row.locator('.onboarding-timing').textContent(),/Server total95 ms/);
   assert.deepEqual(errors,[]);
  }finally{await browser?.close();await server.close();}
 });
