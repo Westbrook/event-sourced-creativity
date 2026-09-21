@@ -1,0 +1,68 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createServer} from 'vite';
+import {chromium} from '@playwright/test';
+
+test('Still form workflows use one responsive toolbar with their original commands',async t=>{
+ const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-form-toolbar',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body></body></html>');});}}]});let browser;
+ try{
+  await server.listen();browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:900,height:700}});page.setDefaultTimeout(5000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.route('**/api/context/apply',route=>route.fulfill({json:{status:'start'}}));
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/still/action/new-project`);
+  await page.evaluate(async()=>{
+   const {html,LitElement}=await import('/node_modules/lit/index.js'),{StillApp}=await import('/src/still/app.ts'),{foldEvents}=await import('/src/model/events.ts');
+   const css=(await import('/src/still/style.css?raw')).default;const style=document.createElement('style');style.textContent=css.replaceAll('still-app','form-fixture');document.head.append(style);
+   class Fixture extends StillApp{
+    connectedCallback(){LitElement.prototype.connectedCallback.call(this);}
+    updated(){this.scheduleDockFit();} decide(){} currentRouteProblem(){return '';} missingWriting(){return null;}
+    closeMode(){this.mode='';this.changed();}
+    navigate(view,ids){window.destination={view,...ids};this.mode='';this.changed();}
+    render(){return html`<div class="still-shell"><main>${this.renderCanvas()}</main>${this.renderDock()}${this.renderDockProbes()}</div>`;}
+   }
+   customElements.define('form-fixture',Fixture);
+   const raw=[['ProjectCreated',{project_id:'p',name:'Quiet hour'}],['DocumentCreated',{project_id:'p',document_id:'d',title:'Observatory'}],['BlockCreated',{project_id:'p',document_id:'d',block_id:'b',type:'subject',handle:'Subject',position:'1',properties:{text:'The subject',weight:1}}],['BlockCreated',{project_id:'p',document_id:'d',block_id:'x',type:'style',handle:'Style',position:'2',properties:{text:'Quiet',weight:1}}],['DocumentCreated',{project_id:'p',document_id:'d2',title:'Another document'}],['BlockCreated',{project_id:'p',document_id:'d2',block_id:'b2',type:'subject',handle:'Other idea',position:'1',properties:{text:'Another idea',weight:1}}]];
+   const events=raw.map(([type,payload],i)=>({type,payload,sequence:i+1,eventId:'e'+i,streamId:'test',occurredAt:'2026-09-21T12:00:00Z',actor:'user'}));
+   const app=window.app=new Fixture();window.writes=[];
+   app.loading=false;app.mode='new-project';app.client={epoch:1,head:events.length,scopeKey:'test',events,content:{},jobs:[],abilities:{author:true,generate:false,projectCreate:true,formats:[]},session:{policy:{accepted:true},projects:[]},position:{projectId:'p',documentId:'d',blockId:'b',outputId:'',view:'document',intent:'',recentActions:[]},projection:foldEvents(events,Infinity,'d','p'),verifyScope:async()=>()=>{},refresh:async()=>{},append:async events=>window.writes.push(events),createProject:async(name,body)=>{window.created={name,body};return {projectId:'created',documentId:'new'};}};
+   document.body.append(app);await app.updateComplete;
+  });
+  const dock=page.locator('.action-dock'),button=name=>dock.getByRole('button',{name,exact:true});
+  const mode=async value=>{await page.evaluate(value=>{window.app.client.hasUnconfirmedWrite=false;window.app.mode=value;window.app.titleDraft='';window.app.bodyDraft='';window.app.changed();},value);await page.waitForFunction(value=>window.app.mode===value&&!!document.querySelector('.action-dock'),value);};
+  await t.test('creation and editing commands leave the content and retain Save and Back',async()=>{
+   for(const value of ['new-project','new-document','add-context','edit-block','rename','edit-artifact','intent','workspaces','reuse']){
+    await mode(value);await button('Back').waitFor();assert.equal(await page.locator('main en-button').count(),0,value);assert.equal(await dock.locator('en-toolbar').count(),1);
+    assert.equal(await button(value==='intent'?'Suggest actions':value==='workspaces'?'Open':value==='reuse'?'Copy idea':'Save').count(),1,value);
+   }
+   await mode('new-project');await button('Save').click();assert.equal(await page.evaluate(()=>window.app.error),'Enter a name.');assert.equal(await page.evaluate(()=>window.created),undefined);
+   await page.getByRole('textbox',{name:'Name',exact:true}).fill('A new project');await page.getByRole('textbox',{name:'Idea',exact:true}).fill('A first idea');
+   await button('Save').focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>!!window.created);assert.deepEqual(await page.evaluate(()=>window.created),{name:'A new project',body:'A first idea'});
+   await mode('rename');await page.evaluate(()=>{window.app.client.hasUnconfirmedWrite=true;window.app.changed();});await button('Check save').waitFor();await button('Back').click();assert.equal(await page.evaluate(()=>window.app.mode),'');
+  });
+  await t.test('group workflow updates toolbar across stages and keeps save recovery guards',async()=>{
+   await mode('compose');await button('Continue').waitFor();assert.equal(await page.locator('main en-button').count(),0);
+   await button('Continue').click();await button('Preview').waitFor();await button('Preview').click();await button('Save group').waitFor();
+   await page.evaluate(()=>{window.app.client.hasUnconfirmedWrite=true;document.querySelector('still-context-flow').requestUpdate();});await button('Check save').waitFor();assert.equal(await button('Back').isDisabled(),true);
+   await button('Check save').click();await page.waitForFunction(()=>window.writes.length===1);
+  });
+  await t.test('research and reference consent commands stay disabled until allowed',async()=>{
+   await mode('research-context');await button('Review cost').waitFor();assert.equal(await page.locator('main en-button').count(),0);
+   await page.evaluate(()=>{const flow=document.querySelector('still-context-flow');flow.phase='quote';flow.flow.quote={status:'quoted',provider:'Fixture',models:[],maximumMicrousd:0,providerCalls:1,searchCalls:0,providerAvailable:false};flow.requestUpdate();});
+   await button('Approve analysis').waitFor();assert.equal(await button('Approve analysis').isDisabled(),true);
+   await page.evaluate(()=>{const flow=document.querySelector('still-context-flow');flow.phase='intake';flow.intake={research:{label:'A reference',attribution:'Fixture',license:'CC0'}};flow.requestUpdate();});
+   await button('Add reference').waitFor();assert.equal(await button('Add reference').isDisabled(),true);
+   await page.evaluate(()=>{const flow=document.querySelector('still-context-flow');flow.rights=true;flow.requestUpdate();});await page.waitForFunction(()=>!document.querySelector('.action-dock en-button').disabled);
+   await button('Back').click();await button('Close').waitFor();
+  });
+  await t.test('reuse destination flow and small action limits share the toolbar',async()=>{
+   await mode('use-in');await button('Review').waitFor();assert.equal(await button('Review').isDisabled(),true);assert.equal(await page.locator('main en-button').count(),0);
+   await page.evaluate(()=>{const flow=document.querySelector('still-use-in-flow');flow.destination=flow.destinations[0].id;flow.requestUpdate();});await page.waitForFunction(()=>!document.querySelector('.action-dock en-button').disabled);
+   await button('Review').click();await page.waitForFunction(()=>document.querySelector('still-use-in-flow').phase==='review');assert.match(await dock.textContent(),/Link idea|Copy idea/);
+   await button('Back').click();await button('Review').waitFor();
+   await mode('new-project');await page.evaluate(()=>{window.app.sharedPanelActive=true;window.app.density=1;window.app.changed();});await button('More actions').waitFor();assert.equal(await dock.locator('en-toolbar > en-button').count(),1);assert.equal(await dock.locator('en-menu-item').count(),2);
+   await button('More actions').click();await dock.getByRole('menuitem',{name:'Back',exact:true}).click();assert.equal(await page.evaluate(()=>window.app.mode),'');
+   await page.setViewportSize({width:360,height:700});await mode('new-project');await page.evaluate(()=>{window.app.density=5;window.app.changed();});await button('Back').waitFor();
+   assert.equal(await dock.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
+  });
+  assert.deepEqual(errors,[]);
+ }finally{await browser?.close();await server.close();}
+});
