@@ -23,6 +23,8 @@ test('Still list toolbar, palette, navigation and En Reve virtual collections',a
   const button=name=>page.getByRole('button',{name,exact:true});
   await t.test('Show all and Show less return to the first toolbar after changing the list',async()=>{
    assert.equal(await page.locator('.work-row').count(),3);assert.equal(await button('Show all').count(),0);
+   assert.equal(await page.locator('.work-row en-icon svg[aria-hidden=\"true\"]').count(),3);
+   assert.equal(await page.getByRole('link',{name:/^01\s*Project 0\s*7 documents$/}).count(),1);
    await button('More actions').click();await button('Show all').click();
    await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===7);
    assert.equal(await button('Show less').count(),0);assert.equal(await button('Back').count(),0);assert.equal(await button('More actions').count(),1);assert.equal(await button('Next page').count(),0);

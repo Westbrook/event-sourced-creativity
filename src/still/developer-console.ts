@@ -58,7 +58,7 @@ export class StillDeveloperConsole extends LitElement {
   private shareSection(){return this.detached?nothing:html`<details class="share-panel"><summary>Share panel · QR code</summary>
     <p class="muted">Anyone with this link and site access can inspect this tab’s live data and change its flags, limit and panel visibility. Expires after one hour.</p>
     ${this.shareQr?html`<img src=${this.shareQr} width="280" height="280" decoding="async" alt="Scan to open the shared Developer Panel">`:nothing}
-    <div class="window-tools">${this.shareUrl?html`<en-button variant="secondary" size="small" @click=${this.copyShare}>Copy link</en-button><a href=${this.shareUrl} target="_blank" rel="noopener noreferrer">Open panel ↗</a><en-button variant="ghost" size="small" ?disabled=${this.shareBusy} @click=${this.stopSharing}>Stop sharing</en-button>`:html`<en-button variant="secondary" size="small" ?disabled=${this.shareBusy} @click=${this.startSharing}>Create link</en-button>`}</div>
+    <div class="window-tools">${this.shareUrl?html`<en-button variant="secondary" size="small" @click=${this.copyShare}>Copy link</en-button><a href=${this.shareUrl} target="_blank" rel="noopener noreferrer">Open panel <en-icon name="link" aria-hidden="true"></en-icon></a><en-button variant="ghost" size="small" ?disabled=${this.shareBusy} @click=${this.stopSharing}>Stop sharing</en-button>`:html`<en-button variant="secondary" size="small" ?disabled=${this.shareBusy} @click=${this.startSharing}>Create link</en-button>`}</div>
     <p role="status">${this.shareStatus}</p></details>`;}
 
   private windowOpen=false;
@@ -194,7 +194,7 @@ export class StillDeveloperConsole extends LitElement {
   }
   static styles=css`
     :host([hidden]){display:none!important}
-    .share-panel img{display:block;max-width:100%;height:auto;margin:12px auto}.share-panel .window-tools{justify-content:flex-start}.share-panel a{color:inherit;padding:8px;text-underline-offset:3px}
+    .share-panel img{display:block;max-width:100%;height:auto;margin:12px auto}.share-panel .window-tools{justify-content:flex-start}.share-panel a{display:inline-flex;align-items:center;gap:6px;--en-icon-size:1em;color:inherit;padding:8px;text-underline-offset:3px}
     .latency-breakdown{display:flex;flex-wrap:wrap;gap:8px 16px;margin:12px 0;font-size:12px;color:var(--en-color-text-muted,#777)}
     .latency-breakdown strong{font-weight:500;color:var(--en-color-text,#333)}
     :host{display:block;min-width:0;padding:0 20px 24px;font:13px/1.5 system-ui,sans-serif;color:var(--en-color-text);container-type:inline-size}

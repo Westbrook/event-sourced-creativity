@@ -48,6 +48,18 @@ test('provider rejection releases reservations; malformed successful text settle
  }
 });
 
+test('emoji-bearing onboarding stays local without caching or retrying the provider',async()=>{
+ for(const symbol of ['\u{1f4a1}','\u{1f1fa}\u{1f1f8}','1\ufe0f\u20e3','\u{1f3fd}','\u2197']){
+  const f=await createSceneCostFixture(),saved=globalThis.fetch;let calls=0;
+  globalThis.fetch=async(_url,init)=>{calls++;const body=JSON.parse(init.body);assert.match(body.instructions,/No emoji or decorative symbols/);return valid(body.model,{'new-project':`Start a project ${symbol}`,projects:'Browse your projects.'});};
+  try{
+   const body=await(await f.request('/api/still/onboarding',f.json(input))).json();
+   assert.equal(body.source,'local');assert.equal(body.reason,'invalid_response');assert.deepEqual(body.tips,{});assert.equal(body.cache.stored,false);assert.equal(calls,1);
+   assert.equal(f.sqlite.prepare("SELECT used_tokens FROM budget_reservations WHERE operation='still-onboarding'").get().used_tokens,170);
+  }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
+ }
+});
+
 test('unknown provider completion is not repeated or recorded as free',async()=>{
  const f=await createSceneCostFixture(),saved=globalThis.fetch;let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('connection lost');};
  try{

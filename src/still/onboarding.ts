@@ -34,7 +34,7 @@ export function actionHelp(id:string,label:string){if(label.startsWith('Back to 
 export function readOnboardingFlag(url:string,storage:Pick<Storage,'getItem'>){const q=new URL(url).searchParams;return q.has('onboarding')||q.has('onbaording')||storage.getItem('still:flag:onboarding')==='true';}
 
 export const ONBOARDING_MODEL='gpt-5.6-luna' as const;
-export const ONBOARDING_VERSION=3;
+export const ONBOARDING_VERSION=4;
 export type OnboardingContext={
  surface?:'main'|'more'|'formats'|'workflow';
  basis?:Record<string,'next-best'|'model-ranked'|'page-default'|'local'|'alternative'>;
