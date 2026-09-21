@@ -130,7 +130,7 @@ export type DerivationCitation = {sourceIndex:number;start:number;end:number;tex
 export const DERIVATION_OBSERVED_ACTIONS=['encounter','inspect','compare','edit','commit','reuse','remove','restore','critique','request','accept','reject','defer'] as const;
 export type DerivationObservedCitation={observationIndex:number;action:typeof DERIVATION_OBSERVED_ACTIONS[number];recordedAt:string;role:'support'|'counterevidence'};
 export type DerivationProfileRelation={relationship:'revises'|'contradicts';claimKey:string;category:'preference-hypothesis'|'workflow-hypothesis';supports:readonly DerivationCitation[]};
-export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[];
+export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[];originalSupportIds?:readonly string[];
   citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[];observationCitations?:readonly DerivationObservedCitation[];reconciles?:readonly DerivationProfileRelation[];resourceCitations?:readonly MemoryResourceCitation[];fieldTarget?:{blockId:string;field:'text';revision:number;sequence:number;textHash:string};replacement?:string;locale?:string};
 export type DerivationHistory = {windowCount:number;originalPairs:number;boundary:'consent'|'bounded'|'capacity';afterSequence:number;throughSequence:number};
 export type DerivationResultView = DerivationResultEntry & {validUntil:string;items:readonly DerivationResultItem[];history?:DerivationHistory;controlRevisions:Readonly<Record<string,number>>};
@@ -203,7 +203,7 @@ function resultView(value:unknown,expected:DerivationResultEntry,withControls=tr
     const sourceIds=new Set<string>();for(const raw of item.sourceBindings){const binding=own(raw,['sourceId','revision','contentHash']);
       check(derivationId(binding.sourceId)&&!sourceIds.has(binding.sourceId)&&derivationInteger(binding.revision,1)&&derivationHash(binding.contentHash));sourceIds.add(binding.sourceId);}
     return {claimKey:item.claimKey,category:item.category,text:item.text,lineageIds:[...item.lineageIds] as string[],
-      citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence,...(fieldTarget?{fieldTarget,replacement:item.replacement as string,locale:item.locale as string}:{}),...(reconciles?{reconciles}:{}),...(observationCitations?{observationCitations}:{})};
+      citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence,...(expected.purpose==='profile'&&!behavioral&&!counterevidence.length&&!reconciles?.length?{originalSupportIds:[...sourceIds].sort()}:{}),...(fieldTarget?{fieldTarget,replacement:item.replacement as string,locale:item.locale as string}:{}),...(reconciles?{reconciles}:{}),...(observationCitations?{observationCitations}:{})};
   });
   check(!field||new Set(items.map(item=>item.fieldTarget!.blockId)).size===items.length);
   check(new Set(items.map(item=>item.claimKey)).size===items.length&&!items.some(item=>item.reconciles?.some(link=>items.some(peer=>peer.claimKey===link.claimKey))));

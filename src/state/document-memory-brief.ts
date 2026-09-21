@@ -1,3 +1,4 @@
+import { scopedMemoryProfileFacets,type MemoryProfileFacet } from './memory-profile-facets.ts';
 import { memoryEvidenceProximity } from '../model/memory-evidence-resource.ts';
 import type { DocumentView } from '../model/routes.ts';
 import { createLiveMemoryClient, MEMORY_POLICY } from './live-memory-client.ts';
@@ -9,7 +10,7 @@ import { createRecallBoundaryClient, type RecallSource } from './memory-recall-b
 import { MEMORY_PROFILE_REVIEW_LIMIT, reconcileMemoryProfile, type ReconciledProfileItem } from './memory-profile-reconciliation.ts';
 
 export type DocumentMemoryBrief = Readonly<{ projectId:string;documentId:string;validUntil:string;
-  completeHistory:false;independentEvidence:false;sections:readonly Readonly<{purpose:MemoryDerivationPurpose;
+  completeHistory:false;independentEvidence:false;scopeProfileFacets?:readonly MemoryProfileFacet[];sections:readonly Readonly<{purpose:MemoryDerivationPurpose;
     corrections:readonly DerivationControl[];items:readonly (DerivationResultItem|ReconciledProfileItem)[];jobId:string|null;history?:DerivationHistory;source?:RecallSource;
     retainedProfile?:{results:number;complete:false;nextAfter:string|null;historicalPage:boolean}}>[] }>;
 export type DocumentMemoryBriefLease = Readonly<{current:()=>DocumentMemoryBrief|null;retire:()=>void}>;
@@ -164,11 +165,24 @@ async function assembleDocumentMemoryBrief(selection:Selection,transport:typeof 
     }
     if(related.length)deadlines.push(...relatedDeadlines);
   } catch { check();related.length=0; }
+  // Native peers prove their own consented range. Independently prove the
+  // local source boundary before any broader private profile interpretation.
+  let scopeProfileFacets:MemoryProfileFacet[]=[];
+  if(!selected.profileAfter&&resolved.some(section=>section.purpose==='profile'&&section.items.length)
+    &&related.some(section=>section.purpose==='profile'&&section.items.length)){
+    try{
+      const boundary=await createRecallBoundaryClient(guarded).boundary(selected,signal);check();
+      if(boundary.enrollmentId===enrollment.id&&boundary.enrollmentRevision===enrollment.revision){
+        scopeProfileFacets=scopedMemoryProfileFacets(selected,[...resolved,...related],boundary);
+        if(scopeProfileFacets.length)deadlines.push(Date.parse(boundary.validUntil));
+      }
+    }catch{check();scopeProfileFacets=[];}
+  }
   if(!resolved.length&&!related.length)return null;
   const until=Math.min(...deadlines),duration=until-started.wall;
   if(!Number.isFinite(until)||duration<=0||elapsed.elapsed(sample())>=duration)throw Error('memory-brief-expired');
   const value:DocumentMemoryBrief={projectId:selected.projectId,documentId:selected.documentId,validUntil:new Date(until).toISOString(),
-    completeHistory:false,independentEvidence:false,sections:[...resolved,...related]};
+    completeHistory:false,independentEvidence:false,...(scopeProfileFacets.length?{scopeProfileFacets}:{}),sections:[...resolved,...related]};
   let retired=false;
   const retire=()=>{retired=true;elapsed.retire();signal.removeEventListener('abort',retire);};
   signal.addEventListener('abort',retire,{once:true});

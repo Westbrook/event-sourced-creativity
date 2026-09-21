@@ -55,3 +55,33 @@ integrations remain in the [completion matrix](forma-memory-completion-matrix-20
 The newest bounded window is not complete lifetime reuse history. Provider/index
 qualification, scheduling and production rollout remain separate tracked gates.
 No migration, production publication, real-user enrollment or real provider call.
+
+## Independently authorized multi-hop continuation
+
+The actual discovery endpoint now follows up to four approved-copy steps, with
+at most 16 distinct original block IDs, eight eligible same-owner source documents
+and 24 metadata probes. Each intermediate must already be independently enrolled,
+current-authorized and permitted by the target's ordinary source recall catalog.
+It must have a current retained result certifying the exact incoming target block
+and its next approved copy. Bare pointers, inaccessible intermediates, withdrawn
+latest windows and older fallback cannot extend a path. Cycles/repeated identities
+do not manufacture support. The catalog may include independently eligible
+intermediate source documents as well as the earlier original document.
+
+All intermediate result, approval, enrollment, placement and source-body witnesses
+are replayed before disclosure. These are discovery dependencies, not permission
+inheritance or durable aggregate prompt ancestry. Subsequent explicit acceptance
+continues to check the chosen original result through its normal consent path.
+
+A fresh four-statement access/head/placement batch precedes any original body
+hydration; every acknowledgement is validated. The measured two-hop native D1
+request uses **46 binding calls** in personal and shared fixtures, below the
+existing conservative 50-call ceiling. This is local synthetic evidence, not a
+hosted capacity or latency claim.
+
+Verification: 68/68 final focused native profile/reuse checks, including two-hop
+personal/shared discovery, actual local D1, late changes, erased/then-restored
+approval non-resurrection, and seven malformed metadata receipts. Earlier full
+native regression passes 2,399/2,399 at `763e91c2`; this continuation is separately
+qualified. Source-document duplication, cross-owner copy provenance and distinct
+Library/Canvas resources remain tracked native work, not assumed complete.

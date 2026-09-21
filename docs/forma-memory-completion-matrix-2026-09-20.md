@@ -299,3 +299,22 @@ widens access or counts as new evidence. The first-mount acceptance-control bug 
 also fixed. This closes the native approved-context-copy discovery/acceptance path;
 cross-owner/multi-hop and duplicate/resource provenance coverage remain explicit
 requirements alongside the other native rows. No automatic enrollment or deployment.
+
+
+## Qualified scope-profile and multi-hop reuse continuation
+
+[Private scope-profile facets](forma-memory-scope-profile-facets-2026-09-21.md)
+now connect original-human evidence counts, independent document/project owners,
+bilateral recall ranges and current corrections to the actual localized brief.
+Project, connected-tree, partition and explicitly opted-in organization facets
+remain tentative and actor-private. Semantic paraphrase consolidation and durable
+aggregate assistant consumers are not implied by this read-side projection.
+
+[Multi-hop certified-copy discovery](forma-memory-reuse-discovery-2026-09-21.md#independently-authorized-multi-hop-continuation)
+now independently verifies every intermediate and root, replays all final proofs,
+and prevents restored approval bodies from resurrecting withdrawn ancestry. The
+actual two-hop D1 request is bounded at46 calls. Duplicate-document/cross-owner
+copy provenance and Library/Canvas resource identities remain explicit native
+requirements. Full regression at preceding763e91c2 passes2,399/2,399; subsequent
+profile/reuse changes have separate focused and browser evidence, not that full
+suite's qualification. No production deployment or enrollment.

@@ -411,9 +411,7 @@ implementation completion.
 Implemented locally: [bounded metadata and atomic dispatch](forma-memory-native-capacity-2026-09-20.md#bounded-native-metadata-and-atomic-dispatch--2026-09-21).
 The existing synthetic invocation meets its conservative50-call target at48/50
 personal/shared, with explicit regression ceilings and adversarial receipt,
-policy, authority and retention checks. The first full run passed 2,371 checks and exposed eight stale metadata fault
-hooks. All 48 targeted faults pass after updating those hooks; the clean full
-rerun is tracked separately. Earlier complete suites are not attributed to it. Hosted qualification
+policy, authority and retention checks. The first full run exposed eight stale metadata fault hooks. After their correction, the immutable full rerun at763e91c2 passes2,399/2,399. Later source changes are qualified separately. Hosted qualification
 and the remaining native completion-matrix rows remain separate, tracked work.
 
 
@@ -426,3 +424,20 @@ older withdrawn window. The actual localized UI now connects to retained origina
 context consent; a candidate-control first-render defect is fixed. Native D1,
 privacy-race, client/component and browser checks pass. Broader source/resource
 coverage and other native completion rows remain assigned; no production rollout.
+
+
+## MEM-034 — Private scope-specific profile proposals
+
+Implemented locally: [original-backed project/tree/partition/organization facets](forma-memory-scope-profile-facets-2026-09-21.md).
+Actual Document review requires independent originals, owner-qualified identities,
+bilateral range consent and current controls; inference cannot become shared
+policy. Native/D1, strict-client, RTL/browser, types and scoped lint checks pass.
+Semantic cross-scope consolidation and aggregate prompt consumers remain tracked.
+
+## MEM-035 — Certified multi-hop original discovery
+
+Implemented locally: [bounded multi-hop discovery](forma-memory-reuse-discovery-2026-09-21.md#independently-authorized-multi-hop-continuation).
+Every intermediate requires its own access, enrollment, range and current native
+approval/result. No pointer-only shortcut or resurrection after body restore.
+Actual personal/shared D1 measures46 calls; final privacy/receipt regression passes.
+Duplicate-document/cross-owner and distinct resource coverage remain assigned.

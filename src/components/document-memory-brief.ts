@@ -82,6 +82,11 @@ export class DocumentMemoryBrief extends FormaElement {
     return html`<aside class="document-memory-brief" aria-label=${this.#t('briefHeading')} data-memory-document-brief>
       <header><h2>${this.#t('briefHeading')}</h2><button type="button" class="button ghost compact" @click=${this.#refresh}>${this.#t('briefRefresh')}</button></header>
       ${value?html`<p class="memory-brief-disclosure">${this.#t('briefDisclosure')}</p>
+        ${value.scopeProfileFacets?.length?html`<details data-memory-scope-profile-facets><summary>${this.#t('profileFacetHeading')}</summary>
+          <p class="memory-brief-disclosure">${this.#t('profileFacetHelp')}</p>
+          <ul>${value.scopeProfileFacets.map(facet=>html`<li><h3>${this.#t('recallBoundary.'+facet.scope)}</h3><p>${facet.text}</p><p>${this.#t('profileFacetSupport',{originals:facet.originalCount,documents:facet.documentCount})}</p>
+            <details><summary>${this.#t('briefEvidence')}</summary>${facet.support.map(source=>html`<p>${source.ownerId?html`${source.ownerId} / `:nothing}${source.projectId} / ${source.documentId}</p>${source.quotes.map(quote=>html`<blockquote>${quote.text}</blockquote>`)}`)}</details></li>`)}</ul>
+        </details>`:nothing}
         ${value.sections.filter(section=>section.items.length||section.corrections.length).map(section=>html`<section>
           <h3>${this.#t('purpose.'+section.purpose)}</h3>
           ${section.jobId&&section.items.length?html`<forma-memory-assistant-context .candidateJobId=${section.jobId}></forma-memory-assistant-context>`:nothing}

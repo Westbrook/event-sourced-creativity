@@ -586,3 +586,86 @@ test('automatic profile does not advance beyond a rejected concurrent group',asy
  await assert.rejects(readDocumentMemoryBrief(f.selection,transport,f.current,f.controller.signal));
  assert.deepEqual(reads,f.entries.slice(0,5).map(entry=>entry.jobId));assert.deepEqual(f.pages,[null]);
 });
+
+const {projectMemoryProfileFacets}=await import('../src/state/memory-profile-facets.ts');
+function projectFacetSections(){
+ const item=(ids,claim)=>({claimKey:claim,category:'workflow-hypothesis',text:'Prefer concise summaries.',lineageIds:ids,originalSupportIds:ids,citationStatus:'support-cited',supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[]});
+ return [{purpose:'profile',source:undefined,jobId:'local-result',corrections:[],items:[item(['human-a','human-b'],'local-claim')]},
+  {purpose:'profile',source:{enrollmentId:'peer',projectId:'project',documentId:'other-document',zoom:'project',distance:0,weight:.7},jobId:'peer-result',corrections:[],items:[item(['human-c'],'peer-claim')]}];
+}
+test('project profile facet requires distinct originals across authorized document facets, not repetition',()=>{
+ const sections=projectFacetSections(),facets=projectMemoryProfileFacets('project','document',sections);
+ assert.equal(facets.length,1);assert.equal(facets[0].originalCount,3);assert.equal(facets[0].documentCount,2);assert.equal(facets[0].authority,'tentative');assert.equal(facets[0].independentEvidence,false);
+ sections[0].items.push(structuredClone(sections[0].items[0]));assert.equal(projectMemoryProfileFacets('project','document',sections)[0].originalCount,3);
+ facets[0].support[0].quotes[0].text='changed';assert.equal(sections[0].items[0].supports[0].text,'Original');
+});
+for(const fault of ['one-document','too-few-originals','shared-original','correction','counterevidence','observation','missing-originals','historical','different-wording','cross-owner','broader-source','reconciled','challenged'])test('project profile facet rejects '+fault,()=>{
+ const sections=projectFacetSections(),local=sections[0],peer=sections[1];
+ if(fault==='one-document')peer.source.documentId='document';if(fault==='too-few-originals')local.items[0].originalSupportIds=['human-a'];if(fault==='shared-original')peer.items[0].originalSupportIds=['human-a','human-d'];
+ if(fault==='correction')local.corrections=[{correctionText:'My explicit choice'}];if(fault==='counterevidence')peer.items[0].citationStatus='conflicting-citations';
+ if(fault==='observation')peer.items[0].observationCitations=[{action:'inspect'}];if(fault==='missing-originals')delete peer.items[0].originalSupportIds;
+ if(fault==='historical')local.items[0].profileOrigin={state:'historical',interpretation:'earlier-only',jobId:'older'};
+ if(fault==='different-wording')peer.items[0].text='Prefer brief summaries.';if(fault==='cross-owner')peer.source.ownerId='other-owner';if(fault==='broader-source')peer.source.zoom='project-tree';
+ if(fault==='reconciled')peer.items[0].reconciles=[{relationship:'revises',claimKey:'earlier'}];
+ if(fault==='challenged')peer.items.push({...peer.items[0],text:'Prefer exhaustive details.',claimKey:'challenge',reconciles:[{relationship:'contradicts',claimKey:'local-claim'}]});
+ assert.deepEqual(projectMemoryProfileFacets('project','document',sections),[]);
+});
+
+function scopedProfileBriefFixture(){
+ const f=profileBriefFixture();f.history.results=[f.entry];f.item.text='Prefer concise summaries.';
+ f.item.supports.push({sourceIndex:1,start:0,end:8,text:'Original'});f.item.sourceBindings.push({sourceId:'second-original',revision:1,contentHash:hash('second-original')});
+ const source={enrollmentId:hash('profile-peer'),projectId:'project',documentId:'other-document',zoom:'project',distance:0,weight:.7},validUntil=new Date(Date.now()+20000).toISOString();
+ const {version:_version,controlRevisions:_controls,...presentation}=structuredClone(f.result);
+ presentation.jobId=presentation.candidate.manifestId=hash('profile-peer-result');presentation.candidate.scopeKey='independent-peer-scope';
+ const item=presentation.candidate.items[0];item.claimKey='derived:'+hash('peer-claim');item.lineageIds=[hash('peer-lineage')];item.supports=[item.supports[0]];item.sourceBindings=[{sourceId:'peer-original',revision:1,contentHash:hash('peer-original')}];
+ const boundary={version:'memory-scope-recall-v1',enrollmentId:f.enrollment.id,enrollmentRevision:f.enrollment.revision,boundary:'project',revision:crypto.randomUUID(),validUntil};
+ let boundaryReads=0;
+ const transport=async(input,init)=>{const url=new URL(String(input),'https://fixture.invalid');
+  if(url.pathname==='/api/memory/recall-boundary'){boundaryReads++;return Response.json(boundary);}
+  if(url.pathname==='/api/memory/recall-scopes'){
+   if(!url.searchParams.has('source'))return Response.json({version:'memory-scope-recall-v1',sources:[source],validUntil,complete:true});
+   if(url.searchParams.get('purpose')!=='profile')return Response.json({error:'not-qualified'},{status:404});
+   return Response.json({version:'memory-scope-recall-v1',source,presentation,validUntil,independentEvidence:false,completeHistory:false,presentationOnly:true});
+  }return f.transport(input,init);
+ };
+ return {...f,transport,boundary,source,boundaryReads:()=>boundaryReads};
+}
+for(const range of ['project','document','stale'])test('actual brief broadens profile display only with exact local '+range+' recall consent',async()=>{
+ const f=scopedProfileBriefFixture();if(range==='document')f.boundary.boundary='document';if(range==='stale')f.boundary.enrollmentRevision++;
+ const lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal),value=lease.current();assert.equal(f.boundaryReads(),1);
+ assert.equal(value.scopeProfileFacets?.length??0,range==='project'?1:0);assert.equal(value.sections.length,2);
+ if(range==='project'){assert.equal(value.scopeProfileFacets[0].originalCount,3);assert.ok(value.validUntil<=f.boundary.validUntil);}
+ lease.retire();assert.equal(lease.current(),null);
+});
+
+const {scopedMemoryProfileFacets}=await import('../src/state/memory-profile-facets.ts');
+for(const zoom of ['project-tree','partition','organization'])for(const allowed of [true,false])test('scope profile facets preserve bilateral '+zoom+' range '+allowed,async()=>{
+ const f=scopedProfileBriefFixture();f.source.zoom=zoom;f.source.projectId='other-project';f.source.distance=zoom==='project-tree'?1:0;f.source.weight=zoom==='project-tree'?.25:zoom==='partition'?.01:.0125;
+ f.boundary.boundary=allowed?zoom:'project';
+ if(zoom==='organization'){
+  f.selection.custody={kind:'organization',organizationId:'org',projectAccessId:'access',ownerUserId:'owner'};
+  f.enrollment.organizationId='org';f.settings.scope.custody=f.selection.custody;f.grant.scope.custody=f.selection.custody;f.boundary.organizationAvailable=true;f.source.ownerId='other-owner';
+ }
+ const lease=await readDocumentMemoryBrief(f.selection,f.transport,f.current,f.controller.signal),facets=lease.current().scopeProfileFacets??[];
+ assert.equal(facets.length,allowed?1:0);if(allowed){assert.equal(facets[0].scope,zoom);assert.equal(facets[0].projectCount,2);assert.equal(facets[0].originalCount,3);}
+ lease.retire();assert.equal(lease.current(),null);
+});
+for(const fault of ['same-project','cross-owner-tree-without-organization','personal-organization','organization-unavailable','shared-original','correction','counterevidence','unrelated-zoom'])test('broader profile facet rejects '+fault,()=>{
+ const sections=projectFacetSections(),peer=sections[1],selection={projectId:'project',documentId:'document',custody:{kind:'organization',organizationId:'org',projectAccessId:'access',ownerUserId:'owner'}};
+ peer.source.projectId='other-project';peer.source.zoom='organization';peer.source.ownerId='other-owner';const boundary={boundary:'organization',organizationAvailable:true};
+ if(fault==='same-project'){delete peer.source.ownerId;peer.source.projectId='project';}
+ if(fault==='cross-owner-tree-without-organization'){peer.source.zoom='project-tree';boundary.boundary='project-tree';}
+ if(fault==='personal-organization')selection.custody={kind:'personal'};
+ if(fault==='organization-unavailable')boundary.organizationAvailable=false;
+ if(fault==='shared-original'){delete peer.source.ownerId;peer.items[0].originalSupportIds=['human-a','human-d'];}
+ if(fault==='correction')sections[0].corrections=[{correctionText:'Explicit'}];
+ if(fault==='counterevidence')peer.items[0].counterevidence=[{text:'No'}];
+ if(fault==='unrelated-zoom')peer.source.zoom='partition';
+ assert.deepEqual(scopedMemoryProfileFacets(selection,sections,boundary),[]);
+});
+test('organization facet qualifies colliding document and source identifiers by owner',()=>{
+ const sections=projectFacetSections();sections[1].source={...sections[1].source,zoom:'organization',ownerId:'other-owner',projectId:'project',documentId:'document'};
+ sections[1].items[0].originalSupportIds=['human-a'];
+ const facets=scopedMemoryProfileFacets({projectId:'project',documentId:'document',custody:{kind:'organization',organizationId:'org',projectAccessId:'access',ownerUserId:'owner'}},sections,{boundary:'organization',organizationAvailable:true});
+ assert.equal(facets.length,1);assert.equal(facets[0].projectCount,2);assert.equal(facets[0].documentCount,2);assert.equal(facets[0].originalCount,3);
+});

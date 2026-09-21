@@ -332,3 +332,11 @@ full rerun will be recorded separately; this is not yet a full-suite pass.
 The preceding creative checkpoint at`9f6b67df` passed2,304/2,304 and excludes
 this subsequent batching implementation. No provider traffic, deployment,
 enrollment, migration or external service registration was performed.
+
+
+### Frozen full regression result
+
+The immutable `763e91c2` snapshot passes **2,399/2,399** native runtime tests
+(zero failures, 1,136.079 seconds). This includes the corrected metadata fault
+hooks and committed original-discovery integration. Newer profile and multi-hop
+changes are separately verified and are not attributed to this full pass.
