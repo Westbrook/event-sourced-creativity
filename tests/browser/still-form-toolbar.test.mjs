@@ -38,6 +38,39 @@ test('Still form workflows use one responsive toolbar with their original comman
    await button('Save').focus();await page.keyboard.press('Enter');await page.waitForFunction(()=>!!window.created);assert.deepEqual(await page.evaluate(()=>window.created),{name:'A new project',body:'A first idea'});
    await mode('rename');await page.evaluate(()=>{window.app.client.hasUnconfirmedWrite=true;window.app.changed();});await button('Check save').waitFor();await button('Back').click();assert.equal(await page.evaluate(()=>window.app.mode),'');
   });
+  await t.test('creation submits the form from Save or Enter, preserving multiline and IME editing',async()=>{
+   for(const value of ['new-project','new-document','add-context']){
+    await mode(value);
+    await page.evaluate(()=>{
+     window.submits=0;window.creationCalls=0;
+     document.querySelector('#still-create-form').addEventListener('submit',()=>window.submits++);
+     const create=async()=>{window.creationCalls++;return {projectId:'p',documentId:'new'};};
+     window.app.client.createProject=create;window.app.client.createDocument=create;
+     window.app.client.blockEvent=()=>({type:'BlockCreated',payload:{block_id:'new',position:'3'}});
+     window.app.client.append=async()=>{window.creationCalls++;};
+    });
+    assert.equal(await dock.locator('en-button[form="still-create-form"]').count(),1);
+    const name=page.getByRole('textbox',{name:'Name',exact:true}),idea=page.getByRole('textbox',{name:'Idea',exact:true});
+    await name.fill('A name');await idea.fill('First line');await idea.press('Enter');
+    assert.equal(await page.evaluate(()=>window.submits),0);assert.match(await idea.inputValue(),/\n/);
+    await name.evaluate(el=>{el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,composed:true}));el.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',repeat:true,bubbles:true,composed:true}));});
+    assert.equal(await page.evaluate(()=>window.submits),0);
+    if(value==='new-document')await button('Save').click();else await name.press('Enter');
+    await page.waitForFunction(()=>window.creationCalls===1);
+    assert.equal(await page.evaluate(()=>window.submits),1,value);
+   }
+   await mode('new-project');await page.getByRole('textbox',{name:'Name',exact:true}).fill('Only once');
+   await page.evaluate(()=>{
+    window.creationCalls=0;window.app.client.createProject=()=>{window.creationCalls++;return new Promise(resolve=>window.finishCreate=resolve);};
+    const form=document.querySelector('#still-create-form');form.requestSubmit();form.requestSubmit();
+   });
+   assert.equal(await page.evaluate(()=>window.creationCalls),1);
+   await page.evaluate(()=>window.finishCreate({projectId:'p',documentId:'new'}));await page.waitForFunction(()=>!window.app.busy);
+   await mode('new-project');await page.getByRole('textbox',{name:'Name',exact:true}).fill('Overflow submit');
+   await page.evaluate(()=>{window.app.sharedPanelActive=true;window.app.density=1;window.app.client.createProject=async()=>{window.creationCalls++;return {projectId:'p',documentId:'new'};};window.submits=0;document.querySelector('#still-create-form').addEventListener('submit',()=>window.submits++);window.app.changed();});
+   await button('More actions').click();await dock.getByRole('menuitem',{name:'Save',exact:true}).click();await page.waitForFunction(()=>window.submits===1);
+   await page.evaluate(()=>{window.app.sharedPanelActive=false;window.app.density=5;window.app.client.append=async events=>window.writes.push(events);window.app.changed();});
+  });
   await t.test('group workflow updates toolbar across stages and keeps save recovery guards',async()=>{
    await mode('compose');await button('Continue').waitFor();assert.equal(await page.locator('main en-button').count(),0);
    await button('Continue').click();await button('Preview').waitFor();await button('Preview').click();await button('Save group').waitFor();

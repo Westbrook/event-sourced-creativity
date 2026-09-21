@@ -645,7 +645,7 @@ export class StillApp extends LitElement {
       <span slot="footer" class="palette-hint">↑ ↓ Select · Enter Open · Esc Close</span>
     </en-dialog>`;
   }
-  private button(label: string, action: (event:MouseEvent) => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${this.dockId(helpId)} data-action-id=${actionId} data-action-source=${source} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
+  private button(label: string, action: (event:MouseEvent) => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${this.dockId(helpId)} data-action-id=${actionId} data-action-source=${source} form=${!this.measuringDock&&actionId==='workflow:save'&&this.isCreationMode()?'still-create-form':nothing} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
   private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { if(rows===1)return html`<en-text-field label=${label} .value=${live(value)} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.changed();}}></en-text-field>`; return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
   private closeMode() { if (this.mode === 'generate') this.client.position.intent = ''; this.resetStep();this.error='';this.writeRoute();this.decide();this.focusContent(); }
   private begin(mode: string, updateURL=true) {
@@ -721,6 +721,24 @@ export class StillApp extends LitElement {
     this.writeRoute();this.draftBaseline=this.draftSignature();
     if (enteringReview && this.generation) void this.updateComplete.then(()=>this.querySelector<HTMLElement>('.format-options en-select')?.focus());
   }
+  private isCreationMode(){return ['new-project','new-document','add-context'].includes(this.mode);}
+  // En Reve buttons use type="button"; bind their toolbar action to the form here.
+  private requestCreationSubmit(){
+    if(!this.isCreationMode()||this.busy||this.composing)return;
+    this.querySelector<HTMLFormElement>('#still-create-form')?.requestSubmit();
+  }
+  private submitCreation=(event:SubmitEvent)=>{
+    event.preventDefault();
+    if(!this.isCreationMode()||event.target!==this.querySelector('#still-create-form'))return;
+    void this.run(()=>this.save());
+  };
+  private creationKeydown=(event:KeyboardEvent)=>{
+    // The text field's native input is in a shadow root, so bridge implicit submission.
+    // Textareas keep Enter for newlines; composition and modified keys remain untouched.
+    if(event.defaultPrevented||event.key!=='Enter'||event.isComposing||event.keyCode===229||event.repeat||event.altKey||event.ctrlKey||event.metaKey||event.shiftKey)return;
+    if(!event.composedPath().some(node=>node instanceof HTMLElement&&node.localName==='en-text-field'))return;
+    event.preventDefault();this.requestCreationSubmit();
+  };
   private async save() {
     const c = this.client, p = c.projection;
     if (this.mode === 'new-project' || this.mode === 'new-document') {
@@ -935,7 +953,10 @@ export class StillApp extends LitElement {
     if (mode === 'reuse') return html`<section class="form-page"><h1>Copy existing idea</h1><en-select class="select-label" label="Idea" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Choose an idea</en-select-option>${p.libraryBlocks.filter(b => !b.removed && b.documentId !== p.documentId).map(b => html`<en-select-option value=${b.id}>${b.handle} · ${b.type}</en-select-option>`)}</en-select><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p></section>`;
     const titles: Record<string, string> = { 'new-project': 'New project', 'new-document': 'New document', 'add-context': 'Add idea', 'edit-block': 'Edit idea', rename: 'Rename document', intent: 'Set next goal', 'edit-artifact': 'Edit result' };
     const named = ['new-project', 'new-document', 'add-context', 'rename'].includes(mode);
-    return html`<section class="form-page">${p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}</section>`;
+    const fields=html`${p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}`;
+    return this.isCreationMode()
+      ? html`<form id="still-create-form" class="form-page" @submit=${this.submitCreation} @keydown=${this.creationKeydown}>${fields}</form>`
+      : html`<section class="form-page">${fields}</section>`;
   }
   private paletteButton(entry:PaletteFeedback['entry']) { return html`<en-button id=${this.dockId("still-help-ui:palette")} data-action-id="ui:palette" variant="ghost" size="medium" aria-keyshortcuts="Meta+K Control+K" .disabled=${this.busy||this.composing} @click=${()=>this.openFinder(entry)}>Find action<en-badge slot="suffix" variant="neutral">⌘+K</en-badge></en-button>${this.help("still-help-ui:palette","Find action")}`; }
   private compactDock(options:{id:string;label:string;run:()=>void;variant?:Emphasis['variant'];disabled?:boolean;source?:string}[],menuLabel='More actions',status='') {
@@ -985,7 +1006,7 @@ export class StillApp extends LitElement {
       const back:WorkflowAction={id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'};
       if(this.mode==='edit-artifact'&&this.missingWriting())toolbar={actions:[back]};
       else if(this.mode==='workspaces')toolbar={actions:[{id:'workflow:open',label:'Open',variant:'primary',run:()=>void this.run(async()=>{await this.client.switchWorkspace(this.client.session?.projects?.find(p=>p.projectAccessId===this.choice));this.navigate(this.client.position.view,this.client.position);})},back]};
-      else toolbar={actions:[{id:'workflow:save',label:this.mode==='intent'?'Suggest actions':this.client.hasUnconfirmedWrite?'Check save':this.mode==='reuse'?'Copy idea':'Save',variant:'primary',disabled:this.mode==='reuse'&&!this.choice,run:()=>void this.run(()=>this.save())},back]};
+      else toolbar={actions:[{id:'workflow:save',label:this.mode==='intent'?'Suggest actions':this.client.hasUnconfirmedWrite?'Check save':this.mode==='reuse'?'Copy idea':'Save',variant:'primary',disabled:this.mode==='reuse'&&!this.choice,run:()=>this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},back]};
     }
     if(!toolbar.actions.length&&!toolbar.status)return nothing;
     if(toolbar.actions.length>this.toolbarLimit)return this.compactDock(toolbar.actions,'More actions',toolbar.status);
