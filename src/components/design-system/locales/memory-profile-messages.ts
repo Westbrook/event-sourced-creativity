@@ -1,6 +1,13 @@
 /** Unified private profile inspection, not automatic prompt permission. */
 export const memoryProfileMessages={
   "en": {
+    "referencePublished": "Reference-only snapshot last published",
+    "referencePending": "Current source projection; no matching scheduled snapshot has been published.",
+    "broader": "Inspect broader profile",
+    "broaderDetail": "A bounded projection of up to three current nightly profiles. Both sides must permit this scope; at least three distinct originals across two documents support each tentative pattern. Corrections prevent promotion. No model runs here.",
+    "originals": "Distinct originals",
+    "documents": "Documents",
+
     "heading": "Your evolving profile",
     "intro": "One review of your separately governed profile projections. Qualified background processing updates them from eligible activity; opening this view does not run a model or enroll anything.",
     "scope": "Organization, owner, project and document boundaries stay separate. Broader context never becomes a policy or permission. Use each document’s Memory review for its finer scopes and controls.",
@@ -25,6 +32,13 @@ export const memoryProfileMessages={
     "expired": "Private view expired. Check again to continue."
   },
   "fr": {
+    "referencePublished": "Dernière publication des références seules",
+    "referencePending": "Projection des sources actuelles ; aucun instantané planifié correspondant n’a été publié.",
+    "broader": "Inspecter le profil élargi",
+    "broaderDetail": "Projection limitée à trois profils nocturnes actuels. Les deux côtés doivent autoriser ce périmètre ; chaque motif provisoire exige trois sources originales distinctes dans deux documents. Les corrections empêchent la généralisation. Aucun modèle n’est exécuté ici.",
+    "originals": "Sources originales distinctes",
+    "documents": "Documents",
+
     "heading": "Votre profil évolutif",
     "intro": "Une vue de vos projections de profil régies séparément. Le traitement en arrière-plan qualifié les actualise à partir des activités admissibles. Ouvrir cette vue ne lance aucun modèle ni inscription.",
     "scope": "Les limites d’organisation, de propriétaire, de projet et de document restent distinctes. Le contexte élargi ne devient ni politique ni permission. La revue Mémoire de chaque document propose les niveaux détaillés et leurs commandes.",
@@ -49,6 +63,13 @@ export const memoryProfileMessages={
     "expired": "La vue privée a expiré. Vérifiez à nouveau pour continuer."
   },
   "ar": {
+    "referencePublished": "آخر نشر للقطة المراجع فقط",
+    "referencePending": "تصور المصادر الحالية؛ لم تُنشر بعد لقطة مجدولة مطابقة.",
+    "broader": "فحص الملف الأوسع",
+    "broaderDetail": "تصور محدود لثلاثة ملفات ليلية حالية كحد أقصى. يجب أن يسمح الطرفان بهذا النطاق؛ ويتطلب كل نمط مبدئي ثلاثة مصادر أصلية مستقلة عبر مستندين. تمنع التصحيحات التعميم. لا يُشغّل أي نموذج هنا.",
+    "originals": "مصادر أصلية مستقلة",
+    "documents": "المستندات",
+
     "heading": "ملفك المتطور",
     "intro": "مراجعة موحّدة لتصورات ملفك الخاضعة لضوابط مستقلة. تحدّثها المعالجة الخلفية المؤهلة من النشاط المسموح. لا يؤدي فتح هذا العرض إلى تشغيل نموذج أو تسجيل أي مورد.",
     "scope": "تبقى حدود المؤسسة والمالك والمشروع والمستند منفصلة. لا يصبح السياق الأوسع سياسة أو صلاحية. استخدم مراجعة ذاكرة كل مستند للنطاقات الأدق وعناصر التحكم.",
@@ -73,6 +94,13 @@ export const memoryProfileMessages={
     "expired": "انتهت صلاحية العرض الخاص. تحقق مجدداً للمتابعة."
   },
   "ja": {
+    "referencePublished": "参照のみのスナップショットの最終保存",
+    "referencePending": "現在のソースからの表示です。一致する定期スナップショットはまだ保存されていません。",
+    "broader": "広い範囲のプロフィールを確認",
+    "broaderDetail": "現在の夜間プロフィールを最大3件使用した限定的な表示です。両側でこの範囲への同意が必要で、暫定パターンごとに2文書以上の独立した原資料3件以上を求めます。修正がある場合は一般化しません。ここでモデルは実行しません。",
+    "originals": "独立した原資料",
+    "documents": "文書",
+
     "heading": "更新されるプロフィール",
     "intro": "個別に管理されたプロフィールの各側面をまとめて確認できます。認定されたバックグラウンド処理が対象の活動から更新します。この画面を開いてもモデルの実行や登録は行いません。",
     "scope": "組織、所有者、プロジェクト、文書の境界は維持されます。広い文脈がポリシーや権限になることはありません。詳細な範囲と操作は各文書のメモリ確認をご利用ください。",

@@ -2883,3 +2883,14 @@ export const memoryResourceAssistantRuns=sqliteTable('memory_resource_assistant_
 export const memoryResourceAssistantContents=sqliteTable('memory_resource_assistant_contents',{
  contentId:text('content_id').primaryKey().notNull(),executionId:text('execution_id').notNull().references(()=>memoryResourceAssistantRuns.executionId,{onDelete:'cascade'}),role:text('role').notNull(),
 },t=>[unique().on(t.executionId,t.role),check('memory_resource_assistant_role',sql.raw("role IN('consent','response','result')"))]);
+
+/** Reference-only scope-profile publications. Not source/permission caches. */
+export const memoryScopeProfileSnapshots=sqliteTable('memory_scope_profile_snapshots',{
+ profileId:text('profile_id').primaryKey().notNull(),actorUserId:text('actor_user_id').notNull(),targetEnrollmentId:text('target_enrollment_id').notNull(),targetRevision:integer('target_revision').notNull(),manifestJson:text('manifest_json').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),
+},t=>[index('idx_memory_scope_profile_target').on(t.actorUserId,t.targetEnrollmentId,t.createdAt),index('idx_memory_scope_profile_expiry').on(t.expiresAt),
+ check('memory_scope_profile_hash',sql.raw("length(profile_id)=64 AND profile_id NOT GLOB '*[^a-f0-9]*'")),check('memory_scope_profile_revision',sql.raw("typeof(target_revision)='integer' AND target_revision>0")),
+ check('memory_scope_profile_manifest',sql.raw("json_valid(manifest_json) AND json_type(manifest_json)='object' AND length(CAST(manifest_json AS BLOB))<=65536")),
+ check('memory_scope_profile_created',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),check('memory_scope_profile_expiry',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at"))]);
+export const memoryScopeProfileCheckpoints=sqliteTable('memory_scope_profile_checkpoints',{
+ targetEnrollmentId:text('target_enrollment_id').primaryKey().notNull(),actorUserId:text('actor_user_id').notNull(),targetRevision:integer('target_revision').notNull(),checkedAt:text('checked_at').notNull(),status:text('status').notNull(),
+},t=>[check('memory_scope_profile_checkpoint_revision',sql.raw("typeof(target_revision)='integer' AND target_revision>0")),check('memory_scope_profile_checkpoint_time',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',checked_at) IS checked_at")),check('memory_scope_profile_checkpoint_status',sql.raw("status IN('stored','unchanged','unavailable')"))]);

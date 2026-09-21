@@ -285,3 +285,11 @@ this catalog is not a substitute for those tasks or hosted schedule qualificatio
 synthetic local evidence, not hosted scheduler/no-visitor capacity or deployment
 qualification. External provisioning, real-provider qualification, production-owner
 integration and affirmative enrollment gates above remain open and separately tracked.
+
+## Native scope-profile scheduling — 2026-09-21
+
+[Automatic reference-only profile publication](forma-memory-automatic-scope-profile-2026-09-21.md)
+is wired to the native callback, with bounded work, privacy cleanup, source
+revalidation and inaccessible-target backoff. Local migration0072 is additive.
+This closes the native callback implementation, not hosted registration,
+no-visitor delivery, hosted capacity/recovery qualification or consented rollout.

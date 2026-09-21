@@ -604,3 +604,14 @@ Automatic current views cannot promote an older result after partial restoration
 410 native,27 subsequent restore/recall,363 client/model and20 browser checks pass.
 The preceding full run has two fixture timeouts, separately investigated and not
 waived; a current clean full regression remains assigned. No production changes.
+
+## MEM-054 — Automatic native scope profiles and reference publication
+
+Implemented locally: [scope-profile integration](forma-memory-automatic-scope-profile-2026-09-21.md).
+Current-only, independently authorized profiles now have a native reader, actual
+localized review, scheduled reference-only snapshots, unavailable-target backoff,
+expiry cleanup and personal-only atomic erasure. Local D1 observes 24 scheduled
+and25 HTTP calls. No private prose is duplicated in0072, no provider is called,
+and no enrollment, production migration or hosted schedule is activated.
+Remaining consumers and full integration evidence stay assigned in the completion
+matrix; external/operational requirements remain separately tracked.

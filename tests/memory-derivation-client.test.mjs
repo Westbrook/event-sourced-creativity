@@ -691,3 +691,21 @@ for(const fault of ['abort','elapsed'])test('profile catalog hashing cannot exte
  const f=profileCatalogFixture(),digest=crypto.subtle.digest,now=Date.now;crypto.subtle.digest=async(...args)=>{const value=await digest.apply(crypto.subtle,args);if(fault==='abort')f.controller.abort();else Date.now=()=>now()+31000;return value;};
  try{await assert.rejects(createMemoryProfileClient(f.transport).page(f.controller.signal));}finally{crypto.subtle.digest=digest;Date.now=now;}
 });
+
+function scopeProfileFixture(){
+ const f=profileCatalogFixture(),job=f.profileEntry.job_id,other='e'.repeat(64),source=(documentId,jobId)=>({projectId:'project',documentId,jobId,claimKey:'derived:'+'a'.repeat(64),quotes:[{sourceIndex:0,start:0,end:8,text:'Original'}]});
+ const value={version:'memory-scope-profile-v1',publication:null,targetEnrollmentId:f.profileEntry.enrollment_id,targetRevision:f.profileEntry.enrollment_revision,validUntil:new Date(Date.now()+25000).toISOString(),facets:[{scope:'project',projectId:'project',text:'A supported tentative pattern',category:'workflow-hypothesis',authority:'tentative',independentEvidence:false,completeHistory:false,originalCount:3,documentCount:2,projectCount:1,support:[source('document',job),source('other',other)]}],sourceJobs:[job,other],complete:false,independentEvidence:false,automaticProjection:true};
+ return {...f,value,transport:async(url,init)=>{f.calls.push({url,init});return Response.json(value);}};
+}
+for(const fault of ['none','target','revision','scope','owner','claims-authority','complete','expired','insufficient','unsupported-job','quote-range','document-count','too-many-sources','duplicate-jobs','extra','abort'])test('unified scope profile client verifies bounded source-backed facets '+fault,async()=>{
+ const f=scopeProfileFixture(),v=f.value,facet=v.facets[0];
+ if(fault==='target')v.targetEnrollmentId='other';if(fault==='revision')v.targetRevision++;
+ if(fault==='scope')facet.scope='world';if(fault==='owner')facet.support[0].ownerId='foreign';if(fault==='claims-authority')facet.authority='confirmed';if(fault==='complete')v.complete=true;if(fault==='expired')v.validUntil=new Date(0).toISOString();
+ if(fault==='insufficient')facet.originalCount=2;if(fault==='unsupported-job')facet.support[0].jobId='d'.repeat(64);if(fault==='quote-range')facet.support[0].quotes[0].end=9;if(fault==='document-count')facet.documentCount=3;if(fault==='too-many-sources')v.sourceJobs.push('a'.repeat(64),'b'.repeat(64));if(fault==='duplicate-jobs')v.sourceJobs.push(v.sourceJobs[0]);if(fault==='extra')facet.secret='unexpected';if(fault==='abort')f.controller.abort();
+ const run=createMemoryProfileClient(f.transport).scopeProfile(f.profileEntry,f.controller.signal);
+ if(fault==='none'){assert.equal((await run).facets.length,1);assert.equal(f.calls.length,1);assert.ok(f.calls[0].url.startsWith('/api/memory/scope-profile?'));assert.equal(f.calls[0].init.method,'GET');assert.equal(f.calls[0].init.body,undefined);}else await assert.rejects(run);
+});
+for(const fault of ['none','future','hash','extra','mutable-entry'])test('scope profile publication receipt remains metadata only '+fault,async()=>{
+ const f=scopeProfileFixture();f.value.publication={profileId:'a'.repeat(64),publishedAt:new Date(Date.now()-1000).toISOString()};if(fault==='future')f.value.publication.publishedAt=new Date(Date.now()+60000).toISOString();if(fault==='hash')f.value.publication.profileId='wrong';if(fault==='extra')f.value.publication.text='not a stored body';
+ const run=createMemoryProfileClient(async(...args)=>{const r=await f.transport(...args);if(fault==='mutable-entry')f.profileEntry.enrollment_id='mutated';return r;}).scopeProfile(f.profileEntry,f.controller.signal);if(['none','mutable-entry'].includes(fault))assert.equal((await run).publication.profileId,'a'.repeat(64));else await assert.rejects(run);
+});

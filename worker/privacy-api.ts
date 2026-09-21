@@ -1,3 +1,4 @@
+import { prepareScopeProfilePersonalErasure } from './memory-scope-profile-store.ts';
 import { prepareResourceMemoryPersonalErasure } from './memory-resource-settings.ts';
 import { reconcileOutputAssetStorage } from "./output-asset-storage-control.ts";
 import { reconcileOutputNativeStorage } from "./output-private-execution.ts";
@@ -123,6 +124,8 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     const platformAssistant=await db.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1")
       .first<{available:number}>();
     if(!current())return unconfirmed();
+    const scopeErasure=await prepareScopeProfilePersonalErasure(env,userId);
+    if(!current())return unconfirmed();
     const resourceErasure=await prepareResourceMemoryPersonalErasure(env,userId);
     if(!current())return unconfirmed();
     const barrier=await prepareLiveMemoryErasureBarrier(env,{actorUserId:userId,personalOnly:true},now);
@@ -185,16 +188,17 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     const selectedShareOffset=legacyIndex+1+genericChecks.length+heldChecks.length;
     const selectedShareStatements=[...selectedShareErasure.statements,...selectedShareErasure.terminalAssertions];
     const resourceOffset=selectedShareOffset+selectedShareStatements.length;
-    const terminalOffset=resourceOffset+resourceErasure.statements.length;
-    const statements=[...prefix,...generic,...outputErasure,legacyPresentationErasure,...genericChecks,...heldChecks,...selectedShareStatements,...resourceErasure.statements,...terminal];
+    const scopeOffset=resourceOffset+resourceErasure.statements.length;
+    const terminalOffset=scopeOffset+scopeErasure.statements.length;
+    const statements=[...prefix,...generic,...outputErasure,legacyPresentationErasure,...genericChecks,...heldChecks,...selectedShareStatements,...resourceErasure.statements,...scopeErasure.statements,...terminal];
     if(!current())return unconfirmed();
     const result=await db.batch(statements),summary=privacyBatchChanges(result,statements.length,prefix.length,legacyIndex,genericChecks.length,heldChecks.length);
     if(!summary||!current())return unconfirmed();
     const {changes,held}=summary;
     const selectedShareSummary=selectedShareErasure.acknowledge(Array.prototype.slice.call(result,selectedShareOffset,resourceOffset));
     if(!selectedShareSummary||!current())return unconfirmed();
-    const resourceSummary=resourceErasure.acknowledge(Array.prototype.slice.call(result,resourceOffset,terminalOffset));
-    if(!resourceSummary||!current())return unconfirmed();
+    const resourceSummary=resourceErasure.acknowledge(Array.prototype.slice.call(result,resourceOffset,scopeOffset));
+    if(!resourceSummary||!current()||!scopeErasure.acknowledge(Array.prototype.slice.call(result,scopeOffset,terminalOffset)))return unconfirmed();
     const ownReceipts=[...Array.prototype.slice.call(result,0,prefix.length),...Array.prototype.slice.call(result,terminalOffset)];
     if(!(final?final.acknowledge(ownReceipts):barrier.acknowledge(ownReceipts))||!current())return unconfirmed();
     let advancedMemoryCleanupWorkUnits=0;

@@ -464,3 +464,14 @@ timeouts remain explicitly recorded pending a clean current full rerun.
 Cross-scope automatic profile publication, broader resource/autocomplete consumers
 and private Output/live-preview remain native implementation assignments, not
 external-service blockers. No production or enrollment action was taken.
+
+## Automatic native scope-profile continuation — 2026-09-21
+
+[Native scope-profile evolution](forma-memory-automatic-scope-profile-2026-09-21.md)
+adds the real multi-source current-profile reader and localized review plus
+reference-only scheduled publication, backoff, cleanup and personal erasure.
+Independent human support and bilateral scope permission remain mandatory. It
+never turns inferred prose into policy or independent evidence. Local D1 covers
+24-call scheduling and25-call complete reads, plus cross-owner organization use.
+Scope promotion and its native scheduled publication are implemented; remaining
+Output/resource consumers and integrated qualification still stay in scope.

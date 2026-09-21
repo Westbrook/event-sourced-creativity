@@ -1,3 +1,4 @@
+import type { MemoryProfileFacet } from './memory-profile-facets.ts';
 import { createMemoryPrivateRequest } from './memory-private-request.ts';
 import { createMemoryDerivationClient,type DerivationResultView,type DerivationControl } from './memory-derivation-client.ts';
 import { derivationId,derivationHash,derivationTime } from '../model/memory-derivation-policy.ts';
@@ -5,6 +6,7 @@ import { createMemoryElapsed } from '../model/memory-lifetime.ts';
 import { memoryDigest } from '../model/scoped-memory.ts';
 
 export type MemoryProfileEntry={enrollment_id:string;enrollment_revision:number;owner_user_id:string;organization_id:string|null;project_access_id:string|null;project_id:string;document_id:string;job_id:string;through_sequence:number;state:'active'|'withdrawn';published_at:string;expires_at:string;scope_key:string};
+export type MemoryScopeProfileView={publication:{profileId:string;publishedAt:string}|null;validUntil:string;targetEnrollmentId:string;targetRevision:number;facets:MemoryProfileFacet[];sourceJobs:string[];complete:false;independentEvidence:false;automaticProjection:true};
 export type MemoryProfilePage={validUntil:string;pageRevision:string;entries:MemoryProfileEntry[];nextAfter:string|null};
 export type MemoryProfileReview={validUntil:string;entry:MemoryProfileEntry;items:DerivationResultView['items'];corrections:DerivationControl[];history?:DerivationResultView['history']};
 const columns=['enrollment_id','enrollment_revision','owner_user_id','organization_id','project_access_id','project_id','document_id','job_id','through_sequence','state','published_at','expires_at'] as const;
@@ -19,6 +21,24 @@ export function createMemoryProfileClient(transport:typeof fetch){
    check(v.entries.every((row:unknown)=>object(row)&&Object.keys(row).sort().join(',')===[...columns,'scope_key'].sort().join(',')&&[row.enrollment_id,row.owner_user_id,row.project_id,row.document_id].every(derivationId)&&Number.isSafeInteger(row.enrollment_revision)&&Number(row.enrollment_revision)>0&&derivationHash(row.job_id)&&Number.isSafeInteger(row.through_sequence)&&Number(row.through_sequence)>=0&&['active','withdrawn'].includes(String(row.state))&&derivationTime(row.published_at)&&derivationTime(row.expires_at)&&typeof row.scope_key==='string'&&row.scope_key.length<=4096&&(row.organization_id===null&&row.project_access_id===null||derivationId(row.organization_id)&&derivationId(row.project_access_id))));
    const rows=v.entries as MemoryProfileEntry[];check(new Set(rows.map(r=>r.enrollment_id)).size===rows.length&&rows.every((r,i)=>r.enrollment_id>(i?rows[i-1]!.enrollment_id:after))&&(v.nextAfter===null||rows.length===16&&v.nextAfter===rows.at(-1)!.enrollment_id));
    check(await memoryDigest(canonical(rows.map(row=>Object.fromEntries(columns.map(k=>[k,row[k]])))))===v.pageRevision);check(!signal.aborted&&clock.elapsed({wall:Date.now(),monotonic:performance.now()})<30000&&Date.parse(v.validUntil)>Date.now());return {validUntil:v.validUntil,pageRevision:v.pageRevision,entries:rows,nextAfter:v.nextAfter};
+  },
+  async scopeProfile(entry:MemoryProfileEntry,signal:AbortSignal):Promise<MemoryScopeProfileView>{
+   entry={...entry};check(!signal.aborted&&entry.state==='active'&&Date.parse(entry.expires_at)>Date.now());
+   const v=await createMemoryPrivateRequest(transport,'memory-scope-profile-v1')({projectId:entry.project_id,documentId:entry.document_id},'scope-profile',signal);
+   const exact=(value:unknown,keys:string[])=>object(value)&&Object.keys(value).sort().join(',')===[...keys].sort().join(',');
+   const text=(value:unknown,max:number)=>typeof value==='string'&&value.isWellFormed()&&value.trim().length>0&&Array.from(value).length<=max;
+   check(exact(v,['version','targetEnrollmentId','targetRevision','validUntil','facets','sourceJobs','complete','independentEvidence','automaticProjection','publication'])&&v.targetEnrollmentId===entry.enrollment_id&&v.targetRevision===entry.enrollment_revision&&v.complete===false&&v.independentEvidence===false&&v.automaticProjection===true&&derivationTime(v.validUntil)&&Date.parse(v.validUntil)>Date.now()&&Date.parse(v.validUntil)<=Date.now()+30000&&Array.isArray(v.sourceJobs)&&v.sourceJobs.length>=1&&v.sourceJobs.length<=3&&v.sourceJobs.every(derivationHash)&&new Set(v.sourceJobs).size===v.sourceJobs.length&&Array.isArray(v.facets)&&v.facets.length<=16);
+   check(v.publication===null||exact(v.publication,['profileId','publishedAt'])&&derivationHash((v.publication as Record<string,unknown>).profileId)&&derivationTime((v.publication as Record<string,unknown>).publishedAt)&&Date.parse(String((v.publication as Record<string,unknown>).publishedAt))<=Date.now());
+   for(const facet of v.facets){
+    check(exact(facet,['scope','projectId','text','category','authority','independentEvidence','completeHistory','originalCount','documentCount','projectCount','support'])&&['project','project-tree','organization','partition'].includes(facet.scope)&&facet.projectId===entry.project_id&&text(facet.text,1800)&&['preference-hypothesis','workflow-hypothesis'].includes(facet.category)&&facet.authority==='tentative'&&facet.independentEvidence===false&&facet.completeHistory===false&&Number.isSafeInteger(facet.originalCount)&&facet.originalCount>=3&&facet.originalCount<=384&&Number.isSafeInteger(facet.documentCount)&&facet.documentCount>=2&&facet.documentCount<=3&&Number.isSafeInteger(facet.projectCount)&&facet.projectCount>=1&&facet.projectCount<=3&&Array.isArray(facet.support)&&facet.support.length>=2&&facet.support.length<=48);
+    const docs=new Set(),projects=new Set();
+    for(const support of facet.support){check(exact(support,['projectId','documentId','jobId','claimKey','quotes',...(Object.hasOwn(support,'ownerId')?['ownerId']:[])])&&[support.projectId,support.documentId].every(derivationId)&&(!Object.hasOwn(support,'ownerId')||derivationId(support.ownerId))&&v.sourceJobs.includes(support.jobId)&&typeof support.claimKey==='string'&&/^derived:[a-f0-9]{64}$/.test(support.claimKey)&&Array.isArray(support.quotes)&&support.quotes.length>=1&&support.quotes.length<=8);
+     const owner=support.ownerId??entry.owner_user_id;docs.add(JSON.stringify([owner,support.projectId,support.documentId]));projects.add(JSON.stringify([owner,support.projectId]));
+     for(const quote of support.quotes)check(exact(quote,['sourceIndex','start','end','text'])&&Number.isSafeInteger(quote.sourceIndex)&&quote.sourceIndex>=0&&quote.sourceIndex<128&&Number.isSafeInteger(quote.start)&&quote.start>=0&&Number.isSafeInteger(quote.end)&&quote.end>quote.start&&text(quote.text,512)&&Array.from(quote.text).length===quote.end-quote.start);
+    }
+    check(docs.size===facet.documentCount&&projects.size===facet.projectCount&&docs.has(JSON.stringify([entry.owner_user_id,entry.project_id,entry.document_id]))&&(facet.scope==='project'?projects.size===1:projects.size>=2));
+   }
+   check(!signal.aborted&&Date.parse(v.validUntil)>Date.now());return v as MemoryScopeProfileView;
   },
   async inspect(entry:MemoryProfileEntry,signal:AbortSignal):Promise<MemoryProfileReview>{
    entry={...entry};check(!signal.aborted&&entry.state==='active'&&Date.parse(entry.expires_at)>Date.now());const clock=createMemoryElapsed({wall:Date.now(),monotonic:performance.now()});

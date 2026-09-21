@@ -19173,13 +19173,17 @@ for(const shared of [false,true])test('native reuse discovery: original preview 
  const retired=await state.reuseRequest(target.document_id,query);assert.notEqual(retired.status,200);assert.equal(Object.hasOwn(await retired.json(),'presentation'),false);
 });
 
-for(const shared of [false,true])test('native project profile facets: distinct human originals, bilateral range and current corrections '+shared,{timeout:120000},async t=>{
+async function nativeScopeProfileFixture(t,{shared=false}={}){
  const seed=await nativeDerivationRollingFixture(t,{shared,windows:2,termOverrides:{purpose:'profile'},profileAllOriginals:true});
  const state=await nativeCrossScopeRecallFixture(t,{shared,seed}),target=state.recallTarget,source=state.recallSource;await state.widen();
  const consent=await state.derivationRequest('PUT',{...state.derivationInput,documentId:target.documentId,enrollmentId:target.id,enrollmentRevision:target.revision});assert.equal(consent.status,200,await consent.clone().text());
  state.env.FORMA_MEMORY_ENABLED='false';await specialistFreeTurn(state,'profile-target-original','Distinct intent in another document.',{route:'/document/'+target.documentId,project:target.projectId});state.env.FORMA_MEMORY_ENABLED='true';
  state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(target.id);state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2999-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(source.enrollment_id);
  assert.equal((await state.run()).status,'completed');assert.equal((await(await import('../worker/memory-derivation-worker.ts')).runNativeDerivationScheduled(state.env)).status,'stored');
+ return state;
+}
+for(const shared of [false,true])test('native project profile facets: distinct human originals, bilateral range and current corrections '+shared,{timeout:120000},async t=>{
+ const state=await nativeScopeProfileFixture(t,{shared}),target=state.recallTarget,source=state.recallSource;
  const live=await import('../worker/memory-live-api.ts'),api=await import('../worker/memory-derivation-api.ts'),recall=await import('../worker/memory-recall-boundary-api.ts'),{readDocumentMemoryBrief}=await import('../src/state/document-memory-brief.ts');
  const transport=async(path,init)=>{assert.equal(init.method,'GET');const headers=new Headers(init.headers);for(const [key,value]of Object.entries(state.owner))headers.set(key,value);
   const request=new Request(state.derivationOrigin+path,{...init,headers}),url=new URL(request.url);
@@ -19191,9 +19195,12 @@ for(const shared of [false,true])test('native project profile facets: distinct h
  const view=await(await state.recallRequest('recall-boundary',target.documentId)).json();const changed=await state.recallRequest('recall-boundary',target.documentId,{method:'PUT',body:{version:'memory-scope-recall-v1',enrollmentId:target.id,enrollmentRevision:target.revision,boundary:'project',revision:view.revision,confirmation:'CHANGE_RECALL_BOUNDARY'}});assert.equal(changed.status,200,await changed.clone().text());
  const financial=adaptiveReentryFinancialState(state),calls=state.rollingRequests.length;lease=await read();const value=lease.current();assert.equal(value.scopeProfileFacets?.length,1,JSON.stringify(value)+' '+state.controls.lastDatabaseError);
  assert.equal(value.scopeProfileFacets[0].originalCount,3);assert.equal(value.scopeProfileFacets[0].documentCount,2);assert.equal(value.scopeProfileFacets[0].independentEvidence,false);assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.rollingRequests.length,calls);lease.retire();
+ const scopeProfiles=await import('../worker/memory-scope-profile.ts'),nativeRequest=()=>scopeProfiles.handleMemoryScopeProfile(new Request(state.derivationOrigin+'/api/memory/scope-profile?'+new URLSearchParams({projectId:target.projectId,documentId:target.documentId}),{headers:state.owner}),state.env);
+ const automatic=await nativeRequest(),autoBody=await automatic.json();assert.equal(automatic.status,200,JSON.stringify(autoBody)+' '+state.controls.lastDatabaseError);assert.equal(autoBody.automaticProjection,true);assert.equal(autoBody.facets.length,1);assert.equal(autoBody.facets[0].originalCount,3);assert.equal(autoBody.sourceJobs.length,2);assert.equal(state.rollingRequests.length,calls);assert.deepEqual(adaptiveReentryFinancialState(state),financial);
  const job=state.sqlite.prepare('SELECT j.job_id FROM memory_derivation_jobs j JOIN memory_derivation_grants g ON g.consent_id=j.consent_id WHERE g.enrollment_id=? ORDER BY j.through_sequence DESC LIMIT 1').get(target.id),results=await import('../worker/memory-derivation-results.ts'),handle=await results.readNativeDerivationResult(state.env,source.actor_user_id,job.job_id),item=results.nativeDerivationResultInputs(state.env,handle).candidate.items[0],controls=await import('../worker/memory-derivation-user-controls.ts'),binding=results.nativeDerivationResultControlTarget(state.env,handle,item.claimKey);
  await controls.controlNativeDerivationResult(state.env,handle,item.claimKey,'corrected','This is only a document-specific choice.',Object.fromEntries(binding.lineages.map(lineage=>[lineage.lineageId,0])));
  lease=await read();assert.equal(lease.current()?.scopeProfileFacets,undefined);assert.equal(lease.current().sections.find(section=>!section.source).corrections[0].correctionText,'This is only a document-specific choice.');lease.retire();
+ const corrected=await nativeRequest();assert.equal(corrected.status,503);assert.ok(!Object.hasOwn(await corrected.json(),'facets'));
 });
 
 for(const native of [false,true])test('native organization profile facets: private qualified owners, bilateral consent and withdrawal '+native,{timeout:120000},async t=>{
@@ -19221,6 +19228,7 @@ for(const native of [false,true])test('native organization profile facets: priva
  let lease=await read();assert.equal(lease.current().scopeProfileFacets,undefined);lease.retire();
  const view=await(await state.organizationRequest('recall-boundary')).json(),changed=await state.organizationRequest('recall-boundary',{method:'PUT',body:{version:'memory-scope-recall-v1',enrollmentId:target.id,enrollmentRevision:target.revision,boundary:'organization',revision:view.revision,confirmation:'CHANGE_RECALL_BOUNDARY'}});assert.equal(changed.status,200,await changed.clone().text());
  lease=await read();const facets=lease.current()?.scopeProfileFacets;assert.equal(facets?.length,1,JSON.stringify(lease.current())+' '+state.controls.lastDatabaseError);assert.equal(facets[0].scope,'organization');assert.equal(facets[0].originalCount,3);assert.equal(facets[0].documentCount,2);assert.equal(facets[0].projectCount,2);assert.deepEqual(new Set(facets[0].support.map(row=>row.ownerId)),new Set(['assistant-owner','memory-target-owner']));lease.retire();
+ const scopeResponse=await(await import('../worker/memory-scope-profile.ts')).handleMemoryScopeProfile(new Request(state.derivationOrigin+'/api/memory/scope-profile?'+new URLSearchParams({projectId:target.projectId,documentId:target.documentId}),{headers}),state.env),scopeBody=await scopeResponse.json();assert.equal(scopeResponse.status,200,JSON.stringify(scopeBody)+' '+state.controls.lastDatabaseError);assert.equal(scopeBody.facets[0]?.scope,'organization');assert.deepEqual(new Set(scopeBody.facets[0].support.map(row=>row.ownerId)),new Set(['assistant-owner','memory-target-owner']));
  const reset=await state.organizationRequest('recall-boundary',{source:true,method:'DELETE',body:{confirmation:'RESET_RECALL_BOUNDARY'}});assert.equal(reset.status,200,await reset.clone().text());lease=await read();assert.equal(lease.current()?.scopeProfileFacets,undefined);lease.retire();
 });
 
@@ -20444,4 +20452,82 @@ for(const shared of [false,true])for(const purpose of ['rolling-summary','profil
  const {handleMemoryDerivationResults}=await import('../worker/memory-derivation-api.ts'),response=await handleMemoryDerivationResults(new Request(state.derivationOrigin+'/api/memory/derivation/results?'+new URLSearchParams({projectId:state.recallSource.project_id,documentId:state.recallSource.document_id,purpose,latest:'1'}),{headers:state.owner}),state.env);
  assert.equal(response.status,200,await response.clone().text());assert.deepEqual((await response.json()).results,[]);
  const recalled=await state.recallRequest('recall-scopes',undefined,{query:{source:state.recallSource.enrollment_id,purpose}});assert.equal(recalled.status,503);assert.ok(!Object.hasOwn(await recalled.json(),'presentation'));
+});
+
+for(const fault of ['none','source-boundary','target-boundary','source-body','head','authority','missing-frame','clock','serialization'])test('native automatic scope profile: source proofs and late disclosure '+fault,{timeout:120000},async t=>{
+ const state=await nativeScopeProfileFixture(t),target=state.recallTarget;
+ const boundary=await(await state.recallRequest('recall-boundary',target.documentId)).json();assert.equal((await state.recallRequest('recall-boundary',target.documentId,{method:'PUT',body:{version:'memory-scope-recall-v1',enrollmentId:target.id,enrollmentRevision:target.revision,boundary:'project',revision:boundary.revision,confirmation:'CHANGE_RECALL_BOUNDARY'}})).status,200);
+ const {handleMemoryScopeProfile}=await import('../worker/memory-scope-profile.ts'),db=state.env.DB,batch=db.batch,json=Response.json,wall=Date.now;let hit=false;
+ db.batch=async statements=>{const final=statements.length>15&&statements.every(s=>s.sql.startsWith('SELECT CASE WHEN'));
+  if(final&&!hit&&fault!=='serialization'){hit=true;
+   if(fault==='source-boundary'||fault==='target-boundary')state.sqlite.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').run(fault==='source-boundary'?state.recallSource.enrollment_id:target.id);
+   if(fault==='source-body')state.sqlite.exec("UPDATE private_content SET redacted_at='2000-01-01T00:00:00.000Z' WHERE kind='chat-user'");
+   if(fault==='head')state.sqlite.prepare("UPDATE memory_derivation_results SET state='withdrawn',raw_json=NULL,manifest_json=NULL,output_sha256=NULL,manifest_sha256=NULL,retired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id=(SELECT j.job_id FROM memory_derivation_jobs j JOIN memory_derivation_grants g ON g.consent_id=j.consent_id WHERE g.enrollment_id=? ORDER BY j.through_sequence DESC LIMIT 1)").run(target.id);
+   if(fault==='authority')state.sqlite.prepare("UPDATE users SET role='viewer' WHERE user_id=?").run(state.recallSource.actor_user_id);
+   if(fault==='clock')Date.now=()=>wall()+31000;
+  }
+  const rows=await batch.call(db,statements);return final&&fault==='missing-frame'?rows.slice(1):rows;
+ };Response.json=function(v,init){const response=json.call(this,v,init);if(fault==='serialization'&&v.facets){hit=true;Date.now=()=>wall()+31000;}return response;};t.after(()=>{db.batch=batch;Response.json=json;Date.now=wall;});
+ const response=await handleMemoryScopeProfile(new Request(state.derivationOrigin+'/api/memory/scope-profile?'+new URLSearchParams({projectId:target.projectId,documentId:target.documentId}),{headers:state.owner}),state.env),body=await response.json();
+ assert.equal(hit,true,state.controls.lastDatabaseError);assert.equal(response.status,fault==='none'?200:503,JSON.stringify(body));if(fault==='none')assert.equal(body.facets.length,1);else assert.equal(body.facets,undefined);
+});
+
+async function nativePublishedScopeFixture(t,{shared=false}={}){
+ const state=await nativeScopeProfileFixture(t,{shared}),target=state.recallTarget;
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0072_memory_scope_profiles.sql',import.meta.url),'utf8'));
+ const boundary=await(await state.recallRequest('recall-boundary',target.documentId)).json();assert.equal((await state.recallRequest('recall-boundary',target.documentId,{method:'PUT',body:{version:'memory-scope-recall-v1',enrollmentId:target.id,enrollmentRevision:target.revision,boundary:'project',revision:boundary.revision,confirmation:'CHANGE_RECALL_BOUNDARY'}})).status,200);
+ const native=await import('../worker/memory-scope-profile.ts'),store=await import('../worker/memory-scope-profile-store.ts'),authority=await import('../worker/memory-live-authority.ts');
+ const prepare=async()=>{const row=state.sqlite.prepare('SELECT * FROM memory_live_enrollments WHERE enrollment_id=?').get(target.id),actor=await authority.liveMemoryPrincipal(state.env,row.actor_user_id);return native.prepareNativeScopeProfile(state.env,actor,row,[authority.liveMemoryAuthorityFromPrincipal(state.env,row,actor).guard]);};
+ return {...state,scopeStore:store,prepareScope:prepare};
+}
+for(const shared of [false,true])test('native scope publication: reference-only, immutable retention, current proof and cleanup '+shared,{timeout:120000},async t=>{
+ const state=await nativePublishedScopeFixture(t,{shared}),store=state.scopeStore,financial=adaptiveReentryFinancialState(state),calls=state.rollingRequests.length;
+ let profile=await state.prepareScope();assert.equal(await store.readNativeScopeProfilePublication(state.env,profile),null);
+ const result=await store.publishNativeScopeProfile(state.env,profile);assert.equal(result.status,'stored',state.controls.lastDatabaseError);
+ const saved=state.sqlite.prepare('SELECT * FROM memory_scope_profile_snapshots').get(),manifest=JSON.parse(saved.manifest_json);assert.equal(manifest.facets.length,1);assert.equal(manifest.sources.length,2);assert.ok(!saved.manifest_json.includes('Synthetic project-wide habit'));assert.ok(!saved.manifest_json.includes('Distinct intent'));assert.ok(manifest.facets.every(f=>!Object.hasOwn(f,'text')&&f.support.every(s=>!Object.hasOwn(s,'quotes'))));
+ profile=await state.prepareScope();assert.equal((await store.publishNativeScopeProfile(state.env,profile)).status,'unchanged');assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_scope_profile_snapshots').get(),saved);assert.deepEqual(await store.readNativeScopeProfilePublication(state.env,profile),{profileId:result.profileId,publishedAt:saved.created_at});
+ state.sqlite.prepare("UPDATE memory_derivation_results SET state='withdrawn',raw_json=NULL,manifest_json=NULL,output_sha256=NULL,manifest_sha256=NULL,retired_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id=?").run(manifest.sources[0].jobId);
+ await assert.rejects(()=>store.readNativeScopeProfilePublication(state.env,profile));await assert.rejects(()=>store.publishNativeScopeProfile(state.env,profile));state.env.FORMA_MEMORY_ENABLED='false';state.env.FORMA_MEMORY_SCHEDULING_ENABLED='false';assert.equal(await store.sweepScopeProfiles(state.env),1);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_scope_profile_snapshots').get().n,0);assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.rollingRequests.length,calls);
+});
+for(const shared of [false,true])test('native scope publication: scheduled bounded refresh '+shared,{timeout:120000},async t=>{
+ const state=await nativePublishedScopeFixture(t,{shared}),store=state.scopeStore,calls=state.rollingRequests.length;
+ state.env.FORMA_MEMORY_SCHEDULING_ENABLED='false';assert.equal((await store.runScopeProfileScheduled(state.env)).status,'disabled');state.env.FORMA_MEMORY_SCHEDULING_ENABLED='true';
+ const outcomes=[];for(let i=0;i<3;i++)outcomes.push(await store.runScopeProfileScheduled(state.env));assert.ok(outcomes.some(r=>r.status==='stored'),JSON.stringify(outcomes)+' '+state.controls.lastDatabaseError);assert.equal(outcomes.at(-1).status,'idle');assert.equal(state.rollingRequests.length,calls);
+});
+for(const shared of [false,true])test('native scope publication: personal erasure preserves organization references '+shared,{timeout:120000},async t=>{
+ const state=await nativePublishedScopeFixture(t,{shared}),store=state.scopeStore;await store.publishNativeScopeProfile(state.env,await state.prepareScope());
+ const erasure=await store.prepareScopeProfilePersonalErasure(state.env,state.recallSource.actor_user_id),frames=await state.env.DB.batch(erasure.statements);assert.equal(erasure.acknowledge(frames),true,state.controls.lastDatabaseError);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_scope_profile_snapshots').get().n,shared?1:0);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_scope_profile_checkpoints').get().n,shared?1:0);assert.equal(erasure.acknowledge(frames.slice(1)),false);
+});
+for(const fault of ['source','schema','frame','clock','config','database','checkpoint-race'])test('native scope publication: atomic fail closed '+fault,{timeout:120000},async t=>{
+ const state=await nativePublishedScopeFixture(t),store=state.scopeStore,profile=await state.prepareScope(),db=state.env.DB,batch=db.batch,wall=Date.now;let hit=false;
+ db.batch=async statements=>{if(!hit&&statements.some(s=>s.sql.startsWith('INSERT INTO memory_scope_profile_snapshots'))){hit=true;
+  if(fault==='source')state.sqlite.exec("UPDATE private_content SET redacted_at='2000-01-01T00:00:00.000Z' WHERE kind='chat-user'");
+  if(fault==='schema')state.sqlite.exec('DROP TRIGGER memory_scope_profile_snapshot_immutable');
+  if(fault==='clock')Date.now=()=>wall()+31000;
+  if(fault==='config')state.env.FORMA_MEMORY_ENABLED='false';
+  if(fault==='database')state.env.DB={...db};
+  if(fault==='checkpoint-race')state.sqlite.prepare('INSERT INTO memory_scope_profile_checkpoints VALUES(?,?,?,?,?)').run(state.recallTarget.id,state.recallSource.actor_user_id,1,'2999-01-01T00:00:00.000Z','unavailable');
+  const rows=await batch.call(db,statements);return fault==='frame'?rows.slice(1):rows;
+ }return batch.call(db,statements);};t.after(()=>{db.batch=batch;state.env.DB=db;Date.now=wall;});
+ await assert.rejects(()=>store.publishNativeScopeProfile(state.env,profile));assert.equal(hit,true);if(['source','schema','checkpoint-race'].includes(fault))assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_scope_profile_snapshots').get().n,0,'Atomic guard failure rolls publication back');
+});
+for(const shared of [false,true])test('native scope publication D1: complete scheduled publication and HTTP read capacity '+shared,{timeout:120000},async t=>{
+ const state=await nativePublishedScopeFixture(t,{shared}),{createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['ScopeProfiles'],script:"export default {fetch(){return new Response('Synthetic only');}};",outboundService(){throw Error('No external requests');}});t.after(()=>mf.dispose());const db=await mf.getD1Database('ScopeProfiles');await install(db,exportSynthetic(state.sqlite));let calls=0,statements=0,maximumBatch=0;
+ state.env.DB={prepare(sql){const query=db.prepare(sql);const wrap=q=>({bind:(...v)=>wrap(q.bind(...v)),first:(...v)=>{calls++;statements++;return q.first(...v);},all:(...v)=>{calls++;statements++;return q.all(...v);},run:(...v)=>{calls++;statements++;return q.run(...v);},raw:(...v)=>{calls++;statements++;return q.raw(...v);},native:q});return wrap(query);},batch:async queries=>{calls++;statements+=queries.length;maximumBatch=Math.max(maximumBatch,queries.length);try{return await db.batch(queries.map(q=>q.native));}catch(e){state.controls.lastDatabaseError=String(e);throw e;}}};
+ const phases=[];for(let i=0;i<2;i++){calls=statements=maximumBatch=0;const started=performance.now(),result=await state.scopeStore.runScopeProfileScheduled(state.env);assert.equal(result.status,'stored',JSON.stringify(result)+' '+state.controls.lastDatabaseError);phases.push({phase:'schedule',calls,statements,maximumBatch,ms:performance.now()-started});assert.ok(calls<=50,JSON.stringify(phases));assert.ok(maximumBatch<=256,JSON.stringify(phases));}
+ calls=statements=maximumBatch=0;const target=state.recallTarget,started=performance.now(),response=await(await import('../worker/memory-scope-profile.ts')).handleMemoryScopeProfile(new Request(state.derivationOrigin+'/api/memory/scope-profile?'+new URLSearchParams({projectId:target.projectId,documentId:target.documentId}),{headers:state.owner}),state.env),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.equal(body.facets.length,1);assert.ok(body.publication?.profileId);phases.push({phase:'http',calls,statements,maximumBatch,ms:performance.now()-started});assert.ok(calls<=50,JSON.stringify(phases));assert.ok(maximumBatch<=256,JSON.stringify(phases));t.diagnostic(JSON.stringify({shared,phases}));
+});
+test('native scope publication: unavailable principals rotate without source or provider reads',{timeout:120000},async t=>{
+ const state=await nativePublishedScopeFixture(t),store=state.scopeStore,calls=state.rollingRequests.length;state.sqlite.prepare("UPDATE users SET consent_version='withdrawn' WHERE user_id=?").run(state.recallSource.actor_user_id);
+ for(let i=0;i<2;i++)assert.equal((await store.runScopeProfileScheduled(state.env)).status,'unavailable',state.controls.lastDatabaseError);
+ assert.equal((await store.runScopeProfileScheduled(state.env)).status,'idle');assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_scope_profile_checkpoints').get().n,2);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_scope_profile_snapshots').get().n,0);assert.equal(state.rollingRequests.length,calls);
+});
+test('native scope publication: personal erasure refuses checkpoint insertion races',{timeout:120000},async t=>{
+ const state=await nativePublishedScopeFixture(t),store=state.scopeStore;await store.publishNativeScopeProfile(state.env,await state.prepareScope());const erasure=await store.prepareScopeProfilePersonalErasure(state.env,state.recallSource.actor_user_id);
+ state.sqlite.prepare('INSERT INTO memory_scope_profile_checkpoints VALUES(?,?,?,?,?)').run(state.recallSource.enrollment_id,state.recallSource.actor_user_id,1,new Date().toISOString(),'unavailable');await assert.rejects(()=>state.env.DB.batch(erasure.statements));assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_scope_profile_snapshots').get().n,1);assert.equal(erasure.acknowledge([]),false);
+});
+test('native scope publication: lost response recovers without duplicate or renewed retention',{timeout:120000},async t=>{
+ const state=await nativePublishedScopeFixture(t),store=state.scopeStore,db=state.env.DB,batch=db.batch,profile=await state.prepareScope();db.batch=async statements=>{const rows=await batch.call(db,statements);return statements.some(s=>s.sql.startsWith('INSERT INTO memory_scope_profile_snapshots'))?rows.slice(1):rows;};
+ await assert.rejects(()=>store.publishNativeScopeProfile(state.env,profile));db.batch=batch;const saved=state.sqlite.prepare('SELECT * FROM memory_scope_profile_snapshots').get();assert.ok(saved);assert.equal((await store.publishNativeScopeProfile(state.env,await state.prepareScope())).status,'unchanged');assert.deepEqual(state.sqlite.prepare('SELECT * FROM memory_scope_profile_snapshots').get(),saved);
 });

@@ -1,3 +1,5 @@
+import { runScopeProfileScheduled,sweepScopeProfiles } from './memory-scope-profile-store.ts';
+import { handleMemoryScopeProfile } from './memory-scope-profile.ts';
 import { handleMemoryProfileCatalog } from './memory-profile-catalog.ts';
 import { handleMemoryResourceAssistant,reconcileResourceAssistantUsage } from './memory-resource-assistant.ts';
 import { handleMemoryResourceContext } from './memory-resource-context.ts';
@@ -193,6 +195,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/assistant/specialist")return handleAssistantSpecialist(request,env,context);
     if(url.pathname==="/api/assistant")return handleAssistant(request,env,context);
     if(url.pathname==="/api/internal/memory-benchmark"||url.pathname==="/api/internal/memory-benchmark/approval"||url.pathname==="/api/internal/memory-benchmark/reconcile"||url.pathname==="/api/internal/memory-benchmark/release-undispatched")return handleNativeMemoryBenchmark(request,env);
+    if(url.pathname==="/api/memory/scope-profile")return handleMemoryScopeProfile(request,env);
     if(url.pathname==="/api/memory/profile-catalog")return handleMemoryProfileCatalog(request,env);
     if(url.pathname==="/api/memory/resource-assistant")return handleMemoryResourceAssistant(request,env);
     if(url.pathname==="/api/memory/resource-assistant-context")return handleMemoryResourceContext(request,env);
@@ -402,6 +405,7 @@ export default {
       const cleanupSteps = [
         () => sweepStillPanels(env),
         () => sweepResourceMemory(env),
+        () => sweepScopeProfiles(env),
         () => reconcileResourceAssistantUsage(env),
         () => observeScheduledRetention(env,1_000),
         () => sweepExpiredMemoryCheckpoints(env,128),
@@ -426,6 +430,7 @@ export default {
       // admission, actor rollout and each existing background-purpose enrollment.
       await runLiveMemoryScheduled(env);
       await runNativeDerivationScheduled(env);
+      await runScopeProfileScheduled(env);
       await runResourceMemoryScheduled(env);
     } finally {
       try {

@@ -6,7 +6,7 @@ type Scope={projectId:string;documentId:string}|MemoryResourceSelector|{after:st
 function check(value:unknown):asserts value{if(!value)throw Error('memory-private-response');}
 /** Bounded same-origin, non-retrying transport. No draft or custody fields on the wire. */
 export function createMemoryPrivateRequest(transport:typeof fetch,version:string){
-  async function request(scope: Scope, route: 'recall-boundary'|'recall-scopes'|'assistant-context'|'resource-settings'|'resource-history'|'resource-enrollments'|'resource-opening'|'resource-assistant-context'|'resource-assistant'|'profile-catalog', signal: AbortSignal, method='GET', body?: unknown, query: Record<string,string>={}) {
+  async function request(scope: Scope, route: 'recall-boundary'|'recall-scopes'|'assistant-context'|'resource-settings'|'resource-history'|'resource-enrollments'|'resource-opening'|'resource-assistant-context'|'resource-assistant'|'profile-catalog'|'scope-profile', signal: AbortSignal, method='GET', body?: unknown, query: Record<string,string>={}) {
     const resource=route.startsWith('resource-');
     check(route==='profile-catalog'?'after' in scope&&(scope.after===''||derivationId(scope.after)):route==='resource-enrollments'?'after' in scope&&(scope.after===''||/^[a-f0-9-]{36}$/.test(scope.after)):resource?memoryResourceSelector(scope):'documentId' in scope&&[scope.projectId,scope.documentId].every(derivationId));
     const elapsed=createMemoryElapsed({wall:Date.now(),monotonic:performance.now()}),controller=new AbortController();
