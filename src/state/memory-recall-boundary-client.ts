@@ -47,15 +47,15 @@ export function createRecallBoundaryClient(transport: typeof fetch = fetch) {
     async reset(scope:Scope,signal:AbortSignal){
       const row=object(await request(scope,'recall-boundary',signal,'DELETE',{confirmation:'RESET_RECALL_BOUNDARY'}),['version','saved','refreshRequired']);check(row.saved===true&&row.refreshRequired===true);
     },
-    async sources(scope:Scope,signal:AbortSignal){
-      const row=object(await request(scope,'recall-scopes',signal),['version','sources','validUntil','complete']);
+    async sources(scope:Scope,signal:AbortSignal,reusedOriginals=false){
+      const row=object(await request(scope,'recall-scopes',signal,'GET',undefined,reusedOriginals?{reuse:'1'}:undefined),['version','sources','validUntil','complete']);
       check(row.complete===true&&Array.isArray(row.sources)&&row.sources.length<=32);lifetime(row.validUntil);
       const sources=row.sources.map(source);check(new Set(sources.map(s=>s.enrollmentId)).size===sources.length&&new Set(sources.map(s=>JSON.stringify([s.ownerId??null,s.projectId,s.documentId]))).size===sources.length
         &&sources.every((s,index)=>(s.ownerId!==undefined||s.projectId!==scope.projectId||s.documentId!==scope.documentId)&&(!index||sources[index-1].weight>=s.weight)));
       return {sources,validUntil:row.validUntil as string};
     },
-    async inspect(scope:Scope,expected:RecallSource,purpose:MemoryDerivationPurpose,signal:AbortSignal){
-      const row=object(await request(scope,'recall-scopes',signal,'GET',undefined,{source:expected.enrollmentId,purpose}),['version','source','presentation','validUntil','independentEvidence','completeHistory','presentationOnly']);
+    async inspect(scope:Scope,expected:RecallSource,purpose:MemoryDerivationPurpose,signal:AbortSignal,reusedOriginals=false){
+      const row=object(await request(scope,'recall-scopes',signal,'GET',undefined,{source:expected.enrollmentId,purpose,...(reusedOriginals?{reuse:'1'}:{})}),['version','source','presentation','validUntil','independentEvidence','completeHistory','presentationOnly']);
       const selected=source(row.source);check((['enrollmentId','ownerId','projectId','documentId','zoom','distance','weight'] as const).every(key=>selected[key]===expected[key])&&row.independentEvidence===false&&row.completeHistory===false&&row.presentationOnly===true);
       lifetime(row.validUntil);
       const p=row.presentation as Row,c=p?.candidate as Row;check(p&&c&&derivationHash(p.jobId)&&derivationTime(p.expiresAt)&&c.purpose===purpose&&typeof c.scopeKey==='string');

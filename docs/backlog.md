@@ -411,6 +411,18 @@ implementation completion.
 Implemented locally: [bounded metadata and atomic dispatch](forma-memory-native-capacity-2026-09-20.md#bounded-native-metadata-and-atomic-dispatch--2026-09-21).
 The existing synthetic invocation meets its conservative50-call target at48/50
 personal/shared, with explicit regression ceilings and adversarial receipt,
-policy, authority and retention checks. Full native verification of this source
-is running; earlier complete suites are not attributed to it. Hosted qualification
+policy, authority and retention checks. The first full run passed 2,371 checks and exposed eight stale metadata fault
+hooks. All 48 targeted faults pass after updating those hooks; the clean full
+rerun is tracked separately. Earlier complete suites are not attributed to it. Hosted qualification
 and the remaining native completion-matrix rows remain separate, tracked work.
+
+
+## MEM-033 — Independently authorized original-source discovery
+
+Implemented locally: [certified-copy source discovery, preview and explicit assistant context](forma-memory-reuse-discovery-2026-09-21.md).
+It preserves source-side recall boundaries and independent enrollment/access,
+adds no copied preference evidence or relevance boost, and never falls back to an
+older withdrawn window. The actual localized UI now connects to retained original
+context consent; a candidate-control first-render defect is fixed. Native D1,
+privacy-race, client/component and browser checks pass. Broader source/resource
+coverage and other native completion rows remain assigned; no production rollout.

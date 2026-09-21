@@ -1,5 +1,6 @@
 import { memoryPrivacyMutationActive } from '../state/memory-privacy-mutation.ts';
 import './memory-recall-boundary.css';
+import './memory-assistant-context.ts';
 import { html, nothing } from 'lit';
 import { FormaElement } from './forma-element.ts';
 import { createRecallBoundaryClient, type RecallBoundaryView, type RecallSource } from '../state/memory-recall-boundary-client.ts';
@@ -11,7 +12,8 @@ import type { MemoryEnrollment } from '../state/live-memory-client.ts';
 
 type Client = ReturnType<typeof createRecallBoundaryClient>;
 type Preview = Awaited<ReturnType<Client['inspect']>>;
-// Explicit native controls and private preview; no prompts, authored edits or persistence.
+// Explicit native controls and private preview. Saving an original uses a separate
+// source-context consent; discovery never dispatches a prompt or authors an edit.
 export class MemoryRecallBoundaryControl extends FormaElement {
   static properties = { enrollment: { attribute: false }, currentCheck: { attribute: false } };
   declare enrollment: MemoryEnrollment | undefined;
@@ -22,6 +24,7 @@ export class MemoryRecallBoundaryControl extends FormaElement {
   #boundary: MemoryRecallBoundary = 'document';
   #purpose: MemoryDerivationPurpose = 'rolling-summary';
   #source = '';
+  #reusedOriginals = false;
   #consent = false;
   #busy = false;
   #status = '';
@@ -29,7 +32,7 @@ export class MemoryRecallBoundaryControl extends FormaElement {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #t(key: string) { return personalMemoryMessage(this.i18n.locale, 'memory.live.' + key); }
   #clear = () => { this.#lease?.controller.abort(); this.#lease = null; clearTimeout(this.#timer); this.#timer = undefined;
-    this.#view = null; this.#sources = []; this.#preview = null; this.#source = ''; this.#consent = false; this.#busy = false; this.requestUpdate(); };
+    this.#view = null; this.#sources = []; this.#preview = null; this.#source = ''; this.#reusedOriginals=false; this.#consent = false; this.#busy = false; this.requestUpdate(); };
   #privacy = () => { if (!this.#lease?.mutation && memoryPrivacyMutationActive()) this.#hide(); };
   #hide = () => { this.#status = this.#busy ? 'recallBoundaryUncertain' : 'briefExpired'; this.#clear(); };
   #expire = () => {
@@ -47,10 +50,10 @@ export class MemoryRecallBoundaryControl extends FormaElement {
   override disconnectedCallback() { this.#clear(); window.removeEventListener('pagehide', this.#hide); window.removeEventListener('blur', this.#hide); window.removeEventListener('forma-memory-privacy-mutation', this.#privacy); this.ownerDocument.removeEventListener('visibilitychange', this.#visibility); super.disconnectedCallback(); }
   protected override updated() { if (this.#lease && !this.#lease.current()) this.#hide(); }
   #active() { if (this.#lease && !this.#lease.current()) { this.#hide(); return false; } return Boolean(this.#lease); }
-  async #run(action: 'load' | 'save' | 'reset' | 'sources' | 'inspect') {
+  async #run(action: 'load' | 'save' | 'reset' | 'sources' | 'originals' | 'inspect') {
     if (this.#busy || memoryPrivacyMutationActive() || !this.enrollment || !this.currentCheck?.() || this.ownerDocument.visibilityState !== 'visible') return;
     const row = this.enrollment, scope = { projectId: row.projectId, documentId: row.documentId }, view = this.#view,
-      boundary = this.#boundary, chosen = this.#sources.find(s => s.enrollmentId === this.#source), purpose = this.#purpose;
+      boundary = this.#boundary, chosen = this.#sources.find(s => s.enrollmentId === this.#source), purpose = this.#purpose, reusedOriginals=action==='originals'||action==='inspect'&&this.#reusedOriginals;
     if (action === 'save' && (!this.#active() || !view || !this.#consent) || action === 'inspect' && (!this.#active() || !chosen)) return;
     this.#clear(); this.#busy = true; this.#status = '';
     const store = this.store, auth = store.captureAuthorizationScope(), source = store.captureSourceOwnership(), route = store.route.get(),
@@ -67,11 +70,11 @@ export class MemoryRecallBoundaryControl extends FormaElement {
         this.#view = value; this.#boundary = value.boundary; owner.until = Math.min(owner.until, Date.parse(value.validUntil)); }
       if (action === 'save') { await client.save(scope, view!, boundary, controller.signal); if (!owner.current()) return; this.#status = 'recallBoundarySaved'; }
       if (action === 'reset') { await client.reset(scope, controller.signal); if (!owner.current()) return; this.#status = 'recallBoundarySaved'; }
-      if (action === 'sources') { const value = await client.sources(scope, controller.signal); if (!owner.current()) return;
-        this.#sources = value.sources; this.#source = value.sources[0]?.enrollmentId ?? ''; owner.until = Math.min(owner.until, Date.parse(value.validUntil));
+      if (action === 'sources'||action==='originals') { const value = await client.sources(scope, controller.signal,reusedOriginals); if (!owner.current()) return;
+        this.#reusedOriginals=reusedOriginals; this.#sources = value.sources; this.#source = value.sources[0]?.enrollmentId ?? ''; owner.until = Math.min(owner.until, Date.parse(value.validUntil));
         if (!value.sources.length) this.#status = 'recallBoundaryEmpty'; }
-      if (action === 'inspect') { const value = await client.inspect(scope, chosen!, purpose, controller.signal); if (!owner.current()) return;
-        this.#preview = value; owner.until = Math.min(owner.until, Date.parse(value.validUntil)); }
+      if (action === 'inspect') { const value = await client.inspect(scope, chosen!, purpose, controller.signal,reusedOriginals); if (!owner.current()) return;
+        this.#reusedOriginals=reusedOriginals; this.#preview = value; owner.until = Math.min(owner.until, Date.parse(value.validUntil)); }
       clearTimeout(this.#timer); this.#timer = setTimeout(this.#expire, Math.max(0, owner.until - Date.now()));
     } catch { if (owner.current()) this.#status = action === 'save' || action === 'reset' ? 'recallBoundaryUncertain' : 'recallBoundaryUnavailable'; }
     finally { if (this.#lease === owner) { this.#busy = false; this.requestUpdate(); } }
@@ -83,10 +86,12 @@ export class MemoryRecallBoundaryControl extends FormaElement {
       <h3>${this.#t('recallBoundaryHeading')}</h3><p>${this.#t('recallBoundaryHelp')}</p>
       <div class="memory-actions"><button type="button" class="button secondary" ?disabled=${this.#busy} @click=${() => this.#run('load')}>${this.#t('recallBoundaryLoad')}</button>
         <button type="button" class="button secondary" ?disabled=${this.#busy} @click=${() => this.#run('sources')}>${this.#t('recallBoundarySources')}</button>
+        <button type="button" class="button secondary" ?disabled=${this.#busy} @click=${() => this.#run('originals')}>${this.#t('recallReuseSources')}</button>
         <button type="button" class="button ghost" ?disabled=${this.#busy} @click=${() => this.#run('reset')}>${this.#t('recallBoundaryReset')}</button></div>
       ${view ? html`<label>${this.#t('recallBoundaryRange')} <select .value=${this.#boundary} @change=${(e: Event) => { this.#boundary = (e.target as HTMLSelectElement).value as MemoryRecallBoundary; this.#consent = false; this.requestUpdate(); }}>${MEMORY_RECALL_BOUNDARIES.filter(b=>b!=='organization'||view.organizationAvailable===true).map(b => html`<option value=${b} ?selected=${b === this.#boundary}>${this.#t('recallBoundary.' + b)}</option>`)}</select></label>
         <label><input type="checkbox" .checked=${this.#consent} @change=${(e: Event) => { this.#consent = (e.target as HTMLInputElement).checked; this.requestUpdate(); }}>${this.#t('recallBoundaryConsent')}</label>
         <button type="button" class="button primary" ?disabled=${!this.#consent || this.#busy} @click=${() => this.#run('save')}>${this.#t('recallBoundarySave')}</button>` : nothing}
+      ${active&&this.#reusedOriginals?html`<p>${this.#t('recallReuseHelp')}</p>`:nothing}
       ${active && this.#sources.length ? html`<label>${this.#t('recallBoundarySource')} <select .value=${this.#source} @change=${(e: Event) => { this.#source = (e.target as HTMLSelectElement).value; this.requestUpdate(); }}>${this.#sources.map(s => html`<option value=${s.enrollmentId} ?selected=${s.enrollmentId === this.#source}>${s.documentId}${s.ownerId?` (${s.ownerId})`:""} · ${this.#t('recallBoundary.' + s.zoom)}</option>`)}</select></label>
         <label>${this.#t('recallBoundaryPurpose')} <select .value=${this.#purpose} @change=${(e: Event) => { this.#purpose = (e.target as HTMLSelectElement).value as MemoryDerivationPurpose; this.requestUpdate(); }}>${MEMORY_DERIVATION_PURPOSES.map(p => html`<option value=${p} ?selected=${p === this.#purpose}>${this.#t('purpose.' + p)}</option>`)}</select></label>
         <button type="button" class="button secondary" ?disabled=${this.#busy} @click=${() => this.#run('inspect')}>${this.#t('reviewInspect')}</button>` : nothing}
@@ -95,6 +100,7 @@ export class MemoryRecallBoundaryControl extends FormaElement {
           <details><summary>${this.#t('briefEvidence')}</summary>${item.supports.map(q => html`<blockquote>${q.text}</blockquote>`)}
           ${item.counterevidence.length ? html`<p>${this.#t('briefCounterevidence')}</p>${item.counterevidence.map(q => html`<blockquote>${q.text}</blockquote>`)}` : nothing}
           ${item.observationCitations?.length ? html`<p>${this.#t('behavioralDisclosure')}</p><ul>${item.observationCitations.map(c => html`<li>${this.#t('behavioralRole.' + c.role)}: ${this.#t('behavioralAction.' + c.action)}</li>`)}</ul>` : nothing}</details></li>`)}</ul>` : nothing}
+      ${preview&&this.#reusedOriginals&&this.store.projection.get().projectId===this.enrollment.projectId&&this.store.projection.get().documentId===this.enrollment.documentId?html`<forma-memory-assistant-context .candidateJobId=${preview.jobId}></forma-memory-assistant-context>`:nothing}
       ${this.#status ? html`<p role="status">${this.#t(this.#status)}</p>` : nothing}
     </section>`;
   }

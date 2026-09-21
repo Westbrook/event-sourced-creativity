@@ -288,3 +288,14 @@ now meet the existing synthetic whole-execution target at48 personal/50 shared
 native calls, preserving exact current source, policy, authority and receipt
 checks. This closes that measured local capacity defect, not hosted qualification
 or the other consumer/resource/lifecycle implementation rows above.
+
+
+## Independent original-source discovery
+
+[Certified native copies](forma-memory-reuse-discovery-2026-09-21.md) now lead to
+separately enrolled, independently authorized original-source recall, private
+preview and explicit acceptance by the real assistant-context consumer. No copy
+widens access or counts as new evidence. The first-mount acceptance-control bug is
+also fixed. This closes the native approved-context-copy discovery/acceptance path;
+cross-owner/multi-hop and duplicate/resource provenance coverage remain explicit
+requirements alongside the other native rows. No automatic enrollment or deployment.

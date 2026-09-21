@@ -227,6 +227,13 @@ export function nativeDerivationResultBinding(env: WorkerEnv, handle: NativeDeri
   return { enrollment: structuredClone(input.enrollment), purpose: input.grant.purpose,
     outputSha256: String(read.row.output_sha256) };
 }
+/** Private native copy evidence only; a pointer is never original-source access.
+ * The caller must independently authorize originals and replay this handle's
+ * guards before displaying a relationship. Nothing here counts as new evidence. */
+export function nativeDerivationResultReuseEvidence(env:WorkerEnv,handle:NativeDerivationResultRead){
+  const read=currentRead(env,handle),source=nativeDerivationSourceInputs(env,read.capture);
+  return structuredClone(source.provenance.reuseBindings?.entries??[]);
+}
 /** A consumer that writes an answer must carry these statements into its own
  * atomic publication; read success alone is not durable answer authority. */
 export function nativeDerivationResultGuards(env: WorkerEnv, handle: NativeDerivationResultRead) {

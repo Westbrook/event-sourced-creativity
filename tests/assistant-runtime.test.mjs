@@ -16953,7 +16953,7 @@ for(const fault of ['truncated','missing-references','missing-grant','wrong-gran
  let injected=false;
  db.batch=async statements=>{
   const result=await batch.call(db,statements);
-  if(!injected&&statements.length===3&&statements[0].sql.startsWith('SELECT job_id,consent_id,purpose,')&&statements[1].sql.startsWith('SELECT job_id,enrollment_id,event_id,')){
+  if(!injected&&statements.length===4&&statements[3].sql===PRINCIPAL_WITH_ACCESS_SQL&&statements[0].sql.startsWith('SELECT job_id,consent_id,purpose,')&&statements[1].sql.startsWith('SELECT job_id,enrollment_id,event_id,')){
    injected=true;
    if(fault==='truncated')result.pop();
    if(fault==='missing-references')result[1].results=[];
@@ -19088,4 +19088,81 @@ for(const fault of ['missing','failed','extra','policy-extra-key','policy-string
  };t.after(()=>{db.batch=batch;});
  await assert.rejects(boundary.readNativePrivateContentPreparation(env,state.current().organization_id),/memory_boundary_|private_content_retention_/);assert.equal(hit,true);
  await assert.rejects(boundary.nativePrivateContentCleanupExclusion(env),/memory_boundary_|private_content_retention_/);
+});
+
+async function nativeReuseRecallFixture(t,{shared=false}={}){
+ const state=await nativeMemoryReuseResultFixture(t,{shared}),target=state.current(),copy=state.copies[0];
+ for(const name of ['0058_project_containment.sql','0059_memory_recall_boundaries.sql'])state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/'+name,import.meta.url),'utf8'));
+ const enrolled=await state.handleLiveMemory(state.settingsRequest({...state.preferences,documentId:copy.sourceDocumentId,revision:0}),state.env,'settings');
+ assert.equal(enrolled.status,200,await enrolled.clone().text());const source=(await enrolled.json()).enrollment;
+ const api=await import('../worker/memory-recall-boundary-api.ts');
+ const request=(documentId=target.document_id,query={reuse:'1'},body=null)=>api.handleMemoryRecallBoundary(new Request('http://localhost/api/memory/'+(body?'recall-boundary':'recall-scopes')+'?'+new URLSearchParams({projectId:target.project_id,documentId,...query}),{method:body?'PUT':'GET',headers:{...state.owner,origin:'http://localhost','content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),state.env);
+ const widen=await request(source.documentId,{}, {version:'memory-scope-recall-v1',enrollmentId:source.id,enrollmentRevision:source.revision,boundary:'project',revision:null,confirmation:'CHANGE_RECALL_BOUNDARY'});
+ assert.equal(widen.status,200,await widen.clone().text());return Object.assign(state,{reuseRequest:request,reuseSource:source,reuseTarget:target});
+}
+for(const shared of [false,true])test('native reuse discovery: certified copy locates only independently enrolled original '+shared,async t=>{
+ const state=await nativeReuseRecallFixture(t,{shared}),before=adaptiveReentryFinancialState(state),calls=state.calls.length;
+ const response=await state.reuseRequest(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+ assert.deepEqual(body.sources.map(source=>source.enrollmentId),[state.reuseSource.id]);assert.equal(body.sources[0].weight,.7,'A copy never amplifies relevance or confidence');
+ assert.equal(JSON.stringify(body).includes('COPY_BODY_NOT_HUMAN'),false);assert.equal(JSON.stringify(body).includes(state.copies[0].sourceBlockId),false);
+ assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.calls.length,calls);
+});
+for(const fault of ['source-consent','source-range','source-removed','source-private','copy-removed','preview-erased','no-target-result','foreign-owner'])test('native reuse discovery: '+fault+' cannot grant original recall',async t=>{
+ const state=await nativeReuseRecallFixture(t,{shared:fault==='source-private'}),target=state.reuseTarget,source=state.reuseSource;
+ if(fault==='source-consent')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(source.id);
+ if(fault==='source-range')state.sqlite.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').run(source.id);
+ if(fault==='foreign-owner')state.sqlite.prepare("UPDATE memory_live_enrollments SET owner_user_id='different-owner' WHERE enrollment_id=?").run(source.id);
+ if(fault==='source-private')state.sqlite.prepare("UPDATE project_resource_scopes SET visibility='actor_private',actor_user_id='different-actor' WHERE resource_kind='block' AND resource_id IN(?,?)").run(state.copies[0].sourceBlockId,state.copies[0].sourceBlockId+'-related');
+ if(fault==='preview-erased')state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),state.copies[0].preview.previewId);
+ if(fault==='no-target-result')assert.equal(await(await import('../worker/memory-derivation-results.ts')).withdrawNativeDerivationResult(state.env,target.actor_user_id,state.stored.job_id),true);
+ if(fault==='source-removed'||fault==='copy-removed')for(const blockId of fault==='source-removed'?[state.copies[0].sourceBlockId,state.copies[0].sourceBlockId+'-related']:state.manifest.provenance.reuseBindings.entries.map(row=>row.targetBlockId)){
+  const response=await state.request('/api/events',json({action:'append',event:{type:'BlockRemoved',payload:{project_id:target.project_id,document_id:fault==='source-removed'?source.documentId:target.document_id,block_id:blockId}}},state.owner));assert.equal(response.status,200,await response.clone().text());
+ }
+ const response=await state.reuseRequest(),body=await response.json();assert.ok(response.status!==200||body.sources.length===0,JSON.stringify(body));assert.equal(JSON.stringify(body).includes('COPY_BODY_NOT_HUMAN'),false);
+});
+
+for(const fault of ['missing','false-proof','late-consent','late-original','late-preview','late-range'])test('native reuse discovery: final '+fault+' cannot disclose stale discovery',async t=>{
+ const state=await nativeReuseRecallFixture(t),db=state.env.DB,batch=db.batch;let hit=false;
+ db.batch=async statements=>{const selected=!hit&&statements.some(s=>s.sql.includes('SELECT wanted.value AS block_id FROM json_each'));
+  if(selected){hit=true;
+   if(fault==='late-consent')state.sqlite.prepare('UPDATE memory_live_enrollments SET recall_enabled=0 WHERE enrollment_id=?').run(state.reuseSource.id);
+   if(fault==='late-original')state.sqlite.prepare("UPDATE event_private_payloads SET private_json='{}' WHERE private_event_id IN(SELECT event_id FROM events WHERE json_extract(payload,'$.block_id')=?)").run(state.copies[0].sourceBlockId);
+   if(fault==='late-preview')state.sqlite.prepare("UPDATE private_content SET content='',redacted_at=? WHERE content_id=?").run(new Date().toISOString(),state.copies[0].preview.previewId);
+   if(fault==='late-range')state.sqlite.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').run(state.reuseSource.id);
+  }
+  const rows=await batch.call(db,statements);if(selected&&fault==='missing')return rows.slice(1);if(selected&&fault==='false-proof')rows[0].results=[{verified:0}];return rows;
+ };t.after(()=>{db.batch=batch;});const response=await state.reuseRequest(),body=await response.json();assert.equal(hit,true);assert.notEqual(response.status,200,JSON.stringify(body));assert.equal(Object.hasOwn(body,'sources'),false);
+});
+for(const shared of [false,true])test('native reuse discovery: actual D1 keeps original and copy proofs within native bounds '+shared,{timeout:120000},async t=>{
+ const state=await nativeReuseRecallFixture(t,{shared});
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare');
+ const {exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');let outbound=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryReuse'],script:"export default {fetch(){return new Response('Isolated',{status:404});}}",outboundService(){outbound++;throw Error('No external network');}});
+ t.after(async()=>{await mf.dispose();assert.equal(outbound,0);});const db=await mf.getD1Database('MemoryReuse');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+ const response=await state.reuseRequest(),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.deepEqual(body.sources.map(source=>source.enrollmentId),[state.reuseSource.id]);
+ await db.prepare('DELETE FROM memory_recall_boundaries WHERE enrollment_id=?').bind(state.reuseSource.id).run();const retired=await state.reuseRequest();assert.equal(retired.status,200);assert.deepEqual((await retired.json()).sources,[]);
+});
+
+for(const shared of [false,true])test('native reuse discovery: original preview uses its own purpose consent and retained originals '+shared,async t=>{
+ const state=await nativeReuseRecallFixture(t,{shared}),source=state.reuseSource,target=state.reuseTarget;
+ const consent=await state.derivationRequest('PUT',{...state.derivationInput,documentId:source.documentId,enrollmentId:source.id,enrollmentRevision:source.revision});
+ assert.equal(consent.status,200,await consent.clone().text());
+ state.env.FORMA_MEMORY_ENABLED='false';
+ await specialistFreeTurn(state,'reuse-original-own-intent','This is my independently authored original intent.',{route:'/document/'+source.documentId,project:source.projectId});
+ state.env.FORMA_MEMORY_ENABLED='true';state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2000-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(source.id);
+ state.sqlite.prepare("UPDATE memory_live_enrollments SET next_due_at='2999-01-01T00:00:00.000Z' WHERE enrollment_id=?").run(target.enrollment_id);
+ const delivery=await state.run();assert.equal(delivery.status,'completed',JSON.stringify(delivery)+' '+state.controls.lastDatabaseError);
+ const worker=await import('../worker/memory-derivation-worker.ts'),generated=await worker.runNativeDerivationScheduled(state.env);assert.equal(generated.status,'stored',JSON.stringify(generated)+' '+state.controls.lastDatabaseError);
+ const query={reuse:'1',source:source.id,purpose:state.derivationInput.purpose},before=adaptiveReentryFinancialState(state),calls=state.rollingRequests.length;
+ const response=await state.reuseRequest(target.document_id,query),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);
+ assert.equal(body.source.documentId,source.documentId);assert.equal(body.independentEvidence,false);assert.equal(body.presentation.candidate.items.length,1);
+ assert.notEqual(body.presentation.jobId,state.stored.job_id);assert.deepEqual(adaptiveReentryFinancialState(state),before);assert.equal(state.rollingRequests.length,calls,'Discovery and preview never invoke a provider');
+ state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0060_memory_derivation_contexts.sql',import.meta.url),'utf8'));
+ const contextApi=await import('../worker/memory-assistant-context-api.ts');
+ const contextRequest=(method='GET',input)=>contextApi.handleMemoryAssistantContext(new Request('http://localhost/api/memory/assistant-context?'+new URLSearchParams({projectId:target.project_id,documentId:target.document_id}),{method,headers:{...state.owner,origin:'http://localhost','content-type':'application/json'},...(input?{body:JSON.stringify(input)}:{})}),state.env);
+ const contextView=await(await contextRequest()).json();
+ const accepted=await contextRequest('PUT',{jobId:body.presentation.jobId,revision:null,targetEnrollmentId:contextView.targetEnrollmentId,targetRevision:contextView.targetRevision,confirmation:'ACCEPT_ASSISTANT_CONTEXT'});
+ assert.equal(accepted.status,200,await accepted.clone().text());const saved=await contextRequest();assert.equal(saved.status,200,await saved.clone().text());assert.equal((await saved.json()).context.source.documentId,source.documentId);
+ assert.equal(await(await import('../worker/memory-derivation-results.ts')).withdrawNativeDerivationResult(state.env,target.actor_user_id,body.presentation.jobId),true);
+ const retired=await state.reuseRequest(target.document_id,query);assert.notEqual(retired.status,200);assert.equal(Object.hasOwn(await retired.json(),'presentation'),false);
 });

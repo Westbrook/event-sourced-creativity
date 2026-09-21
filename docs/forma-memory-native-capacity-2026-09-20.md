@@ -325,7 +325,10 @@ Verification:22 final dispatch/retention-metadata/capacity checks,73 overlapping
 read-bundle/budget/idle-retention/pair checks, and54 adjacent product/private
 retention checks pass. Earlier148 source/hierarchy/D1 and34 dispatch/authority
 checks cover intermediate versions and are not an exact-final-tree full pass.
-The new full native runtime run is in progress and will be recorded separately.
+The first full native run completed with 2,371 passes and eight stale test-hook
+failures: the fault injector expected three metadata statements instead of four.
+After correcting that hook, all 48 metadata-bundle fault checks pass. A clean
+full rerun will be recorded separately; this is not yet a full-suite pass.
 The preceding creative checkpoint at`9f6b67df` passed2,304/2,304 and excludes
 this subsequent batching implementation. No provider traffic, deployment,
 enrollment, migration or external service registration was performed.

@@ -41,7 +41,7 @@ export class MemoryAssistantContext extends FormaElement{
   const owner:Owner={scope:selected,controller,current:()=>this.#owner===owner&&!memoryPrivacyMutationActive()&&!controller.signal.aborted&&this.isConnected&&!this.#suspended&&this.ownerDocument.visibilityState==='visible'
    &&this.store===store&&store.session.get()?.user.userId===session.user.userId&&!store.session.get()?.impersonation&&store.authorizationScopeActive(auth)&&store.sourceOwnershipActive(source)
    &&store.route.get()===route&&this.i18n.locale===locale&&JSON.stringify(this.#scope())===stamp&&this.candidateJobId===candidate};
-  this.#owner=owner;if(!candidate)void this.#load(owner);
+  this.#owner=owner;if(!candidate)void this.#load(owner);else this.requestUpdate();
  }
  #client(owner:Owner){return createAssistantMemoryContextClient((input,init)=>this.store.guardedFetch(input,init,this.#t('assistantContextHeading'),{current:owner.current}));}
  #retain(owner:Owner,view:AssistantMemoryContextView){

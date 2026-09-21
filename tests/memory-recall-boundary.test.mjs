@@ -122,3 +122,9 @@ test('qualified cross-owner tree sources preserve equal project IDs and exact ow
   const malformed=createRecallBoundaryClient(async()=>Response.json({version:'memory-scope-recall-v1',sources:[{...item,...change}],validUntil:new Date(Date.now()+20000).toISOString(),complete:true}));await assert.rejects(malformed.sources(selected,signal()));
  }
 });
+
+test('original reuse discovery is explicit and adds no source, authority or weight override',async()=>{
+ const paths=[],client=createRecallBoundaryClient(async url=>{paths.push([...new URL(url,'https://fixture.invalid').searchParams]);return Response.json({version:'memory-scope-recall-v1',sources:[],validUntil:new Date(Date.now()+20000).toISOString(),complete:true});});
+ await client.sources(selected,signal());await client.sources(selected,signal(),true);
+ assert.deepEqual(paths,[Object.entries(selected),[...Object.entries(selected),['reuse','1']]]);
+});

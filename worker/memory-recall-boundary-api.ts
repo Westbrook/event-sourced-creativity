@@ -1,3 +1,4 @@
+import { prepareNativeReuseRecall } from './memory-reuse-recall.ts';
 import { readNativeOrganizationNesting } from './organization-project-nesting.ts';
 import { qualifiedProjectKey,visibleOrganizationAncestors } from '../src/model/organization-project-nesting.ts';
 import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
@@ -147,7 +148,8 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
     if (!(control ? ['GET', 'PUT', 'DELETE'] : ['GET']).includes(request.method)) return reply({ error: 'method_not_allowed' }, 405);
     if (request.headers.get('sec-fetch-site') === 'cross-site' || request.method !== 'GET' && request.headers.get('origin') !== url.origin) return reply({ error: 'same_origin_required' }, 403);
     const projectId = url.searchParams.get('projectId'), documentId = url.searchParams.get('documentId');
-    if (!derivationId(projectId) || !derivationId(documentId) || [...url.searchParams.keys()].some(key => !(control ? ['projectId', 'documentId'] : ['projectId', 'documentId', 'source', 'purpose']).includes(key) || url.searchParams.getAll(key).length !== 1)) return reply({ error: 'recall_scope_required' }, 400);
+    if (!derivationId(projectId) || !derivationId(documentId) || [...url.searchParams.keys()].some(key => !(control ? ['projectId', 'documentId'] : ['projectId', 'documentId', 'source', 'purpose', 'reuse']).includes(key) || url.searchParams.getAll(key).length !== 1)) return reply({ error: 'recall_scope_required' }, 400);
+    if(url.searchParams.has('reuse')&&(control||url.searchParams.get('reuse')!=='1'))return reply({error:'recall_scope_required'},400);
     const schema=await certifyRecallBoundarySchema(await rows(env,schemaQuery));
     const guards: MemorySqlGuard[] = [schema.guard, { condition: "?>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM sqlite_temp_schema) AND EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [new Date(started + 30000).toISOString()] }];
     // Withdrawal remains possible after source access, qualification or learning ends.
@@ -233,13 +235,18 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
     const sourceBindings = [actor.userId, parent.owner_user_id, parent.organization_id, parent.enrollment_id], sources = await rows(env, sourcesQuery, sourceBindings);
     if (sources.length > 32) return reply({ error: 'recall_scope_capacity' }, 409);
     guards.push(inventory(sourcesQuery, sourceBindings, sources, [...parentColumns, 'boundary', 'boundary_revision']));
-    const eligible=[];
+    let eligible=[];
     for(const row of sources){
       const e=Object.fromEntries(parentColumns.map(key=>[key,row[key]])) as unknown as LiveMemoryEnrollment;
       if(!memoryRecallBoundary(row.boundary)||['forgotten','erased','access-changed','revoked'].includes(e.failure_code??''))continue;
       const authority=liveMemoryAuthorityFromPrincipal(env,e,actor);if(!authority)continue;
       const related=await readNativeRecallRelation(env,actor,e,parent,row.boundary,trees);guards.push(...related.guards);
       if(related.relation)eligible.push({e,relation:related.relation,authority});
+    }
+    if(url.searchParams.get('reuse')==='1'){
+      const reused=await prepareNativeReuseRecall(env,actor,parent,eligible.map(value=>value.e));
+      guards.push(...reused.guards);responseDeadline=Math.min(responseDeadline,Date.parse(reused.validUntil));
+      eligible=eligible.filter(value=>reused.enrollments.includes(value.e.enrollment_id));
     }
     eligible.sort((a,b)=>b.relation.weight-a.relation.weight||a.e.enrollment_id.localeCompare(b.e.enrollment_id));
     const sourceId = url.searchParams.get('source'), purpose = url.searchParams.get('purpose');
@@ -258,7 +265,7 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
         enrollmentRevision: chosen.e.revision, guards: packRecallGuards(guards) });
       if (!presentation || !current()) return reply({ error: 'recall_source_unavailable' }, 503);
       return reply({ source: { ...recallSourceIdentity(chosen.e,chosen.relation.zoom,chosen.e.owner_user_id!==parent.owner_user_id), ...chosen.relation },
-        presentation, validUntil: new Date(Math.min(presentationDeadline, Date.parse(presentation.candidate.validUntil))).toISOString(),
+        presentation, validUntil: new Date(Math.min(responseDeadline, Date.parse(presentation.candidate.validUntil))).toISOString(),
         independentEvidence: false, completeHistory: false, presentationOnly: true });
     }
     if (purpose !== null) return reply({ error: 'recall_scope_required' }, 400);
@@ -266,6 +273,6 @@ export async function handleMemoryRecallBoundary(request: Request, env: WorkerEn
     const checks = packRecallGuards(guards).map(g => derivationAssertion(env, g)), checked = await db.batch(checks);
     if (!current() || !derivationResults(checked, checks.length) || !checked.every(derivationVerified)) throw Error('recall_changed');
     return reply({ sources: eligible.map(source => ({ ...recallSourceIdentity(source.e,source.relation.zoom,source.e.owner_user_id!==parent.owner_user_id), ...source.relation })),
-      validUntil: new Date(Math.min(presentationDeadline, ...eligible.map(source => Date.parse(source.e.expires_at)))).toISOString(), complete: true });
+      validUntil: new Date(Math.min(responseDeadline, ...eligible.map(source => Date.parse(source.e.expires_at)))).toISOString(), complete: true });
   } catch { return reply({ error: request.method === 'GET' ? 'recall_unavailable' : 'recall_commit_unconfirmed' }, 503); }
 }
