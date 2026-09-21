@@ -182,8 +182,23 @@ still-app .palette-find { border-top: 1px solid var(--en-color-line); margin-top
 still-app .palette-hint { color: var(--en-color-text-muted); font-size: 12px; }
 
 /* Fixed library region: notifications do not participate in content layout. */
-still-app .generation-notifications { --en-toast-region-width: 30rem; --en-toast-region-layer: 40; --en-toast-region-max-size: 55dvh; }
-still-app .generation-notifications en-toast { --en-toast-background: var(--en-color-surface); --en-toast-color: var(--en-color-text); }
+still-app .generation-notifications { --en-toast-region-width: 30rem; --en-toast-region-layer: 40; --en-toast-region-max-size: 55dvh; --en-toast-region-gap: var(--en-space-2, 8px); }
+still-app .generation-notifications::part(region) { justify-items: end; scrollbar-gutter: auto; padding: var(--en-space-2, 8px); }
+still-app .generation-notifications en-toast {
+  inline-size: fit-content; max-inline-size: 100%;
+  --en-toast-background: var(--en-color-surface); --en-toast-color: var(--en-color-text);
+  --en-toast-border-color: var(--en-color-line); --en-toast-padding: 6px;
+  /* Half the compact toolbar height; longer messages retain readable corners. */
+  --en-toast-radius: 29px; --en-toast-shadow: 0 5px 26px var(--still-dock-shadow);
+  --en-icon-size: 16px;
+}
+still-app .generation-notifications en-toast::part(base) { min-block-size: 58px; padding-inline-start: 16px; column-gap: var(--en-space-2, 8px); }
+still-app .generation-notifications en-toast::part(content) { font-size: 13px; line-height: 1.5; padding-block: 5px; }
+still-app .generation-notifications en-toast::part(actions) { grid-column: 2 / -1; gap: 5px; }
+still-app .generation-notifications en-toast::part(close) { min-inline-size: 44px; min-block-size: 44px; padding: 0; border-radius: var(--en-radius-pill, 9999px); background: transparent; }
+still-app .generation-notifications en-button[slot="actions"] { margin-block: 0; }
+still-app .generation-notifications en-button[slot="actions"]::part(control) { padding-inline: 12px; }
+
 
 still-app .pending-thumbnail { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--en-color-surface-subtle); overflow: hidden; }
 still-app .pending-thumbnail en-skeleton { position: absolute; inset: 0; --en-skeleton-size: 100%; opacity: .6; }
