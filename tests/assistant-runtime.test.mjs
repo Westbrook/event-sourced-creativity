@@ -18898,3 +18898,33 @@ for(const shared of [false,true])for(const phase of ['continuation','dispatch'])
  assert.equal(state.sqlite.prepare("SELECT COUNT(*) n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n,0);
  assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,null);
 });
+
+
+for(const phase of ['quote','execute','retrieve'])for(const fault of ['missing-proof','false-proof','extra-proof-key','sparse-frame','failed-frame','missing-value','extra-value-key','string-value','array-proof','array-value'])test('Memory final disclosure: '+phase+'/'+fault+' cannot release private bytes',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared:true}),db=state.env.DB,batch=db.batch,original=globalThis.fetch;let hit=false,calls=0,review;
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};
+ if(phase!=='quote'){
+  const quoted=await state.semanticQuote();assert.equal(quoted.response.status,200,JSON.stringify(quoted.body));review=quoted.body;
+  if(phase==='retrieve'){assert.equal((await specialistExecute(state,review,state.semanticOptions)).status,202);await state.drainBackground();assert.equal(calls,1);}
+ }
+ db.batch=async statements=>{
+  const final=statements.at(-1)?.sql??'',selected=phase==='quote'?final.startsWith('SELECT 1 AS retained WHERE'):final.endsWith('AS no_memory_ancestry');
+  const rows=await batch.call(db,statements);if(hit||!selected||statements.length<2)return rows;hit=true;
+  assert.equal(rows[0].results[0].verified,1);
+  if(fault==='array-proof')rows[0].results=[Object.assign([],rows[0].results[0])];
+  if(fault==='array-value')rows.at(-1).results=[Object.assign([],rows.at(-1).results[0])];
+  if(fault==='missing-proof')rows[0].results=[];
+  if(fault==='false-proof')rows[0].results[0].verified=0;
+  if(fault==='extra-proof-key')rows[0].results[0].unexpected=1;
+  if(fault==='sparse-frame')delete rows[0];
+  if(fault==='failed-frame')rows[0].success=false;
+  if(fault==='missing-value')rows.at(-1).results=[];
+  if(fault==='extra-value-key')rows.at(-1).results[0].unexpected=1;
+  if(fault==='string-value'){const row=rows.at(-1).results[0],key=Object.keys(row)[0];row[key]='1';}
+  return rows;
+ };t.after(()=>{db.batch=batch;globalThis.fetch=original;});
+ const quoted=phase==='quote'?await state.semanticQuote():null,response=quoted?quoted.response:phase==='execute'?await specialistExecute(state,review,state.semanticOptions):await specialistRetrieve(state,review,state.semanticOptions),body=quoted?quoted.body:await response.json();
+ assert.equal(hit,true);assert.ok(response.status>=400,JSON.stringify(body));assert.equal(body.quote,undefined);assert.equal(body.result,undefined);assert.equal(body.memory,undefined);
+ await state.drainBackground();assert.equal(calls,phase==='quote'?0:1);db.batch=batch;
+ if(phase!=='quote'){const current=await specialistRetrieve(state,review,state.semanticOptions);assert.equal(current.status,200,await current.clone().text());assert.equal(calls,1);}
+});

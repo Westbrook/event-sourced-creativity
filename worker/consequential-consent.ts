@@ -147,12 +147,12 @@ export async function claimConsequentialExecution(env:WorkerEnv,user:PilotUser,b
     const rows=structuredClone(await db.batch<Record<string,unknown>>(statements));
     if(env.DB!==db||!Array.isArray(rows)||rows.length!==statements.length||!Array.from(rows).every(value=>value&&value.success===true
       &&(!('error' in value)||value.error===undefined)&&Array.isArray(value.results))
-      ||checks.some((_,index)=>rows[index]!.results.length!==1||Object.keys(rows[index]!.results[0]!).join(',')!=='verified'||rows[index]!.results[0]!.verified!==1))throw Error('context_claim_unconfirmed');
+      ||checks.some((_,index)=>rows[index]!.results.length!==1||Array.isArray(rows[index]!.results[0])||Object.keys(rows[index]!.results[0]!).join(',')!=='verified'||rows[index]!.results[0]!.verified!==1))throw Error('context_claim_unconfirmed');
     changed=rows[checks.length]!;
     if(typeof changed.meta?.changes!=='number'||![0,1].includes(changed.meta.changes))throw Error('context_claim_unconfirmed');
     if(changed.meta.changes===1){
       const actual=rows.at(-1)!.results[0];
-      if(rows.at(-1)!.results.length!==1||!actual||Object.keys(actual).sort().join(',')!=='actor_user_id,binding_hash,consent_ref,error_code,execution_id,expires_at,intent_hash,result_ref,status'
+      if(rows.at(-1)!.results.length!==1||!actual||Array.isArray(actual)||Object.keys(actual).sort().join(',')!=='actor_user_id,binding_hash,consent_ref,error_code,execution_id,expires_at,intent_hash,result_ref,status'
         ||actual.execution_id!==id||actual.actor_user_id!==user.userId||actual.intent_hash!==row.intent_hash||actual.binding_hash!==hash||actual.consent_ref!==row.consent_ref
         ||actual.expires_at!==row.expires_at||actual.status!=='reserved'||actual.result_ref!==null||actual.error_code!==null)throw Error('context_claim_unconfirmed');
       claimed=actual as ExecutionRow;
@@ -348,10 +348,10 @@ export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUse
         .bind(id,user.userId,hash,content.contentId)];
     const rows=structuredClone(await env.DB.batch<Record<string,unknown>>(statements));
     if(!Array.isArray(rows)||rows.length!==statements.length||!Array.from(rows).every(row=>row&&row.success===true&&(!('error' in row)||row.error===undefined)&&Array.isArray(row.results)
-      &&row.results.every(value=>value&&typeof value==='object'&&(!Object.hasOwn(value,'verified')||Object.keys(value).length===1&&value.verified===1)))
+      &&row.results.every(value=>value&&typeof value==='object'&&!Array.isArray(value)&&(!Object.hasOwn(value,'verified')||Object.keys(value).length===1&&value.verified===1)))
       ||[...precommit.map((_,index)=>index),verifiedIndex,verifiedIndex+2,...completion.verified.map(index=>verifiedIndex+3+index)].some(index=>rows[index]?.results.length!==1||rows[index]?.results[0]?.verified!==1))throw new Error('context_result_not_retained');
     const current=rows.at(-1)!.results[0];
-    if(rows.at(-1)!.results.length!==1||!current||Object.keys(current).sort().join(',')!=='actor_user_id,binding_hash,consent_ref,error_code,execution_id,expires_at,intent_hash,result_ref,status'
+    if(rows.at(-1)!.results.length!==1||!current||Array.isArray(current)||Object.keys(current).sort().join(',')!=='actor_user_id,binding_hash,consent_ref,error_code,execution_id,expires_at,intent_hash,result_ref,status'
       ||current.execution_id!==id||current.actor_user_id!==user.userId||current.binding_hash!==hash||current.intent_hash!==binding.intentHash||current.result_ref!==content.contentId
       ||current.status!=='completed'||current.error_code!==null||typeof current.consent_ref!=='string'||!current.consent_ref||typeof current.expires_at!=='string'||!Number.isFinite(Date.parse(current.expires_at)))throw Error('context_result_not_retained');
     return current as ExecutionRow;

@@ -273,3 +273,24 @@ candidate-acknowledgement and late expiry/durable/schema/hold races. Types,
 changed-worker/test-file lint and build pass, apart from the separately verified
 unchanged 16-finding runtime-test lint baseline. No production migration,
 enrollment, deployment, external service registration or actual provider call.
+
+
+## Confirmed final private disclosure — 2026-09-21
+
+Quote and result delivery now require the complete dense set of successful native
+source-proof acknowledgements, plus each expected named result value. Missing,
+false, sparse, extra-key, string-valued and array-shaped replies cannot release
+private quote, result or Memory presentation bytes. Asynchronous delivery failures
+are awaited within the protocol error boundary, producing a bounded refusal
+instead of escaping as an unhandled request failure. Explicit retrieval can
+recover the same already-paid result after a transport fault; no repurchase or
+older-source fallback occurs. Claim, raw and final publication decoders also deny
+array-shaped row objects.
+
+All 30 quote/execute/retrieval fault cases pass; the overlapping expanded
+execution/D1 regression passes 135/135. Types, changed-worker lint and build pass.
+A failed execute-delivery acknowledgement does not erase an already authorized
+purchase: retrieval recovers that same paid execution without another provider call.
+The full runtime checkpoint at `8ee293ab` is separate from this later disclosure
+change. No UI, migration, enrollment, scheduling registration, provider charge or
+deployment was added. The remaining native completion matrix is unchanged.

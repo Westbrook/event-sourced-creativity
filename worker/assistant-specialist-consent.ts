@@ -514,7 +514,7 @@ function rawReadStatement(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTas
     .bind(task.task_id,actor.principal.userId,...authority.bindings,...base.bindings,...contained.bindings);
 }
 async function decodeRaw(actor:SpecialistActor,task:SpecialistTaskRecord,retained:Retained,saved:RawRead){
-  if(!saved||Object.keys(saved).sort().join(',')!=='content,content_id,result_json'||typeof saved.content_id!=='string'||!saved.content_id
+  if(!saved||Array.isArray(saved)||Object.keys(saved).sort().join(',')!=='content,content_id,result_json'||typeof saved.content_id!=='string'||!saved.content_id
     ||typeof saved.content!=='string'||!saved.content.isWellFormed()||new TextEncoder().encode(saved.content).byteLength>MAX_ASSISTANT_RAW_RECEIPT_BYTES
     ||typeof saved.result_json!=='string'||!saved.result_json.isWellFormed()||new TextEncoder().encode(saved.result_json).byteLength>65536)fail('assistant_provider_receipt_invalid');
   let receipt:RawReceipt,pointer:Record<string,unknown>;
@@ -558,7 +558,7 @@ async function retainRaw(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTask
     if(env.DB!==db)fail('assistant_provider_receipt_unavailable');
     const rows=structuredClone(await db.batch<Record<string,unknown>>(statements));
     if(env.DB!==db||!Array.isArray(rows)||rows.length!==statements.length||!Array.from(rows).every(row=>row&&row.success===true&&(!('error' in row)||row.error===undefined)&&Array.isArray(row.results))
-      ||[...precommit.map((_,index)=>index),statements.length-2].some(index=>rows[index]!.results.length!==1||Object.keys(rows[index]!.results[0]!).join(',')!=='verified'||rows[index]!.results[0]!.verified!==1)
+      ||[...precommit.map((_,index)=>index),statements.length-2].some(index=>rows[index]!.results.length!==1||Array.isArray(rows[index]!.results[0])||Object.keys(rows[index]!.results[0]!).join(',')!=='verified'||rows[index]!.results[0]!.verified!==1)
       ||Array.from({length:content.requiredInserts},(_,index)=>index+precommit.length).some(index=>rows[index]!.meta?.changes!==1)
       ||publications.some((_,index)=>rows[publicationOffset+index]!.meta?.changes!==1)
       ||rows.at(-1)!.results.length!==1)fail('assistant_provider_receipt_unavailable');
@@ -1123,6 +1123,25 @@ function unusedExecutionProof(retained:Retained):BudgetReservationGuard{
         OR substr(other.cost_reservation_id,1,length(execution.execution_id)+5)=execution.execution_id||':usd:')))`,bindings:[JSON.stringify(expected)]});
 }
 
+/** Final disclosure is confirmed only by every expected native source proof
+ * and every named result row. A successful last row cannot stand in for a lost
+ * or malformed earlier acknowledgement. No retry or older-source fallback. */
+async function semanticDisclosureRead(env:WorkerEnv,memory:SemanticAssistantMemory,reads:readonly {name:string;statement:D1PreparedStatement;optional?:true}[]){
+  const db=env.DB,proof=semanticAssistantMemoryStatements(env,memory),statements=[...proof,...reads.map(read=>read.statement)];
+  const rows=structuredClone(await db.batch<Record<string,unknown>>(statements));
+  if(env.DB!==db||!Array.isArray(rows)||rows.length!==statements.length||!Array.from(rows).every(row=>row&&row.success===true&&(!('error' in row)||row.error===undefined)&&Array.isArray(row.results)))fail('assistant_read_scope_denied');
+  for(let i=0;i<proof.length;i++){
+    const result=rows[i]!.results;if(result.length!==1||!result[0]||Array.isArray(result[0])||Object.keys(result[0]).join(',')!=='verified'||result[0].verified!==1)fail('assistant_read_scope_denied');
+  }
+  const selected:Record<string,number>={};
+  for(const [index,read]of reads.entries()){
+    const result=rows[proof.length+index]!.results;if(read.optional&&result.length===0)continue;
+    if(result.length!==1||!result[0]||Array.isArray(result[0])||Object.keys(result[0]).join(',')!==read.name||![0,1].includes(result[0][read.name] as number))fail('assistant_read_scope_denied');
+    selected[read.name]=result[0][read.name] as number;
+  }
+  semanticAssistantMemoryInputs(env,memory);return selected;
+}
+
 async function resultResponse(env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,retained:Retained,task:SpecialistTaskRecord|null,requestedExecutionId?:string,status=200){
   let recovered:Awaited<ReturnType<typeof recoverResult>>=null,recoveryError:string|null=null;
   // A new Memory execute returns an admission acknowledgement. Its driver
@@ -1141,11 +1160,9 @@ async function resultResponse(env:WorkerEnv,actor:SpecialistActor,host:Assistant
   const semantic=semanticMemory(env,retained.request);
   // Distinct named checks remain in one snapshot without combining all of a
   // shared project's custody bindings into one over-limit D1 statement.
-  const finalRead=semantic?Object.assign({},...(await env.DB.batch<Record<string,number>>([
-    ...semanticAssistantMemoryStatements(env,semantic),
-    ...([["retained",base],["result_retained",resultProof],["unused_execution",unusedProof],["no_memory_ancestry",memory]] as const)
-      .map(([name,proof])=>env.DB.prepare(`SELECT CASE WHEN ${proof.sql} THEN 1 ELSE 0 END AS ${name}`).bind(...proof.bindings)),
-  ])).slice(-4).map(row=>row.results[0])) as Record<string,number>
+  const finalRead=semantic?await semanticDisclosureRead(env,semantic,
+    ([["retained",base],["result_retained",resultProof],["unused_execution",unusedProof],["no_memory_ancestry",memory]] as const)
+      .map(([name,proof])=>({name,statement:env.DB.prepare(`SELECT CASE WHEN ${proof.sql} THEN 1 ELSE 0 END AS ${name}`).bind(...proof.bindings)})))
     :await env.DB.prepare(`SELECT CASE WHEN ${base.sql} THEN 1 ELSE 0 END AS retained,CASE WHEN ${resultProof.sql} THEN 1 ELSE 0 END AS result_retained,CASE WHEN ${unusedProof.sql} THEN 1 ELSE 0 END AS unused_execution,CASE WHEN ${memory.sql} THEN 1 ELSE 0 END AS no_memory_ancestry`)
       .bind(...base.bindings,...resultProof.bindings,...unusedProof.bindings,...memory.bindings)
       .first<{retained:number;result_retained:number;unused_execution:number;no_memory_ancestry:number}>();
@@ -1439,7 +1456,7 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
   try{
     if(action==="quote"){
       const existing=await existingTask(env,actor,scopeKey,turnId);
-      if(existing){const retained=await retainedConsent(env,actor,scopeKey,turnId,existing.task_id);if(!retained)return json({error:"assistant_existing_task_unavailable",turnId,executionId:existing.task_id,retentionUnavailable:true,noAutomaticRetry:true},409);return resultResponse(env,actor,host,retained,existing);}
+      if(existing){const retained=await retainedConsent(env,actor,scopeKey,turnId,existing.task_id);if(!retained)return json({error:"assistant_existing_task_unavailable",turnId,executionId:existing.task_id,retentionUnavailable:true,noAutomaticRetry:true},409);return await resultResponse(env,actor,host,retained,existing);}
       const turn=await savedTurn(env,actor,scopeKey,turnId);if(!turn)return json({error:"assistant_turn_snapshot_unavailable"},409);
       const prepared=await prepareQuote(request,env,actor,host,turn,body.model,body.memory==="saved");
       let quote:ConsequentialPreview;
@@ -1447,13 +1464,13 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
       catch(error){await assertNoPaidMemory(env,noMemoryProof(prepared.binding.request as SpecialistRequest));throw error;}
       const retained=await retainedConsent(env,actor,scopeKey,turnId,quote.executionId,prepared.memory??undefined);if(!retained)return json({error:"assistant_execution_unavailable",turnId,executionId:quote.executionId,retentionUnavailable:true},404);
       const admitted=await existingTask(env,actor,scopeKey,turnId);
-      if(admitted){const winner=admitted.task_id===quote.executionId?retained:await retainedConsent(env,actor,scopeKey,turnId,admitted.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",turnId,executionId:admitted.task_id,retentionUnavailable:true,noAutomaticRetry:true},409);return resultResponse(env,actor,host,winner,admitted);}
+      if(admitted){const winner=admitted.task_id===quote.executionId?retained:await retainedConsent(env,actor,scopeKey,turnId,admitted.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",turnId,executionId:admitted.task_id,retentionUnavailable:true,noAutomaticRetry:true},409);return await resultResponse(env,actor,host,winner,admitted);}
       let availableMicrousd:number|null=null;try{const budgets=await readAccountBudgets(env,actor.principal.userId,retained.binding.scope?.organizationId);availableMicrousd=Math.min(budgets.costBudgets.user.remainingMicrousd,budgets.costBudgets.workspace.remainingMicrousd);}catch{/* Free disclosure remains available. */}
       const finalRead=join(readAuthority(actor,retained),consentProof(retained),turnProof(retained.binding,retained.request));
       const finalStatement=env.DB.prepare("SELECT 1 AS retained WHERE "+finalRead.sql).bind(...finalRead.bindings);
       const memory=semanticMemory(env,retained.request);
-      const final=memory?(await env.DB.batch([...semanticAssistantMemoryStatements(env,memory),finalStatement])).at(-1)?.results[0]:await finalStatement.first();
-      if(!final){await assertNoPaidMemory(env,noMemoryProof(retained.request));return json({error:"assistant_execution_unavailable",turnId,executionId:quote.executionId,retentionUnavailable:true},404);}
+      const final=memory?await semanticDisclosureRead(env,memory,[{name:"retained",statement:finalStatement,optional:true}]):await finalStatement.first<{retained:number}>();
+      if(final?.retained!==1){await assertNoPaidMemory(env,noMemoryProof(retained.request));return json({error:"assistant_execution_unavailable",turnId,executionId:quote.executionId,retentionUnavailable:true},404);}
       const preview=retained.preview,budgetAvailable=availableMicrousd!==null&&availableMicrousd>=preview.maximumMicrousd,providerAvailable=Boolean(env.OPENAI_API_KEY),originalRequest={...retained.request.originalRequest,model:retained.binding.steps[0]!.model,taskKind:retained.request.taskKind,sourceHash:retained.binding.sourceHash,conversationTurnIds:retained.request.conversation.map(item=>item.turnId)};
       return semanticJson(env,memory,{turnId,executionId:preview.executionId,...(memory?{memory:{version:'semantic-memory-answer-v1',validUntil:semanticAssistantMemoryInputs(env,memory).validUntil,independentEvidence:false}}:{}),quote:{...preview,status:retained.row.status,providerAvailable,budgetAvailable,availableMicrousd,unavailableReasons:prepared.unavailableReasons,canExecute:retained.row.status==="quoted"&&providerAvailable&&budgetAvailable&&!prepared.unavailableReasons.length},originalRequest,noAutomaticRetry:true});
     }
@@ -1464,22 +1481,22 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
     let task=await existingTask(env,actor,scopeKey,turnId);
     if(action==="apply-edit")return await applyMemoryEdit(request,env,actor,host,retained,task,body);
     if(task&&task.task_id!==id){
-      const winner=await retainedConsent(env,actor,scopeKey,turnId,task.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",retentionUnavailable:true,noAutomaticRetry:true},409);return resultResponse(env,actor,host,winner,task,id);
+      const winner=await retainedConsent(env,actor,scopeKey,turnId,task.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",retentionUnavailable:true,noAutomaticRetry:true},409);return await resultResponse(env,actor,host,winner,task,id);
     }
-    if(action==="retrieve"||action==="resume")return resultResponse(env,actor,host,retained,task,id);
-    if(task){const step=await env.DB.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").bind(id).first<{status:string}>();if(retained.row.status!=="reserved"||!step||!["quoted","reserved"].includes(step.status))return resultResponse(env,actor,host,retained,task,id);}
+    if(action==="retrieve"||action==="resume")return await resultResponse(env,actor,host,retained,task,id);
+    if(task){const step=await env.DB.prepare("SELECT status FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").bind(id).first<{status:string}>();if(retained.row.status!=="reserved"||!step||!["quoted","reserved"].includes(step.status))return await resultResponse(env,actor,host,retained,task,id);}
     const current=await purchasePreparation(request,env,actor,host,retained);
     let freshlyAdmitted=false;
     if(!task){
       const admitted=await admitTask(env,actor,retained,current.sourceHead,current.sourceProof,hash);task=await existingTask(env,actor,scopeKey,turnId);
       if(!task){await assertNoPaidMemory(env,noMemoryProof(retained.request));return json({error:admitted.error??"assistant_consent_changed",noAutomaticRetry:true},admitted.status??409);}
       if(admitted.row?.execution_id===id&&admitted.reused===false){retained.row=admitted.row;freshlyAdmitted=true;}
-      if(task.task_id!==id){const winner=await retainedConsent(env,actor,scopeKey,turnId,task.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",retentionUnavailable:true},409);return resultResponse(env,actor,host,winner,task,id);}
+      if(task.task_id!==id){const winner=await retainedConsent(env,actor,scopeKey,turnId,task.task_id);if(!winner)return json({error:"assistant_existing_task_unavailable",retentionUnavailable:true},409);return await resultResponse(env,actor,host,winner,task,id);}
     }
     const background=new Request(request.url,{method:"GET",headers:request.headers});
     const admittedHandoff=freshlyAdmitted?captureApprovedTask(env,host,background,actor,retained,task,current.handoff):undefined;
     execution.waitUntil(driveApprovedTask(background,env,host,id,turnId,semanticMemory(env,retained.request)??undefined,current.handoff,admittedHandoff).catch(()=>undefined));
-    return resultResponse(env,actor,host,retained,task,id,202);
+    return await resultResponse(env,actor,host,retained,task,id,202);
   }catch(error){const code=errorCode(error);return json({error:code,noAutomaticRetry:true,...(code==="assistant_read_scope_denied"?{retentionUnavailable:true}:{})},code==="assistant_provider_unavailable"?503:/rights|denied|authorization|custody/u.test(code)?403:code.includes("too_large")?413:409);}
 }
 /** Unsigned legacy work is parked, never replayed or declared free by a read. */

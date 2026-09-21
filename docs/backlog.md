@@ -381,3 +381,12 @@ remain separately recoverable. Current synthetic whole execution is 60/64
 personal/shared calls, above the conservative 50-call target. 151 final-source execution/D1, 29 product/retention and 15 rebuilt-worker
 retention checks pass; the full native regression is running. The complete native matrix
 remains assigned to this task. External service and rollout gates remain separate.
+
+
+## MEM-030 — Confirm every final private disclosure acknowledgement
+
+Implemented locally: [final quote/result source-proof and named-row checks](forma-memory-native-capacity-2026-09-20.md#confirmed-final-private-disclosure--2026-09-21),
+including normalized asynchronous failures and rejection of array-shaped native
+rows. Thirty quote/execute/retrieval fault cases and 135 overlapping native/D1
+checks pass; types, changed-worker lint and build pass. No new source consent, provider charge, native scope promotion or
+production activation. Other native completion-matrix requirements remain assigned.
