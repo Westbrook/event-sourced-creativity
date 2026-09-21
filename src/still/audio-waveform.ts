@@ -14,13 +14,26 @@ export function audioPeaks(channels: readonly Float32Array[], bins = 120): numbe
     return peak;
   });
 }
+/** RMS energy with a small peak contribution preserves detail in loud recordings.
+ * Channels are measured independently, so stereo phase cannot cancel the display. */
+export function audioEnvelope(channels: readonly Float32Array[], bins = 120): number[] {
+  if (!Number.isInteger(bins) || bins < 1 || bins > 1024) throw new RangeError('Invalid waveform resolution');
+  const length=channels[0]?.length??0;
+  if(!length||channels.some(channel=>channel.length!==length))return [];
+  const count=Math.min(bins,length);
+  return Array.from({length:count},(_,bin)=>{
+    const start=Math.floor(bin*length/count),end=Math.floor((bin+1)*length/count);let energy=0,peak=0;
+    for(const channel of channels){let squares=0;for(let i=start;i<end;i++){const sample=Number.isFinite(channel[i])?Math.min(1,Math.abs(channel[i]!)):0;squares+=sample*sample;peak=Math.max(peak,sample);}energy=Math.max(energy,Math.sqrt(squares/(end-start)));}
+    return energy*.85+peak*.15;
+  });
+}
 /** Yield between small batches so large recordings do not stall navigation. */
 export async function decodedAudioPeaks(channels: readonly Float32Array[], signal: AbortSignal): Promise<number[]> {
   const length = channels[0]?.length ?? 0, count = Math.min(120, length), peaks: number[] = [];
   for (let bin = 0; bin < count; bin++) {
     signal.throwIfAborted();
     const start = Math.floor(bin * length / count), end = Math.floor((bin + 1) * length / count);
-    peaks.push(audioPeaks(channels.map(channel => channel.subarray(start, end)), 1)[0] ?? 0);
+    peaks.push(audioEnvelope(channels.map(channel => channel.subarray(start, end)), 1)[0] ?? 0);
     if (bin % 16 === 15) await new Promise(resolve => setTimeout(resolve, 0));
   }
   signal.throwIfAborted();
@@ -30,8 +43,8 @@ export function waveformPath(peaks: readonly number[]): string {
   const maximum = Math.max(...peaks, 0);
   return peaks.map((peak, index) => {
     const x = (index + .5) / peaks.length * 600;
-    // Normalized for readability; silence stays on the center line.
-    const height = maximum ? peak / maximum * 78 : 0;
+    // Bounded gain and headroom; quiet audio remains quiet and silence stays flat.
+    const height = peak * Math.min(2, maximum ? 1 / maximum : 1) * 64;
     return `M${x.toFixed(2)} ${(90-height).toFixed(2)}V${(90+height).toFixed(2)}`;
   }).join(' ');
 }

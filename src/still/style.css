@@ -279,3 +279,6 @@ still-app .idea-choice-name, still-app .idea-choice-selected { font-weight: 600;
 still-app .idea-choice-category, still-app .idea-choice-parent { color: var(--en-color-text-muted); font-size: 14px; }
 still-app .idea-choice-description { font-weight: 400; line-height: 1.5; }
 still-app .idea-choice-description.prominent { font-family: Georgia, serif; font-size: 22px; }
+
+still-app .audio-waveform .waveform-played { color: var(--en-color-brand); }
+still-app .audio-waveform .waveform-playhead { stroke: var(--en-color-brand); opacity: .8; stroke-width: 1; }
