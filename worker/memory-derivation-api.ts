@@ -196,7 +196,7 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
         if (candidates.length > 16) return deny("memory_derivation_inventory_unavailable", 503);
         baseGuards.push(inventoryGuard("memory_derivation_qualifications", DERIVATION_QUALIFICATION_COLUMNS, where, values, "qualification_id", candidates));
         for (const candidate of candidates) { const accepted = await parseMemoryDerivationQualification(candidate, binding);
-          if (accepted&&(accepted.terms.recipeVersion!=='memory-derivation-candidates-v2'||schema.observationControlsPresent&&schema.lifecyclePresent)) { baseGuards.push(derivationQualificationGuard(accepted.row));
+          if (accepted&&(accepted.terms.recipeVersion!=='memory-profile-consolidation-v1'||schema.userControlsPresent&&schema.lifecyclePresent)&&(accepted.terms.recipeVersion!=='memory-derivation-candidates-v2'||schema.observationControlsPresent&&schema.lifecyclePresent)) { baseGuards.push(derivationQualificationGuard(accepted.row));
             qualifications.push({ qualificationId: accepted.row.qualification_id, termsSha256: accepted.row.terms_sha256, expiresAt: accepted.row.expires_at, terms: accepted.terms }); } }
       }
       const reads=[...baseGuards.map(guard => derivationAssertion(env, guard)),...(schema.financePresent?[memoryDerivationFinanceViewStatement(env,actor.userId)]:[])];
@@ -222,7 +222,7 @@ export async function handleMemoryDerivationSettings(request: Request, env: Work
     const expectedCustody = parseMemoryCustody(body.expectedCustody);
     if (!expectedCustody || !memoryCustodyMatches(expectedCustody, prepared.binding.scope)) return deny("memory_derivation_custody_changed", 409);
     const qualified = await readDerivationQualification(env, body.qualificationId), now = new Date().toISOString();
-    if (!qualified || qualified.terms.recipeVersion==='memory-derivation-candidates-v2'&&(!schema.observationControlsPresent||!schema.lifecyclePresent)
+    if (!qualified || qualified.terms.recipeVersion==='memory-profile-consolidation-v1'&&(!schema.userControlsPresent||!schema.lifecyclePresent) || qualified.terms.recipeVersion==='memory-derivation-candidates-v2'&&(!schema.observationControlsPresent||!schema.lifecyclePresent)
       || body.sourceWindow!==(qualified.terms.recipeVersion==='memory-derivation-candidates-v2'?'future-originals-and-actions':'future-originals') || qualified.terms.purpose !== body.purpose || qualified.row.terms_sha256 !== body.termsSha256
       || qualified.terms.monthlyCapMicroUsd !== body.monthlyCapMicroUsd) return deny("memory_derivation_qualification_required", 503);
     if (body.enrollmentId !== parent.enrollment_id || body.enrollmentRevision !== parent.revision || body.retentionDays > parent.retention_days

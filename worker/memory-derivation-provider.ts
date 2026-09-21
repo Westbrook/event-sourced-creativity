@@ -1,3 +1,4 @@
+import { parseMemoryProfileResult,type ParsedMemoryProfileDerivation } from './memory-profile-result.ts';
 import { parseMemoryBehavioralResult, type ParsedMemoryBehavioralDerivation } from './memory-behavioral-result.ts';
 import { nativeDerivationRequestBody, nativeDerivationRequestFits } from './memory-derivation-request.ts';
 import type { WorkerEnv } from './runtime.ts';
@@ -20,7 +21,7 @@ function request(env:WorkerEnv,lease:NativeDerivationLease,capture:NativeDerivat
   if(source.jobId!==input.job.job_id||source.purpose!==terms.purpose||!source.originals.length&&!source.behavioralSources?.length)return null;
   const body=nativeDerivationRequestBody(terms,source.originals,source.behavioralSources??source.observations);
   if(!nativeDerivationRequestFits(terms,body))return null;
-  return {body,model:terms.model,source};
+  return {body,model:terms.model,source,recipeVersion:terms.recipeVersion};
 }
 async function readEnvelope(response:Response,signal:AbortSignal){
   if(!response.ok||!response.body)throw Error('memory-provider-unconfirmed');
@@ -52,7 +53,7 @@ function output(value:Record<string,unknown>){
 }
 declare const candidateReceiptBrand: unique symbol;
 export type NativeDerivationCandidateReceipt = Readonly<{ [candidateReceiptBrand]: true }>;
-type Candidate = ParsedMemoryDerivation | ParsedMemoryBehavioralDerivation;
+type Candidate = ParsedMemoryDerivation | ParsedMemoryBehavioralDerivation | ParsedMemoryProfileDerivation;
 type CandidateReceipt = { env: WorkerEnv; db: WorkerEnv['DB']; capture: NativeDerivationSourceCapture; manifest: NativeDerivationManifest;
   financeId: string; raw: string; outputSha256: string; candidate: Candidate };
 const candidates = new WeakMap<NativeDerivationCandidateReceipt, CandidateReceipt>();
@@ -130,7 +131,7 @@ export async function executeNativeDerivationProvider(env:WorkerEnv,lease:Native
     const source=nativeDerivationSourceInputs(env,fresh);
     const context={purpose:source.purpose,scopeKey:source.scopeKey,manifestId:source.jobId,manifestRevision:1,
       checkedAt:source.checkedAt,validUntil:source.validUntil,sources:source.originals,priorItems:[],suppressedLineages:[]};
-    const candidate=source.behavioralSources?await parseMemoryBehavioralResult(raw,{...context,observations:source.behavioralSources}):await parseMemoryDerivationResult(raw,context);
+    const candidate=prepared.recipeVersion==='memory-profile-consolidation-v1'?await parseMemoryProfileResult(raw,context):source.behavioralSources?await parseMemoryBehavioralResult(raw,{...context,observations:source.behavioralSources}):await parseMemoryDerivationResult(raw,context);
     if (!candidate) return {status:'charged-invalid',financeId};
     nativeDerivationManifestForCapture(env, manifest, fresh);
     const outputSha256 = await memoryDigest(raw);

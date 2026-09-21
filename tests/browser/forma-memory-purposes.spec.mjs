@@ -205,7 +205,7 @@ for(const purpose of ['rolling-summary','profile'])for(const behavioral of [fals
     const grant={scope,grantId:'d'.repeat(64),revision:1,consentId:'11111111-1111-4111-8111-111111111111',purpose,enrollmentId:parent,enrollmentRevision:1,
       qualificationId:'synthetic-qualified',termsSha256:'e'.repeat(64),monthlyCapMicroUsd:100000,sourceAfterSequence:1,background:true,retentionDays:30,
       consentedAt:new Date(Date.now()-1000).toISOString(),expiresAt,revokedAt:null};
-    const terms={version:'memory-derivation-terms-v1',purpose,recipeVersion:behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Synthetic browser fixture only.',retentionPolicyId:'fixture-policy',evidence:Object.fromEntries(DERIVATION_EVIDENCE.map(key=>[key,'f'.repeat(64)]))};
+    const terms={version:'memory-derivation-terms-v1',purpose,recipeVersion:purpose==='profile'&&!behavioral?'memory-profile-consolidation-v1':behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',provider:'openai',model:'isolated-test-model',pricing:{inputMicroUsdPerMillion:1000000,cachedInputMicroUsdPerMillion:0,outputMicroUsdPerMillion:2000000},maximumInputTokens:1000,maximumOutputTokens:100,monthlyCapMicroUsd:100000,payer:'self-ai-allowance',providerStore:false,providerRetentionDisclosure:'Synthetic browser fixture only.',retentionPolicyId:'fixture-policy',evidence:Object.fromEntries(DERIVATION_EVIDENCE.map(key=>[key,'f'.repeat(64)]))};
     grant.termsSha256=createHash('sha256').update(derivationCanonical(terms)).digest('hex');
     const offer={qualificationId:grant.qualificationId,termsSha256:grant.termsSha256,expiresAt,terms};
     const settings={version,enabled:true,available:true,reason:null,policyVersion:'personal-memory-derivation-v1',scope,enrollmentId:parent,enrollmentRevision:1,
@@ -234,14 +234,14 @@ for(const purpose of ['rolling-summary','profile'])for(const behavioral of [fals
           checkedAt:new Date().toISOString(),progress:[],results:selected.map(jobId=>({jobId,purpose,scopeKey:'synthetic-scope',expiresAt})),next:!latest&&offset+8<historyJobs.length?selected.at(-1):null}});
       }
       if(url.pathname.endsWith('/result')){
-        const selectedJob=url.searchParams.get('jobId'),historical=selectedJob!==jobId,claimJob=purpose==='profile'?jobId:selectedJob;
+        const selectedJob=url.searchParams.get('jobId'),historical=selectedJob!==jobId,consolidating=extendedProfile&&!historical,claimJob=consolidating?createHash('sha256').update('new-profile-claim').digest('hex'):purpose==='profile'?jobId:selectedJob;
         if(denied)return route.fulfill({status:404,json:{error:'memory_result_unavailable'}});
         expect(url.searchParams.get('resources')).toBe('1');
         return route.fulfill({json:{version,jobId:selectedJob,expiresAt,resourceEvidence:{version:'memory-evidence-resources-v1',complete:false,claims:[{claimKey:'derived:'+claimJob,citations:[...[0,1].map(index=>({source:'original',index,resource:{zoom:'document',scopeKey:'synthetic-scope'}})),...(behavioral?[{source:'observation',index:0,resource:{zoom:'page',scopeKey:'synthetic-page',view:'document'}}]:[])]}]},controlRevisions:{[lineage]:0},history:{windowCount:3,originalPairs:6,boundary:'bounded',afterSequence:1,throughSequence:24},
-          candidate:{version:behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',purpose,scopeKey:'synthetic-scope',manifestId:selectedJob,manifestRevision:1,validUntil,
+          candidate:{version:consolidating?'memory-profile-consolidation-v1':behavioral?'memory-derivation-candidates-v2':'memory-derivation-candidates-v1',purpose,scopeKey:'synthetic-scope',manifestId:selectedJob,manifestRevision:1,validUntil,
             semanticAuthority:'model-derived-unverified',semanticCompleteness:false,independentEvidence:false,items:[{operation:'assert',target:null,category:purpose==='profile'?'workflow-hypothesis':'proposal',
               text:historical?'Historical private profile hypothesis.'+(extendedProfile?' '+historyJobs.indexOf(selectedJob):''):'Synthetic private brief <script>not code</script>.',...(behavioral?{observationSupports:[0],observationCounterevidence:[],observationCitations:[{observationIndex:0,action:'inspect',recordedAt:new Date(Date.now()-1000).toISOString(),role:'support'}]}:{}),supports:[{sourceIndex:0,start:0,end:8,text:'Original'}],counterevidence:[{sourceIndex:1,start:0,end:7,text:'Opposed'}],
-              claimKey:'derived:'+claimJob,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'conflicting-citations'}]}}});
+              ...(consolidating?{reconciles:[{relationship:'revises',claimKey:'derived:'+jobId,category:'workflow-hypothesis',supports:[{sourceIndex:1,start:0,end:7,text:'Opposed'}]}]}:{}),claimKey:'derived:'+claimJob,lineageIds:[lineage],sourceBindings:[{sourceId:'synthetic-original',revision:1,contentHash:'f'.repeat(64)}],validUntil,citationStatus:'conflicting-citations'}]}}});
       }
       if(url.pathname.endsWith('/controls'))return route.fulfill({json:{version,available:true,scope,enrollmentId:parent,enrollmentRevision:1,validUntil,controls:[],next:null}});
       if(url.pathname==='/api/memory/recall-scopes'){
@@ -264,7 +264,7 @@ for(const purpose of ['rolling-summary','profile'])for(const behavioral of [fals
     await expect(brief).toBeVisible();await expect(brief).toContainText('Synthetic private brief <script>not code</script>.');
     await expect(brief.locator('script')).toHaveCount(0);await expect(brief).toContainText(message(locale,'briefConflict'));
     await brief.getByText(message(locale,behavioral?'behavioralEvidence':'briefEvidence'),{exact:true}).first().click();await expect(brief.getByText('Original',{exact:true}).first()).toBeVisible();
-    await expect(brief.getByText('Opposed',{exact:true}).first()).toBeVisible();
+    await expect(brief.locator('details[open]').getByText('Opposed',{exact:true}).first()).toBeVisible();
     await expect(brief).not.toContainText('memory.live.');
     await expect(brief.locator('[data-memory-evidence-resources]').first()).toContainText(message(locale,'resourceEvidenceDocument'));
     if(behavioral)await expect(brief.locator('[data-memory-evidence-resources]').first()).toContainText(message(locale,'resourceEvidencePage').replace('{view}',message(locale,'visitsPage.document')));
@@ -279,6 +279,10 @@ for(const purpose of ['rolling-summary','profile'])for(const behavioral of [fals
     }
     if(purpose==='profile'){await expect(brief).toContainText('Historical private profile hypothesis.');await expect(brief).toContainText(message(locale,'profileHistorical'));await expect(brief).toContainText(message(locale,'profileSharedEvidence'));await expect(brief).toContainText(message(locale,'profileCitedConflict'));await expect(brief).toContainText(message(locale,'profileRevised'));}
     if(extendedProfile){
+      const relation=brief.locator('details').filter({has:page.getByText(message(locale,'profileRelationHeading'),{exact:true})});
+      await relation.locator('summary').click();await expect(relation).toContainText(message(locale,'profileRelationDetail'));await expect(relation).toContainText('Opposed');
+      await expect(brief).toContainText(message(locale,'profileRelationLinked'));await relation.scrollIntoViewIfNeeded();
+      expect(await relation.evaluate(el=>el.scrollWidth>el.clientWidth+1)).toBe(false);await page.screenshot({path:'.wrangler/memory-profile-consolidation-'+locale+'.png'});
       const older=brief.getByRole('button',{name:message(locale,'profileOlder'),exact:true});await older.scrollIntoViewIfNeeded();await older.focus();await page.keyboard.press('Enter');
       await expect(brief).toContainText(message(locale,'profileHistoryPage'));
       await expect(brief).toContainText('Historical private profile hypothesis. 19');

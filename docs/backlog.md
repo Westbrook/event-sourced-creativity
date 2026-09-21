@@ -269,3 +269,7 @@ Implemented [exact-field saved suggestion reuse](forma-memory-field-completion-2
 ### Memory authored-copy attribution — 2026-09-20
 
 [Approved copies and document duplication](forma-memory-authored-copy-provenance-2026-09-20.md) now retain negative Memory attribution in the native reviewed authoring transaction, without copying private support or creating erasure dependencies. Verified locally; original-source recall and the other native completion-matrix work remain assigned.
+
+### MEM-003 source-backed profile consolidation
+
+[Profile consolidation](forma-memory-profile-consolidation-2026-09-20.md) adds a separately qualified original-evidence recipe for tentative revision/contradiction relationships, exact anchor lineage, native correction/retirement and localized review/export. Continue the remaining native consumers, resource zooms, promotion and integrated qualification in the completion matrix. No deployment or enrollment.

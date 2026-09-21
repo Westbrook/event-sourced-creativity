@@ -6,6 +6,7 @@ export type ReconciledProfileItem = DerivationResultItem & { profileOrigin: {
   jobId: string; state: 'latest' | 'historical'; repeatedIn: number; sharedEvidence: boolean;
   interpretation: 'current' | 'earlier-only' | 'revised';
   newerInterpretationJobId: string | null; counterevidence: boolean;
+  proposedRelations?:readonly {relationship:'revises'|'contradicts';jobId:string}[];
 } };
 export type ReconciledProfile = { items: ReconciledProfileItem[]; results: number; complete: false };
 
@@ -25,7 +26,7 @@ export function reconcileMemoryProfile(views: readonly DerivationResultView[]): 
     // Exact claim identity alone does not imply unchanged model interpretation.
     // Quotes/indexes stay attached to their own result; never splice evidence.
     const key = JSON.stringify([item.claimKey, item.category, item.text, item.citationStatus,
-      [...item.lineageIds].sort(), item.supports, item.counterevidence, item.observationCitations ?? [], item.resourceCitations ?? []]);
+      [...item.lineageIds].sort(), item.supports, item.counterevidence, item.observationCitations ?? [], item.resourceCitations ?? [],item.reconciles??[]]);
     const old = equivalent.get(key);
     if (old) { old.profileOrigin.repeatedIn++; continue; }
     // Only native claim identity can connect interpretations. Similar wording,
@@ -41,6 +42,15 @@ export function reconcileMemoryProfile(views: readonly DerivationResultView[]): 
     } };
     equivalent.set(key, row); items.push(row);
     if (!newer) newestClaim.set(item.claimKey, row);
+  }
+  // Link only identities already visible in this independently authorized
+  // collection. Unmatched anchors do not fetch or imply access to old results.
+  // Keep both rows: a model relation cannot override a user control or erase it.
+  for(const target of items){
+    const proposals=items.filter(source=>source.profileOrigin.jobId!==target.profileOrigin.jobId)
+      .flatMap(source=>(source.reconciles??[]).filter(link=>link.claimKey===target.claimKey)
+        .map(link=>({relationship:link.relationship,jobId:source.profileOrigin.jobId})));
+    if(proposals.length)target.profileOrigin.proposedRelations=proposals;
   }
   const support = new Map<string, ReconciledProfileItem[]>();
   for (const item of items) for (const lineage of item.lineageIds) {

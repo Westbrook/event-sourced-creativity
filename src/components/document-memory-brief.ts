@@ -94,7 +94,10 @@ export class DocumentMemoryBrief extends FormaElement {
               ${item.profileOrigin.repeatedIn>1?this.#t('profileRepeated',{count:item.profileOrigin.repeatedIn}):nothing}
               ${item.profileOrigin.sharedEvidence?this.#t('profileSharedEvidence'):nothing}
               ${item.profileOrigin.interpretation==='revised'?this.#t('profileRevised'):nothing}
-              ${item.profileOrigin.counterevidence?this.#t('profileCitedConflict'):nothing}</p>
+              ${item.profileOrigin.counterevidence?this.#t('profileCitedConflict'):nothing}
+              ${item.profileOrigin.proposedRelations?.length?this.#t('profileRelationLinked'):nothing}</p>
+              ${item.reconciles?.length?html`<details><summary>${this.#t('profileRelationHeading')}</summary><p>${this.#t('profileRelationDetail')}</p>
+                ${item.reconciles.map(link=>html`<p>${this.#t(link.relationship==='revises'?'profileRelationRevises':'profileRelationContradicts')}</p>${link.supports.map(quote=>html`<blockquote dir="auto">${quote.text}</blockquote>`)}`)}</details>`:nothing}
               ${index===section.items.findIndex(candidate=>'profileOrigin' in candidate&&candidate.profileOrigin.jobId===item.profileOrigin.jobId)?html`<forma-memory-assistant-context .candidateJobId=${item.profileOrigin.jobId}></forma-memory-assistant-context>`:nothing}`:nothing}
             <details><summary>${this.#t(item.observationCitations?.length?'behavioralEvidence':'briefEvidence')}</summary>
               ${item.resourceCitations?.length?html`<p class="memory-brief-disclosure">${this.#t('resourceEvidenceDisclosure')}</p><ul data-memory-evidence-resources>${[...new Map(item.resourceCitations.map(row=>[JSON.stringify(row.resource),row.resource])).values()].map(resource=>html`<li>${resource.zoom==='page'?this.#t('resourceEvidencePage',{view:this.#t('visitsPage.'+resource.view)}):resource.zoom==='block'?this.#t('resourceEvidenceBlock',{block:resource.blockId,revision:resource.revision}):this.#t('resourceEvidenceDocument')}</li>`)}</ul>`:nothing}

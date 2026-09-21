@@ -13701,7 +13701,7 @@ test('native derivation delivery: conversation bookkeeping keeps exact reference
   state.sqlite.exec('UPDATE memory_live_sources SET conversation_segmented=1');assert.deepEqual(state.queue(),before);
 });
 
-async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,termOverrides={}}={}){
+async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,recovery=false,results=false,userControls=false,completion=false,lifecycle=false,indexIntents=false,observationControls=false,behavioralOnly=false,deferClaim=false,paid=false,originalCount=1,termOverrides={}}={}){
   const state=await nativeDerivationDeliveryFixture(t,{shared,termOverrides,beforeEnrollment:async state=>{
     state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0045_memory_derivation_finance.sql',import.meta.url),'utf8'));
     if(recovery||results)state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0046_memory_derivation_recovery_cursor.sql',import.meta.url),'utf8'));
@@ -13717,7 +13717,7 @@ async function nativeDerivationExecutionFixture(t,{shared=false,hosted=false,rec
     assert.equal(created.status,200,await created.clone().text());const source=(await created.json()).appended.find(row=>row.type==='BlockCreated');
     const inspected=await state.request('/api/events/hot',json({action:'hot',event:{type:'BlockInspected',payload:{project_id:e.project_id,document_id:e.document_id,block_id:blockId,source_event_ids:[source.eventId],source_surface:'document-context-controls'}}},state.owner));
     assert.equal(inspected.status,200,await inspected.clone().text());
-  }else{const completed=await state.send('financial-execution-original');if(paid)await nativeDerivationPaidTurn(state,completed);}
+  }else{for(let index=0;index<originalCount;index++){const completed=await state.send('financial-execution-original'+(index?'-'+index:''));if(paid)await nativeDerivationPaidTurn(state,completed);}}
   state.due();await state.run();
   const admission=await import('../worker/memory-derivation-admission.ts'),sources=await import('../worker/memory-derivation-sources.ts'),finance=await import('../worker/memory-derivation-finance.ts');
   const job=state.queue().jobs[0];
@@ -17743,4 +17743,48 @@ for(const shared of [false,true])for(const fault of ['disabled','withdrawn','rea
  assert.doesNotMatch(text,/Explicitly accepted authored direction|Original authored direction/);
  assert.ok(response.status>=400||JSON.parse(text).suggestion===null,text);
  assert.equal(state.providerCalls(),1);assert.deepEqual(adaptiveReentryFinancialState(state),counts);
+});
+
+for(const shared of [false,true])for(const phase of ['before-publication','after-publication','user-correction'])test('native profile consolidation: original-backed relation publication and retirement '+shared+'/'+phase,async t=>{
+ const late=phase==='before-publication';
+ const state=await nativeDerivationExecutionFixture(t,{shared,originalCount:2,results:true,userControls:true,completion:true,lifecycle:true,
+  termOverrides:{purpose:'profile',recipeVersion:'memory-profile-consolidation-v1',maximumInputTokens:32768}});
+ const provider=await import('../worker/memory-derivation-provider.ts'),store=await import('../worker/memory-derivation-results.ts');
+ const source=state.sources.nativeDerivationSourceInputs(state.env,state.executionCapture),humans=source.originals.map((value,index)=>({value,index})).filter(row=>row.value.role==='user');assert.equal(humans.length,2);
+ const quote=row=>({sourceIndex:row.index,start:0,end:Math.min(12,Array.from(row.value.text).length),text:Array.from(row.value.text).slice(0,12).join('')});
+ const candidate={version:'memory-profile-consolidation-v1',items:[{operation:'assert',target:null,category:'workflow-hypothesis',text:'The later context may revise the earlier interpretation.',supports:[quote(humans[1])],counterevidence:[],
+  reconciles:[{relationship:'revises',category:'workflow-hypothesis',supports:[quote(humans[0])]}]}]};
+ const original=globalThis.fetch;let calls=0;state.env.OPENAI_API_KEY='isolated-not-a-credential';
+ globalThis.fetch=async(url,init)=>{calls++;assert.equal(String(url),'https://api.openai.com/v1/responses');const request=JSON.parse(init.body),input=JSON.parse(request.input);
+  assert.equal(request.text.format.schema.properties.version.enum[0],candidate.version);assert.equal(input.purpose,'profile');assert.equal(Object.hasOwn(input,'priorItems'),false);assert.equal(input.originals.length,4);
+  return Response.json({id:'isolated-profile-consolidation',object:'response',model:'isolated-test-model',service_tier:'default',status:'completed',error:null,incomplete_details:null,
+   usage:{input_tokens:800,output_tokens:40,total_tokens:840,input_tokens_details:{cached_tokens:400}},
+   output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify(candidate)}]}]});};t.after(()=>{globalThis.fetch=original;});
+ const result=await provider.executeNativeDerivationProvider(state.env,state.executionLease,state.executionCapture);assert.equal(result.status,'candidate',JSON.stringify(result)+' '+state.controls.lastDatabaseError);assert.equal(calls,1);
+ assert.equal(result.candidate.items[0].sourceBindings.length,2);assert.equal(result.candidate.items[0].reconciles.length,1);
+ const anchor=source.originalBacking.find(row=>row.contentHash===humans[0].value.contentHash&&row.contentRef===humans[0].value.sourceId)||source.originalBacking[humans[0].index];assert.ok(anchor);
+ if(late)state.sqlite.prepare("UPDATE private_content SET content=content||' withdrawn anchor' WHERE content_id=?").run(anchor.contentRef);
+ const published=await store.publishNativeDerivationResult(state.env,result.receipt);
+ if(late){assert.notEqual(published.status,'stored');assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),null);return;}
+ assert.equal(published.status,'stored',JSON.stringify(published)+' '+state.controls.lastDatabaseError);
+ const read=await store.readNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);assert.ok(read);
+ const view=store.nativeDerivationResultInputs(state.env,read);assert.deepEqual(view.candidate.items[0].reconciles,result.candidate.items[0].reconciles);
+ if(phase==='user-correction'){
+  const controls=await import('../worker/memory-derivation-user-controls.ts'),item=view.candidate.items[0];
+  const saved=await controls.controlNativeDerivationResult(state.env,read,item.claimKey,'corrected','Do not interpret this change as a durable preference.',Object.fromEntries(item.lineageIds.map(id=>[id,0])));
+  assert.equal(saved.length,2,'Both the current evidence and original relationship anchor receive the correction');
+  assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),null);
+  for(const control of saved)await controls.reviseNativeDerivationUserControl(state.env,state.current().actor_user_id,control.controlId,1,'released',null);
+  assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),null,'Release must not resurrect retired relationships');
+  assert.equal(calls,1);return;
+ }
+ state.sqlite.prepare("UPDATE private_content SET content=content||' withdrawn anchor' WHERE content_id=?").run(anchor.contentRef);
+ const retired=state.sqlite.prepare('SELECT state,raw_json,manifest_json FROM memory_derivation_results WHERE job_id=?').get(state.executionJob.job_id);assert.equal(retired.state,'withdrawn');assert.equal(retired.raw_json,null);assert.equal(retired.manifest_json,null);
+ assert.equal(await store.readNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),null);assert.equal(calls,1);
+});
+
+for(const shared of [false,true])test('native profile consolidation: unavailable controls never offer or enroll the recipe '+shared,async t=>{
+ const state=await nativeDerivationFixture(t,{shared,termOverrides:{purpose:'profile',recipeVersion:'memory-profile-consolidation-v1'}}),settings=await state.derivationRequest();
+ const body=await settings.json();assert.equal(settings.status,200);assert.equal(body.available,false);assert.deepEqual(body.qualifications,[]);
+ assert.equal((await state.derivationRequest('PUT')).status,503);assert.equal(state.derivationRows().length,0);assert.equal(state.calls.length,0);
 });

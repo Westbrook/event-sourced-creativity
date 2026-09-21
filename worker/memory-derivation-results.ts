@@ -1,3 +1,4 @@
+import { parseMemoryProfileResult,type ParsedMemoryProfileDerivation } from './memory-profile-result.ts';
 import { MEMORY_EVIDENCE_RESOURCES, type MemoryResourceCitation } from '../src/model/memory-evidence-resource.ts';
 import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import { parseMemoryBehavioralResult, type ParsedMemoryBehavioralDerivation } from './memory-behavioral-result.ts';
@@ -128,7 +129,7 @@ export async function publishNativeDerivationResult(env: WorkerEnv, receipt: Nat
 declare const readBrand: unique symbol;
 export type NativeDerivationResultRead = Readonly<{ [readBrand]: true }>;
 const reads = new WeakMap<NativeDerivationResultRead, { env: WorkerEnv; db: WorkerEnv['DB']; row: Row; evidence: import('./memory-derivation-admission.ts').NativeDerivationEvidence;
-  capture: NativeDerivationSourceCapture; manifest: NativeDerivationManifest; candidate: ParsedMemoryDerivation | ParsedMemoryBehavioralDerivation; dependencies: Dependency[] }>();
+  capture: NativeDerivationSourceCapture; manifest: NativeDerivationManifest; candidate: ParsedMemoryDerivation | ParsedMemoryBehavioralDerivation | ParsedMemoryProfileDerivation; dependencies: Dependency[] }>();
 
 /** actorUserId comes from the authenticated native principal, never request JSON.
  * No result body is read before that actor's current scope/purpose proof. */
@@ -154,7 +155,7 @@ async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
     const context={purpose: source.purpose, scopeKey: source.scopeKey,
       manifestId: jobId, manifestRevision: 1, checkedAt: source.checkedAt, validUntil: source.validUntil,
       sources: source.originals, priorItems: [], suppressedLineages: []};
-    const candidate = source.behavioralSources?await parseMemoryBehavioralResult(row.raw_json,{...context,observations:source.behavioralSources}):await parseMemoryDerivationResult(row.raw_json,context);
+    const candidate = nativeDerivationEvidenceInputs(env,evidence).qualification.terms.recipeVersion==='memory-profile-consolidation-v1'?await parseMemoryProfileResult(row.raw_json,context):source.behavioralSources?await parseMemoryBehavioralResult(row.raw_json,{...context,observations:source.behavioralSources}):await parseMemoryDerivationResult(row.raw_json,context);
     if (!candidate) return null;
     const handle = Object.freeze({}) as NativeDerivationResultRead;
     reads.set(handle, { env, db, row, evidence, capture: captured.capture, manifest, candidate, dependencies: expected });
@@ -195,7 +196,7 @@ export function nativeDerivationResultResources(env: WorkerEnv, handle: NativeDe
   const read = currentRead(env, handle), source = nativeDerivationSourceInputs(env, read.capture);
   const claims = read.candidate.items.map(item => {
     const citations: MemoryResourceCitation[] = [];
-    for (const index of new Set([...item.supports, ...item.counterevidence].map(row => row.sourceIndex))) {
+    for (const index of new Set([...item.supports, ...item.counterevidence,...('reconciles'in item?item.reconciles.flatMap(link=>link.supports):[])].map(row => row.sourceIndex))) {
       const original = source.originals[index];
       if (!original || original.scopeKey !== source.scopeKey) throw Error('memory-resource-source');
       citations.push({ source: 'original', index, resource: { zoom: 'document', scopeKey: source.scopeKey } });

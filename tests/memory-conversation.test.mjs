@@ -220,7 +220,7 @@ for(const fault of ['stale-target','protected-target','unknown-target','cross-pu
   if(fault==='suppressed-support')f.context.suppressedLineages=['human-lineage'];
   if(fault==='suppressed-counter')f.context.suppressedLineages=['assistant-lineage'];
   if(fault==='sparse-sources')delete f.context.sources[1];
-  if(fault==='accessor')Object.defineProperty(f.context,'scopeKey',{enumerable:true,get(){assert.fail('Do not execute an accessor');}});
+  if(fault==='accessor')Object.defineProperty(f.context,'scopeKey',{enumerable:true,get(){return assert.fail('Do not execute an accessor');}});
   if(fault==='custom-prototype')Object.setPrototypeOf(f.context.sources[0],{toJSON(){assert.fail('Do not invoke custom serialization');}});
   assert.equal(await f.parse(),null);
 });
@@ -365,4 +365,38 @@ for(const fault of ['wrong-version','source-hash','source-scope','source-expired
 });
 test('behavioral v2 rejects duplicate JSON keys without reading a later replacement',async()=>{
   const f=await behavioralFixture(),raw=JSON.stringify(f.body).replace('"observationSupports":','"observationSupports":[],"observationSupports":');assert.equal(await parseMemoryBehavioralResult(raw,f.context),null);
+});
+
+const {parseMemoryProfileResult}=await import('../worker/memory-profile-result.ts');
+function profileConsolidationFixture(){
+ const f=derivationFixture('profile');f.body.version='memory-profile-consolidation-v1';f.item.supports=[f.quote(0,14,28)];
+ f.item.reconciles=[{relationship:'contradicts',category:'preference-hypothesis',supports:[f.quote()]}];
+ return {...f,parse:()=>parseMemoryProfileResult(JSON.stringify(f.body),f.context)};
+}
+test('profile consolidation derives a tentative historical anchor from original quotes, not older model prose',async()=>{
+ const f=profileConsolidationFixture(),result=await f.parse(),prior=await derivationFixture('profile').parse();assert.ok(result);
+ const item=result.items[0];assert.equal(item.reconciles[0].claimKey,prior.items[0].claimKey);assert.notEqual(item.claimKey,prior.items[0].claimKey);
+ assert.equal(item.reconciles[0].supports[0].text,'Keep 🪴 green.');assert.equal(result.independentEvidence,false);assert.ok(Object.isFrozen(item.reconciles[0]));
+ assert.equal(item.operation,'assert');assert.equal(item.target,null);assert.equal(result.semanticCompleteness,false);
+});
+for(const fault of ['purpose','invented-quote','assistant-support','protected-source','self-link','unknown-key','duplicate-link','too-many','same-response-chain','prior-model-input'])test('profile consolidation rejects '+fault,async()=>{
+ const f=profileConsolidationFixture();
+ if(fault==='purpose')f.context.purpose='rolling-summary';
+ if(fault==='invented-quote')f.item.reconciles[0].supports[0].text='Invented old preference';
+ if(fault==='assistant-support')f.item.reconciles[0].supports=[f.quote(1,0,8)];
+ if(fault==='protected-source')f.context.suppressedLineages=['human-lineage'];
+ if(fault==='self-link')f.item.reconciles[0].supports=structuredClone(f.item.supports);
+ if(fault==='unknown-key')f.item.reconciles[0].approved=true;
+ if(fault==='duplicate-link')f.item.reconciles.push(structuredClone(f.item.reconciles[0]));
+ if(fault==='too-many')f.item.reconciles=Array.from({length:5},()=>structuredClone(f.item.reconciles[0]));
+ if(fault==='same-response-chain')f.body.items.push({...structuredClone(derivationFixture('profile').item),reconciles:[]});
+ if(fault==='prior-model-input')f.context.priorItems=[{text:'An old model summary is not an original'}];
+ assert.equal(await f.parse(),null);
+});
+test('profile recipe qualification is explicit and restricted to profile without changing v1/v2 terms',async()=>{
+ const {parseMemoryDerivationTerms}=await import('../src/model/memory-derivation-policy.ts'),f=derivationQualificationFixture();
+ f.terms.recipeVersion='memory-profile-consolidation-v1';assert.equal(parseMemoryDerivationTerms(f.terms),null);f.terms.purpose='profile';assert.ok(parseMemoryDerivationTerms(f.terms));
+ const {nativeDerivationRequestBody}=await import('../worker/memory-derivation-request.ts'),request=JSON.parse(nativeDerivationRequestBody(f.terms,[],[]));
+ assert.deepEqual(request.text.format.schema.properties.version.enum,['memory-profile-consolidation-v1']);assert.ok(request.text.format.schema.properties.items.items.required.includes('reconciles'));
+ assert.match(request.instructions,/ORIGINAL HUMAN/);assert.equal(request.store,false);
 });

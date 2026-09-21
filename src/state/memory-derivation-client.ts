@@ -128,8 +128,9 @@ export type DerivationResultEntry = {jobId:string;purpose:MemoryDerivationPurpos
 export type DerivationCitation = {sourceIndex:number;start:number;end:number;text:string};
 export const DERIVATION_OBSERVED_ACTIONS=['encounter','inspect','compare','edit','commit','reuse','remove','restore','critique','request','accept','reject','defer'] as const;
 export type DerivationObservedCitation={observationIndex:number;action:typeof DERIVATION_OBSERVED_ACTIONS[number];recordedAt:string;role:'support'|'counterevidence'};
+export type DerivationProfileRelation={relationship:'revises'|'contradicts';claimKey:string;category:'preference-hypothesis'|'workflow-hypothesis';supports:readonly DerivationCitation[]};
 export type DerivationResultItem = {claimKey:string;category:string;text:string;lineageIds:readonly string[];
-  citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[];observationCitations?:readonly DerivationObservedCitation[];resourceCitations?:readonly MemoryResourceCitation[]};
+  citationStatus:'support-cited'|'conflicting-citations';supports:readonly DerivationCitation[];counterevidence:readonly DerivationCitation[];observationCitations?:readonly DerivationObservedCitation[];reconciles?:readonly DerivationProfileRelation[];resourceCitations?:readonly MemoryResourceCitation[]};
 export type DerivationHistory = {windowCount:number;originalPairs:number;boundary:'consent'|'bounded'|'capacity';afterSequence:number;throughSequence:number};
 export type DerivationResultView = DerivationResultEntry & {validUntil:string;items:readonly DerivationResultItem[];history?:DerivationHistory;controlRevisions:Readonly<Record<string,number>>};
 export type DerivationControl = {controlId:string;claimKey:string;lineageId:string;revision:number;action:'corrected'|'suppressed'|'released';correctionText:string|null;expiresAt:string;purpose:MemoryDerivationPurpose;textAvailable:boolean};
@@ -142,28 +143,39 @@ function resultEntry(value:unknown):DerivationResultEntry{
 function resultView(value:unknown,expected:DerivationResultEntry,withControls=true,withResources=false):DerivationResultView{
   const hasHistory=!!value&&typeof value==='object'&&Object.hasOwn(value,'history');
   const row=own(value,['version','jobId','expiresAt','candidate',...(withControls?['controlRevisions']:[]),...(hasHistory?['history']:[]),...(withResources?['resourceEvidence']:[])]),candidate=own(row.candidate,['version','purpose','scopeKey','manifestId','manifestRevision','validUntil','semanticAuthority','semanticCompleteness','independentEvidence','items']);
-  check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&['memory-derivation-candidates-v1','memory-derivation-candidates-v2'].includes(String(candidate.version))
+  check(row.version===MEMORY_DERIVATION_CONTROL&&row.jobId===expected.jobId&&row.expiresAt===expected.expiresAt&&['memory-derivation-candidates-v1','memory-derivation-candidates-v2','memory-profile-consolidation-v1'].includes(String(candidate.version))
     &&candidate.purpose===expected.purpose&&candidate.scopeKey===expected.scopeKey&&candidate.semanticAuthority==='model-derived-unverified'
     &&candidate.manifestId===expected.jobId&&candidate.manifestRevision===1
     &&candidate.semanticCompleteness===false&&candidate.independentEvidence===false&&derivationTime(candidate.validUntil)&&Date.parse(candidate.validUntil)>Date.now()
     &&Date.parse(candidate.validUntil)<=Date.now()+60000&&candidate.validUntil<=row.expiresAt
     &&Date.parse(row.expiresAt as string)>Date.now()&&Array.isArray(candidate.items)&&candidate.items.length<=16);
-  const behavioral=candidate.version==='memory-derivation-candidates-v2';
+  const behavioral=candidate.version==='memory-derivation-candidates-v2',profile=candidate.version==='memory-profile-consolidation-v1';
+  check(!profile||expected.purpose==='profile');let relationCount=0;
   const items:DerivationResultItem[]=candidate.items.map(raw=>{
-    const item=own(raw,['operation','target','category','text','supports','counterevidence','claimKey','lineageIds','sourceBindings','validUntil','citationStatus',...(behavioral?['observationSupports','observationCounterevidence','observationCitations']:[])]);
+    const item=own(raw,['operation','target','category','text','supports','counterevidence','claimKey','lineageIds','sourceBindings','validUntil','citationStatus',...(profile?['reconciles']:[]),...(behavioral?['observationSupports','observationCounterevidence','observationCitations']:[])]);
     check(item.operation==='assert'&&item.target===null&&reviewText(item.claimKey,240)&&reviewText(item.category,120)&&reviewText(item.text)
       &&Array.isArray(item.lineageIds)&&item.lineageIds.length>0&&item.lineageIds.length<=128&&item.lineageIds.every(derivationHash)
       &&item.validUntil===candidate.validUntil&&['support-cited','conflicting-citations'].includes(String(item.citationStatus)));
     const seen=new Set<string>();
-    const citations=(value:unknown,minimum:number)=>{
+    const citations=(value:unknown,minimum:number,unique=seen)=>{
       check(Array.isArray(value)&&value.length>=minimum&&value.length<=16);
       return value.map(raw=>{const q=own(raw,['sourceIndex','start','end','text']);
         check(derivationInteger(q.sourceIndex,0,127)&&derivationInteger(q.start)&&derivationInteger(q.end,Number(q.start)+1)
           &&reviewText(q.text,2048)&&q.text.trim().length>0&&Number(q.end)-Number(q.start)<=512
           &&Array.from(q.text).length===Number(q.end)-Number(q.start));
-        const key=JSON.stringify([q.sourceIndex,q.start,q.end]);check(!seen.has(key));seen.add(key);return {...q} as DerivationCitation;});
+        const key=JSON.stringify([q.sourceIndex,q.start,q.end]);check(!unique.has(key));unique.add(key);return {...q} as DerivationCitation;});
     };
     const supports=citations(item.supports,behavioral?0:1),counterevidence=citations(item.counterevidence,0);
+    let reconciles:DerivationProfileRelation[]|undefined;
+    if(profile){
+      check(['preference-hypothesis','workflow-hypothesis'].includes(String(item.category))&&Array.isArray(item.reconciles)&&item.reconciles.length<=4&&(relationCount+=item.reconciles.length)<=16);
+      const linked=new Set<string>();reconciles=item.reconciles.map(raw=>{
+        const link=own(raw,['relationship','claimKey','category','supports']);
+        check(['revises','contradicts'].includes(String(link.relationship))&&typeof link.claimKey==='string'&&/^derived:[a-f0-9]{64}$/u.test(link.claimKey)
+          &&link.claimKey!==item.claimKey&&!linked.has(link.claimKey)&&['preference-hypothesis','workflow-hypothesis'].includes(String(link.category)));linked.add(link.claimKey);
+        return{relationship:link.relationship as DerivationProfileRelation['relationship'],claimKey:link.claimKey,category:link.category as DerivationProfileRelation['category'],supports:citations(link.supports,1,new Set())};
+      });
+    }
     let observationCitations:DerivationObservedCitation[]|undefined;
     if(behavioral){
       check(Array.isArray(item.observationSupports)&&item.observationSupports.length<=8&&Array.isArray(item.observationCounterevidence)&&item.observationCounterevidence.length<=8);
@@ -182,9 +194,9 @@ function resultView(value:unknown,expected:DerivationResultEntry,withControls=tr
     const sourceIds=new Set<string>();for(const raw of item.sourceBindings){const binding=own(raw,['sourceId','revision','contentHash']);
       check(derivationId(binding.sourceId)&&!sourceIds.has(binding.sourceId)&&derivationInteger(binding.revision,1)&&derivationHash(binding.contentHash));sourceIds.add(binding.sourceId);}
     return {claimKey:item.claimKey,category:item.category,text:item.text,lineageIds:[...item.lineageIds] as string[],
-      citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence,...(observationCitations?{observationCitations}:{})};
+      citationStatus:item.citationStatus as DerivationResultItem['citationStatus'],supports,counterevidence,...(reconciles?{reconciles}:{}),...(observationCitations?{observationCitations}:{})};
   });
-  check(new Set(items.map(item=>item.claimKey)).size===items.length);
+  check(new Set(items.map(item=>item.claimKey)).size===items.length&&!items.some(item=>item.reconciles?.some(link=>items.some(peer=>peer.claimKey===link.claimKey))));
   if(withResources){
     const evidence=own(row.resourceEvidence,['version','complete','claims']);
     check(evidence.version===MEMORY_EVIDENCE_RESOURCES&&evidence.complete===false&&Array.isArray(evidence.claims)&&evidence.claims.length===items.length);
@@ -293,7 +305,7 @@ export function createMemoryDerivationClient(transport: (input: RequestInfo | UR
           ...(view.history?{history:{windowCount:view.history.windowCount,originalPairs:view.history.originalPairs,boundary:view.history.boundary}}:{}),
           items:view.items.map(item=>({category:item.category,text:item.text,citationStatus:item.citationStatus,
             originalQuotes:{supports:item.supports,counterevidence:item.counterevidence},
-            observedActions:item.observationCitations??[]}))}},null,2);
+            observedActions:item.observationCitations??[],...(item.reconciles?{proposedRelationships:item.reconciles.map(link=>({relationship:link.relationship,category:link.category,originalQuotes:link.supports,establishedFact:false}))}:{})}))}},null,2);
       check(new TextEncoder().encode(json).byteLength<=524288);
       return frozen({json,validUntil:view.validUntil});
     },

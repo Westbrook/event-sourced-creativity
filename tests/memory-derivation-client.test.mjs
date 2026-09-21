@@ -508,3 +508,28 @@ test('older review never resurrects history after the newest native result is wi
  const lease=await readDocumentMemoryBrief({...f.selection,profileAfter:f.entries[15].jobId},f.transport,f.current,f.controller.signal);
  assert.equal(lease.current().sections[0].items.length,0);assert.equal(f.reads(),0);assert.equal(f.pages.length,0);lease.retire();
 });
+
+function consolidatedProfileViewFixture(){
+ const f=briefFixture();f.entry.purpose='profile';f.result.candidate.purpose='profile';f.result.candidate.version='memory-profile-consolidation-v1';f.item.category='workflow-hypothesis';
+ f.item.reconciles=[{relationship:'revises',claimKey:'derived:'+hash('older-claim'),category:'workflow-hypothesis',supports:[{sourceIndex:1,start:0,end:5,text:'Prior'}]}];
+ return f;
+}
+test('profile client retains bounded quoted relationship hypotheses without erasing earlier visible claims',async()=>{
+ const f=consolidatedProfileViewFixture(),client=createMemoryDerivationClient(async()=>Response.json(f.result));
+ const view=await client.inspectResult(f.entry);assert.equal(view.items[0].reconciles[0].relationship,'revises');assert.ok(Object.isFrozen(view.items[0].reconciles));
+ const older=profileView('older');older.scopeKey=view.scopeKey;older.items[0].claimKey=f.item.reconciles[0].claimKey;
+ const merged=reconcileMemoryProfile([view,older]);assert.equal(merged.items.length,2);assert.equal(merged.items[1].text,older.items[0].text);
+ assert.deepEqual(merged.items[1].profileOrigin.proposedRelations,[{relationship:'revises',jobId:f.entry.jobId}]);assert.equal(merged.items[1].profileOrigin.interpretation,'earlier-only');
+});
+for(const fault of ['missing','self-link','duplicate','operation','scope-purpose','extra','bad-quote','too-many'])test('profile client denies malformed relation '+fault,async()=>{
+ const f=consolidatedProfileViewFixture();
+ if(fault==='missing')delete f.item.reconciles;
+ if(fault==='self-link')f.item.reconciles[0].claimKey=f.item.claimKey;
+ if(fault==='duplicate')f.item.reconciles.push(structuredClone(f.item.reconciles[0]));
+ if(fault==='operation')f.item.reconciles[0].relationship='delete';
+ if(fault==='scope-purpose'){f.entry.purpose='suggestion';f.result.candidate.purpose='suggestion';}
+ if(fault==='extra')f.item.reconciles[0].approved=true;
+ if(fault==='bad-quote')f.item.reconciles[0].supports[0].text='mismatch';
+ if(fault==='too-many')f.item.reconciles=Array.from({length:5},()=>f.item.reconciles[0]);
+ await assert.rejects(createMemoryDerivationClient(async()=>Response.json(f.result)).inspectResult(f.entry));
+});
