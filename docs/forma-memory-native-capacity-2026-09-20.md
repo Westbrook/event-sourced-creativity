@@ -228,3 +228,48 @@ TypeScript, changed-worker lint and production build pass at this source
 separate focused evidence; that full run is not an exact-final-tree claim. The earlier background-field checkpoint separately passed
 2,125 tests at `0bc453f9`. No actual provider calls, enrollment, production
 migration, deployment or external provisioning.
+
+
+## Atomic admission/response receipts and retention preflight — 2026-09-21
+
+Native Memory admission now compares an already-read quote against the exact
+current execution identity, consent reference, intent and expiry in the claim
+transaction. That transaction returns the actual reserved execution row. Missing,
+sparse, foreign or malformed acknowledgements cannot dispatch a provider request;
+an explicit retry recovers the same reserved execution rather than purchasing a
+replacement. Non-Memory callers retain their existing claim path.
+
+Fresh Memory response retention now publishes raw private custody, its inverse
+registration and the exact task pointer atomically, with a closed native read
+receipt in the same transaction. It remains separate from final interpretation:
+a later decode/publication failure can recover the paid raw response without
+another provider call. Required source-proof, insertion and task-write receipts
+are checked, including each expected final-publication assertion. Raw response
+and task metadata byte limits are enforced in SQLite before hydration; the
+transport-body bound is checked again before decoding. This is not a new raw
+response disclosure endpoint.
+
+A non-pilot continuation now checks current cohort absence in the same native
+statement as its source proof. It does not reuse a positive allowance decision.
+Late active, paused and closed cohort assignment is rejected in both personal
+and shared execution, including immediately before dispatch.
+
+Ordinary expiry preflight batches independent schema and candidate reads. Each
+bounded erasure still rechecks its full expiry, legal-hold and negative-origin
+predicates. Dedicated ledger/origin work, shared work-unit limits and durable
+work exclusions remain unchanged. Unconfirmed candidate frames cannot authorize
+erasure. The retention tests now use the existing complete native schema rather
+than a three-table fixture that lacked the required event/provenance exclusions.
+
+Current whole synthetic execution: **60 personal / 64 shared binding calls**
+(from 67/71 at admission checkpoint `cd995ff4`). Quote remains 49/51 and retrieval
+34/32. The conservative 50-call target is still open, and these measurements are
+not hosted quota or latency qualification.
+
+Verification: the final-source execution/recovery/D1 regression passes 151/151;
+15 rebuilt-worker retention/hold/scheduled-handler checks pass. The complete
+native suite is running. All 29 product/privacy/retention checks pass, including eight new
+candidate-acknowledgement and late expiry/durable/schema/hold races. Types,
+changed-worker/test-file lint and build pass, apart from the separately verified
+unchanged 16-finding runtime-test lint baseline. No production migration,
+enrollment, deployment, external service registration or actual provider call.

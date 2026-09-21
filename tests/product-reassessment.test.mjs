@@ -41,47 +41,11 @@ test("local encryption-root setup is private, idempotent, permission-safe, and r
   }finally{rmSync(temporary,{recursive:true,force:true});}
 });
 
-function contentDatabase() {
-  const sqlite = new DatabaseSync(":memory:");
-  sqlite.exec("CREATE TABLE private_content(content_id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,kind TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,redacted_at TEXT)");
-  sqlite.exec("CREATE TABLE project_resource_scopes(resource_kind TEXT,resource_id TEXT,actor_user_id TEXT,owner_user_id TEXT,visibility TEXT)");
-  sqlite.exec("CREATE TABLE private_content_retention_scopes(content_id TEXT PRIMARY KEY)");
-
-  class Statement {
-    constructor(sql, values = []) { this.sql = sql; this.values = values; }
-    bind(...values) { return new Statement(this.sql, values); }
-    execute(kind) {
-      const statement = sqlite.prepare(this.sql);
-      if (kind === "first") return statement.get(...this.values) ?? null;
-      if (kind === "all") return { results: statement.all(...this.values), success: true, meta: { changes: 0 } };
-      const result = statement.run(...this.values);
-      return { results: [], success: true, meta: { changes: Number(result.changes ?? 0) } };
-    }
-    async all() { return this.execute("all"); }
-    async first() { return this.execute("first"); }
-    async run() { return this.execute("run"); }
-  }
-
-  return {
-    sqlite,
-    env: {
-      FORMA_RETENTION_DAYS: "1",
-      DB: {
-        prepare(sql) { return new Statement(sql); },
-        async batch(statements) {
-          sqlite.exec("BEGIN");
-          try {
-            const results = statements.map((statement) => statement.execute(/^\s*SELECT/i.test(statement.sql) ? "all" : "run"));
-            sqlite.exec("COMMIT");
-            return results;
-          } catch (error) {
-            sqlite.exec("ROLLBACK");
-            throw error;
-          }
-        },
-      },
-    },
-  };
+async function contentDatabase() {
+  // Private content now replays native event/provenance exclusions. Exercise
+  // the real schema instead of a three-table fixture missing those boundaries.
+  const state=governedEventDatabase();await ensureSchema(state.env);
+  state.env.FORMA_RETENTION_DAYS='1';return state;
 }
 
 function governedEventDatabase({ triggerInclusiveChanges = false } = {}) {
@@ -150,7 +114,7 @@ function contextHistory() {
 }
 
 test("finished deliverables and exact input receipts survive prompt-retention cleanup without restoring expired work", async () => {
-  const { sqlite, env } = contentDatabase();
+  const { sqlite, env } = await contentDatabase();
   const now = new Date().toISOString();
   const expired = new Date(Date.now() - 60_000).toISOString();
   const insert = sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES(?,?,?,?,?,?,NULL)");
@@ -186,7 +150,7 @@ test("finished deliverables and exact input receipts survive prompt-retention cl
 });
 
 test("retained provider responses remain server-only, owner-bound, and subject to private retention",async()=>{
-  const {sqlite,env}=contentDatabase();
+  const {sqlite,env}=await contentDatabase();
   const secret="SERVER_ONLY_PAID_PRESENTATION_RESPONSE_9137";
   const stored=await storePrivateContent(env,"owner","provider-response",secret);
   assert.equal(privateContentRetentionClass("provider-response"),"transient-private");
@@ -606,4 +570,41 @@ test("operational analytics preserves metrics without storing authored prose, so
   assert.equal(artifact.latency_ms, 1234);
   assert.equal(failure.error_category, "quota");
   assert.equal(attention.expires_at, "2099-01-01T00:00:00.000Z");
+});
+
+
+for(const fault of ['missing-frame','sparse-frame','false-success','extra-key','late-expiry','late-durable','late-origin-schema'])test('ordinary retention batching: '+fault+' cannot authorize stale cleanup',async()=>{
+ const {sqlite,env}=governedEventDatabase();await ensureSchema(env);
+ const now=new Date().toISOString(),expired=new Date(Date.now()-60000).toISOString();
+ sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES('retention-candidate','inactive-owner','prompt','PRESERVE WHEN UNCERTAIN',?,?,NULL)").run(now,expired);
+ const db=env.DB,batch=db.batch;let hit=false;
+ db.batch=async statements=>{
+  const selected=statements.length>0&&statements.every(s=>s.sql.startsWith('SELECT ')&&s.sql.includes(' AS identity FROM '));
+  const rows=await batch.call(db,statements);if(!selected)return rows;hit=true;
+  if(fault==='missing-frame')return rows.slice(0,-1);
+  if(fault==='sparse-frame')delete rows[0];
+  if(fault==='false-success')rows[0].success=false;
+  if(fault==='extra-key')rows[0].results[0].unexpected=1;
+  if(fault==='late-expiry')sqlite.prepare("UPDATE private_content SET expires_at='2999-01-01T00:00:00.000Z' WHERE content_id='retention-candidate'").run();
+  if(fault==='late-durable')sqlite.prepare("UPDATE private_content SET kind='document-artifact' WHERE content_id='retention-candidate'").run();
+  if(fault==='late-origin-schema')sqlite.exec(readFileSync(new URL('../drizzle/0033_memory_structured_answer_provenance.sql',import.meta.url),'utf8'));
+  return rows;
+ };
+ try{
+  if(fault.startsWith('late-'))assert.equal(await sweepExpiredPrivateContent(env),0);
+  else await assert.rejects(sweepExpiredPrivateContent(env),/retention-cleanup-unconfirmed/);
+  assert.equal(hit,true);assert.equal(sqlite.prepare("SELECT content FROM private_content WHERE content_id='retention-candidate'").get().content,'PRESERVE WHEN UNCERTAIN');
+ }finally{db.batch=batch;sqlite.close();}
+});
+
+test('ordinary retention batching: a legal hold added after candidate selection still prevents erasure',async()=>{
+ const {sqlite,env}=governedEventDatabase();await ensureSchema(env);
+ const now=new Date().toISOString(),expired=new Date(Date.now()-60000).toISOString();
+ sqlite.prepare("INSERT INTO organizations(organization_id,name,owner_user_id,status,created_at,updated_at) VALUES('late-hold-org','Synthetic','inactive-owner','active',?,?)").run(now,now);
+ sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at,redacted_at) VALUES('late-held','inactive-owner','prompt','HELD EVIDENCE',?,?,NULL)").run(now,expired);
+ sqlite.prepare("INSERT INTO private_content_retention_scopes(content_id,organization_id,project_access_id,project_id,actor_user_id,classification,policy_version,assigned_expires_at,created_at) VALUES('late-held','late-hold-org','synthetic-access','synthetic-project','inactive-owner','transient-private',0,?,?)").run(expired,now);
+ const db=env.DB,batch=db.batch;let hit=false;
+ db.batch=async statements=>{const rows=await batch.call(db,statements);if(statements.length&&statements.every(s=>s.sql.includes(' AS identity FROM '))){hit=true;sqlite.prepare("INSERT INTO organization_legal_holds(hold_id,organization_id,scope_kind,resource_id,reason,status,created_by_user_id,created_at) VALUES('late-hold','late-hold-org','content','late-held','Synthetic hold','active','inactive-owner',?)").run(now);}return rows;};
+ try{assert.equal(await sweepExpiredPrivateContent(env),0);assert.equal(hit,true);assert.equal(sqlite.prepare("SELECT content FROM private_content WHERE content_id='late-held'").get().content,'HELD EVIDENCE');}
+ finally{db.batch=batch;sqlite.close();}
 });

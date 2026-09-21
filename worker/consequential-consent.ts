@@ -117,27 +117,52 @@ export async function readConsequentialResult(env:WorkerEnv,user:PilotUser,bindi
     .bind(row.result_ref,user.userId,new Date().toISOString(),...guard.bindings,...custody.bindings).first<{content:string}>();
   return content?JSON.parse(content.content):null;
 }
-export async function claimConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,approvedHash:string,sourceHead:number,admissionStatements:Array<ReturnType<WorkerEnv["DB"]["prepare"]>>=[],additional:BudgetReservationGuard={sql:"1",bindings:[]}){
-  const hash=await consentHash(binding),row=await readConsequentialExecution(env,user.userId,id);
+export async function claimConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,approvedHash:string,sourceHead:number,admissionStatements:Array<ReturnType<WorkerEnv["DB"]["prepare"]>>=[],additional:BudgetReservationGuard={sql:"1",bindings:[]},observedQuotedRow?:ExecutionRow){
+  // A same-request native caller may already hold this exact quote. It is only
+  // a proposed comparison value: the atomic claim below replays every field and
+  // current authority, then returns the actual reserved row in its own receipt.
+  const db=env.DB,hash=await consentHash(binding),row=observedQuotedRow?structuredClone(observedQuotedRow):await readConsequentialExecution(env,user.userId,id);
+  if(observedQuotedRow&&(!row||binding.operation!=="assistant-specialist"||row.status!=="quoted"||row.execution_id!==id||row.actor_user_id!==user.userId
+    ||row.intent_hash!==binding.intentHash||row.result_ref!==null||row.error_code!==null||typeof row.consent_ref!=="string"||!row.consent_ref
+    ||typeof row.expires_at!=="string"||!Number.isFinite(Date.parse(row.expires_at))))throw Error("context_consent_changed");
   if(!row||hash!==approvedHash||row.binding_hash!==hash)return{error:"context_consent_changed",status:409};
   if(row.status!=="quoted")return{row,reused:true};
   const now=new Date().toISOString();
   if(row.expires_at<=now||binding.period!==now.slice(0,7))return{error:"context_consent_expired",status:409};
   const guard=executionAdmissionGuard(user,binding,sourceHead,true);
-  const split=9+guard.bindings.length+additional.bindings.length>100;
+  const snapshot=observedQuotedRow?{sql:"AND (intent_hash,consent_ref,expires_at)=(?,?,?) AND result_ref IS NULL AND error_code IS NULL",bindings:[row.intent_hash,row.consent_ref,row.expires_at]}:{sql:"",bindings:[]};
+  const split=9+snapshot.bindings.length+guard.bindings.length+additional.bindings.length>100;
   const inline=split?{sql:'1',bindings:[]}:additional;
   const statement=env.DB.prepare(`UPDATE consequential_executions SET status='reserved',updated_at=? WHERE execution_id=? AND actor_user_id=? AND status='quoted' AND binding_hash=? AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ?=strftime('%Y-%m','now')
-    AND NOT EXISTS(SELECT 1 FROM consequential_executions other WHERE other.actor_user_id=? AND other.intent_hash=? AND other.execution_id!=? AND ${reusableExecutionSql("other")}) AND ${guard.sql} AND (${inline.sql})`)
-    .bind(now,id,user.userId,hash,now,binding.period,user.userId,binding.intentHash,id,...guard.bindings,...inline.bindings);
+    AND NOT EXISTS(SELECT 1 FROM consequential_executions other WHERE other.actor_user_id=? AND other.intent_hash=? AND other.execution_id!=? AND ${reusableExecutionSql("other")}) ${snapshot.sql} AND ${guard.sql} AND (${inline.sql})`)
+    .bind(now,id,user.userId,hash,now,binding.period,user.userId,binding.intentHash,id,...snapshot.bindings,...guard.bindings,...inline.bindings);
   const checks=split?[env.DB.prepare(`SELECT CASE WHEN (${additional.sql}) THEN 1 ELSE json('context_authorization_changed') END AS verified`).bind(...additional.bindings)]:[];
   // All admission assertions, the CAS and dependent task writes still execute
   // in one atomic transaction; only their per-statement bindings are separated.
-  const changed=admissionStatements.length||split?(await env.DB.batch([...checks,statement,...admissionStatements]))[checks.length]!:await statement.run();
+  let claimed:ExecutionRow|undefined;
+  let changed:D1Result;
+  if(observedQuotedRow){
+    const statements=[...checks,statement,...admissionStatements,
+      db.prepare("SELECT execution_id,actor_user_id,intent_hash,binding_hash,consent_ref,result_ref,status,error_code,expires_at FROM consequential_executions WHERE execution_id=? AND actor_user_id=?").bind(id,user.userId)];
+    const rows=structuredClone(await db.batch<Record<string,unknown>>(statements));
+    if(env.DB!==db||!Array.isArray(rows)||rows.length!==statements.length||!Array.from(rows).every(value=>value&&value.success===true
+      &&(!('error' in value)||value.error===undefined)&&Array.isArray(value.results))
+      ||checks.some((_,index)=>rows[index]!.results.length!==1||Object.keys(rows[index]!.results[0]!).join(',')!=='verified'||rows[index]!.results[0]!.verified!==1))throw Error('context_claim_unconfirmed');
+    changed=rows[checks.length]!;
+    if(typeof changed.meta?.changes!=='number'||![0,1].includes(changed.meta.changes))throw Error('context_claim_unconfirmed');
+    if(changed.meta.changes===1){
+      const actual=rows.at(-1)!.results[0];
+      if(rows.at(-1)!.results.length!==1||!actual||Object.keys(actual).sort().join(',')!=='actor_user_id,binding_hash,consent_ref,error_code,execution_id,expires_at,intent_hash,result_ref,status'
+        ||actual.execution_id!==id||actual.actor_user_id!==user.userId||actual.intent_hash!==row.intent_hash||actual.binding_hash!==hash||actual.consent_ref!==row.consent_ref
+        ||actual.expires_at!==row.expires_at||actual.status!=='reserved'||actual.result_ref!==null||actual.error_code!==null)throw Error('context_claim_unconfirmed');
+      claimed=actual as ExecutionRow;
+    }
+  }else changed=admissionStatements.length||split?(await db.batch([...checks,statement,...admissionStatements]))[checks.length]!:await statement.run();
   if(Number(changed.meta.changes??0)!==1){
     const existing=await env.DB.prepare(`SELECT * FROM consequential_executions WHERE actor_user_id=? AND intent_hash=? AND ${reusableExecutionSql("consequential_executions")} AND ${guard.sql} LIMIT 1`).bind(user.userId,binding.intentHash,...guard.bindings).first<ExecutionRow>();
     return existing?{row:existing,reused:true}:{error:"context_consent_changed",status:409};
   }
-  return{row:{...row,status:"reserved"},reused:false};
+  return{row:claimed??{...row,status:"reserved"},reused:false};
 }
 
 /** All limits are reserved before any provider step; only this single claimed execution can dispatch. */
@@ -300,7 +325,7 @@ export async function failConsequentialExecution(env:WorkerEnv,userId:string,id:
   await releaseStoppedConsequentialSteps(env,userId,id);
   return(await readConsequentialExecution(env,userId,id))?.status==="uncertain";
 }
-export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,result:unknown,proof:BudgetReservationGuard={sql:"1",bindings:[]},evidence?:{fresh?:true;precommit:()=>D1PreparedStatement[];publish:(contentId:string)=>D1PreparedStatement[];complete?:(contentId:string)=>D1PreparedStatement[]}){
+export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUser,binding:ConsequentialBinding,id:string,result:unknown,proof:BudgetReservationGuard={sql:"1",bindings:[]},evidence?:{fresh?:true;precommit:()=>D1PreparedStatement[];publish:(contentId:string)=>D1PreparedStatement[];complete?:(contentId:string)=>{statements:D1PreparedStatement[];verified:number[]}}){
   const existing=evidence?.fresh?null:await readConsequentialExecution(env,user.userId,id);if(existing?.result_ref)return existing;
   const hash=await consentHash(binding),authority=executionAdmissionGuard(user,{...binding,contextSessionId:null,pilotCohortId:null},null);
   const accounted={sql:`EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.result_ref IS NULL AND execution.status IN('reserved','uncertain','failed')
@@ -315,14 +340,16 @@ export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUse
     // Retain the entire accounting/source proof immediately before completion,
     // in the same atomic transaction as the copy and its inverse registration.
     const verified=env.DB.prepare(`SELECT CASE WHEN (${accounted.sql}) THEN 1 ELSE json('context_result_not_retained') END AS verified`).bind(...accounted.bindings);
-    const statements=[...evidence.precommit(),...content.statements,...evidence.publish(content.contentId),verified,complete(content.contentId,true),
-      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_result_not_retained') END AS verified"),...(evidence.complete?.(content.contentId)??[]),
+    const precommit=evidence.precommit(),publication=evidence.publish(content.contentId),completion=evidence.complete?.(content.contentId)??{statements:[],verified:[]};
+    const verifiedIndex=precommit.length+content.statements.length+publication.length;
+    const statements=[...precommit,...content.statements,...publication,verified,complete(content.contentId,true),
+      env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('context_result_not_retained') END AS verified"),...completion.statements,
       env.DB.prepare("SELECT execution_id,actor_user_id,intent_hash,binding_hash,consent_ref,result_ref,status,error_code,expires_at FROM consequential_executions WHERE execution_id=? AND actor_user_id=? AND binding_hash=? AND result_ref=? AND status='completed'")
         .bind(id,user.userId,hash,content.contentId)];
     const rows=structuredClone(await env.DB.batch<Record<string,unknown>>(statements));
     if(!Array.isArray(rows)||rows.length!==statements.length||!Array.from(rows).every(row=>row&&row.success===true&&(!('error' in row)||row.error===undefined)&&Array.isArray(row.results)
       &&row.results.every(value=>value&&typeof value==='object'&&(!Object.hasOwn(value,'verified')||Object.keys(value).length===1&&value.verified===1)))
-      ||rows.at(-2)?.results.length!==1||rows.at(-2)?.results[0]?.verified!==1)throw new Error('context_result_not_retained');
+      ||[...precommit.map((_,index)=>index),verifiedIndex,verifiedIndex+2,...completion.verified.map(index=>verifiedIndex+3+index)].some(index=>rows[index]?.results.length!==1||rows[index]?.results[0]?.verified!==1))throw new Error('context_result_not_retained');
     const current=rows.at(-1)!.results[0];
     if(rows.at(-1)!.results.length!==1||!current||Object.keys(current).sort().join(',')!=='actor_user_id,binding_hash,consent_ref,error_code,execution_id,expires_at,intent_hash,result_ref,status'
       ||current.execution_id!==id||current.actor_user_id!==user.userId||current.binding_hash!==hash||current.intent_hash!==binding.intentHash||current.result_ref!==content.contentId

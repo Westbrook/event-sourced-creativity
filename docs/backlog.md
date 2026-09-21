@@ -369,3 +369,15 @@ retain original expiry, source order and no older fallback on failure. Native,
 client/component and field browser checks pass; all eight English/Arabic profile
 and rolling-summary browser journeys also pass. All other native completion-matrix requirements stay assigned here.
 External scheduling/provider/rollout gates are unchanged; no production activation.
+
+
+## MEM-029 — Atomic claim/response receipts and retained-byte bounds
+
+Implemented locally: [exact native quote claim, atomic raw-response custody,
+strict publication receipts, non-pilot continuation and batched ordinary retention
+preflight](forma-memory-native-capacity-2026-09-20.md#atomic-admissionresponse-receipts-and-retention-preflight--2026-09-21).
+Lost acknowledgements cannot authorize dispatch or repurchase; raw paid responses
+remain separately recoverable. Current synthetic whole execution is 60/64
+personal/shared calls, above the conservative 50-call target. 151 final-source execution/D1, 29 product/retention and 15 rebuilt-worker
+retention checks pass; the full native regression is running. The complete native matrix
+remains assigned to this task. External service and rollout gates remain separate.

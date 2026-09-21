@@ -260,3 +260,12 @@ adds a whole-operation deadline and four-read concurrency while retaining
 independent access checks, listing order, corrections and the original expiry.
 These close concrete field and loading gaps, not the remaining scope-promotion,
 resource enrollment, reuse or direct private-output integrations above.
+
+
+[Atomic claim/response receipts and retention preflight](forma-memory-native-capacity-2026-09-20.md#atomic-admissionresponse-receipts-and-retention-preflight--2026-09-21)
+now preserve exact approval, paid-response recovery, original privacy proofs and
+late policy/retention changes while reducing whole native execution to 60/64
+personal/shared calls. Raw hydration and required acknowledgement frames are
+bounded. This advances the capacity/lifecycle work; it does not close direct
+creative-output integration, independent reuse, resource enrollment or profile
+scope promotion. Those native requirements remain assigned here.

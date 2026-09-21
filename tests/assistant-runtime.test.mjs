@@ -16811,7 +16811,7 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  // interval is a stable invocation measurement; phase counts are diagnostic.
  const combinedExecuteOperations=executeOperations+counter.read();
  t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),combinedExecuteOperations,...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
- assert.ok(combinedExecuteOperations<=(shared?71:67),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
+ assert.ok(combinedExecuteOperations<=(shared?64:60),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
  const response=await specialistRetrieve(state,review,options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=(shared?33:35));
@@ -18753,4 +18753,148 @@ for(const shared of [false,true])for(const phase of ['purchase','step','dispatch
  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n,0);
  const before=adaptiveReentryFinancialState(state);await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();
  assert.equal(calls,0);assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+
+for(const shared of [false,true])for(const fault of ['consent-ref','intent','expiry','missing-row','empty-row','foreign-row','extra-column','string-changes','lost-ack'])test('Memory exact quote claim: '+shared+'/'+fault+' cannot dispatch an unconfirmed claim',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch,original=globalThis.fetch;let hit=false,calls=0;
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};
+ db.batch=async statements=>{
+  const index=statements.findIndex(s=>s.sql.startsWith("UPDATE consequential_executions SET status='reserved'"));
+  if(hit||index<0)return batch.call(db,statements);hit=true;
+  if(fault==='consent-ref')state.sqlite.prepare("UPDATE consequential_executions SET consent_ref='foreign-consent' WHERE execution_id=?").run(review.executionId);
+  if(fault==='intent')state.sqlite.prepare("UPDATE consequential_executions SET intent_hash='foreign-intent' WHERE execution_id=?").run(review.executionId);
+  if(fault==='expiry')state.sqlite.prepare("UPDATE consequential_executions SET expires_at='2099-01-01T00:00:00.000Z' WHERE execution_id=?").run(review.executionId);
+  const rows=await batch.call(db,statements);
+  if(fault==='missing-row')return rows.slice(0,-1);
+  if(fault==='empty-row')rows.at(-1).results=[];
+  if(fault==='foreign-row')rows.at(-1).results[0].actor_user_id='foreign-actor';
+  if(fault==='extra-column')rows.at(-1).results[0].unexpected=1;
+  if(fault==='string-changes')rows[index].meta.changes='1';
+  if(fault==='lost-ack')throw Error('isolated-claim-ack-lost');
+  return rows;
+ };t.after(()=>{db.batch=batch;globalThis.fetch=original;});
+ const before=adaptiveReentryFinancialState(state),result=await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();
+ assert.notEqual(result.status,202,await result.clone().text());assert.equal(hit,true);assert.equal(calls,0);
+ assert.deepEqual(adaptiveReentryFinancialState(state),before);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n,0);
+ // A transport fault may hide an actual committed reservation/task, but it
+ // cannot be treated as permission to dispatch or to buy a replacement turn.
+ if(!['consent-ref','intent','expiry'].includes(fault)){
+  db.batch=batch;
+  const retry=await specialistExecute(state,review,state.semanticOptions);assert.equal(retry.status,202,await retry.clone().text());await state.drainBackground();
+  assert.equal(calls,1);const saved=await specialistRetrieve(state,review,state.semanticOptions);assert.equal(saved.status,200,await saved.clone().text());
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) n FROM consequential_executions WHERE operation='assistant-specialist'").get().n,1);
+ }
+});
+
+for(const fault of ['source-proof','accounting-proof','execution-write-proof','task-write-proof','commit-proof'])test('Memory publication receipts: missing '+fault+' is unconfirmed and recovers the same paid result',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared:true}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch,prepare=db.prepare,original=globalThis.fetch;let hit=false,recovered=false,calls=0;
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};
+ db.prepare=sql=>{if(hit&&sql.includes("SELECT json_extract(result_json,'$.leaseToken') AS lease FROM assistant_specialist_tasks"))recovered=true;return prepare.call(db,sql);};
+ db.batch=async statements=>{
+  if(hit||!statements.some(s=>s.sql.startsWith("UPDATE consequential_executions SET status='completed'"))||!statements.some(s=>s.sql.startsWith("UPDATE assistant_specialist_tasks SET status='completed'")))return batch.call(db,statements);
+  const index=fault==='source-proof'?0:fault==='accounting-proof'?statements.findIndex(s=>s.sql.startsWith("UPDATE consequential_executions SET status='completed'"))-1
+   :fault==='execution-write-proof'?statements.findIndex(s=>s.sql.startsWith("UPDATE consequential_executions SET status='completed'"))+1
+   :fault==='task-write-proof'?statements.findIndex(s=>s.sql.startsWith("UPDATE assistant_specialist_tasks SET status='completed'"))+1:statements.length-2;
+  assert.ok(index>=0);const rows=await batch.call(db,statements);assert.equal(rows[index].results[0].verified,1);rows[index].results=[];hit=true;return rows;
+ };t.after(()=>{db.batch=batch;db.prepare=prepare;globalThis.fetch=original;});
+ const execution=await specialistExecute(state,review,state.semanticOptions);assert.equal(execution.status,202,await execution.clone().text());await state.drainBackground();
+ assert.equal(hit,true);assert.equal(recovered,true,'Every expected assertion receipt is required, even when the final completed row arrived');assert.equal(calls,1);
+ db.batch=batch;const saved=await specialistRetrieve(state,review,state.semanticOptions);assert.equal(saved.status,200,await saved.clone().text());assert.equal(calls,1);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) n FROM memory_derivation_consumer_contents WHERE role='result'").get().n,1);
+});
+
+
+for(const shared of [false,true])for(const fault of ['missing-proof','extra-proof-key','missing-insert-ack','missing-row','wrong-content','lost-ack','rollback','withdrawal'])test('Memory raw receipt: atomic '+shared+'/'+fault+' preserves accounting without repurchase',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch,original=globalThis.fetch;let hit=false,calls=0;
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};
+ db.batch=async statements=>{
+  if(hit||!statements.some(s=>s.sql.includes("json('assistant_raw_receipt_not_retained')")))return batch.call(db,statements);hit=true;
+  if(fault==='withdrawal')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+  if(fault==='rollback')return batch.call(db,[...statements,db.prepare("SELECT json('isolated_raw_rollback')")]);
+  const rows=await batch.call(db,statements);
+  if(fault==='missing-proof')rows[0].results=[];
+  if(fault==='extra-proof-key')rows[0].results[0].unexpected=1;
+  if(fault==='missing-insert-ack'){const index=statements.findIndex(s=>s.sql.startsWith('INSERT INTO private_content(')||s.sql.startsWith('INSERT INTO private_content ('));assert.ok(index>=0);rows[index].meta.changes=0;}
+  if(fault==='missing-row')rows.at(-1).results=[];
+  if(fault==='wrong-content')rows.at(-1).results[0].content_id='foreign-response';
+  if(fault==='lost-ack')throw Error('isolated_raw_ack_lost');
+  return rows;
+ };t.after(()=>{db.batch=batch;globalThis.fetch=original;});
+ const response=await specialistExecute(state,review,state.semanticOptions);assert.equal(response.status,202,await response.clone().text());await state.drainBackground();
+ assert.equal(hit,true);assert.equal(calls,1);
+ const completed=state.sqlite.prepare('SELECT verified_tokens,status FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId);
+ assert.equal(completed.verified_tokens,1300);assert.equal(completed.status,'settled');
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) n FROM memory_derivation_consumer_contents WHERE role='result'").get().n,0,'An unconfirmed raw publication cannot immediately authorize final publication');
+ const retained=state.sqlite.prepare("SELECT COUNT(*) n FROM memory_derivation_consumer_contents WHERE role='response'").get().n;
+ assert.equal(retained,['rollback','withdrawal'].includes(fault)?0:1);
+ db.batch=batch;
+ const saved=await specialistRetrieve(state,review,state.semanticOptions),body=await saved.json();
+ if(['rollback','withdrawal'].includes(fault))assert.equal(body.result,undefined,JSON.stringify(body));
+ else{assert.equal(saved.status,200,JSON.stringify(body));assert.equal(body.result?.sourceStatus,'semantic-memory-assisted');}
+ await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();assert.equal(calls,1);
+});
+
+for(const source of ['raw','metadata','decoded-body'])test('Memory raw receipt: '+source+' byte bounds deny recovery before disclosure',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared:true}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch,prepare=db.prepare,original=globalThis.fetch;let held=false,calls=0,hydrated=0,rawRead;
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};
+ db.batch=async statements=>{rawRead??=statements.find(s=>s.sql.startsWith('SELECT task.result_json,raw.content_id,raw.content'));if(statements.some(s=>s.sql.startsWith("UPDATE consequential_executions SET status='completed'"))){held=true;throw Error('isolated_hold_final_publication');}return batch.call(db,statements);};
+ t.after(()=>{db.batch=batch;db.prepare=prepare;globalThis.fetch=original;});
+ const response=await specialistExecute(state,review,state.semanticOptions);assert.equal(response.status,202,await response.clone().text());await state.drainBackground();assert.equal(held,true);db.batch=batch;
+ const task=state.sqlite.prepare('SELECT result_json FROM assistant_specialist_tasks WHERE task_id=?').get(review.executionId),metadata=JSON.parse(task.result_json),ref=metadata.rawReceipt.contentRef;
+ assert.ok(rawRead);assert.ok(await rawRead.first(),'Unmodified retained body passes this exact native read');
+ if(source==='raw'){
+  const projected=rawRead.sql.replace('JOIN private_content raw', 'JOIN (SELECT content_id,owner_id,kind,? AS content,expires_at,redacted_at FROM private_content) raw'),values=['界'.repeat(525654),...rawRead.values];
+  assert.equal(state.sqlite.prepare(projected).get(...values),undefined);
+  const unbounded=projected.replace(/AND length\(CAST\(raw.content AS BLOB\)\)<=\d+ AND length\(CAST\(task.result_json AS BLOB\)\)<=65536/u,'');
+  assert.ok(state.sqlite.prepare(unbounded).get(...values),'Isolate the native byte predicate without retiring the actual private source');
+  state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?').run(values[0],ref);
+ }
+ if(source==='metadata'){metadata.padding='界'.repeat(21846);
+  const projected=rawRead.sql.replace('FROM assistant_specialist_tasks task JOIN private_content raw','FROM (SELECT task_id,actor_user_id,? AS result_json FROM assistant_specialist_tasks) task JOIN private_content raw'),values=[JSON.stringify(metadata),...rawRead.values];
+  assert.equal(state.sqlite.prepare(projected).get(...values),undefined);
+  const unbounded=projected.replace(/AND length\(CAST\(raw.content AS BLOB\)\)<=\d+ AND length\(CAST\(task.result_json AS BLOB\)\)<=65536/u,'');
+  assert.ok(state.sqlite.prepare(unbounded).get(...values),'Metadata byte rejection is independent of source/provenance guards');
+  state.sqlite.prepare('UPDATE assistant_specialist_tasks SET result_json=? WHERE task_id=?').run(JSON.stringify(metadata),review.executionId);}
+ if(source==='decoded-body'){
+  const raw=JSON.parse(state.sqlite.prepare('SELECT content FROM private_content WHERE content_id=?').get(ref).content);raw.responseBody='界'.repeat(87382);
+  const {consentHash}=await import('../worker/consequential-consent.ts');metadata.rawReceipt.sha256=await consentHash(raw);
+  state.sqlite.prepare('UPDATE private_content SET content=? WHERE content_id=?').run(JSON.stringify(raw),ref);
+  state.sqlite.prepare('UPDATE assistant_specialist_tasks SET result_json=? WHERE task_id=?').run(JSON.stringify(metadata),review.executionId);
+ }
+ if(source!=='decoded-body')assert.equal(await rawRead.first(),null);
+ db.prepare=sql=>{const statement=prepare.call(db,sql);if(!sql.startsWith('SELECT task.result_json,raw.content_id,raw.content'))return statement;const wrap=raw=>new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(key==='first')return async(...args)=>{const value=await target.first(...args);if(value)hydrated++;return value;};return Reflect.get(target,key,target);}});return wrap(statement);};
+ const saved=await specialistRetrieve(state,review,state.semanticOptions),body=await saved.json();assert.equal(body.result,undefined,JSON.stringify(body));
+ if(source!=='decoded-body')assert.equal(hydrated,0,'Oversized persisted bodies are rejected inside SQLite, before hydration');
+ await specialistExecute(state,review,state.semanticOptions);await state.drainBackground();assert.equal(calls,1);
+});
+
+
+for(const shared of [false,true])for(const phase of ['continuation','dispatch'])for(const status of ['active','paused','closed'])test('Memory non-pilot continuation: new '+shared+'/'+phase+'/'+status+' cohort cannot inherit ordinary approval',async t=>{
+ const state=await semanticPaidConsumerFixture(t,{shared}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));
+ const db=state.env.DB,prepare=db.prepare,batch=db.batch,original=globalThis.fetch;let hit=false,calls=0;
+ const matches=sql=>sql.startsWith('SELECT 1 AS current WHERE')&&sql.includes("NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort WHERE cohort.status");
+ const inject=()=>{if(hit)return;hit=true;
+  const org=shared?state.organizationId:'isolated-new-memory-pilot',now=new Date().toISOString();
+  if(!shared)state.sqlite.prepare("INSERT INTO organizations(organization_id,name,owner_user_id,status,created_at,updated_at) VALUES(?,?,?,'active',?,?)").run(org,'Synthetic late policy','assistant-owner',now,now);
+  state.sqlite.prepare("INSERT INTO pilot_cohorts(cohort_id,organization_id,status,starts_at,ends_at,created_by_user_id,created_at,updated_at) VALUES(?,?,?,'2000-01-01','2999-01-01',?,?,?)").run('isolated-late-memory-cohort',org,status,'assistant-owner',now,now);
+  state.sqlite.prepare("INSERT INTO pilot_participants(participant_id,cohort_id,organization_id,email_normalized,user_id,role,status,invited_by_user_id,created_at,revoked_at) VALUES(?,?,?,?,?,'member','active',?,?,NULL)").run('isolated-late-memory-participant','isolated-late-memory-cohort',org,'assistant-owner@example.test','assistant-owner','assistant-owner',now);
+ };
+ db.prepare=sql=>{const statement=prepare.call(db,sql);if(phase!=='continuation'||!matches(sql))return statement;const wrap=raw=>new Proxy(raw,{get(target,key){if(key==='bind')return(...args)=>wrap(target.bind(...args));if(key==='first')return async(...args)=>{inject();return target.first(...args);};return Reflect.get(target,key,target);}});return wrap(statement);};
+ db.batch=async statements=>{if(phase==='dispatch'&&statements.some(s=>matches(s.sql)))inject();return batch.call(db,statements);};
+ globalThis.fetch=async(_url,init)=>{calls++;return specialistRawResponse(JSON.parse(init.body));};t.after(()=>{db.prepare=prepare;db.batch=batch;globalThis.fetch=original;});
+ const response=await specialistExecute(state,review,state.semanticOptions);assert.equal(response.status,202,await response.clone().text());await state.drainBackground();
+ assert.equal(hit,true);assert.equal(calls,0);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) n FROM memory_derivation_consumer_contents WHERE role IN('response','result')").get().n,0);
+ assert.equal(state.sqlite.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').get(review.executionId).verified_tokens,null);
 });

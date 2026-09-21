@@ -511,11 +511,11 @@ const ordinaryRevisionRetentionUnheld = `NOT EXISTS(SELECT 1 FROM organization_r
     AND (hold.scope_kind='organization' OR hold.scope_kind='project' AND hold.resource_id=artifact_revisions.project_access_id OR hold.scope_kind='artifact' AND hold.resource_id=artifact_revisions.artifact_id))`;
 
 /** Dedicated answer/origin retirement owns its bodies even after consent or ledger rows disappear. */
-async function ordinaryStructuredOriginExclusion(env: WorkerEnv): Promise<{sql:string;bindings:(string|number|null)[]}> {
+async function ordinaryStructuredOriginExclusion(env: WorkerEnv, observation?:{db:WorkerEnv["DB"];result:unknown}): Promise<{sql:string;bindings:(string|number|null)[]}> {
   const db=env.DB;
   try {
     const { nativeStructuredOriginSchema, nativeStructuredMemoryOriginAnswerExclusion } = await import("./memory-native-origin.ts");
-    const schema=await nativeStructuredOriginSchema(env),answer=nativeStructuredMemoryOriginAnswerExclusion(schema.present,"private_content");
+    const schema=observation?await (await import("./memory-native-origin-schema.ts")).qualifyNativeStructuredOriginSchema(env,observation.db,observation.result):await nativeStructuredOriginSchema(env),answer=nativeStructuredMemoryOriginAnswerExclusion(schema.present,"private_content");
     if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
     return{sql:"("+schema.guard.condition+") AND ("+answer.sql+")",bindings:[...schema.guard.bindings,...answer.bindings]};
   } catch(error) {
@@ -527,10 +527,10 @@ async function ordinaryStructuredOriginExclusion(env: WorkerEnv): Promise<{sql:s
   }
 }
 
-async function ordinaryRetentionShape(env:WorkerEnv,now:string,workClass:number){
+async function ordinaryRetentionShape(env:WorkerEnv,now:string,workClass:number,observation?:{db:WorkerEnv["DB"];result:unknown;platform:boolean}){
   const db=env.DB;
   if(workClass===0){
-    const origin=await ordinaryStructuredOriginExclusion(env);
+    const origin=await ordinaryStructuredOriginExclusion(env,observation);
     if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
     return{table:"private_content",identity:"content_id",body:"content",
       eligible:"redacted_at IS NULL AND kind NOT IN('document-artifact','memory-structured-ledger','memory-structured-origin') AND expires_at<=? AND "+ordinaryPrivateRetentionUnheld+" AND "+origin.sql,
@@ -539,7 +539,7 @@ async function ordinaryRetentionShape(env:WorkerEnv,now:string,workClass:number)
   if(workClass===1)return{table:"artifact_revisions",identity:"revision_id",body:"content_json",
     eligible:"redacted_at IS NULL AND expires_at<=? AND "+ordinaryRevisionRetentionUnheld,bindings:[now]};
   if(workClass===2){
-    const platform=await db.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1").first();
+    const platform=observation?observation.platform:await db.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1").first();
     if(env.DB!==db)throw new Error("retention-cleanup-binding-changed");
     return platform?{table:"platform_assistant_private_content",identity:"content_id",body:"content",eligible:"redacted_at IS NULL AND expires_at<=?",bindings:[now]}:null;
   }
@@ -603,15 +603,33 @@ function ordinaryRetentionCommitted(result: D1Result, maximum: number): number {
 
 async function sweepOrdinaryExpiredPrivateContent(env: WorkerEnv, now: string, maximum: number): Promise<number> {
   const db = env.DB;
-  let processed = 0;
-  for (let workClass = 0; workClass < 3 && processed < maximum; workClass++) {
-    const statement = await ordinaryRetentionStatement(env, now, workClass, maximum - processed);
-    if (env.DB !== db) throw new Error("retention-cleanup-binding-changed");
-    if (statement) {
-      const result = await statement.run();
-      if (env.DB !== db) throw new Error("retention-cleanup-binding-changed");
-      processed += ordinaryRetentionCommitted(result, maximum - processed);
-    }
+  const {nativeStructuredOriginSchemaRead}=await import('./memory-native-origin-schema.ts');
+  if(env.DB!==db)throw Error('retention-cleanup-binding-changed');
+  // Independent metadata and candidate reads share two native round trips.
+  // These select work only; each bounded UPDATE rechecks its complete current
+  // schema, negative origin boundary, expiry and legal-hold predicates.
+  const metadata=structuredClone(await db.batch<Record<string,unknown>>([
+    nativeStructuredOriginSchemaRead(db),
+    db.prepare("SELECT 1 AS available FROM sqlite_schema WHERE type='table' AND name='platform_assistant_private_content' LIMIT 1"),
+  ]));
+  if(env.DB!==db||!Array.isArray(metadata)||metadata.length!==2||!Object.hasOwn(metadata,0)||!Object.hasOwn(metadata,1)
+    ||metadata[1]?.success!==true||('error' in metadata[1]&&metadata[1].error!==undefined)||!Array.isArray(metadata[1].results)
+    ||metadata[1].results.length>1||metadata[1].results.length===1&&(!metadata[1].results[0]||Object.keys(metadata[1].results[0]).join(',')!=='available'||metadata[1].results[0].available!==1))throw Error('retention-cleanup-unavailable');
+  const observation={db,result:metadata[0],platform:metadata[1].results.length===1};
+  const shapes=[];
+  for(let workClass=0;workClass<3;workClass++){
+    const shape=await ordinaryRetentionShape(env,now,workClass,observation);if(shape)shapes.push(shape);
+  }
+  if(env.DB!==db)throw Error('retention-cleanup-binding-changed');
+  const selected=structuredClone(await db.batch<Record<string,unknown>>(shapes.map(shape=>db.prepare('SELECT '+shape.identity+' AS identity FROM '+shape.table+' WHERE '+shape.eligible+' ORDER BY expires_at LIMIT 1').bind(...shape.bindings))));
+  if(env.DB!==db||!Array.isArray(selected)||selected.length!==shapes.length||!Array.from(selected).every(row=>row&&row.success===true&&(!('error' in row)||row.error===undefined)
+    &&Array.isArray(row.results)&&row.results.length<=1&&(row.results.length===0||row.results[0]&&Object.keys(row.results[0]).join(',')==='identity'&&typeof row.results[0].identity==='string'&&row.results[0].identity.length>0)))throw Error('retention-cleanup-unconfirmed');
+  let processed=0;
+  for(const [index,shape]of shapes.entries()){
+    if(processed>=maximum)break;if(selected[index]!.results.length===0)continue;
+    const result=await db.prepare('UPDATE '+shape.table+' SET '+shape.body+"='',redacted_at=? WHERE rowid IN (SELECT rowid FROM "+shape.table+' WHERE '+shape.eligible+' ORDER BY expires_at LIMIT ?)').bind(now,...shape.bindings,maximum-processed).run();
+    if(env.DB!==db)throw Error('retention-cleanup-binding-changed');
+    processed+=ordinaryRetentionCommitted(result,maximum-processed);
   }
   return processed;
 }

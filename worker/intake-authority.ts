@@ -11,6 +11,14 @@ import type { ProjectIntake } from "../src/model/project-intake.ts";
 
 export type ProjectIntakeAuthorization={user:PilotUser;principal:PilotUser;impersonation:PilotImpersonation|null};
 
+/** A non-pilot continuation must still prove the absence of any managed cohort
+ * at the consuming native statement. This is not an allowance cache. */
+export function nonPilotExecutionGuard(userId:string,organizationId:string|null):BudgetReservationGuard{
+  return{sql:`NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort WHERE cohort.status IN('active','paused','closed')
+    AND (cohort.organization_id=? OR EXISTS(SELECT 1 FROM pilot_participants participant WHERE participant.cohort_id=cohort.cohort_id
+      AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL)))`,bindings:[organizationId??"",userId]};
+}
+
 /** The same captured authorization must still exist at the SQL mutation boundary. */
 export function executionAdmissionGuard(user:PilotUser,binding:ConsequentialBinding,sourceHead:number|null,paid=false){
   const snapshot=user.authorizationSnapshot;
@@ -30,9 +38,7 @@ export function executionAdmissionGuard(user:PilotUser,binding:ConsequentialBind
     ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id
     WHERE cohort.cohort_id=? AND cohort.organization_id=? AND cohort.status='active' AND cohort.starts_at<=? AND cohort.ends_at>? AND cohort.ends_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL AND participant.role!='reviewer')`
-    :` AND NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort WHERE cohort.status IN('active','paused','closed')
-      AND (cohort.organization_id=? OR EXISTS(SELECT 1 FROM pilot_participants participant WHERE participant.cohort_id=cohort.cohort_id
-        AND participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL)))`;
+    :` AND ${nonPilotExecutionGuard(user.userId,scope?.organizationId??null).sql}`;
   return{sql:`EXISTS(SELECT 1 FROM(${PRINCIPAL_WITH_ACCESS_SQL}) principal WHERE principal.user_id=? AND principal.role=?
     AND principal.updated_at=? AND principal.consent_version=? AND COALESCE(principal.permission_epoch,'')=?
     AND COALESCE(principal.grants_json,'[]')=? AND COALESCE(principal.organizations_json,'[]')=?

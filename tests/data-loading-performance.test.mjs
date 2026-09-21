@@ -2436,6 +2436,9 @@ test("managed pilots enforce named participants, whole-pilot spending, prospecti
   assert.equal(database.sqlite.prepare("SELECT redacted_at FROM private_content WHERE content_id=?").get(next.contentId).redacted_at,null,"an organizational legal hold protects existing governed evidence");
   assert.equal(database.sqlite.prepare("SELECT COUNT(*) AS count FROM retention_sweep_runs").get().count,0,"traffic cleanup never fabricates scheduled maintenance receipts");
   const releasedHold=await request(`/api/workspaces/${organizationId}/retention`,json(owner,{legalHold:false},"PATCH"));assert.equal(releasedHold.status,200);
+  // The production scheduled handler also owns Still relay expiry. Install its
+  // actual migration in this isolated whole-handler fixture, as deployment does.
+  database.sqlite.exec(await readFile(new URL("../drizzle/0043_still_panel_relay.sql",import.meta.url),"utf8"));
   await worker.scheduled({},environment);const cleaned=database.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE content_id=?").get(next.contentId);assert.equal(cleaned.content,"");assert.ok(cleaned.redacted_at);assert.equal(database.sqlite.prepare("SELECT content_json FROM artifact_revisions WHERE revision_id='held-project-revision'").get().content_json,"");const maintenance=database.sqlite.prepare("SELECT trigger_kind,status,processed_count FROM retention_sweep_runs ORDER BY started_at DESC LIMIT 1").get();assert.equal(maintenance.trigger_kind,"scheduled");assert.equal(maintenance.status,"completed");assert.ok(maintenance.processed_count>=3);
   const dashboard=await(await request(`/api/workspaces/${organizationId}/pilot`,{headers:owner})).json();assert.equal(dashboard.maintenance.status,"completed");assert.equal(dashboard.maintenance.scope,"installation");assert.equal("processed_count" in dashboard.maintenance,false,"global retention telemetry never exposes other organizations' record counts");
 
