@@ -498,6 +498,13 @@
       "when": 1790026251160,
       "tag": "0072_memory_scope_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "6",
+      "when": 1790032684077,
+      "tag": "0073_memory_authored_images",
+      "breakpoints": true
     }
   ]
 }

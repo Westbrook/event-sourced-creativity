@@ -2022,3 +2022,8 @@ test('private image client: aborted and oversized transport fails closed',async(
  const {readMemoryImageReply}=await import('../src/state/memory-image-preview-client.ts'),abort=new AbortController();abort.abort();await assert.rejects(()=>readMemoryImageReply(Response.json(imagePreviewReply()),abort.signal));
  await assert.rejects(()=>readMemoryImageReply(new Response(' '.repeat(1050001)),new AbortController().signal));
 });
+for(const fault of ['none','independent','preservation','identity','projection'])test('private image client: authored acceptance metadata '+fault,async()=>{
+ const {readMemoryImageReply}=await import('../src/state/memory-image-preview-client.ts');const v={version:'memory-authored-image-v1',status:'applied',executionId:'synthetic-image-execution',eventId:'synthetic-event-id',objectId:'synthetic-output-id',projected:true,independentEvidence:false,preservedOnMemoryWithdrawal:true};
+ if(fault==='independent')v.independentEvidence=true;if(fault==='preservation')v.preservedOnMemoryWithdrawal=false;if(fault==='identity')v.eventId='';if(fault==='projection')v.projected='yes';
+ if(fault==='none'){const read=await readMemoryImageReply(Response.json(v),new AbortController().signal);assert.equal(read.applied.eventId,v.eventId);assert.equal(read.image,undefined);assert.equal(read.quote,undefined);}else await assert.rejects(()=>readMemoryImageReply(Response.json(v),new AbortController().signal));
+});

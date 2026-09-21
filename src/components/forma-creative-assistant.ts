@@ -1566,7 +1566,7 @@ export class FormaCreativeAssistant extends FormaElement {
       .canSpecialist=${this.#canSpecialist()} .specialist=${this.#specialist}
       .memoryImageControls=${this.#specialist?.resultSource==='semantic-memory-assisted'&&this.#specialist.quote?.status==='completed'&&parseSemanticMemoryAnswerPresentation(this.#specialist.semanticMemory)?html`<forma-memory-image-preview-controls
         .endpoint=${this.#specialistUrl} .turnId=${this.#specialist.turnId} .executionId=${this.#specialist.executionId} .bindingHash=${this.#specialist.quote.bindingHash}
-        .validUntil=${this.#specialist.semanticMemory!.validUntil}></forma-memory-image-preview-controls>`:undefined}
+        .validUntil=${this.#specialist.semanticMemory!.validUntil} @memory-image-adopted=${()=>{this.#retireSemanticReviews();this.requestUpdate();}}></forma-memory-image-preview-controls>`:undefined}
       .canMemoryEdit=${this.#canAuthor()&&session.assistant.phase==="actions"&&Boolean(surface.documentId)}
       .canReconcile=${false}
       .pending=${this.#pending.size + this.#activeTasks.size + Number(planning)} .readOnly=${embedded || !this.#canAuthor()}

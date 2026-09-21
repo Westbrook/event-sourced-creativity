@@ -46,7 +46,7 @@ const sourceGuards = (guards: readonly BudgetReservationGuard[]): BudgetReservat
 };
 
 /** Recheck complete current native rows and custody at the final atomic receipt. */
-export async function prepareAuthoringSourceProof(env: WorkerEnv, authority: AuthoringSourceAuthority): Promise<BudgetReservationGuard> {
+export async function prepareAuthoringSourceProof(env: WorkerEnv, authority: AuthoringSourceAuthority, options:{coalesceCustody?:boolean}={}): Promise<BudgetReservationGuard> {
   const { binding, projection } = authority;
   const events = authority.events.filter((event) => nativeSourceTypes.has(event.type) || Boolean(binding.canvasId) && canvasSourceTypes.has(event.type));
   const rebuilt = foldEvents(events, Infinity, binding.documentId, binding.projectId);
@@ -57,10 +57,36 @@ export async function prepareAuthoringSourceProof(env: WorkerEnv, authority: Aut
   if (sourceHash !== binding.sourceHash) fail("authoring_source_changed");
   const expected = new Map(events.map((event) => [event.eventId, event]));
   const scope = binding.scope, owner = scope?.ownerUserId ?? authority.principal.userId, ids = JSON.stringify([...expected.keys()]);
+  const resources = new Map<string, { kind: string; id: string }>(), add = (kind: string, id: string) => resources.set(kind + ":" + id, { kind, id });
+  for (const document of projection.documents) add("document", document.id);
+  for (const block of projection.libraryBlocks) {
+    add("block", block.id);
+    if (block.documentId) add("document", block.documentId);
+    if (block.canvasId) add("canvas", block.canvasId);
+    if (typeof block.properties.reference_id === "string" && block.properties.reference_id) add("reference", block.properties.reference_id);
+  }
+  for (const relation of projection.libraryBlockRelations) add("relation", relation.id);
+  if (binding.canvasId && canvas) {
+    add("canvas", binding.canvasId);
+    for (const item of canvas.items) add("canvas_item", item.id);
+  }
+  const required = JSON.stringify([...resources.values()]);
   type Row = Record<string, string | number | null>;
-  const rows = (await env.DB.prepare(`SELECT event.*,secret.owner_id,secret.project_id,secret.document_id,secret.private_json,secret.redacted_at
+  // Image acceptance captures the same complete rows together. This is a
+  // native atomic read, never a saved access decision; all resulting exact
+  // predicates still replay at the final authoring transaction.
+  const sourceRead=env.DB.prepare(`SELECT event.*,secret.owner_id,secret.project_id,secret.document_id,secret.private_json,secret.redacted_at
     FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
-    WHERE event.stream_id=? AND event.event_id IN(SELECT value FROM json_each(?))`).bind(binding.streamId, ids).all<Row>()).results;
+    WHERE event.stream_id=? AND event.event_id IN(SELECT value FROM json_each(?))`).bind(binding.streamId, ids);
+  const reads=options.coalesceCustody&&scope?[sourceRead,env.DB.prepare(`SELECT * FROM project_event_scopes
+      WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=?
+        AND event_id IN(SELECT value FROM json_each(?))`).bind(scope.projectAccessId, scope.organizationId, scope.projectId, owner, ids),env.DB.prepare(`SELECT resource.* FROM project_resource_scopes resource JOIN json_each(?) required
+      ON(resource.resource_kind,resource.resource_id)=(json_extract(required.value,'$.kind'),json_extract(required.value,'$.id'))
+      WHERE(resource.project_access_id,resource.organization_id,resource.project_id,resource.owner_user_id,resource.visibility)=(?,?,?,?,'collaborative_output')`)
+      .bind(required, scope.projectAccessId, scope.organizationId, scope.projectId, owner)]:null;
+  const database=env.DB,observed=reads?structuredClone(await database.batch<Row>(reads)):null;
+  if(observed&&(env.DB!==database||observed.length!==3||observed.some(row=>!row||row.success!==true||('error' in row&&row.error!==undefined)||!Array.isArray(row.results))))fail('authoring_source_unavailable');
+  const rows=observed?observed[0]!.results:(await sourceRead.all<Row>()).results;
   if (rows.length !== expected.size) fail("authoring_source_unavailable");
   for (const row of rows) {
     if (row.redacted_at !== null || row.private_json !== null && row.owner_id !== owner) fail("authoring_source_unavailable");
@@ -76,22 +102,8 @@ export async function prepareAuthoringSourceProof(env: WorkerEnv, authority: Aut
   ]);
   for (let first = 0; first < exactRows.length; first += 128) proofs.push(authoringEventRowsProof(exactRows.slice(first, first + 128), true));
 
-  const resources = new Map<string, { kind: string; id: string }>(), add = (kind: string, id: string) => resources.set(kind + ":" + id, { kind, id });
-  for (const document of projection.documents) add("document", document.id);
-  for (const block of projection.libraryBlocks) {
-    add("block", block.id);
-    if (block.documentId) add("document", block.documentId);
-    if (block.canvasId) add("canvas", block.canvasId);
-    if (typeof block.properties.reference_id === "string" && block.properties.reference_id) add("reference", block.properties.reference_id);
-  }
-  for (const relation of projection.libraryBlockRelations) add("relation", relation.id);
-  if (binding.canvasId && canvas) {
-    add("canvas", binding.canvasId);
-    for (const item of canvas.items) add("canvas_item", item.id);
-  }
-  const required = JSON.stringify([...resources.values()]);
   if (scope) {
-    const custody = (await env.DB.prepare(`SELECT * FROM project_event_scopes
+    const custody = observed?observed[1]!.results:(await env.DB.prepare(`SELECT * FROM project_event_scopes
       WHERE project_access_id=? AND organization_id=? AND project_id=? AND owner_user_id=?
         AND event_id IN(SELECT value FROM json_each(?))`).bind(scope.projectAccessId, scope.organizationId, scope.projectId, owner, ids).all<Row>()).results;
     const visibleIds = new Set([...projection.documents, ...projection.libraryBlocks, ...projection.libraryBlockRelations].flatMap((item) => item.sourceEvents));
@@ -104,7 +116,7 @@ export async function prepareAuthoringSourceProof(env: WorkerEnv, authority: Aut
     const custodyRows = custody.map((row) => AUTHORING_SIDECAR_COLUMNS.project_event_scopes.map((column) => row[column] ?? null));
     for (let first = 0; first < custodyRows.length; first += 128) proofs.push(authoringSidecarProof("project_event_scopes", custodyRows.slice(first, first + 128)));
 
-    const scopedResources = (await env.DB.prepare(`SELECT resource.* FROM project_resource_scopes resource JOIN json_each(?) required
+    const scopedResources = observed?observed[2]!.results:(await env.DB.prepare(`SELECT resource.* FROM project_resource_scopes resource JOIN json_each(?) required
       ON(resource.resource_kind,resource.resource_id)=(json_extract(required.value,'$.kind'),json_extract(required.value,'$.id'))
       WHERE(resource.project_access_id,resource.organization_id,resource.project_id,resource.owner_user_id,resource.visibility)=(?,?,?,?,'collaborative_output')`)
       .bind(required, scope.projectAccessId, scope.organizationId, scope.projectId, owner).all<Row>()).results;

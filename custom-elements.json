@@ -14762,7 +14762,7 @@
           "tagName": "forma-memory-image-preview-controls",
           "customElement": true,
           "summary": "Memory image preview controls application interface.",
-          "description": "Explicit private-image purchase and read. Never writes events, R2, browser\nstorage or a shared Output. The parent removes this view on source retirement.",
+          "description": "Separate private-image purchase/review and exact authored-image acceptance.\nNothing is published without the additional scope-bound checkbox; private\npixels never enter browser persistence. Source retirement removes this view.",
           "superclass": {
             "name": "FormaElement",
             "module": "src/components/forma-element.ts"
@@ -14854,6 +14854,15 @@
                 "text": "string"
               },
               "default": "''"
+            }
+          ],
+          "events": [
+            {
+              "name": "memory-image-adopted",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
             }
           ],
           "x-forma": {

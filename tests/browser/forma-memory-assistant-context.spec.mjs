@@ -42,7 +42,7 @@ for(const locale of ['en','ar'])test.describe('Saved assistant context '+locale,
 
 // Actual whole-app modal and privacy lifecycle with synthetic transport only.
 // Native authorization, finance and D1 are verified separately by runtime tests.
-for(const creation of [false,true,'output','profile','image'])for(const surface of ['document','chat'])for(const locale of ['en','ar'])for(const boundary of ['profile','image'].includes(creation)?['blur','expiry']:['blur','expiry','apply'])test.describe('Semantic assistant '+(creation==='image'?'image':creation==='profile'?'profile':creation==='output'?'output':creation?'creation':'result')+' '+surface+' '+locale+' '+boundary,()=>{
+for(const creation of [false,true,'output','profile','image'])for(const surface of ['document','chat'])for(const locale of ['en','ar'])for(const boundary of creation==='profile'?['blur','expiry']:['blur','expiry','apply'])test.describe('Semantic assistant '+(creation==='image'?'image':creation==='profile'?'profile':creation==='output'?'output':creation?'creation':'result')+' '+surface+' '+locale+' '+boundary,()=>{
  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
  test('historical result retires its private modal without a new purchase',async({page,context,baseURL})=>{
   expect(syntheticNetworkEnabled(baseURL)).toBe(true);
@@ -84,8 +84,8 @@ for(const creation of [false,true,'output','profile','image'])for(const surface 
    if(creation==='image'&&body.action==='image-preview'){
     const executionId='synthetic-private-image',bindingHash='b'.repeat(64);
     if(body.previewAction==='quote')return request.fulfill({json:{version:'memory-image-preview-v1',executionId,validUntil,quote:{...quote,executionId,bindingHash,status:'quoted',models:['gpt-image-2'],canExecute:true,privateInput:{prompt:'Private exact context <script>literal</script>'}},noAutomaticRetry:true}});
-    expect(body.previewExecutionId).toBe(executionId);expect(body.previewAction).toBe('execute');expect(body.approvedPreviewHash).toBe(bindingHash);
-    return request.fulfill({json:{version:'memory-image-preview-v1',executionId,validUntil,status:'completed',result:{version:'memory-image-preview-v1',executionId,bindingHash,mode:'private-review',independentEvidence:false,image:imageData},noAutomaticRetry:true}});
+    expect(body.previewExecutionId).toBe(executionId);if(body.previewAction==='adopt'){expect(boundary).toBe('apply');expect(body.publishToDocument).toBe(true);expect(body.approvedAdoptionHash).toBe('c'.repeat(64));expect(JSON.stringify(body)).not.toContain(imageData.encoded);return request.fulfill({json:{version:'memory-authored-image-v1',status:'applied',executionId,eventId:'synthetic-authored-image',objectId:'memory-image-synthetic',projected:true,independentEvidence:false,preservedOnMemoryWithdrawal:true}});}expect(body.previewAction).toBe('execute');expect(body.approvedPreviewHash).toBe(bindingHash);
+    return request.fulfill({json:{version:'memory-image-preview-v1',executionId,validUntil,status:'completed',result:{version:'memory-image-preview-v1',executionId,bindingHash,mode:'private-review',independentEvidence:false,image:imageData},adoption:{hash:'c'.repeat(64),projectId:'project-atmosphere',documentId:'doc-atmosphere',shared:surface==='chat'},noAutomaticRetry:true}});
    }
    if(boundary==='apply'&&body.action===(creation?'apply-creation':'apply-edit')){
     expect(Object.keys(body).sort()).toEqual(['action','turnId','executionId','approvedBindingHash',...(creation?['proposalId','approvedCreationHash']:['blockId','approvedEditHash']),'publishToDocument'].sort());
@@ -140,8 +140,9 @@ for(const creation of [false,true,'output','profile','image'])for(const surface 
    await image.locator('img').scrollIntoViewIfNeeded();expect(await dialog.evaluate(e=>e.scrollWidth>e.clientWidth+1)).toBe(false);
    await page.screenshot({path:'.wrangler/memory-private-image-'+surface+'-'+locale+'-'+boundary+'.png'});
    expect(calls.filter(c=>c.action==='image-preview').map(c=>c.previewAction)).toEqual(['quote','execute']);
+   if(boundary==='apply'){await expect(image.getByRole('button',{name:c.adopt,exact:true})).toBeDisabled();await expect(image).toContainText(surface==='chat'?c.adoptShared:c.adoptPersonal);await image.locator('input[type=checkbox]').check();await image.getByRole('button',{name:c.adopt,exact:true}).click();await expect.poll(()=>calls.filter(c=>c.previewAction==='adopt').length).toBe(1);}
   }
-  if(boundary==='apply'){await expect(editReview).toContainText(ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationDetail':creation?'creationDetail':'editPublishDetail')]);await editReview.getByRole('button',{name:ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationApply':creation?'creationApply':'editApply')],exact:true}).click();}
+  if(boundary==='apply'&&creation!=='image'){await expect(editReview).toContainText(ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationDetail':creation?'creationDetail':'editPublishDetail')]);await editReview.getByRole('button',{name:ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationApply':creation?'creationApply':'editApply')],exact:true}).click();}
   if(boundary==='blur')await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
   await expect(dialog).not.toContainText(result.reply,{timeout:15000});await expect(dialog).not.toContainText('Synthetic private approved Memory context');await expect(dialog).not.toContainText(privateText);if(!creation)await expect(dialog).not.toContainText(result.editReview.edits[0].beforeExcerpt);
   await page.keyboard.press('Escape');await expect(draft).toHaveValue('Unsent local draft');
@@ -150,7 +151,7 @@ for(const creation of [false,true,'output','profile','image'])for(const surface 
    await expect(page.locator('#creative-chat-message')).toHaveValue('Retained creative draft');
   }
   if(creation==='image')await expect(dialog.locator('forma-memory-image-preview-controls img')).toHaveCount(0);
-  expect(calls.every(call=>['resume','retrieve',...(creation==='image'?['image-preview']:[]),...(boundary==='apply'?[creation?'apply-creation':'apply-edit']:[])].includes(call.action))).toBe(true);expect(calls.filter(call=>call.action===(creation?'apply-creation':'apply-edit'))).toHaveLength(boundary==='apply'?1:0);expect(errors).toEqual([]);
+  expect(calls.every(call=>['resume','retrieve',...(creation==='image'?['image-preview']:[]),...(boundary==='apply'?[creation?'apply-creation':'apply-edit']:[])].includes(call.action))).toBe(true);expect(calls.filter(call=>call.action===(creation?'apply-creation':'apply-edit'))).toHaveLength(boundary==='apply'&&creation!=='image'?1:0);expect(errors).toEqual([]);
  });
 });
 

@@ -304,3 +304,15 @@ implementation with mocked-provider/local-D1 evidence. It does not qualify real
 image models, pricing, provider retention, hosted capacity or enrollment. Those
 external gates remain open; authored-image and long-response integration remain
 native work on this task.
+
+## Accepted-image rollout dependency — 2026-09-21
+
+[Authored-image adoption](forma-memory-authored-image-adoption-2026-09-21.md) adds
+local-only migration0073. Production integration must apply and verify its table,
+uniqueness constraints, permanent erasure receipts and triggers with the reviewed
+atomic migration executor before activation. Do not enroll users, register a
+schedule, call a real provider or infer hosted long-response support from local
+D1/browser tests. Qualification must include the host's post-disconnect lifetime,
+provider/image bounds, receipt recovery and actual storage/privacy cleanup.
+Native capacity and integrated regression remain on the completion matrix, not
+misclassified as unavailable Sites features.

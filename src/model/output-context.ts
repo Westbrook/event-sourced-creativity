@@ -280,7 +280,7 @@ export function artifactContextEvents(artifact: DocumentArtifact, options: Artif
 /** Materialize a generated still as a rights-backed Reference input. */
 export function imageOutputContextEvents(output: CreativeOutput, options: ImageOutputContextOptions): OutputContextResult {
   if(!output.mediaUrl)return{events:[],blockIds:[],sourceItemIds:[],availableMemberCount:0};
-  const idFactory=options.idFactory??(()=>crypto.randomUUID());const blockId=idFactory(),referenceId=idFactory();const shared={...sharedPayload(options),source_output_id:output.id,source_generation_id:output.generationId,source_document_id:output.documentId};
+  const idFactory=options.idFactory??(()=>crypto.randomUUID());const blockId=idFactory(),referenceId=idFactory();const shared={...sharedPayload(options),...(output.memoryAssisted?{memory_authored_version:1,independent_evidence:false}:{}),source_output_id:output.id,source_generation_id:output.generationId,source_document_id:output.documentId};
   const contentHash=typeof options.contentHash==="string"&&/^[a-f0-9]{64}$/i.test(options.contentHash)?options.contentHash.toLowerCase():null;
   const direction=options.content??{};const title=output.title?.trim()||(typeof direction.title==="string"&&direction.title?direction.title:`${output.quality==="low"?"Draft":"Full-quality"} image input`);const guidance=[direction.rationale,direction.scene].filter((value):value is string=>typeof value==="string"&&Boolean(value));const palette=Array.isArray(direction.palette)?direction.palette.filter((value):value is string=>typeof value==="string"):[];
   return{events:[

@@ -1,3 +1,4 @@
+import {memoryAuthoredImageMediaAllowed} from './memory-authored-image-custody.ts';
 import { creativeContextRightsIssue } from "../src/model/context-health.ts";
 import { foldEvents, type CreativeBlock, type CreativeEvent } from "../src/model/events.ts";
 import { mediaKeyMatchesOwnerNamespace } from "../src/model/media-ownership.ts";
@@ -76,7 +77,7 @@ export async function assertDerivedReferenceProvenance(input: {
       const key = decodeURIComponent(url.slice("/api/media/".length));
       if (!mediaKeyMatchesOwnerNamespace(key, ownerId)) return null;
       const object = typeof env.MEDIA.head === "function" ? await env.MEDIA.head(key) : await env.MEDIA.get(key);
-      if (!object || object.customMetadata?.ownerId !== ownerId) return null;
+      if (!object || object.customMetadata?.ownerId !== ownerId || !await memoryAuthoredImageMediaAllowed(env,ownerId,key)) return null;
       const headers = new Headers(); object.writeHttpMetadata(headers);
       const mimeType = (headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
       if (!mimeType.startsWith("image/")) return null;

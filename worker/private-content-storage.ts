@@ -12,10 +12,10 @@ import { assertSponsorAudioIntakeCleanupRead, readSponsorAudioIntakeCleanupExclu
 export const DURABLE_WORK_RETENTION_END = "9999-12-31T23:59:59.999Z";
 export const DEFAULT_EVIDENCE_RETENTION_DAYS = 365;
 
-type PrivateContentKind = "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "chat-assistant-memory" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal" | "authoring-preview" | "memory-structured-ledger" | "memory-structured-origin" | "memory-document-job-origin" | "experience-draft" | "guest-image-stage-history" | "guest-image-result-history";
+type PrivateContentKind = "authored-memory-image" | "prompt" | "provider-output" | "provider-response" | "intent" | "condition" | "critique" | "adaptive-intent" | "adaptive-structure" | "chat-user" | "chat-assistant" | "chat-assistant-memory" | "ideation-prompt" | "document-artifact" | "document-artifact-input" | "activity-issue-note" | "execution-consent" | "context-proposal" | "authoring-preview" | "memory-structured-ledger" | "memory-structured-origin" | "memory-document-job-origin" | "experience-draft" | "guest-image-stage-history" | "guest-image-result-history";
 
 export function privateContentRetentionClass(kind: PrivateContentKind): "durable-work" | "governed-evidence" | "transient-private" {
-  return kind === "document-artifact" ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal","authoring-preview"].includes(kind) ? "governed-evidence" : "transient-private";
+  return ["document-artifact","authored-memory-image"].includes(kind) ? "durable-work" : ["document-artifact-input","activity-issue-note","execution-consent","context-proposal","authoring-preview"].includes(kind) ? "governed-evidence" : "transient-private";
 }
 
 export async function preparePrivateContent(env: WorkerEnv, ownerId: string, kind: PrivateContentKind, content: string, projectScope?: ProjectExecutionScope, admissionReads?:OutputAdmissionReads, guard?:BudgetReservationGuard, identity?:{contentId:string}, expiryCeiling?:string, storyCleanupRead?:SponsorStoryIntakeCleanupRead, audioCleanupRead?:SponsorAudioIntakeCleanupRead) {

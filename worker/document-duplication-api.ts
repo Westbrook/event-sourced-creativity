@@ -1,3 +1,4 @@
+import {memoryAuthoredImageMediaAllowed} from './memory-authored-image-custody.ts';
 import { preserveMemoryAuthoredCopies } from '../src/model/memory-authorship.ts';
 import { audioRightsAllowed } from "../src/model/audio.ts";
 import { creativeContextRightsValidity } from "../src/model/context-health.ts";
@@ -365,7 +366,7 @@ async function sourceAdmission(env: WorkerEnv, prepared: Prepared, intent: CopyI
         }
       }
       const object = typeof env.MEDIA.head === "function" ? await env.MEDIA.head(key) : await env.MEDIA.get(key);
-      if (!object || object.customMetadata?.ownerId !== owner) throw new Error("document_duplicate_source_media_unavailable");
+      if (!object || object.customMetadata?.ownerId !== owner || !await memoryAuthoredImageMediaAllowed(env,owner,key)) throw new Error("document_duplicate_source_media_unavailable");
       if (block.type === "reference" && !await verifySourceDocumentEvidence(env, owner, mediaUrl, block.properties)) {
         throw new Error("document_duplicate_source_evidence_unavailable");
       }

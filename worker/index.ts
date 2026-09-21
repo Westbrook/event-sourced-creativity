@@ -1,3 +1,4 @@
+import {reconcileMemoryAuthoredImages} from './memory-authored-image.ts';
 import { reconcileMemoryImageUsage } from './memory-image-preview.ts';
 import { runScopeProfileScheduled,sweepScopeProfiles } from './memory-scope-profile-store.ts';
 import { handleMemoryScopeProfile } from './memory-scope-profile.ts';
@@ -409,6 +410,7 @@ export default {
         () => sweepScopeProfiles(env),
         () => reconcileResourceAssistantUsage(env),
         () => reconcileMemoryImageUsage(env),
+        () => reconcileMemoryAuthoredImages(env),
         () => observeScheduledRetention(env,1_000),
         () => sweepExpiredMemoryCheckpoints(env,128),
         () => sweepExpiredDocumentProfileSuppressions(env,128),

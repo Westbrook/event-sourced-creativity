@@ -1,3 +1,5 @@
+import {projectMemoryAuthoredImage} from './memory-authored-image.ts';
+import {memoryAuthoredImageMediaAllowed} from './memory-authored-image-custody.ts';
 import { hasCapability, requireConsent, requireUser } from "./pilot-policy.ts";
 import { hasProjectContextCookie, readProjectRequestContext, synchronizeProjectScope } from "./project-access.ts";
 import { mediaKeyMatchesOwnerNamespace, ownerMediaNamespace } from "../src/model/media-ownership.ts";
@@ -55,11 +57,12 @@ export async function storeGeneratedImage(env:WorkerEnv,ownerId:string,generatio
 export async function readGeneratedImageReference(env:WorkerEnv,ownerId:string,mediaUrl:unknown) {
   const value=String(mediaUrl??"");const prefix="/api/media/";if(!value.startsWith(prefix))return null;
   let key="";try{key=decodeURIComponent(value.slice(prefix.length));}catch{return null;}
-  if(!mediaKeyMatchesOwnerNamespace(key,ownerId))return null;
+  if(!mediaKeyMatchesOwnerNamespace(key,ownerId)||!await memoryAuthoredImageMediaAllowed(env,ownerId,key))return null;
   const object=await env.MEDIA.get(key);if(!object||object.customMetadata?.ownerId!==ownerId)return null;
   const headers=new Headers();object.writeHttpMetadata(headers);const mimeType=headers.get("content-type")??"image/png";if(!mimeType.startsWith("image/"))return null;
   const metadata=object.customMetadata??{};const providerMediaUrl=String(metadata.providerMediaUrl??"").trim();
-  return{bytes:new Uint8Array(await new Response(object.body).arrayBuffer()),mimeType,provider:String(metadata.provider??"")||null,providerModel:String(metadata.providerModel??metadata.model??"")||null,providerRequestId:String(metadata.providerRequestId??"")||null,providerMediaUrl:providerMediaUrl||null};
+  const bytes=new Uint8Array(await new Response(object.body).arrayBuffer());if(!await memoryAuthoredImageMediaAllowed(env,ownerId,key)){bytes.fill(0);return null;}
+  return{bytes,mimeType,provider:String(metadata.provider??"")||null,providerModel:String(metadata.providerModel??metadata.model??"")||null,providerRequestId:String(metadata.providerRequestId??"")||null,providerMediaUrl:providerMediaUrl||null};
 }
 
 /** Retrieve only private, owner-scoped recordings; never trust browser-supplied URLs or metadata. */
@@ -289,7 +292,7 @@ export async function getMedia(request:Request,key:string,env:WorkerEnv){
     if(selected.context&&(selected.context.organizationId!==resource.organization_id||selected.context.projectAccessId!==resource.project_access_id))return new Response("Forbidden",{status:403});
   }else if(selected.context)return new Response("Forbidden",{status:403});
   const owner=resource?.owner_user_id??auth.user.userId;
-  if(!mediaKeyMatchesOwnerNamespace(key,owner))return new Response("Forbidden",{status:403});
+  if(!mediaKeyMatchesOwnerNamespace(key,owner)||!await memoryAuthoredImageMediaAllowed(env,owner,key))return new Response("Forbidden",{status:403});
   {
     try{
       const sponsored=await beginSponsorNativeImageRead(request,env,auth.user,{mediaKey:key,ownerUserId:owner});
@@ -303,7 +306,12 @@ export async function getMedia(request:Request,key:string,env:WorkerEnv){
       return new Response('Unavailable',{status:409,headers});
     }
   }
-  const object=await env.MEDIA.get(key);if(!object)return new Response("Not found",{status:404});
+  let object=await env.MEDIA.get(key);
+  if(!object&&key.startsWith(ownerMediaNamespace(owner)+'/generated/memory-image-')){
+    const retained=await env.DB.prepare("SELECT content_id FROM private_content WHERE owner_id=? AND kind='authored-memory-image' AND redacted_at IS NULL AND json_extract(content,'$.key')=? LIMIT 2").bind(owner,key).all<{content_id:string}>();
+    if(retained.success&&retained.results.length===1)try{if(await projectMemoryAuthoredImage(env,retained.results[0]!.content_id))object=await env.MEDIA.get(key);}catch{/* Existing accepted copy remains recoverable, without a new purchase. */}
+  }
+  if(!object||!await memoryAuthoredImageMediaAllowed(env,owner,key))return new Response("Not found",{status:404});
   if(object.customMetadata?.ownerId!==owner)return new Response("Forbidden",{status:403});
   const headers=new Headers();object.writeHttpMetadata(headers);headers.set("etag",object.httpEtag);applySafeMediaResponseHeaders(headers);
   const mimeType=String(headers.get("content-type")??"").toLowerCase();

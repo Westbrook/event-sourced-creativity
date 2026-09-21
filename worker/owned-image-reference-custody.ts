@@ -1,3 +1,4 @@
+import {memoryAuthoredImageMediaAllowed} from './memory-authored-image-custody.ts';
 import { mediaKeyMatchesOwnerNamespace } from "../src/model/media-ownership.ts";
 import type { CreativeEvent } from "../src/model/events.ts";
 import { readGeneratedImageReference } from "./media-api.ts";
@@ -43,7 +44,7 @@ export async function readOwnedImageReferenceCustody(input: {
     || ingestion.payload.content_hash !== input.sha256) fail("owned_image_reference_retained_hash_required");
   const readHead = async () => {
     const head = await env.MEDIA.head(key); signal.throwIfAborted();
-    if (!head || head.customMetadata?.ownerId !== ownerId || typeof head.size !== "number" || !Number.isSafeInteger(head.size)
+    if (!await memoryAuthoredImageMediaAllowed(env,ownerId,key)||!head || head.customMetadata?.ownerId !== ownerId || typeof head.size !== "number" || !Number.isSafeInteger(head.size)
       || head.size < 1 || head.size > input.maximumBytes
       || head.customMetadata.sha256 !== undefined && head.customMetadata.sha256 !== input.sha256)
       return fail("owned_image_reference_media_unavailable");

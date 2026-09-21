@@ -17660,8 +17660,8 @@ test('native asset ancestry: Memory withdrawal cannot enroll or erase authored w
 });
 
 
-async function semanticAuthoredEditFixture(t,{shared=false,native=false,creation=false}={}){
- const state=await semanticPaidConsumerFixture(t,{shared,assets:true}),projectId=state.current().project_id,documentId=state.recallTarget.documentId,blockId='memory-authored-target';
+async function semanticAuthoredEditFixture(t,{shared=false,native=false,creation=false,seed=null}={}){
+ const state=seed??await semanticPaidConsumerFixture(t,{shared,assets:true}),projectId=state.current().project_id,documentId=state.recallTarget.documentId,blockId='memory-authored-target';
  state.env.FORMA_ASSISTANT_ACTION_USER_IDS=state.current().actor_user_id;
  const created=await state.request('/api/events',json({action:'append',event:{type:'BlockCreated',payload:{project_id:projectId,document_id:documentId,
   block_id:blockId,scope:'document',type:'direction',properties:{text:'Original authored direction.'}}}},state.owner));
@@ -17679,7 +17679,7 @@ async function semanticAuthoredEditFixture(t,{shared=false,native=false,creation
   if(native&&String(url)!=='https://api.openai.com/v1/responses')return original(url,init);
   assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;
   const request=JSON.parse(init.body),alias=JSON.parse(request.input).blocks.find(b=>b.text==='Original authored direction.').id;
-  return specialistRawResponse(request,{output:[{type:'message',id:'edit-message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Consider this change.',actions:[
+  return specialistRawResponse(request,{output:[{type:'message',id:'edit-message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({reply:'Consider this change.',...(request.text?.format?.schema?.properties?.profile_synthesis?{profile_synthesis:[]}:{}),actions:[
    {kind:creation?'context.create':'context.edit',block_type:creation==='output'?'output':'direction',target_block_id:creation?null:alias,from_block_id:null,to_block_id:null,relation_kind:'',intent:'include',text:creation==='output'?'Output images: one image of the current scene.':'Explicitly accepted authored direction.'}]})}]}]});
  };t.after(()=>{globalThis.fetch=original;});
  const executed=await specialistExecute(state,review,state.semanticOptions);assert.equal(executed.status,202,await executed.clone().text());await state.drainBackground();
@@ -19736,11 +19736,11 @@ for(const kind of ['library','canvas'])test('native distinct Memory scope: share
  const response=await state.request(state.resourceUrl,{headers});assert.notEqual(response.status,200,await response.clone().text());const saved=await state.request(state.resourceSettingsUrl,{...json({...state.resourceInput,expectedCustody:{kind:'personal'}},{...headers,origin:'http://localhost'}),method:'PUT'});assert.notEqual(saved.status,200,await saved.clone().text());assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_resource_enrollments').get().n,0);
 });
 
-async function semanticProfileAggregateFixture(t,{shared=false}={}){
+async function semanticProfileAggregateFixture(t,{shared=false,assets=false}={}){
  const seed=await nativeDerivationRollingFixture(t,{shared,windows:2,termOverrides:{purpose:'profile'},profileAllOriginals:true});
  seed.executionJob=seed.queue().jobs.sort((a,b)=>b.through_sequence-a.through_sequence)[0];
  seed.resultStore=await import('../worker/memory-derivation-results.ts');
- const state=await semanticPaidConsumerFixture(t,{shared,seed}),target=state.recallTarget,source=state.recallSource;
+ const state=await semanticPaidConsumerFixture(t,{shared,seed,assets}),target=state.recallTarget,source=state.recallSource;
  state.sqlite.exec(await(await import('node:fs/promises')).readFile(new URL('../drizzle/0068_memory_derivation_profile_contexts.sql',import.meta.url),'utf8'));
  const consent=await state.derivationRequest('PUT',{...state.derivationInput,documentId:target.documentId,enrollmentId:target.id,enrollmentRevision:target.revision});assert.equal(consent.status,200,await consent.clone().text()+' '+state.controls.lastDatabaseError);
  state.env.FORMA_MEMORY_ENABLED='false';await specialistFreeTurn(state,'aggregate-target-original','Distinct original human intention.',{route:'/document/'+target.documentId,project:target.projectId});state.env.FORMA_MEMORY_ENABLED='true';
@@ -20536,8 +20536,9 @@ for(const invalid of ['missing','duplicate','long','control','surrogate','object
 });
 
 
-async function semanticImagePreviewFixture(t,{shared=false,native=false}={}){
- const state=await semanticAuthoredEditFixture(t,{shared,native,creation:true}),original=globalThis.fetch,calls=[];
+async function semanticImagePreviewFixture(t,{shared=false,native=false,seed=null}={}){
+ const state=await semanticAuthoredEditFixture(t,{shared,native,creation:true,seed}),original=globalThis.fetch,calls=[];
+ const migration=await(await import('node:fs/promises')).readFile(new URL('../drizzle/0073_memory_authored_images.sql',import.meta.url),'utf8');if(native)await state.env.DB.batch(migration.split('--> statement-breakpoint').filter(s=>s.trim()).map(s=>state.env.DB.prepare(s)));else state.sqlite.exec(migration);
  const {jpeg}=await import('./output-asset-fixtures.mjs');
  globalThis.fetch=async(url,init)=>{
   const address=String(url);if(!address.startsWith('https://api.openai.com/'))return original(url,init);
@@ -20636,14 +20637,102 @@ test('private Memory image: restored private body without source cannot resurrec
  state.sqlite.exec('DROP TRIGGER memory_derivation_asset_content_restore');state.sqlite.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').run(retained.content,retained.content_id);state.sqlite.exec(trigger);
  const read=await state.imageSend('retrieve',keys);assert.ok(read.status>=400);assert.doesNotMatch(await read.text(),/encoded/);assert.equal(state.imageCalls.length,2);
 });
-test('private Memory image: long provider response revalidates instead of extending the old lease',{timeout:120000},async t=>{
+test('private Memory image: long response captures fresh native authority without extending the old lease',{timeout:120000},async t=>{
  const state=await semanticImagePreviewFixture(t),q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote));const original=performance.now.bind(performance);let advanced=false;
  t.mock.method(performance,'now',()=>original()+(advanced?31000:0));state.beforeImageResponse=()=>{advanced=true;};
  const counter=semanticConsumerOperationCounter(state),response=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash}),body=await response.json();
- assert.equal(response.status,200,JSON.stringify(body));assert.ok(body.result.image.encoded);assert.equal(state.imageCalls.length,2);t.diagnostic(JSON.stringify({longResponseCalls:counter.read(),longResponseStatements:counter.statements()}));
+ assert.equal(response.status,200,JSON.stringify(body));assert.ok(body.result?.image.encoded);assert.equal(state.imageCalls.length,2);const executionCalls=counter.read();if(process.env.FORMA_MEMORY_CAPACITY_TRACE==='1')t.diagnostic(JSON.stringify({trace:counter.trace}));assert.ok(executionCalls<=80);counter.reset();const resumed=await state.imageSend('resume',{previewExecutionId:quote.executionId}),result=await resumed.json();assert.equal(resumed.status,200,JSON.stringify(result));assert.ok(result.result.image.encoded);assert.ok(counter.read()<=50);t.diagnostic(JSON.stringify({longResponseCalls:executionCalls,freshReviewCalls:counter.read()}));
 });
 for(const change of ['provider-off','model','image-provider'])test('private Memory image: changed provider configuration after safety review blocks dispatch '+change,{timeout:120000},async t=>{
  const state=await semanticImagePreviewFixture(t),q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote));const original=globalThis.fetch;
  globalThis.fetch=async(url,init)=>{const response=await original(url,init);if(String(url).endsWith('/moderations')){if(change==='provider-off')state.env.FORMA_ASSISTANT_PROVIDER_USER_IDS='';else if(change==='model')state.env.OPENAI_IMAGE_MODEL='different';else state.env.FORMA_IMAGE_PROVIDER='fal';}return response;};t.after(()=>{globalThis.fetch=original;});
  const response=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash});assert.equal(response.status,409);assert.equal(state.imageCalls.length,1);assert.ok(state.imageCalls[0].url.endsWith('/moderations'));
+});
+
+for(const shared of [false,true])for(const native of [false,true])test('Memory image adoption: native authored output preserves accepted pixels on withdrawal '+shared+'/'+native,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t,{shared,native}),objects=new Map();
+ state.env.MEDIA={async put(key,value,options){objects.set(key,{bytes:new Uint8Array(value),options});return {};},async get(key){const v=objects.get(key);return v?{body:v.bytes.slice(),customMetadata:v.options.customMetadata,httpEtag:'"local"',writeHttpMetadata(h){h.set('content-type',v.options.httpMetadata.contentType);}}:null;},async head(key){return this.get(key);},async delete(key){objects.delete(key);}};
+ const quote=await(await state.imageSend('quote')).json(),keys={previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash},execution=await state.imageSend('execute',keys),value=await execution.json();assert.equal(execution.status,200,JSON.stringify(value));assert.equal(objects.size,0);assert.ok(value.adoption.hash);
+ const result=await state.imageSend('adopt',{...keys,approvedAdoptionHash:value.adoption.hash,publishToDocument:true}),accepted=await result.json();assert.equal(result.status,200,JSON.stringify(accepted)+' '+state.controls.lastDatabaseError);assert.equal(accepted.status,'applied');assert.equal(accepted.projected,true,JSON.stringify(accepted));assert.equal(objects.size,1);
+ const saved=await state.env.DB.prepare("SELECT content_id,content FROM private_content WHERE kind='authored-memory-image'").first();assert.ok(saved);const event=await state.env.DB.prepare('SELECT payload FROM events WHERE event_id=?').bind(accepted.eventId).first();assert.equal(JSON.parse(event.payload).memory_authored_version,1);
+ await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);const after=await state.env.DB.prepare('SELECT content,redacted_at FROM private_content WHERE content_id=?').bind(saved.content_id).first();assert.equal(after.redacted_at,null);assert.equal(JSON.parse(after.content).image.sha256,value.result.image.sha256);assert.equal(objects.size,1);
+ assert.equal((await state.imageSend('retrieve',keys)).status,409);assert.equal(state.imageCalls.length,2);
+ const projection=await import('../worker/memory-authored-image.ts');assert.equal(await projection.projectMemoryAuthoredImage(state.env,saved.content_id),true);assert.equal(objects.size,1);assert.equal(state.imageCalls.length,2);
+ const repeated=await state.imageSend('adopt',{...keys,approvedAdoptionHash:value.adoption.hash,publishToDocument:true});assert.equal(repeated.status,200,await repeated.clone().text());assert.equal((await repeated.json()).eventId,accepted.eventId);
+ const mediaKey=decodeURIComponent(accepted.mediaUrl.slice('/api/media/'.length)),bytes=objects.get(mediaKey).bytes;assert.equal(Buffer.from(bytes).toString('base64'),value.result.image.encoded);
+});
+for(const failure of ['unapproved','changed-hash','late-withdrawal','lost-ack','media-failed','tampered-authored-copy'])test('Memory image adoption: failure recovery and publication boundary '+failure,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),objects=new Map(),db=state.env.DB;
+ state.env.MEDIA={async put(key,value,options){if(failure==='media-failed')throw Error('isolated-media-unavailable');objects.set(key,{bytes:new Uint8Array(value),options});return {};},async get(key){const v=objects.get(key);return v?{body:v.bytes.slice(),customMetadata:v.options.customMetadata,httpEtag:'"local"',writeHttpMetadata(h){h.set('content-type',v.options.httpMetadata.contentType);}}:null;},async head(key){return this.get(key);},async delete(key){objects.delete(key);}};
+ const q=await(await state.imageSend('quote')).json(),keys={previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash},value=await(await state.imageSend('execute',keys)).json(),body={...keys,approvedAdoptionHash:failure==='changed-hash'?'0'.repeat(64):value.adoption.hash,publishToDocument:failure!=='unapproved'};
+ const batch=db.batch;let hit=false;if(['late-withdrawal','lost-ack'].includes(failure))db.batch=async statements=>{const matching=!hit&&statements.some(s=>(s.sql??'').includes('INSERT INTO private_content')&&s.values?.includes('authored-memory-image'));if(matching){hit=true;if(failure==='late-withdrawal')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);}const rows=await batch.call(db,statements);return matching&&failure==='lost-ack'?rows.slice(0,-1):rows;};
+ const response=await state.imageSend('adopt',body),result=await response.json();db.batch=batch;
+ if(['unapproved','changed-hash','late-withdrawal'].includes(failure)){assert.ok(response.status>=400,JSON.stringify(result));assert.equal(objects.size,0);assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM private_content WHERE kind='authored-memory-image'").first()).n,0);return;}
+ const retained=await db.prepare("SELECT content_id,content FROM private_content WHERE kind='authored-memory-image'").first();assert.ok(retained);assert.equal(state.imageCalls.length,2);
+ const module=await import('../worker/memory-authored-image.ts');
+ if(failure==='tampered-authored-copy'){const saved=JSON.parse(retained.content);saved.image.sha256='a'.repeat(64);saved.approvalHash=await module.memoryImageAdoptionHash(saved.executionId,saved.image.sha256,saved.projectId,saved.documentId,saved.shared);await assert.rejects(()=>db.prepare('UPDATE private_content SET content=? WHERE content_id=?').bind(JSON.stringify(saved),retained.content_id).run(),/memory_authored_image_body_immutable/);assert.equal(await module.projectMemoryAuthoredImage(state.env,retained.content_id),true);return;}
+ if(failure==='lost-ack'){assert.equal(hit,true);assert.equal(response.status,409);assert.equal(objects.size,0);const recovered=await state.imageSend('adopt',body);assert.equal(recovered.status,200,await recovered.clone().text());assert.equal((await recovered.json()).projected,true);}
+ if(failure==='media-failed'){assert.equal(response.status,200,JSON.stringify(result));assert.equal(result.projected,false);assert.equal(objects.size,0);state.env.MEDIA.put=async(key,value,options)=>{objects.set(key,{bytes:new Uint8Array(value),options});return {};};await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);assert.equal(await module.reconcileMemoryAuthoredImages(state.env),1);}
+ assert.equal(objects.size,1);assert.equal(state.imageCalls.length,2);
+});
+test('private Memory image: real elapsed shared D1 response needs a separate current review',{timeout:180000},async t=>{
+ const state=await semanticImagePreviewFixture(t,{shared:true,native:true}),q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote));state.beforeImageResponse=()=>new Promise(resolve=>setTimeout(resolve,31000));
+ const counter=semanticConsumerOperationCounter(state),response=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.ok(body.result?.image.encoded);const executeCalls=counter.read();assert.ok(executeCalls<=80);counter.reset();const resumed=await state.imageSend('resume',{previewExecutionId:quote.executionId}),saved=await resumed.json();assert.equal(resumed.status,200,JSON.stringify(saved));assert.ok(saved.result.image.encoded);assert.ok(counter.read()<=50);assert.equal(state.imageCalls.length,2);t.diagnostic(JSON.stringify({executeCalls,resumeCalls:counter.read()}));
+});
+for(const withdraw of [false,true])test('private Memory image: browser disconnect after dispatch does not lose accounting '+withdraw,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),q=await(await state.imageSend('quote')).json(),abort=new AbortController(),original=state.request;
+ state.request=(path,init)=>original(path,{...init,signal:abort.signal});
+ state.beforeImageResponse=async()=>{abort.abort();if(withdraw)await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);};
+ const response=await state.imageSend('execute',{previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash});assert.equal(response.status,withdraw?409:200,await response.clone().text());assert.equal(state.imageCalls.length,2);
+ const step=await state.env.DB.prepare('SELECT status,verified_tokens FROM consequential_execution_steps WHERE execution_id=?').bind(q.executionId).first();assert.equal(step.status,'settled');assert.equal(step.verified_tokens,120);
+ state.request=original;const retained=await state.imageSend('retrieve',{previewExecutionId:q.executionId});assert.equal(retained.status,withdraw?409:200);assert.equal(state.imageCalls.length,2);
+});
+test('Memory image adoption: media reads require surviving authored custody, not original Memory',{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),objects=new Map();state.env.MEDIA={async put(key,value,options){objects.set(key,{bytes:new Uint8Array(value),options});return {};},async get(key){const v=objects.get(key);return v?{body:v.bytes.slice(),customMetadata:v.options.customMetadata,httpEtag:'"local"',writeHttpMetadata(h){h.set('content-type',v.options.httpMetadata.contentType);}}:null;},async head(key){return this.get(key);},async delete(key){objects.delete(key);}};
+ const q=await(await state.imageSend('quote')).json(),keys={previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash},v=await(await state.imageSend('execute',keys)).json(),response=await state.imageSend('adopt',{...keys,publishToDocument:true,approvedAdoptionHash:v.adoption.hash}),accepted=await response.json();assert.equal(response.status,200,JSON.stringify(accepted));
+ const evidence=await import('../worker/source-reference-evidence.ts');
+ const owner=state.current().actor_user_id,module=await import('../worker/media-api.ts');assert.equal(await evidence.verifySourceDocumentEvidence(state.env,owner,accepted.mediaUrl,{}),true);assert.ok(await module.readGeneratedImageReference(state.env,owner,accepted.mediaUrl));
+ await state.resultStore.withdrawNativeDerivationResult(state.env,owner,state.executionJob.job_id);assert.ok(await module.readGeneratedImageReference(state.env,owner,accepted.mediaUrl));
+ const publicEvent=await state.env.DB.prepare('SELECT * FROM events WHERE event_id=?').bind(accepted.eventId).first(),secret=await state.env.DB.prepare('SELECT private_json FROM event_private_payloads WHERE private_event_id=?').bind(accepted.eventId).first();const payload=JSON.parse(secret.private_json),event={eventId:accepted.eventId,type:'GenerationCompleted',payload,actor:'user',streamId:publicEvent.stream_id,sequence:publicEvent.sequence,occurredAt:publicEvent.occurred_at,recordedAt:publicEvent.recorded_at};
+ const {foldEvents}=await import('../src/model/events.ts'),fold=foldEvents([event],Infinity,payload.document_id,payload.project_id),output=fold.libraryOutputs.find(o=>o.id===accepted.objectId);assert.ok(output?.memoryAssisted);const {imageOutputContextEvents}=await import('../src/model/output-context.ts'),copy=imageOutputContextEvents(output,{projectId:payload.project_id,documentId:payload.document_id,sourceSurface:'test'});assert.ok(copy.events.every(e=>e.payload.memory_authored_version===1));
+ const {loadPrivateContent}=await import('../worker/pilot-policy.ts');assert.equal((await loadPrivateContent(state.env,owner))[output.contentRef],undefined,'Pixel source is never ordinary prompt text');
+ const originalBody=await state.env.DB.prepare("SELECT content_id,content FROM private_content WHERE kind='authored-memory-image'").first();
+ await state.env.DB.prepare("UPDATE private_content SET content='',redacted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE kind='authored-memory-image'").run();
+ await assert.rejects(()=>state.env.DB.prepare('UPDATE private_content SET content=?,redacted_at=NULL WHERE content_id=?').bind(originalBody.content,originalBody.content_id).run(),/memory_authored_image_body_immutable/);
+ await assert.rejects(()=>state.env.DB.prepare('DELETE FROM memory_authored_image_receipts WHERE content_id=?').bind(originalBody.content_id).run(),/memory_authored_image_tombstone_required/);assert.equal(await module.readGeneratedImageReference(state.env,owner,accepted.mediaUrl),null);assert.equal(await evidence.verifySourceDocumentEvidence(state.env,owner,accepted.mediaUrl,{}),false);assert.equal(objects.size,1,'A leftover R2 object is not a read capability');
+});
+for(const retirement of ['body-delete','event-redact','event-delete','concurrent-projection','late-read-erasure'])test('Memory image adoption: accepted custody recovery '+retirement,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),objects=new Map();state.env.MEDIA={async put(key,value,options){objects.set(key,{bytes:new Uint8Array(value),options});return {};},async get(key){const v=objects.get(key);return v?{body:v.bytes.slice(),customMetadata:v.options.customMetadata,httpEtag:'"local"',writeHttpMetadata(h){h.set('content-type',v.options.httpMetadata.contentType);}}:null;},async head(key){return this.get(key);},async delete(key){objects.delete(key);}};
+ const q=await(await state.imageSend('quote')).json(),keys={previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash},v=await(await state.imageSend('execute',keys)).json(),approval={...keys,publishToDocument:true,approvedAdoptionHash:v.adoption.hash},response=await state.imageSend('adopt',approval),accepted=await response.json();assert.equal(response.status,200,JSON.stringify(accepted));
+ const row=await state.env.DB.prepare("SELECT * FROM private_content WHERE kind='authored-memory-image'").first(),module=await import('../worker/memory-authored-image.ts'),media=await import('../worker/media-api.ts');
+ if(retirement==='concurrent-projection'){
+  await state.env.DB.prepare("UPDATE private_content SET content=json_set(content,'$.projected',json('false')) WHERE content_id=?").bind(row.content_id).run();
+  const put=state.env.MEDIA.put;let arrived=0;const both=Promise.withResolvers();state.env.MEDIA.put=async(...args)=>{if(++arrived===2)both.resolve();await both.promise;return put(...args);};
+  assert.deepEqual(await Promise.all([module.projectMemoryAuthoredImage(state.env,row.content_id),module.projectMemoryAuthoredImage(state.env,row.content_id)]),[true,true]);assert.equal(objects.size,1);return;
+ }
+ if(retirement==='late-read-erasure'){
+  const get=state.env.MEDIA.get;state.env.MEDIA.get=async key=>{const object=await get(key);await state.env.DB.prepare("UPDATE private_content SET content='',redacted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE content_id=?").bind(row.content_id).run();return object;};
+  assert.equal(await media.readGeneratedImageReference(state.env,row.owner_id,accepted.mediaUrl),null);return;
+ }
+ if(retirement==='body-delete')await state.env.DB.prepare('DELETE FROM private_content WHERE content_id=?').bind(row.content_id).run();
+ else if(retirement==='event-redact')await state.env.DB.prepare("UPDATE event_private_payloads SET private_json='{}',redacted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE private_event_id=?").bind(accepted.eventId).run();
+ else await state.env.DB.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').bind(accepted.eventId).run();
+ assert.equal((await state.env.DB.prepare('SELECT state FROM memory_authored_image_receipts WHERE content_id=?').bind(row.content_id).first()).state,'retired');assert.equal(await module.projectMemoryAuthoredImage(state.env,row.content_id),false);assert.equal(await media.readGeneratedImageReference(state.env,row.owner_id,accepted.mediaUrl),null);
+ assert.equal((await state.imageSend('adopt',approval)).status,409,'Original paid preview cannot replace an erased acceptance');assert.equal(state.imageCalls.length,2);assert.equal(objects.size,1,'Leftover storage grants no access');
+});
+for(const shared of [false,true])test('private Memory image: maximum aggregate current-source integration '+shared,{timeout:180000},async t=>{
+ const seed=await semanticProfileAggregateFixture(t,{shared,assets:true}),third=await appendAggregateThirdProfile(seed);assert.equal((await seed.saveProfileAggregate(await seed.contextGet(),[seed.profileJob,third])).status,200);
+ const state=await semanticImagePreviewFixture(t,{shared,native:true,seed}),counter=semanticConsumerOperationCounter(state),response=await state.imageSend('quote'),q=await response.json();assert.equal(response.status,200,JSON.stringify(q)+' '+state.controls.lastDatabaseError);const quote=counter.read();counter.reset();
+ const executed=await state.imageSend('execute',{previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash}),view=await executed.json();assert.equal(executed.status,200,JSON.stringify(view)+' '+state.controls.lastDatabaseError);const execute=counter.read();if(process.env.FORMA_MEMORY_CAPACITY_TRACE==='1')t.diagnostic(JSON.stringify(counter.trace));assert.ok(view.result?.image);assert.ok(quote<=50&&execute<=50,JSON.stringify({quote,execute}));t.diagnostic(JSON.stringify({shared,quote,execute}));
+ await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,third);assert.equal((await state.imageSend('retrieve',{previewExecutionId:q.executionId})).status,409);assert.equal(state.imageCalls.length,2);
+});
+for(const fault of ['context-change','withdrawal','authority','configuration'])test('private Memory image: delayed receipt revalidates '+fault,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),q=await(await state.imageSend('quote')).json(),now=performance.now.bind(performance);let advanced=false;t.after(()=>{performance.now=now;});
+ state.beforeImageResponse=async()=>{advanced=true;performance.now=()=>now()+31000;
+  if(fault==='withdrawal')await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id);
+  if(fault==='configuration')state.env.FORMA_MEMORY_ENABLED='false';
+  if(fault==='authority')await state.env.DB.prepare("UPDATE users SET role='viewer',updated_at='changed' WHERE user_id=?").bind(state.current().actor_user_id).run();
+  if(fault==='context-change')await state.env.DB.prepare("UPDATE memory_derivation_contexts SET revision=? WHERE actor_user_id=?").bind(crypto.randomUUID(),state.current().actor_user_id).run();
+ };
+ const response=await state.imageSend('execute',{previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash});assert.equal(advanced,true);assert.equal(response.status,409);assert.equal(state.imageCalls.length,2);assert.equal((await state.env.DB.prepare('SELECT status FROM consequential_execution_steps WHERE execution_id=?').bind(q.executionId).first()).status,'settled');assert.equal((await state.env.DB.prepare('SELECT result_ref FROM consequential_executions WHERE execution_id=?').bind(q.executionId).first()).result_ref,null);
 });

@@ -1,3 +1,4 @@
+import {memoryAuthoredImageMediaAllowed} from './memory-authored-image-custody.ts';
 import { memoryAuthoredBlockIds } from '../src/model/memory-authorship.ts';
 import { rejectOutputContextPackage } from "./output-context-package-policy.ts";
 import { foldEvents, type CreativeBlock, type CreativeBlockRelation } from "../src/model/events.ts";
@@ -211,6 +212,7 @@ async function authoritativeSnapshot(env: WorkerEnv, actor: PilotUser, organizat
         return Response.json({error:"organization_source_evidence_integrity_failed"},{status:409});
       }
       const bytes=new Uint8Array(await new Response(original.body).arrayBuffer());
+      if(!await memoryAuthoredImageMediaAllowed(env,source.ownerUserId,sourceKey))return Response.json({error:"organization_source_evidence_integrity_failed"},{status:409});
       if(!bytes.length||bytes.byteLength>MAX_PACKAGE_SOURCE_BYTES)return Response.json({error:"organization_context_source_too_large",maximumBytes:MAX_PACKAGE_SOURCE_BYTES},{status:413});
       if(preparedSourceBytes+bytes.byteLength>MAX_PACKAGE_TOTAL_SOURCE_BYTES)return Response.json({error:"organization_context_sources_too_large",
         maximumBytes:MAX_PACKAGE_TOTAL_SOURCE_BYTES,requiredBytes:preparedSourceBytes+bytes.byteLength},{status:413});

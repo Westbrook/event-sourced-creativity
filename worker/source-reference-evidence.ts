@@ -1,3 +1,4 @@
+import {memoryAuthoredImageMediaAllowed} from './memory-authored-image-custody.ts';
 import { mediaKeyMatchesOwnerNamespace } from "../src/model/media-ownership.ts";
 import { sourceDocumentEvidenceDigest, sourceDocumentEvidenceFromProperties } from "../src/model/source-documents.ts";
 import { normalizeReferenceComposition, referenceCompositionMediaUrl, REFERENCE_COMPOSITION_MAX_SOURCE_BYTES, type ReferenceCompositionRecipe } from "../src/model/reference-composition.ts";
@@ -15,7 +16,8 @@ async function ownedCompositionSourcesValid(env: WorkerEnv, ownerId: string, rec
     const key = decodeURIComponent(url.slice("/api/media/".length));
     if (!mediaKeyMatchesOwnerNamespace(key, ownerId)) return false;
     const object = typeof env.MEDIA.head === "function" ? await env.MEDIA.head(key) : await env.MEDIA.get(key);
-    const metadata = object?.customMetadata;
+    if(!await memoryAuthoredImageMediaAllowed(env,ownerId,key))return false;
+  const metadata = object?.customMetadata;
     if (!object || !metadata || metadata.ownerId !== ownerId || metadata.rights !== "asserted" && metadata.source !== "provider-generated-media" && metadata.source !== "provider-image-api") return false;
     const headers = new Headers(); object.writeHttpMetadata(headers);
     if (!SAFE_UPLOADED_IMAGE_TYPES.has(String(headers.get("content-type")).split(";")[0]!.trim().toLowerCase())
@@ -48,6 +50,7 @@ export async function verifyReferenceCompositionAssets(env: WorkerEnv, ownerId: 
   const key = decodeURIComponent(url.slice("/api/media/".length));
   if (!mediaKeyMatchesOwnerNamespace(key, ownerId)) return false;
   const object = typeof env.MEDIA.head === "function" ? await env.MEDIA.head(key) : await env.MEDIA.get(key);
+  if(!await memoryAuthoredImageMediaAllowed(env,ownerId,key))return false;
   const metadata = object?.customMetadata;
   if (!object || !metadata || metadata.ownerId !== ownerId || metadata.mimeType !== "image/png" || metadata.rights !== "asserted"
     || metadata.sha256 !== properties.source_content_hash || metadata.referenceCompositionVersion !== "1"
@@ -71,6 +74,7 @@ export async function verifySourceDocumentEvidence(env: WorkerEnv, ownerId: stri
   try { key = decodeURIComponent(mediaUrl.slice(prefix.length)); } catch { return false; }
   if (!mediaKeyMatchesOwnerNamespace(key, ownerId)) return false;
   const object = typeof env.MEDIA.head === "function" ? await env.MEDIA.head(key) : await env.MEDIA.get(key);
+  if(!await memoryAuthoredImageMediaAllowed(env,ownerId,key))return false;
   const metadata = object?.customMetadata;
   if (!metadata || metadata.ownerId !== ownerId) return false;
   if (metadata.referenceCompositionSha256 || properties.reference_composition) return verifyReferenceCompositionAssets(env, ownerId, properties);

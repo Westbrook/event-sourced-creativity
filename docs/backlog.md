@@ -634,3 +634,13 @@ and source-free accounting maintenance are implemented.31 native and8 browser
 checks pass; preceding full commit passes2,869/2,869. Explicit authored-image
 adoption, long-response capacity/UI recovery and integrated qualification remain
 assigned native work. No production or enrollment change.
+
+## MEM-057 — Explicit authored-image acceptance and erasure custody
+
+Implemented locally: [Memory-assisted image adoption](forma-memory-authored-image-adoption-2026-09-21.md).
+Native transaction, exact UI acceptance, recovery without repurchase, negative
+provenance, permanent accepted-work erasure receipts and downstream media readers
+are integrated. Additive0073 remains undeployed. Maximum-three-source D1 execution
+passes48/50 calls. Delayed-response capacity and final integrated qualification
+remain on this task; external scheduling, provider qualification and rollout stay
+on the separate capability To Do.

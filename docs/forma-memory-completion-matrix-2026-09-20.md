@@ -494,3 +494,13 @@ generation, bounded private review, source retirement and accounting recovery.
 Normal D1 execution meets46/50 calls; fresh long-response recapture uses73 and
 stays assigned with authored adoption and integrated qualification. The prior
 full regression at`f601c4b9` is2,869/2,869, resolving the earlier stale test hooks.
+
+## Explicit private-image adoption and custody
+
+[Authored-image acceptance](forma-memory-authored-image-adoption-2026-09-21.md)
+now connects private Assistant/Chat review to exact native Output authoring,
+non-destructive Memory withdrawal, permanent accepted-work erasure receipts,
+downstream reference/share custody and recovery without another provider purchase.
+Normal maximum-three-source D1 execution passes48/50 calls. The prior committed
+full run passes2,895/2,895. Delayed-response capacity and final current-tree
+integrated qualification remain active implementation assignments here.

@@ -1,3 +1,4 @@
+import {publishMemoryAuthoredImage} from './memory-authored-image.ts';
 import { createMemoryElapsed } from '../src/model/memory-lifetime.ts';
 import { prepareBackgroundMemoryField } from './memory-background-field.ts';
 import { memoryBackgroundFieldApprovalHash } from '../src/model/memory-background-field.ts';
@@ -1747,6 +1748,7 @@ const assistantSpecialistHost:AssistantSpecialistHost={
   kind:(message,context,turnId)=>assistantTaskKind(message,preparedAssistantActions(message,context,turnId)),
   allowedModels:assistantAllowedModels,providerEnrolled:(env,userId)=>featureUsers(env.FORMA_ASSISTANT_PROVIDER_USER_IDS).has(userId),
   solEnrolled:(env,userId)=>featureUsers(env.FORMA_ASSISTANT_SOL_USER_IDS).has(userId),
+  applyMemoryImage:async(env,actor,publication)=>{if(!assistantActionsEnabled(env,actor))return json({error:"assistant_authoring_denied"},403);return publishMemoryAuthoredImage(env,actor,publication);},
   turn:exactAssistantTurn,commit:commitAssistantSpecialistResult,applyMemoryEdit:publishAssistantMemoryEdit,applyMemoryCreation:publishAssistantMemoryCreation,
 };
 export async function handleAssistantSpecialist(request:Request,env:WorkerEnv,execution:WorkerExecutionContext){

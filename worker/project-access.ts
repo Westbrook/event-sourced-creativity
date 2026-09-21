@@ -1273,7 +1273,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   guardBindings?:Array<string|number|null>;
   expectedOwnerHead?:number;
   preserveGovernance?:true;
-  authoringOperation?:"memory-output-create"|"memory-create"|"memory-edit"|"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
+  authoringOperation?:"memory-image-adopt"|"memory-output-create"|"memory-create"|"memory-edit"|"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
   assistantAcceptance?:{proposalId:string;turnId:string;actorUserId:string;scopeKey:string;organizationId:string;projectAccessId:string;projectId:string;documentId:string};
 }){
   const action=String(body.action??"append");
@@ -1282,11 +1282,13 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   if(atomicSidecars?.authoringOperation&&(!atomicSidecars.preserveGovernance||!atomicSidecars.guardSql||!atomicSidecars.buildStatements||!Number.isSafeInteger(atomicSidecars.expectedOwnerHead)
     ||(atomicSidecars.authoringOperation==="canvas-arrangement"
       ? action!=="batch"||validateAtomicCanvasArrangementEvents(original,principal.userId)!==null
-      : (atomicSidecars.authoringOperation==="workspace-quick-edit"?!validWorkspaceQuickEditEvents(original):original.some((event)=>!(atomicSidecars.authoringOperation==="adaptive-proposal"?["BlockCreated","BlockPropertyEdited","CanvasItemPlaced"]:["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"]).includes(String(event.type)))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
-  if(['memory-edit','memory-create','memory-output-create'].includes(atomicSidecars?.authoringOperation??'')&&!atomicSidecars?.preconditions?.length)return Response.json({error:'invalid_authoring_operation'},{status:403});
-  if(atomicSidecars?.preconditions?.length&&(!atomicSidecars.preserveGovernance||!['memory-edit','memory-create','memory-output-create'].includes(atomicSidecars.authoringOperation??'')
+      : (atomicSidecars.authoringOperation==="workspace-quick-edit"?!validWorkspaceQuickEditEvents(original):original.some((event)=>!(atomicSidecars.authoringOperation==="memory-image-adopt"?["GenerationCompleted"]:atomicSidecars.authoringOperation==="adaptive-proposal"?["BlockCreated","BlockPropertyEdited","CanvasItemPlaced"]:["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"]).includes(String(event.type)))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
+  if(['memory-edit','memory-create','memory-output-create','memory-image-adopt'].includes(atomicSidecars?.authoringOperation??'')&&!atomicSidecars?.preconditions?.length)return Response.json({error:'invalid_authoring_operation'},{status:403});
+  if(atomicSidecars?.preconditions?.length&&(!atomicSidecars.preserveGovernance||!['memory-edit','memory-create','memory-output-create','memory-image-adopt'].includes(atomicSidecars.authoringOperation??'')
     ||atomicSidecars.preconditions.length>128||original.length!==1||original[0]?.payload?.memory_authored_version!==1
-    ||(atomicSidecars.authoringOperation==='memory-output-create'
+    ||(atomicSidecars.authoringOperation==='memory-image-adopt'
+      ?original[0]?.type!=='GenerationCompleted'||original[0]?.payload?.memory_image_acceptance_version!==1||original[0]?.payload?.independent_evidence!==false
+      :atomicSidecars.authoringOperation==='memory-output-create'
       ?original[0]?.type!=='BlockCreated'||!memoryOutputCreation(original[0]?.payload??{})
       :atomicSidecars.authoringOperation==='memory-create'
       ?original[0]?.type!=='BlockCreated'||!memoryCreationKind(original[0]?.payload?.type)
@@ -1559,7 +1561,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
       if(!restore)return Response.json({error:'foreign_block_resource'},{status:403});
       restoreWitnesses.push(restore);restoredBlockUndo=true;
     }
-    const reason=await validateProjectMutation(env,context,event,pending,principal,canvasAction,restoredBlockUndo);if(reason)return Response.json({error:reason},{status:403});
+    const reason=atomicSidecars?.authoringOperation==='memory-image-adopt'?null:await validateProjectMutation(env,context,event,pending,principal,canvasAction,restoredBlockUndo);if(reason)return Response.json({error:reason},{status:403});
     if(reviewEvents&&ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??""))){
       const type=String(event.type),artifactId=String(event.payload?.artifact_id??"");
       const completed=[...reviewEvents].reverse().find((candidate)=>candidate.type==="DocumentRenderCompleted"&&String(candidate.payload.artifact_id??"")===artifactId);

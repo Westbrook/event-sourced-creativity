@@ -1,7 +1,7 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
   "system.auto.1r90hqw.52": "Interface de contrôle des aperçus privés de mémoire.",
-  "system.auto.19zkz9s.153": "Achat et lecture explicites d’images privées. Aucun événement, stockage navigateur, objet R2 ou résultat partagé n’est écrit. Le parent retire la vue à l’expiration de la source.",
+  "system.auto.1rhlryl.226": "Achat et aperçu privés de l’image, puis acceptation distincte de l’image créée. Rien n’est publié sans la case supplémentaire liée au périmètre ; les pixels privés ne sont jamais stockés dans le navigateur. Le retrait de la source ferme cette vue.",
   "system.auto.1658tge.44": "Interface de revue du profil Mémoire.",
   "system.auto.13q2pxg.143": "Revue du profil privée pour la personne. Le catalogue ne contient que des métadonnées ; chaque profil actuel sélectionné exige une nouvelle vérification des sources originales et des corrections.",
   "system.auto.1qiljrp.57": "Interface de commande de l’assistant de mémoire des ressources.",
