@@ -275,18 +275,39 @@ export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUse
 
 /** Finish only a previously verified ledger write. This never dispatches, estimates usage, or releases an unknown submission. */
 export async function reconcileConsequentialUsage(env:WorkerEnv,userId:string,id:string){
-  await releaseStoppedConsequentialSteps(env,userId,id);
-  const rows=await env.DB.prepare(`SELECT step.step_index,step.verified_tokens,step.verified_microusd FROM consequential_execution_steps step
-    JOIN consequential_executions execution ON execution.execution_id=step.execution_id AND execution.actor_user_id=?
-    WHERE step.execution_id=? AND step.status='usage-recorded'`).bind(userId,id).all<{step_index:number;verified_tokens:number;verified_microusd:number}>();
-  for(const step of rows.results){
-    if(!Number.isSafeInteger(step.verified_tokens)||step.verified_tokens<0||!Number.isSafeInteger(step.verified_microusd)||step.verified_microusd<0)continue;
+  // One bounded metadata snapshot replaces three no-op calls on the common
+  // reserved/settled path. This is work selection, never settlement authority:
+  // ledger mutations still independently enforce owner, state and exact usage.
+  const db=env.DB,selected=await db.prepare(`SELECT execution.status AS execution_status,execution.result_ref,
+    step.step_index,step.status AS step_status,step.verified_tokens,step.verified_microusd
+    FROM consequential_executions execution LEFT JOIN consequential_execution_steps step
+      ON step.execution_id=execution.execution_id AND step.status IN('not-submitted','usage-recorded')
+    WHERE execution.execution_id=? AND execution.actor_user_id=? ORDER BY step.step_index LIMIT 65`)
+    .bind(id,userId).all<{execution_status:string;result_ref:string|null;step_index:number|null;step_status:string|null;verified_tokens:number|null;verified_microusd:number|null}>();
+  if(env.DB!==db||selected.success!==true||('error' in selected&&selected.error!==undefined)||!Array.isArray(selected.results)||selected.results.length>64
+    ||new Set(selected.results.map(row=>row?.step_index)).size!==selected.results.length
+    ||selected.results.some(row=>!row||Object.keys(row).sort().join(',')!=='execution_status,result_ref,step_index,step_status,verified_microusd,verified_tokens'
+      ||row.execution_status!==selected.results[0]!.execution_status||row.result_ref!==selected.results[0]!.result_ref
+      ||!['quoted','reserved','uncertain','completed','failed','expired','canceled'].includes(row.execution_status)
+      ||row.result_ref!==null&&typeof row.result_ref!=='string'
+      ||row.step_index!==null&&(!Number.isSafeInteger(row.step_index)||row.step_index<0||!['not-submitted','usage-recorded'].includes(String(row.step_status)))
+      ||row.step_index===null&&(selected.results.length!==1||row.step_status!==null||row.verified_tokens!==null||row.verified_microusd!==null)))throw Error('context_billing_reconciliation_unavailable');
+  for(const step of selected.results){
+    if(step.step_status==='not-submitted'&&['failed','uncertain'].includes(step.execution_status)&&step.result_ref===null){
+      await releaseBudget(env,userId,`${id}:tokens:${step.step_index}`,{reason:"context_provider_not_submitted"});
+      await releaseCostBudget(env,userId,`${id}:usd:${step.step_index}`);
+    }
+  }
+  for(const step of selected.results){
+    if(step.step_status!=='usage-recorded'||step.step_index===null)continue;
+    if(typeof step.verified_tokens!=='number'||!Number.isSafeInteger(step.verified_tokens)||step.verified_tokens<0
+      ||typeof step.verified_microusd!=='number'||!Number.isSafeInteger(step.verified_microusd)||step.verified_microusd<0)continue;
     await settleBudget(env,userId,`${id}:tokens:${step.step_index}`,step.verified_tokens);
     await settleCostBudget(env,userId,`${id}:usd:${step.step_index}`,step.verified_microusd);
     if(!await consequentialUsageSettled(env,userId,id,step.step_index,step.verified_tokens,step.verified_microusd))continue;
     await env.DB.prepare("UPDATE consequential_execution_steps SET status='settled',updated_at=? WHERE execution_id=? AND step_index=? AND status='usage-recorded'").bind(new Date().toISOString(),id,step.step_index).run();
   }
-  await env.DB.prepare(`UPDATE consequential_executions SET status=CASE WHEN result_ref IS NOT NULL THEN 'completed' ELSE 'failed' END,updated_at=?
+  if(selected.results.some(row=>row.execution_status==='uncertain'))await env.DB.prepare(`UPDATE consequential_executions SET status=CASE WHEN result_ref IS NOT NULL THEN 'completed' ELSE 'failed' END,updated_at=?
     WHERE execution_id=? AND actor_user_id=? AND status='uncertain' AND NOT EXISTS(SELECT 1 FROM consequential_execution_steps step
       WHERE step.execution_id=consequential_executions.execution_id AND step.status IN('reserved','submitting','uncertain','usage-recorded'))`).bind(new Date().toISOString(),id,userId).run();
 }

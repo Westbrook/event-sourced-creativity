@@ -1,3 +1,4 @@
+import { readNativeControlBody } from "./native-control-body.ts";
 import { prepareMemoryContextRetirement } from './memory-context-retirement.ts';
 import { projectContainmentId as id, projectContainmentForest, reparentProjectForest, visibleProjectAncestors, PROJECT_CONTAINMENT_LIMIT,
   type ProjectContainmentNode, type ProjectContainmentView } from '../src/model/project-containment.ts';
@@ -98,18 +99,8 @@ export async function readNativeProjectContainment(env: WorkerEnv, owner: string
 }
 
 async function commandBody(request: Request): Promise<Row | null> {
-  if (request.headers.get('content-type')?.split(';')[0] !== 'application/json' || !request.body) return null;
-  const reader = request.body.getReader(); let total = 0; const chunks: Uint8Array[] = [];
-  try {
-    for (;;) { const part = await reader.read(); if (part.done) break; total += part.value.byteLength;
-      if (total > 2048) { await reader.cancel(); return null; } chunks.push(part.value); }
-    const bytes = new Uint8Array(total); let offset = 0; for (const chunk of chunks) { bytes.set(chunk,offset); offset += chunk.byteLength; }
-    const text = new TextDecoder('utf-8',{fatal:true}).decode(bytes), value = JSON.parse(text);
-    // Flat command only; detect duplicate/escaped property names before accepting it.
-    const keys = [...text.matchAll(/("(?:\\.|[^"\\])*")\s*:/gu)].map(match => JSON.parse(match[1]));
-    return value && typeof value === 'object' && !Array.isArray(value) && keys.length === 3 && new Set(keys).size === 3
-      && exact(value,['projectId','parentId','revision']) ? value : null;
-  } catch { return null; } finally { reader.releaseLock(); }
+  const body = await readNativeControlBody(request, 2048);
+  return body.status === 'parsed' && exact(body.value,['projectId','parentId','revision']) ? body.value : null;
 }
 
 export async function handleProjectContainment(request: Request, env: WorkerEnv): Promise<Response> {

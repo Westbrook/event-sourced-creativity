@@ -123,3 +123,13 @@ review bytes. **Acceptance, current-field revalidation, durable accepted-edit an
 output ancestry, autocomplete and the other native workstreams remain required.**
 This is a completed review slice, not completed creative-edit integration,
 main integration, deployment or enrollment.
+
+## Native control and recovery continuation
+
+[Control uploads and recovery](forma-memory-native-controls-recovery-2026-09-20.md)
+now share deadline-limited, strict byte/UTF-8/duplicate-key parsing across the
+remaining native Memory mutation readers. Bounded metadata work selection reduces
+no-op financial recovery round trips while preserving ledger settlement and
+uncertain-submission behavior. The combined execution is now 126/136 personal/shared
+synthetic binding calls, still above the conservative target. These verified
+boundary/recovery fixes do not close any of the six end-to-end native workstreams.

@@ -4610,6 +4610,37 @@ test("consequential consent session revocation at dispatch and cached-result rea
   }
 });
 
+for(const phase of ['reserved','settled','foreign','missing'])test('consequential reconciliation: one metadata read with no work '+phase,async()=>{
+ const state=await consequentialContractFixture({reserve:true}),id=state.executionId,user=state.user.userId;
+ if(phase==='settled'){
+  await consequential.beginConsequentialStep(state.env,state.user,state.binding,id,0,state.sourceHead);
+  await consequential.settleConsequentialStep(state.env,user,id,0,1300,5600,'reconciliation-receipt');
+ }
+ const before=consequentialReceipt(state,id),counter=semanticConsumerOperationCounter(state);
+ await consequential.reconcileConsequentialUsage(state.env,phase==='foreign'?'not-the-owner':user,phase==='missing'?'missing-execution':id);
+ assert.equal(counter.read(),1);assert.deepEqual(consequentialReceipt(state,id),before);
+ assert.ok(counter.trace.every(sql=>sql.startsWith('SELECT execution.status AS execution_status')));
+});
+for(const fault of ['failed','error','missing-column','extra-column','duplicate','overflow','invalid-step','invalid-state','db-replaced'])test('consequential reconciliation: rejects invalid metadata before any mutation '+fault,async()=>{
+ const state=await consequentialContractFixture({reserve:true}),db=state.env.DB,prepare=db.prepare,id=state.executionId,before=consequentialReceipt(state,id);let intercepted=false;
+ db.prepare=function(sql){const statement=prepare.call(db,sql);if(!sql.startsWith('SELECT execution.status AS execution_status'))return statement;
+  const bind=statement.bind;statement.bind=function(...args){const bound=bind.apply(this,args),all=bound.all;bound.all=async function(){
+   const result=await all.call(this);intercepted=true;
+   if(fault==='failed')result.success=false;
+   if(fault==='error')result.error='unconfirmed';
+   if(fault==='missing-column')delete result.results[0].result_ref;
+   if(fault==='extra-column')result.results[0].extra=true;
+   if(fault==='duplicate')result.results.push({...result.results[0]});
+   if(fault==='overflow')result.results=Array.from({length:65},()=>({...result.results[0]}));
+   if(fault==='invalid-step')result.results[0].step_index=-1;
+   if(fault==='invalid-state')result.results[0].execution_status='made-up';
+   if(fault==='db-replaced')state.env.DB={...db};
+   return result;
+  };return bound;};return statement;};
+ await assert.rejects(consequential.reconcileConsequentialUsage(state.env,state.user.userId,id),/context_billing_reconciliation_unavailable/);
+ assert.equal(intercepted,true);assert.deepEqual(consequentialReceipt(state,id),before);
+});
+
 test('consequential settlement: exact replay observes both ledgers without rewriting them',async()=>{
  const state=await consequentialContractFixture({reserve:true}),id=state.executionId,user=state.user.userId;
  await consequential.beginConsequentialStep(state.env,state.user,state.binding,id,0,state.sourceHead);
@@ -16729,7 +16760,7 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  // interval is a stable invocation measurement; phase counts are diagnostic.
  const combinedExecuteOperations=executeOperations+counter.read();
  t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),combinedExecuteOperations,...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
- assert.ok(combinedExecuteOperations<=(shared?142:132),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
+ assert.ok(combinedExecuteOperations<=(shared?136:126),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
  const response=await specialistRetrieve(state,review,options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=39);
@@ -17342,4 +17373,33 @@ for(const shared of [false,true])for(const native of [false,true])for(const faul
  }
  assert.equal((await db.prepare('SELECT verified_tokens FROM consequential_execution_steps WHERE execution_id=?').bind(review.executionId).first()).verified_tokens,1300);
  assert.equal(calls,1);
+});
+
+for(const operation of ['live-settings','live-forget','profile-forget'])for(const fault of ['duplicate','escaped-duplicate','utf8','bom','abort','deadline','oversized','length-mismatch'])test('Memory mutation upload: '+operation+' rejects '+fault+' without changing enrollment or finance',async t=>{
+ const state=await nativeMemoryJobFixture(t),before=structuredClone(state.current()),financial=adaptiveReentryFinancialState(state),calls=state.calls.length;
+ const {handleMemoryDocumentProfile}=await import('../worker/memory-document-profile-api.ts');
+ const {NATIVE_CONTROL_READ_TIMEOUT_MS}=await import('../worker/native-control-body.ts');
+ const controller=new AbortController();let cancelled=0,pulled,releasePull;
+ const started=new Promise(resolve=>{releasePull=resolve;});
+ if(fault==='deadline')t.mock.timers.enable({apis:['setTimeout']});
+ const valid=operation==='live-settings'?{...state.preferences,revision:before.revision}:{confirmation:'FORGET_MY_MEMORY',revision:before.revision};
+ let payload=JSON.stringify(valid);
+ if(fault==='duplicate')payload=payload.slice(0,-1)+',"revision":'+before.revision+'}';
+ if(fault==='escaped-duplicate')payload=payload.slice(0,-1)+',"revis\\u0069on":'+before.revision+'}';
+ if(fault==='bom')payload='\ufeff'+payload;
+ const encoded=fault==='utf8'?new Uint8Array([0x7b,0x22,0xe2,0x82]):new TextEncoder().encode(payload);
+ const stream=new ReadableStream({pull(reader){pulled=true;releasePull();
+  if(['abort','deadline'].includes(fault))return;
+  reader.enqueue(fault==='oversized'?new Uint8Array(4097):encoded);reader.close();
+ },cancel(){cancelled++;return new Promise(()=>{});}},{highWaterMark:0});
+ const path=operation==='profile-forget'?'/api/memory/document-profile/settings?grantId='+'a'.repeat(64):'/api/memory/settings?id='+before.enrollment_id;
+ const request=new Request('http://localhost'+path,{method:operation==='live-settings'?'PUT':'DELETE',headers:{...state.owner,'content-type':'application/json',...(fault==='length-mismatch'?{'content-length':String(encoded.length+1)}:{})},body:stream,duplex:'half',signal:controller.signal});
+ const pending=operation==='profile-forget'?handleMemoryDocumentProfile(request,state.env,'settings'):state.handleLiveMemory(request,state.env,'settings');
+ await started;
+ if(fault==='abort')controller.abort();if(fault==='deadline')t.mock.timers.tick(NATIVE_CONTROL_READ_TIMEOUT_MS);
+ const response=await pending,body=await response.json();assert.equal(pulled,true);
+ assert.equal(response.status,fault==='oversized'?413:400,JSON.stringify(body));
+ assert.equal(body.error,operation==='profile-forget'?(fault==='oversized'?'document_profile_request_too_large':'document_profile_request_invalid'):(fault==='oversized'?'memory_request_too_large':'invalid_memory_request'));
+ assert.equal(request.body.locked,false);if(['abort','deadline'].includes(fault))assert.equal(cancelled,1);
+ assert.deepEqual(structuredClone(state.current()),before);assert.deepEqual(adaptiveReentryFinancialState(state),financial);assert.equal(state.calls.length,calls);
 });

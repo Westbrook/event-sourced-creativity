@@ -1,3 +1,4 @@
+import { readNativeControlBody } from "./native-control-body.ts";
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { MEMORY_ASSISTED_OUTCOMES_VERSION } from "../src/model/memory-assisted-outcomes.ts";
 import { MEMORY_SAVED_OUTPUTS_VERSION } from "../src/model/memory-saved-outputs.ts";
@@ -23,15 +24,6 @@ const settings=(e:LiveMemoryEnrollment)=>({id:e.enrollment_id,projectId:e.projec
   retentionDays:e.retention_days,timeZone:e.time_zone,expiresAt:e.expires_at,policyVersion:e.policy_version,lastAdmittedAt:e.last_admitted_at,
   throughSequence:e.cursor_sequence,cutoffSequence:e.cutoff_sequence,backlog:e.cutoff_sequence!==null,nextDueAt:e.next_due_at,
   attempts:e.attempts,status:e.failure_code??"ready"});
-
-async function memoryRequestText(request:Request):Promise<string|null>{
-  if(!request.body)return "";
-  const reader=request.body.getReader(),decoder=new TextDecoder(),chunks:string[]=[];let bytes=0;
-  try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.byteLength;
-    if(bytes>4096){await reader.cancel();return null;}chunks.push(decoder.decode(value,{stream:true}));}
-    chunks.push(decoder.decode());return chunks.join("");
-  }finally{reader.releaseLock();}
-}
 
 /** Expected custody is a consent constraint only; native code independently resolves actor, custody and authority. */
 export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"settings"|"recall"|"export"|"processing"):Promise<Response> {
@@ -90,8 +82,9 @@ export async function handleLiveMemory(request:Request,env:WorkerEnv,operation:"
   if(operation!=="settings"||request.method!=="PUT"&&request.method!=="DELETE")return reply({error:"method_not_allowed"},405);
   const origin=request.headers.get("origin");if(origin&&origin!==url.origin)return reply({error:"same_origin_required"},403);
   if(request.headers.get("sec-fetch-site")==="cross-site")return reply({error:"same_origin_required"},403);
-  const raw=await memoryRequestText(request);if(raw===null)return reply({error:"memory_request_too_large"},413);
-  let body:Record<string,unknown>;try{body=JSON.parse(raw);if(!body||Array.isArray(body)||typeof body!=="object")throw new Error();}catch{return reply({error:"invalid_memory_request"},400);}
+  const parsed=await readNativeControlBody(request);
+  if(parsed.status!=="parsed")return reply({error:parsed.status==="too-large"?"memory_request_too_large":"invalid_memory_request"},parsed.status==="too-large"?413:400);
+  const body=parsed.value;
   if(request.method==="DELETE"){
     if(!id||body.confirmation!=="FORGET_MY_MEMORY"||!Number.isSafeInteger(body.revision))return reply({error:"explicit_memory_erasure_required"},400);
     const e=await env.DB.prepare("SELECT * FROM memory_live_enrollments WHERE enrollment_id=? AND actor_user_id=?").bind(id,actor.userId).first<LiveMemoryEnrollment>();

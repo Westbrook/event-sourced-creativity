@@ -1,3 +1,4 @@
+import { readNativeControlBody } from "./native-control-body.ts";
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import { memoryCustodyMatches, parseMemoryCustody, type MemoryCustody } from "../src/model/memory-custody.ts";
 import { parseMemoryDocumentProfile } from "../src/model/memory-document-profile.ts";
@@ -35,7 +36,6 @@ const deny = (error: string, status = 400) => reply({ error }, status);
 const writeFailure = () => deny("document_profile_commit_delivery_unconfirmed", 503);
 const privateResponse = (response: Response) => new Response(response.body, { status: response.status,
   headers: { ...Object.fromEntries(response.headers), ...HEADERS } });
-const object = (value: unknown): value is Row => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const exact = (value: Row, keys: readonly string[]) => Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
 const hasControlCharacters = (value: string): boolean => Array.from(value).some(character => {
   const code = character.charCodeAt(0); return code < 32 || code === 127;
@@ -73,39 +73,10 @@ async function atomic(env: WorkerEnv, before: readonly Query[], writes: readonly
     || assertions.length !== before.length + after.length
     || assertions.some(value => value.results.length !== 1 || (value.results[0] as Row).verified !== 1)) throw new Error("document_profile_write_unconfirmed");
 }
-/** JSON.parse has already validated the grammar; retain no ambiguous duplicate keys. */
-function uniqueJsonKeys(text: string): boolean {
-  const stack: { keys: Set<string> | null; expectsKey: boolean }[] = [];
-  for (const [token] of text.matchAll(/"(?:\\.|[^"\\])*"|[{}:,]|\[|\]/gsu)) {
-    if (token === "{" || token === "[") stack.push({ keys: token === "{" ? new Set<string>() : null, expectsKey: token === "{" });
-    else if (token === "}" || token === "]") stack.pop();
-    else {
-      const current = stack.at(-1);
-      if (token === "," && current?.keys) current.expectsKey = true;
-      else if (token.startsWith('"') && current?.keys && current.expectsKey) {
-        const key: string = JSON.parse(token);
-        if (current.keys.has(key)) return false;
-        current.keys.add(key); current.expectsKey = false;
-      }
-    }
-  }
-  return true;
-}
 async function requestBody(request: Request): Promise<Row | Response> {
-  if (!request.body) return deny("document_profile_request_invalid");
-  const reader = request.body.getReader(), decoder = new TextDecoder("utf-8", { fatal: true });
-  let text = "", bytes = 0;
-  try {
-    for (;;) {
-      const chunk = await reader.read(); if (chunk.done) break;
-      bytes += chunk.value.byteLength;
-      if (bytes > 4096) { await reader.cancel(); return deny("document_profile_request_too_large", 413); }
-      text += decoder.decode(chunk.value, { stream: true });
-    }
-    text += decoder.decode(); const value: unknown = JSON.parse(text);
-    return object(value) && uniqueJsonKeys(text) ? value : deny("document_profile_request_invalid");
-  } catch { return deny("document_profile_request_invalid"); }
-  finally { reader.releaseLock(); }
+  const body = await readNativeControlBody(request);
+  return body.status === "parsed" ? body.value : body.status === "too-large"
+    ? deny("document_profile_request_too_large", 413) : deny("document_profile_request_invalid");
 }
 function queryKeys(url: URL, keys: readonly string[]): boolean {
   return [...url.searchParams.keys()].every(key => keys.includes(key) && url.searchParams.getAll(key).length === 1);

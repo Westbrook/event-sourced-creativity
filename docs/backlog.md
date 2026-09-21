@@ -80,6 +80,13 @@ items in the [completion matrix](forma-memory-completion-matrix-2026-09-20.md)
 remain implementation work under MEM-003; they are not reclassified as external
 services or rollout-only tasks. No main push, deployment or enrollment is claimed.
 
+Memory continuation checkpoint: [control uploads and financial recovery](forma-memory-native-controls-recovery-2026-09-20.md)
+are implemented and locally verified on the feature branch. All inspected Memory
+mutation readers now have bounded, abortable uploads and strict decoding; recovery
+avoids redundant no-op reads. Full execution capacity and the six native completion
+workstreams remain open under MEM-003. This checkpoint does not claim main or
+production integration, semantic profile consolidation, or user enrollment.
+
 ## Other recorded follow-ups
 
 The mini-app rows below separate completed published subscopes from unfinished

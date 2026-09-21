@@ -38,7 +38,6 @@ async function fixture(t,{install=true,shared=false}={}) {
  const add=async id=>appendAuditEvent(f.env,f.streamId,'user:'+f.owner,'ProjectCreated',{project_id:id,name:id,state:'active'});
  await add('parent-a');await add('parent-b');
  const get=(id=f.projectId)=>f.request('/api/projects/containment?projectId='+id);
- const move=(view,parentId)=>f.request('/api/projects/containment',f.json({projectId:view.projectId,parentId,revision:view.revision})).then(async response=>response);
  const patch=(view,parentId)=>f.request('/api/projects/containment',{...f.json({projectId:view.projectId,parentId,revision:view.revision}),method:'PATCH'});
  return Object.assign(f,{add,get,move:patch});
 }
@@ -189,4 +188,26 @@ for(const fault of ['oversized','late-growth'])test('project declarations are si
  };
  f.controls.beforeRead=statement=>{if(statement.sql.startsWith('SELECT * FROM (SELECT event.event_id AS declaration'))hydrated=true;};
  const response=await f.get();assert.equal(response.status,503);if(fault==='oversized')assert.equal(hydrated,false);else assert.equal(changed,true);
+});
+
+for(const fault of ['duplicate','utf8','bom','abort','deadline','oversized','length-mismatch'])test('containment bounded mutation upload rejects '+fault+' without writing',async t=>{
+ const f=await fixture(t),view=await(await f.get()).json(),before=f.sqlite.prepare('SELECT * FROM project_containment').all();
+ const {handleProjectContainment}=await import('../worker/project-containment-api.ts');
+ const {NATIVE_CONTROL_READ_TIMEOUT_MS}=await import('../worker/native-control-body.ts');
+ const requestController=new AbortController();let cancel=0,release;const pulled=new Promise(resolve=>{release=resolve;});
+ if(fault==='deadline')t.mock.timers.enable({apis:['setTimeout']});
+ let payload=JSON.stringify({projectId:view.projectId,parentId:'parent-a',revision:view.revision});
+ if(fault==='duplicate')payload=payload.slice(0,-1)+',"parentId":"parent-b"}';if(fault==='bom')payload='\ufeff'+payload;
+ const bytes=fault==='utf8'?new Uint8Array([0xe2,0x82]):new TextEncoder().encode(payload);
+ const stream=new ReadableStream({pull(controller){release();if(['abort','deadline'].includes(fault))return;
+  controller.enqueue(fault==='oversized'?new Uint8Array(2049):bytes);controller.close();
+ },cancel(){cancel++;return new Promise(()=>{});}},{highWaterMark:0});
+ const headers=new Headers(f.json({}).headers);headers.set('content-type','application/json');
+ if(fault==='length-mismatch')headers.set('content-length',String(bytes.length+1));
+ const request=new Request('http://localhost/api/projects/containment',{method:'PATCH',headers,body:stream,duplex:'half',signal:requestController.signal});
+ const pending=handleProjectContainment(request,f.env);await pulled;
+ if(fault==='abort')requestController.abort();if(fault==='deadline')t.mock.timers.tick(NATIVE_CONTROL_READ_TIMEOUT_MS);
+ const response=await pending;assert.equal(response.status,400,await response.clone().text());assert.equal((await response.json()).error,'invalid_containment_command');
+ assert.deepEqual(f.sqlite.prepare('SELECT * FROM project_containment').all(),before);assert.equal(request.body.locked,false);
+ if(['abort','deadline'].includes(fault))assert.equal(cancel,1);
 });
