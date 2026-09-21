@@ -49,3 +49,17 @@ zero new executions or provider calls. The earlier 27-case quote/dispatch/contro
 regression also passes. TypeScript, changed source/host-test lint and the
 production build pass; existing chunk-size warnings remain. No runtime deadline
 is a substitute for separate hosted qualification.
+
+## Exact initial authority snapshot — 2026-09-21
+
+The durable specialist source reader now gets the current owner-stream head and
+initial native admission in one SQL snapshot. The final authority/head replay
+and exact private-row dispatch witness remain separate mandatory checks; no
+positive access decision is cached. Synthetic complete execution now measures
+**123 personal / 133 shared binding round trips**, down from 126 / 136. Quote
+remains 50 / 54 and retrieve 37 / 37. The conservative 50-call target still
+requires further implementation; these are not hosted qualification numbers.
+
+52 focused native checks pass, including actual isolated workerd/D1, late private
+body/custody changes, successful follow-ups and permission/rights changes. Tightened
+whole-execution regression ceilings cover the measured reduction.

@@ -144,8 +144,7 @@ export function inferTasteBeliefs(events: CreativeEvent[], now = new Date()) {
   }).filter((belief)=>!retracted.has(belief.claimRef)&&belief.confidence>=.2).sort((left,right)=>right.confidence-left.confidence||right.evidenceCount-left.evidenceCount).slice(0,16);
 }
 
-export function preferenceCapsule(events: CreativeEvent[], limit = 8) {
-  const authored = standingConstraints(events);
+function currentTasteBeliefs(events:CreativeEvent[]) {
   const latestVersion = events.filter((event)=>event.type==="TasteModelVersioned").at(-1);
   const retracted = new Set(events.filter((event)=>event.type==="FactRetracted").map((event)=>String(event.payload.fact_ref)));
   const versionBeliefs = list(latestVersion?.payload.beliefs).map((item)=>item as TasteBelief).filter((item)=>!retracted.has(item.claimRef));
@@ -153,7 +152,11 @@ export function preferenceCapsule(events: CreativeEvent[], limit = 8) {
   // becomes available. Rebuild this derived view; explicitly authored preferences
   // and retractions remain authoritative and are never removed by this filter.
   const assisted=events.some(event=>event.payload.memory_authored_version===1||event.type==='ContextCompiled'&&list((event.payload.compiled_snapshot as Record<string,unknown>|undefined)?.facts).some(value=>value&&typeof value==='object'&&('independent_evidence' in value&&value.independent_evidence===false||'authorship' in value&&value.authorship==='accepted-memory-assisted')));
-  const inferred = versionBeliefs.length&&!assisted ? versionBeliefs : inferTasteBeliefs(events);
+  return versionBeliefs.length&&!assisted ? versionBeliefs : inferTasteBeliefs(events);
+}
+
+export function preferenceCapsule(events: CreativeEvent[], limit = 8) {
+  const authored = standingConstraints(events),inferred=currentTasteBeliefs(events);
   const authoredKeys = new Set(authored.map((item)=>`${item.axis}:${item.value.toLowerCase()}:${item.polarity}`));
   return [...authored,...inferred.filter((item)=>!authoredKeys.has(`${item.axis}:${item.value.toLowerCase()}:${item.polarity}`))].sort((left,right)=>Number(right.authority==="authored")-Number(left.authority==="authored")||right.confidence-left.confidence).slice(0,limit);
 }
@@ -196,7 +199,7 @@ export function compilerBlameLedger(events: CreativeEvent[]): CompilerBlameClust
 }
 
 export function tasteMetrics(events: CreativeEvent[]) {
-  const versions=events.filter((event)=>event.type==="TasteModelVersioned"); const latest=versions.at(-1); const retracted=new Set(events.filter((event)=>event.type==="FactRetracted").map((event)=>String(event.payload.fact_ref))); const inferred=list(latest?.payload.beliefs).map((item)=>item as TasteBelief).filter((item)=>!retracted.has(item.claimRef)).length;
+  const versions=events.filter((event)=>event.type==="TasteModelVersioned"),inferred=currentTasteBeliefs(events).length;
   const authored=events.filter((event)=>event.type==="PreferenceAuthored"); const promoted=authored.filter((event)=>Boolean(event.payload.source_claim_ref)).length;
   const critiques=events.filter((event)=>event.type==="ObjectCritiqued");
   const axisLedger=CREATOR_AXES.map((axis)=>({axis,positive:critiques.filter((event)=>event.payload.axis_ref===axis&&event.payload.polarity==="positive").length,negative:critiques.filter((event)=>event.payload.axis_ref===axis&&event.payload.polarity!=="positive").length}));

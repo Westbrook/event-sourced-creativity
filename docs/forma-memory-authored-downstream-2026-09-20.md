@@ -44,3 +44,12 @@ publication of unreviewed private inference was added. They do not complete the
 remaining direct semantic creative-output/live-preview integration or unrelated
 resource zooms, scheduling and enrollment gates. Continue the
 [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
+
+## Analytics consistency — 2026-09-21
+
+Preference metrics now use the same independent-evidence resolver as the active
+preference capsule. A stale cached model can no longer inflate the inferred
+preference count after Memory-assisted attribution is available. Explicitly
+authored preferences and human retractions remain authoritative. The 14-test
+taste model suite passes, including a stale assisted snapshot, independent human
+choice, deliberate promotion and subsequent retraction.

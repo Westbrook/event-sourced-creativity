@@ -281,3 +281,7 @@ Implemented [exact-field saved suggestion reuse](forma-memory-field-completion-2
 ### MEM-003 exact current-source dispatch
 
 [Exact dispatch binding](forma-memory-exact-dispatch-source-2026-09-20.md) covers private-body and custody changes that do not advance the event head. Verified with 166 native regressions and actual local D1; the [completion matrix](forma-memory-completion-matrix-2026-09-20.md) remains assigned and external operational work stays separately tracked.
+
+### MEM-003 request snapshot and analytics consistency — 2026-09-21
+
+[Initial authority snapshot](forma-memory-native-capacity-2026-09-20.md#exact-initial-authority-snapshot--2026-09-21) reduces complete synthetic execution to 123/133 calls without caching access. [Preference metrics](forma-memory-authored-downstream-2026-09-20.md#analytics-consistency--2026-09-21) now exclude the same assisted evidence as the active profile. The capacity target and remaining native matrix stay assigned.

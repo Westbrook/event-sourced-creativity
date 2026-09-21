@@ -131,3 +131,15 @@ test('independent earlier edits and explicit later critique are not erased by la
  event(3,'ObjectCritiqued',{object_id:'result',axis_ref:'style',polarity:'positive',value:'Explicit human critique'})];
  assert.deepEqual(inferTasteBeliefs(input,new Date('2026-08-10')).map(row=>row.value).sort(),['Earlier human choice','Explicit human critique']);
 });
+
+
+test('taste metrics count the same independent evidence as the current capsule, not stale assisted snapshots',()=>{
+ const now=new Date().toISOString(),input=[event(1,'BlockCreated',{block_id:'assisted',memory_authored_version:1,properties:{text:'Assisted suggestion'}},'user',now),
+  event(2,'ChipEdited',{block_id:'independent',property:'style',new_value:'Human preference'},'user',now),
+  event(3,'TasteModelVersioned',{beliefs:[{claimRef:'stale-one',value:'Assisted suggestion'},{claimRef:'stale-two',value:'Copied suggestion'}]},'worker:taste',now),
+  event(4,'PreferenceAuthored',{preference_id:'confirmed',axis:'style',value:'Deliberately confirmed',polarity:'affirm',source_claim_ref:'stale-one'},'user',now)];
+ assert.equal(tasteMetrics(input).inferred,1);assert.equal(tasteMetrics(input).activeAuthored,1);assert.equal(tasteMetrics(input).promoted,1);
+ const belief=preferenceCapsule(input).find(row=>row.authority==='inferred');assert.equal(belief.value,'Human preference');
+ input.push(event(5,'FactRetracted',{fact_ref:belief.claimRef},'user',now));
+ assert.equal(tasteMetrics(input).inferred,0);assert.equal(tasteMetrics(input).promotionRate,0);assert.equal(tasteMetrics(input).activeAuthored,1);
+});

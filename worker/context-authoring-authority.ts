@@ -2,7 +2,7 @@ import type { AssistantContextReadObserver } from "./assistant-context-source.ts
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { foldEvents, type CreativeBlock, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
-import { consentHash, executionAuthorityCurrent, type ConsequentialBinding } from "./consequential-consent.ts";
+import { consentHash, executionAuthorityCurrent, executionAdmissionGuard, type ConsequentialBinding } from "./consequential-consent.ts";
 import { hasCapability, requireConsent, requireUser, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { readProjectEventPage, readProjectRequestContext, readProjectSourceEvents, resolveOwnerExecutionScope } from "./project-access.ts";
 import { serializeEvent, streamHead, type WorkerEnv } from "./runtime.ts";
@@ -69,10 +69,16 @@ export async function prepareDocumentAuthority(request:Request,env:WorkerEnv,bod
 
 /** A durable executor rechecks its original real session/custody, then reads exact canonical history. */
 export async function readDocumentExecutionAuthority(env:WorkerEnv,principal:PilotUser,binding:ConsequentialBinding,sourceObserver?:AssistantContextReadObserver){
-  if(principal.userId!==binding.actorUserId||!await executionAuthorityCurrent(env,principal,binding,null))throw new Error("context_authorization_changed");
+  if(principal.userId!==binding.actorUserId)throw new Error("context_authorization_changed");
   const scope=binding.scope??undefined;
   if(!(scope?hasCapability(principal,"project.author",scope)&&hasCapability(principal,"project.output.request",scope):principal.access.capabilities.includes("project.author")&&principal.access.capabilities.includes("project.output.request")))throw new Error("context_authorization_changed");
-  const sourceHead=await streamHead(env,binding.streamId);
+  // Head and initial authorization are read in one native snapshot. This is
+  // not a cached access decision: the final exact-head authority check remains.
+  const guard=executionAdmissionGuard(principal,binding,null);
+  const admitted=await env.DB.prepare(`SELECT (SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?) AS head WHERE ${guard.sql}`)
+    .bind(binding.streamId,...guard.bindings).first<{head:number}>();
+  if(!admitted||!Number.isSafeInteger(admitted.head)||admitted.head<0)throw new Error("context_authorization_changed");
+  const sourceHead=admitted.head;
   const events=scope?await readProjectSourceEvents(env,scope,{sourceObserver}):await personalSourceEvents(env,principal.userId,binding.streamId,sourceObserver);
   const projection=foldEvents(events,Infinity,binding.documentId,binding.projectId);
   if(!projection.documents.some((item)=>item.id===binding.documentId&&item.projectId===binding.projectId&&!item.removed))throw new Error("context_document_denied");
