@@ -107,3 +107,16 @@ Nine focused checks pass, including bytewise multilingual input. The previous
 reader's acceptance of malformed encoding, duplicate keys and lone surrogates was
 reproduced on the baseline. TypeScript and production build pass; the API's28
 pre-existing lint findings are unchanged. No deployment or enrollment occurred.
+
+## Paired accounting and interrupted recovery — 2026-09-21
+
+[Native paired settlement](forma-memory-paired-settlement-2026-09-21.md) now replays
+original financial snapshots and settles both ledgers atomically, while preserving
+source-independent accounting and recoverable private responses where authorized.
+Counter underfunding, changed custody, missing acknowledgements and concurrent
+winners cannot produce a partial new charge or a second purchase.
+
+Whole execution is now **111 personal /119 shared** native binding calls. Quote
+is50/54 and retrieval36/36.28 focused native checks, including actual isolated D1,
+pass; types, changed-worker lint and build pass. The capacity target remains
+assigned and is not a hosted qualification claim.

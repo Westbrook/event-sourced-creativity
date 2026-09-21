@@ -308,3 +308,10 @@ review, provider alias restriction and separate canonical replacement acceptance
 Native personal/shared D1 withdrawal preserves accepted text. Automatic background
 completion, broader resources/reuse and all other completion-matrix native work
 remain assigned; no deployment, scheduling or enrollment is implied.
+
+Memory accounting continuation (2026-09-21): [paired native settlement](forma-memory-paired-settlement-2026-09-21.md)
+now records observed usage before atomically settling both ledgers, preserves
+recoverable authorized responses across accounting interruption, and recovers after
+withdrawal without repurchase.28 focused checks include isolated D1; complete
+execution is111/119 binding calls. Remaining native work stays in the completion
+matrix; external qualification and rollout are separately tracked.

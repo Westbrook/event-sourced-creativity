@@ -1295,6 +1295,94 @@ export async function settleCostBudget(env: WorkerEnv, userId: string, reservati
   return { settled, reservationId: row.reservation_id, reservedMicrousd: row.reserved_microusd, usedMicrousd: settled ? used : row.used_microusd, period: row.period, status: settled ? status : row.status };
 }
 
+/** Settle a specialist's already-recorded receipt as one native ledger pair.
+ * The financial receipt outlives Memory/custody withdrawal. This does not grant
+ * source access, admit a purchase, release an unknown submission or retry it. */
+export async function settleSpecialistBudgetPair(env:WorkerEnv,userId:string,id:string,index:number,tokens:number,microusd:number,providerRequestId:string|null){
+  const db=env.DB,unavailable=():never=>{throw new Error('context_billing_reconciliation_pending');};
+  if(!Number.isSafeInteger(index)||index<0||![tokens,microusd].every(n=>Number.isSafeInteger(n)&&n>0))return unavailable();
+  const tokenId=`${id}:tokens:${index}`,costId=`${id}:usd:${index}`;
+  // Closed, ordered financial snapshots, not arbitrary SQL or browser evidence.
+  // The exact same queries are replayed inside the settlement transaction.
+  const snapshot=(table:string,columns:readonly string[],where:string,bindings:Array<string|number|null>,order:string)=>({
+    sql:`SELECT json_group_array(json_object(${columns.map(key=>`'${key}',${key}`).join(',')})) AS specialist_budget_snapshot FROM (SELECT ${columns.join(',')} FROM ${table} WHERE ${where} ORDER BY ${order} LIMIT 4)`,bindings,
+  });
+  const reads=[
+    snapshot('budget_reservations',['reservation_id','owner_id','stream_id','correlation_id','operation','period','reserved_tokens','used_tokens','status','settlement_reason','created_at','settled_at','updated_at'],'reservation_id=?',[tokenId],'reservation_id'),
+    snapshot('cost_budget_reservations',['reservation_id','owner_id','workspace_id','stream_id','correlation_id','operation','period','reserved_microusd','used_microusd','status','allow_user_overage','created_at','settled_at','updated_at'],'reservation_id=?',[costId],'reservation_id'),
+    snapshot('project_budget_reservation_scopes',['reservation_kind','reservation_id','organization_id','project_access_id','actor_user_id','workspace_scope_id'],'reservation_id IN(?,?)',[tokenId,costId],'reservation_kind,reservation_id'),
+    snapshot('pilot_cost_reservation_scopes',['reservation_id','cohort_id','organization_id','actor_user_id'],'reservation_id IN(?,?)',[tokenId,costId],'reservation_id'),
+  ];
+  const rows=structuredClone(await db.batch<{specialist_budget_snapshot:string}>(reads.map(read=>db.prepare(read.sql).bind(...read.bindings))));
+  const complete=(value:unknown,count:number):value is D1Result<Record<string,unknown>>[]=>Array.isArray(value)&&value.length===count
+    &&Array.from({length:count},(_,i)=>i).every(i=>Object.hasOwn(value,i)&&value[i]?.success===true&&value[i]?.error===undefined&&Array.isArray(value[i]?.results));
+  if(env.DB!==db||!complete(rows,reads.length)||rows.some(row=>row.results.length!==1||!row.results[0]
+    ||Object.keys(row.results[0]).join(',')!=='specialist_budget_snapshot'||typeof row.results[0].specialist_budget_snapshot!=='string'
+    ||row.results[0].specialist_budget_snapshot.length>16384))return unavailable();
+  const captured=rows.map(row=>row.results[0]!.specialist_budget_snapshot),parsed=captured.map(value=>JSON.parse(value) as Array<Record<string,unknown>>);
+  if(parsed.some(value=>!Array.isArray(value)||value.some(item=>!item||typeof item!=='object'||Array.isArray(item)))
+    ||parsed[0]!.length!==1||parsed[1]!.length!==1||parsed[2]!.length>2||parsed[3]!.length>1)return unavailable();
+  const token=parsed[0]![0] as unknown as BudgetReservationRow,cost=parsed[1]![0] as unknown as CostBudgetReservationRow;
+  if(token.reservation_id!==tokenId||cost.reservation_id!==costId||token.owner_id!==userId||cost.owner_id!==userId
+    ||token.correlation_id!==id||cost.correlation_id!==id||token.stream_id!==cost.stream_id||token.operation!==cost.operation
+    ||!token.operation.startsWith('assistant-specialist:')||token.period!==cost.period
+    ||![token.reserved_tokens,cost.reserved_microusd].every(n=>Number.isSafeInteger(n)&&n>0)
+    ||!['active','settled'].includes(token.status)||!['executing','settled'].includes(cost.status)
+    ||token.status==='settled'&&token.used_tokens!==tokens||cost.status==='settled'&&cost.used_microusd!==microusd
+    ||token.status==='active'&&(token.used_tokens!==0||token.settled_at!==null)
+    ||cost.status==='executing'&&(cost.used_microusd!==0||cost.settled_at!==null))return unavailable();
+  const scopes=parsed[2]!,fixedRows=parsed[3]!;
+  let scope:TokenSettlementScope|null=null,fixed:FixedCostSettlementScope|null=null;
+  if(cost.workspace_id==='forma'){
+    if(scopes.length||fixedRows.length)return unavailable();
+  }else{
+    const tokenScope=scopes.find(row=>row.reservation_kind==='tokens'&&row.reservation_id===tokenId),costScope=scopes.find(row=>row.reservation_kind==='usd'&&row.reservation_id===costId);
+    if(scopes.length!==2||!tokenScope||!costScope||[tokenScope,costScope].some(row=>row.organization_id!==cost.workspace_id||row.workspace_scope_id!==cost.workspace_id||row.actor_user_id!==userId
+      ||typeof row.project_access_id!=='string'||!row.project_access_id)||tokenScope.project_access_id!==costScope.project_access_id)return unavailable();
+    scope={organization_id:cost.workspace_id,project_access_id:tokenScope.project_access_id as string,actor_user_id:userId};
+    if(fixedRows.length){const row=fixedRows[0]!;if(row.reservation_id!==costId||row.organization_id!==cost.workspace_id||row.actor_user_id!==userId||typeof row.cohort_id!=='string'||!row.cohort_id)return unavailable();
+      fixed={cohort_id:row.cohort_id,organization_id:cost.workspace_id,actor_user_id:userId};}
+  }
+  const assert=(sql:string,bindings:Array<string|number|null>=[])=>db.prepare(`SELECT CASE WHEN (${sql}) THEN 1 ELSE json('context_billing_reconciliation_pending') END AS verified`).bind(...bindings);
+  const receipt:BudgetReservationGuard={sql:`EXISTS(SELECT 1 FROM consequential_execution_steps step JOIN consequential_executions execution ON execution.execution_id=step.execution_id
+    WHERE step.execution_id=? AND step.step_index=? AND step.status IN('usage-recorded','settled') AND step.verified_tokens=? AND step.verified_microusd=? AND step.provider_request_id IS ?
+      AND step.token_reservation_id=? AND step.cost_reservation_id=? AND step.maximum_tokens=? AND step.maximum_microusd=?
+      AND execution.actor_user_id=? AND execution.operation='assistant-specialist' AND execution.stream_id=?
+      AND execution.organization_id IS ? AND execution.project_access_id IS ?)
+    AND NOT EXISTS(SELECT 1 FROM output_operation_slots slot WHERE slot.token_reservation_id=? OR slot.cost_reservation_id=?)`,
+    bindings:[id,index,tokens,microusd,providerRequestId,tokenId,costId,token.reserved_tokens,cost.reserved_microusd,userId,token.stream_id,scope?.organization_id??null,scope?.project_access_id??null,tokenId,costId]};
+  const tokenWrites=token.status==='active'?tokenSettlementStatements(env,userId,tokenId,token,scope,tokens,'provider_usage_recorded').statements:[];
+  const costWrites=cost.status==='executing'?costSettlementStatements(env,userId,cost,fixed,microusd).statements:[];
+  // Each required counter and each reservation must acknowledge the original
+  // write. A missing counter or concurrent change rolls back the entire pair.
+  const acknowledged=(statements:D1PreparedStatement[])=>statements.flatMap(statement=>[statement,assert('changes()=1')]);
+  // A fixed cohort pause is conditional on its current status, not a required
+  // counter mutation. The existing pause statement may correctly change zero.
+  const costStatements=costWrites.flatMap(statement=>{
+    const pause=fixed&&microusd>cost.reserved_microusd&&statement===costWrites.at(-2);
+    return pause?[statement]:[statement,assert('changes()=1')];
+  });
+  const counterProof=(table:'budget_counters'|'cost_budget_counters',unit:'tokens'|'microusd',expected:string[][],held:number,used:number)=>assert(`NOT EXISTS(
+    SELECT 1 FROM json_each(?) expected LEFT JOIN ${table} counter ON counter.scope=json_extract(expected.value,'$[0]')
+      AND counter.scope_id=json_extract(expected.value,'$[1]') AND counter.period=json_extract(expected.value,'$[2]')
+    WHERE counter.scope IS NULL OR typeof(counter.reserved_${unit})!='integer' OR typeof(counter.used_${unit})!='integer'
+      OR counter.reserved_${unit}<? OR counter.reserved_${unit}>9007199254740991 OR counter.used_${unit}<0 OR counter.used_${unit}>9007199254740991-?)`,[JSON.stringify(expected),held,used]);
+  const tokenCounters=[['user',userId,token.period],['workspace','forma',token.period],...(scope?[['workspace',scope.organization_id,token.period]]:[])];
+  const costCounters=[['user',userId,cost.period],['workspace',cost.workspace_id,cost.period],...(cost.workspace_id!=='forma'?[['workspace','forma',cost.period]]:[]),
+    ...(fixed?[['pilot_org',fixed.cohort_id,'pilot:'+fixed.cohort_id],['pilot_user',userId,'pilot:'+fixed.cohort_id]]:[])];
+  const statements=[...reads.map((read,i)=>assert(`(${read.sql}) IS ?`,[...read.bindings,captured[i]!])),assert(receipt.sql,receipt.bindings),
+    ...(tokenWrites.length?[counterProof('budget_counters','tokens',tokenCounters,token.reserved_tokens,tokens)]:[]),
+    ...(costWrites.length?[counterProof('cost_budget_counters','microusd',costCounters,cost.reserved_microusd,microusd)]:[]),
+    ...acknowledged(tokenWrites),...costStatements,
+    assert(`EXISTS(SELECT 1 FROM budget_reservations token JOIN cost_budget_reservations cost ON cost.owner_id=token.owner_id
+      WHERE token.reservation_id=? AND cost.reservation_id=? AND token.owner_id=? AND token.status='settled' AND cost.status='settled' AND token.used_tokens=? AND cost.used_microusd=?)`,[tokenId,costId,userId,tokens,microusd]),
+    db.prepare("UPDATE consequential_execution_steps SET status='settled',updated_at=? WHERE execution_id=? AND step_index=? AND status IN('usage-recorded','settled') AND verified_tokens=? AND verified_microusd=? AND provider_request_id IS ?").bind(new Date().toISOString(),id,index,tokens,microusd,providerRequestId),assert('changes()=1'),
+  ];
+  if(env.DB!==db)return unavailable();
+  const written=structuredClone(await db.batch(statements));
+  if(env.DB!==db||!complete(written,statements.length)||written.at(-1)?.results.length!==1||written.at(-1)?.results[0]?.verified!==1)return unavailable();
+}
+
 /** Original personal foreground Slides only. Reuse the established settlement
  * writers, but qualify the exact pair and acknowledge its final row atomically. */
 export async function settlePersonalPresentationBudgets(env:WorkerEnv,userId:string,input:{jobId:string;streamId:string;correlationId:string;reservationId:string;costReservationId:string;usedTokens:number;usedMicrousd:number}){

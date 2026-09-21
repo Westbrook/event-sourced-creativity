@@ -528,17 +528,22 @@ async function retainRaw(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTask
   ],undefined,memory?()=>semanticAssistantMemoryStatements(env,memory):undefined);
   const saved=await readRaw(env,actor,task,retained);if(!saved)fail("assistant_provider_receipt_unavailable");return saved;
 }
-async function accountRaw(env:WorkerEnv,actor:SpecialistActor,retained:Retained,raw:NonNullable<Awaited<ReturnType<typeof readRaw>>>){
-  let body:unknown;try{body=JSON.parse(raw.receipt.responseBody);}catch{fail("assistant_provider_response_unconfirmed");}
-  const observed=readAssistantProviderUsage(body,{model:retained.binding.steps[0]!.model as AssistantModel}),cost=priceConsentedTextUsageMicrousd(retained.request.pricing,observed.usage);let billingPending=false;
-  try{await settleConsequentialStep(env,actor.principal.userId,retained.row.execution_id,0,observed.usage.totalTokens,cost,observed.responseId);}
+async function accountObservedUsage(env:WorkerEnv,userId:string,retained:Retained,observed:ReturnType<typeof readAssistantProviderUsage>){
+  const cost=priceConsentedTextUsageMicrousd(retained.request.pricing,observed.usage);let billingPending=false;
+  try{await settleConsequentialStep(env,userId,retained.row.execution_id,0,observed.usage.totalTokens,cost,observed.responseId,{atomicSpecialistPair:Boolean(retained.request.memory)});}
   catch(error){
     const saved=await env.DB.prepare("SELECT status,verified_tokens,verified_microusd,provider_request_id FROM consequential_execution_steps WHERE execution_id=? AND step_index=0").bind(retained.row.execution_id).first<{status:string;verified_tokens:number;verified_microusd:number;provider_request_id:string|null}>();
     if(!saved||!["usage-recorded","settled"].includes(saved.status)||saved.verified_tokens!==observed.usage.totalTokens||saved.verified_microusd!==cost||saved.provider_request_id!==observed.responseId)throw error;
-    billingPending=!await consequentialUsageSettled(env,actor.principal.userId,retained.row.execution_id,0,observed.usage.totalTokens,cost);
+    billingPending=!await consequentialUsageSettled(env,userId,retained.row.execution_id,0,observed.usage.totalTokens,cost);
   }
+  return{cost,billingPending};
+}
+async function accountRaw(env:WorkerEnv,actor:SpecialistActor,retained:Retained,raw:NonNullable<Awaited<ReturnType<typeof readRaw>>>){
+  let body:unknown;try{body=JSON.parse(raw.receipt.responseBody);}catch{fail("assistant_provider_response_unconfirmed");}
+  const observed=readAssistantProviderUsage(body,{model:retained.binding.steps[0]!.model as AssistantModel});
+  const accounted=await accountObservedUsage(env,actor.principal.userId,retained,observed);
   if(!await env.DB.prepare("SELECT 1 AS retained WHERE "+raw.proof.sql).bind(...raw.proof.bindings).first())fail("assistant_provider_receipt_unavailable");
-  return{body,observed,cost,billingPending};
+  return{body,observed,...accounted};
 }
 async function canonicalResult(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTaskRecord,retained:Retained){
   const base=retentionProof(task,retained),authority=readAuthority(actor,retained),contained=custody(retained.binding,"content");
@@ -924,7 +929,7 @@ export async function certifiedAssistantTurnResponse(env:WorkerEnv,actor:Special
 }
 
 async function recoverResult(env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,task:SpecialistTaskRecord,retained:Retained){
-  await reconcileConsequentialUsage(env,actor.principal.userId,task.task_id);
+  await reconcileConsequentialUsage(env,actor.principal.userId,task.task_id,{atomicSpecialistPair:Boolean(retained.request.memory)});
   let saved=await canonicalResult(env,actor,task,retained);
   if(!saved){
     const raw=await readRaw(env,actor,task,retained);if(!raw)return null;
@@ -1155,7 +1160,7 @@ async function driveApprovedTask(request:Request,env:WorkerEnv,host:AssistantSpe
       // Record actual usage independently of source retention. A withdrawal
       // during the provider call must not erase accounting or cause a retry.
       const body=JSON.parse(text),usage=readAssistantProviderUsage(body,{model:retained.binding.steps[0]!.model as AssistantModel});
-      await settleConsequentialStep(env,currentActor.principal.userId,taskId,0,usage.usage.totalTokens,priceConsentedTextUsageMicrousd(retained.request.pricing,usage.usage),usage.responseId);
+      await accountObservedUsage(env,currentActor.principal.userId,retained,usage);
     }
     const readActor=await refreshReadActor(request,env,retained);
     if(retained.request.memory)await refreshSemanticMemory(env,readActor,retained.request,true);

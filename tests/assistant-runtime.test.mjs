@@ -16764,7 +16764,7 @@ for(const shared of [false,true])test('semantic assistant consumer: approved req
  // interval is a stable invocation measurement; phase counts are diagnostic.
  const combinedExecuteOperations=executeOperations+counter.read();
  t.diagnostic(JSON.stringify({backgroundOperations:counter.read(),combinedExecuteOperations,...(process.env.FORMA_TEST_SQL_TRACE?{trace:counter.trace}:{})}));
- assert.ok(combinedExecuteOperations<=(shared?126:116),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
+ assert.ok(combinedExecuteOperations<=(shared?119:111),'Measured regression ceiling; conservative 50-call target is not yet satisfied');counter.reset();
  const response=await specialistRetrieve(state,review,options),body=await response.json();
  assert.equal(response.status,200,JSON.stringify(body)+' SQL: '+state.controls.lastDatabaseError);
  t.diagnostic(JSON.stringify({retrieveOperations:counter.read()}));assert.ok(counter.read()<=36);
@@ -18053,4 +18053,103 @@ for(const shared of [false,true])for(const phase of ['quote','execute'])test('Me
  state.sqlite.prepare("UPDATE event_private_payloads SET private_json=json_set(private_json,'$.properties.text','Concurrent source replacement') WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated' AND json_extract(payload,'$.block_id')='race-field')").run();
  const before=adaptiveReentryFinancialState(state),response=phase==='quote'?await specialistProtocolRequest(state,{action:'quote',turnId,memory:'saved'},state.semanticOptions):await specialistExecute(state,review,state.semanticOptions);
  assert.equal(response.status,409,await response.clone().text());assert.equal((await response.json()).error,'assistant_field_source_changed');assert.deepEqual(adaptiveReentryFinancialState(state),before);
+});
+
+function memoryPairFinancialState(state,id){return {receipt:consequentialReceipt(state,id),
+ tokens:state.sqlite.prepare('SELECT * FROM budget_counters ORDER BY scope,scope_id,period').all(),
+ cost:state.sqlite.prepare('SELECT * FROM cost_budget_counters ORDER BY scope,scope_id,period').all()};}
+async function memoryPairSettlementFixture(t,{shared=false}={}){
+ const state=await semanticPaidConsumerFixture(t,{shared}),quoted=await state.semanticQuote(),review=quoted.body;
+ assert.equal(quoted.response.status,200,JSON.stringify(review));
+ const db=state.env.DB,batch=db.batch,original=globalThis.fetch;let calls=0,held=0;
+ db.batch=async statements=>{if(statements.some(statement=>statement.sql.includes('AS specialist_budget_snapshot'))){held++;throw Error('synthetic_pair_interruption');}return batch.call(db,statements);};
+ globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');calls++;return specialistRawResponse(JSON.parse(init.body));};
+ t.after(()=>{db.batch=batch;globalThis.fetch=original;});
+ assert.equal((await specialistExecute(state,review,state.semanticOptions)).status,202);await state.drainBackground();db.batch=batch;
+ assert.equal(calls,1);assert.ok(held>0);
+ const usage=state.sqlite.prepare('SELECT status,verified_tokens,verified_microusd,provider_request_id FROM consequential_execution_steps WHERE execution_id=? AND step_index=0').get(review.executionId);
+ assert.equal(usage.status,'usage-recorded','Actual usage survives interruption before either ledger is charged');
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents WHERE role='response'").get().n,1,'Recoverable private response is retained only with current source authority');
+ const {settleSpecialistBudgetPair}=await import('../worker/pilot-policy.ts');
+ const settle=()=>settleSpecialistBudgetPair(state.env,state.current().actor_user_id,review.executionId,0,usage.verified_tokens,usage.verified_microusd,usage.provider_request_id);
+ return {...state,review,usage,settle,providerCalls:()=>calls};
+}
+for(const shared of [false,true])for(const partial of ['neither','tokens','cost'])test('Memory paired settlement: interrupted '+partial+' ledger recovers exactly once '+shared,async t=>{
+ const state=await memoryPairSettlementFixture(t,{shared}),id=state.review.executionId,owner=state.current().actor_user_id;
+ const {settleBudget,settleCostBudget}=await import('../worker/pilot-policy.ts');
+ if(partial==='tokens')await settleBudget(state.env,owner,id+':tokens:0',state.usage.verified_tokens);
+ if(partial==='cost')await settleCostBudget(state.env,owner,id+':usd:0',state.usage.verified_microusd);
+ const result=await specialistRetrieve(state,state.review,state.semanticOptions),body=await result.json();assert.equal(result.status,200,JSON.stringify(body)+' SQL '+state.controls.lastDatabaseError);
+ assert.equal(body.result.billingStatus,'settled');assert.equal(state.providerCalls(),1);
+ const before=memoryPairFinancialState(state,id);await state.settle();assert.deepEqual(memoryPairFinancialState(state,id),before);
+ assert.equal(state.sqlite.prepare('SELECT status FROM consequential_execution_steps WHERE execution_id=?').get(id).status,'settled');
+ for(const [table,column,expected] of [['budget_counters','tokens',state.usage.verified_tokens],['cost_budget_counters','microusd',state.usage.verified_microusd]]){
+  const counter=state.sqlite.prepare(`SELECT used_${column} AS used,reserved_${column} AS held FROM ${table} WHERE scope='user' AND scope_id=? AND period=?`).get(owner,new Date().toISOString().slice(0,7));
+  assert.equal(counter.held,0);assert.ok(counter.used>=expected);
+ }
+});
+for(const fault of ['receipt','owner','amount','period','project-scope','missing-counter','counter-write','underfunded-counter'])test('Memory paired settlement: late '+fault+' cannot partially settle',async t=>{
+ const state=await memoryPairSettlementFixture(t,{shared:true}),db=state.env.DB,batch=db.batch,id=state.review.executionId,owner=state.current().actor_user_id;
+ let injected=false,afterInjection;
+ db.batch=async statements=>{
+  if(!injected&&statements.some(statement=>statement.sql.startsWith('UPDATE budget_counters SET reserved_tokens='))){injected=true;
+   if(fault==='receipt')state.sqlite.prepare("UPDATE consequential_execution_steps SET provider_request_id='different' WHERE execution_id=?").run(id);
+   if(fault==='owner')state.sqlite.prepare("UPDATE budget_reservations SET owner_id='foreign' WHERE reservation_id=?").run(id+':tokens:0');
+   if(fault==='amount')state.sqlite.prepare('UPDATE cost_budget_reservations SET reserved_microusd=reserved_microusd+1 WHERE reservation_id=?').run(id+':usd:0');
+   if(fault==='period')state.sqlite.prepare("UPDATE cost_budget_reservations SET period='2001-01' WHERE reservation_id=?").run(id+':usd:0');
+   if(fault==='project-scope')state.sqlite.prepare("DELETE FROM project_budget_reservation_scopes WHERE reservation_id=?").run(id+':usd:0');
+   if(fault==='missing-counter'){
+    // Isolated corrupt-restore fixture: production's existing trigger correctly
+    // prevents this deletion while the derivation finance record is present.
+    state.sqlite.exec('DROP TRIGGER memory_derivation_cost_counter_no_delete');
+    state.sqlite.prepare("DELETE FROM cost_budget_counters WHERE scope='user' AND scope_id=?").run(owner);
+   }
+   if(fault==='underfunded-counter')state.sqlite.prepare("UPDATE cost_budget_counters SET reserved_microusd=reserved_microusd-1 WHERE scope='user' AND scope_id=?").run(owner);
+   if(fault==='counter-write')state.sqlite.exec("CREATE TRIGGER synthetic_counter_failure BEFORE UPDATE ON cost_budget_counters BEGIN SELECT RAISE(ABORT,'synthetic counter failure'); END");
+   afterInjection=memoryPairFinancialState(state,id);
+  }
+  return batch.call(db,statements);
+ };t.after(()=>{db.batch=batch;});
+ await assert.rejects(state.settle());assert.equal(injected,true);assert.deepEqual(memoryPairFinancialState(state,id),afterInjection);assert.equal(state.providerCalls(),1);
+});
+for(const fault of ['failed','missing','duplicate','extra','snapshot','database'])test('Memory paired settlement: malformed '+fault+' read never bills',async t=>{
+ const state=await memoryPairSettlementFixture(t),db=state.env.DB,batch=db.batch,id=state.review.executionId,before=memoryPairFinancialState(state,id);let injected=false;
+ db.batch=async statements=>{const rows=await batch.call(db,statements);if(!injected&&statements[0].sql.startsWith('SELECT json_group_array')&&statements[0].sql.includes('specialist_budget_snapshot')){
+  injected=true;
+  if(fault==='failed')rows[0].success=false;
+  if(fault==='missing')delete rows[1];
+  if(fault==='duplicate')rows[0].results.push({...rows[0].results[0]});
+  if(fault==='extra')rows[0].results[0].extra='unexpected';
+  if(fault==='snapshot')rows[0].results[0].specialist_budget_snapshot='[]';
+  if(fault==='database')state.env.DB={...db};
+ }return rows;};t.after(()=>{db.batch=batch;});
+ await assert.rejects(state.settle());assert.equal(injected,true);assert.deepEqual(memoryPairFinancialState(state,id),before);assert.equal(state.providerCalls(),1);
+});
+for(const shared of [false,true])test('Memory paired settlement: isolated D1 recovery after privacy withdrawal '+shared,{timeout:120000},async t=>{
+ const state=await memoryPairSettlementFixture(t,{shared});
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ const {createRequire}=await import('node:module'),{Miniflare,Log,LogLevel}=createRequire(import.meta.resolve('wrangler'))('miniflare'),{exportSynthetic,install}=await import('./helpers/model3d-workerd-snapshot.mjs');
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',host:'127.0.0.1',port:0,log:new Log(LogLevel.NONE),d1Databases:['MemoryPair'],script:"export default {fetch(){return new Response('Isolated financial fixture');}};",outboundService(){throw Error('No outbound service');}});
+ t.after(()=>mf.dispose());const db=await mf.getD1Database('MemoryPair');await install(db,exportSynthetic(state.sqlite));state.env.DB=db;
+ await state.settle();await state.settle();
+ const step=await db.prepare('SELECT status,verified_tokens,verified_microusd FROM consequential_execution_steps WHERE execution_id=?').bind(state.review.executionId).first();
+ assert.equal(step.status,'settled');assert.equal(step.verified_tokens,state.usage.verified_tokens);assert.equal(step.verified_microusd,state.usage.verified_microusd);
+ assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM memory_derivation_consumer_contents link JOIN private_content content ON content.content_id=link.content_id WHERE link.role='response' AND content.redacted_at IS NULL AND content.content!=''").first()).n,0);
+ assert.equal(state.providerCalls(),1);
+});
+for(const fault of ['concurrent-winner','lost-ack'])test('Memory paired settlement: '+fault+' recovery never debits twice',async t=>{
+ const state=await memoryPairSettlementFixture(t,{shared:true}),db=state.env.DB,batch=db.batch,id=state.review.executionId;
+ let injected=false,settled;
+ db.batch=async statements=>{
+  const writing=statements.some(statement=>statement.sql.startsWith('UPDATE budget_counters SET reserved_tokens='));
+  if(!injected&&writing&&fault==='concurrent-winner'){
+   injected=true;await state.settle();settled=memoryPairFinancialState(state,id);
+  }
+  const rows=await batch.call(db,statements);
+  if(!injected&&writing&&fault==='lost-ack'){injected=true;settled=memoryPairFinancialState(state,id);return rows.slice(0,-1);}
+  return rows;
+ };t.after(()=>{db.batch=batch;});
+ await assert.rejects(state.settle());assert.equal(injected,true);assert.deepEqual(memoryPairFinancialState(state,id),settled);
+ await state.settle();assert.deepEqual(memoryPairFinancialState(state,id),settled);
+ const response=await specialistRetrieve(state,state.review,state.semanticOptions),body=await response.json();assert.equal(response.status,200,JSON.stringify(body));assert.equal(body.result.billingStatus,'settled');assert.equal(state.providerCalls(),1);
 });

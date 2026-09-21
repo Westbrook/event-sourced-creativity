@@ -69,3 +69,10 @@ the final built-app Memory browser suite passes **20/20**. TypeScript, changed
 source lint, localization/CEM audits and the production build pass (existing
 chunk warnings). The API retains 28 unchanged baseline lint findings. These are
 synthetic local checks, not production deployment or provider qualification.
+
+## Full native checkpoint
+
+All **2,016 native runtime tests pass at `e7d79ce2`** (895.9 seconds), including
+fresh field generation, prior original/derived source retirement and recovery.
+This exact-commit result does not certify subsequent accounting changes or close
+the remaining native completion-matrix work.

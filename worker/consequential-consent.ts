@@ -1,6 +1,6 @@
 import { executionAdmissionGuard } from "./intake-authority.ts";
 export { executionAdmissionGuard };
-import { claimCostBudgetReservation, preparePrivateContent, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
+import { claimCostBudgetReservation, preparePrivateContent, releaseBudget, releaseCostBudget, reserveBudget, reserveCostBudget, settleBudget, settleCostBudget, settleSpecialistBudgetPair, storePrivateContent, type BudgetReservationGuard, type PilotUser, type ProjectExecutionScope } from "./pilot-policy.ts";
 import { uuidV7, type WorkerEnv } from "./runtime.ts";
 
 export type ExecutionStepLimit={name:string;provider:string;model:string;inputTokens:number;outputTokens:number;maximumMicrousd:number;toolCalls:number};
@@ -196,7 +196,7 @@ export async function beginConsequentialStep(env:WorkerEnv,user:PilotUser,bindin
   ]))[1]!:await statement.run();
   if(Number(changed.meta.changes??0)!==1)throw new Error("context_authorization_changed");
 }
-export async function settleConsequentialStep(env:WorkerEnv,userId:string,id:string,index:number,tokens:number,microusd:number,providerRequestId:string|null){
+export async function settleConsequentialStep(env:WorkerEnv,userId:string,id:string,index:number,tokens:number,microusd:number,providerRequestId:string|null,options:{atomicSpecialistPair?:boolean}={}){
   // Verified usage is saved before either ledger write; recovery can finish an interrupted settlement without another paid request.
   const recorded=await env.DB.prepare(`UPDATE consequential_execution_steps SET status='usage-recorded',verified_tokens=?,verified_microusd=?,provider_request_id=?,updated_at=? WHERE execution_id=? AND step_index=? AND status IN('submitting','uncertain')
     AND EXISTS(SELECT 1 FROM consequential_executions execution WHERE execution.execution_id=consequential_execution_steps.execution_id AND execution.actor_user_id=?)`)
@@ -214,6 +214,7 @@ export async function settleConsequentialStep(env:WorkerEnv,userId:string,id:str
     // Partial or mismatched ledgers still go through ordinary reconciliation.
     if(retained.status==='settled'&&retained.ledgers_settled===1)return;
   }
+  if(options.atomicSpecialistPair){await settleSpecialistBudgetPair(env,userId,id,index,tokens,microusd,providerRequestId);return;}
   await settleBudget(env,userId,`${id}:tokens:${index}`,tokens);
   await settleCostBudget(env,userId,`${id}:usd:${index}`,microusd);
   if(!await consequentialUsageSettled(env,userId,id,index,tokens,microusd))throw new Error("context_billing_reconciliation_pending");
@@ -283,7 +284,7 @@ export async function completeConsequentialExecution(env:WorkerEnv,user:PilotUse
 }
 
 /** Finish only a previously verified ledger write. This never dispatches, estimates usage, or releases an unknown submission. */
-export async function reconcileConsequentialUsage(env:WorkerEnv,userId:string,id:string){
+export async function reconcileConsequentialUsage(env:WorkerEnv,userId:string,id:string,options:{atomicSpecialistPair?:boolean}={}){
   // One bounded metadata snapshot replaces three no-op calls on the common
   // reserved/settled path. This is work selection, never settlement authority:
   // ledger mutations still independently enforce owner, state and exact usage.
@@ -311,6 +312,11 @@ export async function reconcileConsequentialUsage(env:WorkerEnv,userId:string,id
     if(step.step_status!=='usage-recorded'||step.step_index===null)continue;
     if(typeof step.verified_tokens!=='number'||!Number.isSafeInteger(step.verified_tokens)||step.verified_tokens<0
       ||typeof step.verified_microusd!=='number'||!Number.isSafeInteger(step.verified_microusd)||step.verified_microusd<0)continue;
+    if(options.atomicSpecialistPair){
+      const receipt=await env.DB.prepare('SELECT provider_request_id FROM consequential_execution_steps WHERE execution_id=? AND step_index=?').bind(id,step.step_index).first<{provider_request_id:string|null}>();
+      if(!receipt||receipt.provider_request_id!==null&&typeof receipt.provider_request_id!=='string')throw Error('context_billing_reconciliation_unavailable');
+      await settleSpecialistBudgetPair(env,userId,id,step.step_index,step.verified_tokens,step.verified_microusd,receipt.provider_request_id);continue;
+    }
     await settleBudget(env,userId,`${id}:tokens:${step.step_index}`,step.verified_tokens);
     await settleCostBudget(env,userId,`${id}:usd:${step.step_index}`,step.verified_microusd);
     if(!await consequentialUsageSettled(env,userId,id,step.step_index,step.verified_tokens,step.verified_microusd))continue;
