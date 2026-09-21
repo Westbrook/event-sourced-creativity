@@ -1,3 +1,4 @@
+import { documentJobImageSize } from './document-job-image-size.ts';
 import { authorizeImageSafetyDelivery } from "./image-safety-acknowledgement.ts";
 import { requireGuestImageExecution, prepareGuestImageJobClaim, type GuestImageExecutionAuthority } from "./experience-guest-image-execution.ts";
 import { readSponsorJobStatus, sponsorJobReadPredicate } from "./experience-sponsor-job-read.ts";
@@ -1697,6 +1698,7 @@ async function retainedSafetyPrompt(env:WorkerEnv,user:PilotUser,row:DocumentJob
 
 function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null = null, detail = true) {
   const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
+  const imageSize=documentJobImageSize(row.kind,request);
   const sceneConfiguration=row.kind==="render_document"?sceneConfigurationFromRequest(request):null;
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
@@ -1721,6 +1723,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
     ...(documentJobMemoryMarked(row)?{memoryMode:"recall" as const,noAutomaticRetry:true as const}:{}),
     ...(outputJobIsDurable(row) ? { executionOwner: "durable" as const } : {}),
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
+    ...(imageSize?{imageSize}:{}),
     ...(row.kind==="structure_adaptive"&&typeof request.canvasId==="string"&&request.canvasId?{canvasId:request.canvasId}:{}),
     ...(consentedAdaptiveJob(row)?{planningExecutionId:row.job_id,planningProjectScope:request.projectScope===true,planningLocale:typeof request.locale==="string"?request.locale:"en"}:{}),
     ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),
@@ -3455,7 +3458,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const canvasReadable=hasCapability(principal,"project.canvas.use",{organizationId:project.organizationId,projectAccessId:project.projectAccessId});
     const rows=await env.DB.prepare(`SELECT job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,job.source_surface,job.correlation_id,job.requested_sequence,
       json_type(job.request_json,'$.memoryMode') IS NOT NULL AS memory_recall_mode,
-      json_object('documentRevision',json_extract(job.request_json,'$.documentRevision'),'requestKey',json_extract(job.request_json,'$.requestKey'),
+      json_object('requestedImageSize',json(json_extract(job.request_json,'$.requestedImageSize')),'documentRevision',json_extract(job.request_json,'$.documentRevision'),'requestKey',json_extract(job.request_json,'$.requestKey'),
         'sourcePreviewId',json_extract(job.request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(job.request_json,'$.promptTechnique'),
         'promptFanId',json_extract(job.request_json,'$.promptFanId'),'parentJobId',json_extract(job.request_json,'$.parentJobId'),
         'fanKind',json_extract(job.request_json,'$.fanKind'),'artifactKind',json_extract(job.request_json,'$.artifactKind'),'productionMode',json_extract(job.request_json,'$.productionMode'),'itemCount',json_extract(job.request_json,'$.itemCount'),'canvasId',json_extract(job.request_json,'$.canvasId'),
@@ -4033,7 +4036,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const readVisibleJobs = () => env.DB.prepare(`SELECT job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,
       json_type(request_json,'$.outputDurable') IS NOT NULL AS output_durable_owner,
       CASE WHEN json_extract(request_json,'$.documentRevision') IS NULL THEN request_json ELSE json_object(
-        'documentRevision',json_extract(request_json,'$.documentRevision'),'requestKey',json_extract(request_json,'$.requestKey'),
+        'requestedImageSize',json(json_extract(request_json,'$.requestedImageSize')),'documentRevision',json_extract(request_json,'$.documentRevision'),'requestKey',json_extract(request_json,'$.requestKey'),
         'sourcePreviewId',json_extract(request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(request_json,'$.promptTechnique'),
         'promptFanId',json_extract(request_json,'$.promptFanId'),'parentJobId',json_extract(request_json,'$.parentJobId'),
         'fanKind',json_extract(request_json,'$.fanKind'),'artifactKind',json_extract(request_json,'$.artifactKind'),'productionMode',json_extract(request_json,'$.productionMode'),'itemCount',json_extract(request_json,'$.itemCount'),'canvasId',json_extract(request_json,'$.canvasId'),
@@ -4090,6 +4093,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const kind = input.kind as DocumentJobKind; const payload = input.payload && typeof input.payload === "object" ? { ...input.payload } : {};
   // Freeze the Still image policy on new jobs; retained jobs keep their original route.
   delete payload.stillImageProvider;
+  delete payload.requestedImageSize;
   if (!outputPreparation && input.sourceSurface === "still" && ["preview", "generate", "prompt_fan", "render_document"].includes(kind)) {
     payload.stillImageProvider = "openai";
     env = stillImageEnvironment(env, "still", payload);
@@ -4229,6 +4233,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"||kind==="render_document"){
     try{
       const trusted=nativeDocumentJobContext(events,documentId,project?.projectId??documentRecord.projectId,payload);
+      const requestedImageSize=documentJobImageSize(kind,payload);
+      if(requestedImageSize)payload.requestedImageSize=requestedImageSize;
       if(outputPreparation){
         Object.assign(payload,await outputPreparation.compile(trusted));
         payload.outputExecution=outputPreparation.outputExecution;

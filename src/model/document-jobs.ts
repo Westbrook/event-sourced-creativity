@@ -65,6 +65,8 @@ export type GenerationFailureGuidance = {
 };
 
 export type DocumentJob = {
+  /** Expected provider pixels from this job’s saved request; never the current document. */
+  imageSize?: {width:number;height:number};
   /** Separate explicit recall lane; never a generic queued/paid chat job. */
   memoryMode?: "recall";
   noAutomaticRetry?: true;

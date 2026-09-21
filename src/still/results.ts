@@ -22,8 +22,8 @@ export function generationPreview(job:DocumentJob,p:CreativeProjection,events:Cr
   const title=typeof plan?.title==='string'&&plan.title.trim()?plan.title.trim():p.documentTitle;
   const request=events.find(e=>e.type==='GenerationRequested'&&e.correlationId===job.jobId&&e.payload.document_id===job.documentId);
   const size=typeof request?.payload.provider_render_size==='string'?/^(\d{2,5})x(\d{2,5})$/.exec(request.payload.provider_render_size):null;
-  const width=size?Number(size[1]):0,height=size?Number(size[2]):0;
-  return {title,...(width>0&&height>0&&width<=16384&&height<=16384?{width,height}:{})};
+  const width=size?Number(size[1]):job.imageSize?.width??0,height=size?Number(size[2]):job.imageSize?.height??0;
+  return {title,...(Number.isSafeInteger(width)&&Number.isSafeInteger(height)&&width>0&&height>0&&width<=16384&&height<=16384?{width,height}:{})};
 }
 export type StillResult = {id:string;view:'artifact'|'generation';title:string;kind:string;url:string;sequence:number;width?:number|null;height?:number|null;job?:DocumentJob};
 export function stillResults(p:CreativeProjection,jobs:DocumentJob[],events:CreativeEvent[]):StillResult[] {
