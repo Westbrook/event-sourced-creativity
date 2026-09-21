@@ -3,7 +3,7 @@ import type { PaletteFeedback } from './palette-feedback.ts';
 import type { DecisionDiagnostics, ReceivedDecision } from './diagnostics.ts';
 
 export type ConsoleControl = { label:string; id:string; region:string; variant:string; size:string; emphasis:string; source?:string; disabled:boolean; options:string[] };
-export type ConsoleContext = { nextBest?:import('./next-best.ts').NextBestAssessment; nextBestAnswer?:import('./next-best.ts').NextBestAnswer; toolbarFit?:{maximum:number;fits:number;hidden:string[];deferred:boolean}; generation?:import("./generation-decision.ts").GenerationDecisionContext; onboarding?:boolean; onboardingText?:import('./onboarding-client.ts').OnboardingStatus; historyComplete?:boolean; canRefreshDecision?:boolean; attention?:AttentionSnapshot; view:string; mode:string; head:number; selectedFormat:string; page:number; actionLimit?:number; more?:boolean; paletteOpen?:boolean; paletteFeedback?:PaletteFeedback; paletteOrder?:{rankedIds:string[];passedOverIds:string[]}; current:DecisionDiagnostics };
+export type ConsoleContext = { rememberLists?:boolean; listDisplay?:{type?:string;all:boolean}; nextBest?:import('./next-best.ts').NextBestAssessment; nextBestAnswer?:import('./next-best.ts').NextBestAnswer; toolbarFit?:{maximum:number;fits:number;hidden:string[];deferred:boolean}; generation?:import("./generation-decision.ts").GenerationDecisionContext; onboarding?:boolean; onboardingText?:import('./onboarding-client.ts').OnboardingStatus; historyComplete?:boolean; canRefreshDecision?:boolean; attention?:AttentionSnapshot; view:string; mode:string; head:number; selectedFormat:string; page:number; actionLimit?:number; more?:boolean; paletteOpen?:boolean; paletteFeedback?:PaletteFeedback; paletteOrder?:{rankedIds:string[];passedOverIds:string[]}; current:DecisionDiagnostics };
 export type ConsoleSnapshot = { scope:string; context:ConsoleContext; applied?:DecisionDiagnostics; received?:ReceivedDecision; pending:boolean; controls:ConsoleControl[] };
 const protocol='still-developer-console-v1';
 export const validConsoleSession=(value:string|null):value is string=>!!value&&/^[a-f0-9-]{36}$/.test(value);
@@ -39,7 +39,7 @@ export class ConsoleWindowHost {
     if(event.data.type==='ready'){this.ready=true;this.publish(true);}
     if(event.data.type==='rendered'&&this.ready)this.changed(true,true);
     if(event.data.type==='disconnected'){this.ready=false;this.changed(true,false);}
-    if(this.ready&&['density','experiment','refresh','flags','next-best'].includes(event.data.type))this.command?.(event.data);
+    if(this.ready&&['density','experiment','refresh','flags','next-best','remember-lists'].includes(event.data.type))this.command?.(event.data);
     if(event.data.type==='return'){this.dispose();this.returned();}
   };
   private send(type:string,snapshot?:ConsoleSnapshot){

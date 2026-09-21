@@ -20,6 +20,8 @@ export const ACTION_HELP:Record<string,string>={
  slides:'Generate a presentation from this document’s active context.',
  storyboard:'Generate storyboard frames from this document’s active context.',
  projects:'Browse your projects.',documents:'Browse the documents in this project.',document:'Return to the document and its context.',results:'Browse this document’s generated work.',
+ 'ui:show-all':'Browse every item in this list.',
+ 'ui:show-less':'Return to a short page of items.',
  'ui:more':'See the next suggested actions for this page.',
  'ui:palette':'Search all available actions. Open this anytime with Command or Control + K.',
  'ui:previous-page':'Show the previous set of items.', 'ui:next-page':'Show the next set of items.',

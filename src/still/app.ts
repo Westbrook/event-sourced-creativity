@@ -1,3 +1,5 @@
+import './all-list.ts';
+import { ListDisplay, listType, listControls, LIST_PAGE_SIZE } from './list-display.ts';
 import { assessNextBest, nextBestOrder, readNextBestFlag, type NextBestAnswer } from './next-best.ts';
 import { stillImage, stillVideo } from './media.ts';
 import { fitToolbarLimit } from './toolbar-fit.ts';
@@ -168,6 +170,24 @@ export class StillApp extends LitElement {
   private suggestionTargets:Record<string,string>={};
   private useInTarget='';
   private dockTouched=false;
+  private listDisplay=new ListDisplay();
+  private listKind(){const p=this.client.position,type=listType(p.view,this.mode,p.blockId);this.listDisplay.enter([this.client.epoch,this.client.scopeKey,p.projectId,p.documentId,p.view,p.blockId,this.mode].join('/'),type);return type;}
+  private listCount(){const p=this.client.projection;return this.listKind()==='projects'?p.projects.length:this.listKind()==='documents'?p.documents.filter(d=>!d.removed).length:this.listKind()==='ideas'?p.blocks.filter(b=>!b.removed).length:stillResults(p,this.client.jobs,this.client.events).length;}
+  private listOptions(){return listControls(this.listKind(),this.listDisplay.all,this.page,this.listCount());}
+  private runListAction(id:string){
+    if(!this.listOptions().some(a=>a.id===id))return false;
+    if(id==='ui:previous-page')this.turnPage(this.page-1);
+    else if(id==='ui:next-page')this.turnPage(this.page+1);
+    else {this.listDisplay.set(id==='ui:show-all');this.page=0;this.writeRoute(true);this.changed();this.focusContent();}
+    return true;
+  }
+  private setRememberLists=(e:CustomEvent<{value:boolean}>)=>{this.listKind();this.listDisplay.setRemember(e.detail.value===true);this.changed();};
+  private renderList<T extends {id:string}>(items:T[],renderItem:(item:T,index:number)=>unknown,className:string){
+    const type=this.listKind();
+    if(type&&this.listDisplay.all)return html`<still-all-list .label=${'All '+type} .items=${items} .renderItem=${renderItem}></still-all-list>`;
+    const offset=type?this.page*LIST_PAGE_SIZE:0;
+    return html`<div class=${className}>${(type?items.slice(offset,offset+LIST_PAGE_SIZE):items).map((item,i)=>renderItem(item,offset+i))}</div>`;
+  }
   private moreOpen=false;
   private toolbarHelpEpoch=0;
   private nextBestEnabled=true;
@@ -275,6 +295,7 @@ export class StillApp extends LitElement {
       if(inspector?.context)inspector.context={...inspector.context,attention:snapshot};
     });
     try{this.nextBestEnabled=readNextBestFlag(localStorage);}catch{}
+    try{this.listDisplay=new ListDisplay(localStorage);}catch{}
     try{this.onboarding=readOnboardingFlag(location.href,localStorage);}catch{this.onboarding=new URL(location.href).searchParams.has('onboarding');}
     this.client.onChange = () => { this.retireChangedDecisions(); if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
     this.desktop.addEventListener('change', this.developerViewportChanged);
@@ -306,7 +327,7 @@ export class StillApp extends LitElement {
     const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
     if(inspector){
       if(this.developerScope!==this.diagnosticScope()){this.developerApplied=undefined;this.developerReceived=undefined;this.developerScope=this.diagnosticScope();}
-      inspector.context={nextBest:this.nextBestAssessment(),nextBestAnswer:this.nextBest,toolbarFit:this.dockFit,generation:this.decisionPosition().generation,onboarding:this.onboarding,onboardingText:this.onboardingHelp.status,historyComplete:this.client.historyComplete,canRefreshDecision:!this.loading&&!this.busy&&(this.paletteOpen||this.mode==='generate'&&!this.generation||!this.mode&&!this.isInlineGeneration()&&!this.canAcknowledgeSafety(this.selectedGeneration())),attention:this.attention?.summary.snapshot(),view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
+      inspector.context={rememberLists:this.listDisplay.remember,listDisplay:{type:this.listKind(),all:this.listDisplay.all},nextBest:this.nextBestAssessment(),nextBestAnswer:this.nextBest,toolbarFit:this.dockFit,generation:this.decisionPosition().generation,onboarding:this.onboarding,onboardingText:this.onboardingHelp.status,historyComplete:this.client.historyComplete,canRefreshDecision:!this.loading&&!this.busy&&(this.paletteOpen||this.mode==='generate'&&!this.generation||!this.mode&&!this.isInlineGeneration()&&!this.canAcknowledgeSafety(this.selectedGeneration())),attention:this.attention?.summary.snapshot(),view:this.client.position.view,mode:this.mode,head:this.client.head,page:this.page,actionLimit:this.pageActionLimit,more:this.moreOpen,paletteOpen:this.paletteOpen,paletteFeedback:this.paletteFeedback,paletteOrder:this.paletteOrder,selectedFormat:this.generation?.format??'',current:this.localDiagnostics('Current eligibility')};
       inspector.applied=this.developerApplied;inspector.received=this.developerReceived;inspector.pending=this.developerPending||this.paletteBusy||this.paletteRefreshing;
       inspector.scope=this.diagnosticScope();inspector.hostVisible=this.developerVisible;
     }
@@ -419,7 +440,7 @@ export class StillApp extends LitElement {
     }
     this.activeAddress=url;
   }
-  private resetStep(){this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
+  private resetStep(){this.listDisplay.leave();this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
     this.resetStep();this.page = 0; this.itemIndex = 0; this.error = '';this.routeError='';this.notice='';
     const changedDocument = ids.documentId !== undefined && ids.documentId !== this.client.position.documentId || ids.projectId !== undefined && ids.projectId !== this.client.position.projectId;
@@ -438,7 +459,7 @@ export class StillApp extends LitElement {
     if(this.preventsRouteChange()){event.preventDefault();this.error='Finish or close this step before leaving.';this.changed();return;}
     this.follow(event,'projects',{projectId:'',documentId:''});
   };
-  private turnPage(page:number){this.dockTouched=false;this.page=Math.max(0,page);this.writeRoute();this.changed();this.decide();}
+  private turnPage(page:number){if(this.listKind()&&this.listDisplay.all)return;this.dockTouched=false;this.page=Math.max(0,page);this.writeRoute();this.changed();this.decide();}
   private turnItem(item:number){this.dockTouched=false;this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
   private candidates() { return eligibleActions(this.client.projection, this.decisionPosition(), this.client.abilities); }
   private decide(bypass=false) {
@@ -549,7 +570,7 @@ export class StillApp extends LitElement {
     }else parkFocus();
   }
   private visibleToolbarActions(){return [...this.querySelectorAll<HTMLElement>('.action-dock [data-action-id]')].map(e=>e.dataset.actionId!).filter(id=>this.candidates().some(a=>a.id===id));}
-  private paletteOptions(){return paletteActions(this.paletteQuery,this.candidates(),this.paletteOrder).filter(a=>this.desktop.matches||a.id!=='ui:developer');}
+  private paletteOptions(){return paletteActions(this.paletteQuery,this.candidates(),this.paletteOrder,this.listOptions()).filter(a=>this.desktop.matches||a.id!=='ui:developer');}
   private openFinder(entry:PaletteFeedback['entry']='direct'){
     if(!this.paletteOpen)this.attention?.summary.explore('palette');
     const visible=this.visibleToolbarActions();
@@ -595,6 +616,7 @@ export class StillApp extends LitElement {
     if(this.loading||this.startupFailed||!this.client.session?.policy.accepted){this.finderMessage='Open your workspace first.';this.changed();return;}
     if(this.preventsRouteChange()){this.finderMessage='Finish or close the current step first.';this.changed();return;}
     this.closeFinder();this.suggestionTargets={};this.useInTarget='';
+    if(this.runListAction(id))return;
     if(id==='ui:workspaces'){this.begin('workspaces');return;}
     if(id==='ui:refresh'){void this.run(async()=>{await this.client.load({hydrateContent:false});this.readRoute();this.closeMode();});return;}
     const entry=inferred?finderEntry(id):id;
@@ -863,18 +885,18 @@ export class StillApp extends LitElement {
     if (this.mode) return this.renderMode();
     if (pos.view === 'projects' || pos.view === 'documents') {
       const projects = pos.view === 'projects', items = projects ? p.projects.map(x => ({ id: x.id, title: x.name, detail: `${x.documentCount} ${x.documentCount === 1 ? 'document' : 'documents'}` })) : p.documents.filter(d => !d.removed).map(d => ({ id: d.id, title: d.title, detail: '' }));
-      return html`<section class="library-page">${projects ? nothing : html`<span class="eyebrow">${p.projectName}</span>`}<h1>${projects ? 'Projects' : 'Documents'}</h1><div class="work-list">${items.slice(this.page * 3, this.page * 3 + 3).map((x, i) => html`<a data-attention-id=${`${projects?'project':'document'}:${x.id}`} class="work-row" href=${projects?this.viewURL('documents',{projectId:x.id,documentId:''}):this.viewURL('document',{documentId:x.id})} @click=${(e:MouseEvent)=>projects?this.follow(e,'documents',{projectId:x.id,documentId:''}):this.follow(e,'document',{documentId:x.id})}><span class="work-number">${String(this.page * 3 + i + 1).padStart(2, '0')}</span><span><strong>${x.title}</strong>${x.detail ? html`<small>${x.detail}</small>` : nothing}</span><span class="row-arrow" aria-hidden="true">↗</span></a>`)}</div>${!items.length ? html`<p class="empty-copy">${projects ? 'No projects yet.' : 'No documents yet.'}</p>` : nothing}</section>`;
+      return html`<section class="library-page">${projects ? nothing : html`<span class="eyebrow">${p.projectName}</span>`}<h1>${projects ? 'Projects' : 'Documents'}</h1>${this.renderList(items,(x, i) => html`<a data-attention-id=${`${projects?'project':'document'}:${x.id}`} class="work-row" href=${projects?this.viewURL('documents',{projectId:x.id,documentId:''}):this.viewURL('document',{documentId:x.id})} @click=${(e:MouseEvent)=>projects?this.follow(e,'documents',{projectId:x.id,documentId:''}):this.follow(e,'document',{documentId:x.id})}><span class="work-number">${String(i + 1).padStart(2, '0')}</span><span><strong>${x.title}</strong>${x.detail ? html`<small>${x.detail}</small>` : nothing}</span><span class="row-arrow" aria-hidden="true">↗</span></a>`,'work-list')}${!items.length ? html`<p class="empty-copy">${projects ? 'No projects yet.' : 'No documents yet.'}</p>` : nothing}</section>`;
     }
     if (pos.view === 'results') {
       const results = stillResults(p,c.jobs,c.events);
-      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1><div class="result-grid">${results.slice(this.page * 3, this.page * 3 + 3).map(r => html`<a data-attention-id=${`result:${r.id}`} class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:safeMedia(r.url) ? stillImage(safeMedia(r.url),r.title,r) : html`<div class="result-word">${FORMATS[r.kind]}</div>`}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`)}</div>${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
+      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1>${this.renderList(results,r => html`<a data-attention-id=${`result:${r.id}`} class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:safeMedia(r.url) ? stillImage(safeMedia(r.url),r.title,r) : html`<div class="result-word">${FORMATS[r.kind]}</div>`}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`,'result-grid')}${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     }
     if(pos.view==='generation')return this.renderGeneration();
     if (pos.view === 'artifact') {
       const a = p.artifacts.find(x => x.id === pos.outputId), o = p.outputs.find(x => x.id === pos.outputId);
       return a ? this.renderArtifact(a) : o ? html`<figure data-attention-id=${`result:${pos.outputId}`} class="image-stage">${stillImage(safeMedia(o.mediaUrl),o.title??p.documentTitle,o,{loading:'eager'})}<figcaption>${o.title ?? p.documentTitle}</figcaption></figure>` : html`<section class="quiet-state"><h1>Result unavailable</h1></section>`;
     }
-    return html`<article class="document-page"><span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1><div class="context-blocks">${p.blocks.filter(b => !b.removed).map((b, i) => html`<a data-attention-id=${`block:${b.id}`} aria-current=${pos.blockId===b.id?'true':nothing} href=${this.viewURL('document',{blockId:pos.blockId===b.id?'':b.id})} class=${`context-block ${pos.blockId === b.id ? 'selected' : ''} ${Number(b.properties.weight ?? 1) <= 0 ? 'inactive' : ''}`} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:pos.blockId===b.id?'':b.id})}><span class="block-index">${String(i + 1).padStart(2, '0')}</span><div><span class="block-label">${text(b.properties.label) || b.handle || b.type}${p.blockRelations.filter(r=>!r.removed&&r.toBlockId===b.id&&isContextCompositionRelation(r.kind)).map(r=>` · part of ${p.blocks.find(parent=>parent.id===r.fromBlockId)?.handle??'a group'}`).join('')}${b.locked ? ' · locked' : ''}${Number(b.properties.weight ?? 1) <= 0 ? ' · excluded' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? stillImage(safeMedia(text(b.properties.media_url)),b.handle,b.properties,{className:'context-reference'}) : nothing}<p>${text(b.properties.text) || text(b.properties.description) || 'Empty idea'}</p></div></a>`)}</div>${!p.blocks.filter(b => !b.removed).length ? html`<div class="blank-page"><span class="pencil-line" aria-hidden="true"></span><p>Add an idea.</p></div>` : nothing}</article>`;
+    return html`<article class="document-page"><span class="eyebrow">${p.projectName}</span><h1>${p.documentTitle}</h1>${this.renderList(p.blocks.filter(b => !b.removed),(b, i) => html`<a data-attention-id=${`block:${b.id}`} aria-current=${pos.blockId===b.id?'true':nothing} href=${this.viewURL('document',{blockId:pos.blockId===b.id?'':b.id})} class=${`context-block ${pos.blockId === b.id ? 'selected' : ''} ${Number(b.properties.weight ?? 1) <= 0 ? 'inactive' : ''}`} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:pos.blockId===b.id?'':b.id})}><span class="block-index">${String(i + 1).padStart(2, '0')}</span><div><span class="block-label">${text(b.properties.label) || b.handle || b.type}${p.blockRelations.filter(r=>!r.removed&&r.toBlockId===b.id&&isContextCompositionRelation(r.kind)).map(r=>` · part of ${p.blocks.find(parent=>parent.id===r.fromBlockId)?.handle??'a group'}`).join('')}${b.locked ? ' · locked' : ''}${Number(b.properties.weight ?? 1) <= 0 ? ' · excluded' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' ? stillImage(safeMedia(text(b.properties.media_url)),b.handle,b.properties,{className:'context-reference'}) : nothing}<p>${text(b.properties.text) || text(b.properties.description) || 'Empty idea'}</p></div></a>`,'context-blocks')}${!p.blocks.filter(b => !b.removed).length ? html`<div class="blank-page"><span class="pencil-line" aria-hidden="true"></span><p>Add an idea.</p></div>` : nothing}</article>`;
   }
   private renderMode() {
     const mode = this.mode, p = this.client.projection;
@@ -961,18 +983,14 @@ export class StillApp extends LitElement {
     const pool=[...selected,...(firstLimit>5&&this.decisionSource==='jev'?this.rankedActions.filter(a=>!selected.some(s=>s.id===a.id)):[])].filter(a=>eligible.some(e=>e.id===a.id));
     const a=p.artifacts.find(x=>x.id===c.position.outputId);
     const slides=view==='artifact'&&a&&['slides','storyboard'].includes(a.kind)&&a.items.length>1;
-    const browsing=['projects','documents','results'].includes(view);
-    const count=view==='projects'?p.projects.length:view==='documents'?p.documents.filter(d=>!d.removed).length:stillResults(p,c.jobs,c.events).length;
-    const previousPage=browsing&&this.page>0,nextPage=browsing&&(this.page+1)*3<count;
-    const pageControls=[
-      ...(previousPage?[{id:'ui:previous-page',label:'Previous results',run:()=>this.turnPage(this.page-1)}]:[]),
-      ...(nextPage?[{id:'ui:next-page',label:'More results',run:()=>this.turnPage(this.page+1)}]:[]),
-    ];
+    const browsing=!!this.listKind();
+    const listOptions=this.listOptions(),toggle=listOptions.find(a=>a.id==='ui:show-all'||a.id==='ui:show-less');
+    const pageControls=listOptions.filter(a=>a!==toggle).map(a=>({...a,run:()=>this.runListAction(a.id)}));
     const visible=pool.filter(a=>!browsing||a.id!==view).slice(0,Math.max(0,firstLimit-1-(slides?2:pageControls.length)));
     const visibleIds=visible.map(a=>a.id);
     if(this.moreOpen&&limit<3){
       const alternatives=nextToolbarActions(this.rankedActions,visibleIds,eligible,this.rankedActions.length);
-      return this.compactDock([...alternatives.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>void this.replaceToolbar(false)},{id:'ui:palette',label:'Palette',variant:'ghost',run:()=>this.openFinder('more')}],'More',generationProgress);
+      return this.compactDock([...(toggle?[{...toggle,run:()=>this.runListAction(toggle.id),variant:'secondary' as const}]:[]),...alternatives.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>void this.replaceToolbar(false)},{id:'ui:palette',label:'Palette',variant:'ghost',run:()=>this.openFinder('more')}],'More',generationProgress);
     }
     if(limit<3){
       const choices=[...pool,...this.rankedActions.filter(a=>!pool.some(p=>p.id===a.id))].filter(a=>eligible.some(e=>e.id===a.id)&&(!browsing||a.id!==view)),emphasis=presentToolbar(choices.map(a=>a.id),this.emphasis,this.toolbarPolicy());
@@ -980,6 +998,7 @@ export class StillApp extends LitElement {
         ...choices.map(a=>({id:a.id,label:a.label,run:()=>this.choose(a.id),variant:emphasis[a.id]?.variant,source:this.decisionSource==='jev'&&emphasis[a.id]?.score!==undefined?'Jev ranking':'Local fallback'})),
         ...(slides?[{id:'ui:previous',label:'Previous',run:()=>this.turnItem(this.itemIndex-1),disabled:this.itemIndex===0},{id:'ui:next',label:'Next',run:()=>this.turnItem(this.itemIndex+1),disabled:this.itemIndex>=a!.items.length-1}]:[]),
         ...pageControls,
+        ...(toggle?[{...toggle,run:()=>this.runListAction(toggle.id),variant:'secondary' as const}]:[]),
         {id:'ui:palette',label:'Palette',run:()=>this.openFinder('more'),variant:'ghost',source:'Navigation utility'},
       ],'More',generationProgress);
     }
@@ -987,7 +1006,7 @@ export class StillApp extends LitElement {
     if(slides)actions.unshift(this.button('Previous',()=>this.turnItem(this.itemIndex-1),false,this.itemIndex===0,'','secondary'),this.button('Next',()=>this.turnItem(this.itemIndex+1),false,this.itemIndex>=a!.items.length-1,'','secondary'));
     actions.push(...pageControls.map(control=>this.button(control.label,control.run,false,false,control.id,'secondary')));
     actions.push(this.button('More',event=>this.openMore(event),false,false,'ui:more'));
-    if(this.moreOpen)actions=[...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2)),this.button('Back',event=>void this.replaceToolbar(false,event)),this.paletteButton('more')];
+    if(this.moreOpen)actions=[...(toggle?[this.button(toggle.label,()=>this.runListAction(toggle.id),false,false,toggle.id,'secondary')]:[]),...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2-(toggle?1:0))),this.button('Back',event=>void this.replaceToolbar(false,event)),this.paletteButton('more')];
     return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}>${this.toolbarStatus(generationProgress)}<en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   private reviewContext(job?:DocumentJob) {
@@ -1063,7 +1082,7 @@ export class StillApp extends LitElement {
   render() {
     const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
     const failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId && j.jobId !== displayedGeneration);
-    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
+    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main>${this.renderDock()}${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-remember-lists=${this.setRememberLists} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report ↗</a>` : nothing}</div>${this.renderNotifications(failed)}`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

@@ -1,0 +1,16 @@
+{
+  "source": "design-system",
+  "modules": [
+    "packages/primitives/dist/state/virtual-collection.js",
+    "packages/primitives/dist/state/collection.js",
+    "packages/primitives/dist/state/collection.d.ts",
+    "packages/primitives/dist/state/virtual-collection.d.ts",
+    "packages/primitives/dist/interactions/virtual-collection.js",
+    "packages/primitives/dist/interactions/scroll-into-view.js",
+    "packages/primitives/dist/interactions/scroll-into-view.d.ts",
+    "packages/primitives/dist/interactions/virtual-collection.d.ts",
+    "packages/primitives/dist/templates/virtual-collection.js",
+    "packages/primitives/dist/templates/virtual-collection.d.ts"
+  ],
+  "builtClosureSha256": "fa773df13468eb880cb26b7d8a0862a67ab53f137a414bd73f0e731a380f238a"
+}
