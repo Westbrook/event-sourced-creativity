@@ -83,7 +83,7 @@ export class StillClient {
     const value = foldEvents(this.events, Infinity, document, project);
     this.projected = { events: this.events, length: this.events.length, document, project, value }; return value;
   }
-  private clearSource() { ++this.epoch; this.generationActivity.clear(); this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.creation = null; this.projected = null; this.contentWrites.clear(); }
+  private clearSource() { ++this.epoch; this.generationRunAfter.clear(); this.generationActivity.clear(); this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.creation = null; this.projected = null; this.contentWrites.clear(); }
   private async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
     const check = this.fence();
     try { const result = await api<T>(path, body, method); check(); return result; }
@@ -374,8 +374,8 @@ export class StillClient {
         operationJournal.clearGeneration(this.journalScope,draft.documentId);
         this.generationActivity.observe([job],false);
         this.jobs=[job,...this.jobs.filter(j=>j.jobId!==job.jobId)];this.onChange();
-        if(job.status==='queued')void this.request(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{}).catch(()=>{});
-        else if(['completed','partial'].includes(job.status))void this.refresh().catch(()=>{});
+        this.dispatchGeneration(job,true);
+        if(['completed','partial'].includes(job.status))void this.refresh().catch(()=>{});
         return job;
       }
       if(result.status==='closed'&&!job){
@@ -415,7 +415,7 @@ export class StillClient {
     operationJournal.clearGeneration(this.journalScope,draft.documentId);
     this.generationActivity.observe([result.job],false);
     this.jobs = [result.job, ...this.jobs.filter(j => j.jobId !== result.job.jobId)]; this.onChange();
-    void this.request(`/api/document-jobs/${encodeURIComponent(result.job.jobId)}/run`, {}).catch(() => {});
+    this.dispatchGeneration(result.job,true);
     return result.job;
   }
   async acknowledgeGenerationSafety(job: DocumentJob) {
@@ -425,7 +425,7 @@ export class StillClient {
     if(result.job?.jobId!==job.jobId||result.job.documentId!==job.documentId)throw new Error('Generation delivery unconfirmed. Refresh status before trying again.');
     this.generationActivity.observe([result.job],false);
     this.jobs=this.jobs.map(current=>current.jobId===job.jobId?result.job:current);this.onChange();
-    void this.request(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{}).catch(()=>{});
+    this.dispatchGeneration(result.job,true);
     return result.job;
   }
   async dismissJob(job: DocumentJob) {
@@ -436,6 +436,24 @@ export class StillClient {
     ++this.jobRead;
     this.generationActivity.consume(job);
     this.jobs = this.jobs.map(current => generationNoticeKey(current) === generationNoticeKey(job) ? result.job : current); this.onChange();
+  }
+  private generationRuns = new Set<string>();
+  private generationRunAfter = new Map<string,number>();
+  private dispatchGeneration(job:DocumentJob,explicit=false) {
+    if(job.status!=='queued'||job.sourceSurface!=='still'||job.executionOwner==='durable'||job.memoryMode||!['preview','generate','render_document'].includes(job.kind)||(!explicit&&job.attemptCount!==0))return;
+    const key=`${this.epoch}:${this.scopeKey}:${job.jobId}`;
+    if(this.generationRuns.has(key)||Date.now()<(this.generationRunAfter.get(key)??0))return;
+    this.generationRuns.add(key);
+    const epoch=this.epoch;
+    void this.request(`/api/document-jobs/${encodeURIComponent(job.jobId)}/run`,{}).catch(()=>{
+      // Poll the saved attempt before deciding anything else; never create a replacement.
+    }).finally(()=>{
+      this.generationRuns.delete(key);
+      if(epoch===this.epoch){
+        this.generationRunAfter.set(key,Date.now()+5000);
+        if(this.generationRunAfter.size>120)this.generationRunAfter.delete(this.generationRunAfter.keys().next().value!);
+      }
+    });
   }
   async pollJobs() {
     const document = this.position.documentId, key = this.jobsKey;
@@ -463,6 +481,8 @@ export class StillClient {
       if(read!==this.jobRead||document!==this.position.documentId)return;
       // The feed contains authorized active/unnotified work across documents.
       // Keep result lists scoped, but observe completions across navigation.
+      const nextQueued=result.jobs.filter(j=>j.status==='queued'&&j.sourceSurface==='still'&&j.attemptCount===0&&!j.executionOwner&&!j.memoryMode&&['preview','generate','render_document'].includes(j.kind)).sort((a,b)=>a.requestedAt.localeCompare(b.requestedAt)||a.jobId.localeCompare(b.jobId))[0];
+      if(nextQueued&&!result.jobs.some(j=>['running','committing'].includes(j.status)))this.dispatchGeneration(nextQueued);
       const noticesBefore=JSON.stringify(this.generationActivity.notices);
       this.generationActivity.observe([...result.jobs,...jobs.filter(j=>!result.jobs.some(row=>row.jobId===j.jobId))]);
       const terminal = (job: DocumentJob) => ['completed', 'partial', 'failed', 'canceled'].includes(job.status);

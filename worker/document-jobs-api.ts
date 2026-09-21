@@ -2021,8 +2021,8 @@ async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow
   const errorDetail:ProviderFailureDetail = detail??{ code:"execution_interrupted",category:"server",scope:"unknown",action:"contact_support",message:"The server lost contact with this operation before it finished.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null };
   const parentId = parentJobIdFromRequest(parseRequest(row));
   const failedResult=JSON.stringify({...parseResult(row),errorDetail,stage:"failed",progressMessage:failureProgressMessage(errorDetail)});
-  const terminal = env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND status IN ('queued','running','committing') AND correlation_id=? AND result_json IS ? AND (status='queued' OR lease_expires_at<=? OR updated_at<=?) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides' AND EXISTS(SELECT 1 FROM events terminal WHERE terminal.stream_id=document_jobs.stream_id AND terminal.correlation_id=document_jobs.correlation_id AND terminal.type IN('DocumentRenderCompleted','DocumentRenderFailed')))")
-    .bind(errorDetail.code,now,failedResult,parentId,now,now,row.job_id,user.userId,row.correlation_id,observedResult,now,staleBefore);
+  const terminal = env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND status IN ('queued','running','committing') AND correlation_id=? AND result_json IS ? AND (status='queued' OR lease_expires_at<=? OR updated_at<=?) AND NOT EXISTS(SELECT 1 FROM events terminal WHERE (? IS NULL OR (document_jobs.kind='render_document' AND json_extract(document_jobs.request_json,'$.artifactKind')='slides')) AND terminal.stream_id=document_jobs.stream_id AND terminal.correlation_id=document_jobs.correlation_id AND ((document_jobs.kind='render_document' AND terminal.type IN('DocumentRenderCompleted','DocumentRenderFailed')) OR (document_jobs.kind='generate' AND terminal.type IN('GenerationCompleted','GenerationFailed')) OR (document_jobs.kind='preview' AND terminal.type IN('IdeationPreviewCompleted','GenerationFailed'))))")
+    .bind(errorDetail.code,now,failedResult,parentId,now,now,row.job_id,user.userId,row.correlation_id,observedResult,now,staleBefore,row.output_slot_id??null);
   // Project the terminal native job and its existing monetary evidence together.
   // Pending/uncertain calls remain held; this never creates an attempt or grant.
   const result=row.output_slot_id?(await env.DB.batch([terminal,...prepareOutputJobOutcomeStatements(env,row,{completedAt:now,resultJson:failedResult})]))[0]!:await terminal.run();
@@ -2034,6 +2034,17 @@ async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow
     try{await appendAuditEvent(env,user.streamId,"worker:scheduler","JobAttemptInterrupted",{job_id:row.job_id,document_id:row.document_id,kind:row.kind,attempt:row.attempt_count,reason:errorDetail.code,released_reservation_count:0,provider_submission_status:"submission_unknown"},row.correlation_id);}catch(error){console.error("document_job_interruption_audit_failed",row.job_id,error instanceof Error?error.message:"unknown");}
   }else await releaseInterruptedAttempt(env,user,row,errorDetail.code);
   await refreshGenerationReceipt(env,user,row,{},errorDetail,previousStage);await reconcileParentForChild(env,row);
+}
+
+/** Observation may reconcile an expired foreground attempt, never dispatch new paid work. */
+async function reconcileStaleForegroundJob(env:WorkerEnv,user:PilotUser,row:DocumentJobRow) {
+  if(!rowIsStale(row)||!requiresForegroundDocumentExecution(row))return;
+  // A result can be committed before the worker loses its final job-status write.
+  if(operationFinished(await readCorrelatedEvents(env,user.streamId,[row.correlation_id]),row)) {
+    await runDocumentJob(env,user,row.job_id,row);
+    return;
+  }
+  await failStaleJob(env,user,row,unsafePaidRecovery(row)??undefined);
 }
 
 function operationFinished(events: Awaited<ReturnType<typeof readWorkspaceEvents>>, row: DocumentJobRow) {
@@ -2805,7 +2816,7 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
         if(scope){await cancelProjectActorJobs(env,user,{organizationId:scope.organization_id,projectAccessId:scope.project_access_id,actorUserId:running.owner_id});continue;}
         return;
       }
-      if(requiresForegroundDocumentExecution(running)){await failStaleJob(env,owner,running,unsafePaidRecovery(running)??undefined);continue;}
+      if(requiresForegroundDocumentExecution(running)){await reconcileStaleForegroundJob(env,owner,running);continue;}
       const recovered = await runDocumentJob(env, owner, running.job_id);
       if (!recovered || recovered.status === "queued" || recovered.status === "running" || recovered.status === "committing") return;
       continue;
@@ -3486,6 +3497,17 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ORDER BY CASE WHEN job.status IN('queued','running','committing') THEN 0 ELSE 1 END,job.requested_at DESC LIMIT 120`)
       .bind(project.ownerUserId,principal.userId,user.streamId,project.projectAccessId,project.organizationId,project.projectId,Number(readOnlyPlanning),Number(canvasReadable),requestedId,requestedId,Number(activeOnly),document,document,now,...readGuard.bindings,requestedId).all<DocumentJobRow>();
     if(path&&!rows.results.length)return Response.json({error:"job_not_found"},{status:404});
+    // Only reconcile the current actor's ordinary foreground receipts, after the
+    // scoped read guard succeeds. Inspection and read-only planning never mutate.
+    if(!readOnlyPlanning&&query.get("inspection")!=="1")for(let index=0;index<rows.results.length;index++){
+      const visible=rows.results[index]!;
+      if(!rowIsStale(visible)||!requiresForegroundDocumentExecution(visible))continue;
+      const retained=await readJob(env,user.userId,visible.job_id);
+      if(!retained||outputJobIsDurable(retained)||retained.output_slot_id||documentJobMemoryMarked(retained)||!await activeProjectExecution(env,user,retained.document_id,retained.job_id))continue;
+      await reconcileStaleForegroundJob(env,user,retained);
+      const fresh=await readJob(env,user.userId,retained.job_id);
+      if(fresh)rows.results[index]={...visible,status:fresh.status,error_message:fresh.error_message,result_json:fresh.result_json,completed_at:fresh.completed_at,lease_expires_at:fresh.lease_expires_at,updated_at:fresh.updated_at};
+    }
     const activeBlocker=[...rows.results].filter((row)=>!documentJobMemoryMarked(row)&&row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
     const recoveryBlocker=activeBlocker&&rowIsStale(activeBlocker)?activeBlocker:null;
     const adaptiveCertified=await Promise.all(rows.results.map(async(row)=>row.kind==="structure_adaptive"?certifiedAdaptiveJob(env,user,await readJob(env,user.userId,row.job_id)??row,false,query.get("inspection")==="1"):row));
@@ -4062,11 +4084,18 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     const parents = rows.filter((row) => !outputJobIsDurable(row) && row.kind === "prompt_fan" && ["queued","running","committing"].includes(row.status));
     for(const parent of parents){const updated=await reconcilePromptFanParent(env,user.userId,parent.job_id);if(!updated||updated.status!==parent.status||updated.result_json!==parent.result_json||updated.error_message!==parent.error_message||updated.completed_at!==parent.completed_at)reconciled=true;}
-    for (const row of rows) if (!documentJobMemoryMarked(row) && !outputJobIsDurable(row) && rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) {
+    // A detail poll of a queued job must also reconcile its earlier expired blocker.
+    const recoveryRows=[...rows];
+    if(path){
+      const blocker=await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1`).bind(user.userId,user.streamId).first<DocumentJobRow>();
+      if(blocker&&!recoveryRows.some(row=>row.job_id===blocker.job_id))recoveryRows.push(blocker);
+    }
+    for (const row of recoveryRows) if (!documentJobMemoryMarked(row) && !outputJobIsDurable(row) && rowIsStale(row) && (requiresForegroundDocumentExecution(row)||row.attempt_count >= documentJobMaxAttempts(row.kind))) {
       // A compact list row must never replace the retained recovery checkpoint.
-      const retained = path ? row : await readJob(env, user.userId, row.job_id);
-      if (retained && rowIsStale(retained) && retained.attempt_count >= documentJobMaxAttempts(retained.kind)) {
-        await failStaleJob(env, user, retained);
+      const retained = await readJob(env, user.userId, row.job_id);
+      if (retained && rowIsStale(retained)) {
+        if(requiresForegroundDocumentExecution(retained))await reconcileStaleForegroundJob(env,user,retained);
+        else if(retained.attempt_count >= documentJobMaxAttempts(retained.kind))await failStaleJob(env, user, retained);
         reconciled = true;
       }
     }
