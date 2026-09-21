@@ -111,3 +111,23 @@ test("legacy saved facts retain their interpretation and structured values stay 
   unmatched[2].payload.object_id = "other-output";
   assert.deepEqual(inferTasteBeliefs(unmatched, inferenceTime), []);
 });
+
+for(const mode of ['explicit','original-reference','copied','later-chip'])test('Memory-assisted work is not independent taste evidence: '+mode,()=>{
+ const root=event(1,'BlockCreated',{block_id:'assisted',memory_authored_version:1,properties:{text:'memory wording'}});
+ const fact={block_id:'assisted',type:'style',properties:{text:'Repeated private suggestion'},...(mode==='explicit'?{authorship:'accepted-memory-assisted',independent_evidence:false}:{source_event_refs:[root.eventId]})};
+ const input=[root,event(2,'ContextCompiled',{generation_id:'generation',compiled_snapshot:{facts:[fact,{type:'palette',properties:{text:'Independent authored amber'}}]}}),
+  event(3,'GenerationCompleted',{generation_id:'generation',object_ids:['output']}),event(4,'ObjectSaved',{object_id:'output'})];
+ if(mode==='copied')root.payload.copied_from_block_id='original';
+ if(mode==='later-chip')input.push(event(5,'ChipEdited',{block_id:'assisted',property:'style',new_value:'Repeated private suggestion'}));
+ const now=new Date('2026-08-10T12:00:00Z'),beliefs=inferTasteBeliefs(input,now);
+ assert.deepEqual(beliefs.map(row=>row.value),['Independent authored amber']);
+ input.push(event(6,'TasteModelVersioned',{beliefs:[{claimRef:'stale',axis:'style',value:'Repeated private suggestion',polarity:'affirm',authority:'inferred',confidence:.99,evidenceRefs:[root.eventId]}]}));
+ input.push(event(7,'PreferenceAuthored',{preference_id:'explicit',axis:'style',value:'Deliberately confirmed preference',polarity:'affirm'}));
+ const capsule=preferenceCapsule(input);assert.ok(capsule.some(row=>row.value==='Deliberately confirmed preference'));assert.ok(!capsule.some(row=>row.value==='Repeated private suggestion'));
+});
+
+test('independent earlier edits and explicit later critique are not erased by later assistance',()=>{
+ const input=[event(1,'ChipEdited',{block_id:'b',property:'style',new_value:'Earlier human choice'}),event(2,'BlockPropertyEdited',{block_id:'b',property_path:'text',memory_authored_version:1,new_value:'Assisted choice'}),
+ event(3,'ObjectCritiqued',{object_id:'result',axis_ref:'style',polarity:'positive',value:'Explicit human critique'})];
+ assert.deepEqual(inferTasteBeliefs(input,new Date('2026-08-10')).map(row=>row.value).sort(),['Earlier human choice','Explicit human critique']);
+});

@@ -1115,3 +1115,14 @@ test("a retained execution epoch replaces every identical current-owner head but
   await assert.rejects(state.env.DB.batch(retained.assertions.flatMap((assertion) => outputAssertionStatements(state.env, assertion))), /CHECK constraint failed/u);
   assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS count FROM output_atomic_assertions").get().count, 0);
 });
+
+test('native Output current-context proof retains authored Memory attribution after feature shutdown',async()=>{
+ const state=await fixture(),scope={kind:'personal',key:`personal:${owner}:${project}`,ownerUserId:owner,actorUserId:owner,projectId:project,documentId:doc,organizationId:null,projectAccessId:null,contextId:null};
+ await appendEvents(state.env,[makeEvent(`creative:${owner}`,0,`user:${owner}`,'fixture','assisted-authorship','BlockPropertyEdited',{
+  project_id:project,document_id:doc,block_id:'source',property_path:'text',old_value:'An authored research source with no invented claims.',new_value:'Deliberately retained authored wording.',memory_authored_version:1})]);
+ state.env.FORMA_MEMORY_ENABLED='false';
+ const current=await loadOutputCurrentContext(state.env,scope),fact=current.context.snapshot.facts.find(row=>row.block_id==='source');
+ assert.equal(fact.properties.text,'Deliberately retained authored wording.');assert.equal(fact.authorship,'accepted-memory-assisted');assert.equal(fact.independent_evidence,false);
+ const checked=await state.env.DB.batch(current.assertions.map(assertion=>state.env.DB.prepare(`SELECT CASE WHEN (${assertion.sql}) THEN 1 ELSE 0 END AS verified`).bind(...(assertion.bindings??[]))));
+ assert.ok(checked.every(row=>row.results[0].verified===1));
+});

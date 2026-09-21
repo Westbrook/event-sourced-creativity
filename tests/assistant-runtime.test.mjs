@@ -17788,3 +17788,28 @@ for(const shared of [false,true])test('native profile consolidation: unavailable
  const body=await settings.json();assert.equal(settings.status,200);assert.equal(body.available,false);assert.deepEqual(body.qualifications,[]);
  assert.equal((await state.derivationRequest('PUT')).status,503);assert.equal(state.derivationRows().length,0);assert.equal(state.calls.length,0);
 });
+
+for(const shared of [false,true])test('authored Memory downstream: creative chat retains negative attribution after withdrawal '+shared,async t=>{
+ const state=await semanticAuthoredEditFixture(t,{shared});assert.equal((await state.applyAuthored()).status,200);
+ assert.equal(await state.resultStore.withdrawNativeDerivationResult(state.env,state.current().actor_user_id,state.executionJob.job_id),true);
+ state.env.FORMA_MEMORY_ENABLED='false';const requests=[],original=globalThis.fetch;
+ globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');const request=JSON.parse(init.body),input=JSON.parse(request.input);requests.push(input);
+  if(requests.length===1){const authored=input.blocks.find(block=>block.properties?.text==='Explicitly accepted authored direction.');assert.ok(authored);assert.equal(authored.authorship,'accepted-memory-assisted');assert.equal(authored.independent_evidence,false);}
+  else assert.ok(input.history.some(turn=>turn.role==='assistant'&&turn.authorship==='accepted-memory-assisted'&&turn.independent_evidence===false));
+  assert.doesNotMatch(JSON.stringify(input),new RegExp(state.authoredReview.executionId));
+  return Response.json({id:'synthetic-downstream-'+requests.length,model:request.model,
+   output_text:JSON.stringify({reply:'A deliberate follow-up based on the authored direction.',mutations:[{operation:'create',target_block_id:null,type:'direction',subtype:'General',instruction:'Authored follow-up '+requests.length,handle:'follow-up',reference_pixel_mode:'unchanged',image_format:null}],preview_worthy:false,preview_direction:''}),
+   usage:{input_tokens:80,output_tokens:20,total_tokens:100}});
+ };t.after(()=>{globalThis.fetch=original;});
+ for(let index=0;index<2;index++){
+  const accepted=await state.request('/api/document-jobs',json({kind:'chat',documentId:state.recallTarget.documentId,sourceSurface:'chat',payload:{message:'Refine the current creative direction.',livePreview:false}},state.owner));
+  assert.equal(accepted.status,202,await accepted.clone().text());const queued=await accepted.json();await state.drainBackground();
+  const job=state.sqlite.prepare('SELECT status,error_message FROM document_jobs WHERE job_id=?').get(queued.job.jobId);assert.equal(job.status,'completed',JSON.stringify(job));
+  const rows=state.sqlite.prepare("SELECT e.event_id,e.type,e.payload,p.private_json FROM events e LEFT JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.type IN('BlockCreated','AssistantReasoned') ORDER BY e.sequence DESC").all();
+  const created=rows.find(row=>row.type==='BlockCreated'&&JSON.parse(row.private_json??row.payload).properties?.text==='Authored follow-up '+(index+1));assert.ok(created);assert.equal(JSON.parse(created.payload).memory_authored_version,1);
+  assert.equal(JSON.parse(rows.find(row=>row.type==='AssistantReasoned').payload).memory_authored_version,1);
+  assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM memory_derivation_asset_edges WHERE target_kind='event' AND target_id=?").get(created.event_id).n,0);
+  if(index===0){for(const blockId of [state.authoredBlock,JSON.parse(created.payload).block_id]){const removed=await state.request('/api/events',json({action:'append',event:{type:'BlockRemoved',payload:{project_id:state.current().project_id,document_id:state.recallTarget.documentId,block_id:blockId}}},state.owner));assert.equal(removed.status,200,await removed.clone().text());}}
+ }
+ assert.equal(requests.length,2);assert.equal(state.providerCalls(),1,'No retired Memory provider work is repeated');
+});

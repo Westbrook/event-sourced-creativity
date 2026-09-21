@@ -2,6 +2,7 @@ import { isOutputContextBlock } from "./output-source-policy.ts";
 
 /** Durable platform terminology must never become model-facing creative copy. */
 const INTERNAL_CREATIVE_KEYS = new Set([
+  "source_chat_turn_id", "sourceChatTurnId", "memory_authored_version", "memoryAuthoredVersion",
   "combined_context",
   "combined_context_memberships",
   "context_group",
@@ -451,6 +452,7 @@ export function providerFacingRenderingContext(value: unknown, sources?: readonl
 /** Shared behavior expected from all authoring or rendering prompt envelopes. */
 export const CREATIVE_PROMPT_GUARDRAILS = [
   "Work only from active, authorized creative decisions.",
+  "Accepted-memory-assisted material is deliberately retained authored work, not independent evidence of a personal preference. Honor its current creative direction without inferring stable taste, consent, or broader preference from it or its generated descendants.",
   "Treat include and prefer decisions as direction; avoid and prohibit decisions are exclusions, never featured subjects.",
   "Preserve named subjects, ordered reference sets, spatial scope, and combined-context isolation.",
   "Never invent an authorial decision or expose application events, identifiers, provider machinery, or internal metadata.",

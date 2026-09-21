@@ -179,3 +179,5 @@ loss in those native copy paths, not independently authorized recall of the
 original private source or the remaining Output/Library/Canvas integrations.
 
 [Original-backed profile consolidation](forma-memory-profile-consolidation-2026-09-20.md) now connects a separately qualified semantic relationship recipe to native provider, finance, publication, original-source retirement, user corrections, export and localized Document review. Prior generated summaries are not new evidence; no automatic scope promotion or enrollment was introduced.
+
+[Authored downstream attribution](forma-memory-authored-downstream-2026-09-20.md) now reaches native Output/approved Canvas compilers, legacy creative chat and its descendants, with legacy taste feedback-loop exclusion. This is the deliberately authored-work path; it does not substitute for direct private-semantic output publication.

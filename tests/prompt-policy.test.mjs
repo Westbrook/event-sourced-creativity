@@ -348,3 +348,11 @@ test("rich composed decisions preserve full authored text while compacting redun
   assert.equal(context.relationships[0].to_label,"Focused workflow");
   assert.deepEqual([context.relationships[0].from_decision,context.relationships[0].to_decision],["decision_1","decision_2"]);
 });
+
+test('output prompt preserves negative Memory authorship without private source identities',()=>{
+ const snapshot={facts:[{block_id:'private-block',type:'direction',authorship:'accepted-memory-assisted',independent_evidence:false,
+  properties:{text:'Keep the current authored wording.'},source_event_refs:['private-edit'],source_chat_turn_id:'private-chat'}]};
+ const rendered=providerFacingRenderingContext(snapshot);
+ assert.equal(rendered.facts[0].authorship,'accepted-memory-assisted');assert.equal(rendered.facts[0].independent_evidence,false);
+ assert.doesNotMatch(JSON.stringify(rendered),/private-block|private-edit|private-chat/);
+});

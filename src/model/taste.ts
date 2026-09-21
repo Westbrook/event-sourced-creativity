@@ -1,3 +1,4 @@
+import {memoryAuthoredEventIds} from './memory-authorship.ts';
 import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
 import type { CreativeEvent } from "./events.ts";
 import { documentViewWorkflow } from "./document-view-signals.ts";
@@ -86,6 +87,7 @@ function savedContextFact(value: unknown): { axis: CreatorAxis; value: string; p
   }
   if (!value || typeof value !== "object" || Array.isArray(value) || !promptFactIsActive(value)) return null;
   const fact = value as Record<string, unknown>;
+  if(fact.independent_evidence===false||fact.authorship==="accepted-memory-assisted"||fact.memory_authored_version===1)return null;
   if (!fact.properties || typeof fact.properties !== "object" || Array.isArray(fact.properties)) return null;
   const properties = fact.properties as Record<string, unknown>;
   // Read creative values, never serialize the fact's asset/identity/provenance metadata.
@@ -105,6 +107,7 @@ function savedContextFact(value: unknown): { axis: CreatorAxis; value: string; p
 }
 
 function positiveContextEvidence(events: CreativeEvent[]) {
+  const marked=memoryAuthoredEventIds(events);
   const rows: Array<{axis:CreatorAxis;value:string;polarity:PreferencePolarity;event:CreativeEvent;refs:string[]}> = [];
   for (const outcome of events.filter((event) => /^(ObjectSaved|ObjectPinned|ObjectExported|AddedToLibrary|PromptFanOutputPromoted)$/.test(event.type))) {
     const objectId = String(outcome.payload.object_id ?? outcome.payload.item_id ?? "");
@@ -113,6 +116,7 @@ function positiveContextEvidence(events: CreativeEvent[]) {
     const compiled = [...events].reverse().find((event) => event.sequence < completed.sequence && event.type === "ContextCompiled" && event.payload.generation_id === completed.payload.generation_id);
     const snapshot = compiled?.payload.compiled_snapshot as Record<string, unknown> | undefined;
     for (const value of list(snapshot?.facts).slice(0,6)) {
+      if(value&&typeof value==="object"&&!Array.isArray(value)&&list((value as Record<string,unknown>).source_event_refs).some(id=>marked.has(String(id))))continue;
       const fact = savedContextFact(value); if (!fact) continue;
       rows.push({...fact,event:outcome,refs:[compiled?.eventId,completed.eventId,outcome.eventId].filter((item):item is string=>Boolean(item))});
     }
@@ -121,8 +125,11 @@ function positiveContextEvidence(events: CreativeEvent[]) {
 }
 
 export function inferTasteBeliefs(events: CreativeEvent[], now = new Date()) {
+  const marked=memoryAuthoredEventIds(events),assistedBlocks=new Set<string>();
   const candidates: Array<{axis:CreatorAxis;value:string;polarity:PreferencePolarity;event:CreativeEvent;refs:string[]}> = positiveContextEvidence(events);
   for (const event of events) {
+    if(marked.has(event.eventId))assistedBlocks.add(String(event.payload.block_id));
+    if(event.payload.memory_authored_version===1||event.payload.source_chat_turn_id||event.payload.source_surface==="assistant"||event.type==="ChipEdited"&&assistedBlocks.has(String(event.payload.block_id)))continue;
     if (event.type === "ChipEdited") candidates.push({ axis:axisFor(String(event.payload.property ?? "style")), value:concise(event.payload.new_value), polarity:"affirm", event, refs:[event.eventId] });
     if (event.type === "ObjectCritiqued") candidates.push({ axis:safeAxis(event.payload.axis_ref), value:concise(event.payload.value ?? `${String(event.payload.axis_ref ?? "style")} critique`), polarity:event.payload.polarity === "positive" ? "affirm" : "forbid", event, refs:[event.eventId] });
   }
@@ -142,7 +149,11 @@ export function preferenceCapsule(events: CreativeEvent[], limit = 8) {
   const latestVersion = events.filter((event)=>event.type==="TasteModelVersioned").at(-1);
   const retracted = new Set(events.filter((event)=>event.type==="FactRetracted").map((event)=>String(event.payload.fact_ref)));
   const versionBeliefs = list(latestVersion?.payload.beliefs).map((item)=>item as TasteBelief).filter((item)=>!retracted.has(item.claimRef));
-  const inferred = versionBeliefs.length ? versionBeliefs : inferTasteBeliefs(events);
+  // An old model snapshot cannot launder assisted evidence after attribution
+  // becomes available. Rebuild this derived view; explicitly authored preferences
+  // and retractions remain authoritative and are never removed by this filter.
+  const assisted=events.some(event=>event.payload.memory_authored_version===1||event.type==='ContextCompiled'&&list((event.payload.compiled_snapshot as Record<string,unknown>|undefined)?.facts).some(value=>value&&typeof value==='object'&&('independent_evidence' in value&&value.independent_evidence===false||'authorship' in value&&value.authorship==='accepted-memory-assisted')));
+  const inferred = versionBeliefs.length&&!assisted ? versionBeliefs : inferTasteBeliefs(events);
   const authoredKeys = new Set(authored.map((item)=>`${item.axis}:${item.value.toLowerCase()}:${item.polarity}`));
   return [...authored,...inferred.filter((item)=>!authoredKeys.has(`${item.axis}:${item.value.toLowerCase()}:${item.polarity}`))].sort((left,right)=>Number(right.authority==="authored")-Number(left.authority==="authored")||right.confidence-left.confidence).slice(0,limit);
 }

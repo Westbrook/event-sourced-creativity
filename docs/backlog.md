@@ -273,3 +273,7 @@ Implemented [exact-field saved suggestion reuse](forma-memory-field-completion-2
 ### MEM-003 source-backed profile consolidation
 
 [Profile consolidation](forma-memory-profile-consolidation-2026-09-20.md) adds a separately qualified original-evidence recipe for tentative revision/contradiction relationships, exact anchor lineage, native correction/retirement and localized review/export. Continue the remaining native consumers, resource zooms, promotion and integrated qualification in the completion matrix. No deployment or enrollment.
+
+### MEM-003 authored downstream attribution
+
+[Downstream attribution](forma-memory-authored-downstream-2026-09-20.md) now survives canonical Output/Canvas context, legacy creative-chat mutations/history and optional preview direction. Legacy taste inference cannot count assisted descendants as independent evidence or revive them through an old cached model. Authored work survives withdrawal. Direct private-semantic output integration remains separate work.

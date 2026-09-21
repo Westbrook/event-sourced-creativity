@@ -52,3 +52,15 @@ test('rights fold handles empty identities, non-rights events, audio classes and
     assert.throws(()=>fold.accept(input[0]),/already_finished/);assert.throws(()=>fold.finish(),/already_finished/);
   }
 });
+
+for(const canvas of [false,true])test('authored Memory attribution survives native output compilation and streamed pages '+canvas,()=>{
+ const input=structuredClone(streamedContextFixture);
+ input.push(event(10,'BlockPropertyEdited',{block_id:'r',document_id:'d',project_id:'p',property_path:'text',old_value:'Retained source',new_value:'Accepted assistance',memory_authored_version:1}));
+ input.push(event(11,'BlockPropertyEdited',{block_id:'r',document_id:'d',project_id:'p',property_path:'text',old_value:'Accepted assistance',new_value:'Later deliberate wording'}));
+ const request={documentId:'d',projectId:'p',...(canvas?{canvasId:'c',contextSetId:'cs'}:{}),snapshot:{facts:[{block_id:'r',authorship:'independent',independent_evidence:true}]}};
+ const eager=authoritativeCreativeContext(input,request),fold=createAuthoritativeCreativeContextFold(request);
+ for(const row of input)fold.accept(row);
+ assert.deepEqual(fold.finish(),eager);assert.equal(eager.snapshot.facts[0].authorship,'accepted-memory-assisted');assert.equal(eager.snapshot.facts[0].independent_evidence,false);
+ assert.equal(eager.snapshot.facts[0].properties.text,'Later deliberate wording');
+ const clean=authoritativeCreativeContext(streamedContextFixture,request);assert.equal(Object.hasOwn(clean.snapshot.facts[0],'authorship'),false,'Browser flags never fabricate canonical source history');
+});
