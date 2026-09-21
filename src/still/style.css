@@ -282,3 +282,22 @@ still-app .idea-choice-description.prominent { font-family: Georgia, serif; font
 
 still-app .audio-waveform .waveform-played { color: var(--en-color-brand); }
 still-app .audio-waveform .waveform-playhead { stroke: var(--en-color-brand); opacity: .8; stroke-width: 1; }
+
+/* Inspection is deliberately more expansive than the regular content canvas. */
+still-rejection-page { display: block; min-width: 0; }
+still-app .rejection-page { max-width: 980px; width: 100%; margin-inline: auto; overflow-wrap: anywhere; }
+still-app .rejection-page h1 { font-size: clamp(2.5rem, 6vw, 5rem); }
+still-app .rejection-page h2 { font-size: 1.65rem; margin-block: 0 1rem; }
+still-app .rejection-page h3 { font-size: 1.15rem; }
+still-app .rejection-page section { margin-block: 3rem; }
+still-app .rejection-page p { font-size: 1rem; line-height: 1.65; max-width: 80ch; }
+still-app .rejection-page .rejection-lead { font-size: 1.2rem; }
+still-app .rejection-page blockquote { margin: 1rem 0; padding-inline-start: 1rem; border-inline-start: 3px solid var(--en-color-border); line-height: 1.6; }
+still-app .rejection-page details { margin-block: 1rem; padding: 1rem; border: 1px solid var(--en-color-border); border-radius: 12px; }
+still-app .rejection-page summary { cursor: pointer; font-weight: 600; line-height: 1.5; }
+still-app .rejection-page pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; line-height: 1.6; padding: 1rem; background: var(--en-color-surface-subtle); border-radius: 8px; max-height: 36rem; overflow: auto; }
+still-app .rejection-page dl { margin: 0; }
+still-app .rejection-page dl > div { display: grid; grid-template-columns: minmax(10rem, 1fr) minmax(0, 2fr); gap: 1rem; padding-block: .6rem; border-bottom: 1px solid var(--en-color-border); }
+still-app .rejection-page dt { font-weight: 600; }
+still-app .rejection-page dd { margin: 0; }
+@media (max-width: 550px) { still-app .rejection-page dl > div { grid-template-columns: 1fr; gap: .25rem; } }

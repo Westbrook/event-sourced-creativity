@@ -27,6 +27,7 @@ export function stillPageTitle(address:string,p?:CreativeProjection,jobs:readonl
  if(route.view==='projects')return join('Projects',page);
  if(route.view==='documents')return join('Documents',project?.name,page);
  if(route.view==='results')return join('Results',doc?.title,page);
+ if(route.view==='rejection')return join('Inspect rejection',doc?.title);
  if(route.view==='generation'){
   const job=doc?jobs.find(j=>j.jobId===route.outputId&&j.documentId===doc.id):undefined;
   const format=job?formats[generationFormat(job)]||'Generation':'Generation';

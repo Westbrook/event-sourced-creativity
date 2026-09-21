@@ -53,7 +53,7 @@ export class StillClient {
   readonly generationActivity = new GenerationActivity();
   private jobsReadKey = '';
   jobsError = '';
-  private get jobsKey() { return `${this.epoch}:${this.scopeKey}:${this.position.documentId}:${this.position.view==='generation'?this.position.outputId:''}`; }
+  private get jobsKey() { return `${this.epoch}:${this.scopeKey}:${this.position.documentId}:${['generation','rejection'].includes(this.position.view)?this.position.outputId:''}`; }
   get jobsLoaded() { return this.jobsReadKey===this.jobsKey; }
   epoch = 0;
   position: Position = { projectId: '', documentId: '', blockId: '', outputId: '', view: 'projects', intent: '', recentActions: [] };
@@ -455,6 +455,38 @@ export class StillClient {
       }
     });
   }
+  /** Response-only, actor-authorized evidence. Never put private receipts in shared caches. */
+  async inspectGeneration(jobId:string,documentId:string) {
+    const check=await this.verifyScope(),shared=!!this.session?.projectContext;
+    const current=()=>{check();if(this.position.outputId!==jobId||this.position.documentId!==documentId||this.position.view!=='rejection')throw new Error('Inspection changed.');};
+    current();
+    const detail=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(jobId)}?inspection=1`);current();
+    const matches=(job:DocumentJob|undefined)=>job?.jobId===jobId&&job.documentId===documentId;
+    if(!matches(detail.job))throw new Error('Generation unavailable.');
+    let job=detail.job;const content:Record<string,string>={};const unavailable:string[]=[];
+    if(shared){
+      try{
+        const privateReceipt=await this.request<{job:DocumentJob;content:Record<string,string>}>(`/api/document-jobs/${encodeURIComponent(jobId)}/private-receipt`);current();
+        if(!matches(privateReceipt.job))throw new Error('Receipt does not match this attempt.');
+        const receipt=privateReceipt.job.result?.generationReceipt as Record<string,unknown>|undefined,ref=receipt?.input_ref;
+        const raw=typeof ref==='string'?privateReceipt.content?.[ref]:undefined;
+        const parsed=raw?JSON.parse(raw):null;
+        if(!parsed||parsed.job_id!==jobId||parsed.document_id!==documentId)throw new Error('Receipt does not match this attempt.');
+        job=privateReceipt.job;content[String(ref)]=raw!;
+      }catch(error){current();if(error instanceof ApiError&&![403,404,410].includes(error.status))throw error;unavailable.push('Private inputs are unavailable to this viewer or no longer retained.');}
+    }else{
+      const receipt=job.result?.generationReceipt as Record<string,unknown>|undefined;
+      const refs=[...new Set([receipt?.input_ref,job.moderationPromptRef,...(job.members??[]).map(member=>member.moderationPromptRef)].filter((ref):ref is string=>typeof ref==='string'&&!!ref))];
+      await Promise.all(refs.map(async ref=>{
+        try{
+          const response=await this.request<{content?:Record<string,string>}>(`/api/events?after=${this.head}&limit=1&content=1&contentId=${encodeURIComponent(ref)}`);current();
+          if(typeof response.content?.[ref]==='string')content[ref]=response.content[ref];
+          else unavailable.push('Some original inputs are unavailable or their retention period expired.');
+        }catch(error){current();if(error instanceof ApiError&&[401,403].includes(error.status))throw error;unavailable.push('Some retained inputs could not be loaded.');}
+      }));
+    }
+    current();return {job,content,unavailable:[...new Set(unavailable)]};
+  }
   async pollJobs() {
     const document = this.position.documentId, key = this.jobsKey;
     if (this.polling?.key === key) return this.polling.promise;
@@ -462,8 +494,17 @@ export class StillClient {
     const operation = (async () => {
       const check = await this.verifyScope();
       if (read !== this.jobRead || document !== this.position.documentId) return;
+      if(this.position.view==='rejection'){
+        // Inspection is observational: never recover or dispatch queued jobs.
+        const selected=this.position.outputId;
+        const detail=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(selected)}?inspection=1`);check();
+        if(read!==this.jobRead||key!==this.jobsKey)return;
+        if(detail.job?.jobId!==selected||detail.job.documentId!==document)throw new Error('Generation unavailable.');
+        this.jobs=[...this.jobs.filter(j=>j.documentId===document&&j.jobId!==selected),detail.job];
+        this.jobsReadKey=key;this.jobsError='';this.onChange();return;
+      }
       const known=new Set(this.jobs.map(j=>j.jobId));
-      const selected=this.position.view==='generation'?this.position.outputId:'';
+      const selected=['generation','rejection'].includes(this.position.view)?this.position.outputId:'';
       const result = await this.request<{ jobs: DocumentJob[] }>(document ? `/api/document-jobs?document=${encodeURIComponent(document)}` : '/api/document-jobs?scope=active'); check();
       if (read !== this.jobRead || document !== this.position.documentId) return;
       if (!Array.isArray(result.jobs) || result.jobs.some(j => !j || typeof j.documentId !== 'string' || typeof j.jobId !== 'string')) throw new Error('The job history could not be verified.');

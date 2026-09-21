@@ -1,6 +1,12 @@
 import { documentJobCanAcknowledgeSafety, documentJobFailure, type DocumentJob } from '../model/document-jobs.ts';
 import { generationActive, generationFormat } from './results.ts';
 
+export function canInspectRejection(job: DocumentJob | undefined) {
+  if (!job || !['failed', 'partial'].includes(job.status)) return false;
+  const failure = documentJobFailure({...job, members:job.members??[]});
+  return failure?.category === 'safety' || /reject|moderation|safety/.test(failure?.code ?? '');
+}
+
 /** Deliberately excludes prompts, provider URLs, receipts and private checkpoints. */
 export function generationDecisionContext(job: DocumentJob | undefined) {
   if (!job) return undefined;
@@ -11,10 +17,10 @@ export function generationDecisionContext(job: DocumentJob | undefined) {
   return {
     jobId: job.jobId, documentId: job.documentId, format: generationFormat(job), status: job.status,
     attempt: job.attemptCount, active: generationActive(job), failureCode: failure?.code ?? '', failureCategory: failure?.category ?? '',
-    acceptance, needsAcknowledgement: documentJobCanAcknowledgeSafety(job),
+    acceptance, rejected: canInspectRejection(job), needsAcknowledgement: documentJobCanAcknowledgeSafety(job),
     canStartNew: ['failed', 'canceled'].includes(job.status),
     refreshEffect: 'Read saved job status; does not reconcile a missing provider receipt or submit a request.',
-    newGenerationEffect: 'Starts a separate paid request using current document context; does not resume the original.',
+    newGenerationEffect: 'Starts a separate paid request using current document context; does not resume the original. Unchanged inputs may be rejected again and still incur costs.',
     mayDuplicateCharge: acceptance === 'unknown' && job.status === 'failed',
   };
 }

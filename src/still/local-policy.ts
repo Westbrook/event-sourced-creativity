@@ -44,7 +44,11 @@ export function localActionRules(p:CreativeProjection,pos:Position):LocalRule[]{
   const done=pos.recentActions.findLast(id=>id.startsWith('completed:'))?.slice(10);
   if(pos.view==='projects'){add('new-project',p.projects.length?'Start another project':'Your workspace has no projects');return rules;}
   if(pos.view==='documents'){add('new-document',p.documents.some(d=>!d.removed)?'Add a document to this project':'This project has no documents');add('projects','Browse another project');return rules;}
+  if(pos.view==='rejection'){
+    add('context','Review and revise the source document');add('view-output','Return to this attempt');add('clarify','Clarify the intended request');add('add-context','Change the contributing ideas');add('create','Consider another output');add('generate-again','Deliberately start another paid attempt');return rules;
+  }
   if(pos.view==='generation'){
+    if(pos.generation?.rejected)add('inspect-rejection','Investigate the rejected request before another purchase');
     if(pos.generation?.mayDuplicateCharge){add('refresh-generation','Original request is unconfirmed; check saved status');add('context','Inspect the source before another request');}
     else{add('context',pos.generation?.active?'Work on the source while generation continues':'Inspect or revise the source');add('refresh-generation','Check the saved generation status');}
     add('results','Review existing results');add('generate-again','Explicitly start a separate generation');return rules;

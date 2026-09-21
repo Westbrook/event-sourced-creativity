@@ -1,3 +1,4 @@
+import './rejection-page.ts';
 import { stillPageTitle } from './page-title.ts';
 import { isIdeaPage, pageToolbarCandidates, withDocumentReturn, DOCUMENT_RETURN_REASON } from './local-policy.ts';
 import {matchingIdeaAssessment,cachedIdeaAssessment,type IdeaAssessment} from './idea-assessment.ts';
@@ -83,7 +84,7 @@ export class StillApp extends LitElement {
     const ref=this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.contentRef;
     return stableDecisionKey({scope:this.client.scopeKey,epoch:this.client.epoch,head:this.client.head,abilities:this.client.abilities,selectedContent:ref?this.client.content[ref]:undefined,body});
   }
-  private decisionPosition():Position {const generation=this.client.position.view==='generation'?generationDecisionContext(this.selectedGeneration()):undefined;return {...this.client.position,...(generation?{generation:{...generation,canStartNew:generation.canStartNew&&!this.client.pendingGeneration&&!this.client.hasUnconfirmedWrite}}:{})};}
+  private decisionPosition():Position {const generation=['generation','rejection'].includes(this.client.position.view)?generationDecisionContext(this.selectedGeneration()):undefined;return {...this.client.position,...(generation?{generation:{...generation,canStartNew:generation.canStartNew&&!this.client.pendingGeneration&&!this.client.hasUnconfirmedWrite}}:{})};}
   private decisionBody(extra:Record<string,unknown>={}){return {...this.decisionPosition(),...extra,...(this.developer?{developer:true}:{})};}
   private async requestDecision(body:Record<string,unknown>,bypass=false,timeout?:number,onInitial?:(value:DecisionResponse)=>void){
     const result=await this.decisionMemory.run(this.decisionKey(body),()=>fetchDecision({...body,...(bypass?{cacheBypass:true}:{})},onInitial,timeout),bypass);
@@ -563,7 +564,7 @@ export class StillApp extends LitElement {
       const interval = this.client.generationActivity.hasActive || this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 60000;
       if (force || now - this.lastJobsPoll >= interval) { this.lastJobsPoll = now; work.push(this.client.pollJobs()); }
       await Promise.allSettled(work);
-      if(this.client.position.view==='generation'){const signature=JSON.stringify(this.decisionPosition().generation);if(signature!==this.lastGenerationDecision){this.lastGenerationDecision=signature;this.decide();}}
+      if(['generation','rejection'].includes(this.client.position.view)){const signature=JSON.stringify(this.decisionPosition().generation);if(signature!==this.lastGenerationDecision){this.lastGenerationDecision=signature;this.decide();}}
     } finally { this.syncPending = false; }
   }
   private poll() {
@@ -705,6 +706,8 @@ export class StillApp extends LitElement {
     if(id==='use-in')this.useInTarget=this.suggestionTargets[id]??'';
     if(id==='ui:developer'){this.closeMode();this.setDeveloper(true);return;}
     this.client.position.recentActions = [...this.client.position.recentActions, id].slice(-12);
+    if (id === 'inspect-rejection') return this.navigate('rejection',{outputId:this.client.position.outputId});
+    if (id === 'view-output') return this.navigate('generation',{outputId:this.client.position.outputId});
     if (id === 'refresh-generation') return void this.refreshGenerationStatus();
     if (id === 'generate-again') return void this.generateAgain(this.client.position.outputId);
     if (id === 'projects') return this.navigate('projects', { projectId: '', documentId: '' });
@@ -881,7 +884,7 @@ export class StillApp extends LitElement {
     if(this.busy||this.composing||this.directGeneration||job?.jobId!==jobId||!this.canGenerateAgain(job))return;
     const format=generationFormat(job)!;
     this.generationCheck=null;this.generation=null;
-    if(format==='video'){this.inlineGenerationKey=this.generationCheckKey();this.generationGate=null;this.error='';}
+    if(format==='video'&&this.client.position.view==='generation'){this.inlineGenerationKey=this.generationCheckKey();this.generationGate=null;this.error='';}
     else this.begin('generate');
     return this.startGeneration(format);
   }
@@ -950,6 +953,7 @@ export class StillApp extends LitElement {
       const results = stillResults(p,c.jobs,c.events);
       return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1>${this.renderList(results,r => html`<a data-attention-id=${`result:${r.id}`} class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:safeMedia(r.url) ? stillImage(safeMedia(r.url),r.title,r) : html`<div class="result-word">${FORMATS[r.kind]}</div>`}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`,'result-grid')}${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     }
+    if(pos.view==='rejection')return keyed(this.generationCheckKey(),html`<still-rejection-page .client=${c} .scope=${this.generationCheckKey()}></still-rejection-page>`);
     if(pos.view==='generation')return this.renderGeneration();
     if (pos.view === 'artifact') {
       const a = p.artifacts.find(x => x.id === pos.outputId), o = p.outputs.find(x => x.id === pos.outputId);

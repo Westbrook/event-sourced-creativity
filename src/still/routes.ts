@@ -40,6 +40,7 @@ export function parseStillRoute(value:string|URL):StillRoute|null {
       }else if(parts[i]==='results'){route.view='results';i++;}
       else if(parts[i]==='generation'){
         const job=id(parts[++i]??'');if(!job)return null;route.outputId=job;route.view='generation';i++;
+        if(parts[i]==='rejection'){route.view='rejection';i++;}
       }
       else if(parts[i]==='result'){
         const result=id(parts[++i]??'');if(!result)return null;route.outputId=result;route.view='artifact';i++;
@@ -73,7 +74,7 @@ export function stillPath(route:StillRoute):string {
     if(route.view==='artifact'){
       path+=`/result/${encode(route.outputId)}`;
       if(route.itemIndex)path+=`/item/${route.itemIndex+1}`;
-    }else if(route.view==='generation')path+=`/generation/${encode(route.outputId)}`;
+    }else if(['generation','rejection'].includes(route.view))path+=`/generation/${encode(route.outputId)}${route.view==='rejection'?'/rejection':''}`;
     else if(route.view==='results')path+='/results';
     else if(route.blockId)path+=`/block/${encode(route.blockId)}`;
   }
@@ -97,7 +98,7 @@ export function stillRouteProblem(route:StillRoute,p:CreativeProjection,resultCo
   if(route.blockId&&!p.blocks.some(x=>x.id===route.blockId&&x.documentId===route.documentId&&x.projectId===route.projectId&&!x.removed))return 'Idea unavailable';
   const artifact=p.artifacts.find(x=>x.id===route.outputId&&x.documentId===route.documentId);
   // Generation membership is checked against the authorized jobs endpoint by the view.
-  if(route.view!=='generation'&&route.outputId&&!artifact&&!p.outputs.some(x=>x.id===route.outputId&&x.documentId===route.documentId&&!x.discarded))return 'Result unavailable';
+  if(!['generation','rejection'].includes(route.view)&&route.outputId&&!artifact&&!p.outputs.some(x=>x.id===route.outputId&&x.documentId===route.documentId&&!x.discarded))return 'Result unavailable';
   if((route.itemIndex||route.itemExplicit)&&(!artifact||!['slides','storyboard'].includes(artifact.kind)||!artifact.items[route.itemIndex]))return 'Item unavailable';
   const count=route.view==='projects'?p.projects.length:route.view==='documents'?p.documents.filter(d=>!d.removed).length:route.view==='document'?p.blocks.filter(b=>!b.removed).length:resultCount??p.outputs.filter(o=>!o.discarded).length+p.artifacts.length;
   if(route.page&&route.page*3>=count)return 'Page unavailable';

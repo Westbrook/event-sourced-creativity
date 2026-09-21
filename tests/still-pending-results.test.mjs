@@ -38,8 +38,8 @@ for(const shared of [false,true])test(`pending deep links hydrate through the au
   const e=await appendAuditEvent(f.env,f.streamId,`user:${f.owner}`,'ProjectDocumentJobQueued',{job_id:id,document_id:f.documentId,project_id:f.projectId,organization_id:s.organizationId,project_access_id:s.projectAccessId,history_owner_user_id:f.owner,actor_user_id:f.owner,kind:'generate'});
   f.sqlite.prepare(`INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'job',?,?,?,?,'actor_private',?,?,?)`).run(s.projectAccessId,id,s.organizationId,f.projectId,f.owner,e.eventId,f.owner,now);
  }
- let writes=0;
- globalThis.fetch=async(url,init)=>{assert.ok(String(url).startsWith('/'));if(init?.method==='POST')writes++;return f.request(url,init);};
+ const writes=[];
+ globalThis.fetch=async(url,init)=>{assert.ok(String(url).startsWith('/'));if(init?.method==='POST')writes.push(String(url));return f.request(url,init);};
  try{
   const c=new StillClient();await c.load({hydrateContent:false});c.position={...c.position,projectId:f.projectId,documentId:f.documentId,view:'generation',outputId:id};
   await c.pollJobs();assert.equal(c.jobsLoaded,true);assert.equal(c.jobs[0].jobId,id);assert.equal(c.jobs[0].status,'queued');assert.deepEqual(c.jobs[0].imageSize,{width:1024,height:1536});assert.deepEqual(generationPreview(c.jobs[0],c.projection,[]).width,1024);
@@ -47,7 +47,7 @@ for(const shared of [false,true])test(`pending deep links hydrate through the au
   f.sqlite.prepare("UPDATE document_jobs SET status='completed',notified_at=?,completed_at=? WHERE job_id=?").run(now,now,id);
   await c.pollJobs();assert.equal(c.jobs.find(j=>j.jobId===id)?.status,'completed','Direct lookup retains a completed job omitted from recent results');
   c.position.outputId='missing';await c.pollJobs();assert.ok(!c.jobs.some(j=>j.jobId==='missing'));assert.equal(c.jobsError,'');
-  assert.equal(writes,0,'Reading a pending generation must not repeat, run or admit it');
+  assert.deepEqual(writes,[`/api/document-jobs/${id}/run`],'Resume the already-authorized queued attempt once; never admit a replacement during reads');
  }finally{globalThis.fetch=saved;f.close();}
 });
 
