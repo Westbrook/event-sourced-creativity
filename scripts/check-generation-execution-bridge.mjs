@@ -20,7 +20,7 @@ if(mode==='--mock') {
     console.log(JSON.stringify({mode:'MOCK_ONLY',first:first.action,rerun:reuse.action,realProviderCalls:0,...executionSummary(plan,journal)},null,2));
   }finally{journal.close();await rm(directory,{recursive:true,force:true});}
 }else{
-  const plan=await firstCompilerStudy(),bytes=JSON.stringify(plan,null,2)+'\n',path=new URL('../evals/generation-reliability/bridge-artifacts/v3/first-study.json',import.meta.url);
+  const plan=await firstCompilerStudy(),bytes=JSON.stringify(plan,null,2)+'\n',path=new URL('../evals/generation-reliability/bridge-artifacts/v4/first-study.json',import.meta.url);
   if(mode==='--write') {
     await mkdir(new URL('.',path),{recursive:true});
     try {await writeFile(path,bytes,{flag:'wx',mode:0o600});}catch(error){if(error.code!=='EEXIST')throw error;}
@@ -28,5 +28,6 @@ if(mode==='--mock') {
   if(await readFile(path,'utf8')!==bytes) throw new Error('immutable_study_changed_create_new_reviewed_version');
   console.log(JSON.stringify({mode:'dry-run',executionPlanId:plan.id,manifestId:plan.manifest.id,candidateId:plan.candidate.id,financialId:plan.financial.id,
     counts:plan.manifest.counts,preparation:plan.preparation,inventory:plan.inventory,maximumCostMicrousd:null,authorizedCostMicrousd:0,
+    financialEvidence:{id:plan.financial.id,reviewExpiresAt:plan.financial.pricingEvidence.reviewExpiresAt,reviewExpired:Date.now()>=Date.parse(plan.financial.pricingEvidence.reviewExpiresAt),renewed:false,currentRuntimeQualified:false},
     liveAdmitted:false,realProviderCalls:0},null,2));
 }
