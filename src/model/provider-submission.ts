@@ -14,6 +14,10 @@ export type PaidProviderSubmission = {
   totalTokens?: number;
   /** Frozen per-call evidence. A client ID is a trace, never provider idempotency. */
   requestDigest?: string;
+  responseDigest?: string;
+  /** Independent observations, never settlement/admission authority. */
+  contentOutcome?: import("./generation-outcome-evidence.ts").ContentOutcome;
+  accountingState?: import("./generation-outcome-evidence.ts").AccountingState;
   reasoningEffort?: string;
   maximumOutputTokens?: number;
   submittedAt?: string;
@@ -43,7 +47,7 @@ export type PaidProviderSubmissionObserver = (receipt: PaidProviderSubmission) =
 
 /** Source-free billing evidence survives private-body retention and cancellation. */
 export const PAID_PROVIDER_FINANCIAL_FIELDS = ["clientRequestId", "provider", "operation", "model", "unitId", "status", "providerRequestId", "costMicrousd", "inputTokens", "outputTokens", "totalTokens",
-  "requestDigest", "reasoningEffort", "maximumOutputTokens", "submittedAt", "responseReceivedAt", "httpRequestId", "completionStatus", "incompleteReason",
+  "responseDigest", "contentOutcome", "accountingState", "requestDigest", "reasoningEffort", "maximumOutputTokens", "submittedAt", "responseReceivedAt", "httpRequestId", "completionStatus", "incompleteReason",
   "cachedInputTokens", "cacheWriteInputTokens", "reasoningTokens", "pricingVersion", "textInputCostMicrousd", "textOutputCostMicrousd", "effectiveModel", "routingPhase", "routingVersion", "serviceTier", "cachePolicy", "usageCostBasis", "pricingReceipt", "latencyMs"] as const satisfies readonly (keyof PaidProviderSubmission)[];
 
 export function definitiveProviderRejection(status: number) {

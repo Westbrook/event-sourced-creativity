@@ -42,12 +42,14 @@ export async function readWorkerFetchWrapper(indexFile = new URL("../../worker/i
       };`;
   }
 
-  let memoryRepairPath = null;
+  let memoryRepairPath = null, eventSaveRepairPath = null;
   if (/\bMEMORY_SCHEMA_REPAIR_PATH\b/u.test(wrapperText)) {
     const source = await readFile(new URL("./memory-schema-repair-api.ts", indexUrl), "utf8");
     const declarations = [...source.matchAll(/^export const MEMORY_SCHEMA_REPAIR_PATH='([^'\r\n]+)';$/gmu)];
     assert.equal(declarations.length, 1, "The actual immutable Memory repair path must be located exactly once");
     memoryRepairPath = declarations[0][1];
+    const saveDeclarations = [...source.matchAll(/^export const EVENT_SAVE_REPAIR_PATH='([^'\r\n]+)';$/gmu)];
+    if (/\bEVENT_SAVE_REPAIR_PATH\b/u.test(wrapperText)) { assert.equal(saveDeclarations.length, 1); eventSaveRepairPath = saveDeclarations[0][1]; }
   }
 
   function wrapper(status, sponsorResponseIdentity = "unhandled") {
@@ -56,9 +58,9 @@ export async function readWorkerFetchWrapper(indexFile = new URL("../../worker/i
     let retentionCalls = 0, routes = 0;
     // Only observe the surrounding dispatch effects. Retention decisions execute
     // the complete production wrapper and its real selected-share classifier.
-    const fetch = new Function("routeResponse", "schedulePrivateContentRetention", "OUTPUT_SCHEMA_PREFLIGHT_PATH", "isSelectedOutputShareApiPath", "sponsorResponseIdentity", "MEMORY_SCHEMA_REPAIR_PATH", `${sponsorSetup}\nreturn (${wrapperText});`)(
+    const fetch = new Function("routeResponse", "schedulePrivateContentRetention", "OUTPUT_SCHEMA_PREFLIGHT_PATH", "isSelectedOutputShareApiPath", "sponsorResponseIdentity", "MEMORY_SCHEMA_REPAIR_PATH", "EVENT_SAVE_REPAIR_PATH", `${sponsorSetup}\nreturn (${wrapperText});`)(
       async () => { routes++; return Response.json({ status }, { status }); },
-      () => { retentionCalls++; }, preflightPath, isSelectedOutputShareApiPath, sponsorResponseIdentity, memoryRepairPath);
+      () => { retentionCalls++; }, preflightPath, isSelectedOutputShareApiPath, sponsorResponseIdentity, memoryRepairPath, eventSaveRepairPath);
     return { fetch, counts: () => ({ retentionCalls, routes }) };
   }
   return { indexText, preflightPath, supportsSponsorResponseIdentity, wrapper };

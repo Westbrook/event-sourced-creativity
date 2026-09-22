@@ -1,0 +1,3100 @@
+{
+  "completed": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "completed",
+        "dispatched": true,
+        "maximumCostMicrousd": 1000,
+        "artifactHash": "8dd6df18f39390a986871f41f0f834c9642375d9b6d043fe4ff450bdb7095609",
+        "artifact": {
+          "width": 1536,
+          "height": 1024,
+          "format": "png"
+        },
+        "callCounts": {
+          "planner": 0,
+          "media": 1,
+          "moderation": 1,
+          "contextChecker": 0,
+          "evaluator": 1,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "judgment": {
+          "artifactUsable": true,
+          "unsafe": false,
+          "scores": {
+            "authored-brief": 4
+          }
+        },
+        "costs": [
+          {
+            "stage": "media",
+            "costMicrousd": 700,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          },
+          {
+            "stage": "evaluator",
+            "costMicrousd": 200,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:1"
+          },
+          {
+            "stage": "moderation",
+            "costMicrousd": 0,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:2"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "media_result",
+          "providerModerationStage": "unknown",
+          "failureKind": null,
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "usable",
+          "dispatchState": "response_received",
+          "accountingState": "usage_recorded"
+        },
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "unexecuted_fixture_not_supplied",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 1,
+        "completed": 1,
+        "blocked": 0,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 1,
+        "denominator": 1,
+        "rate": 1,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "completed": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "media_result",
+            "providerModerationStage": "unknown",
+            "failureKind": null,
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "usable",
+            "dispatchState": "response_received",
+            "accountingState": "usage_recorded"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 700,
+            "unknownCalls": 0
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 200,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 900,
+        "unknownCalls": 0,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": 900,
+      "totalCostPerUsableMicrousd": 900,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 1,
+              "rate": 1
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": false
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  },
+  "plannerRefusal": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "blocked",
+        "dispatched": false,
+        "artifactHash": null,
+        "judgment": null,
+        "maximumCostMicrousd": 1000,
+        "callCounts": {
+          "planner": 1,
+          "media": 0,
+          "moderation": 0,
+          "contextChecker": 0,
+          "evaluator": 0,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "costs": [
+          {
+            "stage": "planner",
+            "costMicrousd": 50,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "planner",
+          "providerModerationStage": "unknown",
+          "failureKind": "safety",
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "refused",
+          "dispatchState": "not_dispatched",
+          "accountingState": "usage_recorded"
+        },
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "unexecuted_fixture_not_supplied",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 0,
+        "completed": 0,
+        "blocked": 1,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 0,
+        "denominator": 1,
+        "rate": 0,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "blocked": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "planner",
+            "providerModerationStage": "unknown",
+            "failureKind": "safety",
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "refused",
+            "dispatchState": "not_dispatched",
+            "accountingState": "usage_recorded"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 50,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 50,
+        "unknownCalls": 0,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": null,
+      "totalCostPerUsableMicrousd": null,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 0,
+              "rate": 0
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": false
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  },
+  "localPreflightBlock": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "blocked",
+        "dispatched": false,
+        "artifactHash": null,
+        "judgment": null,
+        "maximumCostMicrousd": 1000,
+        "callCounts": {
+          "planner": 1,
+          "media": 0,
+          "moderation": 0,
+          "contextChecker": 0,
+          "evaluator": 0,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "costs": [
+          {
+            "stage": "planner",
+            "costMicrousd": 50,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "app_moderation",
+          "providerModerationStage": "unknown",
+          "failureKind": "safety",
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "refused",
+          "dispatchState": "not_dispatched",
+          "accountingState": "usage_recorded"
+        },
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "unexecuted_fixture_not_supplied",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 0,
+        "completed": 0,
+        "blocked": 1,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 0,
+        "denominator": 1,
+        "rate": 0,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "blocked": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "app_moderation",
+            "providerModerationStage": "unknown",
+            "failureKind": "safety",
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "refused",
+            "dispatchState": "not_dispatched",
+            "accountingState": "usage_recorded"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 50,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 50,
+        "unknownCalls": 0,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": null,
+      "totalCostPerUsableMicrousd": null,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 0,
+              "rate": 0
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": false
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  },
+  "malformedModeration": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "blocked",
+        "dispatched": false,
+        "artifactHash": null,
+        "judgment": null,
+        "maximumCostMicrousd": 1000,
+        "callCounts": {
+          "planner": 1,
+          "media": 0,
+          "moderation": 0,
+          "contextChecker": 0,
+          "evaluator": 0,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "costs": [
+          {
+            "stage": "planner",
+            "costMicrousd": 50,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "app_moderation",
+          "providerModerationStage": "unknown",
+          "failureKind": "validation",
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "unknown",
+          "dispatchState": "not_dispatched",
+          "accountingState": "usage_recorded"
+        },
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "unexecuted_fixture_not_supplied",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 0,
+        "completed": 0,
+        "blocked": 1,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 0,
+        "denominator": 1,
+        "rate": 0,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "blocked": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "app_moderation",
+            "providerModerationStage": "unknown",
+            "failureKind": "validation",
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "unknown",
+            "dispatchState": "not_dispatched",
+            "accountingState": "usage_recorded"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 50,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 50,
+        "unknownCalls": 0,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": null,
+      "totalCostPerUsableMicrousd": null,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 0,
+              "rate": 0
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": false
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  },
+  "providerSafety": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "blocked",
+        "dispatched": true,
+        "artifactHash": null,
+        "judgment": null,
+        "maximumCostMicrousd": 1000,
+        "callCounts": {
+          "planner": 1,
+          "media": 1,
+          "moderation": 0,
+          "contextChecker": 0,
+          "evaluator": 0,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "costs": [
+          {
+            "stage": "planner",
+            "costMicrousd": 50,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          },
+          {
+            "stage": "media",
+            "costMicrousd": 100,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:1"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "media_result",
+          "providerModerationStage": "unknown",
+          "failureKind": "safety",
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "refused",
+          "dispatchState": "response_received",
+          "accountingState": "usage_recorded"
+        },
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "unexecuted_fixture_not_supplied",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 1,
+        "completed": 0,
+        "blocked": 1,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 0,
+        "denominator": 1,
+        "rate": 0,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "blocked": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "media_result",
+            "providerModerationStage": "unknown",
+            "failureKind": "safety",
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "refused",
+            "dispatchState": "response_received",
+            "accountingState": "usage_recorded"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 50,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 100,
+            "unknownCalls": 0
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 150,
+        "unknownCalls": 0,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": null,
+      "totalCostPerUsableMicrousd": null,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 0,
+              "rate": 0
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": false
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  },
+  "noTool": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "no_tool",
+        "dispatched": true,
+        "artifactHash": null,
+        "judgment": null,
+        "maximumCostMicrousd": 1000,
+        "callCounts": {
+          "planner": 1,
+          "media": 1,
+          "moderation": 0,
+          "contextChecker": 0,
+          "evaluator": 0,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "costs": [
+          {
+            "stage": "planner",
+            "costMicrousd": 50,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          },
+          {
+            "stage": "media",
+            "costMicrousd": 100,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:1"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "media_result",
+          "providerModerationStage": "unknown",
+          "failureKind": "incomplete",
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "unknown",
+          "dispatchState": "response_received",
+          "accountingState": "usage_recorded"
+        },
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "unexecuted_fixture_not_supplied",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 1,
+        "completed": 0,
+        "blocked": 0,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 0,
+        "denominator": 1,
+        "rate": 0,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "no_tool": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "media_result",
+            "providerModerationStage": "unknown",
+            "failureKind": "incomplete",
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "unknown",
+            "dispatchState": "response_received",
+            "accountingState": "usage_recorded"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 50,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 100,
+            "unknownCalls": 0
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 150,
+        "unknownCalls": 0,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": null,
+      "totalCostPerUsableMicrousd": null,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 0,
+              "rate": 0
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": false
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  },
+  "transportUncertain": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "uncertain",
+        "dispatched": true,
+        "artifactHash": null,
+        "judgment": null,
+        "maximumCostMicrousd": 1000,
+        "callCounts": {
+          "planner": 1,
+          "media": 1,
+          "moderation": 0,
+          "contextChecker": 0,
+          "evaluator": 0,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "costs": [
+          {
+            "stage": "planner",
+            "costMicrousd": 50,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          },
+          {
+            "stage": "media",
+            "costMicrousd": null,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:1"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "media_submission",
+          "providerModerationStage": "unknown",
+          "failureKind": "transport",
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "unknown",
+          "dispatchState": "dispatch_unknown",
+          "accountingState": "unknown"
+        },
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "unknown_financial_exposure",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 1,
+        "completed": 0,
+        "blocked": 0,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 0,
+        "denominator": 1,
+        "rate": 0,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "uncertain": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "media_submission",
+            "providerModerationStage": "unknown",
+            "failureKind": "transport",
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "unknown",
+            "dispatchState": "dispatch_unknown",
+            "accountingState": "unknown"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 50,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 0,
+            "unknownCalls": 1
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 50,
+        "unknownCalls": 1,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": null,
+      "totalCostPerUsableMicrousd": null,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 0,
+              "rate": 0
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": true
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  },
+  "storageFailure": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "failed",
+        "dispatched": true,
+        "artifactHash": null,
+        "judgment": null,
+        "maximumCostMicrousd": 1000,
+        "callCounts": {
+          "planner": 1,
+          "media": 1,
+          "moderation": 0,
+          "contextChecker": 0,
+          "evaluator": 0,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "costs": [
+          {
+            "stage": "planner",
+            "costMicrousd": 50,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          },
+          {
+            "stage": "media",
+            "costMicrousd": 700,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:1"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "storage",
+          "providerModerationStage": "unknown",
+          "failureKind": "storage",
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "invalid",
+          "dispatchState": "response_received",
+          "accountingState": "usage_recorded"
+        },
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "unexecuted_fixture_not_supplied",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 1,
+        "completed": 0,
+        "blocked": 0,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 0,
+        "denominator": 1,
+        "rate": 0,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "failed": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "storage",
+            "providerModerationStage": "unknown",
+            "failureKind": "storage",
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "invalid",
+            "dispatchState": "response_received",
+            "accountingState": "usage_recorded"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 50,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 700,
+            "unknownCalls": 0
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 750,
+        "unknownCalls": 0,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": null,
+      "totalCostPerUsableMicrousd": null,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 0,
+              "rate": 0
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": false
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  },
+  "accessFailure": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "failed",
+        "dispatched": true,
+        "artifactHash": null,
+        "judgment": null,
+        "maximumCostMicrousd": 1000,
+        "callCounts": {
+          "planner": 1,
+          "media": 1,
+          "moderation": 0,
+          "contextChecker": 0,
+          "evaluator": 0,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "costs": [
+          {
+            "stage": "planner",
+            "costMicrousd": 50,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          },
+          {
+            "stage": "media",
+            "costMicrousd": 0,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:1"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "media_submission",
+          "providerModerationStage": "unknown",
+          "failureKind": "access",
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "unknown",
+          "dispatchState": "response_received",
+          "accountingState": "usage_recorded"
+        },
+        "stopCause": "access",
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "access",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 1,
+        "completed": 0,
+        "blocked": 0,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 0,
+        "denominator": 1,
+        "rate": 0,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "failed": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "media_submission",
+            "providerModerationStage": "unknown",
+            "failureKind": "access",
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "unknown",
+            "dispatchState": "response_received",
+            "accountingState": "usage_recorded"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 50,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 50,
+        "unknownCalls": 0,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": null,
+      "totalCostPerUsableMicrousd": null,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 0,
+              "rate": 0
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": false
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  },
+  "usableUnknownBilling": {
+    "simulation": true,
+    "records": [
+      {
+        "status": "completed",
+        "dispatched": true,
+        "maximumCostMicrousd": 1000,
+        "artifactHash": "8dd6df18f39390a986871f41f0f834c9642375d9b6d043fe4ff450bdb7095609",
+        "artifact": {
+          "width": 1536,
+          "height": 1024,
+          "format": "png"
+        },
+        "callCounts": {
+          "planner": 0,
+          "media": 1,
+          "moderation": 1,
+          "contextChecker": 0,
+          "evaluator": 1,
+          "render": 0,
+          "storage": 0,
+          "reconciliation": 0
+        },
+        "judgment": {
+          "artifactUsable": true,
+          "unsafe": false,
+          "scores": {
+            "authored-brief": 4
+          }
+        },
+        "costs": [
+          {
+            "stage": "media",
+            "costMicrousd": null,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:0"
+          },
+          {
+            "stage": "evaluator",
+            "costMicrousd": 200,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:1"
+          },
+          {
+            "stage": "moderation",
+            "costMicrousd": 0,
+            "operationId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37:2"
+          }
+        ],
+        "outcome": {
+          "schemaVersion": "forma-generation-outcome-v1",
+          "pipelineStage": "media_result",
+          "providerModerationStage": "unknown",
+          "failureKind": null,
+          "correctiveActionScope": "unknown",
+          "contentOutcome": "usable",
+          "dispatchState": "response_received",
+          "accountingState": "unknown"
+        },
+        "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+        "initiated": true
+      }
+    ],
+    "stop": "unknown_financial_exposure",
+    "summary": {
+      "counts": {
+        "planned": 36,
+        "initiated": 1,
+        "dispatched": 1,
+        "completed": 1,
+        "blocked": 0,
+        "unexecuted": 35
+      },
+      "acceptance": {
+        "usable": 1,
+        "denominator": 1,
+        "rate": 1,
+        "basis": "prespecified initiated trials, including local blocks; unexecuted after stops excluded",
+        "unjudged": 0
+      },
+      "outcomes": {
+        "completed": 1
+      },
+      "stageOutcomes": [
+        {
+          "trialId": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37",
+          "outcome": {
+            "schemaVersion": "forma-generation-outcome-v1",
+            "pipelineStage": "media_result",
+            "providerModerationStage": "unknown",
+            "failureKind": null,
+            "correctiveActionScope": "unknown",
+            "contentOutcome": "usable",
+            "dispatchState": "response_received",
+            "accountingState": "unknown"
+          }
+        }
+      ],
+      "costs": {
+        "stages": {
+          "planner": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "media": {
+            "knownMicrousd": 0,
+            "unknownCalls": 1
+          },
+          "moderation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "contextChecker": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "evaluator": {
+            "knownMicrousd": 200,
+            "unknownCalls": 0
+          },
+          "render": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "storage": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          },
+          "reconciliation": {
+            "knownMicrousd": 0,
+            "unknownCalls": 0
+          }
+        },
+        "knownMicrousd": 200,
+        "unknownCalls": 1,
+        "interpretation": "Measured stage costs across successes, failures and evaluators; cached tokens and partial delivery included once in each operation receipt, never added again."
+      },
+      "knownCostPerUsableMicrousd": 200,
+      "totalCostPerUsableMicrousd": null,
+      "latency": {
+        "firstUsablePreviewMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        },
+        "completedMs": {
+          "observed": 0,
+          "missing": 1,
+          "p50": null,
+          "p95": null,
+          "uncertainty": "insufficient_for_p95"
+        }
+      },
+      "pairedCases": [
+        {
+          "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+          "stratum": "literary-portrait",
+          "arms": [
+            {
+              "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 1,
+              "usable": 1,
+              "rate": 1
+            },
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+          "stratum": "adult-portrait",
+          "arms": [
+            {
+              "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+          "stratum": "rich-literary-constraints",
+          "arms": [
+            {
+              "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+          "stratum": "spatial-nonportrait",
+          "arms": [
+            {
+              "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+          "stratum": "exact-typography",
+          "arms": [
+            {
+              "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+              "usableRateDelta": null
+            }
+          ]
+        },
+        {
+          "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+          "stratum": "negative-constraints",
+          "arms": [
+            {
+              "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            },
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+              "initiated": 0,
+              "usable": 0,
+              "rate": null
+            }
+          ],
+          "deltas": [
+            {
+              "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+              "usableRateDelta": null
+            }
+          ]
+        }
+      ],
+      "uncertainty": {
+        "label": "exploratory_small_case_sample",
+        "independentCaseUnits": 0,
+        "correlatedRepetitions": 3,
+        "pairedMeanDelta": null,
+        "caseBootstrap95": null,
+        "limitation": "First contrast only; no product-wide inference, no independent-output binomial interval. Held-out cases and prespecified tradeoffs required."
+      },
+      "pauseRequired": true
+    },
+    "actualProviderCalls": 0,
+    "actualGenerationSubmissions": 0
+  }
+}

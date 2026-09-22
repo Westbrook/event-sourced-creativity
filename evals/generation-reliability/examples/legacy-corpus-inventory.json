@@ -1,0 +1,1142 @@
+[
+  {
+    "caseKey": "v6-01-observatory-composition",
+    "stratum": "composition",
+    "sourceHash": "810ad4b2413eaa3c711ec0285911d296aadd79ea57483097dcc9c1bd586d2029",
+    "plannerHash": "37d1712eced99f7aa2e2dc9041a584ef90f23b838fbac252ada87771929ce7aa",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-01-observatory-typography",
+    "stratum": "typography",
+    "sourceHash": "043f7a36cae4d56c1934a0c3424a829643af1b60ba314905e3bb014fe826faed",
+    "plannerHash": "611089d79cd66b4d9cdddff120c205cb5b1f8a5b8cf315c5fdaef9d4b9b82c73",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “THE LAST LIGHT” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-01-observatory-spatial",
+    "stratum": "spatial",
+    "sourceHash": "410dd10a7508c2f05856e8d9c7f31599bcd5c0b252cc965175e7b7ea6ea3fa49",
+    "plannerHash": "db123400729ea5a1d6a7c20c3249ca5f083dc210c775b5f682e6f46e57007bd0",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-01-observatory-material",
+    "stratum": "material",
+    "sourceHash": "cc3730ba8760a07b4865a06c9ed99f1101d97a5dea69fed940975b794254ae63",
+    "plannerHash": "84582d65fdd4d9255bd527b6ce860de876d310c2da9b9c88d97c4b4a444c2cbf",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-01-observatory-reference",
+    "stratum": "reference",
+    "sourceHash": "416806a44a08b37c14a21bfa6d1b9e6cd4218b598332a7ed08fe4ed81d3b13ae",
+    "plannerHash": "1a1cf50cf488db863e112f34b7e4f2c66a387cad9579a2cb5c640b12de87af12",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose",
+      "referenceAsset": "public/og.png",
+      "referenceMode": "inspiration"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-02-tidal-library-composition",
+    "stratum": "composition",
+    "sourceHash": "9d4d81e99cd8b55a8cf52d8f1c28a6ae87e6850a0a6b90dddd41f111b3550ff5",
+    "plannerHash": "6cb0f62ce95440e49092320366a63b5455307b6f455dca0b0702dce37fc41e41",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-02-tidal-library-typography",
+    "stratum": "typography",
+    "sourceHash": "27b8a7ee8d784593ace7bb248ad7a3ab43bc0a69c9dc863630b9402c0347080d",
+    "plannerHash": "a99879d6518e16b51150fadc30cc91feb7117f78a352632b864006318c4889cd",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “WHAT THE TIDE REMEMBERS” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-02-tidal-library-spatial",
+    "stratum": "spatial",
+    "sourceHash": "9a57a7bab197525322525f9b0f376cb68c924e13ce029a59f0b629021e4b831c",
+    "plannerHash": "850b572d2e61136fd904557c03abc785875fe4c6e764a1e6f5bd99406e09efea",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-02-tidal-library-material",
+    "stratum": "material",
+    "sourceHash": "9484e3cbdf25aa2024ec11afe797ffbb587be95c865c858a8f9481a84ed02205",
+    "plannerHash": "e30332a0d1de4e774921d43b8fa6378ea32f250b84c0e60a368fe0e1b4ef983c",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-02-tidal-library-reference",
+    "stratum": "reference",
+    "sourceHash": "d78ce37721e942df57ebf5e0352f15b2c99393a0fae8c29a02227bd76aa3a5ba",
+    "plannerHash": "621319ee9b767547c90b96ae1dc4d72c190340c09e7ee906f36cb9d051c3d3a4",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets",
+      "referenceAsset": "public/focal-point-lab/children-in-park-01.png",
+      "referenceMode": "preserve_composition"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-03-night-market-composition",
+    "stratum": "composition",
+    "sourceHash": "436048533e3586c94412c49399618d0dcac3ac59788636b21208f061149f2586",
+    "plannerHash": "752b3b196c2a8abf904d7a2ecfc26bc4f2f6adfd1ee18a32a310a32b777ca2d8",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-03-night-market-typography",
+    "stratum": "typography",
+    "sourceHash": "10e468f3d3db4a3f40a6fb13976f7efb580ca8ef708d874de15987da724b795e",
+    "plannerHash": "883316571a95af359b5a70448ba4fe594e2e4c13954cb08b73e3f3ef291e7327",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “AFTER THE STALLS CLOSE” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-03-night-market-spatial",
+    "stratum": "spatial",
+    "sourceHash": "c6e783e3c5789a66bab6d7679643a01595bc2a1bd3b16f855a8aac9ea4edcfab",
+    "plannerHash": "554a65573941adffcd9b4cd0ad91d03edd16f5e53f407afca256c5c68384a40a",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-03-night-market-material",
+    "stratum": "material",
+    "sourceHash": "b5b7dbf9a429be515a305b138a4f3564873057a45285fac31f413c626a0a7046",
+    "plannerHash": "ec0e75c60ffbe429b6feaf43af182e11e3bede530bc3d90367e284061f27b123",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-03-night-market-reference",
+    "stratum": "reference",
+    "sourceHash": "f9a19cfbecb5bf866316ebb075fe9b5f349d87fa99b786dd18113fddd8cf3ff5",
+    "plannerHash": "0167d06f2a4941a670303472b4634a1d82b92740076f074ec470ee56679665a1",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json",
+      "referenceAsset": "public/focal-point-lab/children-in-park-02.png",
+      "referenceMode": "inspiration"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-04-ceramic-lab-composition",
+    "stratum": "composition",
+    "sourceHash": "c972bf9c38fcd17ec3dca1dd53c8e2fe7e0b2052ae00977cd4e4dd5b7febdf4f",
+    "plannerHash": "e528cfb74ad401b6f99f6516d65624b1e1906f9042e9fcf596d34dd375bde0f3",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-04-ceramic-lab-typography",
+    "stratum": "typography",
+    "sourceHash": "62e549d3029bd48e17918f1f83a3042511592ae6e87e4d657ca1c83168cf25e8",
+    "plannerHash": "9ccb1ff68095b319b9dbae80667c6e7fe8affc760dda265a19de8b3e6eb318cb",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “WEATHER, FIRED” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-04-ceramic-lab-spatial",
+    "stratum": "spatial",
+    "sourceHash": "e539a339b8aef32381c72ce6b50f48583bc036488de448bd209b5bc05aaa0fbd",
+    "plannerHash": "6f714151bc5736a071c0d0837b97af7ef4bdc4affa341bcca7a007431f918707",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-04-ceramic-lab-material",
+    "stratum": "material",
+    "sourceHash": "68f041fd80cca3a3c555b93574e60f21c5526bc746a9f4a0b5d9fb09eca3002d",
+    "plannerHash": "4f4a05cf0de10047f9bbab0d73a627091b7ad00ee214b41046927995bc816b65",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-04-ceramic-lab-reference",
+    "stratum": "reference",
+    "sourceHash": "8eb54716d5ce6b036bd4a5d3fb5bdd804f08427e0ce82296fafd9c8ed2b102ff",
+    "plannerHash": "0499f1e2debf4fe733bc04b11b986aab24ddd3e7df2341b95d5f9ba063781e2a",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml",
+      "referenceAsset": "public/focal-point-lab/children-in-park-03.png",
+      "referenceMode": "preserve_composition"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-05-rail-garden-composition",
+    "stratum": "composition",
+    "sourceHash": "be273e760392470633733ae2ee8012bdc0deed4fcf57093113a6e1d3af297e4a",
+    "plannerHash": "d1e444f2166fa307e6f8463a397218a249a0dc96d7c97f3ed330ccf04e42caa3",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-05-rail-garden-typography",
+    "stratum": "typography",
+    "sourceHash": "0fd2edf1045339554b1474f552877cac8419c0424fae7820ced504cfc7f0326a",
+    "plannerHash": "cf650da23a3894b0887d8afaa46da6036d4eb2c6dc7b4697ff95f3626058f1c8",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “THE SECOND GROUND” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-05-rail-garden-spatial",
+    "stratum": "spatial",
+    "sourceHash": "aa73d680a727fbe8a78a7409e7fd8a1a0852130b5c9e7566ad47b5f790b8c220",
+    "plannerHash": "44348af9fbe3a28dca953406e9b9d7df06fb70903192a2b0b1e39bcea82f8d17",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-05-rail-garden-material",
+    "stratum": "material",
+    "sourceHash": "bb3299b5e29de89e1ba957921ad20c8e6750a573e216a31129958331202f3fc2",
+    "plannerHash": "955816bf8333799dac5509abbe4dc33565c60fb195bf8b3f29694e976fa00420",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-05-rail-garden-reference",
+    "stratum": "reference",
+    "sourceHash": "08fc5e4630fa9fb6b07fab974b52e1d81ea6fb329e35447b0750ddfdd55ac501",
+    "plannerHash": "8fd7de0dcfcb731569883e5ba99afb4ed6704b36a72b21915a978eddc49116cd",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose",
+      "referenceAsset": "public/og.png",
+      "referenceMode": "inspiration"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-06-paper-theater-composition",
+    "stratum": "composition",
+    "sourceHash": "ea94930bf88c3d98e9c73f16c3d592b05ed9e7f7aaefb587a5d0532447699aa7",
+    "plannerHash": "a8fa29ef3dd2f59205fcfd2018bd65c990e48994d777a00fa9224339368f83db",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-06-paper-theater-typography",
+    "stratum": "typography",
+    "sourceHash": "a1da2914cb7611bdb64fe674ce90d47e69254b8661249c71662974cf4a4d1a3c",
+    "plannerHash": "3e9414222c32d6029028ea8abac5ff270f6a029ba505dfeeaea91d63f8b7195f",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “A WORLD, FOLDED” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-06-paper-theater-spatial",
+    "stratum": "spatial",
+    "sourceHash": "3f2da73256f0c64e56c542edb65175ed29758ceb237a7a1f918f50c31e7a5a82",
+    "plannerHash": "6e49894cf4bd57f0a65896cbc7e8f97757f965279ff96fd287fc80ffe80125b2",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-06-paper-theater-material",
+    "stratum": "material",
+    "sourceHash": "3e923492dc3258c2c5f2c123a51e57b1aa8a106b6ac49922c7cd6f226e526135",
+    "plannerHash": "865189c6dab343d9a6698ef66b19290875b58bbb65be893335360fa2b4c2d525",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-06-paper-theater-reference",
+    "stratum": "reference",
+    "sourceHash": "9c02471addc1002a9e4e44dec7a4353bbc1c63b793e00f8a4239813bd60e3808",
+    "plannerHash": "7d889797f9ca94e4234548a56f197e7b8cc9862a86b96fd672817f862aa2b4d8",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets",
+      "referenceAsset": "public/focal-point-lab/children-in-park-01.png",
+      "referenceMode": "preserve_composition"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-07-winter-greenhouse-composition",
+    "stratum": "composition",
+    "sourceHash": "da8b88fb07ae4228c27a9841ac0267328d753dcd742213fbb17e06cfb43c39c1",
+    "plannerHash": "552af7101843f2f46b3df522780f9d24b52565ae35d04b635157df7f7f952c46",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-07-winter-greenhouse-typography",
+    "stratum": "typography",
+    "sourceHash": "1c4f3251054f21261ad628a2ee319b659e54932ff72975eaa48a0ca80e2179dd",
+    "plannerHash": "ff5e3ed9397cd02b46b776982cb09638c06f40cdb609978f891024c035922723",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “BLOOM AFTER DARK” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-07-winter-greenhouse-spatial",
+    "stratum": "spatial",
+    "sourceHash": "a2593101f7865c9d84f9e3f62949d35c7d40b32548927ee9dded45fdd6833e3a",
+    "plannerHash": "7beaf0196f9d4b77d309cd6a899b4a49ff6080687dbf3e46008570d0e63c41bf",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-07-winter-greenhouse-material",
+    "stratum": "material",
+    "sourceHash": "b156a28396c043c967df7f8a8a3ad72242b3ad4804ccf97605b12790e7a0663e",
+    "plannerHash": "d9bf1225ccb7d3e25b7a793286517ce5e2a9854cf8b86622514d230f7851ddf8",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-07-winter-greenhouse-reference",
+    "stratum": "reference",
+    "sourceHash": "e51862024ad5f57a97b6239204b8fadf7e9c6a6272dd0c3e49ec4517a173b278",
+    "plannerHash": "92e63139a2fa61d8b15bad2e23f84dd72d07ff998cb888592686f0a2ce684ffe",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json",
+      "referenceAsset": "public/focal-point-lab/children-in-park-02.png",
+      "referenceMode": "inspiration"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-08-signal-kitchen-composition",
+    "stratum": "composition",
+    "sourceHash": "addb8ffb95a78af4abf0d72d8b9d5868f6e400cfc38ff2971a9365e7bc1bf02a",
+    "plannerHash": "1da8d774cb98120c4c9af7c2d1de64be216541b37dc1f65874946983615b992f",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-08-signal-kitchen-typography",
+    "stratum": "typography",
+    "sourceHash": "dc4979aff1afa924c21127421040f72e567d815f974e538945b3c79a797e9af7",
+    "plannerHash": "942e2b41a545a7cf7f599b10fd7c95f699298c54ee9ee89a533c08a9fa759be7",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “COURSE CORRECTION” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-08-signal-kitchen-spatial",
+    "stratum": "spatial",
+    "sourceHash": "e362ff695d7772dcd7bfbdc5768ee81ae2f81ce321e0108eed31e086d907ebd2",
+    "plannerHash": "076bc8e9aa48758390e37b5cfe1298b6f296ad4555ad47bb36e4ea087c5748c7",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-08-signal-kitchen-material",
+    "stratum": "material",
+    "sourceHash": "43bc4e3feb7509ce4a02f74a764f0beb4acecf010812a048c32cebae5cbf55da",
+    "plannerHash": "963472f897fef3382f1b3a1e6021493bf3904a4049e3adb3cdc73b2d45f050d6",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-08-signal-kitchen-reference",
+    "stratum": "reference",
+    "sourceHash": "1727303e2076b5d69a134e30903b08916c48f38dabf70e80eff2287709ac17b7",
+    "plannerHash": "7390d47b78d10442f8e76dc4a4b3d5de28c7c85e21e6d7bc83763b6d01f38756",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml",
+      "referenceAsset": "public/focal-point-lab/children-in-park-03.png",
+      "referenceMode": "preserve_composition"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-09-desert-printshop-composition",
+    "stratum": "composition",
+    "sourceHash": "65caabdde260d59d2b660fee8431455695af6d5ea7715fa70cfc9a76af7caab3",
+    "plannerHash": "1e3b713c452de34e2397718b52ec4cdc12693206386c9a01992cb8f668bbc7d0",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-09-desert-printshop-typography",
+    "stratum": "typography",
+    "sourceHash": "c1ffc2258c03afcf3045d423c7016ebcf7a8c55234986e8e75f25e4eb6b07f96",
+    "plannerHash": "6e0fbb21ab9fb6b9584a9a5b16c4e3946e544fdacda0127e22e85af53fa7c636",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “PRESS / HORIZON” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-09-desert-printshop-spatial",
+    "stratum": "spatial",
+    "sourceHash": "160ec8313abc686fdb765434c43652c679d4e161dd762a5ff31afb2b0ee9a9e6",
+    "plannerHash": "e123e8ade445f5fbbf7d23e0a0ce181731aea665c737934353d5961a34d4f15c",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-09-desert-printshop-material",
+    "stratum": "material",
+    "sourceHash": "2a305c159a9ac6bbdde222168d467cdd66c4364048c577c5a181bdbd1663b171",
+    "plannerHash": "35c0b27ab2c3e36e6fcc107e3aa99cfea58906a18eac81a6df6b36b577170945",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-09-desert-printshop-reference",
+    "stratum": "reference",
+    "sourceHash": "0ee87363083431c465319c64af56dc499295bf6cf1fc8e3a0561d19e5133f877",
+    "plannerHash": "d2bba863b10e39899d35491cd16d3d7d9fbf8336f1752db68054b4b3e8121b14",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose",
+      "referenceAsset": "public/og.png",
+      "referenceMode": "inspiration"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-10-harbor-workshop-composition",
+    "stratum": "composition",
+    "sourceHash": "3b595c33ca0cb0a20ed77315eefbbf2fcba266798afcda19a21bdafa85fb90e9",
+    "plannerHash": "04b1dfd4e71be255c0e34ffd8758039e4a0b4246066e039b118068c812f2c113",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "high",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-10-harbor-workshop-typography",
+    "stratum": "typography",
+    "sourceHash": "7653d4f4931dd3316ba5d2c615827a1dd36e96ee0961ac0d8efc84d947ba12db",
+    "plannerHash": "973656496d639d8dcb58562ba3bc951e158fcdf531e3c9d54cd598aa7582a60c",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The exact display text “FIND TRUE NORTH” appears once and is legible.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "json"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-10-harbor-workshop-spatial",
+    "stratum": "spatial",
+    "sourceHash": "61b8543d18ca890d9d1426490870da8cc9f2930918ec72c5e8807a7bfd844a83",
+    "plannerHash": "9ec7d330dd15f74500ad515bcb2a36fc7d6ddafab0acb12a0cf5a2d60e33df60",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "medium",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "xml"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-sunburst",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-10-harbor-workshop-material",
+    "stratum": "material",
+    "sourceHash": "c9dc9786da74788d61fc0ffaf3256950046c9f051b5720f1e0bfd78d32850462",
+    "plannerHash": "d2b706d031f24100ddfb719d4a0b94c111bf9f88d7d42e32c5c9cf0df3221113",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "png",
+      "promptTechnique": "prose"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "none",
+    "execution": "not_scheduled"
+  },
+  {
+    "caseKey": "v6-10-harbor-workshop-reference",
+    "stratum": "reference",
+    "sourceHash": "ff430e8fac160a484d2d2c0fa9944a2f5807fd7d9573aae38a76ef3064eaf6ec",
+    "plannerHash": "b9cb1fd495cc81ce5a10b7bc31ffb1813a4a52a16c34ad51728f3246b1bc9683",
+    "requirements": [
+      "The named subject and setting are unmistakable.",
+      "Composition and any spatially scoped instruction are followed.",
+      "Palette, mood, and material cues are coherent rather than merely mentioned.",
+      "Avoid instructions are respected.",
+      "The reference contributes the authorized visual property without replacing the requested subject.",
+      "The composition is resolved deliberately for a square frame."
+    ],
+    "settings": {
+      "quality": "low",
+      "size": "1024x1024",
+      "outputFormat": "jpeg",
+      "promptTechnique": "bullets",
+      "referenceAsset": "public/focal-point-lab/children-in-park-01.png",
+      "referenceMode": "preserve_composition"
+    },
+    "effectiveProductionModel": "gpt-image-2.5-flare",
+    "referenceFixtureStatus": "must authorize/read/hash exact ordered pixels before admission",
+    "execution": "not_scheduled"
+  }
+]

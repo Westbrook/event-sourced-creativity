@@ -147,3 +147,40 @@ test('Memory repair native administrator form applies once and refuses enabled M
  const after=await f.request(MEMORY_SCHEMA_REPAIR_PATH);assert.doesNotMatch(await after.text(),/<form/);
  assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM __forma_memory_schema_repair_receipts').get().n,1);
 });
+
+for(const [method,suffix,cookie,expected] of [
+ ['PUT','','',405],['GET','?sql=SELECT%201','',400],['GET','','forma_impersonation=1',409],['GET','','forma_project_context=1',409],['POST','','',403],
+])test(`Event save repair rejects ${method}/${suffix||cookie||'origin'} before database access`,async()=>{
+ const {handleMemorySchemaRepair,EVENT_SAVE_REPAIR_PATH}=await import('../worker/memory-schema-repair-api.ts');
+ const env={get DB(){assert.fail('No database access for rejected input');}};
+ assert.equal((await handleMemorySchemaRepair(new Request('http://localhost'+EVENT_SAVE_REPAIR_PATH+suffix,{method,headers:{cookie}}),env)).status,expected);
+});
+
+test('Event save repair actual Worker is read-only on GET, refuses activation and verifies real rolled-back saves on explicit POST',async t=>{
+ const {EVENT_SAVE_REPAIR_PATH}=await import('../worker/memory-schema-repair-api.ts');
+ const {inspectMemorySchemaRepair,applyMemorySchemaRepair}=await import('../worker/memory-schema-repair.ts');
+ const {readLocalMigrations,migrateLocalDatabase}=await import('../scripts/lib/local-migrations.mjs');
+ const {DatabaseSync}=await import('node:sqlite');
+ const f=await createSceneCostFixture(1);t.after(()=>f.close());await f.drainBackground();
+ const baseline=new DatabaseSync(':memory:');t.after(()=>baseline.close());migrateLocalDatabase(baseline,{migrations:readLocalMigrations(new URL('../drizzle/',import.meta.url)).slice(0,41)});
+ const baselineObjects=baseline.prepare("SELECT type,name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name!='__forma_local_migrations'").all();
+ for(const kind of ['table','index','trigger'])for(const row of baselineObjects)if(row.type===kind&&!f.sqlite.prepare('SELECT 1 FROM sqlite_schema WHERE name=?').get(row.name))f.sqlite.exec(row.sql);
+ await applyMemorySchemaRepair(f.env.DB,(await inspectMemorySchemaRepair(f.env.DB)).proof,{sql:'1',bindings:[]});
+ const changes=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
+ const page=await f.request(EVENT_SAVE_REPAIR_PATH);assert.equal(page.status,200,await page.clone().text());assert.equal(page.headers.get('referrer-policy'),'same-origin');
+ const html=await page.text();assert.match(html,/Repair saves and block inactive Memory writes/);assert.doesNotMatch(html,/keeper checks|in-memory-scene-test/);
+ await f.drainBackground();assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,changes);
+ const proof=html.match(/name="proof" value="([a-f0-9]{64})"/)?.[1];assert.ok(proof);
+ const request={method:'POST',headers:{origin:'http://localhost','content-type':'application/x-www-form-urlencoded'},body:'proof='+proof};
+ f.env.FORMA_MEMORY_ENABLED='true';assert.equal((await f.request(EVENT_SAVE_REPAIR_PATH,request)).status,403);delete f.env.FORMA_MEMORY_ENABLED;
+ const count=f.sqlite.prepare('SELECT count(*) AS n FROM events').get().n;
+ const schema=f.sqlite.prepare("SELECT type,name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'").all(),batches=[];
+ f.controls.beforeBatch=statements=>{if(statements[0]?.sql.startsWith('CREATE TABLE __forma_event_save_repair_guard'))batches.push(statements.map(s=>({sql:s.sql,values:s.values})));};
+ const result=await f.request(EVENT_SAVE_REPAIR_PATH,request);assert.equal(result.status,200,await result.clone().text());assert.match(await result.text(),/four-synthetic-events-persisted-and-rolled-back/);
+ const {spawnSync}=await import('node:child_process');
+ const compiler=spawnSync('python3',[new URL('../scripts/qualify-event-save-expressions.py',import.meta.url).pathname],{input:JSON.stringify({schema,batches}),encoding:'utf8'});
+ assert.equal(compiler.status,0,compiler.stderr||compiler.stdout);t.diagnostic(compiler.stdout.trim());
+ await f.drainBackground();assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM events').get().n,count);
+ f.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run(f.owner);
+ assert.equal((await f.request(EVENT_SAVE_REPAIR_PATH)).status,403);
+});

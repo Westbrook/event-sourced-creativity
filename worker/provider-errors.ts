@@ -1,8 +1,15 @@
+import type { PipelineStage, ProviderModerationStage, GenerationOutcomeEvidence } from "../src/model/generation-outcome-evidence.ts";
 export type ProviderFailureCategory = "safety" | "authentication" | "access" | "quota" | "rate_limit" | "network" | "canceled" | "provider" | "server" | "unknown";
 export type ProviderFailureScope = "request" | "user" | "workspace" | "account" | "project" | "organization" | "model" | "region" | "network" | "provider" | "unknown";
 export type ProviderFailureAction = "edit_request" | "check_credentials" | "check_project" | "verify_organization" | "add_credits" | "raise_limit" | "review_budget" | "wait_and_retry" | "retry" | "contact_support" | "none";
 
 export type ProviderFailureDetail = {
+  pipelineStage?: PipelineStage;
+  providerModerationStage?: ProviderModerationStage;
+  outcome?: GenerationOutcomeEvidence;
+  /** Private structured provider evidence; excluded from publicFailureDetail. */
+  providerError?: Record<string, unknown>;
+  moderationDetails?: unknown;
   code: string;
   category: ProviderFailureCategory;
   scope: ProviderFailureScope;
@@ -97,7 +104,7 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
   let scope: ProviderFailureScope = "unknown";
   let action: ProviderFailureAction = "none";
 
-  if (audioCopyright || /safety|content[_ -]?policy|moderation|request was rejected/.test(lower)) {
+  if (audioCopyright || /safety|content[_ -]?policy|moderation/.test(providerCode.toLowerCase()) || ![401,403,429].includes(status ?? 0) && !(status !== null && status >= 500) && /safety|content[_ -]?policy|moderation/.test(lower)) {
     category = "safety"; scope = "request"; action = "edit_request";
   } else if (promptTooLong || imageCardinalityExceeded) {
     category = "provider"; scope = "request"; action = "edit_request";
@@ -127,7 +134,7 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
     category = "canceled"; scope = "request"; action = "retry";
   } else if (input instanceof TypeError || /fetch failed|network|econn|dns|timeout/.test(lower)) {
     category = "network"; scope = "network"; action = "retry";
-  } else if (status !== null && status >= 500) {
+  } else if (status !== null && status >= 500 || /^(?:server_error|internal_server_error|service_unavailable)$/.test(providerCode)) {
     category = "server"; scope = "provider"; action = "retry";
   } else if (status !== null || providerCode) {
     category = "provider"; scope = "request"; action = "edit_request";
@@ -136,7 +143,13 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
   const fallbackCode: Record<ProviderFailureCategory, string> = {
     safety: "safety_rejected", authentication: "provider_authentication_failed", access: "provider_access_denied", quota: "provider_quota_exhausted", rate_limit: "provider_rate_limited", network: "provider_network_failed", canceled: "provider_request_canceled", provider: "provider_request_failed", server: "provider_server_failed", unknown: "operation_failed",
   };
+  const root = errorRecord(providerBody);
+  const moderationDetails = body.moderation_details ?? root.moderation_details;
+  const reportedStage = errorRecord(moderationDetails).stage ?? body.moderation_stage;
   return {
+    ...(Object.keys(body).length ? {providerError: Object.fromEntries(["code", "type", "param", "message", "event_id", "sequence_number"].filter(key => Object.hasOwn(body,key)).map(key => [key,body[key]]))} : {}),
+    ...(moderationDetails !== undefined ? {moderationDetails} : {}),
+    providerModerationStage: reportedStage === "input" || reportedStage === "output" ? reportedStage : "unknown",
     code: promptTooLong ? "image_prompt_too_long" : imageCardinalityExceeded ? "provider_image_cardinality_exceeded" : providerCode || fallbackCode[category], category, scope, action,
     message: promptTooLong
       ? "The prepared image prompt exceeded the provider's 32,000-character limit. The application should compact the document context before retrying."
@@ -177,9 +190,9 @@ export function applicationFailureDetail(code: string, scope?: unknown, status: 
   return classifyProviderFailure(new Error(code), status ? new Response(null, { status }) : undefined, { error: { code, message: code } });
 }
 
-export function providerErrorFromResponse(response: Response, body: unknown, fallback: string, preparedPrompt: string | null = null) {
+export function providerErrorFromResponse(response: Response, body: unknown, fallback: string, preparedPrompt: string | null = null, pipelineStage: PipelineStage = "unknown") {
   const record = providerErrorRecord(body);
-  return new ProviderRequestError(classifyProviderFailure(new Error(String(record.message ?? fallback)), response, body), preparedPrompt);
+  return new ProviderRequestError({...classifyProviderFailure(new Error(String(record.message ?? fallback)), response, body), pipelineStage}, preparedPrompt);
 }
 
 export function publicFailureDetail(detail: ProviderFailureDetail) {
@@ -187,6 +200,13 @@ export function publicFailureDetail(detail: ProviderFailureDetail) {
   const message = detail.code === "provider_submission_uncertain"
     ? "We couldn’t confirm the original request. We haven’t sent it again, to avoid a duplicate charge." + (detail.message.match(/ Support reference: forma-slides-[0-9a-f-]+\./u)?.[0] ?? "")
     : detail.message;
-  return { ...(detail.safetyInputDigest?{safetyInputDigest:detail.safetyInputDigest}:{}), code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus, riskCategories: detail.riskCategories ?? [], contributingBlockIds: detail.contributingBlockIds ?? [], contributingReferenceIds: detail.contributingReferenceIds ?? [], probe: detail.probe ?? null,...(detail.validationIssues?.length?{validationIssues:detail.validationIssues}:{}) };
+  return { ...(detail.pipelineStage ? {pipelineStage:detail.pipelineStage}:{}), ...(detail.providerModerationStage ? {providerModerationStage:detail.providerModerationStage}:{}), ...(detail.outcome ? {outcome:detail.outcome}:{}), ...(detail.safetyInputDigest?{safetyInputDigest:detail.safetyInputDigest}:{}), code: detail.code, category: detail.category, scope: detail.scope, action: detail.action, message, retryable: detail.retryable, retryAfterMs: detail.retryAfterMs, requestId: detail.requestId, httpStatus: detail.httpStatus, riskCategories: detail.riskCategories ?? [], contributingBlockIds: detail.contributingBlockIds ?? [], contributingReferenceIds: detail.contributingReferenceIds ?? [], probe: detail.probe ?? null,...(detail.validationIssues?.length?{validationIssues:detail.validationIssues}:{}) };
 }
 import type { PresentationCandidateValidationIssue } from "../src/model/presentation-candidates.ts";
+
+/** Origin is independent of the scope where corrective action belongs. */
+export function providerFailureOrigin(detail: ProviderFailureDetail): "provider" | "application" | "unknown" {
+  if (detail.pipelineStage === "app_moderation" || detail.pipelineStage === "compiler" || detail.pipelineStage === "storage" || detail.code === "safety_preflight_flagged") return "application";
+  if (detail.pipelineStage && detail.pipelineStage !== "unknown" || detail.requestId || detail.providerError || detail.scope === "provider" || detail.category === "network" || detail.category === "rate_limit") return "provider";
+  return "unknown";
+}

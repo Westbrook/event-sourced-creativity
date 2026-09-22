@@ -1,0 +1,59 @@
+{
+  "HIST": {
+    "class": "HIST",
+    "jobId": "01a0c62c-dcaf-70ec-9821-598ab1c66aff",
+    "generationId": "01a0c62c-ee03-75ab-825d-902bfb2a30b7",
+    "promptHash": "a121553479bb542c2618a51b374e32d1ad88c24a2a316f9580f4b43a72d23953",
+    "promptCharacters": 5596,
+    "promptBytes": 5621,
+    "retainedContextHash": "8e682c7a1c6decfed553f73b038b8ca321f89f5bf63c3dddf50f9ed89289f4b3",
+    "retainedSourceRevision": "rev-1pygpag",
+    "retainedAccounting": {
+      "reservationMicrousd": 1000000,
+      "aggregateSettledMicrousd": 4946,
+      "stageAllocation": null,
+      "plannerCalls": 1,
+      "mediaCalls": 1,
+      "moderationCalls": null
+    },
+    "requestedModel": "gpt-image-2",
+    "plannerModel": "gpt-5.6-terra",
+    "quality": "high",
+    "size": "1536x1024",
+    "technique": "prose",
+    "references": [],
+    "outcome": "provider_safety_block",
+    "httpStatus": 400,
+    "providerCode": "moderation_blocked",
+    "providerRequestId": "req_a30af8cff4254dd286d2eddf3e5488ce",
+    "unknown": {
+      "sourceHash": null,
+      "plannerDirectionHash": null,
+      "fullRequestHash": null,
+      "modelSnapshot": null,
+      "outputFormat": null,
+      "moderation": null,
+      "providerModerationStage": null,
+      "historicalEnvironment": null,
+      "chatGPTToolPrompt": null,
+      "chatGPTImageModel": null
+    },
+    "retentionExpiresAt": "2026-10-21T22:55:19.772Z",
+    "evidencePolicy": "private authorized read only; never copy prompt into public examples",
+    "id": "baseline:13408de1af2d54010943147089b8467bb60d113d3c9ad6ef01a07d0d2c024000"
+  },
+  "PROD": {
+    "class": "PROD",
+    "sourceRevision": "1587f9067162e38ce437d9cf443faf5620b388ae",
+    "configurationEvidence": "review-v2 retained releases; no fresh live receipt",
+    "routes": {
+      "stillFinal": "configured OpenAI Sunburst/high",
+      "sharedLow": "forced OpenAI Flare/low",
+      "otherFormaHigh": "configured provider, may be Fal",
+      "nativeOutputStoryboard": "separate Ideogram/high",
+      "privateMemoryPreview": "configured OpenAI/high with strict receipts",
+      "historicalRecovery": "original purchased provider/request"
+    },
+    "id": "baseline:4fed076f1b24218fdd554cea9dd16bab00cc1accc7281c870e7072724f073060"
+  }
+}
