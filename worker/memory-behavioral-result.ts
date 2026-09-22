@@ -1,3 +1,4 @@
+import {memoryImageParsingWindow,type MemoryImageReceiptLifetime} from './memory-image-execution-lifetime.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
 import { memoryCanonical } from './memory-sql.ts';
 import { derivationExact, derivationHash, derivationId, derivationInteger, derivationTime } from './memory-derivation-policy.ts';
@@ -25,7 +26,7 @@ export async function behavioralSourceHash(source:Omit<MemoryBehavioralSource,'c
  * parser issues data only, never spending, publication or source authority.
  * Native controls, complete dependencies and fresh scope proof remain required.
  * Observations cannot establish a decision or an authored preference. */
-export async function parseMemoryBehavioralResult(rawJson:string,input:MemoryBehavioralContext):Promise<ParsedMemoryBehavioralDerivation|null>{
+export async function parseMemoryBehavioralResult(rawJson:string,input:MemoryBehavioralContext,processing?:MemoryImageReceiptLifetime):Promise<ParsedMemoryBehavioralDerivation|null>{
   try{
     if(typeof rawJson!=='string'||new TextEncoder().encode(rawJson).byteLength>65536||!memoryDerivationJsonUniqueKeys(rawJson))return null;
     const raw=snapshotMemoryDerivationInput(JSON.parse(rawJson)),context=snapshotMemoryDerivationInput(input);
@@ -38,9 +39,9 @@ export async function parseMemoryBehavioralResult(rawJson:string,input:MemoryBeh
       ||new Set(context.suppressedLineages).size!==context.suppressedLineages.length
       ||!Array.isArray(context.observations)||context.observations.length>128||context.sources.length+context.observations.length===0)return null;
     const at=Date.parse(context.checkedAt),until=Date.parse(context.validUntil);
-    if(at>Date.now()||until<=Date.now()||until<=at||until-at>60000)return null;
+    if(at>Date.now()||until<=Date.now()||until<=at||until-at>memoryImageParsingWindow(processing))return null;
     const observations=context.observations as MemoryBehavioralSource[],base={...context} as Record<string,unknown>;delete base.observations;
-    if(context.sources.length&&!await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:[]}),base as unknown as MemoryDerivationParseContext))return null;
+    if(context.sources.length&&!await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:[]}),base as unknown as MemoryDerivationParseContext,processing))return null;
     const ids=new Set(context.sources.map(source=>(source as {sourceId:string}).sourceId));
     for(const source of observations){
       if(!derivationExact(source,sourceKeys)||!derivationId(source.sourceId)||ids.has(source.sourceId)||!derivationInteger(source.revision,1)
@@ -70,7 +71,7 @@ export async function parseMemoryBehavioralResult(rawJson:string,input:MemoryBeh
       let original:MemoryDerivationCandidate|undefined;
       if(value.supports.length){
         const quoted={operation:value.operation,target:value.target,category:value.category,text:value.text,supports:value.supports,counterevidence:value.counterevidence};
-        original=(await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:[quoted]}),base as unknown as MemoryDerivationParseContext))?.items[0];if(!original)return null;
+        original=(await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:[quoted]}),base as unknown as MemoryDerivationParseContext,processing))?.items[0];if(!original)return null;
       }else{
         // Observation-only hypotheses never claim original intent, decisions or
         // personal preferences. Mixed quotation counterevidence requires an

@@ -1,3 +1,4 @@
+import {bindMemoryImageReceiptLifetime} from './memory-image-execution-lifetime.ts';
 import {recoverMemoryImageAdoption,type MemoryImagePublication} from './memory-authored-image.ts';
 import { handleMemoryImagePreview,type MemoryImageSource } from './memory-image-preview.ts';
 import { buildMemoryProfileSynthesis,parseMemoryProfileSynthesis,type MemoryProfileSynthesis,type ProfileSynthesisSource } from '../src/model/memory-profile-synthesis.ts';
@@ -185,9 +186,11 @@ export type AssistantSpecialistHost={
 };
 
 /** The existing queue gains only private-evidence pointers, never provider response bytes. */
-export async function ensureAssistantSpecialistColumns(env:WorkerEnv){
+export async function ensureAssistantSpecialistColumns(env:WorkerEnv,bootstrap:readonly D1PreparedStatement[]=[]){
   const targets=[["assistant_turns","request_json"],["assistant_specialist_tasks","result_json"]]as const;
-  const snapshots=await env.DB.batch<{name:string}>(targets.map(([table])=>env.DB.prepare("SELECT name FROM pragma_table_info(?)").bind(table)));
+  const db=env.DB,observed=await db.batch<{name:string}>([...bootstrap,...targets.map(([table])=>db.prepare("SELECT name FROM pragma_table_info(?)").bind(table))]);
+  if(env.DB!==db||observed.length!==bootstrap.length+targets.length||observed.some(row=>!row||!row.success||('error' in row&&row.error!==undefined)||!Array.isArray(row.results)))fail('assistant_schema_unavailable');
+  const snapshots=observed.slice(bootstrap.length);
   if(snapshots.length!==targets.length||snapshots.some(row=>!row.success))fail('assistant_schema_unavailable');
   for(const [index,[table,column]]of targets.entries()){
     const columns=snapshots[index]!;
@@ -376,7 +379,7 @@ async function retainedConsent(env:WorkerEnv,actor:SpecialistActor,scopeKey:stri
   }
   await assertNoPaidMemory(env,noMemoryProof(request));return null;
 }
-function taskProof(task:SpecialistTaskRecord,retained:Retained):BudgetReservationGuard{
+function taskProof(task:Pick<SpecialistTaskRecord,'task_id'>,retained:Retained):BudgetReservationGuard{
   const expected={id:task.task_id,actor:retained.binding.actorUserId,scopeKey:retained.request.scopeKey,turnId:retained.request.turnId,organizationId:retained.binding.scope?.organizationId??null,projectAccessId:retained.binding.scope?.projectAccessId??null,projectId:retained.binding.projectId,documentId:retained.binding.documentId,kind:retained.request.taskKind,model:retained.binding.steps[0]!.model,bindingHash:retained.row.binding_hash,input:retained.binding.steps[0]!.inputTokens,output:retained.binding.steps[0]!.outputTokens,maximum:retained.binding.steps[0]!.maximumMicrousd,locale:retained.request.originalRequest.locale};
   return{sql:`EXISTS(SELECT 1 FROM assistant_specialist_tasks task,(SELECT ? AS value) expected WHERE task.task_id=json_extract(expected.value,'$.id')
     AND task.actor_user_id=json_extract(expected.value,'$.actor') AND task.scope_key=json_extract(expected.value,'$.scopeKey') AND task.turn_id=json_extract(expected.value,'$.turnId')
@@ -511,7 +514,7 @@ async function prepareQuote(request:Request,env:WorkerEnv,actor:SpecialistActor,
   return{...prepared,binding,privateInput,quoteProof,memory,unavailableReasons:[...prepared.unavailableReasons,...modelEligibility(env,actor,host,kind,model,explicit)]};
 }
 
-function retentionProof(task:SpecialistTaskRecord,retained:Retained,enforceMemory=true){return join(consentProof(retained),turnProof(retained.binding,retained.request,false,enforceMemory),taskProof(task,retained));}
+function retentionProof(task:Pick<SpecialistTaskRecord,'task_id'>,retained:Retained,enforceMemory=true){return join(consentProof(retained),turnProof(retained.binding,retained.request,false,enforceMemory),taskProof(task,retained));}
 // JSON escaping can expand a bounded transport byte by at most six bytes.
 // Check in SQLite before hydration, and again at the actual decoding boundary.
 const MAX_ASSISTANT_RAW_RECEIPT_BYTES=6*MAX_ASSISTANT_PROVIDER_RESPONSE_BYTES+4096;
@@ -601,7 +604,7 @@ async function accountRaw(env:WorkerEnv,actor:SpecialistActor,retained:Retained,
   if(!await env.DB.prepare("SELECT 1 AS retained WHERE "+raw.proof.sql).bind(...raw.proof.bindings).first())fail("assistant_provider_receipt_unavailable");
   return{body,observed,...accounted};
 }
-async function canonicalResult(env:WorkerEnv,actor:SpecialistActor,task:SpecialistTaskRecord,retained:Retained){
+async function canonicalResult(env:WorkerEnv,actor:SpecialistActor,task:Pick<SpecialistTaskRecord,'task_id'>,retained:Retained){
   const base=retentionProof(task,retained),authority=readAuthority(actor,retained),contained=custody(retained.binding,"content");
   // Read the canonical pointer and its authorized retained body in one
   // snapshot. A pointer whose body is no longer readable is NOT an absent
@@ -1483,7 +1486,7 @@ async function memoryAuthoringPreconditions(env:WorkerEnv,actor:SpecialistActor,
   const nativeHash=await contextSourceHash(retained.binding.projectId,retained.binding.documentId,undefined,source.projection,source.events);
   const canvas=retained.binding.canvasId?foldCanvasEvents(source.events,retained.binding.projectId,retained.binding.canvasId):null;
   const sourceHash=canvas?await consentHash({sourceHash:nativeHash,canvas:canvas.canvases.find(item=>item.id===retained.binding.canvasId)??null,items:canvas.items}):nativeHash;
-  const nativeProof=packAuthoringSourceProof(await prepareAuthoringSourceProof(env,{...source,binding:{...retained.binding,sourceHash}},{coalesceCustody:!includeMemory}));
+  const nativeProof=packAuthoringSourceProof(await prepareAuthoringSourceProof(env,{...source,binding:{...retained.binding,sourceHash}},{coalesceCustody:!includeMemory,deferFinalReplay:!includeMemory}));
   const proofs=[readAuthority(actor,retained),savedProof,consentProof(retained),turnProof(retained.binding,retained.request),source.sourceProof,nativeProof,
     {sql:'(SELECT COALESCE(MAX(sequence),0) FROM events WHERE stream_id=?)=?',bindings:[source.scope?'creative:'+source.scope.ownerUserId:actor.principal.streamId,source.sourceHead]}];
   return [...(includeMemory?semanticAssistantMemoryStatements(env,memory):[]),...proofs.map(proof=>env.DB.prepare(
@@ -1505,9 +1508,11 @@ async function applyMemoryCreation(request:Request,env:WorkerEnv,actor:Specialis
 }
 
 async function imagePreviewSource(request:Request,env:WorkerEnv,actor:SpecialistActor,host:AssistantSpecialistHost,scopeKey:string,turnId:string,id:string,hash:string):Promise<MemoryImageSource>{
- const retained=await retainedConsent(env,actor,scopeKey,turnId,id),task=await existingTask(env,actor,scopeKey,turnId);
- if(!retained||!task||task.task_id!==id||retained.row.binding_hash!==hash||!retained.request.memory||!retained.row.result_ref)fail('assistant_memory_unavailable');
- const saved=await canonicalResult(env,actor,task,retained);
+ const retained=await retainedConsent(env,actor,scopeKey,turnId,id);
+ if(!retained||retained.row.binding_hash!==hash||!retained.request.memory||!retained.row.result_ref)fail('assistant_memory_unavailable');
+ // canonicalResult replays the complete native task identity from retained
+ // consent before reading bytes; no separate positive task lookup is needed.
+ const saved=await canonicalResult(env,actor,{task_id:id},retained);
  if(!saved||saved.result.sourceStatus!=='semantic-memory-assisted')fail('assistant_memory_unavailable');
  const source=await sourcePreparation(request,env,actor,retained.request.originalRequest,retained.request.conversation,retained.binding,retained.request.memory.parents);
  if(source.sourceHash!==retained.binding.sourceHash||source.sourceRightsValidUntil!==retained.request.sourceRightsValidUntil)fail('assistant_memory_source_changed');
@@ -1540,6 +1545,7 @@ export async function handleAssistantSpecialistConsent(request:Request,env:Worke
   const fields=action==="image-preview"?["action","turnId","executionId","approvedBindingHash","previewAction","previewExecutionId","approvedPreviewHash","approvedAdoptionHash","publishToDocument"]:action==="apply-creation"?["action","turnId","executionId","approvedBindingHash","proposalId","approvedCreationHash","publishToDocument"]:action==="apply-edit"?["action","turnId","executionId","approvedBindingHash","blockId","approvedEditHash","publishToDocument"]:action==="quote"?["action","turnId","model","memory"]:action==="resume"?["action","turnId","executionId"]:["action","turnId","executionId","approvedBindingHash"];
   if(Object.hasOwn(body,"memory")&&body.memory!=="saved")return json({error:"assistant_memory_mode_invalid"},400);
   if(Object.keys(body).some(key=>!fields.includes(key)))return json({error:"assistant_request_invalid"},400);
+  if(action==='image-preview'&&body.previewAction==='execute')bindMemoryImageReceiptLifetime(env);
   const authorization=await host.authorize(request,env);if(authorization.response||!authorization.authorized)return authorization.response!;
   const actor=authorization.authorized,scopeKey=host.scopeKey(actor);await host.ensure(env);
   try{

@@ -1,3 +1,4 @@
+import {memoryImageReceiptLifetime} from './memory-image-execution-lifetime.ts';
 import { nativeDerivationResultRowSql,nativeDerivationStoredRow } from './memory-derivation-result-row.ts';
 import { parseMemoryFieldResult,type ParsedMemoryFieldDerivation } from './memory-field-result.ts';
 import { parseMemoryProfileResult,type ParsedMemoryProfileDerivation } from './memory-profile-result.ts';
@@ -156,7 +157,8 @@ async function readResult(env: WorkerEnv, actorUserId: string, jobId: string,
     const context={purpose: source.purpose, scopeKey: source.scopeKey,
       manifestId: jobId, manifestRevision: 1, checkedAt: source.checkedAt, validUntil: source.validUntil,
       sources: source.originals, priorItems: [], suppressedLineages: []};
-    const candidate = nativeDerivationEvidenceInputs(env,evidence).qualification.terms.recipeVersion==='memory-field-suggestions-v1'?await parseMemoryFieldResult(row.raw_json,context,source.fieldTargets??[]):nativeDerivationEvidenceInputs(env,evidence).qualification.terms.recipeVersion==='memory-profile-consolidation-v1'?await parseMemoryProfileResult(row.raw_json,context):source.behavioralSources?await parseMemoryBehavioralResult(row.raw_json,{...context,observations:source.behavioralSources}):await parseMemoryDerivationResult(row.raw_json,context);
+    const processing=memoryImageReceiptLifetime(env);
+    const candidate = nativeDerivationEvidenceInputs(env,evidence).qualification.terms.recipeVersion==='memory-field-suggestions-v1'?await parseMemoryFieldResult(row.raw_json,context,source.fieldTargets??[],processing):nativeDerivationEvidenceInputs(env,evidence).qualification.terms.recipeVersion==='memory-profile-consolidation-v1'?await parseMemoryProfileResult(row.raw_json,context,processing):source.behavioralSources?await parseMemoryBehavioralResult(row.raw_json,{...context,observations:source.behavioralSources},processing):await parseMemoryDerivationResult(row.raw_json,context,processing);
     if (!candidate) return null;
     const handle = Object.freeze({}) as NativeDerivationResultRead;
     reads.set(handle, { env, db, row, evidence, capture: captured.capture, manifest, candidate, dependencies: expected });

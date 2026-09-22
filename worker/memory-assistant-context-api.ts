@@ -1,3 +1,4 @@
+import {memoryNativeProcessingDeadline} from './memory-image-execution-lifetime.ts';
 import { createMemoryReadBatch } from './memory-read-batch.ts';
 import type { ProfileSynthesisSource } from '../src/model/memory-profile-synthesis.ts';
 import type { WorkerEnv } from './runtime.ts';
@@ -127,9 +128,10 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
   const db=env.DB,started=Date.now(),monotonic=performance.now();
   const config=()=>memoryCanonical([env.FORMA_MEMORY_ENABLED,env.FORMA_MEMORY_USER_IDS,env.FORMA_MEMORY_DERIVATION_ENABLED,
     env.FORMA_MEMORY_DERIVATION_USER_IDS,env.FORMA_PILOT_COHORT_ID,env.FORMA_ADMIN_EMAILS,memoryDerivationBinding(env)]),configured=config();
-  let deadline=started+30000;let staging:ReturnType<typeof createMemoryReadBatch>|undefined;
+  const processingDeadline=native?memoryNativeProcessingDeadline(env,started+30000):started+30000,processingMs=processingDeadline-started;
+  let deadline=processingDeadline;let staging:ReturnType<typeof createMemoryReadBatch>|undefined;
   const current=()=>env.DB===db&&config()===configured&&Date.now()>=started&&Date.now()<deadline
-    &&performance.now()>=monotonic&&performance.now()-monotonic<30000;
+    &&performance.now()>=monotonic&&performance.now()-monotonic<processingMs;
   try{
     const url=new URL(request.url);
     if(actor.fictional||actor.projectExecution||request.headers.get('cookie')?.split(';').some(c=>c.trim().startsWith('forma_impersonation=')))return answer({error:'principal_account_required'},403);
@@ -155,7 +157,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
     if(native&&request.method==='GET'&&controls===null&&schema.profileContextsPresent&&old&&liveMemoryEnabled(env,actor.userId)&&memoryDerivationEnabled(env,actor.userId)){
       // Own selection metadata and fresh target custody are independent. Keep
       // their original SQL/snapshots while coalescing the first native read wave.
-      const targetReads=createMemoryReadBatch(env,current,Math.min(deadline-Date.now(),30000-(performance.now()-monotonic)));
+      const targetReads=createMemoryReadBatch(env,current,Math.min(30000,deadline-Date.now(),processingMs-(performance.now()-monotonic)));
       try{
         const parts=await Promise.allSettled([
           targetReads.run(local=>readScope(null,local,actor,projectId,documentId,nativeScope)),
@@ -218,7 +220,7 @@ async function readAssistantContext(request:Request,env:WorkerEnv,actor:PilotUse
       return answer({...metadata(),context:old?{revision:old.revision,state:'dismissed',jobId:old.job_id,...profileMetadata()}:null,presentation:null});
     }
     if(!derivationHash(jobId))throw Error('context_job');
-    staging=profileJobIds.length?createMemoryReadBatch(env,current,Math.min(deadline-Date.now(),30000-(performance.now()-monotonic))):undefined;
+    staging=profileJobIds.length?createMemoryReadBatch(env,current,Math.min(30000,deadline-Date.now(),processingMs-(performance.now()-monotonic))):undefined;
     const unwrap=staging?.unwrap??((s:D1PreparedStatement)=>s);
     const captureSource=async(sourceEnv:WorkerEnv,id:string,profileOnly=false)=>{
       const handle=await prepareNativeDerivationResult(sourceEnv,actor.userId,id);if(!handle)throw Error('context_source');

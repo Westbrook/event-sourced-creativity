@@ -430,3 +430,17 @@ for(const fault of ['unobserved-index','duplicate-field','unchanged','oversize',
  const raw=fault==='duplicate-json'?JSON.stringify(f.body).replace('"fieldIndex":0','"fieldIndex":1,"fieldIndex":0'):JSON.stringify(f.body);
  assert.equal(await parseMemoryFieldResult(raw,f.context,f.fields),null);
 });
+for(const failure of ['none','forged','cloned','database','wall-reversal','monotonic-reversal','expired','clock-invalid'])test('private image processing lifetime is native-only and does not extend normal parsing '+failure,async t=>{
+ const {bindMemoryImageReceiptLifetime,memoryImageReceiptLifetime,memoryImageParsingWindow,memoryNativeProcessingDeadline}=await import('../worker/memory-image-execution-lifetime.ts');
+ const env={DB:{}},f=derivationFixture(),until=new Date(Date.now()+100000).toISOString();f.context.validUntil=until;for(const source of f.context.sources)source.expiresAt=until;
+ assert.equal(memoryNativeProcessingDeadline(env,123),123);assert.equal(await f.parse(),null);bindMemoryImageReceiptLifetime(env);const token=memoryImageReceiptLifetime(env);assert.throws(()=>bindMemoryImageReceiptLifetime(env),/already_issued/);
+ let supplied=token;
+ if(failure==='forged')supplied={};if(failure==='cloned')supplied=structuredClone(token);if(failure==='database')env.DB={};
+ const wall=Date.now,monotonic=performance.now.bind(performance);
+ if(failure==='wall-reversal')t.mock.method(Date,'now',()=>wall()-1000);
+ if(failure==='monotonic-reversal')t.mock.method(performance,'now',()=>monotonic()-100000);
+ if(failure==='expired')t.mock.method(performance,'now',()=>monotonic()+121000);
+ if(failure==='clock-invalid')t.mock.method(Date,'now',()=>NaN);
+ if(failure==='none'){assert.equal(memoryImageParsingWindow(supplied),120000);assert.ok(await parseMemoryDerivationResult(JSON.stringify(f.body),f.context,supplied));assert.equal(await f.parse(),null);assert.equal(memoryImageReceiptLifetime({...env}),undefined,'The private token is not copied by ordinary environment serialization');}
+ else{assert.throws(()=>memoryImageParsingWindow(supplied));assert.equal(await parseMemoryDerivationResult(JSON.stringify(f.body),f.context,supplied),null);}
+});

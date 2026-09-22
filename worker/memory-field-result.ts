@@ -1,3 +1,4 @@
+import type {MemoryImageReceiptLifetime} from './memory-image-execution-lifetime.ts';
 import { memoryFieldTextHash } from '../src/model/memory-field-request.ts';
 import { memoryDigest } from '../src/model/scoped-memory.ts';
 import { derivationExact,derivationInteger,derivationHash,derivationId } from './memory-derivation-policy.ts';
@@ -11,7 +12,7 @@ export type ParsedMemoryFieldDerivation=Omit<ParsedMemoryDerivation,'version'|'i
 /** An exact saved-field proposal, not a write, authoring capability or new human
  * preference. Original human intent and unchanged native field identity are
  * both required. No model-supplied project/block IDs are accepted. */
-export async function parseMemoryFieldResult(rawJson:string,input:MemoryDerivationParseContext,fieldInput:readonly NativeMemoryFieldTarget[]):Promise<ParsedMemoryFieldDerivation|null>{
+export async function parseMemoryFieldResult(rawJson:string,input:MemoryDerivationParseContext,fieldInput:readonly NativeMemoryFieldTarget[],processing?:MemoryImageReceiptLifetime):Promise<ParsedMemoryFieldDerivation|null>{
  try{
   if(typeof rawJson!=='string'||new TextEncoder().encode(rawJson).byteLength>65536||!memoryDerivationJsonUniqueKeys(rawJson))return null;
   const fields=snapshotMemoryDerivationInput(fieldInput) as NativeMemoryFieldTarget[];
@@ -22,7 +23,7 @@ export async function parseMemoryFieldResult(rawJson:string,input:MemoryDerivati
   for(const field of fields)if(await memoryFieldTextHash(field.text)!==field.textHash)return null;
   const raw=snapshotMemoryDerivationInput(JSON.parse(rawJson)),context=snapshotMemoryDerivationInput(input) as MemoryDerivationParseContext;
   if(!derivationExact(raw,['version','items'])||raw.version!==MEMORY_FIELD_RECIPE||!Array.isArray(raw.items)||raw.items.length>8||context.purpose!=='suggestion'||fields.length>8)return null;
-  const empty=await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:[]}),context);if(!empty)return null;
+  const empty=await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:[]}),context,processing);if(!empty)return null;
   const items:MemoryFieldCandidate[]=[],seen=new Set<number>();
   for(const item of raw.items){
    if(!derivationExact(item,['operation','target','category','text','supports','counterevidence','fieldIndex','replacement','locale'])
@@ -31,7 +32,7 @@ export async function parseMemoryFieldResult(rawJson:string,input:MemoryDerivati
     ||!['en','fr','ar','ja'].includes(String(item.locale)))return null;
    const field=fields[item.fieldIndex]!;if(item.replacement===field.text)return null;seen.add(item.fieldIndex);
    const {fieldIndex:_index,replacement,locale,...value}=item;
-   const parsed=await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:[value]}),context),base=parsed?.items[0];
+   const parsed=await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:[value]}),context,processing),base=parsed?.items[0];
    if(!base||!base.supports.some(quote=>context.sources[quote.sourceIndex]?.authorship==='original-human'&&context.sources[quote.sourceIndex]?.role==='user'))return null;
    const {text:_text,eventIds:_events,...fieldTarget}=field;
    items.push({...base,claimKey:'derived:'+await memoryDigest(memoryCanonical([MEMORY_FIELD_RECIPE,base.claimKey,fieldTarget])),fieldTarget:structuredClone(fieldTarget),replacement,locale:locale as MemoryFieldCandidate['locale']});

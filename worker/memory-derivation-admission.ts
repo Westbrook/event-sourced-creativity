@@ -1,3 +1,4 @@
+import {memoryNativeProcessingDeadline} from './memory-image-execution-lifetime.ts';
 import { PRINCIPAL_WITH_ACCESS_SQL } from './access-policy.ts';
 import { nativeDerivationResultRowSql,nativeDerivationStoredRow,type NativeDerivationStoredRow } from './memory-derivation-result-row.ts';
 import { memoryCanonical, type MemorySqlGuard } from "./memory-sql.ts";
@@ -216,7 +217,7 @@ async function resolveNativeDerivationAdmission(env: WorkerEnv, jobId: string, r
   const references = observed ? observed[1]!.results : await read(referenceQuery, [jobId]);
   if (!referencesShape(references, job, grant)) return null;
   const leaseExpires = [new Date(started + 300_000).toISOString(), job.expires_at, grant.expires_at, e.expires_at, qualification.row.expires_at].sort()[0]!;
-  const until = [new Date(started + 60_000).toISOString(), leaseExpires, ...nativeDeadlines].sort()[0]!;
+  const until = [new Date(mode==='read'?Math.min(memoryNativeProcessingDeadline(env,started+60_000),started+120_000):started+60_000).toISOString(), leaseExpires, ...nativeDeadlines].sort()[0]!;
   const next: NativeJob = mode === "read" ? job : { ...job, state: "leased", lease_token: crypto.randomUUID(), lease_expires_at: leaseExpires, attempts: job.attempts + 1 };
   const common = [schema.guard,...producerGuard(schema.producersPresent,jobId,Number(chat)), { condition: "EXISTS(SELECT 1 FROM pragma_foreign_keys WHERE foreign_keys=1) AND EXISTS(SELECT 1 FROM pragma_ignore_check_constraints WHERE ignore_check_constraints=0)", bindings: [] },
     authority.guard, ...nativeGuards, liveMemoryEnrollmentGuard(e, mode === "read" ? "recall" : "learn"),

@@ -1,3 +1,4 @@
+import type {MemoryImageReceiptLifetime} from './memory-image-execution-lifetime.ts';
 import { derivationExact } from './memory-derivation-policy.ts';
 import { memoryDerivationJsonUniqueKeys,parseMemoryDerivationResult,snapshotMemoryDerivationInput,
  type MemoryDerivationParseContext,type MemoryDerivationCandidate,type MemoryDerivationQuote,type ParsedMemoryDerivation } from './memory-derivation-result.ts';
@@ -14,7 +15,7 @@ const freeze=<T>(value:T):T=>{if(value&&typeof value==='object'){Object.values(v
  * Every relationship's source bindings and lineages join the new item's inverse
  * dependencies. A user correction/suppression cannot be lifted by this recipe.
  * No relationship silently deletes, promotes or overwrites an earlier claim. */
-export async function parseMemoryProfileResult(rawJson:string,input:MemoryDerivationParseContext):Promise<ParsedMemoryProfileDerivation|null>{
+export async function parseMemoryProfileResult(rawJson:string,input:MemoryDerivationParseContext,processing?:MemoryImageReceiptLifetime):Promise<ParsedMemoryProfileDerivation|null>{
  try{
   if(typeof rawJson!=='string'||new TextEncoder().encode(rawJson).byteLength>65536||!memoryDerivationJsonUniqueKeys(rawJson))return null;
   const raw=snapshotMemoryDerivationInput(JSON.parse(rawJson)),context=snapshotMemoryDerivationInput(input) as MemoryDerivationParseContext;
@@ -26,7 +27,7 @@ export async function parseMemoryProfileResult(rawJson:string,input:MemoryDeriva
     ||!Array.isArray(value.reconciles)||value.reconciles.length>4||(total+=value.reconciles.length)>16)return null;
    const {reconciles:_relations,...original}=value;originals.push(original);
   }
-  const base=await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:originals}),context);
+  const base=await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:originals}),context,processing);
   if(!base)return null;
   const items:MemoryProfileCandidate[]=[];
   for(const [index,item]of base.items.entries()){
@@ -35,7 +36,7 @@ export async function parseMemoryProfileResult(rawJson:string,input:MemoryDeriva
     if(!derivationExact(relation,['relationship','category','supports'])||!['revises','contradicts'].includes(String(relation.relationship)))return null;
     const prior=await parseMemoryDerivationResult(JSON.stringify({version:'memory-derivation-candidates-v1',items:[{
      operation:'assert',target:null,category:relation.category,text:'Original evidence anchor',supports:relation.supports,counterevidence:[],
-    }]}),context),anchor=prior?.items[0];
+    }]}),context,processing),anchor=prior?.items[0];
     if(!anchor||anchor.claimKey===item.claimKey||seen.has(anchor.claimKey))return null;seen.add(anchor.claimKey);
     for(const lineage of anchor.lineageIds)lineages.add(lineage);for(const binding of anchor.sourceBindings)bindings.set(binding.sourceId,binding);
     reconciles.push({relationship:relation.relationship as MemoryProfileRelation['relationship'],claimKey:anchor.claimKey,

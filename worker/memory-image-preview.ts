@@ -1,6 +1,6 @@
 import {memoryImageAdoptionHash,type MemoryImagePublication} from './memory-authored-image.ts';
 import type { WorkerEnv } from './runtime.ts';
-import { preparePrivateContent,readAccountBudgets,pilotExecutionAllowance,type BudgetReservationGuard,type PilotUser } from './pilot-policy.ts';
+import { preparePrivateContent,readAccountBudgets,type BudgetReservationGuard,type PilotUser } from './pilot-policy.ts';
 import { consentHash,canonicalConsent,quoteConsequentialExecution,claimConsequentialExecution,reserveConsequentialSteps,beginConsequentialStep,settleConsequentialStep,completeConsequentialExecution,failConsequentialExecution,reconcileConsequentialUsage,proveConsequentialStepNotSubmitted,executionContentCustodyGuard,type ConsequentialBinding,type ConsequentialPreview,type ExecutionRow } from './consequential-consent.ts';
 import { generateCreativeImage } from './image-adapter.ts';
 import { outputImageBudget } from './output-image-budget.ts';
@@ -17,6 +17,7 @@ export type MemoryImageSource={principal:PilotUser;binding:ConsequentialBinding;
 type Source=()=>Promise<MemoryImageSource>;
 type PreviewRequest={version:typeof VERSION;parentExecutionId:string;parentBindingHash:string;parentResultRef:string;prompt:string;model:string;size:typeof SIZE;quality:'high';format:'jpeg';compression:80;budget:NonNullable<ReturnType<typeof outputImageBudget>>};
 type Retained={row:ExecutionRow;binding:ConsequentialBinding;preview:ConsequentialPreview;request:PreviewRequest;serialized:string};
+const presentationDeadline=(source:MemoryImageSource)=>new Date(Math.min(Date.parse(source.validUntil),Date.now()+30000)).toISOString();
 const response=(value:unknown,status=200)=>Response.json(value,{status,headers:{'cache-control':'private, no-store','x-content-type-options':'nosniff',vary:'Cookie, oai-authenticated-user-id, oai-authenticated-user-email'}});
 const id=(v:unknown):v is string=>typeof v==='string'&&/^[a-zA-Z0-9_-]{8,80}$/u.test(v);
 const hash=(v:unknown):v is string=>typeof v==='string'&&/^[a-f0-9]{64}$/u.test(v);
@@ -26,6 +27,12 @@ function fence(source:MemoryImageSource){return {sql:`EXISTS(SELECT 1 FROM memor
 function edge(env:WorkerEnv,source:MemoryImageSource,contentId:string){return env.DB.prepare(`INSERT INTO memory_derivation_asset_edges(source_kind,source_id,target_kind,target_id,owner_user_id,created_at,expires_at,state,retired_at)
  SELECT 'content',?,'content',content_id,owner_id,strftime('%Y-%m-%dT%H:%M:%fZ','now'),MIN(expires_at,?),'active',NULL FROM private_content WHERE content_id=? AND owner_id=?`)
  .bind(source.parentResultRef,source.expiresAt,contentId,source.principal.userId);}
+/** Image purchase is unavailable in any managed pilot. Replay this exclusion
+ * at every paid read/write boundary, including late enrollment before dispatch. */
+function nonPilot(source:MemoryImageSource):BudgetReservationGuard {
+ return source.binding.scope?{sql:"NOT EXISTS(SELECT 1 FROM pilot_cohorts WHERE organization_id=? AND status IN('active','paused','closed'))",bindings:[source.binding.scope.organizationId]}
+ :{sql:"NOT EXISTS(SELECT 1 FROM pilot_cohorts cohort JOIN pilot_participants participant ON participant.cohort_id=cohort.cohort_id AND participant.organization_id=cohort.organization_id WHERE participant.user_id=? AND participant.status='active' AND participant.revoked_at IS NULL AND cohort.status IN('active','paused','closed'))",bindings:[source.principal.userId]};
+}
 function childProof(value:Retained){const custody=executionContentCustodyGuard(value.binding,'content');return {sql:`EXISTS(SELECT 1 FROM consequential_executions execution JOIN private_content content ON content.content_id=execution.consent_ref
  JOIN memory_derivation_asset_edges edge ON edge.target_kind='content' AND edge.target_id=content.content_id
  WHERE execution.execution_id=? AND execution.actor_user_id=? AND execution.binding_hash=? AND execution.consent_ref=? AND content.content=?
@@ -89,18 +96,23 @@ async function publish(env:WorkerEnv,source:MemoryImageSource,value:Retained){
 async function display(env:WorkerEnv,source:MemoryImageSource,value:Retained){
  const saved=await body(env,source,value,'context-proposal');let result:unknown;let adoption:unknown;
  if(saved){const parsed=JSON.parse(String(saved.content));if(value.row.status!=='completed'||parsed.mode!=='private-review'||parsed.independentEvidence!==false)throw Error('assistant_memory_image_unavailable');result=parsed;adoption={hash:await memoryImageAdoptionHash(value.row.execution_id,parsed.image.sha256,value.binding.projectId!,value.binding.documentId!,!!value.binding.scope),projectId:value.binding.projectId,documentId:value.binding.documentId,shared:!!value.binding.scope};}
- const out=response({version:VERSION,executionId:value.row.execution_id,status:value.row.status,validUntil:source.validUntil,...(result?{result,adoption}:{}),noAutomaticRetry:true});source.check();return out;
+ const wall=Date.now(),monotonic=performance.now(),validUntil=presentationDeadline(source);
+ const out=response({version:VERSION,executionId:value.row.execution_id,status:value.row.status,validUntil,...(result?{result,adoption}:{}),noAutomaticRetry:true});source.check();
+ if(!Number.isFinite(Date.now())||Date.now()<wall||Date.now()>=Date.parse(validUntil)||performance.now()<monotonic||performance.now()-monotonic>=30000)throw Error('assistant_memory_image_expired');return out;
 }
 export async function handleMemoryImagePreview(request:Request,env:WorkerEnv,control:Record<string,unknown>,sourceFactory:Source,adopt?: (publication:MemoryImagePublication)=>Promise<Response>):Promise<Response>{
  let executing:string|null=null,actorId:string|null=null,dispatched=false,claimedHash:string|null=null;
  try{
   const action=control.previewAction;if(!['quote','execute','retrieve','resume','adopt'].includes(String(action))||action!=='quote'&&(!id(control.previewExecutionId)||action==='execute'&&!hash(control.approvedPreviewHash)))return response({error:'assistant_memory_image_request'},400);
   const requestDb=env.DB,started=Date.now(),monotonic=performance.now();let source=await sourceFactory();actorId=source.principal.userId;
+  const paid=(value:MemoryImageSource):MemoryImageSource=>{const checks=value.assertions;return {...value,assertions:()=>[...checks(),assertion(env,nonPilot(value))]};};
+  if(action==='execute')source=paid(source);
   const refresh=async()=>{if(env.DB!==requestDb||Date.now()<started||performance.now()<monotonic||performance.now()-monotonic>=120000)throw Error('assistant_memory_image_changed');
-   // Reuse compiled predicates only inside their original short lease. Every
-   // transmission/publication still replays them in its own DB transaction.
+   // Reuse compiled predicates only inside the originally issued server
+   // processing deadline. Every transmission/publication still replays them
+   // in its own DB transaction; browser presentation remains separately short.
    try{source.check();return source;}catch{/* A long image call needs fresh native source proof, not an extended handle. */}
-   const next=await (source.renew?.()??sourceFactory());if(next.parentResultRef!==source.parentResultRef||next.prompt!==source.prompt||await consentHash(next.binding)!==await consentHash(source.binding))throw Error('assistant_memory_image_changed');source=next;return next;};
+   const next=await (source.renew?.()??sourceFactory());if(next.parentResultRef!==source.parentResultRef||next.prompt!==source.prompt||await consentHash(next.binding)!==await consentHash(source.binding))throw Error('assistant_memory_image_changed');source=action==='execute'?paid(next):next;return source;};
   if(action==='quote'){
    const model=env.OPENAI_IMAGE_MODEL??'gpt-image-2.5-sunburst',budget=outputImageBudget(model,SIZE,new TextEncoder().encode(source.prompt).length);if(!budget)throw Error('assistant_memory_image_pricing');
    const data:PreviewRequest={version:VERSION,parentExecutionId:source.parentExecutionId,parentBindingHash:await consentHash(source.binding),parentResultRef:source.parentResultRef,prompt:source.prompt,model,size:SIZE,quality:'high',format:'jpeg',compression:80,budget};
@@ -109,7 +121,7 @@ export async function handleMemoryImagePreview(request:Request,env:WorkerEnv,con
    const quote=await quoteConsequentialExecution(env,source.principal,binding,{...data,disclosure:'One private image, no authoring or publication. Text safety review precedes the paid image request. Allowance is an estimate, not a provider-enforced charge cap.'},source.sourceHead,Infinity,fence(source),(executionId,ref)=>[...source.assertions(),edge(env,source,ref),env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json('assistant_memory_image_unavailable') END AS verified")]);
    const current=await retained(env,source,quote.executionId);let available:number|null=null;try{const budget=await readAccountBudgets(env,source.principal.userId,source.binding.scope?.organizationId);available=Math.min(budget.costBudgets.user.remainingMicrousd,budget.costBudgets.workspace.remainingMicrousd);}catch{/* Unknown capacity never authorizes spending. */}
    await read(env,source,env.DB.prepare('SELECT 1 AS verified'),current);
-   const out=response({version:VERSION,executionId:quote.executionId,validUntil:source.validUntil,quote:{...current.preview,status:current.row.status,canExecute:source.canPurchase()&&Boolean(env.OPENAI_API_KEY)&&['','openai'].includes((env.FORMA_IMAGE_PROVIDER??'openai').trim().toLowerCase())&&available!==null&&available>=quote.maximumMicrousd&&current.row.status==='quoted'},noAutomaticRetry:true});source.check();return out;
+   const out=response({version:VERSION,executionId:quote.executionId,validUntil:presentationDeadline(source),quote:{...current.preview,status:current.row.status,canExecute:source.canPurchase()&&Boolean(env.OPENAI_API_KEY)&&['','openai'].includes((env.FORMA_IMAGE_PROVIDER??'openai').trim().toLowerCase())&&available!==null&&available>=quote.maximumMicrousd&&current.row.status==='quoted'},noAutomaticRetry:true});source.check();return out;
   }
   let value=await retained(env,source,control.previewExecutionId as string);
   if(action==='adopt'){
@@ -120,8 +132,7 @@ export async function handleMemoryImagePreview(request:Request,env:WorkerEnv,con
   }
   if(action==='retrieve')return await display(env,source,value);
   if(action==='resume'){await reconcileConsequentialUsage(env,actorId,value.row.execution_id,{atomicSpecialistPair:true});value={...value,row:await publish(env,source,value)};return await display(env,source,value);}
-  const allowance=await pilotExecutionAllowance(env,actorId,source.binding.scope??undefined);
-  if(allowance.pilot||!source.canPurchase()||!env.OPENAI_API_KEY||value.row.binding_hash!==control.approvedPreviewHash||value.request.model!==(env.OPENAI_IMAGE_MODEL??'gpt-image-2.5-sunburst')||!['','openai'].includes((env.FORMA_IMAGE_PROVIDER??'openai').trim().toLowerCase()))throw Error('assistant_memory_image_approval');
+  if(!source.canPurchase()||!env.OPENAI_API_KEY||value.row.binding_hash!==control.approvedPreviewHash||value.request.model!==(env.OPENAI_IMAGE_MODEL??'gpt-image-2.5-sunburst')||!['','openai'].includes((env.FORMA_IMAGE_PROVIDER??'openai').trim().toLowerCase()))throw Error('assistant_memory_image_approval');
   const claim=await claimConsequentialExecution(env,source.principal,value.binding,value.row.execution_id,control.approvedPreviewHash as string,source.sourceHead,source.assertions(),childProof(value),value.row.status==='quoted'?value.row:undefined);if(claim.error)throw Error('assistant_memory_image_approval');
   if(claim.reused)return await display(env,source,await retained(env,source,value.row.execution_id));executing=value.row.execution_id;claimedHash=value.row.binding_hash;
   await reserveConsequentialSteps(env,source.principal,value.binding,executing,childProof(value),{atomicSpecialistPair:true});

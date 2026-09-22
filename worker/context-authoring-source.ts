@@ -46,7 +46,7 @@ const sourceGuards = (guards: readonly BudgetReservationGuard[]): BudgetReservat
 };
 
 /** Recheck complete current native rows and custody at the final atomic receipt. */
-export async function prepareAuthoringSourceProof(env: WorkerEnv, authority: AuthoringSourceAuthority, options:{coalesceCustody?:boolean}={}): Promise<BudgetReservationGuard> {
+export async function prepareAuthoringSourceProof(env: WorkerEnv, authority: AuthoringSourceAuthority, options:{coalesceCustody?:boolean;deferFinalReplay?:boolean}={}): Promise<BudgetReservationGuard> {
   const { binding, projection } = authority;
   const events = authority.events.filter((event) => nativeSourceTypes.has(event.type) || Boolean(binding.canvasId) && canvasSourceTypes.has(event.type));
   const rebuilt = foldEvents(events, Infinity, binding.documentId, binding.projectId);
@@ -129,6 +129,8 @@ export async function prepareAuthoringSourceProof(env: WorkerEnv, authority: Aut
     bindings: [required, owner],
   });
   const proof = sourceGuards(proofs);
-  if (!await env.DB.prepare("SELECT 1 AS authoring_source_retained WHERE " + proof.sql).bind(...proof.bindings).first()) fail("authoring_source_custody_changed");
+  // A composed consumer may replay this exact predicate in its immediately
+  // following guarded read/write transaction; this function grants no access.
+  if (!options.deferFinalReplay&&!await env.DB.prepare("SELECT 1 AS authoring_source_retained WHERE " + proof.sql).bind(...proof.bindings).first()) fail("authoring_source_custody_changed");
   return proof;
 }

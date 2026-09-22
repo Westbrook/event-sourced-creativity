@@ -67,3 +67,7 @@ Final integrated current-tree regression, delayed-response capacity and completi
 matrix reconciliation remain assigned in this same implementation task. Earlier
 slice receipts do not substitute for those checks. See the [completion matrix](forma-memory-completion-matrix-2026-09-20.md)
 and [separate operational gates](forma-memory-sites-capability-todo-2026-09-18.md).
+
+## Subsequent processing qualification
+
+[Fixed server lifetime and cold-start capacity](forma-memory-image-processing-lifetime-2026-09-21.md) supersedes the delayed-response capacity checkpoint above: the maximum-three-source cold shared invocation now uses50 calls. Browser presentation remains30 seconds and every native source/authority predicate still replays at use. Final integrated qualification is tracked in the completion matrix.

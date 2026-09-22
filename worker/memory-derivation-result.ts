@@ -1,3 +1,4 @@
+import {memoryImageParsingWindow,type MemoryImageReceiptLifetime} from './memory-image-execution-lifetime.ts';
 import { memoryDigest } from "../src/model/scoped-memory.ts";
 import type { StructuredMemoryConversationCategory, StructuredMemoryConversationOperation } from "../src/model/memory-conversation.ts";
 
@@ -129,7 +130,7 @@ function freeze<T>(value: T): T {
  * source, grant, suppression, prior-revision and lifetime proofs in its publication
  * batch. Invalid model output can still be billable; this function never settles a
  * budget, publishes a record, changes user declarations, or refunds a provider call. */
-export async function parseMemoryDerivationResult(rawJson: string, originalContext: MemoryDerivationParseContext): Promise<ParsedMemoryDerivation | null> {
+export async function parseMemoryDerivationResult(rawJson: string, originalContext: MemoryDerivationParseContext, processing?:MemoryImageReceiptLifetime): Promise<ParsedMemoryDerivation | null> {
   try {
     if (typeof rawJson !== "string" || rawJson.length > 65536 || new TextEncoder().encode(rawJson).byteLength > 65536) return null;
     const raw = snapshot(JSON.parse(rawJson)), context = snapshot(originalContext);
@@ -142,7 +143,7 @@ export async function parseMemoryDerivationResult(rawJson: string, originalConte
       || !Array.isArray(context.suppressedLineages) || !context.suppressedLineages.every(id)
       || new Set(context.suppressedLineages).size !== context.suppressedLineages.length) return null;
     const at = time(context.checkedAt), until = time(context.validUntil), now = Date.now();
-    if (!Number.isFinite(at) || !Number.isFinite(until) || at > now || until <= now || until <= at || until - at > 60000) return null;
+    if (!Number.isFinite(at) || !Number.isFinite(until) || at > now || until <= now || until <= at || until - at > memoryImageParsingWindow(processing)) return null;
     const sources = context.sources as unknown as MemoryDerivationSource[], lineages = new Map<string, number>();
     if (new Set(sources.map(source => source?.sourceId)).size !== sources.length) return null;
     for (const source of sources) {

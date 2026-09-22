@@ -644,3 +644,7 @@ are integrated. Additive0073 remains undeployed. Maximum-three-source D1 executi
 passes48/50 calls. Delayed-response capacity and final integrated qualification
 remain on this task; external scheduling, provider qualification and rollout stay
 on the separate capability To Do.
+
+## MEM-058 — Fixed private-image processing lifetime and cold capacity
+
+Implemented locally: [server processing and browser lifetime separation](forma-memory-image-processing-lifetime-2026-09-21.md). Cold maximum-three-source delayed execution uses50 D1 calls including bootstrap. Late pilot/task/source changes and over-deadline results fail closed; verified usage settles without repurchase. Final full native regression and matrix reconciliation remain on this task, not a request for further user approval.
