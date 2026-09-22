@@ -1,5 +1,5 @@
 import type { GenerationEvidenceObserver, OperationEvidence } from "../src/model/generation-outcome-evidence.ts";
-import { checkpointGenerationEvidence, evidenceSha256, operationEvidence } from "./generation-evidence.ts";
+import { checkpointGenerationEvidence, evidenceSha256, operationEvidence, generationDispatchFailure } from "./generation-evidence.ts";
 import { openAIImageModel } from "./image-generation-policy.ts";
 import { readBoundedAssistantProviderResponse } from './assistant-provider.ts';
 import { memoryDerivationJsonUniqueKeys } from './memory-derivation-result.ts';
@@ -414,12 +414,15 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
     clientRequestId:submission.clientRequestId,logicalCallKey:"planning:initial",requestDigest:await sha256Bytes(new TextEncoder().encode(requestBody))});
   await onProviderSubmission?.(submission);
   executionOptions?.onBeforeProviderDispatch?.(submission.clientRequestId);
-  const response = await openAIRequest(OPENAI_IMAGE_DIRECTION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":submission.clientRequestId},signal,body:requestBody});
+  let response:Response;try{response = await openAIRequest(OPENAI_IMAGE_DIRECTION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":submission.clientRequestId},signal,body:requestBody});}catch(error){throw await generationDispatchFailure(executionOptions?.onEvidence,submission.clientRequestId,evidenceOperation,"planner",error);}
   if(!response.ok&&definitiveProviderRejection(response.status))await onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
   const responseBody = await response.text();
-  let body: OpenAIResponse = {};try{body=JSON.parse(responseBody) as OpenAIResponse;}catch{/* Retain malformed response before interpretation. */}
-  const refusal=body.output?.flatMap(item=>item.content??[]).find(item=>item.type==="refusal");
-  const evidenceOutcome={dispatchState:"response_received" as const,contentOutcome:refusal?"refused" as const:body.status==="incomplete"?"invalid" as const:response.ok&&responseText(body)?"usable" as const:"unknown" as const,accountingState:verifiedUsage(body.usage)?"usage_recorded" as const:"unknown" as const};
+  let body: OpenAIResponse = {};try{const parsed:unknown=JSON.parse(responseBody);if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))body=parsed as OpenAIResponse;}catch{/* Retain malformed response before interpretation. */}
+  const refusal=Array.isArray(body.output)?body.output.flatMap(item=>item&&Array.isArray(item.content)?item.content:[]).find(item=>item?.type==="refusal"):undefined;
+  const content=Array.isArray(body.output)?body.output.flatMap(item=>item&&Array.isArray(item.content)?item.content:[]):[];
+  const candidateText=typeof body.output_text==="string"?body.output_text:content.find(item=>item?.type==="output_text"&&typeof item.text==="string")?.text??"";
+  let parsed:Record<string,unknown>|null=null;try{const candidate:unknown=JSON.parse(candidateText);if(candidate&&typeof candidate==="object"&&!Array.isArray(candidate))parsed=candidate as Record<string,unknown>;}catch{/* Classification follows durable usage and private response checkpoints. */}
+  const evidenceOutcome={dispatchState:"response_received" as const,contentOutcome:refusal?"refused" as const:body.status==="incomplete"?"invalid" as const:response.ok?(parsed?"usable" as const:"invalid" as const):"unknown" as const,accountingState:verifiedUsage(body.usage)?"usage_recorded" as const:"unknown" as const};
   const retainPlannerResponse=()=>checkpointGenerationEvidence(executionOptions?.onEvidence,submission.clientRequestId,"response",{...evidenceOperation,returnedModel:body.model??null,requestId:response.headers.get("x-request-id"),responseId:body.id??null,responseSha256:responseDigest},"planner",evidenceOutcome,{responseBody});
   const responseDigest=await evidenceSha256(responseBody);
   if(!response.ok)await retainPlannerResponse();
@@ -430,10 +433,8 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
   if(refusal)throw new ProviderRequestError({code:"provider_planner_refusal",category:"safety",scope:"request",action:"edit_request",message:refusal.refusal??"The planner declined this request.",retryable:false,retryAfterMs:null,requestId:body.id??null,httpStatus:response.status,pipelineStage:"planner",providerModerationStage:"unknown"});
   if(body.status==="incomplete"||body.error)throw new ProviderRequestError({...classifyProviderFailure(new Error(body.error?.message??"provider_response_incomplete"),response,body),code:body.error?.code??"provider_response_incomplete",pipelineStage:"planner"});
   if(onProviderSubmission&&!verifiedUsage(body.usage))throw missingUsageReceipt(body.id??null);
-  const text = responseText(body);
-  if (!text) throw new Error("provider_returned_no_output");
-  let parsed: Record<string, unknown>; try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error("provider_returned_invalid_json"); }
-  return { responseId: body.id ?? "", model: body.model ?? env.OPENAI_MODEL ?? "gpt-5.6-terra", output: parsed, raw: text, latencyMs: Date.now() - started, usage: { inputTokens: Number(body.usage?.input_tokens ?? 0), outputTokens: Number(body.usage?.output_tokens ?? 0), totalTokens: Number(body.usage?.total_tokens ?? 0) } };
+  if(!parsed)throw new ProviderRequestError({code:candidateText?"provider_returned_invalid_json":"provider_returned_no_output",category:"provider",scope:"provider",action:"contact_support",message:candidateText?"The planner returned an invalid structured result.":"The planner returned no output.",retryable:false,retryAfterMs:null,requestId:body.id??null,httpStatus:response.status,pipelineStage:"planner"});
+  return { responseId: body.id ?? "", model: body.model ?? env.OPENAI_MODEL ?? "gpt-5.6-terra", output: parsed, raw: candidateText, latencyMs: Date.now() - started, usage: { inputTokens: Number(body.usage?.input_tokens ?? 0), outputTokens: Number(body.usage?.output_tokens ?? 0), totalTokens: Number(body.usage?.total_tokens ?? 0) } };
 }
 
 const referenceDescriptors=(references:ImageReference[]):PromptReferenceDescriptor[]=>references.map((reference)=>({blockId:reference.blockId,referenceId:reference.referenceId,label:reference.label,mode:reference.mode,mimeType:reference.mimeType,source:reference.source}));
@@ -477,17 +478,18 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   const model=openAIImageModel(env,options.quality);const quality=options.quality??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.quality;const size=options.size??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.size;const sizeValidation=validateProviderImageSize(size);
   if(model.startsWith("gpt-image-2")&&!sizeValidation.valid)throw new ProviderRequestError({code:"invalid_image_size",pipelineStage:"compiler",category:"provider",scope:"request",action:"edit_request",message:`The requested image size ${size} cannot be submitted to ${model}. ${sizeValidation.issues.join(" ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   const references=validateImageReferences(options.references??[]);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const safetyInputDigest=await imageSafetyInputDigest(snapshot,{model,quality,size,promptTechnique},references);const acknowledgedPrompt=consumeImageSafetyDelivery(options.safetyAcknowledgement,safetyInputDigest);const prompt=acknowledgedPrompt||options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:options.partialImages});const started=Date.now();
-  await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
-  let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal,Boolean(options.privateImageReceipt),options.onEvidence);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
-  if(moderation.flagged&&!acknowledgedPrompt)throw new ProviderRequestError({safetyInputDigest,code:"safety_preflight_flagged",pipelineStage:"app_moderation",providerModerationStage:"unknown",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and the contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation",moderationReceipt:moderation},prompt);
-  await options.onStage?.("provider-wait",acknowledgedPrompt?"Risks acknowledged. Sending the reviewed request to the image provider.":"Safety preflight passed. Waiting for the image provider.");
   const outputFormat=options.outputFormat??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputFormat;const outputCompression=Math.max(0,Math.min(100,Math.round(options.outputCompression??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputCompression)));const partialImages=options.partialImages??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.partialImages;const user=await safetyIdentifier(userId);
   const evidenceId=options.providerClientRequestId??`image-evidence-${crypto.randomUUID()}`;
   const imageSettings={n:OPENAI_IMAGE_GENERATION_CONTRACT.outputCount,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{})};
   const evidenceOperation=operationEvidence("openai",references.length?"https://api.openai.com/v1/images/edits":OPENAI_IMAGE_GENERATION_CONTRACT.api,model,imageSettings,{adapterVersion:"openai-image-v5",compilerVersion:"prompt-structures@1587f906",requestedAlias:env.OPENAI_IMAGE_MODEL??null,overrideProvenance:quality==="low"?"shared-low-quality-flare":env.OPENAI_IMAGE_MODEL?"configured OPENAI_IMAGE_MODEL":"application-default",...options.evidenceContext,requestedQuality:options.quality??null});
+  await checkpointGenerationEvidence(options.onEvidence,`${evidenceId}:compiler`,"request",evidenceOperation,"compiler",{dispatchState:"not_dispatched",accountingState:"not_incurred"},{requestBody:JSON.stringify({encoding:"compiled-image-input",prompt})});
+  await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
+  let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal,Boolean(options.privateImageReceipt),options.onEvidence);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+  if(moderation.flagged&&!acknowledgedPrompt)throw new ProviderRequestError({safetyInputDigest,code:"safety_preflight_flagged",pipelineStage:"app_moderation",providerModerationStage:"unknown",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and the contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation",moderationReceipt:moderation},prompt);
+  await options.onStage?.("provider-wait",acknowledgedPrompt?"Risks acknowledged. Sending the reviewed request to the image provider.":"Safety preflight passed. Waiting for the image provider.");
   let retainCompletedImageEvidence:(()=>Promise<void>)|undefined;
   const retainImageResponse=async(raw:string,body:OpenAIImageResponse|OpenAIImageStreamEvent,httpResponse:Response,usable:boolean)=>{
-    const failure=body.error||("type" in body&&body.type==="error")?classifyProviderFailure(new Error("provider_image_error"),httpResponse,body):null;
+    const failure=!httpResponse.ok||body.error||("type" in body&&body.type==="error")?classifyProviderFailure(new Error("provider_image_error"),httpResponse,body):null;
     // Media bytes already have artifact custody. Keep the exact envelope hash and non-pixel fields privately.
     const responseBody=JSON.stringify(body, (key,value)=>key==="b64_json"?undefined:value);
     const revised="data" in body?body.data?.[0]?.revised_prompt:(body as OpenAIImageStreamEvent).revised_prompt;
@@ -502,14 +504,14 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
     await checkpointGenerationEvidence(options.onEvidence,evidenceId,"request",evidenceOperation,"media_submission",{dispatchState:"not_dispatched"},{requestBody:JSON.stringify({encoding:"multipart-fields",fields:Object.fromEntries([...form.entries()].filter(([,value])=>typeof value==="string")),references:await Promise.all(references.map(async(reference,index)=>({index,mimeType:reference.mimeType,sha256:await sha256Bytes(reference.bytes)})))})});
     await options.onStage?.("provider-submit","Submitting the approved image request.");
     options.onBeforeProviderDispatch?.(options.providerClientRequestId??"");
-    try{response=await openAIRequest("https://api.openai.com/v1/images/edits",{method:"POST",headers:{...openAIAuthHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:form,signal:options.signal});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+    try{response=await openAIRequest("https://api.openai.com/v1/images/edits",{method:"POST",headers:{...openAIAuthHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:form,signal:options.signal});}catch(error){throw await generationDispatchFailure(options.onEvidence,evidenceId,evidenceOperation,"media_submission",error,prompt);}
   }else{
     const requestBody=JSON.stringify({model,prompt,n:OPENAI_IMAGE_GENERATION_CONTRACT.outputCount,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user});
     evidenceOperation.requestSha256=await evidenceSha256(requestBody);
     await checkpointGenerationEvidence(options.onEvidence,evidenceId,"request",evidenceOperation,"media_submission",{dispatchState:"not_dispatched"},{requestBody});
     await options.onStage?.("provider-submit","Submitting the approved image request.");
     options.onBeforeProviderDispatch?.(options.providerClientRequestId??"");
-    try{response=await openAIRequest(OPENAI_IMAGE_GENERATION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:requestBody,signal:options.signal},undefined,options.privateImageReceipt?"caller-bounded":"classify");}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+    try{response=await openAIRequest(OPENAI_IMAGE_GENERATION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:requestBody,signal:options.signal},undefined,options.privateImageReceipt?"caller-bounded":"classify");}catch(error){throw await generationDispatchFailure(options.onEvidence,evidenceId,evidenceOperation,"media_submission",error,prompt);}
   }
   let privateRaw:string|undefined;
   if(options.privateImageReceipt){privateRaw=await readBoundedAssistantProviderResponse(response,options.privateImageReceipt.signal,1024*1024);if(!memoryDerivationJsonUniqueKeys(privateRaw))throw new Error('private_image_receipt_invalid');}

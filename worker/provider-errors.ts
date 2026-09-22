@@ -134,7 +134,7 @@ export function classifyProviderFailure(input: unknown, response?: Response, pro
     category = "canceled"; scope = "request"; action = "retry";
   } else if (input instanceof TypeError || /fetch failed|network|econn|dns|timeout/.test(lower)) {
     category = "network"; scope = "network"; action = "retry";
-  } else if (status !== null && status >= 500) {
+  } else if (status !== null && status >= 500 || /^(?:server_error|internal_server_error|service_unavailable)$/.test(providerCode)) {
     category = "server"; scope = "provider"; action = "retry";
   } else if (status !== null || providerCode) {
     category = "provider"; scope = "request"; action = "edit_request";

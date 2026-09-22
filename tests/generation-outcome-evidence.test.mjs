@@ -73,3 +73,37 @@ test('evidence observation leaves JSON image request bytes and paid retry count 
     for(const onEvidence of [undefined,()=>{}])await assert.rejects(()=>generateCreativeImage(env,'user',{facts:[]},{},{onEvidence}));
   });assert.equal(requests.length,2);assert.equal(requests[0],requests[1]);
 });
+
+test('network ambiguity records unknown dispatch with original pending purchase intact',async()=>{
+  const evidence=[],calls=[];
+  await withFetch(async()=>{throw new TypeError('fetch failed');},async()=>{
+    await assert.rejects(()=>generateCreativeDirection(env,'user',{facts:[]},undefined,undefined,r=>calls.push(r),{onEvidence:e=>evidence.push(e)}),e=>e.detail.outcome.dispatchState==='dispatch_unknown');
+  });assert.equal(calls.length,1);assert.equal(calls[0].status,'pending');assert.equal(evidence.at(-1).outcome.dispatchState,'dispatch_unknown');assert.equal(evidence.at(-1).operation.responseSha256,null);
+});
+test('private response checkpoint failure cannot erase planner financial completion',async()=>{
+  const calls=[];await withFetch(async()=>Response.json({id:'paid',output_text:'{"scene":"synthetic"}',usage}),async()=>{
+    await assert.rejects(()=>generateCreativeDirection(env,'user',{facts:[]},undefined,undefined,r=>calls.push(r),{onEvidence:e=>{if(e.phase==='response')throw new Error('private checkpoint failed');}}),/private checkpoint failed/);
+  });assert.equal(calls.at(-1).status,'completed');assert.equal(calls.at(-1).totalTokens,3);
+});
+test('local preflight stop retains intended media route and resolved settings',async()=>{
+  const evidence=[];await withFetch(async()=>Response.json({results:[{flagged:true,categories:{violence:true}}]}),async()=>{
+    await assert.rejects(()=>generateCreativeImage(env,'user',{facts:[]},{},{quality:'low',onEvidence:e=>evidence.push(e)}));
+  });const compiler=evidence.find(e=>e.outcome.pipelineStage==='compiler');assert.equal(compiler.operation.effectiveModel,'gpt-image-2.5-flare');assert.equal(compiler.operation.settings.quality,'low');assert.equal(compiler.outcome.dispatchState,'not_dispatched');assert.equal(compiler.operation.endpoint,'https://api.openai.com/v1/images/generations');
+});
+test('structured streaming server code outranks generic rejection wording',()=>{
+  assert.equal(classifyProviderFailure(new Error('fallback'),new Response(null),{error:{code:'server_error',message:'request was rejected'}}).category,'server');
+});
+
+test('invalid planner text is retained as invalid before format failure',async()=>{
+  const evidence=[];await withFetch(async()=>Response.json({id:'bad-json',output_text:'not JSON',usage}),async()=>{
+    await assert.rejects(()=>generateCreativeDirection(env,'user',{facts:[]},undefined,undefined,()=>{},{onEvidence:e=>evidence.push(e)}),e=>e.detail.pipelineStage==='planner'&&e.detail.code==='provider_returned_invalid_json');
+  });assert.equal(evidence.at(-1).outcome.contentOutcome,'invalid');assert.match(evidence.at(-1).responseBody,/not JSON/);
+});
+
+test('successful render followed by real storage function failure retains usable result evidence',async()=>{
+  const {storeGeneratedImage}=await import('../worker/media-api.ts');const checkpoint={};let storageCalls=0;
+  await withFetch(async url=>String(url).endsWith('/moderations')?pass():Response.json({data:[{b64_json:btoa('pixels')}],usage}),async()=>{
+    const image=await generateCreativeImage(env,'user',{facts:[]},{},{onEvidence:e=>{checkpoint.generationOutcome=e.outcome;}});
+    await assert.rejects(()=>storeGeneratedImage({MEDIA:{put:async()=>{storageCalls++;throw new Error('offline storage failure');}}},'user','generation',image.bytes,image.model),/offline storage failure/);
+  });const outcome=generationOutcomeSummary(checkpoint,{category:'server'},'storage');assert.equal(storageCalls,1);assert.equal(outcome.contentOutcome,'usable');assert.equal(outcome.accountingState,'usage_recorded');assert.equal(outcome.pipelineStage,'storage');
+});

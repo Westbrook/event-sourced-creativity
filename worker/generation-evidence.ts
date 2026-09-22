@@ -1,3 +1,4 @@
+import { classifyProviderFailure, ProviderRequestError } from "./provider-errors.ts";
 import { unknownGenerationOutcome, type GenerationEvidenceObserver, type OperationEvidence, type PipelineStage, type GenerationOutcomeEvidence, type SafetyEvidence } from '../src/model/generation-outcome-evidence.ts';
 
 export const evidenceSha256 = async (raw: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw))), n=>n.toString(16).padStart(2,'0')).join('');
@@ -12,4 +13,13 @@ export async function checkpointGenerationEvidence(observer: GenerationEvidenceO
   if (!observer) return;
   await observer({schemaVersion:'forma-private-generation-evidence-v1',evidenceId,capturedAt:new Date().toISOString(),phase,operation,
     outcome:{...unknownGenerationOutcome(pipelineStage),...outcome},...bodies});
+}
+
+/** A fetch exception cannot prove that the provider did not receive the original purchase. */
+export async function generationDispatchFailure(observer:GenerationEvidenceObserver|undefined,evidenceId:string,operation:OperationEvidence,pipelineStage:PipelineStage,error:unknown,prompt:string|null=null) {
+  const detail=classifyProviderFailure(error);
+  const outcome:GenerationOutcomeEvidence={...unknownGenerationOutcome(pipelineStage),failureKind:detail.category==='network'?'transport':detail.category,
+    correctiveActionScope:detail.scope,dispatchState:'dispatch_unknown'};
+  await checkpointGenerationEvidence(observer,`${evidenceId}:dispatch`, 'request',operation,pipelineStage,outcome);
+  return new ProviderRequestError({...detail,pipelineStage,outcome},prompt);
 }

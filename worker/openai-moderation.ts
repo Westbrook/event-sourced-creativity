@@ -1,6 +1,6 @@
 import { validModerationResults } from "./moderation-response-validation.ts";
 import type { GenerationEvidenceObserver } from "../src/model/generation-outcome-evidence.ts";
-import { checkpointGenerationEvidence, evidenceSha256, operationEvidence } from "./generation-evidence.ts";
+import { checkpointGenerationEvidence, evidenceSha256, operationEvidence, generationDispatchFailure } from "./generation-evidence.ts";
 import { readBoundedAssistantProviderResponse } from './assistant-provider.ts';
 import { memoryDerivationJsonUniqueKeys } from './memory-derivation-result.ts';
 import { OPENAI_IMAGE_MODERATION_CONTRACT } from "./openai-image-route-contract.ts";
@@ -46,7 +46,7 @@ async function requestModeration(env: WorkerEnv, input: unknown, signal?: AbortS
   const evidenceId=`moderation-${crypto.randomUUID()}`;
   const operation=operationEvidence("openai",OPENAI_IMAGE_MODERATION_CONTRACT.api,OPENAI_IMAGE_MODERATION_CONTRACT.model,{}, {requestSha256:await evidenceSha256(requestBody)});
   await checkpointGenerationEvidence(onEvidence,evidenceId,"request",operation,"app_moderation",{dispatchState:"not_dispatched"},{requestBody});
-  const response = await fetch(OPENAI_IMAGE_MODERATION_CONTRACT.api, { method: "POST", headers: headers(env), signal, body: requestBody });
+  let response:Response;try{response = await fetch(OPENAI_IMAGE_MODERATION_CONTRACT.api, { method: "POST", headers: headers(env), signal, body: requestBody });}catch(error){throw await generationDispatchFailure(onEvidence,evidenceId,operation,"app_moderation",error);}
   let body: ModerationResponse = {};
   let responseBody="";let uniqueKeys=false;let responseReadComplete=false;
   if(strict&&!signal)throw Error('private_image_moderation_invalid');
@@ -61,7 +61,7 @@ async function requestModeration(env: WorkerEnv, input: unknown, signal?: AbortS
     if(signal?.aborted)throw error;
   }
   const shapeValid = uniqueKeys && validModerationResults(body,expectedResults);
-  await checkpointGenerationEvidence(onEvidence,evidenceId,"response",{...operation,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id")??response.headers.get("openai-request-id"),responseId:body?.id??null,responseSha256:responseReadComplete?await evidenceSha256(responseBody):null},"app_moderation",{dispatchState:"response_received",contentOutcome:shapeValid?"usable":"invalid"},{...(responseReadComplete?{responseBody}:{}),safety:{schemaVersion:"forma-safety-evidence-v1",source:"standalone_omni",stage:"unknown",verdict:shapeValid?(body.results!.some(result=>result.flagged)?"flagged":"clear"):"unknown",validity:shapeValid?"valid":"invalid",expectedResultCount:expectedResults,returnedResultCount:Array.isArray(body?.results)?body.results.length:null,requestedModel:operation.effectiveModel,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id"),responseId:body?.id??null}});
+  await checkpointGenerationEvidence(onEvidence,evidenceId,"response",{...operation,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id")??response.headers.get("openai-request-id"),responseId:body?.id??null,responseSha256:responseReadComplete?await evidenceSha256(responseBody):null},"app_moderation",{dispatchState:"response_received",contentOutcome:shapeValid?"usable":"invalid"},{...(responseReadComplete?{responseBody}:{}),safety:{schemaVersion:"forma-safety-evidence-v1",source:"standalone_omni",stage:"unknown",verdict:shapeValid?(body.results!.some(result=>result.flagged)?"flagged":"clear"):"unknown",validity:shapeValid?"valid":"invalid",expectedResultCount:expectedResults,returnedResultCount:Array.isArray(body?.results)?body.results.length:null,requestedModel:operation.effectiveModel,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id"),responseId:body?.id??null,...(shapeValid&&expectedResults===1?{categories:body.results![0]!.categories,...(body.results![0]!.category_scores?{scores:body.results![0]!.category_scores}:{})}:{})}});
   if (!response.ok) throw providerErrorFromResponse(response, body, `openai_moderation_${response.status}`,null,"app_moderation");
   if(!shapeValid){
     if(strict)throw Error('private_image_moderation_invalid');

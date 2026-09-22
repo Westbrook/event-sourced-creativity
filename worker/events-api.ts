@@ -140,6 +140,7 @@ const HOT_EVENTS = new Set(["AnnotationAdded","ComparisonOpened","ObjectViewed",
 const PERMISSION_SCHEMA_VERSION = 1;
 const failureEventFields = (detail: ProviderFailureDetail) => ({
   ...(detail.pipelineStage?{pipeline_stage:detail.pipelineStage}:{}), ...(detail.providerModerationStage?{provider_moderation_stage:detail.providerModerationStage}:{}),
+  ...(detail.outcome?{generation_outcome:detail.outcome}:{}),
   error_class: detail.category, error_code: detail.code, error_category: detail.category, error_scope: detail.scope, error_action: detail.action,
   error_message: detail.message, retryable: detail.retryable, retry_after_ms: detail.retryAfterMs, provider_request_id: detail.requestId, http_status: detail.httpStatus,
   ...(detail.safetyInputDigest?{safety_input_digest:detail.safetyInputDigest}:{}),

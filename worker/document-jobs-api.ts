@@ -1569,6 +1569,7 @@ function errorDetailFromResult(result: Record<string, unknown>): DocumentJobErro
   if (!value || typeof value !== "object") return null;
   const detail = value as Record<string, unknown>;
   const parsed={
+    ...(detail.outcome?{outcome:detail.outcome as ProviderFailureDetail["outcome"]}:{}),
     ...(detail.pipelineStage?{pipelineStage:detail.pipelineStage as ProviderFailureDetail["pipelineStage"]}:{}),
     ...(detail.providerModerationStage?{providerModerationStage:detail.providerModerationStage as ProviderFailureDetail["providerModerationStage"]}:{}),
     ...(typeof detail.safetyInputDigest==="string"?{safetyInputDigest:detail.safetyInputDigest}:{}),
@@ -2073,6 +2074,7 @@ function correlatedFailureDetail(events: Awaited<ReturnType<typeof readWorkspace
   if (!failureEvent) return null;
   const payload = failureEvent.payload;
   const detail={
+    ...(payload.generation_outcome?{outcome:payload.generation_outcome as ProviderFailureDetail["outcome"]}:{}),
     ...(payload.pipeline_stage?{pipelineStage:payload.pipeline_stage as ProviderFailureDetail["pipelineStage"]}:{}),
     ...(payload.provider_moderation_stage?{providerModerationStage:payload.provider_moderation_stage as ProviderFailureDetail["providerModerationStage"]}:{}),
     ...(typeof payload.safety_input_digest==="string"?{safetyInputDigest:payload.safety_input_digest}:{}),
