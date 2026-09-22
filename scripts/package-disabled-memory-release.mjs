@@ -10,4 +10,4 @@ try{await access(output);throw Error('Archive already exists');}catch(error){if(
 const receipt=await verifyReleaseMigrations(root,join(root,'dist/.openai/drizzle'));
 async function check(directory){for(const e of await readdir(directory,{withFileTypes:true})){if(['.git','node_modules'].includes(e.name)||e.name.startsWith('.env')||e.name.startsWith('.dev.vars')||e.name.endsWith('.pending.sql'))throw Error('Unsafe release artifact');const p=join(directory,e.name);if(e.isDirectory())await check(p);else if(!e.isFile()||!(await lstat(p)).isFile())throw Error('Non-regular release artifact');}}
 await check(join(root,'dist'));await access(join(root,'dist/server/index.js'));await access(join(root,'dist/.openai/hosting.json'));
-const result=spawnSync('tar',['-C',root,'-cf',output,'dist'],{stdio:'inherit'});if(result.status!==0)throw Error('Packaging failed');console.log(JSON.stringify({archive:output,...receipt}));
+const result=spawnSync('tar',['-C',root,'-cf',output,'dist'],{stdio:'inherit',env:{...process.env,COPYFILE_DISABLE:'1'}});if(result.status!==0)throw Error('Packaging failed');console.log(JSON.stringify({archive:output,...receipt}));
