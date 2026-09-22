@@ -1,0 +1,60 @@
+{
+  "version": "h5-decision-v1",
+  "status": "unavailable",
+  "baseHead": "fd714354d3b2f5a963ca6e104bc3ea0d69a7176d",
+  "target": {
+    "documentId": "fedbe915-6e12-420e-b049-b00430902446",
+    "projectId": "c30526e4-afd4-4de9-b18e-7494f9e92394",
+    "actualEligibility": null
+  },
+  "realEvidence": {
+    "sitesDatabaseOverview": "available; exact private_content table identifier absent from returned list; not proof of absence",
+    "jobDiscovery": {
+      "returnedRowsInspected": 99,
+      "pages": 22,
+      "targetFailedJobsFound": 3,
+      "scanComplete": false,
+      "targetRequestAndResultJson": "truncated; not exact-pair evidence"
+    },
+    "environmentRevision": 16,
+    "configuredPlannerModel": "gpt-5.6-terra",
+    "modelBasis": "configured OPENAI_MODEL",
+    "projectHeaderPresent": true,
+    "credentialEntryMasked": true,
+    "browserRequirementsGet": "blocked by client; not backend-unavailability evidence"
+  },
+  "actualSource": null,
+  "retainedDirection": null,
+  "actualRequest": null,
+  "resolvedAccountPayerRegionCredentialBinding": null,
+  "freshConditionalEstimate": null,
+  "maximumExposure": null,
+  "selectedFinancialPolicy": null,
+  "financialAcceptance": null,
+  "liveAuthority": null,
+  "providerCalls": 0,
+  "deployment": false,
+  "activation": false,
+  "schemaInstallation": false,
+  "sourceFreezeInventory": {
+    "maximumSourceBytes": 1048576,
+    "maximumReceiptBytes": 1048576,
+    "privateRows": 2,
+    "maximumRetentionDays": 30,
+    "earlierNativeAndSourceDeadlinesRequired": true,
+    "automaticRetry": false,
+    "cleanupAttempts": 0,
+    "billedStorageOrRowScanBound": null
+  },
+  "nextOperation": "Authorized trusted operational source/configuration binding; no inference",
+  "review": "unacknowledged",
+  "missingBinding": "Current authorized server freeze plus full configuration/custody metadata; separate binding required for project, pilot, Memory, external/pinned sources or global preferences",
+  "futureScope": [
+    "deployment and schemas/grants",
+    "source lifecycle deletion/funding integration with F4",
+    "financial policy choice",
+    "exactly one explicitly authorized planner call",
+    "human fidelity review",
+    "genuine C capture and separate image worksheet/envelope"
+  ]
+}
