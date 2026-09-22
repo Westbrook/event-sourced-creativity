@@ -1,3 +1,4 @@
+import {stageEvidenceRefs} from './rejection-evidence.ts';
 import { sharedIdeaEdits, independentIdeaEdits, ideaContentEdit } from '../model/shared-idea-edits.ts';
 import { chooseSharedIdeaEdit, IdeaEditCanceled } from '../ui/shared-idea-choice.ts';
 import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
@@ -494,9 +495,9 @@ export class StillClient {
     });
   }
   /** Response-only, actor-authorized evidence. Never put private receipts in shared caches. */
-  async inspectGeneration(jobId:string,documentId:string) {
+  async inspectGeneration(jobId:string,documentId:string,viewedJobId=jobId) {
     const check=await this.verifyScope(),shared=!!this.session?.projectContext;
-    const current=()=>{check();if(this.position.outputId!==jobId||this.position.documentId!==documentId||this.position.view!=='rejection')throw new Error('Inspection changed.');};
+    const current=()=>{check();if(this.position.outputId!==viewedJobId||this.position.documentId!==documentId||this.position.view!=='rejection')throw new Error('Inspection changed.');};
     current();
     const detail=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(jobId)}?inspection=1`);current();
     const matches=(job:DocumentJob|undefined)=>job?.jobId===jobId&&job.documentId===documentId;
@@ -514,7 +515,8 @@ export class StillClient {
       }catch(error){current();if(error instanceof ApiError&&![403,404,410].includes(error.status))throw error;unavailable.push('Private inputs are unavailable to this viewer or no longer retained.');}
     }else{
       const receipt=job.result?.generationReceipt as Record<string,unknown>|undefined;
-      const refs=[...new Set([receipt?.input_ref,job.moderationPromptRef,...(job.members??[]).map(member=>member.moderationPromptRef)].filter((ref):ref is string=>typeof ref==='string'&&!!ref))];
+      const evidenceRefs=stageEvidenceRefs(job).filter(row=>!row.expiresAt||Date.parse(row.expiresAt)>Date.now()).map(row=>row.ref);
+      const refs=[...new Set([...evidenceRefs,receipt?.input_ref,job.moderationPromptRef,...(job.members??[]).map(member=>member.moderationPromptRef)].filter((ref):ref is string=>typeof ref==='string'&&!!ref))];
       await Promise.all(refs.map(async ref=>{
         try{
           const response=await this.request<{content?:Record<string,string>}>(`/api/events?after=${this.head}&limit=1&content=1&contentId=${encodeURIComponent(ref)}`);current();
@@ -523,7 +525,12 @@ export class StillClient {
         }catch(error){current();if(error instanceof ApiError&&[401,403].includes(error.status))throw error;unavailable.push('Some retained inputs could not be loaded.');}
       }));
     }
-    current();return {job,content,unavailable:[...new Set(unavailable)]};
+    current();
+    // A deadline can pass during parallel reads. Never hand expired bytes to presentation.
+    const receipt=job.result?.generationReceipt as Record<string,unknown>|undefined;
+    const deadlines=[...stageEvidenceRefs(job),{ref:typeof receipt?.input_ref==='string'?receipt.input_ref:null,expiresAt:typeof receipt?.input_expires_at==='string'?receipt.input_expires_at:null}];
+    for(const row of deadlines)if(row.ref&&row.expiresAt&&!(Date.parse(row.expiresAt)>Date.now()))delete content[row.ref];
+    return {job,content,unavailable:[...new Set(unavailable)]};
   }
   async pollJobs() {
     const document = this.position.documentId, key = this.jobsKey;
