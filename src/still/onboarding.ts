@@ -36,7 +36,7 @@ export const ACTION_HELP:Record<string,string>={
 /** Workflow commands have known outcomes. Keep their help immediate and tied to the actual step. */
 export function workflowHelp(mode:string,id:string,label:string,unconfirmedSave=false):string|undefined{
  if(!mode||mode==='generate')return;
- if(label==='Start new draft')return 'Unlock this draft without repeating the earlier save. Its outcome may still be unknown.';
+ if(label==='Save draft')return 'Save your current draft after checking again. The earlier save may still exist, so this could create a duplicate.';
  if(label==='Check save')return 'Check whether the earlier save completed before continuing.';
  if(label==='More actions')return 'See the remaining actions for this step.';
  const save:Record<string,string>={

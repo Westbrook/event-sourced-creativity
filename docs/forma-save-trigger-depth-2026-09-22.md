@@ -158,18 +158,22 @@ field. The Check save button then ran draft validation first and demanded a name
 in the disabled field. The same durable marker also caused an unnecessary reload
 warning even when no draft text or active submission remained.
 
-Receipt checking now bypasses form validation and never resubmits the old request.
-A confirmed receipt unlocks the form. If no matching receipt is found, the form
-explains the uncertainty and offers an explicit Start new draft action. That
-choice rechecks the original request before releasing only the current tab's
-write lock, resets creation IDs, and preserves any draft text still in memory.
-It does not cancel an earlier server request or certify that it failed. The UI
-warns that a subsequent save could duplicate an earlier unconfirmed save.
+Draft fields now remain editable while the earlier save is unconfirmed. Receipt
+checking bypasses form validation and never submits the corrected draft or repeats
+the old request. If no matching receipt is found, the form offers Save draft with
+an explicit duplication warning. There is no Start new draft or unlock step.
+
+Save draft validates the current input before changing recovery metadata, checks
+the original request again, and submits the edited draft only if the outcome is
+still unknown. If a late matching receipt appears, it reports the confirmation
+without a new submission and preserves the corrected draft for review. Offline
+checks and workspace changes retain the original journal. A new save uses fresh
+creation IDs; it does not mutate or cancel the earlier server request.
 
 Actual in-flight work and changed drafts retain their navigation warning. A
 persisted recovery marker alone no longer blocks reload or browsing saved work.
-Offline checks and workspace changes retain the original journal. Personal and
-shared Worker integration tests cover reload, lost/late receipts, no repeated
-POST, explicit new submission, offline checks and scope fencing. A headless
-browser test exercises the disabled empty field, Check save, Start new draft,
-editable name and one explicit new Project submission.
+Personal/shared Worker integration tests cover reload, lost/late receipts, no
+repeated POST, explicit new submission, offline checks and scope fencing. The
+headless browser regression verifies immediate editing, independent Check save,
+empty-input validation without retiring the journal, saving the corrected name,
+and no new submission after a late confirmation.

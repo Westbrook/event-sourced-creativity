@@ -689,7 +689,7 @@ export class StillApp extends LitElement {
     </en-dialog>`;
   }
   private button(label: string, action: (event:MouseEvent) => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${this.dockId(helpId)} data-action-id=${actionId} data-action-source=${source} form=${!this.measuringDock&&actionId==='workflow:save'&&this.isCreationMode()?'still-create-form':nothing} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
-  private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { if(rows===1)return html`<en-text-field label=${label} .value=${live(value)} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.changed();}}></en-text-field>`; return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || this.client.hasUnconfirmedWrite || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
+  private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { if(rows===1)return html`<en-text-field label=${label} .value=${live(value)} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.changed();}}></en-text-field>`; return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
   private closeMode() { if (this.mode === 'generate') this.client.position.intent = ''; this.resetStep();this.error='';this.writeRoute();this.decide();this.focusContent(); }
   private begin(mode: string, updateURL=true) {
     if(mode==='surprise')mode='add-context'; // Legacy entry points use the ordinary idea form.
@@ -769,7 +769,7 @@ export class StillApp extends LitElement {
   }
   private isCreationMode(){return ['new-project','new-document','add-context'].includes(this.mode);}
   private writeRecoveryKey(){return `${this.client.scopeKey}:${this.client.epoch}:${this.mode}:${this.client.pendingWriteId}`;}
-  private renderWriteRecovery(){return this.client.hasUnconfirmedWrite ? html`<p class="gate-notice" role="status">${this.writeRecovery?.key===this.writeRecoveryKey()?'The earlier save is still unconfirmed. Go Back to review your saved work, or choose Start new draft to unlock this form. The earlier save may still exist; saving again could create a duplicate.':'An earlier save needs checking before you edit. Check save looks for that save without submitting it again.'}</p>` : nothing;}
+  private renderWriteRecovery(){return this.client.hasUnconfirmedWrite ? html`<p class="gate-notice" role="status">${this.writeRecovery?.key===this.writeRecoveryKey()?'The earlier save is still unconfirmed. You can edit this draft. Choose Save draft to submit your current changes, or Back to review saved work. The earlier save may still exist; saving again could create a duplicate.':'You can keep editing this draft. Check save looks for the earlier save without submitting your changes.'}</p>` : nothing;}
   private async checkSave(){
     const key=this.writeRecoveryKey();this.writeRecovery=undefined;
     const result=await this.client.checkPendingSave();
@@ -777,13 +777,14 @@ export class StillApp extends LitElement {
     else if(key===this.writeRecoveryKey())this.writeRecovery={key,correlationId:result.correlationId};
     this.changed();
   }
-  private async startNewSave(){
+  private async saveUnconfirmedDraft(){
     const recovery=this.writeRecovery;
     if(!recovery||recovery.key!==this.writeRecoveryKey())return;
+    this.validateSaveDraft();
     const result=await this.client.startNewSave(recovery.correlationId);
     this.writeRecovery=undefined;this.pendingBlock=null;
-    this.notice=result.confirmed?'The earlier save is confirmed. Review your saved work before saving again.':'Draft unlocked. The earlier save may still exist. Nothing was submitted again.';
-    this.changed();this.focusContent();
+    if(result.confirmed){this.notice='The earlier save is confirmed. Your current draft has not been submitted. Review the saved work before saving again.';this.changed();return;}
+    await this.save();
   }
   // En Reve buttons use type="button"; bind their toolbar action to the form here.
   private requestCreationSubmit(){
@@ -802,6 +803,13 @@ export class StillApp extends LitElement {
     if(!event.composedPath().some(node=>node instanceof HTMLElement&&node.localName==='en-text-field'))return;
     event.preventDefault();this.requestCreationSubmit();
   };
+  private validateSaveDraft(){
+    if(['new-project','new-document','rename'].includes(this.mode)&&!this.titleDraft.trim())throw new Error('Enter a name.');
+    if(this.mode==='add-context'&&!this.bodyDraft.trim())throw new Error('Add an idea.');
+    if(this.mode==='edit-block'){const block=this.client.projection.blocks.find(b=>b.id===this.client.position.blockId);if(!block||block.locked)throw new Error('Idea is not editable.');}
+    if(this.mode==='reuse'&&!this.client.projection.libraryBlocks.some(b=>b.id===this.choice))throw new Error('Choose an idea.');
+    if(this.mode==='edit-artifact'&&this.missingWriting())throw new Error('Wait for the writing to load.');
+  }
   private async save() {
     const c = this.client, p = c.projection;
     if(c.hasUnconfirmedWrite){await this.checkSave();return;}
@@ -1078,7 +1086,7 @@ export class StillApp extends LitElement {
       const back:WorkflowAction={id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'};
       if(this.mode==='edit-artifact'&&this.missingWriting())toolbar={actions:[back]};
       else if(this.mode==='workspaces')toolbar={actions:[{id:'workflow:open',label:'Open',variant:'primary',run:()=>void this.run(async()=>{await this.client.switchWorkspace(this.client.session?.projects?.find(p=>p.projectAccessId===this.choice));this.navigate(this.client.position.view,this.client.position);})},back]};
-      else toolbar={actions:[{id:'workflow:save',label:this.client.hasUnconfirmedWrite?'Check save':this.mode==='intent'?'Suggest actions':this.mode==='reuse'?'Use idea':'Save',variant:'primary',disabled:this.mode==='reuse'&&!this.choice&&!this.client.hasUnconfirmedWrite,run:()=>this.client.hasUnconfirmedWrite?void this.run(()=>this.checkSave()):this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},...(this.client.hasUnconfirmedWrite&&this.writeRecovery?.key===this.writeRecoveryKey()?[{id:'workflow:new-draft',label:'Start new draft',variant:'secondary' as const,run:()=>void this.run(()=>this.startNewSave())}]:[]),back]};
+      else toolbar={actions:[{id:'workflow:save',label:this.client.hasUnconfirmedWrite?'Check save':this.mode==='intent'?'Suggest actions':this.mode==='reuse'?'Use idea':'Save',variant:'primary',disabled:this.mode==='reuse'&&!this.choice&&!this.client.hasUnconfirmedWrite,run:()=>this.client.hasUnconfirmedWrite?void this.run(()=>this.checkSave()):this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},...(this.client.hasUnconfirmedWrite&&this.writeRecovery?.key===this.writeRecoveryKey()?[{id:'workflow:save-draft',label:'Save draft',variant:'secondary' as const,run:()=>void this.run(()=>this.saveUnconfirmedDraft())}]:[]),back]};
     }
     if(!toolbar.actions.length&&!toolbar.status)return nothing;
     if(toolbar.actions.length>this.toolbarLimit)return this.compactDock(toolbar.actions,'More actions',toolbar.status);
