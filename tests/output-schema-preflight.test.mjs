@@ -120,6 +120,7 @@ test('Memory repair actual Worker inspection is read-only, capability-protected 
  const f=await createSceneCostFixture(1);t.after(()=>f.close());await f.drainBackground();
  const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
  const r=await f.request(MEMORY_SCHEMA_REPAIR_PATH);assert.equal(r.status,200,await r.clone().text());
+ assert.equal(r.headers.get('referrer-policy'),'same-origin');
  const html=await r.text();assert.match(html,/Memory schema repair inspection/);assert.doesNotMatch(html,/<form|keeper checks|in-memory-scene-test/);
  await f.drainBackground();assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);
  const denied=await f.request(MEMORY_SCHEMA_REPAIR_PATH,{method:'POST',headers:{origin:'http://localhost','content-type':'application/x-www-form-urlencoded'},body:'proof='+'0'.repeat(64)});

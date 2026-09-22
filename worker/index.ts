@@ -395,7 +395,7 @@ export default {
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");
     headers.set("x-content-type-options","nosniff");
-    headers.set("referrer-policy","no-referrer");
+    headers.set("referrer-policy",pathname===MEMORY_SCHEMA_REPAIR_PATH?"same-origin":"no-referrer");
     headers.set("permissions-policy","camera=(), microphone=(), geolocation=()");
     if(!headers.has("content-security-policy"))headers.set("content-security-policy","frame-ancestors 'none'; base-uri 'none'; object-src 'none'");
     if(new URL(request.url).protocol==="https:")headers.set("strict-transport-security","max-age=31536000; includeSubDomains");
