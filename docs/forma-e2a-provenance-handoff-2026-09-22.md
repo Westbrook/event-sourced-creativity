@@ -67,3 +67,9 @@ Zero live provider/planner/generation/evaluator calls; no key read/provisioning,
 | Private Memory | No activation or custody change. Existing stricter moderation, owner/retention boundaries and bounded receipts remain required; no general adoption claim. |
 
 H owns the global Progress Report handoff. This task updates only `generation-e2a-*` tasks, its review card and `handoff.generationE2a` via the atomic helper. Existing unresolved reviews are preserved; canonical open feedback was empty at the final task boundary. Implementation completion does not mark user review complete.
+
+## Authorized Production continuation
+
+The user subsequently explicitly requested merging this E2a work to main and publishing Production. This supersedes only the original publication restriction. The transform remains disabled, with no production caller, new generation, planner inference, live study, credential/infrastructure provisioning, changed defaults or Memory activation. C serialized its release after the independently authorized E, G and D releases and preserves their current-main source plus F2. H's disabled execution bridge remains separate and is not included by this release.
+
+The immutable v1 capture and original source/compiler baseline remain unchanged. The exact release source, successful native deployment/version, checks and retained environment/audience are appended under `handoff.generationE2a.release` through the canonical report's atomic helper. Publication does not establish user review, visual fidelity, refusal-rate improvement or financial qualification.
