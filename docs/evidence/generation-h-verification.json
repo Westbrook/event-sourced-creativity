@@ -1,0 +1,78 @@
+{
+  "task": "H",
+  "mode": "offline-only",
+  "baseMain": "2a0caa914a0c57002f9b69ff3b60cb3d6d8a687f",
+  "verifiedReleaseBaseline": "faa8fb42b7295c24e6ac35921586cc5cf511a840",
+  "mainAtFinalCheck": "493e1003d5328130171bb53df54ef21e3f107af7",
+  "integrations": {
+    "C": {
+      "original": "a1f7016a",
+      "local": "7d55496a"
+    },
+    "F2": {
+      "original": "493e1003",
+      "local": "3a1f24fe",
+      "separateProductionRelease": 511
+    }
+  },
+  "executionPlanId": "execution:69d9d3e32549e256ca5b5b3cdb861312a0cb28cb12b07239a0dda62ddcc71325",
+  "manifestId": "manifest:abd5b2e6d0e7fb73a3a6fcbbd8b5ea820ab7a5f9324e88748f0d9134a5ab5c50",
+  "candidateId": "e2a-capture:9356ab25a005fcc0cb95916d331e7a57c257ee3379192e05c27472364e6e003b",
+  "financialId": "f2-financial:02e1f21c272deeb5040baf3b0de8f20cb88e1102dff89b91cf2cf0f396d21aa4",
+  "tests": {
+    "passed": 140,
+    "failed": 0,
+    "bridgeTests": 25,
+    "command": "node --import tsx --test tests/generation-execution-bridge.test.mjs tests/generation-reliability-eval.test.mjs tests/prompt-provenance-e2a.test.mjs tests/sunburst-financial.test.mjs tests/image-financial-qualification.test.mjs tests/image-operation-capabilities.test.mjs tests/generation-request-parity.test.mjs tests/generation-outcome-evidence.test.mjs tests/image-adapter-eval-reuse.test.mjs tests/flare-draft-generation.test.mjs tests/still-image-policy.test.mjs"
+  },
+  "typecheck": "passed",
+  "focusedLint": "passed",
+  "diffCheck": "passed",
+  "existingBCheck": {
+    "valid": true,
+    "manifests": 41,
+    "planned": 141,
+    "initiated": 0,
+    "providerCalls": 0,
+    "liveExecution": "not_implemented"
+  },
+  "studyCounts": {
+    "planned": 2,
+    "initiated": 0,
+    "dispatched": 0,
+    "completed": 0,
+    "blocked": 0,
+    "unexecuted": 2
+  },
+  "preparationPlannerCalls": {
+    "planned": 1,
+    "initiated": 0
+  },
+  "liveProviderCalls": 0,
+  "actualProviderCostMicrousd": 0,
+  "authorizedCostMicrousd": 0,
+  "maximumCostMicrousd": null,
+  "providerEnforcedChargeCap": false,
+  "privateSourceRetrievals": 0,
+  "HDeployments": 0,
+  "changedSharedAdapterFiles": [],
+  "unresolvedFeedbackAtRead": [],
+  "limitations": [
+    "No provider transport or production authority/custody binding is wired.",
+    "Local SQLite proves single-host crash/race semantics, not distributed atomicity.",
+    "Synthetic authored direction is not actual planner output or historical incident coverage.",
+    "F2 total exposure remains unavailable/null; no paid execution allowed.",
+    "No visual fidelity, usable-output, refusal-rate or empirical billing improvement measured.",
+    "D/E/G remain separately owned follow-ups, not integrated into this branch."
+  ],
+  "sourceHashes": {
+    "evals/generation-reliability/execution-plan.mjs": "2cd7f130d3e6e986877eaa0d4c658693430f7e08aa1d19766a1c42c1d5dff066",
+    "evals/generation-reliability/execution-journal.mjs": "c504a6aef6a8b161d0986a84babe1562dac72caf3c10192aed167ef87cbe33fb",
+    "evals/generation-reliability/execution-bridge.mjs": "424f5366c43c6230f8369ce6ca43048553ba7b80c66919daa2b1d9cc80fd0689",
+    "evals/generation-reliability/execution-summary.mjs": "4ec58a4576f62644edc17e04b9ac7b78667c9821491a919d1b5fa93a6bdf3563",
+    "evals/generation-reliability/first-compiler-study.mjs": "8fa01f714690ca59c257e067c55ddf4831151e229627e40cf13eea78d4461cc7",
+    "evals/generation-reliability/bridge-fixtures/mock-host.mjs": "1a0a5b28f90d1a9d777cee8ff27d377599943562cca5a2457bda0dc416a7236c",
+    "scripts/check-generation-execution-bridge.mjs": "974d8d0e95c5db68b5454370c697b60b29ece05c531ff4170827287f707712f1",
+    "tests/generation-execution-bridge.test.mjs": "7cb8e40f6462aa908ba229b1ba1c612e844601f7eb87cd4adfbf5c6328cfa4d2"
+  }
+}
