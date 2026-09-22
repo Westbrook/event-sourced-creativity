@@ -1,0 +1,39 @@
+{
+  "version": "responses-image-offline-2026-09-22-v1",
+  "status": "proposal_requires_separate_review_and_authorization",
+  "enabled": false,
+  "liveDispatchAuthorized": false,
+  "runtime": "responses_runtime_unqualified",
+  "financial": "unavailable",
+  "maximumCostMicrousd": null,
+  "automaticReplacementPurchases": 0,
+  "briefSha256": "0c77c2a0da9d834296521ef874cbbdfc0296736a1f57a3471b115388685fdc35",
+  "assets": [],
+  "sharedImageModel": "gpt-image-2.5-sunburst",
+  "aliasResolution": "unknown",
+  "sharedSettings": {
+    "quality": "high",
+    "size": "1536x1024",
+    "outputFormat": "png",
+    "background": "opaque",
+    "moderation": "auto",
+    "stream": false
+  },
+  "arms": [
+    {
+      "id": "direct",
+      "endpoint": "/v1/images/generations",
+      "requestBody": "{\"model\":\"gpt-image-2.5-sunburst\",\"prompt\":\"Generate one watercolor of an adult botanist beside a greenhouse.\\nPreserve the words “FIELD NOTES”.\",\"n\":1,\"quality\":\"high\",\"size\":\"1536x1024\",\"output_format\":\"png\",\"background\":\"opaque\",\"moderation\":\"auto\",\"stream\":false}",
+      "requestSha256": "b34f95d51e859af83a60b8346d1b0000e3bcf6b5fa0663f2f9e057244879d66f"
+    },
+    {
+      "id": "responses",
+      "endpoint": "/v1/responses",
+      "requestBody": "{\"model\":\"gpt-5.5\",\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"Generate one watercolor of an adult botanist beside a greenhouse.\\nPreserve the words “FIELD NOTES”.\"}]}],\"tools\":[{\"type\":\"image_generation\",\"model\":\"gpt-image-2.5-sunburst\",\"action\":\"generate\",\"quality\":\"high\",\"size\":\"1536x1024\",\"output_format\":\"png\",\"background\":\"opaque\",\"moderation\":\"auto\"}],\"tool_choice\":{\"type\":\"image_generation\"},\"parallel_tool_calls\":false,\"stream\":false,\"store\":false}",
+      "requestSha256": "477251f41628c6878465625d3dbc6d648f4b950cfaa9cb43101cc9b8b4c6718c"
+    }
+  ],
+  "treatment": "route-plus-mainline-orchestration-and-automatic-prompt-revision",
+  "pureEndpointEffect": false,
+  "chatGPTImplementationEvidence": false
+}
