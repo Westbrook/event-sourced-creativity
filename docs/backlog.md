@@ -673,17 +673,20 @@ and their linked To Dos. This is not a production completion claim.
 
 ## MEM-060 — Authorized publication and hosted migration hold
 
-**Code publication: Done. Hosted schema repair/qualification: Blocked — supported
-exact-schema inspection and migration execution required. Owner: Memory task;
-production publisher notified.**
+**Done — code publication and hosted schema repair. Owner: Memory task.**
 
-Remote `main` source `45fdacfa` is published successfully in production496.
-The first495 attempt failed with an incomplete-input SQLite error and partial
-schema creation. The [publication receipt](forma-memory-publication-2026-09-21.md)
-records both outcomes and the guarded packaging commands. The durable release
-hold retains the exact41-migration production494 prefix and excludes31 candidate
-Memory migrations. Before activation, inspect exact schema/applied receipts,
-repair and qualify isolated hosted execution, then explicitly lift the hold.
-Memory activation, enrollment and scheduling remain off; existing audience unchanged.
+Remote `main` source `0c544606` is published in production500. The
+[hosted repair receipt](forma-memory-schema-repair-2026-09-21.md) records completed
+schema effects for all31 held migrations:361 objects/42 tables, zero missing or
+pending replacements, verified rollback and exact final catalog. A fresh
+post-redeployment inspection confirms completion and a disabled repair switch.
+No user table was dropped or rewritten; original applied-history receipts remain
+unchanged. Memory activation, enrollment and scheduling remain off.
 
-MEM-060 repair continuation: [fixed atomic Memory schema repair](forma-memory-schema-repair-2026-09-21.md) is locally qualified; hosted inspection/application are in progress. Packaging hold and Memory-off boundaries remain unchanged.
+**Retained release constraint:** continue the guarded41-migration packaging prefix.
+Do not replay the historical31 files through the unqualified Sites executor; their
+schema effects were installed through the fixed atomic D1 repair instead.
+[Packaging instructions](forma-memory-publication-2026-09-21.md) and the complete
+[Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md) retain
+separate service-dependent and activation work. No repair is still pending for
+these31 journaled migrations.

@@ -1,5 +1,10 @@
 # Native Memory merge and default-disabled publication
 
+**Subsequent repair completed:** production500 now has the verified final schema
+for all31 held migrations. See the [hosted repair receipt](forma-memory-schema-repair-2026-09-21.md).
+The495/496 account below is historical; the packaging hold remains to prevent
+replay through the unqualified original executor, not because schema is partial.
+
 The user explicitly authorized merging and publishing the verified native candidate.
 This supersedes the prior local-only release boundary, not activation, enrollment,
 external-service or spending gates.

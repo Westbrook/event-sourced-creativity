@@ -1,6 +1,6 @@
 # Memory schema repair after production 495
 
-Status: **local qualification complete; hosted inspection and application pending**.
+Status: **hosted schema repair complete and independently re-inspected in production500**.
 Memory activation, user enrollment, schedules and provider calls remain disabled.
 This continues [MEM-060](backlog.md#mem-060--authorized-publication-and-hosted-migration-hold).
 
@@ -15,7 +15,7 @@ Builds check the generated manifest against source; no SQL from a caller is acce
 The administrator-only inspection/repair page is
 `/api/portfolio/engineering/memory-schema-repair`. It uses the existing principal
 administrator admission and requires both identity-management and engineering
- diagnostics capabilities. Project/impersonation contexts are refused. Inspection
+diagnostics capabilities. Project/impersonation contexts are refused. Inspection
 reads schema metadata and aggregate emptiness checks only, without bootstrap,
 retention, user-row export or provider activity.
 
@@ -71,3 +71,44 @@ must remain** so a later publication cannot blindly replay held migration files.
 A failed request is not permission for a blind retry. Inspect first: an uncertain
 response can represent a committed repair. Unknown schema must be explained and
 reviewed rather than added to an allowlist merely to pass a check.
+
+
+## Hosted outcome — complete
+
+- Source on remote `main`: `0c54460657c0e30b6cbec607ef2ab7610067a37f`,
+  including Sunburst main `cf4abc8a` and the repair implementation.
+- Production **500**: `appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_c5568573f0f881918a006d353a7494f2`.
+- Initial authenticated inspection found328 missing objects, two recognized
+  replacements and no blockers. No populated new Memory tables were found.
+- The explicit administrator form succeeded: `applied:true`,
+  `rollbackQualified:true`,338 statements,361 objects,42 tables, zero missing,
+  zero replacements, no blockers. Exact catalog and foreign-key postconditions
+  and the separate repair receipt committed together.
+- The temporary repair variable was removed. Final deployment
+  `appgdep_6ab1dc54b6d4819190be565fe4bb2028` succeeded at
+  `2026-09-22T01:39:44.913657Z`, environment revision16.
+- A fresh authenticated GET after that redeployment reported `status:complete`,
+  zero missing/replacements/blockers and `repairEnabled:false`.
+- Environment entries exactly match pre-repair revision14; no Memory keys remain.
+  Sunburst/FAL settings are preserved. Audience is unchanged: `workspace_all`,
+  access revision7, zero external visitors. The authorized Projects page loaded
+  its saved content successfully after repair.
+- Qualification:15 repair/D1 tests,19 API/preflight tests,104 migration/schema
+  regressions, TypeScript, changed-file lint and production build pass.
+
+The first form submission under version499 was rejected403 **before** database
+repair because `no-referrer` caused a null Origin. Version500 uses `same-origin`
+referrer policy only on this fixed admin page; the exact Origin requirement is
+unchanged. See [MDN Referrer-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referrer-Policy).
+
+**No further schema repair is pending for these31 journaled migrations.** Their
+final schema effects are installed and verified through the fixed D1 operation.
+The original Sites SQL executor remains unqualified, so its historical files
+remain excluded from future deployment artifacts. That compatibility safeguard
+is not a claim that the database is still partial. Keep the guarded packaging
+command, unchanged source history and separate repair receipt.
+
+The separately unjournaled benchmark/conversation candidates, service-dependent
+work, activation/privacy acceptance, scheduling and explicit enrollment remain
+outside this completed repair. No provider was called or real user enrolled.
+The final documentation-only receipt commit does not change runtime500.

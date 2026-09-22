@@ -1,10 +1,12 @@
 # Forma Memory: remaining non-implementation work
 
-**Current release update:** Merged to remote `main` and published successfully as
-production **496**, source `45fdacfa`. This is default-disabled application delivery;
-31 candidate Memory migrations remain held after the failed495 SQL attempt.
-See the [merge/publication and migration-hold receipt](forma-memory-publication-2026-09-21.md).
-Earlier local-only release statements below are historical. Activation remains gated.
+**Current release update:** Production **500**, source `0c544606`, contains the
+completed [hosted Memory schema repair](forma-memory-schema-repair-2026-09-21.md).
+All361 objects across42 tables match the31 held migrations; zero missing objects
+or pending replacements. Memory and the temporary repair switch remain disabled.
+Historical SQL stays excluded from deployment artifacts to prevent unsafe replay;
+that packaging safeguard does not mean the database remains partial.
+Earlier release statements below are historical. Activation remains gated.
 
 Updated **2026-09-21**. Backlog entry: [MEM-001](backlog.md#memory).
 
