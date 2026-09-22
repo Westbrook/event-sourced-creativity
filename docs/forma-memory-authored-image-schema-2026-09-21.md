@@ -28,7 +28,8 @@ Nine added runtime checks cover optional absence, orphaned bodies, partial
 schema, missing/replaced/incoming triggers, a transaction-time schema race, and
 protection loss before/after media retrieval. The six original maintenance
 regressions are rerun alongside existing native adoption and image capacity
-checks. Final current-source receipts are recorded in the
+checks. The combined81-case image/maintenance suite and full2,942-case runtime pass.
+Final current-source receipts are recorded in the
 [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
 
 No new migration is introduced. Migration0073 still requires qualified execution

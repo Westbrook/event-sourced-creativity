@@ -5,21 +5,25 @@ Updated2026-09-21. This is the **current native implementation ledger** for the
 Older dated checkpoints below preserve the investigation history; their former
 “remaining” lists are superseded by this table, not new outstanding assignments.
 
-**Current state: native code implemented; final integrated qualification running.**
-The last code commit is `f0ae8a12`, following authored-image custody `01104767`.
-Do not declare native closure until the current-source full runtime and browser
-runs below finish. The complete externally hosted system is not activated.
+**Current state: all six native implementation workstreams complete and locally
+qualified; ready for integration review.**
+The last code commit is `bd6c4ef3`, following the `b945511c` merge of local main
+`00e23d97`. [Optional image schema qualification](forma-memory-authored-image-schema-2026-09-21.md)
+fixes six maintenance regressions found by the exhaustive custody run.
+The exhaustive native runtime and browser runs below have finished successfully.
+No further known Sites-native implementation remains in this plan. Service-dependent
+implementation and the complete externally hosted activation remain open below.
 
 ## Native implementation by workstream
 
 | Workstream | Actual implementation and caller | Closure evidence / state |
 | --- | --- | --- |
-| Assistant and Chat Studio | Shared native consent-bound semantic guidance, rolling original-backed history and follow-up ancestry; exact text edits and creative blocks; Output requirements; separately approved private image preview and explicit authored-image acceptance. | [Semantic caller](forma-memory-semantic-assistant-2026-09-20.md), [Chat caller](forma-memory-chat-guidance-2026-09-20.md), [authored text](forma-memory-authored-edits-2026-09-20.md), [creative blocks](forma-memory-creative-blocks-2026-09-21.md), [Output](forma-memory-output-requirements-2026-09-21.md), [image custody](forma-memory-authored-image-adoption-2026-09-21.md). Implemented; final integrated run pending. |
-| Exact-field and resource suggestions | Actual localized Document text editor uses versioned saved suggestions, separately approved fresh generation and purpose-authorized background fields. IME/draft/revision/keyboard/Undo boundaries and assisted provenance remain intact. Library/Canvas offer explicit private next-question drafts without replacing unsent text or purchasing generation. | [Field caller](forma-memory-field-completion-2026-09-20.md), [fresh fields](forma-memory-fresh-field-generation-2026-09-21.md), [background fields](forma-memory-background-fields-2026-09-21.md), [resource drafts](forma-memory-resource-intent-drafts-2026-09-21.md). Implemented; final integrated run pending. |
+| Assistant and Chat Studio | Shared native consent-bound semantic guidance, rolling original-backed history and follow-up ancestry; exact text edits and creative blocks; Output requirements; separately approved private image preview and explicit authored-image acceptance. | [Semantic caller](forma-memory-semantic-assistant-2026-09-20.md), [Chat caller](forma-memory-chat-guidance-2026-09-20.md), [authored text](forma-memory-authored-edits-2026-09-20.md), [creative blocks](forma-memory-creative-blocks-2026-09-21.md), [Output](forma-memory-output-requirements-2026-09-21.md), [image custody](forma-memory-authored-image-adoption-2026-09-21.md). Implemented and locally qualified. |
+| Exact-field and resource suggestions | Actual localized Document text editor uses versioned saved suggestions, separately approved fresh generation and purpose-authorized background fields. IME/draft/revision/keyboard/Undo boundaries and assisted provenance remain intact. Library/Canvas offer explicit private next-question drafts without replacing unsent text or purchasing generation. | [Field caller](forma-memory-field-completion-2026-09-20.md), [fresh fields](forma-memory-fresh-field-generation-2026-09-21.md), [background fields](forma-memory-background-fields-2026-09-21.md), [resource drafts](forma-memory-resource-intent-drafts-2026-09-21.md). Implemented and locally qualified. |
 | Unified evolving profile | Original-backed semantic revision and contradiction processing; current-only catalog, correction/suppression controls and separate review of semantic relationships; automatic scope-specific reference publication with independent human support. Existing authored policy always takes precedence. | [Consolidation](forma-memory-profile-consolidation-2026-09-20.md), [current review](forma-memory-unified-profile-review-2026-09-21.md), [scheduled scope profiles](forma-memory-automatic-scope-profile-2026-09-21.md). Native scheduler callback implemented, not hosted registration. |
 | Resources, zoom and consumption | Owner-qualified project nesting, cross-owner organization recall with independent grants, page/block/extracted-field history, current/historical/governed artifact inspection, Library/Canvas identity and consent, original-source reuse/duplication/published-package recall. Rolling1/7/30/90-day document views remain bounded and do not imply preference or comprehension. | [Nesting](forma-memory-cross-owner-nesting-2026-09-21.md), [organization](forma-memory-organization-recall-2026-09-21.md), [resources](forma-memory-resource-integration-2026-09-21.md), [resource semantic caller](forma-memory-resource-semantic-assistant-2026-09-21.md), [reuse](forma-memory-reuse-discovery-2026-09-21.md), [duplicates](forma-memory-duplicate-source-recall-2026-09-21.md), [published packages](forma-memory-published-package-recall-2026-09-21.md). Implemented; finite windows disclose incomplete coverage. |
 | Durable lifecycle and accounting | Native grants, changed-scope jobs, original-source capture, one-shot dispatch, token/dollar settlement and uncertain-charge recovery; private derivation/result/index-intent retirement; transitive answer, copy and accepted-output provenance. Withdrawal preserves authored work. Accepted-image erasure permanently fences restore/reprojection. | [Native worker](forma-memory-user-controls-worker-2026-09-18.md), [rolling refresh](forma-memory-rolling-history-2026-09-19.md), [index intents](forma-memory-native-index-intents-2026-09-19.md), [downstream custody](forma-memory-authored-downstream-2026-09-20.md), [image custody](forma-memory-authored-image-adoption-2026-09-21.md). Remote index delivery is separately dependent on a real service contract. |
-| Integrated qualification and diagnostics | Actual private processing-health controls, source-free accounting/queue diagnostics, bounded request/response bodies, original deadlines, fresh source checks and maximum-source request tests. Native maintenance is separate from new-learning activity gates. | [Processing health](forma-memory-processing-health-2026-09-20.md), [native capacity](forma-memory-native-capacity-2026-09-20.md), [cold delayed image capacity](forma-memory-image-processing-lifetime-2026-09-21.md). Current full runtime, exact Memory inventory and all-browser runs are in progress; no failure is waived. |
+| Integrated qualification and diagnostics | Actual private processing-health controls, source-free accounting/queue diagnostics, bounded request/response bodies, original deadlines, fresh source checks and maximum-source request tests. Native maintenance is separate from new-learning activity gates. | [Processing health](forma-memory-processing-health-2026-09-20.md), [native capacity](forma-memory-native-capacity-2026-09-20.md), [cold delayed image capacity](forma-memory-image-processing-lifetime-2026-09-21.md). Full2,942 runtime,2,351 exact Memory inventory and116 browser checks passed; no failure is waived. |
 
 ## Current verification receipt
 
@@ -28,11 +32,37 @@ runs below finish. The complete externally hosted system is not activated.
 | Previous whole native runtime | `1370bbd0`:2,895/2,895 passed. Does not certify later commits. |
 | Authored-image custody | `01104767`:51 native,102 migration,90 downstream and281 client checks passed;12 browser journeys passed. Full runtime tracked separately. |
 | Image processing and cold capacity | `f0ae8a12`:64 native image/adoption checks;770 parser/schema/host checks;12 image browser journeys passed. Counts overlap other suites. |
-| Native request ceiling | Maximum-three-source cold shared delayed execution:50 D1 binding calls, including bootstrap. Warm personal/shared:45/47.90-second response accepted;125-second response denied with verified usage settled. Browser lease remains at most30 seconds. |
+| Native request ceiling | Maximum-three-source cold shared delayed execution:50 D1 binding calls, including bootstrap. Warm personal/shared:45/47.90-second response accepted;125-second response denied with verified usage settled. Browser lease remains at most30 seconds. Strengthened maximum-source acceptance:39/45 personal/shared calls; post-withdrawal authored recovery:10/9. |
 | Type/build/lint | TypeScript and built-app/localization checks passed. All newly changed source is lint-clean except28 unchanged assistant-api diagnostics, reproduced on01104767. Existing large bundle warnings remain. Entire-repository lint is not claimed green. |
-| Final full native runtime | Running from immutable `f0ae8a12`; result must be recorded here. |
-| Final exact Memory model/client/benchmark inventory |2,351/2,351 passed onf0ae8a12. An earlier broad glob included an unrelated MP3 allocation-instrumentation test:2,363/2,364 passed. The MP3 suite passed13/13 independently at both the prior and current snapshots; do not relabel that broad run as green. |
-| Final browser matrix | All four existing Memory browser specs running against the current local build with synthetic network responses. No production page or real user data is used. |
+| Prior failing full runtimes | `01104767`:2,914/2,920; `f0ae8a12`:2,927/2,933. Both exposed the same six optional-migration maintenance failures, fixed and verified in `bd6c4ef3`, not waived. |
+| Final full native runtime | **2,942/2,942 passed** on immutable `bd6c4ef3`:983+582+766+611 in four disjoint groups. Exact test-name multiset equals all2,933 f0ae8a12 cases plus nine new schema cases. Zero failures/skips/cancellations. The two current maximum-source tests were additionally strengthened for acceptance/recovery and passed; production source is unchanged. |
+| Final exact Memory model/client/benchmark inventory |2,351/2,351 passed again on the merged `bd6c4ef3` source. An earlier broad glob included an unrelated MP3 allocation-instrumentation test:2,363/2,364 passed. The MP3 suite passed13/13 independently at both the prior and current snapshots; do not relabel that broad run as green. |
+| Final browser matrix | 116/116 passed again across all four existing Memory browser specs against the merged local build with synthetic network responses. No production page or real user data is used. |
+| Main integration |86/86 focused merge checks;160/160 current migration/downstream checks;90/90 downstream custody/reference/sharing checks; typecheck and final build passed. |
+| Optional authored-image schema | 81/81 native image/capacity/maintenance checks passed, including nine new missing/partial/mutated/late-schema faults. Changed files lint-clean. |
+
+
+### Reproduction and retained evidence
+
+The production source tested is `bd6c4ef3`. The final follow-up changes only the
+capacity assertions and tracking documents. Runtime partitions use literal
+positive test-name prefixes; their manifest and exact multiset verification are
+retained with the logs, not estimated from summed partial runs.
+
+- Whole native suite: `node --import tsx --test tests/assistant-runtime.test.mjs`.
+- Memory inventory: the existing `tests/memory*.test.mjs` suites plus personal
+  controls, document brief, scoped/live Memory, conversation, taste, indexing and
+  analytics tests; exact command and results are in the local handoff.
+- Browser: all four `tests/browser/forma-memory-*.spec.mjs` suites, one worker,
+  synthetic localhost responses; no production page or real user history.
+- Retained evidence: the independent Memory handoff's
+  `continuation-20260918/evidence/20260921-native-completion/` directory includes
+  source-bound JSON receipts, logs and SHA-256 file manifest.
+
+Counts overlap between focused/full suites; they are not an additive unique-test
+total. Whole-repository lint and the entire unrelated application suite are not
+claimed green. Hosted services, human usefulness and real deployment remain
+separate qualification boundaries.
 
 ## Remaining dependent implementation and operational work
 
@@ -64,7 +94,7 @@ separately owns human review, real measurements, rollout and operations.
 This continuation is local and merge-ready only: no remote is configured, no
 push or production deployment was performed, and no new flag, user enrollment,
 credential, service, schedule or provider charge was introduced. Local `main`
-`7c78b3c6` is incorporated; the newer `00e23d97` integration is being reviewed. Earlier production435 is a historical foundation
+`00e23d97431a89a0c8d02e095dafe931e5c16172` is incorporated in `b945511c`. Earlier production435 is a historical foundation
 release, not the deployment of this candidate.
 
 The review handoff to **Assemble Forma specialist team**

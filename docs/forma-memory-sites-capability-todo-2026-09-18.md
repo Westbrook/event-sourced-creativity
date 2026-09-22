@@ -2,8 +2,8 @@
 
 ## Current reconciliation —2026-09-21
 
-Native source is implemented through `f0ae8a12`; final whole-scope qualification
-is running in the [current completion matrix](forma-memory-completion-matrix-2026-09-20.md).
+Native source is implemented through `bd6c4ef3` (local main00e23d97 merged); final native qualification
+passed as recorded in the [current completion matrix](forma-memory-completion-matrix-2026-09-20.md).
 All older slice descriptions below are historical checkpoints. They do not reopen
 work subsequently implemented in that matrix, nor claim it has been deployed.
 External-service-dependent adapter/baseline code remains explicitly tracked below;
@@ -84,7 +84,8 @@ hosted provider, browser, scheduling or real-user qualification.
 
 The six workstreams in the [current matrix](forma-memory-completion-matrix-2026-09-20.md#native-implementation-by-workstream)
 now contain actual callers, native durability/privacy/accounting and local tests.
-Final integrated qualification is still being run in this task. Do not use the
+Final native qualification passed:2,942 runtime,2,351 Memory inventory and116
+browser checks. No known Sites-native implementation remains queued. Do not use the
 historical foundation descriptions to infer missing native pipeline work, and do
 not equate local verification with hosted service readiness.
 

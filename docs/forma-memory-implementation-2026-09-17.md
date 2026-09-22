@@ -53,8 +53,8 @@ The native benchmark routes and independent synthetic-payload cleanup are mounte
 ## Remaining source work
 
 **Current source ledger:** [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
-The six native workstreams are implemented through `f0ae8a12`; final integrated
-qualification is running. This supersedes the September17 foundation-only table:
+The six native workstreams are implemented through `bd6c4ef3`; final integrated
+qualification passed (2,942 runtime,2,351 Memory inventory and116 browser checks). This supersedes the September17 foundation-only table:
 semantic summaries, automatic scope profiles, native index intent retirement,
 project nesting, artifact/block/resource consumption and UI consumers are no
 longer merely detached foundations.

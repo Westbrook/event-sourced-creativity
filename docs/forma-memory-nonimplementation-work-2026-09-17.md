@@ -20,8 +20,8 @@ external services. This does not close the semantic system or rollout gates.
 
 ## Current candidate, distinct from the earlier release
 
-The local candidate through `f0ae8a12` has implemented the six native workstreams;
-final integrated qualification is running in the [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
+The local candidate through `bd6c4ef3` has implemented the six native workstreams;
+final integrated qualification passed as recorded in the [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
 Production435 above is a historical foundation release, **not this candidate**.
 No current merge to main, remote push or deployment is claimed.
 

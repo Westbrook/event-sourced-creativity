@@ -35,7 +35,9 @@ unchanged; long server processing does not keep private pixels visible longer.
 The maximum-three-source shared fixture, with a cold database binding and a
 simulated 90-second provider response, uses **50 D1 binding calls**, including
 schema initialization. Warm maximum-source execution uses45/47 personal/shared
-calls. A125-second completion is denied and verified usage is settled.
+calls. Maximum-source authored acceptance uses39/45 personal/shared calls;
+recovery after Memory withdrawal uses10/9. Both are checked against the same
+50-call native request ceiling, with no second provider purchase. A125-second completion is denied and verified usage is settled.
 These are local synthetic workerd/D1 observations, **not hosted quota or latency
 qualification**. The earlier54-call cold failure is fixed, not waived or excluded.
 
@@ -44,7 +46,8 @@ qualification**. The earlier54-call cold failure is fixed, not waived or exclude
 Focused native image/adoption/privacy, pure parser, assistant schema and host,
 real built-app browser, TypeScript and build checks are recorded in the final
 [completion matrix](forma-memory-completion-matrix-2026-09-20.md). Full current
-runtime qualification is tracked separately and must finish before native closure.
+runtime qualification passed2,942/2,942, with116/116 browser journeys; native
+closure and the remaining dependent-service gates are recorded in that matrix.
 The28 assistant-api lint diagnostics also occur unchanged at01104767; no new
 changed-source lint diagnostic was introduced. No production migration, provider
 call, enrollment, deployment, schedule or service provisioning occurred.

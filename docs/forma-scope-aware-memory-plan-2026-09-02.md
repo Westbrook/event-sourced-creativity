@@ -5,11 +5,12 @@
 ## Current reconciliation —2026-09-21
 
 The September2 paragraph is historical. The [current completion matrix](forma-memory-completion-matrix-2026-09-20.md)
-records actual native callers and evidence through `f0ae8a12`: semantic summary/
+records actual native callers and evidence through `bd6c4ef3`: semantic summary/
 profile processing, nested and independently authorized broad scopes, all-interaction
 consumption, fields and resource suggestions, Assistant/Chat/Output use, automatic
 scope-profile publication and durable privacy/accounting. Final integrated local
-qualification is running; no current production deployment is claimed.
+qualification passed (2,942 native runtime,2,351 Memory inventory and116 browser
+checks); no current production deployment is claimed.
 
 The architecture and planned outcomes below remain intact. Live semantic index
 service integration and its genuine benchmark baseline need a selected service/
