@@ -17,7 +17,7 @@ export function generationDecisionContext(job: DocumentJob | undefined) {
   return {
     jobId: job.jobId, documentId: job.documentId, format: generationFormat(job), status: job.status,
     attempt: job.attemptCount, active: generationActive(job), failureCode: failure?.code ?? '', failureCategory: failure?.category ?? '',
-    acceptance, rejected: canInspectRejection(job), needsAcknowledgement: documentJobCanAcknowledgeSafety(job),
+    acceptance, inspectable: ['failed','partial'].includes(job.status), rejected: canInspectRejection(job), needsAcknowledgement: documentJobCanAcknowledgeSafety(job),
     canStartNew: ['failed', 'canceled'].includes(job.status),
     refreshEffect: 'Read saved job status; does not reconcile a missing provider receipt or submit a request.',
     newGenerationEffect: 'Starts a separate paid request using current document context; does not resume the original. Unchanged inputs may be rejected again and still incur costs.',

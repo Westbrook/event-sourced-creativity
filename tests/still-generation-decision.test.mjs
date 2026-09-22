@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {generationDecisionContext} from '../src/still/generation-decision.ts';
-import {ACTIONS,eligibleActions,evaluateEligibility,selectActions,buildDecisionState,questionsFor,POLICY_VERSION} from '../src/still/decisions.ts';
+import {eligibleActions,evaluateEligibility,selectActions,questionsFor,POLICY_VERSION} from '../src/still/decisions.ts';
 import {presentToolbar} from '../src/still/presentation.ts';
 import {createSceneCostFixture} from './helpers/scene-cost-fixture.mjs';
 import {appendAuditEvent} from '../worker/runtime.ts';
@@ -16,7 +16,7 @@ const projection={...foldEvents([]),documents:[{id:'doc',projectId:'project'}],b
 test('uncertain jobs offer explicit new work without treating status reads as recovery',()=>{
  const candidates=eligibleActions(projection,position,abilities),ids=candidates.map(a=>a.id);
  assert.ok(ids.includes('generate-again'));assert.ok(ids.includes('refresh-generation'));
- assert.equal(candidates.find(a=>a.id==='generate-again').label,'Retry dangerously');
+ assert.equal(candidates.find(a=>a.id==='generate-again').label,'New paid attempt');
  assert.equal(position.generation.mayDuplicateCharge,true);
  assert.match(position.generation.refreshEffect,/does not reconcile/);assert.doesNotMatch(JSON.stringify(position.generation),/PRIVATE/);
  assert.equal(selectActions(candidates,position)[0].id,'context');
