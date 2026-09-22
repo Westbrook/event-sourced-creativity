@@ -670,3 +670,11 @@ checks and116/116 browser journeys pass. No native implementation is scheduled
 or left queued. Service-dependent adapter/baseline code, hosted qualification,
 owner integration, deployment and explicit enrollment remain in MEM-001/MEM-002
 and their linked To Dos. This is not a production completion claim.
+
+## MEM-060 — Authorized publication and hosted migration hold
+
+Main was fast-forwarded and pushed tof28e6b19. Version495 publication failed
+with an incomplete-input SQLite error after partial schema creation.
+The [merge/publication and migration-hold receipt](forma-memory-publication-2026-09-21.md) tracks the guarded code-only
+publication, pinned deployed migration prefix and exact-schema/receipt repair
+required before activation. No failed deployment is marked published.

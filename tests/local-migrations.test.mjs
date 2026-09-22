@@ -938,3 +938,12 @@ for(const fault of ['altered-upgrade','missing-old-trigger','modified-old-trigge
  assert.throws(()=>migrateLocalDatabase(sqlite,{migrations}),/migration_hash_mismatch|migration_schema_mismatch/);
  assert.deepEqual(schema(sqlite),before);assert.deepEqual(rows(sqlite,receiptTable),receipts);
 });
+
+test('release migrations: disabled publication pins the deployed prefix without changing candidate SQL',async t=>{
+ const {copyReleaseMigrations,verifyReleaseMigrations,releaseMigrationPolicy}=await import('../build/release-migrations.ts'),temp=mkdtempSync(join(tmpdir(),'forma-release-migrations-'));t.after(()=>rmSync(temp,{recursive:true,force:true}));
+ const policy=await releaseMigrationPolicy(root),sourceBefore=readFileSync(join(root,'drizzle/meta/_journal.json'),'utf8');await copyReleaseMigrations(root,temp);const receipt=await verifyReleaseMigrations(root,temp);assert.equal(receipt.baselineCommit,'00e23d97431a89a0c8d02e095dafe931e5c16172');assert.equal(receipt.migrations,41);assert.equal(readFileSync(join(temp,'meta/_journal.json'),'utf8'),policy.baselineJournal);assert.equal(readFileSync(join(root,'drizzle/meta/_journal.json'),'utf8'),sourceBefore);assert.equal(existsSync(join(temp,'0043_memory_derivation_purpose_grants.sql')),false);
+ writeFileSync(join(temp,'0043_memory_derivation_purpose_grants.sql'),'SELECT 1;');await assert.rejects(()=>verifyReleaseMigrations(root,temp),/migration_release_unqualified/);rmSync(join(temp,'0043_memory_derivation_purpose_grants.sql'));writeFileSync(join(temp,policy.files[0].path),'SELECT 1;');await assert.rejects(()=>verifyReleaseMigrations(root,temp),/migration_release_unqualified/);
+});
+test('release migrations: changed source journal refuses publication before copying',async t=>{
+ const {copyReleaseMigrations}=await import('../build/release-migrations.ts'),temp=mkdtempSync(join(tmpdir(),'forma-release-source-'));t.after(()=>rmSync(temp,{recursive:true,force:true}));mkdirSync(join(temp,'build'));mkdirSync(join(temp,'drizzle/meta'),{recursive:true});writeFileSync(join(temp,'build/memory-migration-release.json'),readFileSync(join(root,'build/memory-migration-release.json')));writeFileSync(join(temp,'drizzle/meta/_journal.json'),'{}');await assert.rejects(()=>copyReleaseMigrations(temp,join(temp,'output')),/migration_release_unqualified/);assert.equal(existsSync(join(temp,'output')),false);
+});

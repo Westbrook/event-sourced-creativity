@@ -1,5 +1,10 @@
 # Forma Memory: remaining non-implementation work
 
+**Current release update:** The user authorized merge and publication; source is
+on remote `main`. The first publication failed during hosted SQL execution.
+Guarded default-disabled recovery is in progress; see the [merge/publication and migration-hold receipt](forma-memory-publication-2026-09-21.md).
+Earlier local-only release statements below are historical. Activation remains gated.
+
 Updated **2026-09-21**. Backlog entry: [MEM-001](backlog.md#memory).
 
 September 18 release continuation: see [completion and release status](forma-memory-release-2026-09-18.md).

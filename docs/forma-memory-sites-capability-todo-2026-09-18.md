@@ -1,5 +1,10 @@
 # Memory: Sites implementation and external capability To Do
 
+**Current release update:** The user authorized merge and publication; source is
+on remote `main`. The first publication failed during hosted SQL execution.
+Guarded default-disabled recovery is in progress; see the [merge/publication and migration-hold receipt](forma-memory-publication-2026-09-21.md).
+Earlier local-only release statements below are historical. Activation remains gated.
+
 ## Current reconciliation —2026-09-21
 
 Native source is implemented through `bd6c4ef3` (local main00e23d97 merged); final native qualification

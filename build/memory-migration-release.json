@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "mode": "hold-unqualified-memory-migrations",
+  "baselineCommit": "00e23d97431a89a0c8d02e095dafe931e5c16172",
+  "baselineVersion": 494,
+  "sourceJournalSha256": "00b0317fa45a2686e6545d3a16dd3864eb1f6e521be73f4cd331281400248dc0",
+  "baselineJournal": "{\n  \"version\": \"7\",\n  \"dialect\": \"sqlite\",\n  \"entries\": [\n    {\n      \"idx\": 0,\n      \"version\": \"6\",\n      \"when\": 1786380541541,\n      \"tag\": \"0000_lively_owl\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 1,\n      \"version\": \"6\",\n      \"when\": 1786383935009,\n      \"tag\": \"0001_slimy_dragon_lord\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 2,\n      \"version\": \"6\",\n      \"when\": 1786385722784,\n      \"tag\": \"0002_cooing_paladin\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 3,\n      \"version\": \"6\",\n      \"when\": 1786546028259,\n      \"tag\": \"0003_skinny_hammerhead\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 4,\n      \"version\": \"6\",\n      \"when\": 1786547536804,\n      \"tag\": \"0004_pink_titanium_man\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 5,\n      \"version\": \"6\",\n      \"when\": 1786648829555,\n      \"tag\": \"0005_large_energizer\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 6,\n      \"version\": \"6\",\n      \"when\": 1787225185196,\n      \"tag\": \"0006_high_talisman\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 7,\n      \"version\": \"6\",\n      \"when\": 1787321219803,\n      \"tag\": \"0007_dizzy_bruce_banner\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 8,\n      \"version\": \"6\",\n      \"when\": 1787336622494,\n      \"tag\": \"0008_shocking_joshua_kane\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 9,\n      \"version\": \"6\",\n      \"when\": 1787411496788,\n      \"tag\": \"0009_rainy_sir_ram\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 10,\n      \"version\": \"6\",\n      \"when\": 1787423798387,\n      \"tag\": \"0010_simple_alex_wilder\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 11,\n      \"version\": \"6\",\n      \"when\": 1787438499724,\n      \"tag\": \"0011_swift_redwing\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 12,\n      \"version\": \"6\",\n      \"when\": 1787442093396,\n      \"tag\": \"0012_green_james_howlett\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 13,\n      \"version\": \"6\",\n      \"when\": 1787452816325,\n      \"tag\": \"0013_long_midnight\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 14,\n      \"version\": \"6\",\n      \"when\": 1787501364000,\n      \"tag\": \"0014_perfect_robbie_robertson\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 15,\n      \"version\": \"6\",\n      \"when\": 1787516163127,\n      \"tag\": \"0015_true_lila_cheney\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 16,\n      \"version\": \"6\",\n      \"when\": 1787522932917,\n      \"tag\": \"0016_living_tarantula\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 17,\n      \"version\": \"6\",\n      \"when\": 1787530951487,\n      \"tag\": \"0017_previous_pixie\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 18,\n      \"version\": \"6\",\n      \"when\": 1787796904509,\n      \"tag\": \"0018_consequential_consent\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 19,\n      \"version\": \"6\",\n      \"when\": 1787800209711,\n      \"tag\": \"0019_authoring_commits\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 20,\n      \"version\": \"6\",\n      \"when\": 1787843272923,\n      \"tag\": \"0020_assistant_runtime_tables\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 21,\n      \"version\": \"6\",\n      \"when\": 1787843379540,\n      \"tag\": \"0021_assistant_specialist_consent\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 22,\n      \"version\": \"6\",\n      \"when\": 1787853600000,\n      \"tag\": \"0018_output_requirements\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 23,\n      \"version\": \"6\",\n      \"when\": 1788192000000,\n      \"tag\": \"0022_output_model3d\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 24,\n      \"version\": \"6\",\n      \"when\": 1788870605392,\n      \"tag\": \"0025_memory_live_base\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 25,\n      \"version\": \"6\",\n      \"when\": 1788870605981,\n      \"tag\": \"0026_memory_live_conversation\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 26,\n      \"version\": \"6\",\n      \"when\": 1788870606619,\n      \"tag\": \"0027_memory_native_origins\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 27,\n      \"version\": \"6\",\n      \"when\": 1788870607227,\n      \"tag\": \"0028_memory_document_profile\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 28,\n      \"version\": \"6\",\n      \"when\": 1788870607788,\n      \"tag\": \"0032_memory_structured_conversation_ledger\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 29,\n      \"version\": \"6\",\n      \"when\": 1788870608316,\n      \"tag\": \"0033_memory_structured_answer_provenance\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 30,\n      \"version\": \"6\",\n      \"when\": 1788870608920,\n      \"tag\": \"0034_memory_document_job_origins\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 31,\n      \"version\": \"6\",\n      \"when\": 1788870609575,\n      \"tag\": \"0035_memory_document_job_origin_retirement_progress\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 32,\n      \"version\": \"6\",\n      \"when\": 1788874244014,\n      \"tag\": \"0036_budget_hold_dispositions\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 33,\n      \"version\": \"6\",\n      \"when\": 1789128075313,\n      \"tag\": \"0037_managed_video_reconciliation\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 34,\n      \"version\": \"6\",\n      \"when\": 1789383619912,\n      \"tag\": \"0038_scene_source_generations\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 35,\n      \"version\": \"6\",\n      \"when\": 1789387745000,\n      \"tag\": \"0039_scene_job_source_witness\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 36,\n      \"version\": \"6\",\n      \"when\": 1789659788167,\n      \"tag\": \"0040_selected_output_shares\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 37,\n      \"version\": \"6\",\n      \"when\": 1789749347208,\n      \"tag\": \"0041_still_decision_cache\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 38,\n      \"version\": \"6\",\n      \"when\": 1789749785642,\n      \"tag\": \"0042_memory_live_change_checkpoints\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 39,\n      \"version\": \"6\",\n      \"when\": 1789761110511,\n      \"tag\": \"0043_still_panel_relay\",\n      \"breakpoints\": true\n    },\n    {\n      \"idx\": 40,\n      \"version\": \"6\",\n      \"when\": 1789928794240,\n      \"tag\": \"0044_still_history_cache\",\n      \"breakpoints\": true\n    }\n  ]\n}\n",
+  "files": [
+    {
+      "path": "0000_lively_owl.sql",
+      "sha256": "a171936bedddbcd299e13569985486cfbdaa281b973ddcaa23201c92b1016279"
+    },
+    {
+      "path": "0001_slimy_dragon_lord.sql",
+      "sha256": "7e9e2d9125b1722f7d3c042290c91a64b4e43cae4387851b4d9a90104f3603cf"
+    },
+    {
+      "path": "0002_cooing_paladin.sql",
+      "sha256": "06bb5dd7dc75066c01e8c3a8d7c15e648234f307f056b87f49407234fa6f0ba0"
+    },
+    {
+      "path": "0003_skinny_hammerhead.sql",
+      "sha256": "6f26ae9b89c6c15a674567cf619e503f8fade63da6a35acc8a1ecb5df1d5253f"
+    },
+    {
+      "path": "0004_pink_titanium_man.sql",
+      "sha256": "0c46e3c06e7e6fe256f385ce49f40c219a1e8bf2251105cc3b1490ae38bd71c9"
+    },
+    {
+      "path": "0005_large_energizer.sql",
+      "sha256": "ad0382816b3c63787a9513a4a7c76faf1147bbce2c04053ea4e1e273c4618e1a"
+    },
+    {
+      "path": "0006_high_talisman.sql",
+      "sha256": "a6b5ea7d1bb02fd2520e9923afdeb22aa0e6d65b2b0a6bc2b7d29d0244e06a2b"
+    },
+    {
+      "path": "0007_dizzy_bruce_banner.sql",
+      "sha256": "ca8173b98fbd580deb271eeb1ddd72417ae6e18e4b1dc1c31a11a41829c0428c"
+    },
+    {
+      "path": "0008_shocking_joshua_kane.sql",
+      "sha256": "37c75899f2f63745f7942f7988fb0bae118f1eba4aabd0ca07902950db8feb1e"
+    },
+    {
+      "path": "0009_rainy_sir_ram.sql",
+      "sha256": "ea965294ea9cad9812ac2f08612f0f7545a0064daff4f598b672c851b6c86653"
+    },
+    {
+      "path": "0010_simple_alex_wilder.sql",
+      "sha256": "7deb564b4467962147c58d86feb5fa6659e4e83d50729f1e6b6d8213664d4fe3"
+    },
+    {
+      "path": "0011_swift_redwing.sql",
+      "sha256": "1e55294b01bfc6a3fc5de9eb0c96703cde5c6c039279b128c9b64bca993e5aac"
+    },
+    {
+      "path": "0012_green_james_howlett.sql",
+      "sha256": "f08b6795fcf9a2b48400e119abbb984715d92c80fb46af06073aa74b43b84e9d"
+    },
+    {
+      "path": "0013_long_midnight.sql",
+      "sha256": "a7adb61922ef8224f52258fc1e7881c21c4482f8ade86e1c0d2d5265c9e0e41b"
+    },
+    {
+      "path": "0014_perfect_robbie_robertson.sql",
+      "sha256": "df3dfd3ff407915cb258ea3a2b05f66b451ff921f1e6a44a26783c097fed44c4"
+    },
+    {
+      "path": "0015_true_lila_cheney.sql",
+      "sha256": "f0d798ba43eddd8236d5c8cde1c8d075b121b211faa9e4e74e10f575a8e5c4c6"
+    },
+    {
+      "path": "0016_living_tarantula.sql",
+      "sha256": "fcf5bcb9b8ac9ff85d09046882cf9ab8ea82723646f38feb6477dffbf7fc64ba"
+    },
+    {
+      "path": "0017_previous_pixie.sql",
+      "sha256": "3f1e8bac9cf1216a5a2118055cd2f5c6079f10e29bfd601291588d38e3f69e83"
+    },
+    {
+      "path": "0018_consequential_consent.sql",
+      "sha256": "a33aeab74dfee37da4e9d79f515efe5cc8c5edffddae8eb10e4f9838e7918e20"
+    },
+    {
+      "path": "0019_authoring_commits.sql",
+      "sha256": "502475279915896917dce5137a5d54549eea5e5c32947449de8440cefda88acc"
+    },
+    {
+      "path": "0020_assistant_runtime_tables.sql",
+      "sha256": "9d1240b323c0cbd3f587f0a86192630e2392be77643058110fa4c85645e730e7"
+    },
+    {
+      "path": "0021_assistant_specialist_consent.sql",
+      "sha256": "928e94bf4712edb2fcc848e546830edcbde8f67cb5fac52099affa3f1c7a0a5b"
+    },
+    {
+      "path": "0018_output_requirements.sql",
+      "sha256": "6d96ee6c4f496a9b858533711c4c5fccb48b8814bfe3af195e86a6f31d12f5c9"
+    },
+    {
+      "path": "0022_output_model3d.sql",
+      "sha256": "393bf222f1aa1210d679af3d588ffdf0e989cc6b9bd4db02eeef78cfb9907206"
+    },
+    {
+      "path": "0025_memory_live_base.sql",
+      "sha256": "f8b894e15fbe3a463396a9dc099baf5de665f93142fc2a7748ea1acbf4660280"
+    },
+    {
+      "path": "0026_memory_live_conversation.sql",
+      "sha256": "a7884a5d77ee78fd8eba63d9f3464079ae50697203e894fbc3d85e206dfc76e0"
+    },
+    {
+      "path": "0027_memory_native_origins.sql",
+      "sha256": "e39fcde607997aadf3e1d24ee6759db08cca64604bf50f582e6a363d969d6618"
+    },
+    {
+      "path": "0028_memory_document_profile.sql",
+      "sha256": "4ab998067eb4147b6540b43d19f8638d90c44abddbeb9ddf8d216aa37311d8a3"
+    },
+    {
+      "path": "0032_memory_structured_conversation_ledger.sql",
+      "sha256": "83ab85023adb5d7842f38b404a251c363a1cdbdba60fc089d3afe783c87b113a"
+    },
+    {
+      "path": "0033_memory_structured_answer_provenance.sql",
+      "sha256": "da6874966c74a25d6b18bc4228b1edfa8c7ef0dc504aebf8c3217baac6c68d32"
+    },
+    {
+      "path": "0034_memory_document_job_origins.sql",
+      "sha256": "e74e14b57ba85dd01aea34ffadc57e56b3314d6098587dd8cb6720382c17d9d1"
+    },
+    {
+      "path": "0035_memory_document_job_origin_retirement_progress.sql",
+      "sha256": "edc6fd99df781c535a3a113f252c2d8cbe2c101ef244347579d5c97fa11e3c1b"
+    },
+    {
+      "path": "0036_budget_hold_dispositions.sql",
+      "sha256": "2187dd646864fd1b7a110579b5446b4e80521c5e49f2ee19bb042b234390864b"
+    },
+    {
+      "path": "0037_managed_video_reconciliation.sql",
+      "sha256": "3c2de86b42ab38b6938574e078150297a0bce9481224a45ea59d9bf6f845c665"
+    },
+    {
+      "path": "0038_scene_source_generations.sql",
+      "sha256": "9e31b72e2f3e2f5ca5ce7436eb06e14ef93fdcea57fee17a040eb7734d16b5ec"
+    },
+    {
+      "path": "0039_scene_job_source_witness.sql",
+      "sha256": "edc61b3be73dd90eab3248ee2828a4d2477bc3367d94efcbd3344fd8c0f47c94"
+    },
+    {
+      "path": "0040_selected_output_shares.sql",
+      "sha256": "fbf0d62eca4175ddff7d716ecb3f40e6f103b4cc112082ca5edc85cbc32167a6"
+    },
+    {
+      "path": "0041_still_decision_cache.sql",
+      "sha256": "f0d3f3ee3c7ac4f100a046432e89a9b67b066d6d1a709c25677b47d86d620f98"
+    },
+    {
+      "path": "0042_memory_live_change_checkpoints.sql",
+      "sha256": "9adad8f1d7339839bc1130fd812e99b620bdec22c67de3342f5934d8a23e65b9"
+    },
+    {
+      "path": "0043_still_panel_relay.sql",
+      "sha256": "adac5ec6ad6348933c030f427f52193e1f8c13ddee08f45b353f263d841903c8"
+    },
+    {
+      "path": "0044_still_history_cache.sql",
+      "sha256": "e8fbd1806a73b850cdd4e760b21a8e59ada315b578349866a033ccd8d484758c"
+    }
+  ],
+  "reason": "Production495 failed with incomplete input: SQLITE_ERROR after partial Memory schema creation. Publish default-disabled code without retrying candidate migrations. Exact hosted schema/receipt repair and qualification required before activation."
+}

@@ -1,5 +1,10 @@
 # Memory implementation completion matrix
 
+**Current release update:** The user authorized merge and publication; source is
+on remote `main`. The first publication failed during hosted SQL execution.
+Guarded default-disabled recovery is in progress; see the [merge/publication and migration-hold receipt](forma-memory-publication-2026-09-21.md).
+Earlier local-only release statements below are historical. Activation remains gated.
+
 Updated2026-09-21. This is the **current native implementation ledger** for the
 [original scope-aware plan](forma-scope-aware-memory-plan-2026-09-02.md).
 Older dated checkpoints below preserve the investigation history; their former

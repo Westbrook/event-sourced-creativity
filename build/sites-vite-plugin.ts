@@ -1,6 +1,7 @@
 import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Plugin } from "vite";
+import {copyReleaseMigrations} from "./release-migrations.ts";
 import { applicationIdFromRoute, routeRequiredCapabilities, SITE_ROUTE_ENTRIES } from "../src/platform/applications";
 
 export { SITE_ROUTE_ENTRIES } from "../src/platform/applications";
@@ -134,9 +135,7 @@ export function sites(): Plugin {
         await cp(hostingConfig, resolve(outputDirectory, "hosting.json"));
       }
       if (await exists(drizzleSource)) {
-        await cp(drizzleSource, resolve(outputDirectory, "drizzle"), {
-          recursive: true,
-        });
+        await copyReleaseMigrations(root, resolve(outputDirectory, "drizzle"));
       }
       await writeRouteEntries(root);
     },
