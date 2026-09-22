@@ -25,8 +25,11 @@ assert.notEqual(oldId,freshId);
 const oldHashes=old.runtimeIdentity.sourceHashes,newHashes=fresh.runtimeIdentity.sourceHashes;
 const changed=Object.keys(oldHashes).filter(p=>oldHashes[p]!==newHashes[p]);
 assert.deepEqual(changed,['worker/openai-adapter.ts']);
+assert.equal(freshBody.runtimeIdentity.adapterSha256,newHashes['worker/openai-adapter.ts']);
+assert.equal(oldBody.runtimeIdentity.adapterSha256,oldHashes['worker/openai-adapter.ts']);
 freshBody.runtimeIdentity.sourceHashes=oldHashes;
-assert.equal(canonical(freshBody),canonical(oldBody),'unexpected_historical_study_difference');
+freshBody.runtimeIdentity.adapterSha256=oldBody.runtimeIdentity.adapterSha256;
+assert(canonical(freshBody)===canonical(oldBody),'unexpected_historical_study_difference');
 const historicalChecks=[
  ['scripts/check-generation-execution-bridge.mjs','--check','immutable_study_changed_create_new_reviewed_version'],
  ['evals/generation-reliability/native-host/envelope.mjs',null,'Relevant source changed: mint a NEW version; never rewrite the archived envelope.'],
