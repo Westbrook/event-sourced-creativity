@@ -1,0 +1,35 @@
+{
+  "version": "h3-disabled-bindings-v1",
+  "integratedSource": "a5cedbbc5dfde9bde753403c3f71ffb2c958f11a",
+  "e2Source": "d5411eaca61efdc53f8cc4e2ac127cf33911cfd7",
+  "executionPlanId": "execution:5b353eaa929463860f1bff3c702a0236896172b7990b6a8b4beadfbb1cdbf544",
+  "runtimeHash": "7dffe88c5e9bb79b6ef5edc5d9b44ba4816e7d4f7e5caa6f40d646bd79981252",
+  "proposalSha256": "28c79da1ceba6a796ebb3aab4fe67f166caf16de284ed09e9269707dd8d0dfd4",
+  "sourceDiscovery": {
+    "authority": "existing authenticated owner-facing UI",
+    "completeFrozenSource": null,
+    "retainedPlannerDirection": null,
+    "originalAttempt": "retained prompt unavailable; frozen source and private request/response not recorded; planner response ID not recorded",
+    "privateBytesCopied": 0
+  },
+  "cSyntheticCapture": "e2a-capture:9356ab25a005fcc0cb95916d331e7a57c257ee3379192e05c27472364e6e003b",
+  "financialReference": "f2-financial:02e1f21c272deeb5040baf3b0de8f20cb88e1102dff89b91cf2cf0f396d21aa4",
+  "financialReferenceRenewed": false,
+  "actualCapture": null,
+  "providerCallsMade": 0,
+  "completedLiveStudies": 0,
+  "immutableEvidenceSha256": {
+    "evals/generation-reliability/bridge-artifacts/v1/first-study.json": "c1f4b275742e308e1a882381fe30b5a948ce4d6507ede4c1a15b400a85ef9824",
+    "evals/generation-reliability/bridge-artifacts/v2/first-study.json": "77f5d58156be93f542cdfe34fa57a9a02c6162242814b0df6a5b485438406c78",
+    "evals/generation-reliability/bridge-artifacts/v3/first-study.json": "97b246d673d91f4d7797c449fd3d8ea4ef6fd02b9394588238cb57390ff36829",
+    "evals/generation-reliability/bridge-artifacts/v4/first-study.json": "8d152f27b4ff41a1aaf7239191f9ae7157d6ebdd37fa04ff273ef85ee26f6331",
+    "evals/generation-reliability/bridge-artifacts/v5/first-study.json": "46b501dcfa61cbcab17b678cadb99f6d3aaa8b95d7a3b37b3b6072143426a6aa",
+    "evals/generation-reliability/e2a/artifacts/capture.json": "103f035d0b5cc1acf42651aba0ee31737855bb31a1e2cfcf78d8b6661899b823",
+    "evals/generation-reliability/e2a/artifacts/before.txt": "0cf169ef58606c5409fe9d2d98e7676de6d7c67271e8dfa9d434aa0cf46b6ce9",
+    "evals/generation-reliability/e2a/artifacts/after.txt": "a64b05de6929fa49c8ce23c6fc534735b7be07e096acfcb33775e074ff1e5b72",
+    "evals/generation-reliability/e2a/artifacts/exact-diff.json": "a5b41ccd74a675953b0f87b396cf81a7bbfbeaa51f5ee1a35bfbfb1ed2c17f03",
+    "evals/generation-reliability/e2a/artifacts/semantic-ledger.json": "957c65aa096b85b7d80a7ca893473ff1999d9053f71ce46e636b02595f53670d",
+    "docs/evidence/f2-sunburst/financial-gate.json": "83d678eeeb6277f6fb542cb6057232dd56efe3e042f7827f565ddf703834a7c9"
+  },
+  "id": "h3-binding-capture:73bea5c09254bf44993e3119d2c55154515077ff4985ccfc9398308ee24f059e"
+}
