@@ -107,3 +107,12 @@ test('successful render followed by real storage function failure retains usable
     await assert.rejects(()=>storeGeneratedImage({MEDIA:{put:async()=>{storageCalls++;throw new Error('offline storage failure');}}},'user','generation',image.bytes,image.model),/offline storage failure/);
   });const outcome=generationOutcomeSummary(checkpoint,{category:'server'},'storage');assert.equal(storageCalls,1);assert.equal(outcome.contentOutcome,'usable');assert.equal(outcome.accountingState,'usage_recorded');assert.equal(outcome.pipelineStage,'storage');
 });
+
+test('E2: creative-direction content_filter outranks parseable direction and missing usage',async()=>{
+ const paid=[],evidence=[];let calls=0;
+ await withFetch(async()=>{calls++;return Response.json({id:'filtered-direction',status:'incomplete',incomplete_details:{reason:'content_filter'},output_text:JSON.stringify({scene:'Partial direction'})});},async()=>{
+  await assert.rejects(()=>generateCreativeDirection(env,'user',{facts:[]},undefined,undefined,r=>paid.push(r),{onEvidence:e=>evidence.push(e)}),e=>e.detail.code==='provider_planner_refusal');
+ });
+ assert.equal(calls,1);assert.equal(paid.at(-1).costMicrousd,undefined);assert.equal(paid.at(-1).accountingState,'unknown');
+ assert.equal(evidence.at(-1).outcome.contentOutcome,'refused');assert.equal(evidence.at(-1).outcome.providerModerationStage,'unknown');
+});

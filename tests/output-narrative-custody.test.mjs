@@ -36,7 +36,7 @@ test('actual job and direct event seams deny ordinary opt-in; trusted payload mu
  assert.equal(await readOutputNarrativePayload({...settings.payload,productionMode:'managed'}),null);
  const events=source('events-api.ts'),line=events.split('\n').find(l=>l.includes('if(!execution?.output&&[')&&l.includes('output_execution_server_owned'));
  const direct=new Function('body','execution',line+';return "metadata-only";');assert.equal(direct({outputNarrative:{}},undefined).status,400);assert.equal(direct({narrativeContractDigest:'x'},undefined).status,400);
- const begin=job.indexOf('    const requiredTokens=kind==='),end=job.indexOf('    const scope=user.projectExecution;',begin),allow=new Function('documentRenderTokenReservation','return function(payload,nativeNarrative,outputPreparation,kind,estimatedGenerationCostMicrousd){'+job.slice(begin,end)+'return "allowance-only";}')(documentRenderTokenReservation);
+ const begin=job.indexOf('    const requiredTokens=kind==='),end=job.indexOf('    const scope=user.projectExecution;',begin),allow=new Function('documentRenderTokenReservation','return function(payload,nativeNarrative,outputPreparation,kind,estimatedGenerationCostMicrousd,nativeStoryboard=null,nativeAudio=null,nativeScene=null){'+job.slice(begin,end)+'return "allowance-only";}')(documentRenderTokenReservation);
  const bounds={maximumMicrousd:1000000,maximumTokens:128000,maximumCalls:1};assert.equal(allow(settings.payload,settings.payload.outputNarrative,bounds,'render_document',1000000),'allowance-only');assert.equal(allow(settings.payload,settings.payload.outputNarrative,{...bounds,maximumCalls:2},'render_document',1000000).status,409);
 });
 // These values exercise pure evidence validation only, not a native job or paid receipt.

@@ -30,15 +30,26 @@ test('Memory strict branch preserves mandatory signal, unique keys and single-re
   await withFetch(async()=>Response.json({results:[result]}),async()=>assert.rejects(()=>moderateExactImagePrompt(env,'prompt',[],undefined,true),/private_image_moderation_invalid/));
   for(const raw of ['{"results":[{"flagged":true,"flagged":false,"categories":{}}]}',JSON.stringify({results:[result,result]})])await withFetch(async()=>new Response(raw),async()=>assert.rejects(()=>moderateExactImagePrompt(env,'prompt',[],new AbortController().signal,true),/private_image_moderation_invalid/));
 });
-test('Memory private image retains bounded receipt before financial completion and rejects absent usage',async()=>{
+test('Memory private image checkpoints finance before bounded receipt and rejects absent usage',async()=>{
   const order=[];const signal=new AbortController().signal;
   await withFetch(async url=>String(url).endsWith('/moderations')?Response.json({results:[result]}):Response.json({data:[{b64_json:btoa('image')}],usage:{input_tokens:1,output_tokens:2,total_tokens:3,input_tokens_details:{text_tokens:1,image_tokens:0}}}),async()=>{
     await generateCreativeImage(env,'user',{facts:[]},{},{signal,privateImageReceipt:{signal,onReceipt:async()=>order.push('private')},onProviderSubmission:()=>order.push('financial')});
-  });assert.deepEqual(order,['private','financial']);
+  });assert.deepEqual(order,['financial','private']);
   await withFetch(async url=>String(url).endsWith('/moderations')?Response.json({results:[result]}):Response.json({data:[{b64_json:btoa('image')}]}),async()=>assert.rejects(()=>generateCreativeImage(env,'user',{facts:[]},{},{signal,privateImageReceipt:{signal,onReceipt:async()=>assert.fail('invalid usage must not be accepted')},onProviderSubmission:()=>assert.fail('missing usage cannot settle')}),e=>e.detail.code==='provider_usage_receipt_missing'));
 });
 
 test('oversized moderation has unknown full response hash, never an invented empty-body hash',async()=>{
   const evidence=[];await withFetch(async()=>new Response('x'.repeat(65537)),async()=>assert.rejects(()=>moderateExactImagePrompt(env,'exact',[],undefined,false,e=>evidence.push(e))));
   assert.equal(evidence.at(-1).operation.responseSha256,null);assert.equal(evidence.at(-1).responseBody,undefined);
+});
+
+test('E2: Memory finance is observable while private custody is suspended',async()=>{
+ const signal=new AbortController().signal,paid=[];let release,entered;
+ const waiting=new Promise(resolve=>{entered=resolve;});
+ await withFetch(async url=>String(url).endsWith('/moderations')?Response.json({results:[result]}):Response.json({data:[{b64_json:btoa('image')}],usage:{input_tokens:1,output_tokens:2,total_tokens:3,input_tokens_details:{text_tokens:1,image_tokens:0}}}),async()=>{
+  const pending=generateCreativeImage(env,'user',{facts:[]},{},{signal,onProviderSubmission:r=>paid.push(r),privateImageReceipt:{signal,onReceipt:async()=>{entered();await new Promise(resolve=>{release=resolve;});throw Error('private storage unavailable');}}});
+  const rejected=assert.rejects(pending,/private storage unavailable/);await waiting;
+  assert.equal(paid.length,1);assert.equal(paid[0].status,'completed');assert.ok(paid[0].costMicrousd>0);assert.equal(paid[0].totalTokens,3);
+  assert.ok(!JSON.stringify(paid).includes('b64_json'));release();await rejected;
+ });
 });

@@ -7,19 +7,23 @@ const env = { OPENAI_API_KEY: 'unusable-offline-fixture' };
 const input = options => ({ documentTitle: 'Synthetic document', snapshot: { facts: [] }, options: { productionMode: 'manual', itemCount: 1, ...options } });
 for (const kind of ['short_story', 'scene', 'slides', 'storyboard', 'audio', 'video']) {
   for (const [name, change, problem] of stoppedPlannerEnvelopes) test(`${kind}: ${name} stops before repair/media, with original accounting`, async t => {
-    const requests = [], submissions = [];
+    const requests = [], submissions = [], evidence = [];
     t.mock.method(globalThis, 'fetch', async (url, init) => {
       requests.push({url, body: init.body});
       assert.equal(url, 'https://api.openai.com/v1/responses');
       return Response.json(plannerEnvelope(change));
     });
-    await assert.rejects(generateDocumentArtifact(env, 'owner', kind, input({ onProviderSubmission: r => submissions.push(r) })), error => {
+    await assert.rejects(generateDocumentArtifact(env, 'owner', kind, input({ onProviderSubmission: r => submissions.push(r), onEvidence: e => evidence.push(e) })), error => {
       assert.equal(error.detail?.outcome?.contentOutcome, problem === 'refused' ? 'refused' : problem === 'incomplete' ? 'invalid' : 'unknown');
       assert.equal(error.detail.pipelineStage, 'planner');
       assert.equal(error.detail.outcome.accountingState, 'usage_recorded');
       return true;
     });
     assert.equal(requests.length, 1, 'no repair or downstream submission');
+    assert.equal(evidence.length,2);assert.equal(evidence[0].requestBody,requests[0].body);
+    assert.deepEqual(JSON.parse(evidence[1].responseBody),plannerEnvelope(change));assert.equal(evidence[1].evidenceId,submissions[0].clientRequestId);
+    assert.equal(evidence[1].operation.requestSha256,submissions[0].requestDigest);
+    assert.ok(!JSON.stringify(submissions).includes('requestBody'));
     assert.equal(submissions.at(-1).status, 'completed');
     assert.equal(submissions.at(-1).totalTokens, 14);
     assert(submissions.at(-1).costMicrousd > 0);
@@ -67,4 +71,10 @@ test('native Audio applies upstream outcomes before its strict usage and artifac
     })), e => e.detail?.outcome?.contentOutcome === (problem === 'refused' ? 'refused' : problem === 'incomplete' ? 'invalid' : 'unknown'));
     assert.equal(calls, 1); assert.equal(receipts.at(-1).costMicrousd, undefined); assert.equal(receipts.at(-1).accountingState, 'unknown');
   }
+});
+for(const raw of ['{','null','[]'])test('E2 raw generic malformed envelope is private evidence, never a repair purchase: '+raw,async t=>{
+ const evidence=[],paid=[];let calls=0;t.mock.method(globalThis,'fetch',async()=>{calls++;return new Response(raw);});
+ await assert.rejects(generateDocumentArtifact(env,'owner','short_story',input({onProviderSubmission:r=>paid.push(r),onEvidence:e=>evidence.push(e)})));
+ assert.equal(calls,1);assert.equal(evidence.at(-1).responseBody,raw);assert.equal(evidence.at(-1).outcome.accountingState,'unknown');
+ assert.equal(paid.at(-1).status,'pending');assert.equal(paid.at(-1).costMicrousd,undefined);
 });

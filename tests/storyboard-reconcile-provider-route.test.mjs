@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import worker from "../worker/index.ts";
+import { HOLD_DISPOSITION_SCHEMA } from "../worker/budget-hold-schema.ts";
 import { seedLegacyStoryboard, LEGACY_STORYBOARD_PROMPT } from "./legacy-storyboard-recovery-fixture.mjs";
 
 const workspaceRoot = new URL("../", import.meta.url).href;
@@ -94,6 +95,8 @@ async function routeFixture() {
   sqlite.prepare("UPDATE users SET consent_version=?").run("pilot-2026-08-10");
   assert.equal((await bootstrap("/api/events?after=0&limit=2000&content=0")).status, 200);
 
+  for(const sql of HOLD_DISPOSITION_SCHEMA)sqlite.exec(sql);
+
   const route = (path = "", init = {}) => handleDocumentJobs(
     new Request(`http://localhost/api/document-jobs${path ? `/${path}` : ""}`, init),
     env,
@@ -102,7 +105,7 @@ async function routeFixture() {
   return { sqlite, env, route, savedMedia };
 }
 
-async function admitStoryboard(fixture, itemCount = 1) {
+async function admitStoryboard(fixture, itemCount = 1, artifactKind = "storyboard") {
   const response = await fixture.route("", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -111,7 +114,7 @@ async function admitStoryboard(fixture, itemCount = 1) {
       documentId: "doc-atmosphere",
       sourceSurface: "storyboard-provider-reconciliation-e2e",
       payload: {
-        artifactKind: "storyboard",
+        artifactKind,
         productionMode: "manual",
         itemCount,
         paidMediaConfirmed: true,
@@ -367,4 +370,41 @@ test('E: later refusal evidence does not block reconciliation of an already purc
   const retained=JSON.parse(fixture.sqlite.prepare('SELECT result_json FROM document_jobs WHERE job_id=?').get(failed.jobId).result_json);
   assert.deepEqual(retained.generationOutcome,checkpoint.generationOutcome);
  }finally{provider.restore();}
+});
+
+for(const kind of ['short_story','slides','storyboard'])test('E2: '+kind+' planner observer retains exact private request/response with owner and job-bounded lifetime',async()=>{
+ const f=await routeFixture(),original=globalThis.fetch;let sent;
+ const raw=JSON.stringify({id:'private-refusal',model:'gpt-5.6-terra',status:'completed',output:[{type:'message',content:[{type:'refusal',refusal:'Private synthetic refusal'}]}],usage:{input_tokens:10,output_tokens:4,total_tokens:14}});
+ globalThis.fetch=async(url,init)=>{assert.equal(String(url),'https://api.openai.com/v1/responses');sent=init.body;return new Response(raw);};
+ try{
+  const admitted=await admitStoryboard(f,1,kind);await f.route(`${admitted.jobId}/run`,{method:'POST'});
+  const job=f.sqlite.prepare('SELECT * FROM document_jobs WHERE job_id=?').get(admitted.jobId),checkpoint=JSON.parse(job.result_json);
+  const refs=Object.values(checkpoint.generationEvidenceRefs);assert.equal(refs.length,2);
+  const bodies=refs.map(({ref})=>f.sqlite.prepare('SELECT * FROM private_content WHERE content_id=?').get(ref));
+  for(const row of bodies){assert.equal(row.owner_id,ownerId);assert.ok(row.expires_at<=job.expires_at);}
+  assert.equal(JSON.parse(bodies[0].content).requestBody,sent);assert.equal(JSON.parse(bodies[1].content).responseBody,raw);
+  assert.equal(JSON.parse(bodies[1].content).outcome.contentOutcome,'refused');
+  assert.ok(!JSON.stringify(checkpoint.providerSubmissions).includes('Private synthetic refusal'));
+  const publicJob=await f.route(admitted.jobId);assert.ok(!(await publicJob.text()).includes('Private synthetic refusal'));
+ }finally{globalThis.fetch=original;f.sqlite.close();}
+});
+for(const fault of ['owner','lease','expiry','request','custody-failure'])test('E2: atomic generic private evidence denies '+fault+' after finance without downstream purchase',async()=>{
+ const f=await routeFixture(),original=globalThis.fetch,batch=f.env.DB.batch;let calls=0,hit=false;
+ globalThis.fetch=async()=>{calls++;return Response.json({id:'paid-original',model:'gpt-5.6-terra',status:'completed',output:[{type:'message',content:[{type:'refusal',refusal:'private'}]}],usage:{input_tokens:10,output_tokens:4,total_tokens:14}});};
+ try{
+  const admitted=await admitStoryboard(f);
+  f.env.DB.batch=async statements=>{
+   if(!hit&&statements.some(s=>s.values?.some(v=>typeof v==='string'&&v.includes('forma-private-generation-evidence-v1')&&v.includes('"phase":"response"')))){
+    hit=true;
+    if(fault==='custody-failure')throw Error('synthetic custody outage');
+    const patch={owner:"owner_id='foreign'",lease:"lease_expires_at='2000-01-01T00:00:00.000Z'",expiry:"expires_at='2000-01-01T00:00:00.000Z'",request:"request_json='{}'"}[fault];
+    f.sqlite.prepare('UPDATE document_jobs SET '+patch+' WHERE job_id=?').run(admitted.jobId);
+   }
+   return batch.call(f.env.DB,statements);
+  };
+  await f.route(`${admitted.jobId}/run`,{method:'POST'});assert.equal(hit,true);assert.equal(calls,1);
+  const checkpoint=JSON.parse(f.sqlite.prepare('SELECT result_json FROM document_jobs WHERE job_id=?').get(admitted.jobId).result_json);
+  const call=Object.values(checkpoint.providerSubmissions)[0];assert.equal(call.status,'completed');assert.ok(call.costMicrousd>0);
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM private_content WHERE content LIKE '%forma-private-generation-evidence-v1%' AND content LIKE '%\"phase\":\"response\"%'").get().n,0);
+ }finally{f.env.DB.batch=batch;globalThis.fetch=original;f.sqlite.close();}
 });

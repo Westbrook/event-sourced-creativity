@@ -51,12 +51,12 @@ test('checkpoint failure and final dispatch denial cannot reach the existing sub
  const source=readFileSync(new URL('../worker/output-execution-control.ts',import.meta.url),'utf8');
  const start=source.indexOf('  beforeProviderDispatch(clientRequestId){'),end=source.indexOf('\n  async observeProvider',start);
  const method=source.slice(start,end).trim().replace(/,$/,'');
- const gate=new Function('claimedCalls','localStops','OutputConflictError','assertDispatchDeadline','return ({'+method+'}).beforeProviderDispatch');
+ const gate=new Function('claimedCalls','localStops','OutputConflictError','assertDispatchDeadline','outputJobIsDurable','job','assertOutputDurableLease','env','artifactKind','requireAudioDispatchCurrent','return ({'+method+'}).beforeProviderDispatch');
  for(const change of [{checkpointed:false},{pending:false},{dispatched:true}]){
-  const call={pending:true,dispatched:false,storyboardBinding:'binding',checkpointed:true,...change},run=gate(new Map([['id',call]]),new Map(),Error,()=>{});
+  const call={pending:true,dispatched:false,storyboardBinding:'binding',checkpointed:true,...change},run=gate(new Map([['id',call]]),new Map(),Error,()=>{},()=>false,{},()=>{}, {},'storyboard',()=>{});
   assert.throws(()=>run('id'));assert.equal(call.dispatched,change.dispatched??false);
  }
- const call={pending:true,dispatched:false,storyboardBinding:'binding',checkpointed:true};gate(new Map([['id',call]]),new Map(),Error,()=>{})('id');assert.equal(call.dispatched,true);
+ const call={pending:true,dispatched:false,storyboardBinding:'binding',checkpointed:true};gate(new Map([['id',call]]),new Map(),Error,()=>{},()=>false,{},()=>{}, {},'storyboard',()=>{})('id');assert.equal(call.dispatched,true);
 });
 
 function database(){

@@ -42,9 +42,9 @@ async function setup({ body = envelope(), retentionFails = false, dispatchFails 
 
 test('Scene adapter captures one request and retains own raw response before emitting structure-valid layout-pending draft', async () => {
   const fixture = await setup(), result = await fixture.run();
-  assert.deepEqual(fixture.log, ['claim', 'pending:none', 'guard', 'dispatch', 'retain', 'completed:pending', 'completed:valid', 'attempt']);
+  assert.deepEqual(fixture.log, ['claim', 'pending:none', 'guard', 'dispatch', 'completed:pending', 'retain', 'completed:valid', 'attempt']);
   assert.equal(fixture.count(), 1); assert.equal(fixture.retained[0].rawEnvelope, fixture.rawEnvelope);
-  assert.equal(fixture.retained[0].candidateRaw, JSON.stringify(candidate())); assert.equal(fixture.retained[0].call.status, 'pending');
+  assert.equal(fixture.retained[0].candidateRaw, JSON.stringify(candidate())); assert.equal(fixture.retained[0].call.status, 'completed');
   assert.equal(fixture.attempts[0].scene.requestBody, fixture.retained[0].request.requestBody);
   const receipt = result.inputReceipt, call = receipt.provider_calls[0];
   assert.equal(call.responseRef, 'unadmitted-private-envelope'); assert.equal(call.providerRequestId, 'unadmitted-response');
@@ -185,4 +185,19 @@ test('Scene local-stop hook receives the exact attempt only before dispatch; fai
     try { await fixture.run(); } catch { /* The existing cases assert each actual failure. */ }
     assert.equal(fixture.count(), 1); assert.equal(stops, 0);
   }
+});
+
+for (const measured of [true, false]) test('E2: Scene finance precedes a suspended private store; measured=' + measured, async () => {
+ const body=envelope();if(!measured)delete body.usage;
+ const f=await setup({body});let release,entered;
+ const waiting=new Promise(resolve=>{entered=resolve;});
+ const selection={...f.selection,retainEnvelope:async()=>{entered();await new Promise(resolve=>{release=resolve;});throw Error('custody failed');}};
+ const pending=generateOutputSceneArtifact(selection,JSON.stringify(f.input),'forma_'+'a'.repeat(32),f.hooks,async()=>Response.json(body));
+ const rejected=assert.rejects(pending,e=>e.detail.code==='output_scene_response_retention_failed');
+ await waiting;
+ assert.equal(f.submissions.at(-1).status,'completed');
+ assert.equal(Number.isSafeInteger(f.submissions.at(-1).costMicrousd),measured);
+ assert.equal(f.submissions.at(-1).responseRef,undefined);
+ assert.ok(!JSON.stringify(f.submissions).includes('screenplay'));
+ release();await rejected;
 });

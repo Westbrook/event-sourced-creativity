@@ -895,7 +895,7 @@ test("long-form stories and screenplays retain later-page manuscripts and repair
 test("multi-page decks retain one cover, correct repeated content, and lock the original presentation", async () => {
   const snapshot = { facts: Array.from({ length: 10 }, (_, offset) => ({ block_id: `slide-${offset + 1}`, type: "reference", properties: { text: `Unique action ${offset + 1}`, storyboard_frame_index: offset + 1, source_artifact_id: "ordered-slides", storyboard_shot_title: `Heading ${offset + 1}`, storyboard_shot_direction: `Unique action ${offset + 1}` } })) };
   const production = buildManagedProductionPlan("slides", snapshot);
-  const requests = [];
+  const requests = [], evidence = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init = {}) => {
     const request = JSON.parse(String(init.body));
@@ -911,8 +911,15 @@ test("multi-page decks retain one cover, correct repeated content, and lock the 
     return Response.json({ id: `slides-${requests.length}`, model: "gpt-5.6-terra", output_text: JSON.stringify({ title: "Alpha deck", summary: "A coherent presentation.", content_markdown: `# Alpha deck\n\n${items.map((item) => item.body).join("\n")}`, presentation, items }), usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 } });
   };
   try {
-    const planned = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "owner", "slides", { documentTitle: "Alpha deck", snapshot, production });
+    const planned = await generateManagedArtifactDraft({ OPENAI_API_KEY: "test-only", OPENAI_MODEL: "gpt-5.6-terra" }, "owner", "slides", { documentTitle: "Alpha deck", snapshot, production, onEvidence:e=>evidence.push(e) });
     assert.equal(requests.length, 3);
+    assert.equal(evidence.length,6);
+    assert.equal(new Set(evidence.map(e=>e.evidenceId)).size,3);
+    const requestEvidence=evidence.filter(e=>e.phase==='request');
+    assert.deepEqual(requestEvidence.map(e=>e.operation.settings.pageIndex),[0,1,1]);
+    assert.equal(requestEvidence[2].operation.settings.phase,'editorial-rewrite');
+    requestEvidence.forEach((e,i)=>assert.deepEqual(JSON.parse(e.requestBody),requests[i].request));
+    assert.deepEqual(evidence.filter(e=>e.phase==='response').map(e=>JSON.parse(e.responseBody).id),['slides-1','slides-2','slides-3']);
     assert.equal(planned.inputReceipt.planned_provider_request_count, 2);
     assert.equal(planned.inputReceipt.provider_request_count, 3, "the receipt must include the additional bounded whole-work repair call");
     assert.equal(planned.inputReceipt.maximum_provider_request_count, production.maximumProviderCallCount);

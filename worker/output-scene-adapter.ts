@@ -119,16 +119,8 @@ export async function generateOutputSceneArtifact(selection: Selection, provider
     const values = Array.isArray(raw?.output) ? raw.output.flatMap((item: { content?: unknown }) => Array.isArray(item?.content) ? item.content : []) : [];
     retainedCandidate = typeof raw?.output_text === "string" ? raw.output_text : values.find((item: { type?: string; text?: unknown }) => item?.type === "output_text" && typeof item.text === "string")?.text ?? null;
   } catch { /* Exact malformed raw envelope is still retained. */ }
-  let retentionFailure: unknown, responseRef: string | undefined;
-  try {
-    const retained = await selection.retainEnvelope(freeze({ rawEnvelope, candidateRaw: retainedCandidate, httpStatus: response.status, call: { ...call }, request }));
-    if (!retained || typeof retained.responseRef !== "string" || !retained.responseRef.trim()) throw failure("output_scene_response_retention_required");
-    responseRef = retained.responseRef;
-  } catch (error) { retentionFailure = error; }
-  // Retention failure must not erase source-free financial evidence. Inspect
-  // and persist received usage/cost before any rejection or artifact projection.
   const evidence = await inspectOutputSceneResponse(original, rawEnvelope);
-  call = { ...call, status: response.ok ? "completed" : "pending", ...(responseRef ? { responseRef } : {}),
+  call = { ...call, status: response.ok ? "completed" : "pending",
     ...(evidence.responseId ? { providerRequestId: evidence.responseId } : {}), ...(evidence.effectiveModel ? { effectiveModel: evidence.effectiveModel } : {}),
     responseReceivedAt: new Date().toISOString(), httpRequestId: response.headers.get("x-request-id") ?? undefined,
     completionStatus: evidence.completionStatus ?? "unspecified", latencyMs: Date.now() - started, validationStatus: "pending",
@@ -137,7 +129,15 @@ export async function generateOutputSceneArtifact(selection: Selection, provider
       ...(evidence.usage.reasoningTokens === null ? {} : { reasoningTokens: evidence.usage.reasoningTokens }) } : {}),
     ...(evidence.cost ? { costMicrousd: evidence.cost.totalMicrousd, textInputCostMicrousd: evidence.cost.textInputMicrousd,
       textOutputCostMicrousd: evidence.cost.textOutputMicrousd, usageCostBasis: evidence.cost.costBasis, pricingReceipt: evidence.cost } : {}) };
+  // Persist source-free measured/unknown finance before fallible private custody.
   await hooks.onProviderSubmission(freeze({ ...call }));
+  let retentionFailure: unknown, responseRef: string | undefined;
+  try {
+    const retained = await selection.retainEnvelope(freeze({ rawEnvelope, candidateRaw: retainedCandidate, httpStatus: response.status, call: { ...call }, request }));
+    if (!retained || typeof retained.responseRef !== "string" || !retained.responseRef.trim()) throw failure("output_scene_response_retention_required");
+    responseRef = retained.responseRef;
+  } catch (error) { retentionFailure = error; }
+  if (responseRef) call = { ...call, responseRef };
   const accounting: ProviderAttemptAccounting | undefined = evidence.usage ? { providerUsage: { inputTokens: evidence.usage.inputTokens, outputTokens: evidence.usage.outputTokens, totalTokens: evidence.usage.totalTokens },
     providerResponseIds: evidence.responseId ? [evidence.responseId] : [], providerModel: evidence.effectiveModel ?? contract.model, providerCallCount: 1 } : undefined;
   if (retentionFailure || !responseRef) throw failure("output_scene_response_retention_failed", accounting);

@@ -20808,3 +20808,38 @@ for(const partial of ['grants','reference-tables','reference-complete'])test('na
  const settings=await state.request('/api/memory/settings'),view=await settings.json();if(settings.status===200){assert.equal(view.enabled,false);assert.deepEqual(view.enrollments,[]);}else {assert.equal(settings.status,503);assert.equal(view.error,'memory_schema_unavailable');}
  const enroll=await state.request('/api/memory/settings',{...json({confirmation:'ENABLE_PERSONAL_MEMORY'}),method:'PUT'});assert.ok(enroll.status>=400);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_derivation_grants').get().n,0);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_live_enrollments').get().n,0);assert.equal(providerCalls,0);
 });
+
+// E2: use the complete native owner/consent/paid-step/private-retention pipeline.
+for(const fault of ['custody-outage','malformed','duplicate-key','oversized','missing-usage','multiple-images','moderation-refusal'])test('E2 private Memory native journey: '+fault,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),db=state.env.DB,q=await(await state.imageSend('quote')).json();
+ const original=globalThis.fetch,batch=db.batch;let imageCalls=0,observedFinance=false;
+ globalThis.fetch=async(url,init)=>{
+  if(String(url).endsWith('/moderations')&&fault==='moderation-refusal')return Response.json({results:[{flagged:true,categories:{violence:true}}]});
+  const response=await original(url,init);
+  if(!String(url).endsWith('/images/generations'))return response;
+  imageCalls++;
+  if(fault==='malformed')return new Response('{');
+  if(fault==='duplicate-key')return new Response('{"usage":{},"usage":{}}');
+  if(fault==='oversized')return new Response('x'.repeat(1024*1024+1));
+  const body=await response.json();if(fault==='missing-usage')delete body.usage;
+  if(fault==='multiple-images')body.data.push({...body.data[0]});
+  return Response.json(body,{headers:{'x-request-id':'private-image-response'}});
+ };
+ db.batch=async statements=>{
+  if(fault==='custody-outage'&&statements.some(s=>s.sql?.includes('INSERT INTO private_content')&&s.values?.includes('provider-response'))){
+   const step=await db.prepare('SELECT status,verified_tokens,verified_microusd FROM consequential_execution_steps WHERE execution_id=?').bind(q.executionId).first();
+   assert.equal(step.status,'settled');assert.equal(step.verified_tokens,120);assert.ok(step.verified_microusd>0);observedFinance=true;
+   throw Error('E2 private custody unavailable');
+  }
+  return batch.call(db,statements);
+ };
+ t.after(()=>{globalThis.fetch=original;db.batch=batch;});
+ const keys={previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash};
+ const response=await state.imageSend('execute',keys);assert.equal(response.status,409);assert.doesNotMatch(await response.text(),/encoded/);
+ if(fault==='custody-outage')assert.equal(observedFinance,true);
+ const step=await db.prepare('SELECT status,verified_tokens FROM consequential_execution_steps WHERE execution_id=?').bind(q.executionId).first();
+ if(['custody-outage','multiple-images'].includes(fault))assert.equal(step.status,'settled');
+ if(['malformed','duplicate-key','oversized','missing-usage'].includes(fault)){assert.notEqual(step.status,'settled');assert.equal(step.verified_tokens,null);}
+ assert.equal(imageCalls,fault==='moderation-refusal'?0:1);
+ await state.imageSend('resume',keys);await state.imageSend('execute',keys);assert.equal(imageCalls,fault==='moderation-refusal'?0:1);
+});
