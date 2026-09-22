@@ -113,8 +113,12 @@ export async function applyEventSaveRepair(db:D1Database,proof:string,authority:
   await rollbackProbe(db,plan.snapshot,authority,false);
   const expected=plan.catalog.filter(r=>!removed.has(r.name)).concat(EVENT_SAVE_REPAIR_BARRIERS,receiptObject);
   const final=checkCatalog(expected);
+  // Keep independent predicates in separate statements in the same atomic
+  // batch. Combining the authorization query with all empty-table witnesses
+  // exceeds hosted D1's expression depth100, even though each check fits.
+  const assert=(sql:string,bindings:unknown[]=[])=>db.prepare(`INSERT INTO ${guard} SELECT CASE WHEN (${sql}) THEN 1 ELSE 0 END`).bind(...bindings);
   const batch=[db.prepare(`CREATE TABLE ${guard}(proof INTEGER NOT NULL CHECK(proof=1))`),
-   db.prepare(`INSERT INTO ${guard} SELECT CASE WHEN ${snapshotSQL}=? AND ${settingsSQL} AND ${emptySQL} AND (${authority.sql}) THEN 1 ELSE NULL END`).bind(plan.snapshot,...authority.bindings),
+   assert(`${snapshotSQL}=?`,[plan.snapshot]),assert(settingsSQL),assert(emptySQL),assert(authority.sql,authority.bindings),
    // Install barriers before disconnecting any lifecycle protection.
    ...EVENT_SAVE_REPAIR_BARRIERS.map(r=>db.prepare(r.sql!)),
    ...EVENT_SAVE_REPAIR_REMOVED.map(r=>db.prepare(`DROP TRIGGER ${quote(r.name)}`)),
@@ -123,7 +127,7 @@ export async function applyEventSaveRepair(db:D1Database,proof:string,authority:
    // The same hosted engine must compile the full ordinary save shape before
    // committing the change; a failure rolls back all DDL and the receipt.
    db.prepare(EVENT_SAVE_COMPILE_PROBE),
-   db.prepare(`INSERT INTO ${guard} SELECT CASE WHEN ${final.sql} AND ${settingsSQL} AND ${emptySQL} AND NOT EXISTS(SELECT 1 FROM pragma_foreign_key_check LIMIT 1) THEN 1 ELSE NULL END`).bind(...final.bindings),
+   assert(final.sql,final.bindings),assert(settingsSQL),assert(emptySQL),assert('NOT EXISTS(SELECT 1 FROM pragma_foreign_key_check LIMIT 1)'),
    db.prepare(`DROP TABLE ${guard}`)];
   const result=await db.batch(batch);
   if(result.length!==batch.length||result.some(r=>r.success!==true))fail('batch_unconfirmed');

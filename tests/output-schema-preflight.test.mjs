@@ -174,7 +174,12 @@ test('Event save repair actual Worker is read-only on GET, refuses activation an
  const request={method:'POST',headers:{origin:'http://localhost','content-type':'application/x-www-form-urlencoded'},body:'proof='+proof};
  f.env.FORMA_MEMORY_ENABLED='true';assert.equal((await f.request(EVENT_SAVE_REPAIR_PATH,request)).status,403);delete f.env.FORMA_MEMORY_ENABLED;
  const count=f.sqlite.prepare('SELECT count(*) AS n FROM events').get().n;
+ const schema=f.sqlite.prepare("SELECT type,name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'").all(),batches=[];
+ f.controls.beforeBatch=statements=>{if(statements[0]?.sql.startsWith('CREATE TABLE __forma_event_save_repair_guard'))batches.push(statements.map(s=>({sql:s.sql,values:s.values})));};
  const result=await f.request(EVENT_SAVE_REPAIR_PATH,request);assert.equal(result.status,200,await result.clone().text());assert.match(await result.text(),/four-synthetic-events-persisted-and-rolled-back/);
+ const {spawnSync}=await import('node:child_process');
+ const compiler=spawnSync('python3',[new URL('../scripts/qualify-event-save-expressions.py',import.meta.url).pathname],{input:JSON.stringify({schema,batches}),encoding:'utf8'});
+ assert.equal(compiler.status,0,compiler.stderr||compiler.stdout);t.diagnostic(compiler.stdout.trim());
  await f.drainBackground();assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM events').get().n,count);
  f.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run(f.owner);
  assert.equal((await f.request(EVENT_SAVE_REPAIR_PATH)).status,403);

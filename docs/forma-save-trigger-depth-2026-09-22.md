@@ -1,7 +1,8 @@
 # Save failures: trigger depth investigation
 
-Status: local save recovery implemented and qualified; awaiting explicit deployment approval.
-Production is unchanged. The original investigation below is retained, followed by the repair and validation record.
+Bounded save recovery and qualification record. Live deployment and database
+outcomes are maintained in the project's shared Progress Report. The original
+investigation below is retained, followed by the repair and validation record.
 
 ## Observed failure
 
@@ -125,6 +126,13 @@ node --import tsx --test tests/output-schema-preflight.test.mjs
 node node_modules/typescript/bin/tsc --noEmit
 ```
 
+The authenticated maintenance batches also compile under SQLite's expression
+depth limit100. The regression test captures the actual administrator authority
+and all314 batch statements, including the post-repair save probes. It failed
+against the original combined precondition and passes after splitting independent
+assertions into separate statements in the same atomic transaction. No authority,
+schema, emptiness or rollback check was removed.
+
 The guarded deployment packaging hold remains mandatory: the generic Sites
 packager copies the entire historical migration directory and must not be sent
 to deployment. Use `scripts/package-disabled-memory-release.mjs` against the
@@ -132,10 +140,11 @@ build's verified41-migration artifact. No historical migration was rewritten.
 
 ## Release checkpoint
 
-Production build, localization, manifest consistency and TypeScript checks passed.
-Automatic approval review rejected publication because it requires explicit
-deployment authorization. No source push, deployment, hosted repair or live
-probe was performed. The release is prepared locally; after approval, preserve
-any newer remote source and the existing audience, publish the guarded artifact,
-then inspect and apply the fixed administrator operation. Hosted before/after
+The user explicitly authorized merging main, deploying Production and applying
+the guarded repair. Production505 and506 preserved the workspace audience and
+environment revision16. Inspection confirmed the original trigger-depth failure.
+The first application rolled back because its combined precondition exceeded
+hosted D1's expression depth100; an authenticated diagnostic page exposed the
+failure. The expression qualification and atomic assertion split above address
+that separate hosted constraint. Hosted before/after
 compilation and four rolled-back saves remain required before claiming recovery.
