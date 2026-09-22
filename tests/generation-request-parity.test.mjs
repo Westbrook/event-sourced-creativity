@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { readFile, writeFile, rm, mkdtemp } from 'node:fs/promises';
+import { readFile, writeFile, rm, mkdtemp, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { generateCreativeDirection, generateCreativeImage } from '../worker/openai-adapter.ts';
 const baseline='1587f9067162e38ce437d9cf443faf5620b388ae';
 const pass=()=>Response.json({results:[{flagged:false,categories:{}}]});
@@ -17,6 +17,8 @@ test('reviewed HEAD request builders match current JSON bytes, multipart fields/
   const retry=source=>source.slice(source.indexOf('async function openAIRequest('),source.indexOf('\nconst responseText='));
   assert.equal(retry(source),retry(current),'paid and unpaid retry implementation stays byte-identical');
   const baselineModule=source.replace(/((?:from\s*|import\s*\()\s*)["'](\.{1,2}\/[^"']+)["']/g,(_match,prefix,path)=>`${prefix}${JSON.stringify(new URL(path,new URL('worker/openai-adapter.ts',root)).href)}`);
+  await writeFile(join(temporary,'package.json'),JSON.stringify({type:'module'}));
+  await symlink(fileURLToPath(new URL('node_modules',root)),join(temporary,'node_modules'),'dir');
   await writeFile(file,baselineModule);const oldFetch=globalThis.fetch;
   try{
     const original=await import(file.href);const env={OPENAI_API_KEY:'offline-only',OPENAI_IMAGE_MODEL:'gpt-image-2.5-sunburst'};
