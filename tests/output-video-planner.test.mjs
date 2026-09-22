@@ -65,7 +65,7 @@ test('malformed JSON after failed Video custody preserves the custody error and 
  await network(async()=>{calls++;return new Response('not JSON');},()=>assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i),error=>error===failure));
  assert.equal(calls,1);assert.equal(f.receipts.length,0);assert.deepEqual(f.submissions.map(call=>call.status),['pending']);
 });
-for(const mode of ['parent_aborted','authority_revoked'])test('early Video custody failure respects existing observer '+mode+' refusal',async()=>{
+for(const mode of ['parent_aborted','authority_revoked'])test('Video retains valid financial checkpoint before custody triggers '+mode,async()=>{
  const {withOutputVideoHook}=await import('../worker/output-video-execution.ts');
  const f=configured(),failure=Error('synthetic_envelope_custody_failed'),parent=new AbortController();let authority=true,calls=0,financialWrites=0;
  f.i.options.signal=parent.signal;
@@ -75,5 +75,25 @@ for(const mode of ['parent_aborted','authority_revoked'])test('early Video custo
   if(receipt.status!=='pending')financialWrites++;f.submissions.push(receipt);
  });
  await network(async()=>{calls++;return response();},()=>assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i),error=>error===failure));
- assert.equal(calls,1);assert.equal(financialWrites,0);assert.equal(f.receipts.length,0);assert.deepEqual(f.submissions.map(call=>call.status),['pending']);
+ assert.equal(calls,1);assert.equal(financialWrites,1);assert.equal(f.receipts.length,0);assert.deepEqual(f.submissions.map(call=>call.status),['pending','completed']);
+});
+for(const mode of ['parent_aborted','authority_revoked'])test('Video financial checkpoint still rejects '+mode+' before custody',async()=>{
+ const {withOutputVideoHook}=await import('../worker/output-video-execution.ts');
+ const f=configured(),parent=new AbortController();let authority=true,calls=0,financialWrites=0,privateWrites=0;
+ f.i.options.signal=parent.signal;
+ f.i.options.onVideoPlannerEnvelope=async()=>{privateWrites++;};
+ f.i.options.onProviderSubmission=receipt=>withOutputVideoHook(parent.signal,async lease=>{
+  lease.assertCurrent();if(!authority)throw Error('output_execution_authority_unverified');
+  if(receipt.status!=='pending')financialWrites++;f.submissions.push(receipt);
+ });
+ await network(async()=>{calls++;const wire=response();if(mode==='parent_aborted')parent.abort(Error('parent stopped'));else authority=false;return wire;},()=>assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i)));
+ assert.equal(calls,1);assert.equal(financialWrites,0);assert.equal(privateWrites,0);assert.equal(f.receipts.length,0);
+});
+test('E: native Video refusal and partial completion stop before missing usage and media dispatch',async()=>{
+ const {stoppedPlannerEnvelopes}=await import('./planner-response-outcome-fixtures.mjs');
+ for(const [,change,problem] of stoppedPlannerEnvelopes){
+  const f=configured();let calls=0;
+  await network(async()=>{calls++;return Response.json({...await response().json(),...change,usage:undefined});},()=>assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'synthetic'},'owner','video',f.i),e=>e.detail?.outcome?.contentOutcome===(problem==='refused'?'refused':problem==='incomplete'?'invalid':'unknown')));
+  assert.equal(calls,1);assert.equal(f.submissions.at(-1).costMicrousd,undefined);assert.equal(f.submissions.at(-1).accountingState,'unknown');
+ }
 });

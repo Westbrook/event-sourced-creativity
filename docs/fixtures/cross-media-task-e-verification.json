@@ -1,0 +1,56 @@
+{
+  "task": "E",
+  "date": "2026-09-22",
+  "baseCommit": "2a0caa914a0c57002f9b69ff3b60cb3d6d8a687f",
+  "releaseBaseline": "faa8fb42b7295c24e6ac35921586cc5cf511a840",
+  "tests": 453,
+  "passed": 451,
+  "failed": 2,
+  "baselineReproducedFailures": [
+    {
+      "file": "tests/output-narrative-custody.test.mjs",
+      "reason": "ReferenceError: nativeStoryboard is not defined"
+    },
+    {
+      "file": "tests/output-storyboard-fal.test.mjs",
+      "reason": "ReferenceError: outputJobIsDurable is not defined"
+    }
+  ],
+  "typecheck": "passed",
+  "changedFileLint": "passed",
+  "diffCheck": "passed",
+  "liveProviderCalls": 0,
+  "deployed": false,
+  "testFiles": [
+    "tests/planner-response-outcome.test.mjs",
+    "tests/cross-media-planner-outcome.test.mjs",
+    "tests/cross-media-request-parity.test.mjs",
+    "tests/output-narrative-request.test.mjs",
+    "tests/output-storyboard-planner.test.mjs",
+    "tests/output-video-planner.test.mjs",
+    "tests/rodin-adapter.test.mjs",
+    "tests/audio-original-recovery.test.mjs",
+    "tests/output-video-original-read.test.mjs",
+    "tests/storyboard-recovery-model.test.mjs",
+    "tests/storyboard-reconcile-provider-route.test.mjs",
+    "tests/output-model3d-recovery-authority.test.mjs",
+    "tests/output-model3d-recovery-storage.test.mjs",
+    "tests/moderation-response-validation.test.mjs",
+    "tests/output-scene-adapter.test.mjs",
+    "tests/output-audio-dispatch.test.mjs",
+    "tests/output-audio-recovery-lease.test.mjs",
+    "tests/output-narrative-custody.test.mjs",
+    "tests/generation-outcome-evidence.test.mjs",
+    "tests/generation-execution-evidence.test.mjs",
+    "tests/generation-request-parity.test.mjs",
+    "tests/flare-draft-generation.test.mjs",
+    "tests/output-storyboard-fal.test.mjs",
+    "tests/provider-errors.test.mjs"
+  ],
+  "coverageLimits": [
+    "No full repository suite or production build",
+    "No complete native final-dispatch/Memory owner journey",
+    "No measured media quality or alias-resolution claim",
+    "Native Scene/Memory specialized custody and global raw-envelope bindings remain gaps"
+  ]
+}
