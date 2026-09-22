@@ -315,3 +315,14 @@ still-app .rejection-page dl > div + div { border-top: 1px solid var(--en-color-
 still-app .rejection-page dt { color: var(--en-color-text-muted); font-weight: 400; font-size: .9rem; }
 still-app .rejection-page dd { margin: 0; font-variant-numeric: tabular-nums; }
 @media (max-width: 550px) { still-app .rejection-page dl > div { grid-template-columns: 1fr; gap: .25rem; } }
+
+still-app .output-options { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px 28px;margin:28px 0 36px; }
+still-app .output-options en-text-field { margin:0; }
+still-app .output-options > :first-child, still-app .output-option-note { grid-column:1 / -1; }
+still-app .output-option-note { font-size:14px;line-height:1.6;color:var(--en-color-text-muted); }
+still-app .output-number { display:grid;align-content:start;gap:8px;font-size:14px; }
+still-app .output-number input { box-sizing:border-box;width:100%;min-width:0;font:inherit;color:var(--en-color-text);background:var(--en-color-surface);border:1px solid var(--en-color-line);border-radius:6px;padding:12px; }
+still-app .output-number input:focus-visible { outline:2px solid var(--en-color-focus);outline-offset:2px; }
+still-app .generation-source { border-top:1px solid var(--en-color-line);padding-top:20px;margin-block:24px; }
+still-app .generation-source > summary { cursor:pointer;color:var(--en-color-text-muted);font-size:14px; }
+@media(max-width:600px) { still-app .output-options { grid-template-columns:minmax(0,1fr);gap:20px; } }

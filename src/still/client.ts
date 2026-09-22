@@ -1,3 +1,5 @@
+import { defaultGenerationSettings, validateGenerationOptions, type GenerationSettings } from './generation-settings.ts';
+import { normalizeAudioRequestProfile } from '../model/audio.ts';
 import { generationOutcome } from './generation-outcome.ts';
 import {stageEvidenceRefs} from './rejection-evidence.ts';
 import { sharedIdeaEdits, independentIdeaEdits, ideaContentEdit } from '../model/shared-idea-edits.ts';
@@ -45,7 +47,7 @@ export async function api<T>(path: string, body?: unknown, method = body === und
     })]);
   } finally { clearTimeout(timer); }
 }
-export type GenerationDraft = { format: string; prompt: string; itemCount: number; tone: string; audience: string; requestId: string; sourceHead: number; documentId: string; scopeKey: string; attempted?: boolean; recoveryClosed?: boolean; previousUnconfirmed?: boolean; previousAttemptId?: string; previousDocumentRevision?: string | null; sourceSnapshot?: ReturnType<typeof documentSnapshot>; sourceBlockVersions?: Array<Record<string, unknown>>; sourceRevision?: string; adaptation?: Model3dDocumentAdaptation; scenePreview?: SceneCostPreview; acknowledgements?: Record<string, boolean> };
+export type GenerationDraft = { settings?: GenerationSettings; format: string; prompt: string; itemCount: number; tone: string; audience: string; requestId: string; sourceHead: number; documentId: string; scopeKey: string; attempted?: boolean; recoveryClosed?: boolean; previousUnconfirmed?: boolean; previousAttemptId?: string; previousDocumentRevision?: string | null; sourceSnapshot?: ReturnType<typeof documentSnapshot>; sourceBlockVersions?: Array<Record<string, unknown>>; sourceRevision?: string; adaptation?: Model3dDocumentAdaptation; scenePreview?: SceneCostPreview; acknowledgements?: Record<string, boolean> };
 
 export class StillClient {
   session: Session | null = null;
@@ -376,7 +378,7 @@ export class StillClient {
     if (!p.documents.some(d => d.id === p.documentId && !d.removed)) throw new Error('Select a document.');
     const source = documentSource(p, p.documentId);
     const adaptation = format === 'model3d' ? this.model3dAdaptation() : undefined;
-    return { format, prompt: adaptation?.prompt ?? '', ...(adaptation ? { adaptation } : {}), documentId:p.documentId, scopeKey:this.scopeKey, itemCount:format === 'slides' ? 6 : format === 'storyboard' ? 4 : 1, tone:'', audience:'', requestId:crypto.randomUUID(), sourceHead:this.head, sourceSnapshot:source.snapshot, sourceBlockVersions:source.sourceBlockVersions, sourceRevision:source.revision, ...(pending ? { attempted:true,recoveryClosed:pending.closed===true } : {}) };
+    return { settings:defaultGenerationSettings(), format, prompt: adaptation?.prompt ?? '', ...(adaptation ? { adaptation } : {}), documentId:p.documentId, scopeKey:this.scopeKey, itemCount:format === 'slides' ? 6 : format === 'storyboard' ? 4 : 1, tone:'', audience:'', requestId:crypto.randomUUID(), sourceHead:this.head, sourceSnapshot:source.snapshot, sourceBlockVersions:source.sourceBlockVersions, sourceRevision:source.revision, ...(pending ? { attempted:true,recoveryClosed:pending.closed===true } : {}) };
   }
   reviewNewGeneration(draft: GenerationDraft) {
     const pending=this.pendingGeneration;
@@ -385,11 +387,14 @@ export class StillClient {
     return { ...this.prepareGeneration(draft.format), previousUnconfirmed:true };
   }
   generationPayload(draft: GenerationDraft) {
-    const payload: Record<string, unknown> = { locale: 'en', productionMode: 'manual', promptTechnique: 'prose', requestKey: `still:${draft.documentId}:${draft.sourceHead}:${draft.requestId}`, ...(draft.sourceSnapshot ? {snapshot:draft.sourceSnapshot,sourceBlockVersions:draft.sourceBlockVersions,expectedDocumentRevision:draft.sourceRevision} : {}), ...(draft.format === 'image' ? {} : { artifactKind: draft.format, itemCount: draft.itemCount, tone: draft.tone, audience: draft.audience }) };
+    const settings=draft.settings??defaultGenerationSettings();
+    const payload: Record<string, unknown> = { locale: 'en', productionMode: settings.productionMode, promptTechnique: 'prose', requestKey: `still:${draft.documentId}:${draft.sourceHead}:${draft.requestId}`, ...(draft.sourceSnapshot ? {snapshot:draft.sourceSnapshot,sourceBlockVersions:draft.sourceBlockVersions,expectedDocumentRevision:draft.sourceRevision} : {}), ...(draft.format === 'image' ? {} : { artifactKind: draft.format, itemCount: draft.itemCount, tone: draft.tone, audience: draft.audience }) };
     if(draft.previousAttemptId)payload.previousAttemptId=draft.previousAttemptId;
-    if (draft.format === 'scene') Object.assign(payload, { sceneRequestId: draft.requestId, sceneMedium: 'visual', ...(draft.scenePreview ? { sceneCostConsent: { ...draft.scenePreview, confirmed: true } } : {}) });
-    if (draft.format === 'model3d') Object.assign(payload, { model3dPrompt: draft.prompt, model3dSettings: { ...DEFAULT_MODEL3D_SETTINGS }, model3dReferenceBlockIds: [], ...(draft.adaptation && draft.prompt === draft.adaptation.prompt ? { model3dPromptSource: 'document', model3dAdaptation: model3dAdaptationReceipt(draft.adaptation) } : {}) });
-    if (draft.format === 'video') Object.assign(payload, { videoSeconds: 4, videoSize: '1280x720', videoAudioMode: 'silent' });
+    if (draft.format === 'scene') Object.assign(payload, { sceneRequestId: draft.requestId, sceneMedium: settings.sceneMedium, ...(draft.scenePreview ? { sceneCostConsent: { ...draft.scenePreview, confirmed: true } } : {}) });
+    if (draft.format === 'model3d') Object.assign(payload, { model3dPrompt: draft.prompt, model3dSettings: structuredClone(settings.model3dSettings), model3dReferenceBlockIds: [], ...(draft.adaptation && draft.prompt === draft.adaptation.prompt ? { model3dPromptSource: 'document', model3dAdaptation: model3dAdaptationReceipt(draft.adaptation) } : {}) });
+    if (draft.format === 'video') Object.assign(payload, { ...(settings.productionMode==='manual'?{videoSeconds:settings.videoSeconds}:{}), videoSize: settings.videoSize, videoAudioMode: settings.videoAudioMode });
+    if(draft.format==='slides')Object.assign(payload,{requestedSlideCount:draft.itemCount,presentationFidelity:settings.presentationFidelity,...(settings.presentationStyle==='document'?{}:{presentationStyle:settings.presentationStyle})});
+    if(draft.format==='audio')payload.audioProfile=normalizeAudioRequestProfile({goal:settings.audioGoal,destination:settings.audioDestination,...(['timed_music','sound_effects'].includes(settings.audioGoal)?{durationSeconds:settings.audioDuration}:{}),...(settings.audioGoal==='narration'?{speakerCount:settings.audioSpeakerCount}:{}),...(['music','timed_music'].includes(settings.audioGoal)?{requireInstrumental:settings.audioInstrumental}: {})});
     return { kind: draft.format === 'image' ? 'generate' : 'render_document', documentId: draft.documentId, sourceSurface: 'still', payload };
   }
   async previewScene(draft: GenerationDraft) {
@@ -425,6 +430,7 @@ export class StillClient {
       }
       throw new Error('Generation check unconfirmed. Check again.');
     }
+    validateGenerationOptions(draft);
     if (draft.sourceSnapshot) {
       // Admission checks this reviewed revision against authoritative server context.
       if (await digest(documentSnapshot(this.projection,draft.documentId)) !== await digest(draft.sourceSnapshot)) throw new Error('Document changed. Reopen generation to review it.');
@@ -432,7 +438,7 @@ export class StillClient {
     check();
     if (draft.format === 'model3d') {
       if (draft.adaptation && draft.prompt === draft.adaptation.prompt && !draft.adaptation.valid) throw new Error(draft.adaptation.issues.map(i => i.message).join(' '));
-      const validation = validateModel3dRequest({ prompt: draft.prompt, settings: DEFAULT_MODEL3D_SETTINGS, referenceCount: 0 });
+      const validation = validateModel3dRequest({ prompt: draft.prompt, settings: draft.settings?.model3dSettings??DEFAULT_MODEL3D_SETTINGS, referenceCount: 0 });
       if (!validation.valid) throw new Error(validation.issues.map(i => i.message).join(' '));
     }
     const readiness=await this.checkGenerationReadiness(check);check();
