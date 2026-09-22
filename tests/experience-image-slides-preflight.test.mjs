@@ -17,6 +17,7 @@ const root = realpathSync(rootInput);
 const manifest = JSON.parse(readFileSync(manifestInput, 'utf8'));
 assert.equal(manifest.reviewedFor, 'image-slides-pure-preflight');
 const modulePaths = [
+  'worker/image-generation-policy.ts', 'worker/openai-image-route-contract.ts',
   'worker/output-image-slides-preflight.ts', 'worker/image-adapter-selection.ts', 'worker/fal-image-identity.ts',
   'src/model/output-execution-policy.ts', 'src/model/image-format.ts', 'src/model/block-types.ts',
   'src/model/managed-production.ts', 'src/model/presentation-source.ts', 'src/model/generation-budget.ts',
@@ -321,7 +322,7 @@ test('actual selector preserves configured Fal models/identity and its legacy Op
   assert.deepEqual([high.provider, high.providerName, high.model, high.adapterId, high.adapterVersion],
     ['fal-ideogram', 'fal', 'ideogram/v4', identityModule.FAL_IDEOGRAM_ADAPTER_ID, identityModule.FAL_IDEOGRAM_ADAPTER_VERSION]);
   assert.equal(high.adapterId, 'fal-ideogram-v4'); assert.equal(high.adapterVersion, 'v52');
-  assert.equal(selectAdapter(env, { quality: 'low' }).model, 'ideogram/v4/fast');
+  assert.equal(selectAdapter(env, { quality: 'low' }).model, 'gpt-image-2.5-flare');
   const inertReference = { bytes: new Uint8Array(0), mimeType: 'image/png', source: 'uploaded-reference' };
   const edit = selectAdapter(env, { references: [inertReference] });
   assert.equal(edit.model, 'ideogram/v4/image-to-image');

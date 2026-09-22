@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { generateCreativeImage, selectImageAdapter } from "../worker/image-adapter.ts";
-import { FAL_IDEOGRAM_ADAPTER_VERSION, FAL_IDEOGRAM_CAPTION_STRATEGY, FAL_IDEOGRAM_REFERENCE_STRENGTHS, falExpansionModel, falExpansionModelForRequest, falImageModelForRequest, falImageProviderReceipt, falReferenceStrength, falRenderingSpeed } from "../worker/fal-image-adapter.ts";
+import { generateFalCreativeImage, FAL_IDEOGRAM_ADAPTER_VERSION, FAL_IDEOGRAM_CAPTION_STRATEGY, FAL_IDEOGRAM_REFERENCE_STRENGTHS, falExpansionModel, falExpansionModelForRequest, falImageModelForRequest, falImageProviderReceipt, falReferenceStrength, falRenderingSpeed } from "../worker/fal-image-adapter.ts";
 import { buildIdeogramCaption, IDEOGRAM_CAPTION_ADAPTER_VERSION, IDEOGRAM_CAPTION_MAX_CHARS, validateIdeogramCaption } from "../worker/ideogram-caption-adapter.ts";
 import { buildIdeogramPrompt, IDEOGRAM_PROMPT_ADAPTER_VERSION, IDEOGRAM_PROMPT_MAX_CHARS } from "../worker/ideogram-prompt-adapter.ts";
 import { priceFalIdeogramImageBreakdownMicrousd } from "../worker/replay-cost.ts";
@@ -10,13 +10,13 @@ const moderationPass=()=>Response.json({id:"modr_fal",model:"omni-moderation-lat
 
 test("selects Ideogram models by quality and preserves the multi-reference contract with an OpenAI fallback",()=>{
   const env={FAL_KEY:"test-only",FORMA_IMAGE_PROVIDER:"fal-ideogram",FAL_IMAGE_MODEL:"ideogram/v4",FAL_IMAGE_PREVIEW_MODEL:"ideogram/v4/fast",FAL_IMAGE_EDIT_MODEL:"ideogram/v4/image-to-image"};
-  assert.equal(selectImageAdapter(env,{quality:"low"}).model,"ideogram/v4/fast");
+  assert.equal(selectImageAdapter(env,{quality:"low"}).model,"gpt-image-2.5-flare");
   assert.equal(selectImageAdapter(env,{quality:"high"}).model,"ideogram/v4");
   const reference={bytes:new Uint8Array([1]),mimeType:"image/png",source:"uploaded-reference"};
   assert.equal(selectImageAdapter(env,{quality:"high",references:[reference]}).model,"ideogram/v4/image-to-image");
   const fallback=selectImageAdapter(env,{references:[reference,reference]});
   assert.equal(fallback.provider,"openai");assert.equal(fallback.model,"gpt-image-2.5-sunburst");assert.match(fallback.reason,/one reference/i);
-  assert.equal(selectImageAdapter(env,{quality:"low",outputFormat:"webp"}).model,"gpt-image-2.5-sunburst");
+  assert.equal(selectImageAdapter(env,{quality:"low",outputFormat:"webp"}).model,"gpt-image-2.5-flare");
 });
 
 test("derives canonical Fal queue receipts from the application root instead of routed model endpoints",()=>{
@@ -46,7 +46,7 @@ test("runs a Fal Ideogram draft through moderation, queue, result, private downl
     throw new Error(`unexpected request ${url}`);
   };
   try{
-    const stages=[];const result=await generateCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{facts:[]},{title:"Typography study"},{quality:"low",size:"816x816",outputFormat:"jpeg",onStage:(stage)=>stages.push(stage)});
+    const stages=[];const result=await generateFalCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{facts:[]},{title:"Typography study"},{quality:"low",size:"816x816",outputFormat:"jpeg",onStage:(stage)=>stages.push(stage)});
     assert.equal(result.provider,"fal");assert.equal(result.adapterVersion,"v52");assert.equal(result.model,"ideogram/v4/fast");assert.equal(result.providerRequestId,"fal-request-1");assert.equal(result.seed,42);assert.equal(result.promptAdaptation.strategy,"production_director");assert.equal(new TextDecoder().decode(result.bytes),"fal-image");
     const submitted=JSON.parse(String(calls.find((call)=>call.url==="https://queue.fal.run/ideogram/v4/fast").init.body));
     assert.ok(calls.some((call)=>call.url==="https://queue.fal.run/ideogram/v4/requests/fal-request-1/status?logs=1"));assert.ok(calls.some((call)=>call.url==="https://queue.fal.run/ideogram/v4/requests/fal-request-1"));assert.equal(calls.some((call)=>call.url.includes("/fast/requests/")||call.url.endsWith("/response")),false);
@@ -151,7 +151,7 @@ test("retains an explicitly prepared canonical prompt while submitting its provi
     throw new Error(`unexpected request ${url}`);
   };
   try{
-    const result=await generateCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{ignored:"snapshot"},{ignored:"direction"},{quality:"low",size:"1024x1024",outputFormat:"jpeg",preparedPrompt:"Exact paired evaluation prompt."});
+    const result=await generateFalCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{ignored:"snapshot"},{ignored:"direction"},{quality:"low",size:"1024x1024",outputFormat:"jpeg",preparedPrompt:"Exact paired evaluation prompt."});
     assert.match(submitted.prompt,/Exact paired evaluation prompt/);assert.equal(result.canonicalPrompt,"Exact paired evaluation prompt.");assert.equal(result.prompt,submitted.prompt);assert.equal(result.promptAdapterVersion,IDEOGRAM_PROMPT_ADAPTER_VERSION);
   }finally{globalThis.fetch=originalFetch;}
 });
@@ -188,7 +188,7 @@ test("keeps the legacy expanded-plain strategy available as an explicit comparis
     throw new Error(`unexpected request ${url}`);
   };
   try{
-    const result=await generateCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{facts:[{block_id:"subject",type:"subject",intent:"include",properties:{text:"an adult astronomer"}}]},{scene:"An observatory at night."},{quality:"low",size:"1024x1024",ideogramPromptMode:"expanded_plain",ideogramExpansionModel:"Large"});
+    const result=await generateFalCreativeImage({OPENAI_API_KEY:"openai-test",FAL_KEY:"fal-test",FORMA_IMAGE_PROVIDER:"fal-ideogram"},"user-1",{facts:[{block_id:"subject",type:"subject",intent:"include",properties:{text:"an adult astronomer"}}]},{scene:"An observatory at night."},{quality:"low",size:"1024x1024",ideogramPromptMode:"expanded_plain",ideogramExpansionModel:"Large"});
     assert.equal(submitted.expansion_model,"Large");assert.throws(()=>JSON.parse(submitted.prompt));assert.equal(result.promptMode,"expanded_plain");assert.equal(result.promptAdapterVersion,IDEOGRAM_PROMPT_ADAPTER_VERSION);
   }finally{globalThis.fetch=originalFetch;}
 });

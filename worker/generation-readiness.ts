@@ -1,3 +1,4 @@
+import { draftImageEnvironment } from "./image-generation-policy.ts";
 import { OPENAI_IMAGE_GENERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import { assertOutputAdmissionActor, assertOutputAdmissionBudget, outputAdmissionBudgetOwner, outputAdmissionSponsor, readOutputAdmissionValue, requireGuestImageAdmissionPreparation, type OutputAdmissionReads } from "./output-admission-reads.ts";
 import { referencePixelMode, sendsReferencePixels } from "../src/model/block-types.ts";
@@ -255,13 +256,14 @@ export async function preflightGuestImageAdmission(request:Request,env:WorkerEnv
 }
 
 export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:GenerationPreflightInput,options:{appendEvents?:boolean;allowCache?:boolean;sourceEvents?:EventRow[];allowProviderCalls?:boolean;persist?:boolean;outputAdmissionReads?:OutputAdmissionReads;outputImageRender?:{format:ImageFormat;size:`${number}x${number}`}}={}):Promise<GenerationReadiness>{
+  if(input.kind.startsWith("preview"))env=draftImageEnvironment(env);
   assertOutputAdmissionActor(options.outputAdmissionReads,env,user.userId,user.projectExecution?.organizationId??null,user.projectExecution?.projectAccessId??null,input.documentId);
   const sponsor=outputAdmissionSponsor(options.outputAdmissionReads);
   if(sponsor&&(user.projectExecution||user.fictional||(user.billingUserId??user.userId)!==user.userId))throw new Error("sponsor_personal_principal_required");
   if(options.outputAdmissionReads&&(options.allowProviderCalls!==false||options.persist!==false||options.appendEvents!==false||options.allowCache!==false))throw new Error("output_admission_readiness_must_be_local");
   await ensureSchema(env);const checkedAt=nowIso();const technique=normalizePromptTechnique(input.promptTechnique);const productionMode:ProductionMode=input.productionMode==="managed"?"managed":"manual";
   const hasWorkflow=input.workflowId!==undefined||input.workflowStageId!==undefined||input.workflowSources!==undefined;
-  const execution=user.projectExecution,cachePrefix=execution?`${GENERATION_PREFLIGHT_VERSION}:project:${execution.projectAccessId}:${execution.actorUserId}:`:`${GENERATION_PREFLIGHT_VERSION}:`;
+  const execution=user.projectExecution,cachePrefix=(input.kind.startsWith("preview")?"flare-draft-v1:":"")+(execution?`${GENERATION_PREFLIGHT_VERSION}:project:${execution.projectAccessId}:${execution.actorUserId}:`:`${GENERATION_PREFLIGHT_VERSION}:`);
   if(execution){
     const governedEvents=options.sourceEvents??await readProjectSourceEvents(env,execution);
     const governedProjection=foldEvents(governedEvents,Number.POSITIVE_INFINITY,input.documentId,execution.projectId);

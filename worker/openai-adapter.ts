@@ -1,3 +1,4 @@
+import { openAIImageModel } from "./image-generation-policy.ts";
 import { readBoundedAssistantProviderResponse } from './assistant-provider.ts';
 import { memoryDerivationJsonUniqueKeys } from './memory-derivation-result.ts';
 import { imageSafetyInputDigest, consumeImageSafetyDelivery } from "./image-safety-acknowledgement.ts";
@@ -458,7 +459,7 @@ async function readImageStream(response:Response,onEvent:(event:OpenAIImageStrea
 export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:CreativeImageOptions={}) {
   if(options.privateImageReceipt&&((options.partialImages??0)!==0||!options.onProviderSubmission))throw new Error('private_image_contract_invalid');
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
-  const model=env.OPENAI_IMAGE_MODEL??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model;const quality=options.quality??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.quality;const size=options.size??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.size;const sizeValidation=validateProviderImageSize(size);
+  const model=openAIImageModel(env,options.quality);const quality=options.quality??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.quality;const size=options.size??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.size;const sizeValidation=validateProviderImageSize(size);
   if(model.startsWith("gpt-image-2")&&!sizeValidation.valid)throw new ProviderRequestError({code:"invalid_image_size",category:"provider",scope:"request",action:"edit_request",message:`The requested image size ${size} cannot be submitted to ${model}. ${sizeValidation.issues.join(" ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   const references=validateImageReferences(options.references??[]);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const safetyInputDigest=await imageSafetyInputDigest(snapshot,{model,quality,size,promptTechnique},references);const acknowledgedPrompt=consumeImageSafetyDelivery(options.safetyAcknowledgement,safetyInputDigest);const prompt=acknowledgedPrompt||options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:options.partialImages});const started=Date.now();
   await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");

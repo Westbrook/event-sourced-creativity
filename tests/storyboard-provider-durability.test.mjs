@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import worker from "../dist/server/index.js";
-import { falImageProviderReceipt } from "../worker/fal-image-adapter.ts";
+import { generateFalCreativeImage, falImageProviderReceipt } from "../worker/fal-image-adapter.ts";
 import { generateCreativeImage } from "../worker/image-adapter.ts";
 
 const workspaceRoot=new URL("../",import.meta.url).href;
@@ -65,7 +65,7 @@ test("durably receives the full owner-scoped Fal queue receipt before any queue 
     throw new Error(`unexpected provider request ${address}`);
   };
   try{
-    const pending=generateCreativeImage(providerEnv,"owner-1",source,direction,{quality:"low",size:"1024x1024",onProviderReceipt:async(receipt)=>{receipts.push(receipt);await checkpointWritten;}});
+    const pending=generateFalCreativeImage(providerEnv,"owner-1",source,direction,{quality:"low",size:"1024x1024",onProviderReceipt:async(receipt)=>{receipts.push(receipt);await checkpointWritten;}});
     await new Promise(setImmediate);
     assert.deepEqual(receipts,[receiptFor()]);
     assert.equal(calls.includes(receiptFor().providerResponseUrl),false,"paid queue work must wait until its accepted receipt is durably checkpointed");
@@ -89,7 +89,7 @@ test("resumes the exact accepted storyboard-frame queue without submitting a sec
     throw new Error(`unexpected provider request ${address}`);
   };
   try{
-    await assert.rejects(()=>generateCreativeImage(providerEnv,"owner-1",source,direction,{quality:"low",size:"1024x1024",onProviderReceipt:(receipt)=>receipts.push(receipt)}),(error)=>error.detail.category==="network"&&error.detail.requestId==="owned-frame-request-1");
+    await assert.rejects(()=>generateFalCreativeImage(providerEnv,"owner-1",source,direction,{quality:"low",size:"1024x1024",onProviderReceipt:(receipt)=>receipts.push(receipt)}),(error)=>error.detail.category==="network"&&error.detail.requestId==="owned-frame-request-1");
     assert.deepEqual(receipts,[receiptFor()]);
     const stages=[];const resumed=await generateCreativeImage(providerEnv,"owner-1",source,direction,{quality:"low",size:"1024x1024",providerReceipt:receipts[0],onProviderReceipt:(receipt)=>receipts.push(receipt),onStage:(stage)=>stages.push(stage)});
     assert.equal(resumed.providerRequestId,"owned-frame-request-1");
@@ -119,7 +119,7 @@ test("durably checkpoints the canonical accepted request before rejecting any ho
         if(address===queueBase&&init.method==="POST")return Response.json({request_id:"owned-frame-request-1",status:"COMPLETED",...supplied});
         throw new Error(`unsafe provider request escaped validation: ${address}`);
       };
-      await assert.rejects(()=>generateCreativeImage(providerEnv,"owner-1",source,direction,{quality:"low",size:"1024x1024",onProviderReceipt:(receipt)=>receipts.push(receipt)}),(error)=>error.detail?.code==="fal_provider_returned_untrusted_queue_url"&&error.detail.requestId==="owned-frame-request-1",JSON.stringify(supplied));
+      await assert.rejects(()=>generateFalCreativeImage(providerEnv,"owner-1",source,direction,{quality:"low",size:"1024x1024",onProviderReceipt:(receipt)=>receipts.push(receipt)}),(error)=>error.detail?.code==="fal_provider_returned_untrusted_queue_url"&&error.detail.requestId==="owned-frame-request-1",JSON.stringify(supplied));
       assert.deepEqual(receipts,[receiptFor()],"the accepted paid request identity must already be durable before an optional hostile hint is rejected");
       assert.equal(calls.filter((address)=>address===queueBase).length,1,"a malformed provider hint must never submit a second paid frame");
       assert.equal(calls.some((address)=>!address.endsWith("/moderations")&&address!==queueBase),false,"provider credentials never follow an untrusted hint");
@@ -152,7 +152,7 @@ test("stops when Fal acknowledges an image without a durable request identifier"
   const previousFetch=globalThis.fetch;let submissions=0;
   globalThis.fetch=async(url,init={})=>{if(String(url).endsWith("/moderations"))return moderation();if(String(url)===queueBase&&init.method==="POST"){submissions+=1;return Response.json({status:"IN_QUEUE"});}throw new Error("unexpected automatic recovery");};
   try{
-    await assert.rejects(()=>generateCreativeImage(providerEnv,"owner-1",source,direction,{quality:"low",size:"1024x1024"}),(error)=>error.detail.code==="fal_provider_returned_no_request_id"&&error.detail.retryable===false&&error.detail.action==="contact_support");
+    await assert.rejects(()=>generateFalCreativeImage(providerEnv,"owner-1",source,direction,{quality:"low",size:"1024x1024"}),(error)=>error.detail.code==="fal_provider_returned_no_request_id"&&error.detail.retryable===false&&error.detail.action==="contact_support");
     assert.equal(submissions,1,"unknown provider acceptance must never be resolved by an automatic second charge");
   }finally{globalThis.fetch=previousFetch;}
 });

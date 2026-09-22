@@ -114,9 +114,7 @@ test("moderates the exact sanitized storyboard frame before one pixel-free paid 
     const address=String(url);
     calls.push({url:address,body:init.body?JSON.parse(String(init.body)):null});
     if(address.endsWith("/moderations"))return Response.json({id:"storyboard-frame-moderation",model:"omni-moderation-latest",results:[{flagged:false,categories:{},category_scores:{}}]});
-    if(address==="https://queue.fal.run/ideogram/v4/fast")return Response.json({request_id:"storyboard-frame-safe-1",status:"COMPLETED",response_url:"https://queue.fal.run/ideogram/v4/fast/requests/storyboard-frame-safe-1/response"});
-    if(address.endsWith("/requests/storyboard-frame-safe-1/response"))return Response.json({images:[{url:"https://cdn.fal.media/storyboard-frame-safe.jpg",content_type:"image/jpeg",width:1536,height:1024}],has_nsfw_concepts:[false]});
-    if(address==="https://cdn.fal.media/storyboard-frame-safe.jpg")return new Response("private-storyboard-frame",{headers:{"content-type":"image/jpeg"}});
+    if(address==="https://api.openai.com/v1/images/generations")return Response.json({data:[{b64_json:btoa("private-storyboard-frame")}],usage:{input_tokens:100,output_tokens:200,total_tokens:300}},{headers:{"x-request-id":"storyboard-frame-safe-1"}});
     throw new Error(`unexpected request ${address}`);
   };
   try{
@@ -125,7 +123,7 @@ test("moderates the exact sanitized storyboard frame before one pixel-free paid 
       "storyboard-test-owner",prepared.snapshot,prepared.direction,
       {quality:"low",size:prepared.size,outputFormat:"jpeg",ideogramCaptionStrategy:prepared.ideogramCaptionStrategy},
     );
-    assert.equal(result.provider,"fal");
+    assert.equal(result.provider,"openai");
     assert.equal(result.providerRequestId,"storyboard-frame-safe-1");
     assert.equal(result.width,1536);
     assert.equal(result.height,1024);
@@ -135,15 +133,15 @@ test("moderates the exact sanitized storyboard frame before one pixel-free paid 
     assert.equal(result.safetyCoverage,"text");
 
     const moderation=calls.filter((call)=>call.url.endsWith("/moderations"));
-    const submissions=calls.filter((call)=>call.url==="https://queue.fal.run/ideogram/v4/fast");
+    const submissions=calls.filter((call)=>call.url==="https://api.openai.com/v1/images/generations");
     assert.equal(moderation.length,1,"the sanitized exact image prompt still receives its required safety review");
     assert.equal(submissions.length,1,"one finished frame requires exactly one paid image submission");
     assert.ok(calls.indexOf(moderation[0])<calls.indexOf(submissions[0]),"moderation must complete before any paid provider submission");
     assert.equal(moderation[0].body.input.length,1);
     assert.equal(moderation[0].body.input[0].type,"text");
     assert.equal(moderation[0].body.input[0].text,submissions[0].body.prompt,"the safety probe and paid provider must receive the exact same sanitized prompt");
-    assert.deepEqual(submissions[0].body.image_size,{width:1536,height:1024});
-    assert.equal(submissions[0].body.enable_safety_checker,true);
+    assert.equal(submissions[0].body.size,"1536x1024");
+    assert.equal(submissions[0].body.model,"gpt-image-2.5-flare");
     assert.equal("image_url" in submissions[0].body,false,"description-only sources must never transfer reference pixels");
     assert.doesNotMatch(JSON.stringify(submissions[0].body),forbiddenProviderSource);
     assert.match(source.frame.notes,/Your content\. One context\. Infinite paths to your target\./,"the display caption remains owned by the original storyboard plan");

@@ -1,3 +1,4 @@
+import { DRAFT_IMAGE_MODEL } from "./image-generation-policy.ts";
 import type { WorkerEnv } from "./runtime";
 import { OPENAI_IMAGE_GENERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import { buildReplayDevelopmentStages, replayDevelopmentSummary, type CreativeStudyKind, type ReplayDevelopmentStage } from "../src/model/replay-development.ts";
@@ -9,7 +10,7 @@ export const LIVE_REPLAY_PRICING_VERSION = "openai-2026-07-30";
 const replayImageModel = (env: Pick<WorkerEnv, "OPENAI_IMAGE_MODEL">) => env.OPENAI_IMAGE_MODEL ?? OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model;
 // The replay token assumptions below were established for Image 2 only.
 // Matching token rates do not qualify a different model's token consumption.
-export const hasQualifiedReplayImageEstimate = (env: Pick<WorkerEnv, "OPENAI_IMAGE_MODEL">) => replayImageModel(env) === "gpt-image-2";
+export const hasQualifiedReplayImageEstimate = (env: Pick<WorkerEnv, "OPENAI_IMAGE_MODEL">) => [replayImageModel(env), DRAFT_IMAGE_MODEL].every(model => model === "gpt-image-2");
 
 export type ReplayStreamSize = 1_000 | 10_000 | 50_000;
 export type ReplayProviderCoverage = "automatic" | "minimal" | "representative" | "dense";
@@ -111,6 +112,7 @@ export const hasKnownTextModelPricing=(model:string)=>Object.hasOwn(TEXT_RATES,m
 const IMAGE_RATES: Record<string, ImageRates> = {
   "gpt-image-2": { textInput: 5, imageInput: 8, output: 30 },
   "gpt-image-2.5-sunburst": { textInput: 5, imageInput: 8, output: 30 },
+  "gpt-image-2.5-flare": { textInput: 5, imageInput: 8, output: 30 },
 };
 
 /** An application allowance must never rely on fallback image-model pricing. */

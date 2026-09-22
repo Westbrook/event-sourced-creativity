@@ -12,7 +12,9 @@ import { definitiveProviderRejection, type PaidProviderSubmission } from "../src
 
 
 export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot:Record<string,unknown>,direction:Record<string,unknown>,options:CreativeImageOptions={}){
-  const selection=selectImageAdapter(env,options);
+  // Resume an already purchased legacy Fal image without submitting a new Draft.
+  const retainedFalReceipt=(options as CreativeImageOptions&{providerReceipt?:FalImageProviderReceipt}).providerReceipt;
+  const selection=selectImageAdapter(env,retainedFalReceipt?{...options,quality:"high"}:options);
   const falContract=options.outputFalImage===undefined?null:readOutputFalImageContract(options.outputFalImage);
   if(options.outputFalImage!==undefined&&(!falContract||selection.provider!=="fal-ideogram"||selection.model!==falContract.model
     ||options.size!==`${falContract.width}x${falContract.height}`||options.quality!=="high"||(options.references?.length??0)!==0
