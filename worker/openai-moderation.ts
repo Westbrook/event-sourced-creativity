@@ -1,3 +1,4 @@
+import { validModerationResults } from "./moderation-response-validation.ts";
 import type { GenerationEvidenceObserver } from "../src/model/generation-outcome-evidence.ts";
 import { checkpointGenerationEvidence, evidenceSha256, operationEvidence } from "./generation-evidence.ts";
 import { readBoundedAssistantProviderResponse } from './assistant-provider.ts';
@@ -6,7 +7,7 @@ import { OPENAI_IMAGE_MODERATION_CONTRACT } from "./openai-image-route-contract.
 import type { WorkerEnv } from "./runtime.ts";
 import type { ImageReference } from "./openai-adapter.ts";
 import type { PromptTechnique } from "../src/model/prompt-structures.ts";
-import { providerErrorFromResponse } from "./provider-errors.ts";
+import { ProviderRequestError, providerErrorFromResponse } from "./provider-errors.ts";
 
 type ModerationResult = { flagged?: boolean; categories?: Record<string, boolean>; category_scores?: Record<string, number> };
 type ModerationResponse = { id?: string; model?: string; results?: ModerationResult[]; error?: { message?: string; code?: string; type?: string } };
@@ -47,19 +48,25 @@ async function requestModeration(env: WorkerEnv, input: unknown, signal?: AbortS
   await checkpointGenerationEvidence(onEvidence,evidenceId,"request",operation,"app_moderation",{dispatchState:"not_dispatched"},{requestBody});
   const response = await fetch(OPENAI_IMAGE_MODERATION_CONTRACT.api, { method: "POST", headers: headers(env), signal, body: requestBody });
   let body: ModerationResponse = {};
-  let responseBody="";
-  if(strict){
-    if(!signal)throw Error('private_image_moderation_invalid');
-    const raw=await readBoundedAssistantProviderResponse(response,signal,65536);responseBody=raw;
-    if(!memoryDerivationJsonUniqueKeys(raw))throw Error('private_image_moderation_invalid');
-    body=JSON.parse(raw) as ModerationResponse;
-    if(response.ok&&(!Array.isArray(body.results)||body.results.length!==1||typeof body.results[0]?.flagged!=='boolean'
-      ||!body.results[0].categories||typeof body.results[0].categories!=='object'||Array.isArray(body.results[0].categories)
-      ||Object.values(body.results[0].categories).some(v=>typeof v!=='boolean')))throw Error('private_image_moderation_invalid');
-  }else try { responseBody=await response.text(); body = JSON.parse(responseBody) as ModerationResponse; } catch { /* Status still provides a useful provider receipt. */ }
-  const shapeValid = Boolean(body && Array.isArray(body.results) && body.results.length===expectedResults && body.results.every(result => result && typeof result.flagged==="boolean" && result.categories && typeof result.categories==="object" && !Array.isArray(result.categories) && Object.values(result.categories).every(value=>typeof value==="boolean")));
+  let responseBody="";let uniqueKeys=false;
+  if(strict&&!signal)throw Error('private_image_moderation_invalid');
+  try {
+    responseBody=await readBoundedAssistantProviderResponse(response,signal??new AbortController().signal,65536);
+    uniqueKeys=memoryDerivationJsonUniqueKeys(responseBody);
+    const parsed:unknown=JSON.parse(responseBody);
+    if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))body=parsed as ModerationResponse;
+  } catch(error) {
+    // Private Memory keeps its original abort/size failures; ordinary checks become explicit invalid evidence.
+    if(strict)throw error;
+    if(signal?.aborted)throw error;
+  }
+  const shapeValid = uniqueKeys && validModerationResults(body,expectedResults);
   await checkpointGenerationEvidence(onEvidence,evidenceId,"response",{...operation,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id")??response.headers.get("openai-request-id"),responseId:body?.id??null,responseSha256:await evidenceSha256(responseBody)},"app_moderation",{dispatchState:"response_received",contentOutcome:shapeValid?"usable":"invalid"},{responseBody,safety:{schemaVersion:"forma-safety-evidence-v1",source:"standalone_omni",stage:"unknown",verdict:shapeValid?(body.results!.some(result=>result.flagged)?"flagged":"clear"):"unknown",validity:shapeValid?"valid":"invalid",expectedResultCount:expectedResults,returnedResultCount:Array.isArray(body?.results)?body.results.length:null,requestedModel:operation.effectiveModel,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id"),responseId:body?.id??null}});
   if (!response.ok) throw providerErrorFromResponse(response, body, `openai_moderation_${response.status}`,null,"app_moderation");
+  if(!shapeValid){
+    if(strict)throw Error('private_image_moderation_invalid');
+    throw new ProviderRequestError({code:"moderation_response_invalid",category:"provider",scope:"provider",action:"contact_support",message:"The moderation response was incomplete or invalid. No safety pass was established and no image request was sent.",retryable:false,retryAfterMs:null,requestId:response.headers.get("x-request-id")??response.headers.get("openai-request-id"),httpStatus:response.status,pipelineStage:"app_moderation",providerModerationStage:"unknown"});
+  }
   return { body, requestId: response.headers.get("x-request-id") ?? response.headers.get("openai-request-id"), latencyMs: Date.now() - started };
 }
 

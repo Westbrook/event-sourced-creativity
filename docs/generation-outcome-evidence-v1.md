@@ -28,3 +28,9 @@ No request fields, field order, model defaults, provider selection or paid retry
 - Audio/video/3D: add queue acceptance, status, result retrieval and storage observations under their own capability/usage contracts. Image checks do not certify speech, temporal frames or geometry.
 - J/L: consume `SafetyEvidence.source` and explicit validity/cardinality. Local policy assessment, omni flags, attached text scores and downstream media moderation are different evidence sources.
 - All routes: preserve authorization/expiry checks at every private write/read; financial records remain source-free; stop on ambiguous paid submissions; never use hashes or schema presence as authorization, idempotency or settlement proof.
+
+## E0b behavior change
+
+The formerly permissive moderation paths now use the bounded UTF-8 reader and unique-key guard already used by private Memory. Every HTTP-success body must contain the exact expected number of results, boolean flags, an object of boolean category flags and, if supplied, finite scores in [0,1]. A false aggregate with a true category is invalid. Missing scores are not manufactured; missing required flags/categories or missing/excess results never pass. Exact text/image probes require one result; snapshot and technique diagnostics require one result per text input.
+
+Malformed JSON, duplicate keys, oversized bodies and invalid shapes return unknown/invalid evidence and stop before image submission. This intentionally changes dispatch. Private Memory still requires its signal, bounded body, unique keys, one result and complete private usage receipt. One existing streaming fixture incorrectly returned SSE to the moderation endpoint; the fixture now supplies a valid moderation response and keeps its original streaming image assertions.
