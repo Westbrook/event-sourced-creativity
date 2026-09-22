@@ -648,3 +648,13 @@ on the separate capability To Do.
 ## MEM-058 — Fixed private-image processing lifetime and cold capacity
 
 Implemented locally: [server processing and browser lifetime separation](forma-memory-image-processing-lifetime-2026-09-21.md). Cold maximum-three-source delayed execution uses50 D1 calls including bootstrap. Late pilot/task/source changes and over-deadline results fail closed; verified usage settles without repurchase. Final full native regression and matrix reconciliation remain on this task, not a request for further user approval.
+
+## MEM-059 — Optional authored-image schema qualification
+
+Implemented locally; final integrated qualification tracked in the
+[completion matrix](forma-memory-completion-matrix-2026-09-20.md).
+[Schema qualification](forma-memory-authored-image-schema-2026-09-21.md) fixes the
+six full-runtime maintenance failures caused by an absent optional migration.
+Clean absence is a no-op; partial/changed privacy schema and orphaned material
+are denied. Exact native guards fence acceptance and accepted-media reads,
+including late schema changes. No deployment, migration execution or enrollment.

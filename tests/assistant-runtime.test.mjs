@@ -20772,3 +20772,29 @@ for(const change of ['missing','scope','binding'])test('private Memory image: ca
  else state.sqlite.prepare("UPDATE assistant_specialist_tasks SET result_json=json_set(result_json,'$.bindingHash','wrong') WHERE task_id=?").run(id);
  const response=await state.imageSend('execute',{previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash});assert.equal(response.status,409);assert.equal(state.imageCalls.length,0);assert.doesNotMatch(await response.text(),/encoded/);
 });
+
+for(const installation of ['absent','orphaned-body','partial'])test('Memory image schema: optional installation '+installation,async()=>{
+ const state=await fixture(),schema=await import('../worker/memory-authored-image-schema.ts'),module=await import('../worker/memory-authored-image.ts');
+ if(installation==='orphaned-body')state.sqlite.prepare("INSERT INTO private_content(content_id,owner_id,kind,content,created_at,expires_at) VALUES('orphan','dev-local-creative','authored-memory-image','{}','2026-01-01T00:00:00.000Z','2099-01-01T00:00:00.000Z')").run();
+ if(installation==='partial')state.sqlite.exec('CREATE TABLE memory_authored_image_receipts(content_id TEXT)');
+ if(installation==='absent'){assert.equal(await schema.memoryAuthoredImageSchema(state.env),null);assert.equal(await module.reconcileMemoryAuthoredImages(state.env),0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) n FROM sqlite_schema WHERE name='memory_authored_image_receipts'").get().n,0);}
+ else {await assert.rejects(()=>schema.memoryAuthoredImageSchema(state.env),/memory_authored_image_schema_unavailable/);await assert.rejects(()=>module.reconcileMemoryAuthoredImages(state.env),/memory_authored_image_schema_unavailable/);}
+});
+for(const fault of ['missing-trigger','changed-trigger','incoming-trigger','late-transaction'])test('Memory image schema: adoption rejects changed privacy schema '+fault,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),db=state.env.DB,q=await(await state.imageSend('quote')).json(),keys={previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash},v=await(await state.imageSend('execute',keys)).json();assert.ok(v.adoption?.hash,JSON.stringify(v));
+ const alter=()=>{state.sqlite.exec('DROP TRIGGER memory_authored_image_receipt_delete');if(fault==='changed-trigger')state.sqlite.exec("CREATE TRIGGER memory_authored_image_receipt_delete BEFORE DELETE ON memory_authored_image_receipts BEGIN SELECT 1; END;");};
+ let hit=false;const batch=db.batch;
+ if(fault==='late-transaction')db.batch=async statements=>{if(!hit&&statements.some(s=>(s.sql??'').includes('INSERT INTO memory_authored_image_receipts'))){hit=true;alter();}return batch.call(db,statements);};
+ else if(fault==='incoming-trigger')state.sqlite.exec('CREATE TRIGGER unexpected_image_reader AFTER INSERT ON users BEGIN SELECT content_id FROM memory_authored_image_receipts; END;');else alter();
+ const before=state.sqlite.prepare("SELECT COUNT(*) n FROM events WHERE type='GenerationCompleted'").get().n,response=await state.imageSend('adopt',{...keys,publishToDocument:true,approvedAdoptionHash:v.adoption.hash});db.batch=batch;
+ assert.equal(response.status,409,await response.clone().text());if(fault==='late-transaction')assert.equal(hit,true);
+ assert.equal(state.sqlite.prepare("SELECT COUNT(*) n FROM private_content WHERE kind='authored-memory-image'").get().n,0);assert.equal(state.sqlite.prepare("SELECT COUNT(*) n FROM events WHERE type='GenerationCompleted'").get().n,before);assert.equal(state.imageCalls.length,2);
+});
+for(const late of [false,true])test('Memory image schema: accepted custody read rejects late protection loss '+late,{timeout:120000},async t=>{
+ const state=await semanticImagePreviewFixture(t),objects=new Map();state.env.MEDIA={async put(key,value,options){objects.set(key,{bytes:new Uint8Array(value),options});return {};},async get(key){const v=objects.get(key);return v?{body:v.bytes.slice(),customMetadata:v.options.customMetadata,httpEtag:'"local"',writeHttpMetadata(h){h.set('content-type',v.options.httpMetadata.contentType);}}:null;},async head(key){return this.get(key);},async delete(key){objects.delete(key);}};
+ const q=await(await state.imageSend('quote')).json(),keys={previewExecutionId:q.executionId,approvedPreviewHash:q.quote.bindingHash},v=await(await state.imageSend('execute',keys)).json(),response=await state.imageSend('adopt',{...keys,publishToDocument:true,approvedAdoptionHash:v.adoption.hash}),accepted=await response.json();assert.equal(response.status,200,JSON.stringify(accepted));
+ const media=await import('../worker/media-api.ts'),owner=state.current().actor_user_id,alter=()=>state.sqlite.exec('DROP TRIGGER memory_authored_image_body_insert');
+ let hit=false;if(late){const get=state.env.MEDIA.get;state.env.MEDIA.get=async key=>{const object=await get(key);if(!hit){hit=true;alter();}return object;};}else alter();
+ assert.equal(await media.readGeneratedImageReference(state.env,owner,accepted.mediaUrl),null);if(late)assert.equal(hit,true);
+ const body=state.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE kind='authored-memory-image'").get();assert.equal(body.redacted_at,null);assert.equal(JSON.parse(body.content).image.sha256,v.result.image.sha256,'Protection loss denies disclosure without erasing accepted work');assert.equal(state.imageCalls.length,2);
+});
