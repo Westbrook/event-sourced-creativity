@@ -1,3 +1,4 @@
+import { inspectPlannerResponseOutcome } from "./planner-response-outcome.ts";
 import type { GenerationEvidenceObserver, OperationEvidence } from "../src/model/generation-outcome-evidence.ts";
 import { checkpointGenerationEvidence, evidenceSha256, operationEvidence, generationDispatchFailure } from "./generation-evidence.ts";
 import { openAIImageModel } from "./image-generation-policy.ts";
@@ -1255,7 +1256,9 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const run=async(requestInstructions:string,requestInput:string,name:string)=>{
     if(narrative){if(narrativeAttempted||name!=="document_short_story")throw new Error("output_narrative_call_consumed");narrativeAttempted=true;}
     let localDispatchStop=false;
-    let videoEnvelopeFailure:{error:unknown}|undefined;
+    let envelopeCustodyFailure:{error:unknown}|undefined;
+    let retainPlannerEnvelope:(()=>Promise<void>)|undefined;
+    const retainEnvelope=async()=>{try{await retainPlannerEnvelope?.();}catch(error){envelopeCustodyFailure={error};throw error;}};
     try{
       const validationRepair=name.endsWith("_repair");
       if(nativeVideo&&(validationRepair||paidCalls.length||name!=="document_video"))throw new Error("output_video_planner_call_consumed");
@@ -1319,17 +1322,20 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       if(storyboard){
         if(response.ok)await input.options?.onProviderSubmission?.({...submission,status:"accepted"});
         const capturedEnvelope=await captureStoryboardRawEnvelope(response,{clientRequestId,requestDigest,model:callModel},input.options?.signal);
-        await input.options!.onStoryboardEnvelope!(capturedEnvelope);
-        storyboardEnvelope=storyboardEnvelopeText(capturedEnvelope);
+        retainPlannerEnvelope=async()=>{await input.options!.onStoryboardEnvelope!(capturedEnvelope);};
+        try{storyboardEnvelope=storyboardEnvelopeText(capturedEnvelope);}catch(error){await retainEnvelope();throw error;}
       }
       let rawVideoEnvelope:string|undefined;
       if(nativeVideo){const captured=await captureVideoPlannerEnvelope(response,{clientRequestId,requestDigest,model:callModel},input.options?.signal);
         rawVideoEnvelope=videoPlannerEnvelopeText(captured);
-        try{await input.options!.onVideoPlannerEnvelope!(captured);}catch(error){videoEnvelopeFailure={error};}}
+        retainPlannerEnvelope=async()=>{await input.options!.onVideoPlannerEnvelope!(captured);};}
       const rawAudioEnvelope=nativeVideo?rawVideoEnvelope:nativeAudio?await readOutputAudioEnvelope(response):undefined;
-      const body=(nativeAudio||nativeVideo?JSON.parse(rawAudioEnvelope!):storyboardEnvelope===null?await response.json():JSON.parse(storyboardEnvelope)) as OpenAIResponse;
+      let body:OpenAIResponse;
+      try{body=(nativeAudio||nativeVideo?JSON.parse(rawAudioEnvelope!):storyboardEnvelope===null?await response.json():JSON.parse(storyboardEnvelope)) as OpenAIResponse;}
+      catch(error){await retainEnvelope();throw error;}
+      if(!body||typeof body!=="object"||Array.isArray(body)){await retainEnvelope();throw new Error("provider_planner_envelope_invalid");}
       if((nativeAudio||nativeVideo)&&!response.ok&&definitiveProviderRejection(response.status))await input.options?.onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
-      if(!response.ok)throw providerErrorFromResponse(response,body,`openai_${response.status}`,`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`);
+      if(!response.ok){await retainEnvelope();throw providerErrorFromResponse(response,body,`openai_${response.status}`,`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`);}
       paidResponses.push(body);
       const paidUsage={inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)};
       let call:PaidProviderSubmission={...submission,status:"completed",providerRequestId:body.id??undefined,...(verifiedUsage(body.usage)?paidUsage:{}),...(route||narrative||storyboard||nativeAudio||nativeVideo?{...(typeof body.model==="string"&&body.model.length?{effectiveModel:body.model}:{}),responseReceivedAt:new Date().toISOString(),latencyMs:Date.now()-callStarted,httpRequestId:response.headers.get("x-request-id")??undefined,completionStatus:body.status??"unspecified",...(body.incomplete_details?.reason?{incompleteReason:String(body.incomplete_details.reason)}:{}),validationStatus:"pending"}:{})};
@@ -1341,18 +1347,15 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
           call={...call,costMicrousd:cost.totalMicrousd,textInputCostMicrousd:cost.textInputMicrousd,textOutputCostMicrousd:cost.textOutputMicrousd,cachedInputTokens:measured.cachedInputTokens,cacheWriteInputTokens:measured.cacheWriteTokens,...(measured.reasoningTokens===null?{}:{reasoningTokens:measured.reasoningTokens}),usageCostBasis:cost.costBasis,pricingReceipt:cost};
         }catch{/* Preserve the received response and known tokens, but never invent a settled price. */}
       }else if(verifiedUsage(body.usage))call.costMicrousd=priceTextUsageBreakdownMicrousd(callModel,paidUsage).totalMicrousd;
-      if(videoEnvelopeFailure){
-        // Private custody failed, but bounded received bytes can still carry
-        // billing evidence. Keep the existing observer's lifetime/authority
-        // guards; never persist another private body or proceed to media.
-        // Unverified usage/model/pricing has no invented settled cost.
-        await input.options?.onProviderSubmission?.(call);
-        throw videoEnvelopeFailure.error;
-      }
+      const plannerOutcome=inspectPlannerResponseOutcome(body,verifiedUsage(body.usage)?"usage_recorded":"unknown");
+      call={...call,contentOutcome:plannerOutcome.outcome.contentOutcome,accountingState:plannerOutcome.outcome.accountingState};
       paidCalls.push(call);
+      // Source-free financial evidence must precede fallible private retention.
+      await input.options?.onProviderSubmission?.(call);
+      await retainEnvelope();
       const accounting=paidAccounting();
       const receipt={model:accounting.providerModel,responseId:String(body.id??""),responseIds:accounting.providerResponseIds,usage:accounting.providerUsage,latencyMs:Date.now()-started};
-      const raw=responseText(body)??"";
+      const raw=typeof body.output_text==="string"&&body.output_text?body.output_text:Array.isArray(body.output)?body.output.flatMap(item=>item&&Array.isArray(item.content)?item.content:[]).find(item=>item?.type==="output_text"&&typeof item.text==="string")?.text??"":"";
       // Retain the exact response plus its OWN call receipt before validation or
       // a subsequent repair. Even if private storage fails, retain source-free
       // financial evidence; neither failure authorizes another paid request.
@@ -1362,11 +1365,19 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
           const candidateBytes=new TextEncoder().encode(raw).byteLength;
           const candidateTruncated=candidateBytes>MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES;
           const retained=await input.options.onProviderResponse({...receipt,call,...(rawAudioEnvelope!==undefined?{rawEnvelope:rawAudioEnvelope}:{}),candidateRaw:candidateTruncated?null:raw,candidateBytes,candidateTruncated,...(storyboardEnvelope===null?{}:{storyboardEnvelope}),...(body.status?{completionStatus:String(body.status)}:{}),...(body.incomplete_details?.reason?{incompleteReason:String(body.incomplete_details.reason)}:{})});
-          if(retained?.responseRef){call={...call,responseRef:retained.responseRef};paidCalls[paidCalls.length-1]=call;}
+          if(retained?.responseRef){call={...call,responseRef:retained.responseRef};paidCalls[paidCalls.length-1]=call;await input.options?.onProviderSubmission?.(call);}
         }
       }catch(error){responsePersistenceError=error;}
-      await input.options?.onProviderSubmission?.(call);
       if(responsePersistenceError)throw responsePersistenceError;
+      if(plannerOutcome.problem){
+        const refused=plannerOutcome.problem==="refused",incomplete=plannerOutcome.problem==="incomplete";
+        const code=kind==="slides"?(refused?"presentation_provider_refused":incomplete?(body.incomplete_details?.reason==="max_output_tokens"?"presentation_output_limit_reached":"presentation_provider_response_incomplete"):"presentation_provider_response_failed")
+          :narrative?(refused?"narrative_provider_refused":"narrative_provider_response_incomplete")
+          :refused?"provider_planner_refusal":incomplete?"provider_response_incomplete":"provider_planner_response_failed";
+        throw new ProviderRequestError({code,category:refused?"safety":"provider",scope:refused?"request":"provider",action:refused?"edit_request":"contact_support",
+          message:refused?"The planner declined this request.":"The planner did not return a complete response.",retryable:false,retryAfterMs:null,requestId:body.id??null,httpStatus:response.status,
+          pipelineStage:"planner",providerModerationStage:"unknown",outcome:plannerOutcome.outcome},null,accounting);
+      }
       if(narrative){
         const code=outputNarrativeResponseProblem(body,narrative.model);
         if(code)throw new ProviderRequestError({code,category:code==="narrative_provider_refused"?"safety":"provider",scope:"request",action:"edit_request",message:"Story response unavailable",retryable:false,retryAfterMs:null,requestId:body.id??null,httpStatus:null},null,paidAccounting());
@@ -1385,7 +1396,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     }catch(error){
       // Retain the original server guard identity; earlier paid receipts are
       // already durable and must not turn this local stop into a provider error.
-      if(videoEnvelopeFailure)throw videoEnvelopeFailure.error;
+      if(envelopeCustodyFailure)throw envelopeCustodyFailure.error;
       if(localDispatchStop||!paidResponses.length)throw error;
       throw new ProviderRequestError(classifyProviderFailure(error),error instanceof ProviderRequestError?error.preparedPrompt:`Document ${kind} instructions:\n${requestInstructions}\n\nCreative context:\n${requestInput}`,paidAccounting());
     }

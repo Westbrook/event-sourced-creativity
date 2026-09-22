@@ -338,3 +338,33 @@ for (const previousEvidence of ["submission", "frame"]) {
     }
   });
 }
+
+test('E: upstream refusal prevents a new storyboard frame purchase through the actual job runner',async()=>{
+ const fixture=await routeFixture(),previous=globalThis.fetch,calls=[];
+ globalThis.fetch=async(url,init={})=>{
+  calls.push({url:String(url),method:init.method??'GET'});
+  assert.equal(String(url),'https://api.openai.com/v1/responses','no downstream generation after planner refusal');
+  return Response.json({id:'synthetic-refusal',model:'gpt-5.6-terra',status:'completed',output:[{type:'message',content:[{type:'refusal',refusal:'Synthetic upstream refusal'}]}],usage:{input_tokens:10,output_tokens:4,total_tokens:14}});
+ };
+ try{
+  const admitted=await admitStoryboard(fixture),response=await fixture.route(`${admitted.jobId}/run`,{method:'POST'}),job=(await response.json()).job;
+  assert.equal(job.status,'failed');assert.equal(job.errorDetail.code,'provider_planner_refusal');assert.equal(calls.length,1);
+  const saved=JSON.parse(fixture.sqlite.prepare('SELECT result_json FROM document_jobs WHERE job_id=?').get(admitted.jobId).result_json);
+  const receipts=Object.values(saved.providerSubmissions);assert.equal(receipts.length,1);assert.equal(receipts[0].operation,'planning');assert.equal(receipts[0].contentOutcome,'refused');assert(receipts[0].costMicrousd>0);
+ }finally{globalThis.fetch=previous;}
+});
+test('E: later refusal evidence does not block reconciliation of an already purchased historical child',async()=>{
+ const fixture=await routeFixture(),provider=providerMock(fixture);
+ try{
+  const failed=await failedUnknownStoryboard(fixture);
+  const checkpoint=JSON.parse(fixture.sqlite.prepare('SELECT result_json FROM document_jobs WHERE job_id=?').get(failed.jobId).result_json);
+  checkpoint.generationOutcome={schemaVersion:'forma-generation-outcome-v1',pipelineStage:'planner',providerModerationStage:'unknown',contentOutcome:'refused',failureKind:'safety',correctiveActionScope:'request',dispatchState:'response_received',accountingState:'usage_recorded'};
+  fixture.sqlite.prepare('UPDATE document_jobs SET result_json=? WHERE job_id=?').run(JSON.stringify(checkpoint),failed.jobId);
+  const response=await fixture.route(`${failed.jobId}/reconcile-provider`,{method:'POST'});
+  assert.equal(response.status,200,await response.clone().text());
+  const reconciled=(await response.json()).job;assert.equal(reconciled.result.providerJobId,recoveredProviderJobId);assert.equal(reconciled.result.providerModel,providerModel);
+  assert(provider.calls.length>0);assert(provider.calls.every(call=>call.method==='GET'),'only original-receipt reads; no new planner or media purchase');
+  const retained=JSON.parse(fixture.sqlite.prepare('SELECT result_json FROM document_jobs WHERE job_id=?').get(failed.jobId).result_json);
+  assert.deepEqual(retained.generationOutcome,checkpoint.generationOutcome);
+ }finally{provider.restore();}
+});

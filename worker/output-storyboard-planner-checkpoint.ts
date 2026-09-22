@@ -33,7 +33,9 @@ export async function retainStoryboardPlannerRequestCheckpoint(env:WorkerEnv,sco
 }
 
 /** Retain bounded original response bytes even when JSON/usage is malformed.
- * The checkpoint has no cost value or successful candidate assertion. */
+ * The checkpoint has no cost value or successful candidate assertion. A parsed
+ * response may already have a settled financial checkpoint; that state grants
+ * no private authority and all owner/job/lease/expiry predicates still apply. */
 export async function retainStoryboardRawEnvelopeCheckpoint(env:WorkerEnv,scope:OutputScope,slot:OutputOperationSlot,job:DocumentJobRow,envelope:StoryboardRawEnvelope){
  if(scope.kind!=="personal"||scope.ownerUserId!==scope.actorUserId||job.owner_id!==scope.actorUserId||job.kind!=="render_document"
   ||job.document_id!==scope.documentId||slot.jobId!==job.job_id||job.output_slot_id!==slot.slotId||envelope.version!=="output-storyboard-raw-envelope-v1"
@@ -44,7 +46,7 @@ export async function retainStoryboardRawEnvelopeCheckpoint(env:WorkerEnv,scope:
   responseRef:body.contentId,retainedBytes:envelope.retainedBytes,complete:envelope.complete,readFailed:envelope.readFailed,httpStatus:envelope.httpStatus,expiresAt:[body.expiresAt,job.expires_at].sort()[0]});
  const claim:OutputSqlAssertion={sql:`EXISTS(SELECT 1 FROM output_provider_calls paid JOIN output_operation_slots slot ON slot.scope_key=paid.scope_key AND slot.slot_id=paid.slot_id
   WHERE paid.scope_key=? AND paid.slot_id=? AND paid.call_key='planning:0:initial' AND paid.stage_key='planning:0:initial'
-  AND paid.provider='openai' AND paid.model=? AND paid.client_request_id=? AND paid.request_digest=? AND paid.status IN('pending','uncertain','rejected')
+  AND paid.provider='openai' AND paid.model=? AND paid.client_request_id=? AND paid.request_digest=? AND paid.status IN('pending','uncertain','rejected','settled')
   AND slot.job_id=? AND slot.route_digest=? AND slot.grant_id=? AND slot.source_digest=? AND slot.status IN('queued','running'))`,
   bindings:[scope.key,slot.slotId,envelope.model,envelope.clientRequestId,envelope.requestDigest,job.job_id,slot.routeDigest,slot.grantId,slot.sourceDigest]};
  const jobCurrent:OutputSqlAssertion={sql:`EXISTS(SELECT 1 FROM document_jobs WHERE job_id=? AND owner_id=? AND stream_id=? AND document_id=? AND correlation_id=?

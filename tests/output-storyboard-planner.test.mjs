@@ -25,7 +25,7 @@ test('actual Storyboard adapter merges accepted unknown evidence into the origin
   const pending=generateDocumentArtifact({OPENAI_API_KEY:'unusable-test-presence-marker'},'owner','storyboard',{...source,options:{...source.options,
    outputStoryboard:{contract:contract(),requestDigest:prepared.requestDigest,maximumInputTokens:prepared.maximumInputTokens},
    onBeforeProviderAttempt:value=>{attempt=value;},onBeforeProviderDispatch(){},onProviderSubmission:merge,
-   onStoryboardEnvelope:async raw=>{rawEnvelopes.push(raw);assert.equal(Object.values(receipts)[0].status,'accepted');assert(hasUnsettledProviderSubmission({providerSubmissions:receipts}));},
+   onStoryboardEnvelope:async raw=>{rawEnvelopes.push(raw);assert.equal(Object.values(receipts)[0].status,wire==='{'?'accepted':'completed');assert.equal(hasUnsettledProviderSubmission({providerSubmissions:receipts}),wire==='{');},
    onProviderResponse:receipt=>{merge(receipt.call);}
   }});
   if(wire==='{')await assert.rejects(pending);else await pending;
@@ -170,16 +170,21 @@ test('exact planner attempt and actual private checkpoint transaction bind curre
    if(tamper){await assert.rejects(retained,/CHECK constraint/);assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n,0);}
    else{await retained;assert.equal(f.sqlite.prepare('SELECT content FROM private_content').get().content,captured.requestBody);const cp=JSON.parse(f.sqlite.prepare('SELECT result_json FROM document_jobs').get().result_json).outputStoryboardPlannerCheckpoint;assert.equal(cp.requestDigest,captured.requestDigest);assert.equal(cp.clientRequestId,captured.attempt.clientRequestId);await assert.rejects(retainStoryboardPlannerRequestCheckpoint(f.env,scope,slot,job,captured),/CHECK constraint/);
     const rawEnvelope=await captureStoryboardRawEnvelope(new Response('{'),{clientRequestId:captured.attempt.clientRequestId,requestDigest:captured.requestDigest,model:captured.attempt.model});
-    for(const sql of ["UPDATE output_operation_slots SET job_id='foreign'","UPDATE output_operation_slots SET scope_key='foreign'","UPDATE output_operation_slots SET slot_id='foreign'"]){
+    // Financial completion now precedes raw custody. Settled is evidence,
+    // never an owner/lease/retention substitute.
+    f.sqlite.exec("UPDATE output_provider_calls SET status='settled',provider_response_id='response-original'");
+    for(const sql of ["UPDATE output_operation_slots SET job_id='foreign'","UPDATE output_operation_slots SET scope_key='foreign'","UPDATE output_operation_slots SET slot_id='foreign'","UPDATE document_jobs SET owner_id='foreign'","UPDATE document_jobs SET expires_at='2000-01-01T00:00:00.000Z'","UPDATE document_jobs SET lease_expires_at='2000-01-01T00:00:00.000Z'","UPDATE output_provider_calls SET request_digest='foreign'"]){
      f.sqlite.exec(sql);await assert.rejects(retainStoryboardRawEnvelopeCheckpoint(f.env,scope,slot,job,rawEnvelope),/CHECK constraint/);
-     assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n,1);assert.equal(f.sqlite.prepare('SELECT status FROM output_provider_calls').get().status,'pending');
+     assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n,1);assert.equal(f.sqlite.prepare('SELECT status FROM output_provider_calls').get().status,'settled');
      f.sqlite.exec("UPDATE output_operation_slots SET job_id='job',scope_key='scope',slot_id='slot'");
+     f.sqlite.prepare("UPDATE document_jobs SET owner_id='owner',expires_at=?,lease_expires_at=?").run(future,future);
+     f.sqlite.prepare("UPDATE output_provider_calls SET request_digest=?").run(captured.requestDigest);
     }
     await assert.rejects(retainStoryboardRawEnvelopeCheckpoint(f.env,scope,slot,job,{...rawEnvelope,clientRequestId:'foreign'}),/CHECK constraint/);
     assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n,1);
     await retainStoryboardRawEnvelopeCheckpoint(f.env,scope,slot,job,rawEnvelope);
     const rawBody=JSON.parse(f.sqlite.prepare("SELECT content FROM private_content WHERE kind='provider-response'").get().content);assert.equal(atob(rawBody.bodyBase64),'{');assert.equal(rawBody.complete,true);
-    assert.equal(f.sqlite.prepare('SELECT status FROM output_provider_calls').get().status,'pending');
+    assert.equal(f.sqlite.prepare('SELECT status FROM output_provider_calls').get().status,'settled');
     await assert.rejects(retainStoryboardRawEnvelopeCheckpoint(f.env,scope,slot,job,rawEnvelope),/CHECK constraint/);
    }
   }finally{f.sqlite.close();}
@@ -241,5 +246,22 @@ test('actual adapter sends non-OK malformed and oversized responses directly to 
   assert.equal(atob(f.rawEnvelopes[0].bodyBase64),oversized?'x'.repeat(MAX_STORYBOARD_ENVELOPE_BYTES):'{');
   assert.equal(f.rawEnvelopes[0].complete,!oversized);assert.equal(response.body.locked,false);
   assert.equal(f.submissions.filter(x=>x.status==='rejected'||x.costMicrousd===0).length,0);
+ }
+});
+
+test('E: native Storyboard retains measured or unknown financial evidence before failed envelope custody',async()=>{
+ for(const usage of [envelope().usage,undefined]){
+  const failure=Error('synthetic_storyboard_custody_failure');let final;
+  const f=await runFixture({...envelope(),usage},{onProviderSubmission:receipt=>{if(receipt.status==='completed')final=receipt;},onStoryboardEnvelope:()=>{assert(final);throw failure;}});
+  await assert.rejects(f.promise,error=>error===failure);assert.equal(fetches.length,1);assert.equal(f.responses.length,0);
+  assert.equal(final.accountingState,usage?'usage_recorded':'unknown');assert.equal(final.costMicrousd===undefined,!usage);assert.equal(final.responseRef,undefined);
+ }
+});
+test('E: native Storyboard refusal and partial completion precede strict receipt/plan checks without new frames',async()=>{
+ const {stoppedPlannerEnvelopes}=await import('./planner-response-outcome-fixtures.mjs');
+ for(const [,change,problem] of stoppedPlannerEnvelopes){
+  const f=await runFixture({...envelope(),...change,usage:undefined});
+  await assert.rejects(f.promise,e=>e.detail?.outcome?.contentOutcome===(problem==='refused'?'refused':problem==='incomplete'?'invalid':'unknown'));
+  assert.equal(fetches.length,1);assert.equal(f.submissions.at(-1).costMicrousd,undefined);assert.equal(f.submissions.at(-1).accountingState,'unknown');
  }
 });

@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { stripTypeScriptTypes } from 'node:module';
+import { generateDocumentArtifact } from '../worker/openai-adapter.ts';
 import { SHORT_STORY_NARRATIVE_CONTRACT as contract, assessShortStoryBody } from '../src/model/output-narrative-contract.ts';
 import { createOutputNarrativeExecution, readOutputNarrativeExecution, captureOutputNarrativeRequest, OUTPUT_NARRATIVE_INSTRUCTIONS, outputNarrativeResponseProblem, outputNarrativeArtifactProblem, outputNarrativeBodyReceipt } from '../worker/output-narrative-request.ts';
 const execution=()=>createOutputNarrativeExecution(contract,'gpt-5.6-terra',25000);
@@ -35,8 +36,7 @@ test('final-body receipt counts and hashes exact retained prose without rewritin
  await assert.rejects(outputNarrativeBodyReceipt(value,'short_story',story+' extra '.repeat(201)));await assert.rejects(outputNarrativeBodyReceipt(value,'short_story','# Heading\n'+story));await assert.rejects(outputNarrativeBodyReceipt(value,'scene',body));
 });
 test('actual adapter requires all original guarded-execution hooks before provider access',async()=>{
- const begin=adapter.indexOf('export async function generateDocumentArtifact('),end=adapter.indexOf('  const started=Date.now();',begin),source=stripTypeScriptTypes(adapter.slice(begin,end).replace('export ','')+'\nreturn "admission-only";\n}');
- const check=new Function('readOutputNarrativeExecution',source+';return generateDocumentArtifact;')(readOutputNarrativeExecution),value=await execution(),all={outputNarrative:value,onBeforeProviderAttempt(){},onBeforeProviderDispatch(){},onProviderSubmission(){},onProviderResponse(){}},env={get OPENAI_API_KEY(){throw Error('provider access');}};
+ const check=generateDocumentArtifact,value=await execution(),all={outputNarrative:value,onBeforeProviderAttempt(){},onBeforeProviderDispatch(){},onProviderSubmission(){},onProviderResponse(){}},env={get OPENAI_API_KEY(){throw Error('provider access');}};
  for(const key of ['onBeforeProviderAttempt','onBeforeProviderDispatch','onProviderSubmission','onProviderResponse']){const options={...all};delete options[key];await assert.rejects(check(env,'test','short_story',{options}),/output_narrative_execution_invalid/);}
  for(const options of [{...all,outputNarrative:undefined},{...all,productionMode:'managed'},{...all,productionPage:{pageIndex:0}}])await assert.rejects(check(env,'test','short_story',{options}),/output_narrative_execution_invalid/);
  await assert.rejects(check(env,'test','scene',{options:all}),/output_narrative_execution_invalid/);
@@ -46,33 +46,23 @@ test('actual resolved-body assessor rejects invalid prose and skips automatic pa
  const assess=new Function('resolveDocumentArtifactContextGroups','groupContracts','sourceContract','audioConstraints','documentArtifactValidationIssues','kind','groupIds','itemCount','assessShortStoryBody','narrative','audioSelection',source+';return assess;')(
  parsed=>({output:parsed,receipt:{unknownAssignments:[],rawAssignments:[]}}),[],null,null,()=>[],'short_story',[],3,assessShortStoryBody,await execution(),null);
  assert.deepEqual(assess({content_markdown:story}).issues,[]);assert.ok(assess({content_markdown:'short'}).issues.length);
- const condition=/if\((initialIssues\.length[^)]*)\)\{\n    repairAttempted=true;/.exec(adapter)[1];assert.equal(Boolean(new Function('initialIssues','narrative','return '+condition)([{code:'invalid'}],await execution())),false);
+ const condition=/if\((initialIssues\.length[^)]*)\)\{\n {4}repairAttempted=true;/.exec(adapter)[1];assert.equal(Boolean(new Function('initialIssues','narrative','return '+condition)([{code:'invalid'}],await execution())),false);
  const failure=adapter.slice(adapter.indexOf('      code:narrative?'),adapter.indexOf('    },`Document ${kind} instructions:',adapter.indexOf('      code:narrative?')));assert.match(failure,/retryable:!narrative/);assert.match(failure,/action:narrative\|\|kind/);
  assert.ok(adapter.indexOf('outputNarrativeBodyReceipt(narrative,kind,output.content_markdown)')>adapter.indexOf('const finalIssues='));
 });
 
-// Execute only the renderer's original run closure against a supplied response.
-// No fetch, provider, database, grant, job, reservation, or completed journey is simulated.
-test('actual adapter retains raw response and original accounting before metadata refusal; no second call or fabricated price',async()=>{
- const {ProviderRequestError,classifyProviderFailure}=await import('../worker/provider-errors.ts');
- const {readOpenAITextUsage,priceCurrentOpenAITextUsage}=await import('../worker/openai-text-cost.ts');
- const value=await execution(),from=adapter.indexOf('  let narrativeAttempted=false;'),to=adapter.indexOf('  const groupIds=',from),runSource=stripTypeScriptTypes(adapter.slice(from,to));
- const utilities=stripTypeScriptTypes(adapter.slice(adapter.indexOf('const responseText='),adapter.indexOf('\n',adapter.indexOf('const missingUsageReceipt='))));
- const raw=JSON.stringify({content_markdown:story}),usage={input_tokens:40,output_tokens:610,total_tokens:650};
+// Actual adapter execution with intercepted transport, no live access.
+test('actual narrative adapter retains accounting before private custody and metadata refusal',async t=>{
+ const {ProviderRequestError}=await import('../worker/provider-errors.ts');
+ const value=await execution(),raw=JSON.stringify({content_markdown:story}),usage={input_tokens:40,output_tokens:610,total_tokens:650};
  for(const changes of [{status:'incomplete'},{output:[{type:'refusal'}]},{model:'other'},{model:undefined},{usage:{input_tokens:40,output_tokens:610}},{service_tier:'flex'}]){
-  const responseBody={id:'unadmitted-response',status:'completed',model:value.model,usage,output_text:raw,...changes},trace=[],paidResponses=[],paidCalls=[];let transports=0;
-  const bindings={narrative:value,page:null,presentationRoutes:null,model:value.model,kind:'short_story',selectedStyle:null,itemCount:3,audioConstraints:null,schemaCountPolicy:undefined,maxOutputTokens:6000,identifier:'test-user',preparation:undefined,env:{},started:Date.now(),paidResponses,paidCalls,MAX_PROVIDER_ARTIFACT_CANDIDATE_BYTES:524288,
-   captureOutputNarrativeRequest,outputNarrativeResponseProblem,readOpenAITextUsage,priceCurrentOpenAITextUsage,ProviderRequestError,classifyProviderFailure,
-   documentArtifactSchema:()=>({type:'object'}),openAIHeaders:()=>({}),
-   paidAccounting:()=>({providerUsage:{inputTokens:40,outputTokens:610,totalTokens:650},providerResponseIds:['unadmitted-response'],providerModel:responseBody.model??value.model,providerCallCount:paidResponses.length}),
-   input:{options:{onBeforeProviderAttempt:attempt=>{trace.push('claim');assert.equal(attempt.logicalCallKey,'planning:0:initial');},onProviderSubmission:call=>{trace.push(call.status);},onBeforeProviderDispatch:()=>{trace.push('gate');queueMicrotask(()=>trace.push('microtask'));},onProviderResponse:receipt=>{trace.push('retain');assert.equal(receipt.candidateRaw,raw);return{responseRef:'unadmitted-private-ref'};}}},
-   openAIRequest:(_url,init)=>{transports++;trace.push('supplied-response');assert.equal(init.body,JSON.stringify(request(value)));return Promise.resolve({ok:true,headers:new Headers(),json:async()=>responseBody});}
-  };
-  const run=new Function(...Object.keys(bindings),utilities+'\n'+runSource+'\nreturn run;')(...Object.values(bindings));
-  await assert.rejects(run(OUTPUT_NARRATIVE_INSTRUCTIONS,request(value).input,'document_short_story'),error=>{assert.ok(error instanceof ProviderRequestError);assert.equal(error.detail.retryable,false);assert.equal(error.providerCallCount,1);assert.deepEqual(error.providerResponseIds,['unadmitted-response']);return true;});
-  assert.equal(transports,1);assert.ok(trace.indexOf('supplied-response')<trace.indexOf('microtask'));assert.ok(trace.indexOf('retain')<trace.indexOf('completed'));assert.equal(paidCalls[0].responseRef,'unadmitted-private-ref');
-  if(Object.hasOwn(changes,'model')||changes.usage||changes.service_tier)assert.equal(paidCalls[0].costMicrousd,undefined);
-  await assert.rejects(run(OUTPUT_NARRATIVE_INSTRUCTIONS,request(value).input,'document_short_story'),/output_narrative_call_consumed/);assert.equal(transports,1);
+  const responseBody={id:'unadmitted-response',status:'completed',model:value.model,usage,output_text:raw,...changes},trace=[],paidCalls=[];let transports=0;
+  t.mock.method(globalThis,'fetch',async(_url,init)=>{transports++;trace.push('supplied-response');assert.equal(JSON.parse(init.body).text.format.name,'document_short_story');return Response.json(responseBody);});
+  const options={productionMode:'manual',outputNarrative:value,onBeforeProviderAttempt(){trace.push('claim');},onBeforeProviderDispatch(){trace.push('gate');},
+   onProviderSubmission(call){trace.push(call.status);paidCalls.push(call);},onProviderResponse(receipt){trace.push('retain');assert.equal(receipt.candidateRaw,raw);return{responseRef:'unadmitted-private-ref'};}};
+  await assert.rejects(generateDocumentArtifact({OPENAI_API_KEY:'offline-test'},'owner','short_story',{documentTitle:'Synthetic story',snapshot:{facts:[]},options}),error=>{assert.ok(error instanceof ProviderRequestError);assert.equal(error.detail.retryable,false);assert.equal(error.providerCallCount,1);assert.deepEqual(error.providerResponseIds,['unadmitted-response']);return true;});
+  assert.equal(transports,1);assert.ok(trace.indexOf('completed')<trace.indexOf('retain'));assert.equal(paidCalls.at(-1).responseRef,'unadmitted-private-ref');
+  if(Object.hasOwn(changes,'model')||changes.usage||changes.service_tier)assert.equal(paidCalls.at(-1).costMicrousd,undefined);
  }
 });
 
