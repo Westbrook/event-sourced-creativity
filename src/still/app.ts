@@ -69,6 +69,7 @@ const safeMedia = (url: string | null | undefined) => url?.startsWith('/api/medi
 
 export class StillApp extends LitElement {
   private client = new StillClient();
+  private writeRecovery?:{key:string;correlationId:string};
   private attention?:StillAttentionObserver;
   private decisionMemory=new DecisionMemo<DecisionResponse>({
     accept:r=>r.source==='jev'&&!r.reason&&r.policy===POLICY_VERSION&&r.head===this.client.head&&r.cache?.stored===true,
@@ -339,7 +340,7 @@ export class StillApp extends LitElement {
   }
   disconnectedCallback() { super.disconnectedCallback(); window.removeEventListener('scroll', this.updateHeaderScroll); this.onboardingHelp.dispose(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect();cancelAnimationFrame(this.dockFitFrame); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount]);}
-  private preventsRouteChange(){return this.busy&&!this.loading||this.composing||this.client.hasUnconfirmedWrite||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange;}
+  private preventsRouteChange(){return this.busy&&!this.loading||this.composing||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange;}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange()) { e.preventDefault(); e.returnValue = ''; } };
   private changed() { this.requestUpdate(); }
   private updatePageTitle() {
@@ -767,6 +768,23 @@ export class StillApp extends LitElement {
     if (enteringReview && this.generation) void this.updateComplete.then(()=>this.querySelector<HTMLElement>('.format-options en-select')?.focus());
   }
   private isCreationMode(){return ['new-project','new-document','add-context'].includes(this.mode);}
+  private writeRecoveryKey(){return `${this.client.scopeKey}:${this.client.epoch}:${this.mode}:${this.client.pendingWriteId}`;}
+  private renderWriteRecovery(){return this.client.hasUnconfirmedWrite ? html`<p class="gate-notice" role="status">${this.writeRecovery?.key===this.writeRecoveryKey()?'The earlier save is still unconfirmed. Go Back to review your saved work, or choose Start new draft to unlock this form. The earlier save may still exist; saving again could create a duplicate.':'An earlier save needs checking before you edit. Check save looks for that save without submitting it again.'}</p>` : nothing;}
+  private async checkSave(){
+    const key=this.writeRecoveryKey();this.writeRecovery=undefined;
+    const result=await this.client.checkPendingSave();
+    if(result.confirmed){this.pendingBlock=null;this.notice='The earlier save is confirmed. Review your saved work before saving again.';this.focusContent();}
+    else if(key===this.writeRecoveryKey())this.writeRecovery={key,correlationId:result.correlationId};
+    this.changed();
+  }
+  private async startNewSave(){
+    const recovery=this.writeRecovery;
+    if(!recovery||recovery.key!==this.writeRecoveryKey())return;
+    const result=await this.client.startNewSave(recovery.correlationId);
+    this.writeRecovery=undefined;this.pendingBlock=null;
+    this.notice=result.confirmed?'The earlier save is confirmed. Review your saved work before saving again.':'Draft unlocked. The earlier save may still exist. Nothing was submitted again.';
+    this.changed();this.focusContent();
+  }
   // En Reve buttons use type="button"; bind their toolbar action to the form here.
   private requestCreationSubmit(){
     if(!this.isCreationMode()||this.busy||this.composing)return;
@@ -786,6 +804,7 @@ export class StillApp extends LitElement {
   };
   private async save() {
     const c = this.client, p = c.projection;
+    if(c.hasUnconfirmedWrite){await this.checkSave();return;}
     if (this.mode === 'new-project' || this.mode === 'new-document') {
       if (!this.titleDraft.trim()) throw new Error('Enter a name.');
       if(this.mode==='new-project') {
@@ -1003,10 +1022,10 @@ export class StillApp extends LitElement {
       </section>`;
     }
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><en-select class="select-label" label="Workspace" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Personal projects</en-select-option>${this.client.session?.projects?.map(p => html`<en-select-option value=${p.projectAccessId}>${p.projectName} · ${p.role}</en-select-option>`)}</en-select></section>`;
-    if (mode === 'reuse') return html`<section class="form-page"><h1>Use existing idea</h1><en-select class="select-label" label="Idea" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Choose an idea</en-select-option>${p.libraryBlocks.filter(b => !b.removed && !p.blocks.some(used=>used.id===b.id)).map(b => html`<en-select-option value=${b.id}>${b.handle} · ${b.type}</en-select-option>`)}</en-select><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p></section>`;
+    if (mode === 'reuse') return html`<section class="form-page"><h1>Use existing idea</h1>${this.renderWriteRecovery()}<en-select class="select-label" label="Idea" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Choose an idea</en-select-option>${p.libraryBlocks.filter(b => !b.removed && !p.blocks.some(used=>used.id===b.id)).map(b => html`<en-select-option value=${b.id}>${b.handle} · ${b.type}</en-select-option>`)}</en-select><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p></section>`;
     const titles: Record<string, string> = { 'new-project': 'New project', 'new-document': 'New document', 'add-context': 'Add idea', 'edit-block': 'Edit idea', rename: 'Rename document', intent: 'Set next goal', 'edit-artifact': 'Edit result' };
     const named = ['new-project', 'new-document', 'add-context', 'rename'].includes(mode);
-    const fields=html`${mode!=='new-project'&&p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' && mode !== 'new-project' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}`;
+    const fields=html`${mode!=='new-project'&&p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${this.renderWriteRecovery()}${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' && mode !== 'new-project' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}`;
     return this.isCreationMode()
       ? html`<form id="still-create-form" class="form-page" @submit=${this.submitCreation} @keydown=${this.creationKeydown}>${fields}</form>`
       : html`<section class="form-page">${fields}</section>`;
@@ -1059,7 +1078,7 @@ export class StillApp extends LitElement {
       const back:WorkflowAction={id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'};
       if(this.mode==='edit-artifact'&&this.missingWriting())toolbar={actions:[back]};
       else if(this.mode==='workspaces')toolbar={actions:[{id:'workflow:open',label:'Open',variant:'primary',run:()=>void this.run(async()=>{await this.client.switchWorkspace(this.client.session?.projects?.find(p=>p.projectAccessId===this.choice));this.navigate(this.client.position.view,this.client.position);})},back]};
-      else toolbar={actions:[{id:'workflow:save',label:this.mode==='intent'?'Suggest actions':this.client.hasUnconfirmedWrite?'Check save':this.mode==='reuse'?'Use idea':'Save',variant:'primary',disabled:this.mode==='reuse'&&!this.choice,run:()=>this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},back]};
+      else toolbar={actions:[{id:'workflow:save',label:this.client.hasUnconfirmedWrite?'Check save':this.mode==='intent'?'Suggest actions':this.mode==='reuse'?'Use idea':'Save',variant:'primary',disabled:this.mode==='reuse'&&!this.choice&&!this.client.hasUnconfirmedWrite,run:()=>this.client.hasUnconfirmedWrite?void this.run(()=>this.checkSave()):this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},...(this.client.hasUnconfirmedWrite&&this.writeRecovery?.key===this.writeRecoveryKey()?[{id:'workflow:new-draft',label:'Start new draft',variant:'secondary' as const,run:()=>void this.run(()=>this.startNewSave())}]:[]),back]};
     }
     if(!toolbar.actions.length&&!toolbar.status)return nothing;
     if(toolbar.actions.length>this.toolbarLimit)return this.compactDock(toolbar.actions,'More actions',toolbar.status);

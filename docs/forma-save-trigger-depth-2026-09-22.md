@@ -148,3 +148,28 @@ hosted D1's expression depth100; an authenticated diagnostic page exposed the
 failure. The expression qualification and atomic assertion split above address
 that separate hosted constraint. Hosted before/after
 compilation and four rolled-back saves remain required before claiming recovery.
+
+## Follow-up: reloaded creation form recovery
+
+The trigger failure could leave a tab-local Still write journal. That journal
+stores only a correlation ID, receipt hashes and a request signature, not the
+Project name. After reload the draft was empty, but the journal disabled its
+field. The Check save button then ran draft validation first and demanded a name
+in the disabled field. The same durable marker also caused an unnecessary reload
+warning even when no draft text or active submission remained.
+
+Receipt checking now bypasses form validation and never resubmits the old request.
+A confirmed receipt unlocks the form. If no matching receipt is found, the form
+explains the uncertainty and offers an explicit Start new draft action. That
+choice rechecks the original request before releasing only the current tab's
+write lock, resets creation IDs, and preserves any draft text still in memory.
+It does not cancel an earlier server request or certify that it failed. The UI
+warns that a subsequent save could duplicate an earlier unconfirmed save.
+
+Actual in-flight work and changed drafts retain their navigation warning. A
+persisted recovery marker alone no longer blocks reload or browsing saved work.
+Offline checks and workspace changes retain the original journal. Personal and
+shared Worker integration tests cover reload, lost/late receipts, no repeated
+POST, explicit new submission, offline checks and scope fencing. A headless
+browser test exercises the disabled empty field, Check save, Start new draft,
+editable name and one explicit new Project submission.
