@@ -64,3 +64,18 @@ test('a workspace change during an explicit unlock retains the original recovery
  await assert.rejects(c.startNewSave(checked.correlationId),/workspace changed/);
  assert.equal(operationJournal.write(scope).correlationId,checked.correlationId);
 });
+
+test('checking a confirmed creation retires its IDs before a later explicit creation',async t=>{
+ const f=await createSceneCostFixture(1),original=globalThis.fetch,scope=`${f.owner}:personal`;
+ let loseReceipt=true,posts=0;
+ globalThis.fetch=async(url,init)=>{
+  const response=await f.request(String(url),init);
+  if(url==='/api/events'&&init?.method==='POST'){posts++;if(loseReceipt){loseReceipt=false;throw Error('lost receipt');}}
+  return response;
+ };
+ t.after(async()=>{globalThis.fetch=original;operationJournal.clearWrite(scope);await f.drainBackground();f.close();});
+ const c=new StillClient();await c.load();await assert.rejects(c.createProject('Same name'),/lost receipt/);
+ assert.equal((await c.checkPendingSave()).confirmed,true);assert.equal(posts,1);
+ const first=c.events.find(e=>e.type==='ProjectCreated'&&e.payload.name==='Same name').payload.project_id;
+ const next=await c.createProject('Same name');assert.notEqual(next.projectId,first);assert.equal(posts,2);
+});

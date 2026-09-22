@@ -258,6 +258,7 @@ export class StillClient {
     await this.refresh();check();
     const confirmed=await this.recoverPendingWrite();check();
     if(!confirmed&&this.pendingWriteId!==correlationId)throw new Error('The pending save changed. Check it again.');
+    if(confirmed)this.creation=null;
     return {confirmed,correlationId};
   }
   /** Explicit acknowledgement of uncertainty; only releases this tab's lock.

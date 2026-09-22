@@ -773,7 +773,7 @@ export class StillApp extends LitElement {
   private async checkSave(){
     const key=this.writeRecoveryKey();this.writeRecovery=undefined;
     const result=await this.client.checkPendingSave();
-    if(result.confirmed){this.notice='The earlier save is confirmed. Review your saved work before saving again.';this.focusContent();}
+    if(result.confirmed){this.pendingBlock=null;this.notice='The earlier save is confirmed. Review your saved work before saving again.';this.focusContent();}
     else if(key===this.writeRecoveryKey())this.writeRecovery={key,correlationId:result.correlationId};
     this.changed();
   }
