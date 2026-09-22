@@ -1,0 +1,16 @@
+{
+  "recordedAt": "2026-09-22T20:00:46.898Z",
+  "source": "H4 continuation owner task 01a0caa6-f0da-7602-b136-763331e6947c",
+  "status": "owner-reported combined check; not a new F3 test claim",
+  "combinedTests": {
+    "passed": 223,
+    "failed": 1
+  },
+  "failure": "generation-execution-bridge.test: checked study remains immutable; immutable_study_changed_create_new_reviewed_version",
+  "disposition": "Historical sealed study preserved. Current-source invalidation is expected after local H4/F3 edits; no replacement actual-input envelope is fabricated. A new combined source-bound reviewed envelope remains required before future installation/release.",
+  "f3SelectedTests": {
+    "passed": 90,
+    "failed": 0
+  },
+  "liveAuthorityMicrousd": 0
+}

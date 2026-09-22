@@ -112,6 +112,7 @@ test('connected Scene driver positive and replay',async t=>{
   assert.ok(admission);assert.ok(run);assert.deepEqual(run.predecessor,admission.successor);assert.equal(run.jobId,admission.jobId);
   const before=state(f);assert.deepEqual(await withoutBootstrap(()=>drive(f,prepared)),{...result,replayed:true});assert.deepEqual(state(f),before);assertSettled(f,calls);
   f.limits.assertVerified();assert.deepEqual(f.trace.databaseErrors,[]);assert.deepEqual(f.trace.failedPredicates,[]);
+  assert.equal(f.limits.exceptions,0,'the current Scene path must satisfy strict32 without a compatibility exception');
   t.diagnostic(JSON.stringify({nodeHostedNativeComposition:true,strictShapes:f.limits.records.length,exactNativeMetadataExceptions:f.limits.exceptions,
     maximumBindings:Math.max(...f.limits.boundCounts),syntheticProviderCalls:calls.length,externalRequests:0,resourceOperations:3,resourceTextBytes:3*f.N,
     prepareReplaySqlStatements:replaySqlCounts[0],terminalReplaySqlStatements:replaySqlCounts[1]}));

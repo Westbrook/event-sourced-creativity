@@ -1,0 +1,10 @@
+import {DatabaseSync} from 'node:sqlite';
+import {readFileSync,writeFileSync} from 'node:fs';
+const db=new DatabaseSync(':memory:');
+db.exec('CREATE TABLE users(user_id TEXT PRIMARY KEY); CREATE TABLE cost_budget_reservations(owner_id,reservation_id,status,reserved_microusd,period); CREATE TABLE budget_reservations(owner_id,reservation_id,status,reserved_tokens,period);');
+db.exec(readFileSync(new URL('../../../db/generation-preparation.pending.sql',import.meta.url),'utf8'));
+const rows=db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name GLOB 'generation_preparation_*' ORDER BY name").all();
+const code='// Generated offline from the uninstalled preparation schema.\nexport const schemaRows='+JSON.stringify(rows,null,2)+';\n';
+const target=new URL('./schema-contract.mjs',import.meta.url);
+if(process.argv.includes('--write'))writeFileSync(target,code);else if(readFileSync(target,'utf8')!==code)throw Error('preparation_schema_drift');
+db.close();console.log('Preparation schema matches offline contract; no installation.');

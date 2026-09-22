@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
@@ -39,6 +40,9 @@ async function fixture() {
   assert.equal((await handleSession(new Request("http://localhost/api/session"), environment)).status, 200);
   sqlite.prepare("UPDATE users SET consent_version=?").run("pilot-2026-08-10");
   assert.equal((await handleEvents(new Request("http://localhost/api/events?after=0&limit=2000&content=0"), environment)).status, 200);
+  // Recovery reads the administrative hold ledger. Install its canonical schema
+  // only in this disposable fixture, as in the adjacent receipt/recovery suites.
+  sqlite.exec(readFileSync(new URL("../db/operations/budget-hold-dispositions.sql", import.meta.url), "utf8"));
   const documentId = "count-policy-document";
   await appendAuditEvent(environment, "creative:dev-local-creative", "user", "DocumentCreated", { project_id: "project-atmosphere", document_id: documentId, title: "Community stewardship" });
   for (const [index, fact] of snapshot().facts.entries()) await appendAuditEvent(environment, "creative:dev-local-creative", "user", "BlockCreated", {

@@ -49,7 +49,8 @@ const operationalTables=Object.freeze(['output_preflights','output_execution_gra
   'experience_sponsor_driver_stages','experience_sponsor_resource_receipts',
   'experience_sponsor_consumptions','experience_sponsor_active_jobs','experience_sponsor_assertions']);
 
-/** Preserve the accepted exception for this exact unchanged native SQL only.
+/** Preserve the historical exception for this exact SQL only; current journeys
+ * assert zero uses. Never reseal changed bytes to inherit that qualification.
  * All new statements retain depth 100, function arguments 32, parameters 100,
  * and SQL bytes 100000. This is Node SQLite qualification, not workerd evidence. */
 export function strictSceneSql(f){
@@ -62,7 +63,7 @@ export function strictSceneSql(f){
     return strictPrepare.call(this,sql);
   };
   return {records:strict.records,nativeRecords:native.records,boundCounts:strict.boundCounts,
-    assertVerified(){strict.assertVerified();native.assertVerified();assert.ok(exceptions>0);assert.ok(native.records.every(record=>createHash('sha256').update(record.sql).digest('hex')===metadataSqlSha));},
+    assertVerified(){strict.assertVerified();if(exceptions)native.assertVerified();assert.ok(native.records.every(record=>createHash('sha256').update(record.sql).digest('hex')===metadataSqlSha));},
     get exceptions(){return exceptions;},restore(){strict.restore();native.restore();}};
 }
 

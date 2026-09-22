@@ -8,6 +8,8 @@ import {createCreativeEventFold} from '../src/model/events.ts';
 import {createSceneContextConsumer} from '../worker/scene-context-consumer.ts';
 import {sceneReadFailureDiagnostic,recordSceneReadFailure} from '../worker/scene-read-diagnostic.ts';
 import {assertSceneHistoryRead} from '../worker/scene-history-proof-read.ts';
+import {sceneHistoryMetadataFields} from '../worker/scene-history-proof.ts';
+import {enforceD1ExpressionDepth} from './helpers/d1-expression-depth.mjs';
 const migrations=readLocalMigrations(new URL('../drizzle/',import.meta.url));
 test('Scene diagnostics are fixed server-only labels and never disclose arbitrary input',()=>{
   const error=new Error('original');recordSceneReadFailure(error,'deadline');
@@ -32,6 +34,37 @@ function fixture(t){
   const reduce=(version,createConsumer,overrides={})=>reduceSceneVersionedHistory(env,{scope:scope(),version,readAssertions:[{sql:'1',bindings:[]}],createConsumer,...overrides});
   return{db,env,event,secret,scope,capture,reduce};
 }
+test('metadata paging obeys strict D1 limits and preserves exact JSON bytes including nulls and escapes',async t=>{
+  const f=fixture(t),fields=[...sceneHistoryMetadataFields,'metadata_valid'];
+  const insert=f.db.prepare(`INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,type,payload)
+    VALUES(?,'creative:a',?,'2026-09-14','2026-09-14',?,?,?,?,?,'Fixture','{}')`);
+  const long='m'.repeat(500);
+  for(let sequence=1;sequence<=300;sequence++)insert.run('e'+sequence,sequence,long,
+    sequence===1?'雪 "quoted" \\ slash\nline':long,long,sequence===1?'':long,sequence===1?null:long);
+  f.secret(1,{text:'private'});
+  const version=await f.capture(),batch=f.env.DB.batch;
+  const limits=enforceD1ExpressionDepth({env:f.env,sqlite:f.db},{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}});
+  t.after(()=>limits.restore());let metadataPages=0;
+  f.env.DB.batch=async statements=>{
+    const result=await batch(statements),query=statements[0];
+    if(query.sql.includes('AS running_bytes FROM page')){
+      metadataPages++;
+      if(metadataPages===1)assert.ok(result[0].results.length<256,'exercise the byte cutoff before the row limit');
+      const expression=query.sql.match(/SUM\(length\(CAST\((.*?) AS BLOB\)\)\+1\)/s)?.[1];assert.ok(expression);
+      // Independent legacy serializer on the identical page. Unrestricted local
+      // SQLite is an equality oracle only; the actual read uses the strict compiler.
+      const legacy=`json_object(${fields.map(field=>`'${field}',${field}`).join(',')})`;
+      const from=query.sql.slice(0,query.sql.indexOf(',\n      budgeted AS'));
+      const pairs=f.db.prepare(`${from} SELECT ${expression} AS actual,${legacy} AS expected FROM page`).all(...query.bindings);
+      for(const pair of pairs){assert.equal(pair.actual,pair.expected);assert.deepEqual(Object.keys(JSON.parse(pair.actual)),fields);}
+      const expected=f.db.prepare(query.sql.replace(expression,legacy)).all(...query.bindings);
+      assert.deepEqual(result[0].results,expected,'same ordered page and byte-budget cutoff');
+    }
+    return result;
+  };
+  const result=await f.reduce(version,()=>({accept(){return true;},finish(){return 'complete';}}));
+  assert.equal(result.rows,300);assert.equal(result.value,'complete');assert.ok(metadataPages>=3);limits.assertVerified();
+});
 test('versioned reader consumes over16MiB fully in bounded pages without retaining full history',async t=>{
   const f=fixture(t);f.event(1,'ProjectCreated',{project_id:'p',name:'Paged'});f.event(2,'DocumentCreated',{project_id:'p',document_id:'d',title:'Paged document'});
   f.event(3,'BlockCreated',{project_id:'p',document_id:'d',block_id:'b',type:'direction',properties:{text:'First'}});
