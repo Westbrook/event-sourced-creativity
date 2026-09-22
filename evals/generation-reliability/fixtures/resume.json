@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "generation-resume-fixtures-v1",
+  "privacy": "synthetic",
+  "artifact": "synthetic retained pixels",
+  "cases": [
+    {
+      "name": "completed exact",
+      "status": "completed",
+      "mismatch": false,
+      "expected": "reuse_completed"
+    },
+    {
+      "name": "completed current model mismatch",
+      "status": "completed",
+      "mismatch": true,
+      "expected": "hold_completed_evidence_mismatch"
+    },
+    {
+      "name": "accepted historical Fal",
+      "status": "accepted",
+      "provider": "fal",
+      "mismatch": true,
+      "expected": "reconcile_original"
+    },
+    {
+      "name": "uncertain original OpenAI",
+      "status": "uncertain",
+      "provider": "openai",
+      "mismatch": false,
+      "expected": "reconcile_original"
+    },
+    {
+      "name": "submitted original mismatch",
+      "status": "submitted",
+      "provider": "fal",
+      "mismatch": true,
+      "expected": "reconcile_original"
+    },
+    {
+      "name": "failed original",
+      "status": "failed",
+      "mismatch": false,
+      "expected": "new_trial_required",
+      "submissionStatus": "rejected"
+    }
+  ]
+}
