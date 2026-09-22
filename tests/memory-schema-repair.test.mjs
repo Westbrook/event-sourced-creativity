@@ -23,7 +23,7 @@ for(const partial of [false,true])test('Memory repair installs exact final schem
  const result=await applyMemorySchemaRepair(f.db,before.proof,authority);assert.equal(result.status,'complete');assert.equal(result.applied,true);
  assert.deepEqual(f.sqlite.prepare('SELECT * FROM __forma_local_migrations').all(),history);
  assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM __forma_memory_schema_repair_receipts').get().n,1);
- const next=await inspectMemorySchemaRepair(f.db);await applyMemorySchemaRepair(f.db,next.proof,authority);assert.equal(f.control.batches,1);
+ const next=await inspectMemorySchemaRepair(f.db);await applyMemorySchemaRepair(f.db,next.proof,authority);assert.equal(f.control.batches,2);
  for(const row of manifest.objects)assert.deepEqual({...catalog(f).find(r=>r.name===row.name)},row);
 });
 for(const damage of ['unknown-trigger','wrong-table','populated','missing-parent','reserved','receipt-trigger'])test('Memory repair blocks '+damage,async t=>{

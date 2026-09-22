@@ -59,12 +59,28 @@ export async function inspectMemorySchemaRepair(db:D1Database){
  return {summary:{manifest:manifest.sha256,status:blocked.length?'blocked':complete?'complete':'ready',missing:missing.length,replacements:replace.length,blocked:[...new Set(blocked)],tables:manifest.tables.length,objects:objects.length,hostedDeploymentRunnerQualified:false},snapshot,catalog,missing,replace,present,proof};
 }
 
+/** Qualify rollback with isolated metadata/test data on the selected binding.
+ * Only the reserved probe table is touched; the expected final statement fails.
+ * An unrelated/network error or any retained object is not a passing receipt. */
+async function qualifyRollback(db:D1Database,snapshot:string){
+ let expectedFailure=false;
+ try{await db.batch([
+  db.prepare(`CREATE TABLE ${guard}(proof INTEGER NOT NULL CHECK(proof=1))`),
+  db.prepare(`INSERT INTO ${guard} VALUES(1)`),
+  db.prepare(`INSERT INTO ${guard} VALUES(NULL)`),
+ ]);}catch(error){expectedFailure=error instanceof Error&&error.message.includes(`NOT NULL constraint failed: ${guard}.proof`);}
+ if(!expectedFailure)fail('rollback_not_qualified');
+ const verified=await rows(db,`SELECT ${snapshotSQL} AS snapshot,EXISTS(SELECT 1 FROM sqlite_schema WHERE name='${guard}') AS reserved`);
+ if(verified.length!==1||verified[0]!.reserved!==0||verified[0]!.snapshot!==snapshot)fail('rollback_not_qualified');
+}
+
 /** A single D1 batch owns preconditions, all DDL, postconditions and its distinct
  * receipt. Original deployment/Drizzle migration history is never rewritten. */
 export async function applyMemorySchemaRepair(db:D1Database,proof:string,authority:{sql:string;bindings:unknown[]}){
  const plan=await inspectMemorySchemaRepair(db);
  if(plan.proof!==proof||plan.summary.status==='blocked')fail('precondition');
  if(plan.summary.status==='complete')return plan.summary;
+ await qualifyRollback(db,plan.snapshot);
  const statements:D1PreparedStatement[]=[];
  const add=(sql:string,...values:unknown[])=>statements.push(db.prepare(sql).bind(...values));
  add(`CREATE TABLE ${guard}(proof INTEGER NOT NULL CHECK(proof=1))`);
@@ -88,5 +104,5 @@ export async function applyMemorySchemaRepair(db:D1Database,proof:string,authori
  if(result.length!==statements.length||result.some(r=>r.success!==true))fail('batch_unconfirmed');
  const after=await inspectMemorySchemaRepair(db);
  if(after.summary.status!=='complete')fail('postcondition');
- return {...after.summary,applied:true,statements:statements.length};
+ return {...after.summary,applied:true,rollbackQualified:true,statements:statements.length};
 }

@@ -27,6 +27,11 @@ snapshot, database settings and existing new-table emptiness. Unknown objects,
 incompatible declarations/parent columns, unexpected receipt hooks and populated
 new Memory tables fail closed.
 
+Before installation, a separate fixed batch creates a reserved probe table, inserts
+one synthetic row, then deliberately violates its NOT NULL constraint. Only the
+exact expected failure plus an unchanged catalog and absent probe table qualifies
+rollback. No Memory/user table is touched by this rehearsal.
+
 One D1 batch installs missing tables/indexes/triggers and replaces only exact known
 historical trigger/index versions. It drops no user table, copies no user rows and
 executes no application DML. A final exact-catalog and foreign-key assertion must
