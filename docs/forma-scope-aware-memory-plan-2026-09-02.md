@@ -2,15 +2,22 @@
 
 **Historical checkpoint — 2026-09-02:** Architecture and delivery plan. The [first offline foundation](forma-memory-foundation-status-2026-09-02.md), [second isolated persistence slice](forma-memory-persistence-status-2026-09-02.md), and [third durable review-job slice](forma-memory-review-jobs-status-2026-09-02.md) have been implemented and tested in a separate worktree. Local synthetic storage, restart-safe job orchestration and recurrent extractive derivation are exercised; live source authority, semantic models, deployed scheduling and UI/assistant integration remain off. Shared publication is held during the specialist team's release freeze. The full plan is not implemented or deployed. Proposed defaults below are starting points for evaluation, not measurements or authorization to collect more data, retain it longer, or incur background provider costs.
 
-## Current reconciliation — 2026-09-17
+## Current reconciliation —2026-09-21
 
-The status paragraph above is the historical September 2 checkpoint, not current
-release status. Later native Memory foundations and privacy work were integrated;
-the current branch is synchronized with local main. See the [implementation
-reconciliation](forma-memory-implementation-2026-09-17.md) for current source
-boundaries and the [non-implementation checklist](forma-memory-nonimplementation-work-2026-09-17.md)
-for rollout/qualification work. **The full semantic, inferred-profile and nested-scope
-plan is not complete.** Track continuing work in [backlog MEM-001/MEM-002](backlog.md#memory).
+The September2 paragraph is historical. The [current completion matrix](forma-memory-completion-matrix-2026-09-20.md)
+records actual native callers and evidence through `f0ae8a12`: semantic summary/
+profile processing, nested and independently authorized broad scopes, all-interaction
+consumption, fields and resource suggestions, Assistant/Chat/Output use, automatic
+scope-profile publication and durable privacy/accounting. Final integrated local
+qualification is running; no current production deployment is claimed.
+
+The architecture and planned outcomes below remain intact. Live semantic index
+service integration and its genuine benchmark baseline need a selected service/
+provider contract; they remain explicit dependent implementation in the
+[Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md).
+Hosted qualification, budget/retention decisions, release acceptance and affirmative
+user enrollment remain in the [non-implementation checklist](forma-memory-nonimplementation-work-2026-09-17.md).
+The whole externally hosted system is not activated by native source completion.
 
 ## 1. Product outcome
 

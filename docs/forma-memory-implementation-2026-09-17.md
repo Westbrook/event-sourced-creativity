@@ -1,5 +1,7 @@
 # Forma Memory implementation reconciliation
 
+**Current status is in the [completion matrix](forma-memory-completion-matrix-2026-09-20.md).** The opening continuation and verification below preserve the historical September17/18 record.
+
 Updated **2026-09-17**. Scope: `codex/forma-memory-foundation`, synchronized with
 local `main` at `2face013e96a9796302ba9a5f44bef16706a1f79` by merge `c2ee60e`.
 There is no configured Git remote in this checkout. The merge retained the newer
@@ -50,27 +52,22 @@ The native benchmark routes and independent synthetic-payload cleanup are mounte
 
 ## Remaining source work
 
-These are **implementation dependencies**, not approvals or scheduling chores.
-The original [scope-aware plan](forma-scope-aware-memory-plan-2026-09-02.md) is
-larger than the already-published extractive Memory foundation.
+**Current source ledger:** [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
+The six native workstreams are implemented through `f0ae8a12`; final integrated
+qualification is running. This supersedes the September17 foundation-only table:
+semantic summaries, automatic scope profiles, native index intent retirement,
+project nesting, artifact/block/resource consumption and UI consumers are no
+longer merely detached foundations.
 
-| Area | Current boundary | Remaining implementation / dependency |
-| --- | --- | --- |
-| Structured conversation summaries | The guarded ledger now has a bounded genuine completed Chat Studio turn producer, gated by the explicit reference-only schema candidate. Captured references carry no inferred annotations and do not claim semantic completeness. | Broader assistant-turn sources, longer-history window/rebase, grounded semantic segment summaries, coverage/contradiction handling and a native budgeted derivation pipeline. Reference capture does not complete semantic summarization. |
-| Evolving profile | The live document profile represents explicit palette choices; it is not a general inferred profile. | Purpose-authorized inferred facets, supporting/contradicting evidence, correction/suppression, contextual differentiation and conservative generalization. Depend on qualified derivation and accepted scope/retention policy. |
-| Semantic recall/index lifecycle | Current recall is extractive and the deterministic hash embedding is a test-oriented representation, not a production semantic embedding. | Approved provider adapter in the live pipeline, chosen durable vector-store binding, partitioned hybrid retrieval, transactional outbox consumption, index readiness, invalidation/deletion acknowledgements and recovery. A synthetic benchmark adapter alone does not supply these. |
-| Nested projects and wider zoom | The synthetic scope model supports ancestry; native project ownership does not yet provide the required parent/reparent contract. | Native acyclic containment, bounded ancestry, canonical subresource identity, reparent invalidation and separate access-versus-relevance rules before hierarchical inference/recall. |
-| Rich consumption | The merge-ready continuation adds opt-in consumption v2 for native navigation and current retained personal artifact views, with independent source ordinals, original expiry ceilings and final certified replay. It is not yet published and is still excluded from assistant-origin/semantic derivation sources. | Governed/historical receipt and retained historical-body authority, durable assistant-origin dependency inverses, and block inspection/comparison/reuse episodes. There is still no genuine block-inspection producer. |
-| Learned suggestions/autocomplete | Existing intent/Re-entry features do not establish the new nightly learned-pattern pipeline. | Qualified changed-scope derivation, exposure/accept/reject feedback, lineage deduplication, rate/quality controls and native consumers. Do not translate clicks into aesthetic preference or comprehension. |
-| Benchmark extension | The isolated synthetic runner now has native self-payer accounting; it does not constitute a paired native Forma quality baseline or real-user Memory billing. | Add any approved wider payer scope and genuine native-baseline comparison. Reconcile claimed operations with missing usage only from a qualified original provider receipt; do not infer zero cost from missing content. |
-| Analytics and operations | Existing coarse analytics are separate from private Memory bodies. | Reconcile the final learned pipelines with minimized purpose-specific metrics and privacy-safe observability; implement any missing operator tooling once concrete runtime/provider contracts are selected. |
+The [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md#capabilities-not-available-directly-through-the-inspected-sites-tools)
+retains service-dependent code for the actual vector/embedding adapter, hybrid
+index retrieval/deletion and genuine candidate baseline once the service/provider
+contracts are fixed. It also tracks hosted delivery and migration qualification.
+No live index, provider benchmark, remote deletion receipt, monthly cap or
+production activation is claimed. Human review/rollout gates remain in the
+[non-implementation checklist](forma-memory-nonimplementation-work-2026-09-17.md).
 
-The [non-implementation checklist](forma-memory-nonimplementation-work-2026-09-17.md)
-is deliberately separate. No release, benchmark measurement, monthly-cap choice,
-real-user activation, supported hosted scheduling or whole-plan completion is
-asserted by this source reconciliation.
-
-## Verification
+## Historical September17 verification
 
 Using Node 24.16.0 and the existing installed dependencies in an isolated worktree:
 

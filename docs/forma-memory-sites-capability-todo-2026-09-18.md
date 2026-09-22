@@ -1,5 +1,15 @@
 # Memory: Sites implementation and external capability To Do
 
+## Current reconciliation —2026-09-21
+
+Native source is implemented through `f0ae8a12`; final whole-scope qualification
+is running in the [current completion matrix](forma-memory-completion-matrix-2026-09-20.md).
+All older slice descriptions below are historical checkpoints. They do not reopen
+work subsequently implemented in that matrix, nor claim it has been deployed.
+External-service-dependent adapter/baseline code remains explicitly tracked below;
+it is not renamed as non-implementation work.
+
+
 Updated 2026-09-18. Part of [MEM-002](backlog.md#memory), not a new or reduced plan.
 The [full implementation reconciliation](forma-memory-implementation-2026-09-17.md#remaining-source-work)
 and [operational gates](forma-memory-nonimplementation-work-2026-09-17.md) remain open.
@@ -70,19 +80,13 @@ Verification: 625 focused artifact/client/UI checks and 51 focused native runtim
 checks passed; typecheck and production build passed. These are local tests, not
 hosted provider, browser, scheduling or real-user qualification.
 
-## Sites-native code still to implement
+## Sites-native source status
 
-These are not external-service blockers and must not be moved into a rollout-only list.
-
-| Work | Concrete next step | Completion evidence |
-| --- | --- | --- |
-| Purpose grants / native accounting integration | Consent, source-bound native holds, payer-month caps, one-shot transport, settlement/recovery and manual UI are implemented; connect them to durable semantic processing | Real admission/accounting/recovery and privacy tests, no automatic enrollment |
-| Reliable changed-scope delivery | Reference jobs, leases and [bounded recovery](forma-memory-native-recovery-2026-09-18.md) are implemented. [Private result storage and source inverses](forma-memory-native-results-2026-09-18.md) are implemented. Atomic eligible-work completion cursors and bounded native worker are implemented; [Byte-aware new-job windows and capacity fairness](forma-memory-windows-artifacts-2026-09-18.md) are implemented; [legacy oversized-job subdivision](forma-memory-legacy-subdivision-2026-09-18.md) is implemented with financial no-repurchase guards; [bounded original-backed rolling refresh](forma-memory-rolling-history-2026-09-19.md) is implemented; finish longer-term reconciliation and index outbox acknowledgements | Cursor/publication atomicity, replay, backpressure, source invalidation and deletion acknowledgements |
-| Wider scope identities | Canonical certified personal/current artifact identities and lifecycle/custody retirement are implemented; finish real nested-project and page/block identities, bounded ancestry and reparent invalidation | Cycle, move, isolation and independent access-versus-relevance tests |
-| Broader source and consumption coverage | Certified personal/current artifact views now accompany genuine originals in derivation capture; [Independent Chat Studio derivation](forma-memory-chat-studio-derivation-2026-09-19.md) and its bounded rolling rebase are implemented; historical personal artifacts, document-local block/relationship revisions and [native approved-copy evidence](forma-memory-approved-reuse-2026-09-19.md) are implemented; [governed artifacts and actor-private v4 inspection](forma-memory-governed-artifact-consumption-2026-09-19.md) are implemented; [bounded cross-producer reconciliation](forma-memory-cross-producer-history-2026-09-19.md) is implemented; [genuine native document block inspection and v5 private consumption](forma-memory-block-inspection-2026-09-19.md) are implemented; finish longer-term/cross-scope reconciliation, library/canvas and unsupported block-field histories, and independent cross-scope source recall | Exact source/body/lifetime/custody proofs; do not infer preference or comprehension from a click |
-| Semantic/profile and suggestion callers | Citation parsing, provider adapter, [fresh read-only evidence](forma-memory-native-read-evidence-2026-09-18.md) and [complete-input manifests/publication receipts](forma-memory-native-manifests-2026-09-18.md) are implemented. [Result storage](forma-memory-native-results-2026-09-18.md) retains complete dependencies and privacy inverses; cross-job corrections/suppression and manual review are implemented; [automatic document-local briefs](forma-memory-document-brief-2026-09-19.md) implement correction-prioritized summary/profile/suggestion presentation and [v2 behavioral evidence](forma-memory-behavioral-evidence-2026-09-19.md) is integrated. Automatic assistant prompts, autocomplete, acceptance/rejection/undo provenance and broader reconciliation remain | Local adapter tests can proceed before external qualification; actual provider/index integration stays gated |
-| Runtime observability | Scoped derivation counts, completion and uncertain-usage snapshots are implemented; finish index freshness/deletion status as that pipeline becomes real | Native measurements and failure drills; no text/vector payloads in general analytics |
-| Pending migration integration | Assign candidates only after review, matching ORM/snapshot generation and qualified execution path | Append-only history, full rollback/row preservation and exact reader compatibility |
+The six workstreams in the [current matrix](forma-memory-completion-matrix-2026-09-20.md#native-implementation-by-workstream)
+now contain actual callers, native durability/privacy/accounting and local tests.
+Final integrated qualification is still being run in this task. Do not use the
+historical foundation descriptions to infer missing native pipeline work, and do
+not equate local verification with hosted service readiness.
 
 ## Capabilities not available directly through the inspected Sites tools
 
@@ -95,12 +99,12 @@ its omission here is not proof that no schedules exist.
 
 | External / unqualified work | Tracked next action | Gate / owner |
 | --- | --- | --- |
-| PostgreSQL/pgvector service | Select/provision the retained PostgreSQL direction, with an authenticated Sites-compatible HTTP adapter, scoped partitions and deletion/reindex contract | Service owner unassigned; keep vectors with Forma user data; do not silently substitute D1 |
+| PostgreSQL/pgvector service and dependent adapter implementation | Select/provision the retained PostgreSQL direction and fix the authenticated HTTP contract; then implement/qualify native embedding dispatch, partitioned hybrid queries, fenced upsert/deletion acknowledgements and restore/reindex/compaction against that actual contract. Native intents are already implemented; remote success is not. | Service owner unassigned; keep vectors with Forma user data; do not silently substitute D1 |
 | Hosted invocation registration | User is arranging scheduling; identify supported Sites scheduling or an approved external scheduler and authenticated delivery | Isolated capacity, duplicates/missed runs, concurrency, timezone, recovery and no-visitor privacy cleanup qualification before enrollment |
 | Durable external delivery, if required | Determine whether existing D1 leases suffice at measured load; otherwise qualify a queue/workflow adapter | No unrequested service provisioning or spend; preserve original IDs and uncertain outcomes |
 | Hosted conversation rebuild | Qualify an executor that applies all 30 candidate statements in one atomic transaction/batch and preserves exact rows/schema | Local SQLite/workerd success does not qualify the hosted tool; never execute chunks as independent commits |
 | Provider/model qualification | Verify access, current pricing, retention/residency and original usage receipts for the existing approved credential | No key rotation/re-request or synthetic approval records; real provider calls remain gated |
-| Benchmark and monthly cap | Run the approved isolated experiment only after native/provider qualification; use measured usefulness and cost | AI allowance for now; one-time $10 ceiling is not the monthly cap; user approves measured cap |
+| Candidate comparison and monthly cap | Finish a genuine deployed-candidate baseline harness once the selected index/provider recipe is fixed; retain the current synthetic-only benchmark as a separate experiment. Run only after native/provider qualification and use measured usefulness and cost. This row includes dependent integration code, not only a measurement task. | AI allowance for now; one-time $10 ceiling is not the monthly cap; user approves measured cap |
 | Operations and user acceptance | Name an operations owner, qualify restore/erase and browser/device behavior, then collect each user's affirmative enrollment | No real-user enrollment inferred from publication or site use |
 
 ## Release boundary and verification

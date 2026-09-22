@@ -1,6 +1,6 @@
 # Forma Memory: remaining non-implementation work
 
-Updated **2026-09-18**. Backlog entry: [MEM-001](backlog.md#memory).
+Updated **2026-09-21**. Backlog entry: [MEM-001](backlog.md#memory).
 
 September 18 release continuation: see [completion and release status](forma-memory-release-2026-09-18.md).
 The Memory task pushed the integrated implementation to remote `main` and published
@@ -18,6 +18,22 @@ See the [Sites capability and implementation To Do](forma-memory-sites-capabilit
 for the current checkpoint/status/tooling continuation and separately tracked
 external services. This does not close the semantic system or rollout gates.
 
+## Current candidate, distinct from the earlier release
+
+The local candidate through `f0ae8a12` has implemented the six native workstreams;
+final integrated qualification is running in the [completion matrix](forma-memory-completion-matrix-2026-09-20.md).
+Production435 above is a historical foundation release, **not this candidate**.
+No current merge to main, remote push or deployment is claimed.
+
+The [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md#capabilities-not-available-directly-through-the-inspected-sites-tools)
+keeps remaining **service-dependent implementation** (the real index/embedding
+adapter and genuine candidate comparison once their contracts are fixed) separate
+from this operational checklist. Neither source stubs nor invented qualification
+receipts may close those dependencies. An owner must review the exact migration
+history: some historical Memory migrations replace guarded triggers and the
+conversation-capture candidate requires atomic execution; do not call the entire
+migration set purely additive merely because0073 is additive.
+
 ## Decisions already made
 
 The user approved storing Memory with their other Forma data, charging its
@@ -34,7 +50,7 @@ credential's presence is not model access, price verification or spend approval.
 
 | Gate | Next action | Evidence needed to close | Owner |
 | --- | --- | --- | --- |
-| Release review and integration | The default-disabled source release is shipped through production 435; see the exact receipt. Remaining: owner/human acceptance, future migration review, qualified rollback and later pipeline releases. The older specialist production task remains archived. | Publication/source receipt is recorded; it does not close future schema, qualification, acceptance or operations gates. | Memory task delivered this release; ongoing operations unassigned |
+| Release review and integration | Production435 is the earlier default-disabled foundation. Review and integrate the current local candidate, exact migration chain and rollback plan; the later implementation is not deployed. The older specialist production task remains archived. | Publication/source receipt is recorded; it does not close future schema, qualification, acceptance or operations gates. | Memory task delivered this release; ongoing operations unassigned |
 | Hosted scheduling qualification | Qualify the supported independent scheduler/runtime using isolated accounts/data before registering production delivery. | No-visitor invocation, timezone/activity gating, concurrency/capacity limits, duplicate and missed delivery, lease expiry, loss of ACK, restart and backpressure evidence. Privacy/expiry maintenance must run even without human activity. | Unassigned; user is arranging scheduling |
 | Hosted storage/privacy qualification | Rehearse the exact schema and bounded SQL on the selected host, with isolated data and real access transitions. | Atomicity and statement/binding limits; revoke/remove/expire/erase, concurrent publication, retained-content withdrawal, recovery and backup/restore checks; no false erasure success. Qualify larger retention limits separately rather than assuming the earlier 257-item boundary passed. | Unassigned |
 | Provider qualification | Verify the selected models, current pricing, account access, residency/retention and bounded usage reporting for the exact candidate source. | Reviewable dated evidence bound to model/pricing versions, exact plan and source digest, origin and validity period. Do not fabricate qualification records merely to enable a route. | Unassigned |
