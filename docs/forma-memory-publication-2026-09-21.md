@@ -50,7 +50,9 @@ entire source `drizzle/` directory over the built migration manifest.** Do not u
 remote-build fallback unless its handling of this hold is qualified. Always push
 the exact built source before saving the artifact and deploy only that saved version.
 
-Local validation:104 migration/schema checks, TypeScript, explicit non-ignored
+Local validation:104 migration/schema checks and three synthetic partial-schema
+smoke cases pass (ordinary session/assistant stay available, Memory stays off,
+no enrollment/provider call). TypeScript, explicit non-ignored
 changed-file lint, and production build pass. Runtime/frontend source remains the
 candidate already covered by2,942 native tests,2,351 Memory checks and116 browser
 journeys. Counts overlap. These results do not qualify the hosted migration executor.

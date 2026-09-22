@@ -20799,3 +20799,12 @@ for(const late of [false,true])test('Memory image schema: accepted custody read 
  assert.equal(await media.readGeneratedImageReference(state.env,owner,accepted.mediaUrl),null);if(late)assert.equal(hit,true);
  const body=state.sqlite.prepare("SELECT content,redacted_at FROM private_content WHERE kind='authored-memory-image'").get();assert.equal(body.redacted_at,null);assert.equal(JSON.parse(body.content).image.sha256,v.result.image.sha256,'Protection loss denies disclosure without erasing accepted work');assert.equal(state.imageCalls.length,2);
 });
+
+for(const partial of ['grants','reference-tables','reference-complete'])test('native disabled release: partial hosted schema cannot activate Memory '+partial,async t=>{
+ const state=await fixture(),{readFile}=await import('node:fs/promises');let providerCalls=0;t.mock.method(globalThis,'fetch',async()=>{providerCalls++;throw Error('No external request allowed');});
+ for(const file of ['0025_memory_live_base.sql','0026_memory_live_conversation.sql','0043_memory_derivation_purpose_grants.sql'])state.sqlite.exec(await readFile(new URL('../drizzle/'+file,import.meta.url),'utf8'));
+ if(partial!=='grants'){const parts=(await readFile(new URL('../drizzle/0044_memory_derivation_reference_jobs.sql',import.meta.url),'utf8')).split('--> statement-breakpoint');state.sqlite.exec((partial==='reference-tables'?parts.slice(0,9):parts).join('\n'));}
+ assert.equal((await state.request('/api/session')).status,200);const assistant=await state.request(endpoint());assert.equal(assistant.status,200,await assistant.clone().text());
+ const settings=await state.request('/api/memory/settings'),view=await settings.json();if(settings.status===200){assert.equal(view.enabled,false);assert.deepEqual(view.enrollments,[]);}else {assert.equal(settings.status,503);assert.equal(view.error,'memory_schema_unavailable');}
+ const enroll=await state.request('/api/memory/settings',{...json({confirmation:'ENABLE_PERSONAL_MEMORY'}),method:'PUT'});assert.ok(enroll.status>=400);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_derivation_grants').get().n,0);assert.equal(state.sqlite.prepare('SELECT COUNT(*) n FROM memory_live_enrollments').get().n,0);assert.equal(providerCalls,0);
+});
