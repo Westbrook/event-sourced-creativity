@@ -1,0 +1,10 @@
+{
+  "gate": "typecheck",
+  "exit": 0,
+  "seconds": 36.0,
+  "command": [
+    "node",
+    "node_modules/typescript/bin/tsc",
+    "--noEmit"
+  ]
+}

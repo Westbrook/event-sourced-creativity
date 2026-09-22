@@ -1,0 +1,9 @@
+{
+  "gate": "studySchema",
+  "exit": 0,
+  "seconds": 0.08,
+  "command": [
+    "node",
+    "evals/generation-reliability/native-host/check-schema.mjs"
+  ]
+}

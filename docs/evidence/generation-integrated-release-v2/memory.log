@@ -1,0 +1,72 @@
+✔ private Memory image: approved native preview remains private and retires false (1381.64325ms)
+✔ private Memory image: approved native preview remains private and retires true (1333.688084ms)
+✔ private Memory image: withdrawal during image settles verified usage without publication false (974.804958ms)
+✔ private Memory image: withdrawal during image settles verified usage without publication true (1069.310833ms)
+✔ private Memory image: actual D1 preview and metadata-only maintenance false (3666.708917ms)
+ℹ {"shared":false,"quoteCalls":38,"executeCalls":41,"executeStatements":283}
+✔ private Memory image: actual D1 preview and metadata-only maintenance true (4205.793583ms)
+ℹ {"shared":true,"quoteCalls":39,"executeCalls":43,"executeStatements":302}
+✔ private Memory image: failure boundary wrong-approval (914.838666ms)
+✔ private Memory image: failure boundary source-withdrawn (906.493042ms)
+✔ private Memory image: failure boundary malformed-moderation (940.081875ms)
+✔ private Memory image: failure boundary moderation-withdrawal (947.498084ms)
+✔ private Memory image: failure boundary provider-rejection (1103.216375ms)
+✔ private Memory image: failure boundary invalid-image (1172.343292ms)
+✔ private Memory image: failure boundary unknown-usage (1139.234625ms)
+✔ private Memory image: durable receipt and interrupted accounting resume (1091.723375ms)
+✔ private Memory image: durable receipt and interrupted accounting withdraw-maintenance (994.245083ms)
+✔ private Memory image: late native source race quote (895.668375ms)
+✔ private Memory image: late native source race dispatch (1074.923875ms)
+✔ private Memory image: late native source race receipt (1090.805917ms)
+✔ private Memory image: late native source race result (1182.885583ms)
+✔ private Memory image: lost publication acknowledgement never repurchases receipt (1506.344042ms)
+✔ private Memory image: lost publication acknowledgement never repurchases result (1600.376333ms)
+✔ private Memory image: restored private body without source cannot resurrect a preview (1447.748708ms)
+✔ private Memory image: long response replays current native authority without extending the browser lease (1381.728208ms)
+ℹ {"longResponseCalls":44,"freshReviewCalls":30}
+✔ private Memory image: changed provider configuration after safety review blocks dispatch provider-off (1213.185792ms)
+✔ private Memory image: changed provider configuration after safety review blocks dispatch model (1172.074417ms)
+✔ private Memory image: changed provider configuration after safety review blocks dispatch image-provider (1283.71825ms)
+✔ private Memory image: real elapsed shared D1 response needs a separate current review (36818.859708ms)
+ℹ {"executeCalls":46,"resumeCalls":30}
+✔ private Memory image: browser disconnect after dispatch does not lose accounting false (1134.771834ms)
+✔ private Memory image: browser disconnect after dispatch does not lose accounting true (1002.58275ms)
+✔ private Memory image: maximum aggregate current-source integration false (7148.568208ms)
+ℹ {"shared":false,"quote":42,"execute":45,"adopt":39,"recovery":10}
+✔ private Memory image: maximum aggregate current-source integration true (7695.260583ms)
+ℹ {"shared":true,"quote":43,"execute":47,"adopt":45,"recovery":9}
+✔ private Memory image: delayed receipt revalidates context-change (991.272084ms)
+✔ private Memory image: delayed receipt revalidates withdrawal (988.324167ms)
+✔ private Memory image: delayed receipt revalidates authority (1019.786667ms)
+✔ private Memory image: delayed receipt revalidates configuration (1084.813208ms)
+✔ private Memory image: fixed server processing deadline 90000 (4384.614542ms)
+ℹ {"milliseconds":90000,"calls":46}
+✔ private Memory image: fixed server processing deadline 125000 (3601.945417ms)
+ℹ {"milliseconds":125000,"calls":43}
+✔ private Memory image: maximum aggregate cold delayed invocation (6508.56075ms)
+ℹ {"calls":50}
+✔ private Memory image: serialization cannot extend the browser lease (1068.469167ms)
+✔ private Memory image: late managed-pilot exclusion false/claim (898.509208ms)
+✔ private Memory image: late managed-pilot exclusion false/dispatch (937.740584ms)
+✔ private Memory image: late managed-pilot exclusion false/receipt (975.154916ms)
+✔ private Memory image: late managed-pilot exclusion true/claim (978.087667ms)
+✔ private Memory image: late managed-pilot exclusion true/dispatch (1011.030709ms)
+✔ private Memory image: late managed-pilot exclusion true/receipt (1097.198792ms)
+✔ private Memory image: canonical task identity missing (854.361459ms)
+✔ private Memory image: canonical task identity scope (865.777792ms)
+✔ private Memory image: canonical task identity binding (869.024791ms)
+✔ E2 private Memory native journey: custody-outage (1287.036875ms)
+✔ E2 private Memory native journey: malformed (1231.496459ms)
+✔ E2 private Memory native journey: duplicate-key (1198.72675ms)
+✔ E2 private Memory native journey: oversized (1381.18125ms)
+✔ E2 private Memory native journey: missing-usage (1418.28625ms)
+✔ E2 private Memory native journey: multiple-images (1422.912416ms)
+✔ E2 private Memory native journey: moderation-refusal (1190.551792ms)
+ℹ tests 55
+ℹ suites 0
+ℹ pass 55
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 127547.702333

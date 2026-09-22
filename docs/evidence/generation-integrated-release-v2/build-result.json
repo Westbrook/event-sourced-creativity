@@ -1,0 +1,10 @@
+{
+  "gate": "build",
+  "exit": 0,
+  "seconds": 10.07,
+  "command": [
+    "npm",
+    "run",
+    "build"
+  ]
+}
