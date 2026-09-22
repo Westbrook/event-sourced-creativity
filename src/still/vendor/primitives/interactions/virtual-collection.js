@@ -1,3 +1,4 @@
+const isElementNode = (node) => !!node && node.nodeType === 1;
 import { reaction } from 'signal-utils/subtle/reaction';
 import { beginScrollIntoView, normalizeScrollOptions } from './scroll-into-view.js';
 /**
@@ -12,6 +13,8 @@ export class VirtualCollectionController {
     #viewport = null;
     #content = null;
     #window = null;
+    #scrollTarget = null;
+    #anchorActive = false;
     #observer;
     #stop;
     #frame = 0;
@@ -147,7 +150,8 @@ export class VirtualCollectionController {
         this.#window = viewport.ownerDocument.defaultView;
         this.#anchorStyle = { value: viewport.style.getPropertyValue('overflow-anchor'), priority: viewport.style.getPropertyPriority('overflow-anchor') };
         viewport.style.setProperty('overflow-anchor', 'none');
-        viewport.addEventListener('scroll', this.#scroll, { passive: true });
+        this.#scrollTarget = this.#documentViewport ? viewport.ownerDocument : viewport;
+        this.#scrollTarget.addEventListener('scroll', this.#scroll, { passive: true });
         viewport.addEventListener('wheel', this.#cancelReveal, { passive: true });
         viewport.addEventListener('touchstart', this.#cancelReveal, { passive: true });
         viewport.addEventListener('pointerdown', this.#cancelReveal, { passive: true });
@@ -183,7 +187,8 @@ export class VirtualCollectionController {
         this.#frame = 0;
         this.#observer?.disconnect();
         this.#observer = undefined;
-        this.#viewport?.removeEventListener('scroll', this.#scroll);
+        this.#scrollTarget?.removeEventListener('scroll', this.#scroll);
+        this.#scrollTarget = null;
         this.#viewport?.removeEventListener('wheel', this.#cancelReveal);
         this.#viewport?.removeEventListener('touchstart', this.#cancelReveal);
         this.#viewport?.removeEventListener('pointerdown', this.#cancelReveal);
@@ -216,6 +221,7 @@ export class VirtualCollectionController {
         this.#userScrolled = false;
         this.#expectedScrollTop = undefined;
         this.#pendingAnchor = undefined;
+        this.#anchorActive = false;
     }
     #syncRows() {
         if (!this.#content)
@@ -268,15 +274,15 @@ export class VirtualCollectionController {
         this.#syncRows();
         const viewport = this.#viewport;
         const content = this.#content;
-        if (!viewport || !content || viewport.clientHeight === 0)
+        if (!viewport || !content || this.#viewportHeight === 0)
             return;
         const rect = content.getBoundingClientRect();
-        const viewportRect = viewport.getBoundingClientRect();
-        const origin = rect.top - viewportRect.top - viewport.clientTop + viewport.scrollTop;
+        const viewportRect = this.#viewportBounds();
+        const origin = rect.top - viewportRect.top - this.#viewportBorder + this.#scrollOffset;
         const inset = Math.max(0, this.#options.occludedBlockStart?.() ?? 0);
         const visibleOrigin = origin - inset;
         const endInset = Math.max(0, this.#options.occludedBlockEnd?.() ?? 0);
-        const height = Math.max(0, viewport.clientHeight - inset - endInset);
+        const height = Math.max(0, this.#viewportHeight - inset - endInset);
         if (this.#scrollRequest && this.model.indexOf(this.#scrollRequest.key) !== this.#scrollRequest.index)
             this.#finishReveal(true);
         const nativeScrolling = this.#scrollRequest?.phase === 'scrolling';
@@ -284,7 +290,7 @@ export class VirtualCollectionController {
             // Follow the native animation's real position. Changing scrollTop or
             // measured prefix geometry here would interrupt its captured target.
             this.#userScrolled = false;
-            this.model.setViewport(Math.max(0, viewport.scrollTop - origin + inset), height);
+            this.model.setViewport(Math.max(0, this.#scrollOffset - origin + inset), height);
             this.#lastAnchor = this.model.anchorOffset;
             this.#lastOrigin = visibleOrigin;
             return;
@@ -295,16 +301,18 @@ export class VirtualCollectionController {
         // Header/padding geometry can move the collection's origin without a
         // scroll input. Preserve the old visible record's pixel position before
         // translating the scrollport into collection coordinates.
-        if (!this.#userScrolled && this.#lastOrigin !== undefined && Math.abs(visibleOrigin - this.#lastOrigin) > 0.5) {
-            this.#writeScroll(Math.max(0, viewport.scrollTop + visibleOrigin - this.#lastOrigin));
+        if ((!this.#documentViewport || this.#anchorActive) && !this.#userScrolled && this.#lastOrigin !== undefined && Math.abs(visibleOrigin - this.#lastOrigin) > 0.5) {
+            this.#writeScroll(Math.max(0, this.#scrollOffset + visibleOrigin - this.#lastOrigin));
         }
         // setItems()/measurements preserve a key anchor in the pure model. Apply that
         // correction before accepting a new viewport; genuine scroll input takes priority.
-        if (!this.#userScrolled && this.#lastAnchor !== undefined && this.model.anchorOffset !== this.#lastAnchor) {
+        if ((!this.#documentViewport || this.#anchorActive) && !this.#userScrolled && this.#lastAnchor !== undefined && this.model.anchorOffset !== this.#lastAnchor) {
             this.#writeScroll(Math.max(0, origin + this.model.anchorOffset - inset));
         }
         this.#userScrolled = false;
-        this.model.setViewport(this.#pendingAnchor ?? Math.max(0, viewport.scrollTop - origin + inset), height);
+        this.model.setViewport(this.#pendingAnchor ?? Math.max(0, this.#scrollOffset - origin + inset), height);
+        const collectionOffset = this.#scrollOffset - origin + inset;
+        this.#anchorActive = collectionOffset >= 0 && collectionOffset < this.model.totalSize;
         const beforeMeasurement = this.model.anchorOffset;
         let presentationAnchor;
         if (widthChanged || this.#invalidated) {
@@ -339,7 +347,7 @@ export class VirtualCollectionController {
             }
             this.unpin(interrupted.key);
         }
-        if (this.model.anchorOffset !== beforeMeasurement && this.#scrollRequest?.phase !== 'settle') {
+        if ((!this.#documentViewport || this.#anchorActive) && this.model.anchorOffset !== beforeMeasurement && this.#scrollRequest?.phase !== 'settle') {
             // A larger total extent is not in the DOM until Lit commits the new
             // spacers. Retry then; writing only now can clamp against the old extent.
             this.#pendingAnchor = this.model.anchorOffset;
@@ -426,7 +434,7 @@ export class VirtualCollectionController {
             request.cleanup = undefined;
             request.stopNative = undefined;
             const target = this.#rows.get(request.key);
-            const bounds = viewport.getBoundingClientRect();
+            const bounds = this.#viewportBounds();
             const position = target?.getBoundingClientRect();
             // A programmatic scroll that interrupts native motion far from the
             // target owns that new position too; do not restart an old reveal.
@@ -477,7 +485,7 @@ export class VirtualCollectionController {
             // An interrupted native animation can queue a final scroll event.
             // Attribute that position to our stop, not to a user superseding the
             // newer request that may be created before the event is delivered.
-            this.#expectedScrollTop = this.#viewport?.scrollTop;
+            this.#expectedScrollTop = this.#scrollOffset;
             if (restorePosition)
                 this.#completeNativeStop(finishStop, anchor);
         }
@@ -487,8 +495,8 @@ export class VirtualCollectionController {
     #captureVisibleAnchor() {
         if (!this.#viewport)
             return undefined;
-        const bounds = this.#viewport.getBoundingClientRect();
-        const top = bounds.top + this.#viewport.clientTop + Math.max(0, this.#options.occludedBlockStart?.() ?? 0);
+        const bounds = this.#viewportBounds();
+        const top = bounds.top + this.#viewportBorder + Math.max(0, this.#options.occludedBlockStart?.() ?? 0);
         for (const [key, row] of this.#rows) {
             const rect = row.getBoundingClientRect();
             if (rect.bottom > top && rect.top < bounds.bottom)
@@ -499,8 +507,8 @@ export class VirtualCollectionController {
         // a precise position; retain its logical key instead of adopting the
         // first row that happens to mount during cancellation/measurement.
         if (this.#content && this.model.count > 0) {
-            const origin = this.#content.getBoundingClientRect().top - bounds.top - this.#viewport.clientTop + this.#viewport.scrollTop;
-            const offset = Math.max(0, this.#viewport.scrollTop - origin + Math.max(0, this.#options.occludedBlockStart?.() ?? 0));
+            const origin = this.#content.getBoundingClientRect().top - bounds.top - this.#viewportBorder + this.#scrollOffset;
+            const offset = Math.max(0, this.#scrollOffset - origin + Math.max(0, this.#options.occludedBlockStart?.() ?? 0));
             let low = 0;
             let high = this.model.count;
             while (low < high) {
@@ -542,7 +550,7 @@ export class VirtualCollectionController {
             // synchronous stop. Complete the stop at a frame boundary, unless
             // subsequent scrolling input has already taken ownership.
             finishStop();
-            this.#expectedScrollTop = this.#viewport?.scrollTop;
+            this.#expectedScrollTop = this.#scrollOffset;
             this.#userScrolled = false;
             this.#stopCorrection = undefined;
             correction.cleanup();
@@ -567,26 +575,36 @@ export class VirtualCollectionController {
     #isScrollingInput(event) {
         return event.type !== 'keydown' || ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Tab'].includes(event.key);
     }
+    /** Root element bounds move with the document; the actual scrollport stays at (0, 0). */
+    get #documentViewport() { return !!this.#viewport && this.#viewport === this.#viewport.ownerDocument.scrollingElement; }
+    get #scrollOffset() { return this.#documentViewport ? this.#window?.scrollY ?? 0 : this.#viewport?.scrollTop ?? 0; }
+    get #viewportHeight() { return this.#documentViewport ? this.#viewport.ownerDocument.documentElement.clientHeight : this.#viewport?.clientHeight ?? 0; }
+    get #viewportBorder() { return this.#documentViewport ? 0 : this.#viewport?.clientTop ?? 0; }
+    #viewportBounds() {
+        return this.#documentViewport ? { top: 0, bottom: this.#viewportHeight, height: this.#viewportHeight } : this.#viewport.getBoundingClientRect();
+    }
     #writeScroll(value) {
         if (!this.#viewport)
             return;
-        this.#viewport.scrollTo({ top: value, behavior: 'instant' });
-        this.#expectedScrollTop = this.#viewport.scrollTop;
+        if (this.#documentViewport)
+            this.#window?.scrollTo({ top: value, behavior: 'instant' });
+        else
+            this.#viewport.scrollTo({ top: value, behavior: 'instant' });
+        this.#expectedScrollTop = this.#scrollOffset;
     }
     #applyPendingAnchor() {
         if (this.#pendingAnchor === undefined || !this.#viewport || !this.#content || this.#userScrolled || this.#stopCorrection || this.#scrollRequest?.phase === 'scrolling')
             return;
-        const viewport = this.#viewport;
-        const origin = this.#content.getBoundingClientRect().top - viewport.getBoundingClientRect().top - viewport.clientTop + viewport.scrollTop;
+        const origin = this.#content.getBoundingClientRect().top - this.#viewportBounds().top - this.#viewportBorder + this.#scrollOffset;
         const target = Math.max(0, origin + this.#pendingAnchor - Math.max(0, this.#options.occludedBlockStart?.() ?? 0));
         this.#writeScroll(target);
-        if (Math.abs(viewport.scrollTop - target) < 1)
+        if (Math.abs(this.#scrollOffset - target) < 1)
             this.#pendingAnchor = undefined;
     }
     #scroll = () => {
         if (this.#stopCorrection)
             return;
-        const actual = this.#viewport?.scrollTop;
+        const actual = this.#scrollOffset;
         if (actual !== undefined && (this.#expectedScrollTop === undefined || Math.abs(actual - this.#expectedScrollTop) > 1)) {
             this.#userScrolled = true;
             this.#pendingAnchor = undefined;
@@ -600,11 +618,10 @@ export class VirtualCollectionController {
             // behind; a distant reveal can cross thousands of rows in that frame.
             // Publish the bounded visible range now so Lit commits in the event's
             // microtask checkpoint, without changing native scroll or measurements.
-            const viewport = this.#viewport;
-            const origin = this.#content.getBoundingClientRect().top - viewport.getBoundingClientRect().top - viewport.clientTop + viewport.scrollTop;
+            const origin = this.#content.getBoundingClientRect().top - this.#viewportBounds().top - this.#viewportBorder + this.#scrollOffset;
             const start = Math.max(0, this.#options.occludedBlockStart?.() ?? 0);
             const end = Math.max(0, this.#options.occludedBlockEnd?.() ?? 0);
-            this.model.setViewport(Math.max(0, viewport.scrollTop - origin + start), Math.max(0, viewport.clientHeight - start - end));
+            this.model.setViewport(Math.max(0, this.#scrollOffset - origin + start), Math.max(0, this.#viewportHeight - start - end));
             this.#host.requestUpdate();
         }
         this.#schedule();
@@ -620,8 +637,8 @@ export class VirtualCollectionController {
         this.#focusTransitionPending = false;
         const origin = event.composedPath()[0];
         const row = this.#options.rowFor
-            ? this.#rowFor(origin instanceof Element ? origin : null)
-            : event.composedPath().find(node => node instanceof Element && node.parentElement === this.#content && node.hasAttribute('data-en-virtual-key'));
+            ? this.#rowFor(isElementNode(origin) ? origin : null)
+            : event.composedPath().find(node => isElementNode(node) && node.parentElement === this.#content && node.hasAttribute('data-en-virtual-key'));
         this.#setFocusedKey(row?.getAttribute('data-en-virtual-key') ?? undefined);
     };
     #focusout = () => {
