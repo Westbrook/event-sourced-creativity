@@ -5,7 +5,7 @@ still-app button { font: inherit; color: inherit; }
 still-app button { cursor: pointer; }
 still-app a.work-row, still-app a.result, still-app a.context-block { color: inherit; text-decoration: none; }
 still-app button:focus-visible, still-app a:focus-visible { outline: 2px solid var(--en-color-focus); outline-offset: 6px; }
-still-app .still-shell { display: flex; flex-direction: column; min-height: 100dvh; padding: 0 48px max(148px, var(--dock-height, 148px)); }
+still-app .still-shell { --shell-gutter: 48px; display: flex; flex-direction: column; min-height: 100dvh; padding: 0 var(--shell-gutter); }
 still-app .masthead { position: sticky; top: 0; z-index: 6; flex: none; height: 104px; display: flex; align-items: center; gap: 20px; pointer-events: none; }
 still-app .header-stamp { background: var(--en-color-canvas); border: 0; border-radius: 3px; box-shadow: none; pointer-events: auto; }
 still-app[data-header-scrolled] .header-stamp { box-shadow: 0 0 6px var(--still-shadow); }
@@ -117,7 +117,7 @@ still-app still-model-view canvas { display: block; width: 100%; height: 100%; t
 still-app .progress-return { display: inline-flex; align-items: center; gap: 4px; --en-icon-size: 1em; position: fixed; left: 12px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 10; font-size: 10px; padding: 7px 9px; background: var(--en-color-canvas); color: var(--en-color-text-muted); border: 1px solid var(--en-color-line); border-radius: 20px; text-decoration: none; }
 @keyframes still-pulse { 50% { opacity: .3; } }
 @media (max-width: 720px) {
-  still-app .still-shell { padding: 0 23px max(180px, var(--dock-height, 180px)); }
+  still-app .still-shell { --shell-gutter: 23px; }
   still-app .masthead { height: 80px; gap: 20px; }
   still-app .wordmark { height: 56px; font-size: 30px; }
   still-app .location-label { margin-left: auto; font-size: 11px; }
@@ -168,7 +168,7 @@ still-app en-button[data-action-id="ui:more"] { margin-inline-start:7px; }
 /* Developer inspection shares the viewport without covering creative work. */
 still-app .still-layout { min-width: 0; }
 still-app .still-layout.has-developer { --developer-width: clamp(360px, 38vw, 560px); display: grid; grid-template-columns: minmax(0, 1fr) var(--developer-width); align-items: start; }
-still-app .has-developer .still-shell { min-width: 0; padding-inline: 32px; }
+still-app .has-developer .still-shell { --shell-gutter: 32px; min-width: 0; }
 still-app .developer-panel { position: sticky; top: 0; height: 100dvh; min-width: 0; overflow: auto; overscroll-behavior: contain; border-left: 1px solid var(--en-color-line); background: var(--en-color-canvas); }
 still-app .has-developer .action-dock { right: var(--developer-width); padding-inline: 16px; }
 still-app .has-developer en-toolbar::part(base) { justify-content: center; }
@@ -191,10 +191,9 @@ still-app .palette-result[aria-selected="true"], still-app .palette-result:hover
 still-app .palette-find { border-top: 1px solid var(--en-color-line); margin-top: 8px; }
 still-app .palette-hint { color: var(--en-color-text-muted); font-size: 12px; }
 
-/* A quiet notification line shares the toolbar's fixed, measured footprint. */
-still-app .dock-stack { position: fixed; z-index: 5; bottom: 0; left: 0; right: 0; padding: 36px 24px max(25px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--en-color-canvas) 24%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+/* The sticky stack reserves its own height; negative gutters retain full toolbar width. */
+still-app .dock-stack { position: sticky; flex: none; z-index: 5; bottom: 0; margin-inline: calc(-1 * var(--shell-gutter)); padding: 36px 24px max(25px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--en-color-canvas) 24%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
 still-app .dock-stack > .action-dock { position: static; width: 100%; padding: 0; background: none; }
-still-app .has-developer .dock-stack { right: var(--developer-width); }
 still-app .generation-notifications { width: min(100%, 36rem); --en-toast-region-max-size: min(45dvh, 24rem); --en-toast-region-gap: 4px; }
 still-app .generation-notifications:not(:has(en-toast)) { display: none; }
 still-app .generation-notifications::part(region) { justify-items: center; scrollbar-gutter: auto; padding: 6px; }
@@ -216,7 +215,6 @@ still-app .notification-detail { order: -1; flex: 1 0 100%; min-width: 0; margin
 still-app .notification-detail[hidden] { display: none; }
 still-app .notification-detail-actions { display: flex; justify-content: end; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 still-app .notification-detail-actions:empty { display: none; }
-@media(max-width: 1023px) { still-app .has-developer .dock-stack { right: 0; } }
 @media(max-width: 600px) { still-app .dock-stack { padding-inline: 12px; padding-bottom: max(20px, env(safe-area-inset-bottom)); } }
 
 
