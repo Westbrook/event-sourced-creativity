@@ -25,7 +25,7 @@ test('artifact and image receipts resolve exact results, never the most recent u
  assert.equal(generationResult(job({result:{artifactId:'foreign'}}),projection,[]),'');
  projection.outputs=[{id:'i',documentId:'d',sourceEventId:'e',sequence:3}];
  assert.equal(generationResult(job({result:{appendedEventIds:['e']}}),projection,[{eventId:'e',payload:{}}]),'i');
- assert.equal(stillResults(projection,[job({status:'failed',dismissedAt:'now'})],[]).length,2);
+ assert.equal(stillResults(projection,[job({status:'failed',dismissedAt:'now'})],[]).length,3);
 });
 for(const shared of [false,true])test(`pending deep links hydrate through the authorized job API (${shared?'shared':'personal'})`,async()=>{
  const f=await createSceneCostFixture(1,'visual',{shared}),saved=globalThis.fetch;

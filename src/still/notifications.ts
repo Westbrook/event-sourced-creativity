@@ -1,3 +1,4 @@
+import { generationOutcome } from './generation-outcome.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
 import type { GenerationReview } from './generation-review.ts';
 
@@ -6,7 +7,7 @@ export function failureNotification(job: DocumentJob) {
   const edit = job.errorDetail?.category === 'safety' || job.errorDetail?.action === 'edit_request';
   return {
     key: `${job.jobId}:${job.attemptCount}:${job.errorDetail?.code ?? job.error ?? 'failed'}`,
-    message: job.errorDetail?.message || job.error || 'Generation failed.',
+    message: generationOutcome(job).title,
     action: edit ? 'context' as const : format ? 'generation' as const : 'results' as const,
     label: edit ? 'Review context' : format ? 'Review generation' : 'View results',
     format,

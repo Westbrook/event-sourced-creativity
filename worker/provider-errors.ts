@@ -1,9 +1,15 @@
+import {GenerationPreparationError,type PreparationCheck} from './generation-preparation-error.ts';
 import type { PipelineStage, ProviderModerationStage, GenerationOutcomeEvidence } from "../src/model/generation-outcome-evidence.ts";
+import { generationPreparationUnavailable, generationPreparationMessage, GENERATION_PREPARATION_UNAVAILABLE } from '../src/model/generation-service-failure.ts';
 export type ProviderFailureCategory = "safety" | "authentication" | "access" | "quota" | "rate_limit" | "network" | "canceled" | "provider" | "server" | "unknown";
 export type ProviderFailureScope = "request" | "user" | "workspace" | "account" | "project" | "organization" | "model" | "region" | "network" | "provider" | "unknown";
 export type ProviderFailureAction = "edit_request" | "check_credentials" | "check_project" | "verify_organization" | "add_credits" | "raise_limit" | "review_budget" | "wait_and_retry" | "retry" | "contact_support" | "none";
 
 export type ProviderFailureDetail = {
+  /** Bounded application diagnostic, excluded from publicFailureDetail. */
+  diagnosticCode?: string;
+  diagnosticCheck?: PreparationCheck;
+  schemaFingerprint?: string;
   pipelineStage?: PipelineStage;
   providerModerationStage?: ProviderModerationStage;
   outcome?: GenerationOutcomeEvidence;
@@ -91,6 +97,10 @@ export function providerRetryAfterMs(response?: Response) {
 
 export function classifyProviderFailure(input: unknown, response?: Response, providerBody?: unknown): ProviderFailureDetail {
   if (input instanceof ProviderRequestError) return input.detail;
+  if (!response && providerBody === undefined && input instanceof Error && generationPreparationUnavailable(undefined, input.message)) return {
+    code: GENERATION_PREPARATION_UNAVAILABLE, category: 'server', scope: 'workspace', action: 'contact_support',
+    diagnosticCode: input.message, ...(input instanceof GenerationPreparationError?{diagnosticCheck:input.preparationCheck,...(input.schemaFingerprint?{schemaFingerprint:input.schemaFingerprint}:{})}:{}), message: generationPreparationMessage, pipelineStage: 'storage', retryable: false, retryAfterMs: null, requestId: null, httpStatus: null,
+  };
   const body = providerErrorRecord(providerBody);
   const message = String(body.message ?? (input instanceof Error ? input.message : "provider_request_failed"));
   const status = response?.status ?? null;

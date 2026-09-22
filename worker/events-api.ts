@@ -1,3 +1,4 @@
+import {logPreparationFailure} from './generation-preparation-error.ts';
 import { documentPlannerEvidenceObserver } from "./document-planner-evidence.ts";
 import { ideasInDocument } from '../src/model/project-ideas.ts';
 import { validateIdeaMembershipEvents, projectOwnedIdeaInput } from "./idea-membership-guards.ts";
@@ -584,7 +585,7 @@ async function executeNativeImageOperation(input:NativeImageOperationInput):Prom
     if(execution?.signal.aborted||error instanceof Error&&error.message==="document_job_canceled")throw error;
     if(execution?.output?.dispatchStop(error))throw error;
     await execution?.beginCommit();
-    let detail=classifyProviderFailure(error);
+    let detail=classifyProviderFailure(error);logPreparationFailure(detail,corr);
     if(hasUnresolvedProviderSubmission(body as Record<string,unknown>))detail={...detail,code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"The paid request may already have reached its provider. Its reservation is held; no duplicate request will be submitted automatically.",retryable:false,retryAfterMs:null};
     await observeProviderFailure(env,detail);
     const moderationPrompt=await retainFailurePrompt(env,ownerId,error,executionScope);
@@ -1799,7 +1800,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
           const presentationStillPending=hasUnresolvedProviderSubmission(body as Record<string,unknown>)||(body as Record<string,unknown>).presentationProviderSubmission==="pending";
           await execution?.progress("planning",`${paidResponseIds.length||error.providerCallCount} paid provider response${(paidResponseIds.length||error.providerCallCount)===1?"":"s"} recorded before generation failed.`,{plannerModel,plannerResponseId,plannerResponseIds:paidResponseIds,plannerUsage,plannerInput,reservationId,costReservationId,costReservationPeriod,costReservationMicrousd,...(productionPlan?{productionPlan}:{}),...(artifactKind==="slides"?{presentationProviderSubmission:presentationStillPending?"pending":"confirmed"}:{})});
         }
-        let detail=classifyProviderFailure(error);
+        let detail=classifyProviderFailure(error);logPreparationFailure(detail,corr);
         if(artifactKind==="slides"&&presentationSubmissionPending&&!hasUnresolvedProviderSubmission(body as Record<string,unknown>)&&detail.scope==="provider"&&definitiveProviderRejection(Number(detail.httpStatus))){await execution?.progress("planning","The presentation provider returned a confirmed rejection.",{reservationId,costReservationId,costReservationPeriod,costReservationMicrousd,presentationProviderSubmission:"confirmed"});presentationSubmissionPending=false;}
         const audioSubmission=artifactKind==="audio"?audioProviderSubmissionState({attempted:videoSubmissionAttempted,providerJobId:activeProviderJobId,httpStatus:detail.httpStatus}):null;
         if(audioSubmission==="rejected")await execution?.progress("planning",`${requestedAudioSelection?.contract.label??"The audio provider"} returned a confirmed rejection before accepting a paid audio request.`,{reservationId,costReservationId,costReservationPeriod,costReservationMicrousd,audioProviderSubmission:"rejected",providerJobId:""});
@@ -1857,7 +1858,7 @@ export async function handleEvents(request:Request,env:WorkerEnv,hot=false,userO
       }catch(error){
         if(execution?.signal.aborted||error instanceof Error&&error.message==="document_job_canceled")throw error;
         await execution?.beginCommit();
-        let detail=classifyProviderFailure(error);
+        let detail=classifyProviderFailure(error);logPreparationFailure(detail,corr);
         if(hasUnresolvedProviderSubmission(body as Record<string,unknown>))detail={...detail,code:"provider_submission_uncertain",category:"network",scope:"network",action:"contact_support",message:"The paid request may already have reached its provider. Its reservation is held; no duplicate request will be submitted automatically.",retryable:false,retryAfterMs:null};
         await observeProviderFailure(env,detail);
         const moderationPrompt=await retainFailurePrompt(env,ownerId,error,executionScope);

@@ -1,3 +1,4 @@
+import {generationOutcome} from '../src/still/generation-outcome.ts';
 import { pageToolbarCandidates, withDocumentReturn } from '../src/still/local-policy.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,12 +16,12 @@ const abilities={generate:true,author:true,projectCreate:true,formats:['slides']
 const projection={...foldEvents([]),documents:[{id:'doc',projectId:'project'}],blocks:[{id:'idea',properties:{text:'An idea'}}]};
 test('uncertain jobs offer explicit new work without treating status reads as recovery',()=>{
  const candidates=eligibleActions(projection,position,abilities),ids=candidates.map(a=>a.id);
- assert.ok(ids.includes('generate-again'));assert.ok(ids.includes('refresh-generation'));
- assert.equal(candidates.find(a=>a.id==='generate-again').label,'New paid attempt');
+ assert.ok(!ids.includes('generate-again'));assert.ok(ids.includes('refresh-generation'));
+
  assert.equal(position.generation.mayDuplicateCharge,true);
  assert.match(position.generation.refreshEffect,/does not reconcile/);assert.doesNotMatch(JSON.stringify(position.generation),/PRIVATE/);
  assert.equal(selectActions(candidates,position)[0].id,'context');
- assert.ok(questionsFor(candidates,position)['use_generate-again']);
+ assert.ok(!questionsFor(candidates,position)['use_generate-again']);
  assert.ok(!eligibleActions(projection,{...position,view:'document'},abilities).some(a=>a.id==='generate-again'));
  assert.ok(!eligibleActions(projection,position,{...abilities,generate:false}).some(a=>a.id==='generate-again'));
  assert.ok(evaluateEligibility(projection,{...position,generation:{...position.generation,documentId:'other'}},abilities).find(a=>a.action.id==='generate-again').reason);
@@ -71,7 +72,7 @@ test('generation pages render the shared ranked toolbar and More alternatives',a
  const method=app.members.find(n=>n.name?.getText(source)==='renderDock');
  const code=ts.transpileModule(`function renderDock()${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
  const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
- const render=new Function('html','nothing','generationActive','generationStatus','stillResults','nextToolbarActions','presentToolbar','pageToolbarCandidates','withDocumentReturn',code+';return renderDock;')(html,'',generationActive,generationStatus,stillResults,nextToolbarActions,presentToolbar,pageToolbarCandidates,withDocumentReturn);
+ const render=new Function('generationOutcome','html','nothing','generationActive','generationStatus','stillResults','nextToolbarActions','presentToolbar','pageToolbarCandidates','withDocumentReturn',code+';return renderDock;')(generationOutcome,html,'',generationActive,generationStatus,stillResults,nextToolbarActions,presentToolbar,pageToolbarCandidates,withDocumentReturn);
  const candidates=eligibleActions(projection,position,abilities);
  const view={client:{projection,position,session:{policy:{accepted:true}},jobs:[failed],events:[]},pageActionLimit:5,toolbarLimit:5,firstDockLimit:5,currentRouteProblem:()=>false,isInlineGeneration:()=>false,canAcknowledgeSafety:()=>false,candidates:()=>candidates,suggestions:selectActions(candidates,position),rankedActions:candidates,toolbarStatus:()=>'',toolbarSuggestions:xs=>xs.map(x=>`<button>${x.label}</button>`),button:label=>`<button>${label}</button>`,paletteButton:()=>'<button>Palette</button>',selectedGeneration:()=>failed,renderGenerationStatusDock:()=>assert.fail('Normal job page must use shared actions')};
  view.decisionPosition=()=>position;view.preferredSuggestions=()=>view.suggestions;view.listKind=()=>undefined;view.listOptions=()=>[];

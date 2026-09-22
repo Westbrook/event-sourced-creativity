@@ -10,15 +10,27 @@ page.on('pageerror',error=>errors.push(error.message));
 await page.route('**/*',route=>new URL(route.request().url()).origin==='http://127.0.0.1:4211'?route.continue():(blocked.push(route.request().url()),route.abort()));
 const url='http://127.0.0.1:4211/tests/still-rejection-browser/index.html?progress-report';
 try{
- await page.goto(url);await expect(page.getByRole('heading',{name:'Inspect generation failure',exact:true})).toBeVisible();
+ await page.goto(url);await expect(page.getByRole('button',{name:'Copy support summary',exact:true})).toBeVisible();await page.getByText('Technical details and retained evidence',{exact:true}).click();
  await expect(page.locator('.rejection-page')).toContainText('The provider reported an output moderation refusal.');
  await expect(page.getByRole('heading',{name:'Stage outcomes and operation identity',exact:true})).toBeVisible();
  for(const name of scenarios){
-  await page.locator('#scenario').selectOption(name);await expect(page.locator('.rejection-lead')).toBeVisible();
+  await page.locator('#scenario').selectOption(name);await expect(page.getByRole('button',{name:'Copy support summary',exact:true})).toBeVisible();
+  const technical=page.locator('.rejection-page > details');if(!await technical.evaluate(el=>el.open))await technical.locator(':scope > summary').click();await expect(page.locator('.rejection-lead')).toBeVisible();
+  if(name==='service-preparation'){
+   await expect(page.locator('h1')).toHaveText('Forma could not prepare this generation');
+   await expect(page.locator('.rejection-page')).toContainText('No provider request was submitted.');
+   await expect(page.locator('.rejection-page')).toContainText('Recorded usage: $0.00.');
+   await expect(page.locator('.rejection-page')).not.toContainText('No specific risk category was recorded.');
+   await technical.locator(':scope > summary').click();
+   await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   await page.screenshot({path:`${directory}/service-mobile.png`,fullPage:true});
+   await page.setViewportSize({width:1360,height:1000});await page.screenshot({path:`${directory}/service-desktop.png`,fullPage:true});
+   await technical.locator(':scope > summary').click();
+  }
   await expect(page.locator('.rejection-page')).toContainText('Corrective scope');
   if(name==='expired-evidence'){await expect(page.locator('.rejection-page')).toContainText('Frozen source snapshot: expired');await expect(page.locator('.rejection-page')).toContainText('Provider response envelope: not recorded');}
  }
- await page.locator('#scenario').selectOption('mixed-routes');await expect(page.locator('.rejection-page')).toContainText('fal / fal-ai/ideogram/v3');
+ await page.locator('#scenario').selectOption('mixed-routes');await expect(page.locator('.rejection-page')).toContainText('fal / fal-ai/ideogram/v3');await page.locator('.rejection-page > details > summary').click();
  await page.locator('#comparison-attempt').fill('comparison');await page.locator('#comparison-attempt').press('Enter');
  await expect(page.locator('.rejection-page')).toContainText('Exact retained prompt: changed');
  await expect(page.locator('.rejection-page')).toContainText('Per-operation model, quality, route and recorded settings: changed');
@@ -35,14 +47,14 @@ try{
  // A comparison source permalink reloads only authorized retained evidence.
  const sourceLink=await page.locator('details[id]').filter({hasText:'Attempt comparison · source prompt.'}).locator('a').getAttribute('href');
  assert.ok(sourceLink.includes('compareAttempt=comparison'));await page.goto(sourceLink);
- await expect(page.getByRole('heading',{name:'Comparison immutable sources'})).toBeVisible();
- await page.goto(url);await expect(page.getByRole('heading',{name:'Stage outcomes and operation identity'})).toBeVisible();
+ await expect(page.locator('.rejection-page')).toContainText('Comparison immutable sources');if(!await page.locator('.rejection-page > details').evaluate(el=>el.open))await page.locator('.rejection-page > details > summary').click();await expect(page.getByRole('heading',{name:'Comparison immutable sources'})).toBeVisible();
+ await page.goto(url);await page.getByText('Technical details and retained evidence',{exact:true}).click();await expect(page.getByRole('heading',{name:'Stage outcomes and operation identity'})).toBeVisible();
  // A stale comparison must not survive a new scope.
  await page.locator('#comparison-attempt').fill('slow');await page.locator('#comparison-attempt').press('Enter');
  await expect.poll(()=>page.evaluate(()=>typeof window.releaseSlow)).toBe('function');
  await page.locator('#scenario').selectOption('expired-evidence');await page.evaluate(()=>window.releaseSlow());
  await expect(page.locator('.rejection-page')).toContainText('Frozen source snapshot: expired');
- await expect(page.getByRole('heading',{name:'Comparison immutable sources'})).toHaveCount(0);
+ await expect(page.getByRole('heading',{name:'Comparison immutable sources'})).toHaveCount(0);await page.locator('.rejection-page > details > summary').click();
  // An authorization failure clears both original and comparison private data.
  await page.locator('#comparison-attempt').fill('denied');await page.locator('#comparison-attempt').press('Enter');
  await expect(page.locator('.rejection-page')).toContainText('Your authorization changed');

@@ -1,3 +1,4 @@
+import {GenerationPreparationError} from './generation-preparation-error.ts';
 import manifest from './memory-schema-repair-manifest.json' with {type:'json'};
 import {memoryDigest} from '../src/model/scoped-memory.ts';
 import {inspectMemorySchemaRepair, MEMORY_SCHEMA_REPAIR_CATALOG_SQL} from './memory-schema-repair.ts';
@@ -136,4 +137,24 @@ export async function applyEventSaveRepair(db:D1Database,proof:string,authority:
  if(after.summary.status!=='complete')fail('postcondition');
  await rollbackProbe(db,after.snapshot,authority,true);
  return{...after.summary,applied:plan.summary.status!=='complete',rollbackQualified:true,saveProbe:'four-synthetic-events-persisted-and-rolled-back'};
+}
+
+
+/** A negative-boundary compatibility witness for ordinary content only.
+ * This does not qualify Memory operations or reactivate the isolated graph.
+ * Every consuming SELECT/cleanup statement rechecks the whole captured catalog,
+ * settings, receipt and empty-table witnesses; a stale proof cannot widen access.
+ */
+export async function readIsolatedMemoryContentBoundary(db:D1Database) {
+ const plan=await inspectEventSaveRepair(db);
+ if(plan.summary.status!=='complete')throw new GenerationPreparationError('isolation_profile_unqualified',plan.proof);
+ // D1 bounds compound SELECT terms. Balance independent emptiness predicates
+ // to stay within both its compound-select and expression-depth limits.
+ const every=(terms:string[]):string=>terms.length===1?terms[0]!: `(${every(terms.slice(0,Math.floor(terms.length/2)))} AND ${every(terms.slice(Math.floor(terms.length/2)))})`;
+ const empty=every(EVENT_SAVE_REPAIR_TABLES.map(table=>`NOT EXISTS(SELECT 1 FROM ${quote(table)} LIMIT 1)`));
+ return {sql:`(${snapshotSQL}=? AND ${settingsSQL} AND ${empty}
+  AND NOT EXISTS(SELECT 1 FROM sqlite_schema WHERE name IN('__forma_memory_schema_repair_guard','__forma_event_save_repair_guard'))
+  AND (SELECT count(*) FROM ${receipt})=1
+  AND EXISTS(SELECT 1 FROM ${receipt} WHERE repair_id=? AND source_manifest=? AND typeof(applied_at)='text'))`,
+  bindings:[plan.snapshot,EVENT_SAVE_REPAIR_ID,manifest.sha256]};
 }

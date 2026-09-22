@@ -1,3 +1,4 @@
+import {generationOutcome} from '../src/still/generation-outcome.ts';
 import {sharedIdeaOutputNotices} from '../src/model/shared-idea-output-freshness.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,12 +16,12 @@ test('generation status renders terminal errors only once and replaces stale pro
  const method=app.members.find(n=>n.name?.getText(source)==='renderGeneration');
  const code=ts.transpileModule(`function renderGeneration() ${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
  const html=(parts,...values)=>parts.reduce((out,part,i)=>out+part+(values[i]??''),'');
- const render=new Function('html','nothing','generationFormat','generationActive','generationStatus','generationPreview','FORMATS',`${code};return renderGeneration;`)(html,'',generationFormat,generationActive,generationStatus,generationPreview,{video:'Video'});
+ const render=new Function('generationOutcome','html','nothing','generationFormat','generationActive','generationStatus','generationPreview','FORMATS',`${code};return renderGeneration;`)(generationOutcome,html,'',generationFormat,generationActive,generationStatus,generationPreview,{video:'Video'});
  const message='At least one reference image or video is required.';
  for(const progressMessage of [message,'Submitting…']){
   const job={jobId:'failed',documentId:'doc',kind:'render_document',status:'failed',progressMessage,result:{artifactKind:'video'},error:message,errorDetail:{message}};
   const output=render.call({canAcknowledgeSafety:()=>false,isInlineGeneration:()=>false,renderInlineGeneration:()=>'',client:{projection:{documentId:'doc',documentTitle:'Scene',blocks:[]},position:{outputId:'failed'},jobs:[job],events:[]},canGenerateAgain:()=>true,generationCheckKey:()=>'',button:()=>assert.fail('Recovery controls belong in the toolbar')});
-  assert.equal(output.split(message).length-1,1);assert.equal(output.includes('Submitting…'),false);assert.equal(output.split('role="status"').length-1,1);
+  assert.match(output,/The generation could not be completed/);assert.equal(output.includes(message),false);assert.equal(output.includes('Submitting…'),false);assert.equal(output.split('role="status"').length-1,1);
  }
 });
 
@@ -71,7 +72,7 @@ test('Review generation opens the original job even without generation permissio
  const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
  const method=app.members.find(n=>n.name?.getText(source)==='renderNotifications');
  const code=ts.transpileModule(`function renderNotifications(failed) ${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
- const render=new Function('html','nothing','failureNotification','canContinueReview','generationFormat','generationNoticeKey','sharedIdeaOutputNotices',`${code};return renderNotifications;`)(()=>null,null,failureNotification,canContinueReview,generationFormat,generationNoticeKey,sharedIdeaOutputNotices);
+ const render=new Function('generationOutcome','html','nothing','failureNotification','canContinueReview','generationFormat','generationNoticeKey','sharedIdeaOutputNotices',`${code};return renderNotifications;`)(generationOutcome,()=>null,null,failureNotification,canContinueReview,generationFormat,generationNoticeKey,sharedIdeaOutputNotices);
  for(const formats of [[],['image','video']])for(const job of [{kind:'generate'},{kind:'render_document',result:{artifactKind:'video'}}]){
   const failed={...job,jobId:'original-failed-job',documentId:'original-document',status:'failed',attemptCount:1,errorDetail:{category:'network',action:'retry',code:'provider_network_error',message:'Unavailable.'}};
   let review;const navigations=[];

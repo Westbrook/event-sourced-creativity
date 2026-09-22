@@ -184,7 +184,19 @@ async function qualifyNativeMemoryAnswerExclusion(env: WorkerEnv, db: WorkerEnv[
     ||!Object.hasOwn(flags,"origins")||![0,1].includes(flags.origins as number)
     ||!turn&&(!Object.hasOwn(flags,"turns")||![0,1].includes(flags.turns as number)))throw new Error("memory_boundary_schema_unavailable");
   const hasOrigins={present:flags.origins},hasTurns=!turn&&{present:flags.turns};
-  const semantic=await qualifySemanticConsumerBoundary(flags.consumer_schema);
+  let semantic: Awaited<ReturnType<typeof qualifySemanticConsumerBoundary>>;
+  try { semantic=await qualifySemanticConsumerBoundary(flags.consumer_schema); }
+  catch(error) {
+    // Only the named, installed isolation profile is a compatibility candidate.
+    // The original qualifier remains strict for dedicated semantic consumers.
+    if (!(error instanceof Error) || error.message!=='memory_boundary_schema_unavailable'
+      || typeof flags.consumer_schema!=='string' || !flags.consumer_schema.includes('event_save_isolation_')) throw error;
+    const {readIsolatedMemoryContentBoundary}=await import('./event-save-repair.ts');
+    if(env.DB!==db)throw new Error('memory_boundary_database_changed');
+    const guard=await readIsolatedMemoryContentBoundary(db);
+    if(env.DB!==db)throw new Error('memory_boundary_database_changed');
+    semantic={present:false,assetsPresent:false,guard};
+  }
   if (env.DB !== db) throw new Error("memory_boundary_database_changed");
   // Freeze omitted auxiliary branches too. If a table arrives between guard
   // construction and use, its newly registered/repointed contents require a

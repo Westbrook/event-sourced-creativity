@@ -1,3 +1,4 @@
+import { generationOutcome } from './generation-outcome.ts';
 import {LitElement, html, nothing} from 'lit';
 import type {StillClient} from './client.ts';
 import {rejectionEvidence, failureSummary, compareRejectionEvidence, evidenceAnchor, evidenceSourceLink, type RejectionEvidence} from './rejection-evidence.ts';
@@ -111,7 +112,7 @@ export class StillRejectionPage extends LitElement {
   }
   override render(){
     const job=this.job,inspection=this.inspection,evidence=this.evidence;
-    if(this.loading)return html`<section class="rejection-page"><h1>Inspect generation failure</h1><p role="status">Loading the retained request and rejection details…</p></section>`;
+    if(this.loading)return html`<section class="rejection-page"><h1>Generation details</h1><p role="status">Loading this attempt’s saved details…</p></section>`;
     if(!job||!inspection||!evidence)return html`<section class="rejection-page"><h1>Inspect generation failure</h1><p role="status">${this.error}</p><en-button variant="secondary" @click=${()=>this.load()}>Reload details</en-button></section>`;
     const receipt=inspection.receipt,generation=record(receipt.generation_receipt),failure=documentJobFailure(job),checkpoint=record(receipt.artifact_checkpoint),privateInput=record(receipt.private_input);
     const preflight=failure?.code==='safety_preflight_flagged';
@@ -126,6 +127,7 @@ export class StillRejectionPage extends LitElement {
       ['Queue time',duration(job.requestedAt,job.startedAt)],['Execution time',duration(job.startedAt,job.completedAt)],
       ['Source revision',job.documentRevision],['Attempt count',job.attemptCount],['Input retention ends',generation.private_input_expires_at],
     ];
+    const outcome=generationOutcome(job);
     const message=failure?.message||job.error||'No rejection message was retained.';
     const requestDetails=Object.fromEntries(facts.map(([label,value])=>[label,value??'Not recorded']));
     const bundle=pretty({attempt:job.jobId,document:job.documentId,rejection:message,prompt:inspection.prompt??null,requestDetails,receipt,evidence,unavailable:this.unavailable});
@@ -139,23 +141,23 @@ export class StillRejectionPage extends LitElement {
         .rejection-page details[id] { scroll-margin-top:2rem; }
       </style>
       <span class="eyebrow">${this.client.projection.documentTitle} · ${inspection.subtitle}</span>
-      <h1>Inspect generation failure</h1>
-      <p class="rejection-lead">${preflight?'Still stopped this request for a safety review before the next submission.':'This attempt did not finish successfully. Read its recorded outcome before deciding whether to make a new request.'}</p>
+      <h1>${outcome.title}</h1><p>${outcome.summary}</p>${outcome.facts.map(fact=>html`<p>${fact}</p>`)}<p>${outcome.next}</p>${!evidence.sources.some(source=>source.status==='retained')?html`<p>Original prompt and source evidence are unavailable to this viewer. They may have expired or were never retained. The recorded status and usage above remain separate facts.</p>`:nothing}<div class="rejection-export">${this.copyControl('Support summary',outcome.supportSummary,'Copy support summary')}<span>Attempt identifiers and recorded status only; no prompt or source content.</span></div>
+      <p role="status" aria-live="polite">${this.copyStatus}</p>
+      <details><summary>Technical details and retained evidence</summary><p class="rejection-lead">${preflight?'Still stopped this request for a safety review before the next submission.':'This attempt did not finish successfully. Read its recorded outcome before deciding whether to make a new request.'}</p>
       <p>${failureSummary(evidence)}</p>
       <dl aria-label="Failure classification"><div><dt>Pipeline origin</dt><dd>${evidence.pipelineStage}</dd></div><div><dt>Corrective scope</dt><dd>${evidence.correctiveScope}</dd></div><div><dt>Provider moderation stage</dt><dd>${evidence.moderationStage}</dd></div></dl>
       <div class="rejection-export">${this.copyControl('Complete evidence',bundle,'Copy all evidence')}<span>Includes the retained prompt, request details, and technical records below.</span></div>
-      <p class="rejection-copy-status" role="status" aria-live="polite">${this.copyStatus}</p>
       <section aria-labelledby="rejection-reason"><div class="rejection-section-heading"><h2 id="rejection-reason">What was reported</h2>${this.copyControl('Rejection message',message)}</div>
         <blockquote><span class="rejection-quote-label">Recorded message</span>${message}</blockquote>
-        <p>${preflight?'This is Still’s preflight assessment, not a confirmation that the output provider rejected the request. Only the existing exact-prompt-and-reference acknowledgement, when offered on the output page, applies. It does not waive a provider refusal.':'The recorded message is the provider or application’s explanation. A generic safety rejection does not identify which word, idea, or reference caused it. Still cannot infer an undisclosed reason from the document title or subject.'}</p>
-        ${failure?.riskCategories?.length?html`<p>Recorded risk categories: ${failure.riskCategories.join(', ')}. These are assessment signals, not proof that every listed item caused the rejection.</p>`:html`<p>No specific risk category was recorded.</p>`}
+        ${failure?.category==='safety'?html`<p>${preflight?'This is Still’s preflight assessment, not a confirmation that the output provider rejected the request. Only the existing exact-prompt-and-reference acknowledgement, when offered on the output page, applies. It does not waive a provider refusal.':'The recorded message is the provider or application’s explanation. A generic safety rejection does not identify which word, idea, or reference caused it. Still cannot infer an undisclosed reason from the document title or subject.'}</p>
+        ${failure?.riskCategories?.length?html`<p>Recorded risk categories: ${failure.riskCategories.join(', ')}. These are assessment signals, not proof that every listed item caused the rejection.</p>`:html`<p>No specific risk category was recorded.</p>`}`:nothing}
       </section>
-      <section aria-labelledby="rejection-next"><h2 id="rejection-next">Deciding what to do next</h2>
+      ${failure?.category==='safety'||failure?.action==='edit_request'?html`<section aria-labelledby="rejection-next"><h2 id="rejection-next">Deciding what to do next</h2>
         <p>Review the original prompt, source ideas, and references below. Compare them with what you intended to ask for. If they contain an unintended instruction, ambiguity, or incorrect detail, revise the document before generating again. Add idea and Add direction update the document used by a new request; they do not change this attempt’s retained evidence.</p>
         <p><strong>New paid attempt</strong> starts a separate paid request in the original output format using the current document. Unchanged inputs may be rejected again, and planning or other provider work can still incur costs without producing an output. It does not resume this attempt or bypass provider safeguards.</p>
-        <p>View output returns to this attempt’s status; a rejected attempt may have no output. Choose output lets you consider a different format. Original-request recovery, when offered on the output page, is a separate action using the existing bounded status/result checks for the original provider purchase. Viewing or comparing evidence performs no recovery, reconciliation or generation. A provider refusal cannot be acknowledged away.</p>
+        <p>View attempt status returns to this attempt’s status; a rejected attempt may have no output. Choose output lets you consider a different format. Original-request recovery, when offered on the output page, is a separate action using the existing bounded status/result checks for the original provider purchase. Viewing or comparing evidence performs no recovery, reconciliation or generation. A provider refusal cannot be acknowledged away.</p>
       </section>
-      <section aria-labelledby="rejection-outcomes"><h2 id="rejection-outcomes">Stage outcomes and operation identity</h2>
+      `:nothing}<section aria-labelledby="rejection-outcomes"><h2 id="rejection-outcomes">Stage outcomes and operation identity</h2>
         <p>Request scope describes where a correction may apply; it does not identify where the failure originated. Each observation below keeps its own provider request and response IDs. Draft, preview and final labels do not establish a model.</p>
         <p>A local moderation pass describes that check only. Local policy opinions and attached text scores are not provider approval of an image or other media. Missing historical models, settings and categories remain unknown.</p>
         ${this.details('Recorded overall outcome',evidence.outcome)}
@@ -205,7 +207,7 @@ export class StillRejectionPage extends LitElement {
         ${this.details('Retained execution checkpoint',receipt.artifact_checkpoint)}
         ${this.details('Individual attempt members',job.members.map(member=>({jobId:member.jobId,status:member.status,promptTechnique:member.promptTechnique,error:member.error})))}
       </section>
-    </article>`;
+    </details></article>`;
   }
 }
 customElements.define('still-rejection-page',StillRejectionPage);

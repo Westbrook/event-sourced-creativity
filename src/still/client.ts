@@ -1,3 +1,4 @@
+import { generationOutcome } from './generation-outcome.ts';
 import {stageEvidenceRefs} from './rejection-evidence.ts';
 import { sharedIdeaEdits, independentIdeaEdits, ideaContentEdit } from '../model/shared-idea-edits.ts';
 import { chooseSharedIdeaEdit, IdeaEditCanceled } from '../ui/shared-idea-choice.ts';
@@ -44,7 +45,7 @@ export async function api<T>(path: string, body?: unknown, method = body === und
     })]);
   } finally { clearTimeout(timer); }
 }
-export type GenerationDraft = { format: string; prompt: string; itemCount: number; tone: string; audience: string; requestId: string; sourceHead: number; documentId: string; scopeKey: string; attempted?: boolean; recoveryClosed?: boolean; previousUnconfirmed?: boolean; sourceSnapshot?: ReturnType<typeof documentSnapshot>; sourceBlockVersions?: Array<Record<string, unknown>>; sourceRevision?: string; adaptation?: Model3dDocumentAdaptation; scenePreview?: SceneCostPreview; acknowledgements?: Record<string, boolean> };
+export type GenerationDraft = { format: string; prompt: string; itemCount: number; tone: string; audience: string; requestId: string; sourceHead: number; documentId: string; scopeKey: string; attempted?: boolean; recoveryClosed?: boolean; previousUnconfirmed?: boolean; previousAttemptId?: string; previousDocumentRevision?: string | null; sourceSnapshot?: ReturnType<typeof documentSnapshot>; sourceBlockVersions?: Array<Record<string, unknown>>; sourceRevision?: string; adaptation?: Model3dDocumentAdaptation; scenePreview?: SceneCostPreview; acknowledgements?: Record<string, boolean> };
 
 export class StillClient {
   session: Session | null = null;
@@ -385,6 +386,7 @@ export class StillClient {
   }
   generationPayload(draft: GenerationDraft) {
     const payload: Record<string, unknown> = { locale: 'en', productionMode: 'manual', promptTechnique: 'prose', requestKey: `still:${draft.documentId}:${draft.sourceHead}:${draft.requestId}`, ...(draft.sourceSnapshot ? {snapshot:draft.sourceSnapshot,sourceBlockVersions:draft.sourceBlockVersions,expectedDocumentRevision:draft.sourceRevision} : {}), ...(draft.format === 'image' ? {} : { artifactKind: draft.format, itemCount: draft.itemCount, tone: draft.tone, audience: draft.audience }) };
+    if(draft.previousAttemptId)payload.previousAttemptId=draft.previousAttemptId;
     if (draft.format === 'scene') Object.assign(payload, { sceneRequestId: draft.requestId, sceneMedium: 'visual', ...(draft.scenePreview ? { sceneCostConsent: { ...draft.scenePreview, confirmed: true } } : {}) });
     if (draft.format === 'model3d') Object.assign(payload, { model3dPrompt: draft.prompt, model3dSettings: { ...DEFAULT_MODEL3D_SETTINGS }, model3dReferenceBlockIds: [], ...(draft.adaptation && draft.prompt === draft.adaptation.prompt ? { model3dPromptSource: 'document', model3dAdaptation: model3dAdaptationReceipt(draft.adaptation) } : {}) });
     if (draft.format === 'video') Object.assign(payload, { videoSeconds: 4, videoSize: '1280x720', videoAudioMode: 'silent' });
@@ -433,6 +435,8 @@ export class StillClient {
       const validation = validateModel3dRequest({ prompt: draft.prompt, settings: DEFAULT_MODEL3D_SETTINGS, referenceCount: 0 });
       if (!validation.valid) throw new Error(validation.issues.map(i => i.message).join(' '));
     }
+    const readiness=await this.checkGenerationReadiness(check);check();
+    if(!readiness.ready)throw new Error(readiness.message);
     const request = this.generationPayload(draft), journalScope = this.journalScope;
     Object.assign(request.payload, { paidMediaConfirmed: true, ...draft.acknowledgements });
     operationJournal.saveGeneration(this.journalScope,{documentId:draft.documentId,format:draft.format,requestKey:String(request.payload.requestKey)});
@@ -440,7 +444,7 @@ export class StillClient {
     let result: {job:DocumentJob};
     try { result = await this.request<{ job: DocumentJob }>('/api/document-jobs', request); }
     catch(error) {
-      if(error instanceof ApiError && [400,401,403,409,422,428].includes(error.status) && error.body.error !== 'generation_request_closed' && !String(error.body.error).startsWith('generation_receipt_')) {
+      if(error instanceof ApiError && ([400,401,403,409,422,428].includes(error.status)||error.status===503&&error.body.error==='generation_preparation_unavailable'&&error.body.submission==='not-submitted') && error.body.error !== 'generation_request_closed' && !String(error.body.error).startsWith('generation_receipt_')) {
         draft.attempted = false; operationJournal.clearGeneration(journalScope,draft.documentId);
       }
       check();
@@ -456,6 +460,31 @@ export class StillClient {
     this.jobs = [result.job, ...this.jobs.filter(j => j.jobId !== result.job.jobId)]; this.onChange();
     this.dispatchGeneration(result.job,true);
     return result.job;
+  }
+  async refreshGeneration(job: DocumentJob) {
+    const check=await this.verifyScope(),documentId=this.position.documentId,jobId=this.position.outputId;
+    if(!job||job.documentId!==documentId||job.jobId!==jobId)return;
+    const result=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(jobId)}?inspection=1`);
+    check();if(this.position.documentId!==documentId||this.position.outputId!==jobId)return;
+    if(result.job?.jobId!==jobId||result.job.documentId!==documentId)throw new Error('Generation unavailable.');
+    ++this.jobRead;this.jobs=this.jobs.map(current=>current.jobId===jobId?result.job:current);this.onChange();
+  }
+  async checkGenerationReadiness(verified?:()=>void) {
+    const check=verified??await this.verifyScope(),documentId=this.position.documentId;
+    const result=await this.request<{ready:boolean;code:string;message:string;documentId:string}>(`/api/document-jobs/still-readiness?documentId=${encodeURIComponent(documentId)}`);
+    check();if(this.position.documentId!==documentId||result.documentId!==documentId)throw new Error('Document changed. Check readiness again.');
+    return result;
+  }
+  async recoverGeneration(job: DocumentJob) {
+    const check=await this.verifyScope();
+    if(!this.abilities.generate||job.documentId!==this.position.documentId)throw new Error('Refresh this attempt before recovering it.');
+    const recovery=generationOutcome(job).recovery;
+    if(!recovery)throw new Error('No recoverable original result is recorded.');
+    const result=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(job.jobId)}/${recovery==='presentation'?'recover':'retry'}`,{recoveryOnly:true,attemptCount:job.attemptCount});
+    check();if(result.job?.jobId!==job.jobId||result.job.documentId!==job.documentId)throw new Error('Recovery unconfirmed. Refresh status before trying again.');
+    this.jobs=this.jobs.map(current=>current.jobId===job.jobId?result.job:current);this.onChange();
+    if(['queued','running','committing'].includes(result.job.status))this.dispatchGeneration(result.job,true);
+    await this.refresh();return result.job;
   }
   async acknowledgeGenerationSafety(job: DocumentJob) {
     const check=await this.verifyScope();

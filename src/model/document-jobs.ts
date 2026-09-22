@@ -1,3 +1,4 @@
+import { generationPreparationUnavailable, generationPreparationMessage } from './generation-service-failure.ts';
 export const DOCUMENT_JOB_KINDS = ["preview", "generate", "prompt_fan", "chat", "structure_adaptive", "extract_reference", "render_document"] as const;
 export type DocumentJobKind = typeof DOCUMENT_JOB_KINDS[number];
 export type DocumentJobStatus = "queued" | "running" | "committing" | "completed" | "partial" | "failed" | "canceled";
@@ -309,6 +310,14 @@ export function documentJobCanRecoverProviderRender(job: DocumentJob) {
   return Boolean((failure?.retryable||recoverableReservationFailure||originalSourceAudio)&&failure?.category!=="safety"&&failure?.httpStatus!==400&&failure?.httpStatus!==422);
 }
 
+/** Single existing result only; managed/incomplete scene work needs its own review. */
+export function documentJobCanRecoverSingleProviderResult(job: DocumentJob) {
+  const id=job.result?.providerJobId;
+  return documentJobCanRecoverProviderRender(job) && ['video','audio','model3d'].includes(String(job.result?.artifactKind))
+    && typeof id==='string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/u.test(id) && !['pending','submitted','unknown'].includes(id.toLowerCase())
+    && !job.result?.productionSceneReceipts && !job.result?.recoverableProductionProviderRequest;
+}
+
 /** Fal identifiers are useful for recovery only after a durable, confirmed acceptance checkpoint. */
 function confirmedStoryboardProviderRequest(result: Record<string, unknown>) {
   const providerJobId = result.providerJobId;
@@ -357,6 +366,7 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   const result=job?.result&&typeof job.result==="object"?job.result:{};
   const receipt=result.generationReceipt&&typeof result.generationReceipt==="object"&&!Array.isArray(result.generationReceipt)?result.generationReceipt as Record<string,unknown>:{};
   if(detail?.code==="document_render_guidance_too_long"||detail?.code==="document_render_guidance_invalid")return{title:"Request settings need attention",summary:"Audience and Tone must be text, each no longer than 120 UTF-16 code units after trimming outer whitespace. This is an application validation error, not a provider failure.",actionLabel:null,actionUrl:null,retryAllowed:false};
+  if(generationPreparationUnavailable(detail?.code,detail?.message??fallback))return{title:"Forma could not prepare this generation",summary:generationPreparationMessage,actionLabel:null,actionUrl:null,retryAllowed:false};
   const providerStatus=typeof receipt.provider_request_status==="string"?receipt.provider_request_status:"";
   const transmissionStatus=typeof receipt.source_transmission_status==="string"?receipt.source_transmission_status:"";
   const failureStage=typeof receipt.failure_stage==="string"?receipt.failure_stage:job?.stage??"";
@@ -371,7 +381,7 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
     return{title:"Forma lost contact with the generation worker",summary:`Forma’s server lost contact with this operation before it finished. ${confirmed}`,actionLabel:null,actionUrl:null,retryAllowed:detail?.retryable===true};
   }
   if (!detail) {
-    return { title: "The generation could not be completed", summary: TRUSTED_GENERATION_FAILURE_FALLBACKS.has(fallback) ? fallback : "The provider could not complete this request. Review the saved inputs and technical receipt before trying again.", actionLabel: null, actionUrl: null, retryAllowed: true };
+    return { title: "The generation could not be completed", summary: TRUSTED_GENERATION_FAILURE_FALLBACKS.has(fallback) ? fallback : "The cause of this incomplete generation is not recorded. Review the saved receipt before deciding what to do next.", actionLabel: null, actionUrl: null, retryAllowed: true };
   }
   if(result.artifactKind==="model3d"||detail.code.startsWith("model3d_")||detail.code.startsWith("fal_model3d_")){
     if(detail.category==="safety")return{title:"Rodin stopped this 3D request",summary:"Review the subject, prompt, and selected image views for the provider’s content restrictions before starting a changed request. A text request also creates an internal image that must pass the provider’s checks.",actionLabel:null,actionUrl:null,retryAllowed:false};
@@ -432,7 +442,7 @@ export function generationFailureGuidance(detail: DocumentJobError | null, fallb
   if (detail.category === "rate_limit") return { title: "OpenAI is limiting image throughput", summary: detail.retryAfterMs ? `The server already retried. Wait about ${Math.max(1, Math.ceil(detail.retryAfterMs / 1000))} seconds before trying again.` : "The server already retried with backoff. Wait briefly before trying again.", actionLabel: "Review rate limits", actionUrl: "https://platform.openai.com/settings/organization/limits", retryAllowed: true };
   if (detail.category === "network" || detail.category === "server") return { title: "The provider connection was interrupted", summary: detail.retryable ? "No terminal account or request block was reported. It is reasonable to retry." : "Review the saved technical receipt and resolve the reported connection or server issue before starting a new request.", actionLabel: null, actionUrl: null, retryAllowed: detail.retryable };
   if (detail.category === "canceled") return { title: "The generation request was stopped", summary: "No late provider result will be adopted. Start a new request whenever the document is ready.", actionLabel: null, actionUrl: null, retryAllowed: true };
-  return { title: "The provider did not produce the requested output", summary: "Review the technical receipt, adjust the request if needed, and try again.", actionLabel: null, actionUrl: null, retryAllowed: detail.retryable };
+  return { title: "The generation could not be completed", summary: "The recorded details do not establish the cause. Review the attempt and its usage before deciding whether to start another request.", actionLabel: null, actionUrl: null, retryAllowed: detail.retryable };
 }
 
 const PROVIDER_CREDENTIAL_DESTINATIONS = new Set([
