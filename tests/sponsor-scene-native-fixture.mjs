@@ -40,8 +40,8 @@ const actorCounters=f=>Object.fromEntries(['budget_counters','cost_budget_counte
 const count=(f,table)=>f.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
 const metadataSqlSha='87984dc31fc80df29511e79e97c2d1f59ce7e1c5324781951a3cb486f96d1a41';
 function strictSceneSql(f){
-  // One unchanged native statement has 56 json_object arguments and passed
-  // actual local workerd D1 qualification. Every other statement keeps 32.
+  // Historical workerd qualification covers only this exact 56-argument SQL.
+  // Current journeys assert zero exceptions; never reseal changed query bytes.
   const original=f.env.DB.prepare;
   const strict=enforceD1ExpressionDepth(f,{queryLimits:{functionArguments:32,parameters:100,sqlBytes:100000}}),strictPrepare=f.env.DB.prepare;
   const nativeEnv={DB:{prepare:original}},native=enforceD1ExpressionDepth({env:nativeEnv,sqlite:f.sqlite},{queryLimits:{functionArguments:56,parameters:100,sqlBytes:100000}});
@@ -51,7 +51,7 @@ function strictSceneSql(f){
     return strictPrepare.call(this,sql);
   };
   return {records:strict.records,nativeRecords:native.records,boundCounts:strict.boundCounts,
-    assertVerified(){strict.assertVerified();native.assertVerified();assert.ok(exceptions>0);assert.ok(native.records.every(record=>createHash('sha256').update(record.sql).digest('hex')===metadataSqlSha));},
+    assertVerified(){strict.assertVerified();if(exceptions)native.assertVerified();assert.ok(native.records.every(record=>createHash('sha256').update(record.sql).digest('hex')===metadataSqlSha));},
     get exceptions(){return exceptions;},restore(){strict.restore();native.restore();}};
 }
 function captureSql(f,path,t){

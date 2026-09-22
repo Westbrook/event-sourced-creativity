@@ -13,7 +13,15 @@ export const SCENE_VERSIONED_READ_LIMITS=Object.freeze({rows:40_000,pageRows:256
   rawBytes:64*1024*1024,batches:400,guardStatements:64,guardBytes:512*1024});
 const encoder=new TextEncoder(),bytes=(value:string)=>encoder.encode(value).length;
 const metadataFields=[...sceneHistoryMetadataFields,'metadata_valid'];
-const metadataJson=`json_object(${metadataFields.map(field=>`'${field}',${field}`).join(',')})`;
+// D1 documents at most 32 arguments per function. Append disjoint, ordered
+// fields in bounded groups; json_insert preserves explicit nulls (unlike a
+// merge patch), so the serialized bytes and page budget remain unchanged.
+const metadataJson=(()=>{
+  let sql=`json_object(${metadataFields.slice(0,16).map(field=>`'${field}',${field}`).join(',')})`;
+  for(let index=16;index<metadataFields.length;index+=15)
+    sql=`json_insert(${sql},${metadataFields.slice(index,index+15).map(field=>`'$.${field}',${field}`).join(',')})`;
+  return sql;
+})();
 const hydratedFields={event_id:'event_id',stream_id:'event_stream',sequence:'sequence',occurred_at:'occurred_at',recorded_at:'recorded_at',
   actor:'actor',client_id:'client_id',correlation_id:'correlation_id',causation_id:'causation_id',compensates_event_id:'compensates_event_id',schema_version:'schema_version',type:'event_type',order_sequence:'order_sequence'};
 type Consumer<T>={accept(event:CreativeEvent):boolean;finish():T;checkpoint?():unknown};

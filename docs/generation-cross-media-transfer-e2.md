@@ -16,3 +16,18 @@ Task-specific continuation of [H's ledger](generation-cross-media-transfer-h.md)
 Private Memory is a stricter cross-cutting custody boundary: 55 complete mocked preview journeys qualify existing owner/source/retention and accounting behavior, with no activation. Its specialized raw receipt is not relabeled as a generic observer. Generic hashes, successful parsers and caller booleans never confer private read/write access.
 
 H3 must consume a new source/runtime identity after any E2 integration; historical Image2 incident and C/F2/H envelopes remain unchanged. Attached moderation is L-owned and remains separate. All semantic output studies above are proposals, not demonstrated results or prerequisites for H's first direct-image study.
+
+## E3 continuation — local verification on H3 main882729f1
+
+This section supersedes only the earlier unresolved Scene SQL and presentation fixture statuses; original E2/H releases and evidence remain intact. [Cause report](generation-baseline-task-e3.md) and [exact evidence](evidence/generation-e3/verification.json).
+
+| Transfer / named owner | Applicability | Tests and outcome metrics | Evidence / status |
+| --- | --- | --- | --- |
+| Scene history SQL — E implementation, H3/H4 integration owner | Versioned Scene metadata pages; no established first-image dependency | Native206/driver252 strict SQL shapes, zero exceptions; byte-identical metadata and page cutoff; one synthetic original call and no replacement replay | E3 report/query hashes; locally repaired, unreviewed and unpublished |
+| Slides original purchase recovery — E fixture/recovery owner | Disposable presentation HTTP fixture lacked existing hold ledger schema | Original paid9-slide result retained, changed policy409, recovered/replayed once, no new request | Original recovery test passes; local fixture-only repair |
+| Scene policy-stop receipts — E recovery owner, H integration | Adjacent retained accounting/projection fixture or shared receipt behavior; exact cause still open | 58 failures reproduced against original reader; success metric is correct original-call/charge projection without replacement | Named failures in E3 verification; unresolved, separate continuation |
+| Bundled video/planner recovery — E recovery owner, K original-only boundary | Two adjacent original paid draft/provider recovery checks, not screenplay metadata | 0/2 on fresh original and repaired builds; success requires completion from original purchase and intact reservations | E3 baseline build/test logs; unresolved |
+| Scene composer test imports — E UI fixture owner | Data-URL extracted fixture import resolution only observed | Same lit/directives/live.js resolution failure before/after; require actual UI recovery tests to execute | E3 verification; unresolved fixture investigation |
+| Narration, slides, Scene, video and3D quality — E media study owners, C semantic projection, F financial qualification | Each medium requires its own authored inputs, output validators and empirical study | Transcript exactness; layout overflow; screenplay fidelity; continuity/audio sync; geometry/material fidelity; costs per usable output | No new output study; all unmeasured. Image findings do not establish other-media quality |
+
+E3 shared SQL changes were coordinated through the H3 continuation owner. No host/adapter, financial policy, private retention, Memory/Replay activation or routing change is transferred. The repaired query must be qualified against any future changed source; historical56-argument workerd acceptance never qualifies arbitrary new bytes.
