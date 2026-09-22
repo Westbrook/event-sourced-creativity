@@ -1,36 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync,readdirSync} from 'node:fs';
-import {registerOutputSourceImports,outputTestDatabase} from './output-execution-test-helpers.mjs';
+import {registerOutputSourceImports} from './output-execution-test-helpers.mjs';
 registerOutputSourceImports();
 const {createPreparationHost}=await import('../evals/generation-reliability/preparation/native-host.mjs');
 const {capturePreparation,validatePreparation,financialScope,operationId,LIMITS,conditionalEstimate,validateDirection}=await import('../evals/generation-reliability/preparation/contract.mjs');
 const {sealFinancialPolicy}=await import('../evals/generation-reliability/native-host/financial-policy.mjs');
-const {POLICY_VERSION,reserveCostBudget,releaseCostBudget}=await import('../worker/pilot-policy.ts');
+const {reserveCostBudget,releaseCostBudget}=await import('../worker/pilot-policy.ts');
 const {canonical,hash}=await import('../evals/generation-reliability/core.mjs');
 const {generateCreativeDirection}=await import('../worker/openai-adapter.ts');
+import {fixture,responseBody} from './generation-preparation-fixture.mjs';
 const direction={title:'Botanist',rationale:'Preserve the brief.',scene:'An adult botanist. No logos.',palette:['green','white','brown'],next_moves:['Review identity','Review constraints']};
-const responseBody=model=>({id:'resp_original',model,status:'completed',output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify(direction)}]}],usage:{input_tokens:100,output_tokens:200,total_tokens:300}});
-async function fixture(t,options={}){
- const f=outputTestDatabase();t.after(()=>f.sqlite.close());
- for(const file of readdirSync(new URL('../drizzle/',import.meta.url)).filter(x=>x.endsWith('.sql')).sort())f.sqlite.exec(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'));
- for(const file of ['generation-study','generation-preparation'])f.sqlite.exec(readFileSync(new URL('../db/'+file+'.pending.sql',import.meta.url),'utf8'));
- const now=new Date().toISOString(),expiry=new Date(Date.now()+3600000).toISOString();
- f.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES('mock-owner','owner@example.test','Offline only','admin',?,?,?,?)").run(POLICY_VERSION,now,now,now);
- const source={ref:'source',bytes:JSON.stringify({brief:'An adult botanist. No logos.',facts:[]}),version:'synthetic-1',producer:'offline-fixture',authorityVersion:'OFFLINE-ONLY',documentId:'offline-document',producerEvidenceRef:'offline-freeze-receipt',frozenAt:now,complete:true,scope:'personal-administrator',expiresAt:expiry};
- f.sqlite.prepare("INSERT INTO private_content VALUES('source','mock-owner','document-artifact-input',?,?,?,NULL)").run(source.bytes,now,expiry);
- const config={model:'gpt-5.6-terra',accountId:'offline-account',projectHeader:null,region:'global',resolutionVersion:'OFFLINE-ONLY',resolutionEvidenceRef:'offline-configuration',credentialBinding:'offline-credential',modelBasis:'application-default',endpoint:'https://api.openai.com/v1/responses',serviceTier:'standard',expiresAt:expiry};
- const plan=capturePreparation({source,config,payerId:'mock-owner',runtimeHash:hash('offline-runtime')});
- const policy=sealFinancialPolicy({version:'generation-financial-policy-v1',scope:financialScope(plan),mode:'bounded-proof',reservationMicrousd:100000,lifecycleReserveMicrousd:10000,estimate:{microusd:50000,assumptions:['OFFLINE SYNTHETIC ONLY'],evidenceRef:'offline-pricing',costBasis:'fixture-not-price',reviewExpiresAt:expiry},bound:{maximumCostMicrousd:110000,evidenceRef:'offline-bound',scope:'synthetic-fixture'},residualDecision:null,expiresAt:expiry,inFlightLimit:1,stopBehavior:'stop-before-next-stage-no-retry',overrunPolicy:'retain-and-hold',lifecycle:{scope:'private copies and finance',liabilityOwner:'mock-owner',evidenceRef:'offline-only',through:expiry,maximumMicrousd:10000},nextPurchase:'after-settlement-and-funded-lifecycle'});
- const grantId='offline-grant';
- f.sqlite.prepare('INSERT INTO generation_preparation_grants VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0)').run(grantId,'mock-owner',plan.id,'source',plan.source.sha256,canonical(plan.source),canonical(config),plan.runtimeHash,canonical(policy),40000,'OFFLINE-ONLY',expiry,'authorized');
- const env={...f.env,FORMA_GENERATION_PREPARATION_ENABLED:'1',FORMA_GENERATION_STUDY_ORIGIN:'https://study.example.test',FORMA_PREPARATION_CONFIG:config,FORMA_PREPARATION_RUNTIME_HASH:plan.runtimeHash,FORMA_PREPARATION_CREDENTIAL_BINDING:config.credentialBinding,OPENAI_API_KEY:'OFFLINE-SENTINEL'};
- const request=()=>new Request(env.FORMA_GENERATION_STUDY_ORIGIN+'/offline-preparation',{method:'POST',headers:{origin:env.FORMA_GENERATION_STUDY_ORIGIN,'oai-authenticated-user-id':'mock-owner','oai-authenticated-user-email':'owner@example.test'}});
- const host=createPreparationHost(env,{plan}),args={grantId},calls=[],original=globalThis.fetch;
- globalThis.fetch=async(url,init)=>{calls.push({url,init});return options.fetch?options.fetch(url,init,f):Response.json(responseBody(config.model),{headers:{'x-request-id':'req_original'}});};t.after(()=>{globalThis.fetch=original;});
- const run=()=>host.execute(request(),args),op=()=>f.sqlite.prepare('SELECT * FROM generation_preparation_operations').get();
- return {...f,source,config,plan,policy,env,host,request,args,calls,run,op,expiry};
-}
 test('disabled preparation has zero authority, DB, key or transport work',async()=>{
  const env={DB:{prepare(){throw Error('read');}},get OPENAI_API_KEY(){throw Error('key');}};
  assert.deepEqual(await createPreparationHost(env,{plan:null}).execute(null),{action:'disabled',newPurchases:0});
@@ -39,7 +19,7 @@ test('one immutable request, finance before custody, three bounded private copie
  const f=await fixture(t);const r=await f.run();assert.equal(r.contentOutcome,'usable');assert.equal(r.initiatedProviderCalls,1);assert.equal(r.newPurchases,1);assert.equal(f.calls.length,1);assert.equal(f.calls[0].init.body,f.plan.request.body);assert.equal(f.calls[0].init.redirect,'error');
  assert.equal(f.op().provider_request_id,'req_original');assert.equal(f.op().response_id,'resp_original');assert.deepEqual(JSON.parse(f.op().usage_json),{input_tokens:100,output_tokens:200,total_tokens:300});assert.equal(f.op().private_writes,3);
  assert.equal((await f.run()).reason,'original_purchase_only');assert.equal((await f.host.recover(f.request(),f.args)).contentOutcome,'usable');assert.equal(f.calls.length,1);
- assert.equal(f.sqlite.prepare('SELECT reserved_microusd FROM cost_budget_reservations').get().reserved_microusd,110000);
+ assert.equal(f.sqlite.prepare('SELECT reserved_microusd FROM cost_budget_reservations').get().reserved_microusd,100000);
 });
 test('ordinary planner and disabled capture use byte-identical existing request contract',async t=>{
  const f=await fixture(t);await generateCreativeDirection(f.env,'mock-owner',JSON.parse(f.source.bytes),undefined,'en');
@@ -100,7 +80,7 @@ for(const problem of ['refusal','incomplete','bad-schema','duplicate','missing-u
 test('new grant, plan, operation id and expired lease cannot bypass payer hold or erase original reservation',async t=>{
  const f=await fixture(t);await f.run();
  await assert.rejects(reserveCostBudget(f.env,'mock-owner',1,{maximumMicrousd:1,allowUserOverage:false,reservationId:'replacement',period:'2030-01',operation:'different'}),/outstanding_exposure/);
- await assert.rejects(releaseCostBudget(f.env,'mock-owner',f.op().cost_reservation_id),/reconciliation_uninstalled/);
+ await assert.rejects(releaseCostBudget(f.env,'mock-owner',f.op().cost_reservation_id),/original_charge_required/);
  assert.throws(()=>f.sqlite.prepare('DELETE FROM generation_preparation_operations').run(),/original_only/);
  assert.throws(()=>f.sqlite.prepare("UPDATE generation_preparation_operations SET status='reserved'").run(),/immutable_purchase/);
  assert.throws(()=>f.sqlite.prepare("UPDATE generation_preparation_grants SET expires_at='2030-01-01'").run(),/immutable_grant/);
@@ -124,7 +104,7 @@ test('conditional estimate unavailable until exact input/config; cache-write, re
  const e=conditionalEstimate(f.plan,rates);assert.equal(e.actualRequestEstimateMicrousd,Math.ceil(2.5*(f.plan.request.byteLength+4096)+12*1200));assert.equal(e.maximumExposureMicrousd,null);assert.throws(()=>conditionalEstimate(f.plan,{...rates,accountId:'other'}));assert.throws(()=>conditionalEstimate(f.plan,{...rates,expiresAt:'2000-01-01'}));
 });
 test('disabled preparation is absent from runtime imports and reuses H3 external purchase inventory',()=>{
- const native=readFileSync(new URL('../evals/generation-reliability/native-host/host.mjs',import.meta.url),'utf8');const guard=readFileSync(new URL('../evals/generation-reliability/preparation/external-guard.mjs',import.meta.url),'utf8');assert.ok(guard.includes(native.slice(native.indexOf('const externalGuard='),native.indexOf('\n\n',native.indexOf('const externalGuard=')))));
+ const native=readFileSync(new URL('../evals/generation-reliability/native-host/host.mjs',import.meta.url),'utf8');const guard=readFileSync(new URL('../evals/generation-reliability/preparation/external-guard.mjs',import.meta.url),'utf8');assert.ok(native.includes("import {externalGuard, preparationGuards} from '../preparation/external-guard.mjs'"));assert.ok(guard.includes('output_provider_calls'));assert.ok(guard.includes('consequential_execution_steps'));
  for(const file of readdirSync(new URL('../worker/',import.meta.url)).filter(f=>f.endsWith('.ts')))assert.doesNotMatch(readFileSync(new URL('../worker/'+file,import.meta.url),'utf8'),/from\s+['"][^'"]*(?:generation-reliability\/preparation|preparation\/native-host)/);
  assert.ok(operationId({payerId:'p',source:{},request:{sha256:'x'},config:{},runtimeHash:'r'}).startsWith('h4-'));
 });
@@ -166,7 +146,7 @@ test('cleanup is original-copy-only, once, and preserves financial rows after ex
  f.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01T00:00:00.000Z' WHERE content_id IN(SELECT content_ref FROM generation_preparation_evidence)").run();
  Date.now=()=>Date.parse(op.expires_at)+1;t.after(()=>{Date.now=originalNow;});
  const r=await f.host.cleanup(f.request(),{operationId:op.operation_id});assert.equal(r.financialIdentityPreserved,true);
- assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n,1);assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM cost_budget_reservations').get().n,1);assert.equal(f.op().cleanup_attempts,1);
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM private_content').get().n,1);assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM cost_budget_reservations').get().n,2);assert.equal(f.op().cleanup_attempts,1);
  await assert.rejects(f.host.cleanup(f.request(),{operationId:op.operation_id}));assert.equal(f.calls.length,1);
 });
 test('database rebinding or same-model override provenance mismatch stops before purchase',async t=>{

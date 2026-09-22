@@ -1,9 +1,12 @@
 import { hash, canonical } from '../core.mjs';
 const integer=n=>Number.isSafeInteger(n)&&n>=0;
 const text=v=>typeof v==='string'&&v.trim().length>0;
+// Only these two disabled, schema-qualified hosts share F3 semantics. No caller-supplied table name.
+const tablePrefix=kind=>{if(!['study','preparation'].includes(kind))throw Error('financial_schema_invalid');return `generation_${kind}`;};
 /** Reads server-entered verified billing assessments only. No request body is financial evidence. */
-export async function financialCompletion(db,op,charge,policy) {
-  const r=await db.prepare('SELECT * FROM generation_study_reconciliations WHERE operation_id=? ORDER BY sequence DESC LIMIT 1').bind(op.operation_id).first();
+export async function financialCompletion(db,op,charge,policy,kind='study') {
+  const table=tablePrefix(kind);
+  const r=await db.prepare(`SELECT * FROM ${table}_reconciliations WHERE operation_id=? ORDER BY sequence DESC LIMIT 1`).bind(op.operation_id).first();
   const result={providerSettled:false,lifecycleFunded:false,nextPurchaseEligible:false,evidenceId:r?.evidence_id??null,originalResidualMicrousd:charge.residual_exposure_microusd,remainingUncertaintyMicrousd:r?.remaining_uncertainty_microusd??null};
   if(!r)return {...result,reason:'verified_reconciliation_required'};
   if(r.original_charge_hash!==hash(charge)||r.policy_id!==policy.id||r.evidence_kind!=='verified-incurred-charge'
@@ -30,7 +33,8 @@ export async function financialCompletion(db,op,charge,policy) {
  * The verifier's identity, private evidence reference and incurred classification must already be established.
  * A lost commit acknowledgement is retried with the same complete record and evidence_id.
  */
-export async function appendVerifiedReconciliation(env,record) {
+export async function appendVerifiedReconciliation(env,record,kind='study') {
+  const table=tablePrefix(kind);
   const columns=['evidence_id','operation_id','sequence','previous_id','original_charge_hash','policy_id','evidence_kind','authority_version','evidence_ref','recorded_at','provider_settled','incurred_microusd','incurred_tokens','remaining_uncertainty_microusd','lifecycle_microusd','lifecycle_scope','liability_owner','lifecycle_through','lifecycle_evidence_ref','lifecycle_closed','lifecycle_incurred_microusd'];
   const deny=()=>{throw Error('study_reconciliation_record_invalid');};
   if(canonical(Object.keys(record).sort())!==canonical([...columns].sort())||record.evidence_kind!=='verified-incurred-charge'
@@ -42,16 +46,16 @@ export async function appendVerifiedReconciliation(env,record) {
     ||!Number.isFinite(Date.parse(record.recorded_at))||!Number.isFinite(Date.parse(record.lifecycle_through)))deny();
   const db=env.DB;
   const same=async()=>{
-    const prior=await db.prepare('SELECT * FROM generation_study_reconciliations WHERE evidence_id=?').bind(record.evidence_id).first();
+    const prior=await db.prepare(`SELECT * FROM ${table}_reconciliations WHERE evidence_id=?`).bind(record.evidence_id).first();
     if(prior&&canonical(prior)!==canonical(record))throw Error('study_reconciliation_id_conflict');
     return prior;
   };
   if(await same())return {evidenceId:record.evidence_id,reused:true};
-  const charge=await db.prepare('SELECT * FROM generation_study_charges WHERE operation_id=?').bind(record.operation_id).first();
-  const op=await db.prepare('SELECT * FROM generation_study_operations WHERE operation_id=?').bind(record.operation_id).first();
+  const charge=await db.prepare(`SELECT * FROM ${table}_charges WHERE operation_id=?`).bind(record.operation_id).first();
+  const op=await db.prepare(`SELECT * FROM ${table}_operations WHERE operation_id=?`).bind(record.operation_id).first();
   if(!charge||!op||hash(charge)!==record.original_charge_hash||op.financial_policy_id!==record.policy_id)deny();
   try{
-    const result=await db.prepare(`INSERT INTO generation_study_reconciliations (${columns.join(',')}) VALUES (${columns.map(()=>'?').join(',')})`).bind(...columns.map(k=>record[k])).run();
+    const result=await db.prepare(`INSERT INTO ${table}_reconciliations (${columns.join(',')}) VALUES (${columns.map(()=>'?').join(',')})`).bind(...columns.map(k=>record[k])).run();
     if(env.DB!==db||result.success!==true||result.meta?.changes!==1)throw Error('study_reconciliation_unacknowledged');
   }catch(error){if(env.DB===db&&await same())return {evidenceId:record.evidence_id,reused:true};throw error;}
   return {evidenceId:record.evidence_id,reused:false};

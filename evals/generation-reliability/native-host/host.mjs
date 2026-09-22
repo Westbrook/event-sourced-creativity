@@ -1,3 +1,4 @@
+import {externalGuard, preparationGuards} from '../preparation/external-guard.mjs';
 import { imageFinancialScope, resolveFinancialPolicy } from './financial-policy.mjs';
 import { financialCompletion } from './financial-reconciliation.mjs';
 import { checkpointGenerationEvidence, operationEvidence } from '../../../worker/generation-evidence.ts';
@@ -10,10 +11,7 @@ import { submitStudyStage, validateWire, digest, HOST_LIMITS } from './transport
 const fail=code=>{throw Error(code);};
 const integer=n=>Number.isSafeInteger(n)&&n>=0;
 const row=(db,id)=>db.prepare('SELECT * FROM generation_study_operations WHERE operation_id=?').bind(id).first();
-const externalGuard=owner=>({sql:`NOT EXISTS(SELECT 1 FROM cost_budget_reservations WHERE owner_id=? AND status IN('authorizing','active','executing') AND reservation_id NOT IN(SELECT lifecycle_reservation_id FROM generation_study_operations WHERE lifecycle_reservation_id IS NOT NULL AND status='completed'))
- AND NOT EXISTS(SELECT 1 FROM budget_reservations WHERE owner_id=? AND status IN('authorizing','active'))
- AND NOT EXISTS(SELECT 1 FROM output_provider_calls c JOIN output_execution_grants g ON g.scope_key=c.scope_key AND g.grant_id=(SELECT grant_id FROM output_operation_slots s WHERE s.scope_key=c.scope_key AND s.slot_id=c.slot_id) WHERE g.payer_user_id=? AND c.status NOT IN('settled','rejected'))
- AND NOT EXISTS(SELECT 1 FROM document_jobs WHERE owner_id=? AND (status IN('queued','running','committing') OR json_extract(result_json,'$.providerSubmissionLegacyUncertain')=1 OR json_extract(result_json,'$.model3dProviderSubmission')='pending' OR EXISTS(SELECT 1 FROM json_each(COALESCE(json_extract(result_json,'$.providerSubmissions'),'{}')) WHERE (json_extract(value,'$.status') IS NULL OR json_extract(value,'$.status') NOT IN('completed','rejected') OR json_extract(value,'$.accountingState')='unknown' OR json_extract(value,'$.status')='completed' AND COALESCE(json_type(value,'$.costMicrousd'),'missing') NOT IN('integer','real'))))) AND NOT EXISTS(SELECT 1 FROM consequential_execution_steps s JOIN consequential_executions e USING(execution_id) WHERE e.actor_user_id=? AND s.status NOT IN('settled','not-submitted'))`,bindings:[owner,owner,owner,owner,owner]});
+
 
 /** Server-owned config only; no HTTP route, authority factory, mock import, CLI live command or automatic schema installation. */
 export function createNativeStudyHost(env,{plan:original,runtimeIdentity,financialPolicies=[],financialAccount=null}){
@@ -27,6 +25,8 @@ export function createNativeStudyHost(env,{plan:original,runtimeIdentity,financi
     if(plan.user!==safetyIdentifier(a.user.userId)||a.grant.runtime_hash!==hash(runtime))fail('study_owner_runtime_mismatch');
     const binding=plan.candidate.retainedInputs;
     if(!binding||binding.sourceRef!==a.source.content_id||binding.directionRef!==a.direction.content_id||binding.sourceSha256!==a.grant.source_hash||binding.directionSha256!==a.grant.direction_hash||binding.authorityVersion!==a.grant.authority_version)fail('study_capture_retention_mismatch');
+    const preparation=await preparationGuards(db,a.user.userId);
+    a.guards.push(...preparation.identity,...(!recovery?preparation.holds:[]));
     return a;
   }
   async function admission(a,trial){
@@ -84,7 +84,7 @@ export function createNativeStudyHost(env,{plan:original,runtimeIdentity,financi
     unchanged();
     const stopped={sql:"EXISTS(SELECT 1 FROM generation_study_grants WHERE grant_id=? AND stopped=0) AND COALESCE((SELECT SUM(COALESCE(measured_microusd,0)+COALESCE((SELECT reserved_microusd FROM cost_budget_reservations WHERE reservation_id=generation_study_operations.lifecycle_reservation_id),0)) FROM generation_study_operations WHERE grant_id=?),0)+?<=?",bindings:[grantId,grantId,finance.reservationMicrousd+finance.lifecycleReserveMicrousd,a.grant.allowance_microusd]};
     // Native token and dollar preparation statements plus H state in one D1 batch. No independent SQLite journal.
-    const results=await checkedBatch(env,[...a.guards,externalGuard(a.user.userId),stopped],[
+    const results=await checkedBatch(env,[...a.guards,await externalGuard(db,a.user.userId),stopped],[
       db.prepare("INSERT INTO generation_study_operations(operation_id,owner_id,grant_id,plan_id,trial_id,request_hash,token_reservation_id,cost_reservation_id,status,created_at,expires_at,financial_policy_id,lifecycle_reservation_id) VALUES(?,?,?,?,?,?,?,?,'reserved',strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,?,?)").bind(id,a.user.userId,grantId,plan.id,trial.id,digest(plan.requests[trial.cellId].image.body),tokenId,costId,a.expiresAt,finance.policy?.id??null,lifeId),
       ...tokens.statements,...cost.statements,...(life?.statements??[]),
       ...(lifeId?[assertion(db,{sql:"EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status='active' AND reserved_microusd=?)",bindings:[lifeId,a.user.userId,finance.lifecycleReserveMicrousd]})]:[]),
