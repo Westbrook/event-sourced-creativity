@@ -127,3 +127,22 @@ test('Memory repair actual Worker inspection is read-only, capability-protected 
  f.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run(f.owner);
  assert.equal((await f.request(MEMORY_SCHEMA_REPAIR_PATH)).status,403);
 });
+
+test('Memory repair native administrator form applies once and refuses enabled Memory',async t=>{
+ const {MEMORY_SCHEMA_REPAIR_PATH}=await import('../worker/memory-schema-repair-api.ts');
+ const {MEMORY_SCHEMA_REPAIR_MANIFEST}=await import('../worker/memory-schema-repair.ts');
+ const {readLocalMigrations,migrateLocalDatabase}=await import('../scripts/lib/local-migrations.mjs');
+ const f=await createSceneCostFixture(1);t.after(()=>f.close());await f.drainBackground();
+ const {DatabaseSync}=await import('node:sqlite');const baseline=new DatabaseSync(':memory:');t.after(()=>baseline.close());
+ migrateLocalDatabase(baseline,{migrations:readLocalMigrations(new URL('../drizzle/',import.meta.url)).slice(0,41)});
+ const baselineObjects=baseline.prepare("SELECT type,name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name!='__forma_local_migrations'").all();
+ for(const kind of ['table','index','trigger'])for(const row of baselineObjects)if(row.type===kind&&!f.sqlite.prepare('SELECT 1 FROM sqlite_schema WHERE name=?').get(row.name))f.sqlite.exec(row.sql);
+ f.env.FORMA_MEMORY_SCHEMA_REPAIR_MANIFEST=MEMORY_SCHEMA_REPAIR_MANIFEST;
+ const page=await f.request(MEMORY_SCHEMA_REPAIR_PATH);assert.equal(page.status,200,await page.clone().text());const html=await page.text();
+ const proof=html.match(/name="proof" value="([a-f0-9]{64})"/)?.[1];assert.ok(proof,html);
+ const request={method:'POST',headers:{origin:'http://localhost','content-type':'application/x-www-form-urlencoded'},body:'proof='+proof};
+ f.env.FORMA_MEMORY_ENABLED='true';assert.equal((await f.request(MEMORY_SCHEMA_REPAIR_PATH,request)).status,403);delete f.env.FORMA_MEMORY_ENABLED;
+ const result=await f.request(MEMORY_SCHEMA_REPAIR_PATH,request);assert.equal(result.status,200,await result.clone().text());assert.match(await result.text(),/Memory schema repair completed/);
+ const after=await f.request(MEMORY_SCHEMA_REPAIR_PATH);assert.doesNotMatch(await after.text(),/<form/);
+ assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM __forma_memory_schema_repair_receipts').get().n,1);
+});

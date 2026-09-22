@@ -685,3 +685,5 @@ hold retains the exact41-migration production494 prefix and excludes31 candidate
 Memory migrations. Before activation, inspect exact schema/applied receipts,
 repair and qualify isolated hosted execution, then explicitly lift the hold.
 Memory activation, enrollment and scheduling remain off; existing audience unchanged.
+
+MEM-060 repair continuation: [fixed atomic Memory schema repair](forma-memory-schema-repair-2026-09-21.md) is locally qualified; hosted inspection/application are in progress. Packaging hold and Memory-off boundaries remain unchanged.
