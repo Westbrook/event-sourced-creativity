@@ -1,0 +1,416 @@
+{
+  "schemaVersion": "generation-reliability-v1",
+  "sourceRevision": "1587f9067162e38ce437d9cf443faf5620b388ae",
+  "experiment": "C3",
+  "mode": "dry-run",
+  "baselineIds": [
+    "baseline:13408de1af2d54010943147089b8467bb60d113d3c9ad6ef01a07d0d2c024000",
+    "baseline:4fed076f1b24218fdd554cea9dd16bab00cc1accc7281c870e7072724f073060"
+  ],
+  "cases": [
+    {
+      "key": "incident-equivalent",
+      "stratum": "literary-portrait",
+      "source": {
+        "facts": [
+          {
+            "type": "subject",
+            "active": true,
+            "authority": "authored",
+            "properties": {
+              "text": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+              "weight": 1,
+              "intent": "include",
+              "spatial_scope": {
+                "kind": "document"
+              }
+            }
+          }
+        ],
+        "relationships": [],
+        "pins": [],
+        "standing_constraints": []
+      },
+      "direction": {
+        "title": "incident-equivalent",
+        "scene": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+        "rationale": "Synthetic frozen direction, not reconstructed incident planning.",
+        "palette": [],
+        "next_moves": []
+      },
+      "prompt": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+      "requirements": [
+        {
+          "id": "authored-brief",
+          "text": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+          "critical": true,
+          "mustContain": [
+            "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness."
+          ]
+        }
+      ],
+      "references": [],
+      "hashes": {
+        "source": "f1a5dca1b65c07317aa06e137ff7bc32075de668a298f591021959cb6e43955b",
+        "planner": "afb1a89cb879b826511e24244b2b29bd7b11eb69c563f5b37b0e1bfa47f22903",
+        "prompt": "922bcaa1283e27c3657e19f3d23b82a0bd27a764a5dd50e693de470312cb3831",
+        "references": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "privacy": "synthetic",
+      "id": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df"
+    }
+  ],
+  "cells": [
+    {
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "baselineClass": "CTRL",
+      "parentId": null,
+      "config": {
+        "prompt": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "f1a5dca1b65c07317aa06e137ff7bc32075de668a298f591021959cb6e43955b",
+      "plannerHash": "afb1a89cb879b826511e24244b2b29bd7b11eb69c563f5b37b0e1bfa47f22903",
+      "promptHash": "922bcaa1283e27c3657e19f3d23b82a0bd27a764a5dd50e693de470312cb3831",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb"
+    },
+    {
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "baselineClass": "CTRL",
+      "parentId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+      "config": {
+        "prompt": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.\nPreserve the named identity and era in an original illustration.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "f1a5dca1b65c07317aa06e137ff7bc32075de668a298f591021959cb6e43955b",
+      "plannerHash": "afb1a89cb879b826511e24244b2b29bd7b11eb69c563f5b37b0e1bfa47f22903",
+      "promptHash": "af7a2243b2c6df3713544a1d08a5a2c9eb58f51b57c0ea2f9b44bcbae338a3ec",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [
+        "prompt"
+      ],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:6d44e8c831abba01302b3ca1395b3035b85441a2bef6ee63eac28a273f3d7bb7"
+    },
+    {
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "baselineClass": "CTRL",
+      "parentId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+      "config": {
+        "prompt": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/responses",
+        "orchestration": "responses-image-tool-with-recorded-mainline-model",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "f1a5dca1b65c07317aa06e137ff7bc32075de668a298f591021959cb6e43955b",
+      "plannerHash": "afb1a89cb879b826511e24244b2b29bd7b11eb69c563f5b37b0e1bfa47f22903",
+      "promptHash": "922bcaa1283e27c3657e19f3d23b82a0bd27a764a5dd50e693de470312cb3831",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [
+        "endpoint",
+        "orchestration"
+      ],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "route-plus-orchestration or reference route composite; never endpoint-only",
+      "id": "cell:f9635943e2dcd449a0620a490083f4a15e1f4ddcdc7f7296cb41aeff47129ac8"
+    },
+    {
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "baselineClass": "CTRL",
+      "parentId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+      "config": {
+        "prompt": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.\nPreserve the named identity and era in an original illustration.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/responses",
+        "orchestration": "responses-image-tool-with-recorded-mainline-model",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "f1a5dca1b65c07317aa06e137ff7bc32075de668a298f591021959cb6e43955b",
+      "plannerHash": "afb1a89cb879b826511e24244b2b29bd7b11eb69c563f5b37b0e1bfa47f22903",
+      "promptHash": "af7a2243b2c6df3713544a1d08a5a2c9eb58f51b57c0ea2f9b44bcbae338a3ec",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [
+        "endpoint",
+        "orchestration",
+        "prompt"
+      ],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "route-plus-orchestration or reference route composite; never endpoint-only",
+      "id": "cell:cccf2b903bd1baa7e30f0e12ce7d8bc96ff407fd5a3230d236e1270ae9191b4c"
+    }
+  ],
+  "trials": [
+    {
+      "experiment": "C3",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:cccf2b903bd1baa7e30f0e12ce7d8bc96ff407fd5a3230d236e1270ae9191b4c",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:a6e8057d98c19f9ae1d39c6502c3a991738f3f59403e75c094bfbc074b6179a9"
+    },
+    {
+      "experiment": "C3",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:f9635943e2dcd449a0620a490083f4a15e1f4ddcdc7f7296cb41aeff47129ac8",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:f592e78af3eded4b5b8f766738ec1f7748f0b834c96f8152124dbe4201e5b040"
+    },
+    {
+      "experiment": "C3",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:6d44e8c831abba01302b3ca1395b3035b85441a2bef6ee63eac28a273f3d7bb7",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:be1e104072102291181fb74d704808de921705875b34fc4d2f82f2da5d20823f"
+    },
+    {
+      "experiment": "C3",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:292f3c47071dffaeb071b82f95990d2a907367d9ceb5ab61fa277cd3548e9699"
+    }
+  ],
+  "allowedFactors": [
+    "prompt",
+    "endpoint",
+    "orchestration"
+  ],
+  "interpretation": "full clarification-by-route factorial",
+  "repetitions": 1,
+  "plannedCalls": {
+    "planner": 0,
+    "media": 4,
+    "moderation": 4,
+    "evaluator": 4,
+    "contextChecker": 0,
+    "status": 0,
+    "result": 0
+  },
+  "callBudgetBasis": "maximum prespecified stage slots; a downstream evaluator not initiated after failure stays unexecuted",
+  "counts": {
+    "planned": 4,
+    "initiated": 0,
+    "dispatched": 0,
+    "completed": 0,
+    "blocked": 0,
+    "unexecuted": 4
+  },
+  "budget": {
+    "currency": "USD",
+    "maximumCostMicrousd": null,
+    "authorizedCostMicrousd": 0,
+    "actualCostMicrousd": 0,
+    "unknownExposure": "all future planner/media/check/evaluator consumption unqualified",
+    "maxConcurrent": 1,
+    "maxUnreconciled": 0
+  },
+  "stopRules": [
+    "unexpected_unsafe_output",
+    "critical_intent_loss",
+    "budget_bound",
+    "unknown_financial_exposure",
+    "systematic_access_failure",
+    "invalid_comparison_infrastructure"
+  ],
+  "gates": [
+    "exact_manifest_user_review",
+    "existing_credential_consent_and_budget_workflow",
+    "A_stage_evidence",
+    "F_capability_and_consumption_qualification",
+    "zero_replacement_purchase_admission",
+    "individual_screens_first",
+    "synthetic_design_example_requires_actual_candidate_capture"
+  ],
+  "review": {
+    "reviewedManifestId": null,
+    "spendAuthorized": false
+  },
+  "id": "manifest:1005887c5022037ab46e4455629b00a3fb315525e456d7e32823b3cc71471220"
+}

@@ -1,0 +1,1655 @@
+{
+  "schemaVersion": "generation-reliability-v1",
+  "sourceRevision": "1587f9067162e38ce437d9cf443faf5620b388ae",
+  "experiment": "first-screen-proposed-E2a",
+  "mode": "dry-run",
+  "baselineIds": [
+    "baseline:13408de1af2d54010943147089b8467bb60d113d3c9ad6ef01a07d0d2c024000",
+    "baseline:4fed076f1b24218fdd554cea9dd16bab00cc1accc7281c870e7072724f073060"
+  ],
+  "cases": [
+    {
+      "key": "incident-equivalent",
+      "stratum": "literary-portrait",
+      "source": {
+        "facts": [
+          {
+            "type": "subject",
+            "active": true,
+            "authority": "authored",
+            "properties": {
+              "text": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+              "weight": 1,
+              "intent": "include",
+              "spatial_scope": {
+                "kind": "document"
+              }
+            }
+          }
+        ],
+        "relationships": [],
+        "pins": [],
+        "standing_constraints": []
+      },
+      "direction": {
+        "title": "incident-equivalent",
+        "scene": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+        "rationale": "Synthetic frozen direction, not reconstructed incident planning.",
+        "palette": [],
+        "next_moves": []
+      },
+      "prompt": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+      "requirements": [
+        {
+          "id": "authored-brief",
+          "text": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+          "critical": true,
+          "mustContain": [
+            "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness."
+          ]
+        }
+      ],
+      "references": [],
+      "hashes": {
+        "source": "f1a5dca1b65c07317aa06e137ff7bc32075de668a298f591021959cb6e43955b",
+        "planner": "afb1a89cb879b826511e24244b2b29bd7b11eb69c563f5b37b0e1bfa47f22903",
+        "prompt": "922bcaa1283e27c3657e19f3d23b82a0bd27a764a5dd50e693de470312cb3831",
+        "references": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "privacy": "synthetic",
+      "id": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df"
+    },
+    {
+      "key": "adult-portrait",
+      "stratum": "adult-portrait",
+      "source": {
+        "facts": [
+          {
+            "type": "subject",
+            "active": true,
+            "authority": "authored",
+            "properties": {
+              "text": "An original adult botanist holding a notebook in a greenhouse. Green and cream palette. No logos.",
+              "weight": 1,
+              "intent": "include",
+              "spatial_scope": {
+                "kind": "document"
+              }
+            }
+          }
+        ],
+        "relationships": [],
+        "pins": [],
+        "standing_constraints": []
+      },
+      "direction": {
+        "title": "adult-portrait",
+        "scene": "An original adult botanist holding a notebook in a greenhouse. Green and cream palette. No logos.",
+        "rationale": "Synthetic frozen direction, not reconstructed incident planning.",
+        "palette": [],
+        "next_moves": []
+      },
+      "prompt": "An original adult botanist holding a notebook in a greenhouse. Green and cream palette. No logos.",
+      "requirements": [
+        {
+          "id": "authored-brief",
+          "text": "An original adult botanist holding a notebook in a greenhouse. Green and cream palette. No logos.",
+          "critical": true,
+          "mustContain": [
+            "An original adult botanist holding a notebook in a greenhouse. Green and cream palette. No logos."
+          ]
+        }
+      ],
+      "references": [],
+      "hashes": {
+        "source": "a9a9995edbf32b7ef0303c7b5f0caf4e31b88e5e271f14daf35d5b07db5d8191",
+        "planner": "e7b9dbfe43faeaf85fb54ab944d2653c1d0656c772d3ee2de288aeb9a7962a54",
+        "prompt": "c8009572ff600d4385274411857084838655eaaca77dea0ce0bd432f5045ab69",
+        "references": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "privacy": "synthetic",
+      "id": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689"
+    },
+    {
+      "key": "rich-literary",
+      "stratum": "rich-literary-constraints",
+      "source": {
+        "facts": [
+          {
+            "type": "subject",
+            "active": true,
+            "authority": "authored",
+            "properties": {
+              "text": "An original adult fictional archivist in a 1920s library, left of a brass lamp, holding a red atlas. Indigo and brass palette. No actor likeness.",
+              "weight": 1,
+              "intent": "include",
+              "spatial_scope": {
+                "kind": "document"
+              }
+            }
+          }
+        ],
+        "relationships": [],
+        "pins": [],
+        "standing_constraints": []
+      },
+      "direction": {
+        "title": "rich-literary",
+        "scene": "An original adult fictional archivist in a 1920s library, left of a brass lamp, holding a red atlas. Indigo and brass palette. No actor likeness.",
+        "rationale": "Synthetic frozen direction, not reconstructed incident planning.",
+        "palette": [],
+        "next_moves": []
+      },
+      "prompt": "An original adult fictional archivist in a 1920s library, left of a brass lamp, holding a red atlas. Indigo and brass palette. No actor likeness.",
+      "requirements": [
+        {
+          "id": "authored-brief",
+          "text": "An original adult fictional archivist in a 1920s library, left of a brass lamp, holding a red atlas. Indigo and brass palette. No actor likeness.",
+          "critical": true,
+          "mustContain": [
+            "An original adult fictional archivist in a 1920s library, left of a brass lamp, holding a red atlas. Indigo and brass palette. No actor likeness."
+          ]
+        }
+      ],
+      "references": [],
+      "hashes": {
+        "source": "0f3d3f3b3742446654fa5f7bd229d9f0fd296877ae67a2d30974e1b087924eb3",
+        "planner": "f94934c7af61a4a7b01adb04b6b3add68af3d3e82bea7a61f6d15fa933bc064d",
+        "prompt": "dda69bf18260d08948892df0f88c335e1e75c830053d5408607f716cd81c7324",
+        "references": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "privacy": "synthetic",
+      "id": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be"
+    },
+    {
+      "key": "spatial",
+      "stratum": "spatial-nonportrait",
+      "source": {
+        "facts": [
+          {
+            "type": "subject",
+            "active": true,
+            "authority": "authored",
+            "properties": {
+              "text": "Three blue ceramic bowls in the lower-right quadrant of a cream table; one red cloth at upper left. No people.",
+              "weight": 1,
+              "intent": "include",
+              "spatial_scope": {
+                "kind": "document"
+              }
+            }
+          }
+        ],
+        "relationships": [],
+        "pins": [],
+        "standing_constraints": []
+      },
+      "direction": {
+        "title": "spatial",
+        "scene": "Three blue ceramic bowls in the lower-right quadrant of a cream table; one red cloth at upper left. No people.",
+        "rationale": "Synthetic frozen direction, not reconstructed incident planning.",
+        "palette": [],
+        "next_moves": []
+      },
+      "prompt": "Three blue ceramic bowls in the lower-right quadrant of a cream table; one red cloth at upper left. No people.",
+      "requirements": [
+        {
+          "id": "authored-brief",
+          "text": "Three blue ceramic bowls in the lower-right quadrant of a cream table; one red cloth at upper left. No people.",
+          "critical": true,
+          "mustContain": [
+            "Three blue ceramic bowls in the lower-right quadrant of a cream table; one red cloth at upper left. No people."
+          ]
+        }
+      ],
+      "references": [],
+      "hashes": {
+        "source": "86e2192e5d15fd188c8613cf4d3affe9ed9a0a49553a8f155cb4e49193bc2c05",
+        "planner": "a7207b1ca52b628e57a1e08f609a5e515a12083de3318a17c74f2d57a198772e",
+        "prompt": "153ba9c5bec1d55a5960f15617ddf176cdeb1412ddc0012231584b9dde1a52d0",
+        "references": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "privacy": "synthetic",
+      "id": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3"
+    },
+    {
+      "key": "typography",
+      "stratum": "exact-typography",
+      "source": {
+        "facts": [
+          {
+            "type": "subject",
+            "active": true,
+            "authority": "authored",
+            "properties": {
+              "text": "A cream poster with the exact words FIND TRUE NORTH once, centered above a navy compass illustration. No additional text.",
+              "weight": 1,
+              "intent": "include",
+              "spatial_scope": {
+                "kind": "document"
+              }
+            }
+          }
+        ],
+        "relationships": [],
+        "pins": [],
+        "standing_constraints": []
+      },
+      "direction": {
+        "title": "typography",
+        "scene": "A cream poster with the exact words FIND TRUE NORTH once, centered above a navy compass illustration. No additional text.",
+        "rationale": "Synthetic frozen direction, not reconstructed incident planning.",
+        "palette": [],
+        "next_moves": []
+      },
+      "prompt": "A cream poster with the exact words FIND TRUE NORTH once, centered above a navy compass illustration. No additional text.",
+      "requirements": [
+        {
+          "id": "authored-brief",
+          "text": "A cream poster with the exact words FIND TRUE NORTH once, centered above a navy compass illustration. No additional text.",
+          "critical": true,
+          "mustContain": [
+            "A cream poster with the exact words FIND TRUE NORTH once, centered above a navy compass illustration. No additional text."
+          ]
+        }
+      ],
+      "references": [],
+      "hashes": {
+        "source": "7a9b2406623b0d8477d6c5e7312144e283978933a7c7b026ea50908b618c2d2d",
+        "planner": "a1a3f25c89aa3cc08afc24aeb868319d8edd8284418e2b36cd46f26674666479",
+        "prompt": "74b6518c066f9e4850d504238db534a8f6e223c60fd9bb59a4ae16defbd7f0b0",
+        "references": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "privacy": "synthetic",
+      "id": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979"
+    },
+    {
+      "key": "negative",
+      "stratum": "negative-constraints",
+      "source": {
+        "facts": [
+          {
+            "type": "subject",
+            "active": true,
+            "authority": "authored",
+            "properties": {
+              "text": "A quiet ochre desert printshop with one adult printmaker and a blue landscape print. No logos, no crowds, no computer screens.",
+              "weight": 1,
+              "intent": "include",
+              "spatial_scope": {
+                "kind": "document"
+              }
+            }
+          }
+        ],
+        "relationships": [],
+        "pins": [],
+        "standing_constraints": []
+      },
+      "direction": {
+        "title": "negative",
+        "scene": "A quiet ochre desert printshop with one adult printmaker and a blue landscape print. No logos, no crowds, no computer screens.",
+        "rationale": "Synthetic frozen direction, not reconstructed incident planning.",
+        "palette": [],
+        "next_moves": []
+      },
+      "prompt": "A quiet ochre desert printshop with one adult printmaker and a blue landscape print. No logos, no crowds, no computer screens.",
+      "requirements": [
+        {
+          "id": "authored-brief",
+          "text": "A quiet ochre desert printshop with one adult printmaker and a blue landscape print. No logos, no crowds, no computer screens.",
+          "critical": true,
+          "mustContain": [
+            "A quiet ochre desert printshop with one adult printmaker and a blue landscape print. No logos, no crowds, no computer screens."
+          ]
+        }
+      ],
+      "references": [],
+      "hashes": {
+        "source": "d608d89c086c922391585375c4f72271becd129c9dcf1db81ede8bbb03d9b1de",
+        "planner": "96f5c74f6a759b7da28dab1677e86e6fac8a698414db0b4b1cd99db5ae360e9c",
+        "prompt": "45c6f897399e7cec7259ca80044b75352a33e5576c822ddc96f8e062ff4b973f",
+        "references": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "privacy": "synthetic",
+      "id": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49"
+    }
+  ],
+  "cells": [
+    {
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "baselineClass": "CTRL",
+      "parentId": null,
+      "config": {
+        "prompt": "An original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "f1a5dca1b65c07317aa06e137ff7bc32075de668a298f591021959cb6e43955b",
+      "plannerHash": "afb1a89cb879b826511e24244b2b29bd7b11eb69c563f5b37b0e1bfa47f22903",
+      "promptHash": "922bcaa1283e27c3657e19f3d23b82a0bd27a764a5dd50e693de470312cb3831",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb"
+    },
+    {
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "baselineClass": "CTRL",
+      "parentId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+      "config": {
+        "prompt": "Render brief:\nAn original illustration of Atticus Finch, an adult fictional lawyer, in a dark suit and glasses carrying a portfolio on a 1930s street before a courthouse. Muted earth palette. No specific screen actor likeness.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "remove-provenance",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "f1a5dca1b65c07317aa06e137ff7bc32075de668a298f591021959cb6e43955b",
+      "plannerHash": "afb1a89cb879b826511e24244b2b29bd7b11eb69c563f5b37b0e1bfa47f22903",
+      "promptHash": "8abb2497bdfb70fd41d1e3ad9750a59dc2e1ed23cf87f7acc2b38ee99a804b48",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [
+        "compiler",
+        "prompt"
+      ],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7"
+    },
+    {
+      "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+      "baselineClass": "CTRL",
+      "parentId": null,
+      "config": {
+        "prompt": "An original adult botanist holding a notebook in a greenhouse. Green and cream palette. No logos.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "a9a9995edbf32b7ef0303c7b5f0caf4e31b88e5e271f14daf35d5b07db5d8191",
+      "plannerHash": "e7b9dbfe43faeaf85fb54ab944d2653c1d0656c772d3ee2de288aeb9a7962a54",
+      "promptHash": "c8009572ff600d4385274411857084838655eaaca77dea0ce0bd432f5045ab69",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794"
+    },
+    {
+      "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+      "baselineClass": "CTRL",
+      "parentId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+      "config": {
+        "prompt": "Render brief:\nAn original adult botanist holding a notebook in a greenhouse. Green and cream palette. No logos.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "remove-provenance",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "a9a9995edbf32b7ef0303c7b5f0caf4e31b88e5e271f14daf35d5b07db5d8191",
+      "plannerHash": "e7b9dbfe43faeaf85fb54ab944d2653c1d0656c772d3ee2de288aeb9a7962a54",
+      "promptHash": "5d7835a7718cefc9de13b2c3d310efde2ba353f2b871427d9ac614a42b3c30a1",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [
+        "compiler",
+        "prompt"
+      ],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194"
+    },
+    {
+      "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+      "baselineClass": "CTRL",
+      "parentId": null,
+      "config": {
+        "prompt": "An original adult fictional archivist in a 1920s library, left of a brass lamp, holding a red atlas. Indigo and brass palette. No actor likeness.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "0f3d3f3b3742446654fa5f7bd229d9f0fd296877ae67a2d30974e1b087924eb3",
+      "plannerHash": "f94934c7af61a4a7b01adb04b6b3add68af3d3e82bea7a61f6d15fa933bc064d",
+      "promptHash": "dda69bf18260d08948892df0f88c335e1e75c830053d5408607f716cd81c7324",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236"
+    },
+    {
+      "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+      "baselineClass": "CTRL",
+      "parentId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+      "config": {
+        "prompt": "Render brief:\nAn original adult fictional archivist in a 1920s library, left of a brass lamp, holding a red atlas. Indigo and brass palette. No actor likeness.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "remove-provenance",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "0f3d3f3b3742446654fa5f7bd229d9f0fd296877ae67a2d30974e1b087924eb3",
+      "plannerHash": "f94934c7af61a4a7b01adb04b6b3add68af3d3e82bea7a61f6d15fa933bc064d",
+      "promptHash": "26c2225454a879c63bfe62d48daa75d1dd1ac780575c05c3fb58c7a1622e1386",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [
+        "compiler",
+        "prompt"
+      ],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043"
+    },
+    {
+      "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+      "baselineClass": "CTRL",
+      "parentId": null,
+      "config": {
+        "prompt": "Three blue ceramic bowls in the lower-right quadrant of a cream table; one red cloth at upper left. No people.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "86e2192e5d15fd188c8613cf4d3affe9ed9a0a49553a8f155cb4e49193bc2c05",
+      "plannerHash": "a7207b1ca52b628e57a1e08f609a5e515a12083de3318a17c74f2d57a198772e",
+      "promptHash": "153ba9c5bec1d55a5960f15617ddf176cdeb1412ddc0012231584b9dde1a52d0",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03"
+    },
+    {
+      "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+      "baselineClass": "CTRL",
+      "parentId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+      "config": {
+        "prompt": "Render brief:\nThree blue ceramic bowls in the lower-right quadrant of a cream table; one red cloth at upper left. No people.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "remove-provenance",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "86e2192e5d15fd188c8613cf4d3affe9ed9a0a49553a8f155cb4e49193bc2c05",
+      "plannerHash": "a7207b1ca52b628e57a1e08f609a5e515a12083de3318a17c74f2d57a198772e",
+      "promptHash": "bbebfbb6922b45b32a91138f20db4bc587fa9e368e4371fb2f51a87a2de29291",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [
+        "compiler",
+        "prompt"
+      ],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272"
+    },
+    {
+      "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+      "baselineClass": "CTRL",
+      "parentId": null,
+      "config": {
+        "prompt": "A cream poster with the exact words FIND TRUE NORTH once, centered above a navy compass illustration. No additional text.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "7a9b2406623b0d8477d6c5e7312144e283978933a7c7b026ea50908b618c2d2d",
+      "plannerHash": "a1a3f25c89aa3cc08afc24aeb868319d8edd8284418e2b36cd46f26674666479",
+      "promptHash": "74b6518c066f9e4850d504238db534a8f6e223c60fd9bb59a4ae16defbd7f0b0",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6"
+    },
+    {
+      "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+      "baselineClass": "CTRL",
+      "parentId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+      "config": {
+        "prompt": "Render brief:\nA cream poster with the exact words FIND TRUE NORTH once, centered above a navy compass illustration. No additional text.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "remove-provenance",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "7a9b2406623b0d8477d6c5e7312144e283978933a7c7b026ea50908b618c2d2d",
+      "plannerHash": "a1a3f25c89aa3cc08afc24aeb868319d8edd8284418e2b36cd46f26674666479",
+      "promptHash": "253ca696cf076c0bc447f8d485b656fa0e3c4aed8079988cf48fc50716c53973",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [
+        "compiler",
+        "prompt"
+      ],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8"
+    },
+    {
+      "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+      "baselineClass": "CTRL",
+      "parentId": null,
+      "config": {
+        "prompt": "A quiet ochre desert printshop with one adult printmaker and a blue landscape print. No logos, no crowds, no computer screens.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "captured-original",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "d608d89c086c922391585375c4f72271becd129c9dcf1db81ede8bbb03d9b1de",
+      "plannerHash": "96f5c74f6a759b7da28dab1677e86e6fac8a698414db0b4b1cd99db5ae360e9c",
+      "promptHash": "45c6f897399e7cec7259ca80044b75352a33e5576c822ddc96f8e062ff4b973f",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee"
+    },
+    {
+      "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+      "baselineClass": "CTRL",
+      "parentId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+      "config": {
+        "prompt": "Render brief:\nA quiet ochre desert printshop with one adult printmaker and a blue landscape print. No logos, no crowds, no computer screens.",
+        "references": [],
+        "model": "gpt-image-2.5-sunburst",
+        "quality": "high",
+        "size": "1536x1024",
+        "outputFormat": "png",
+        "stream": false,
+        "endpoint": "/v1/images/generations",
+        "orchestration": "direct-frozen-prompt",
+        "modelResolution": "unresolved-alias",
+        "technique": "prose",
+        "planner": {
+          "mode": "frozen",
+          "model": "gpt-5.6-terra",
+          "reasoning": "low",
+          "instructions": "captured-original",
+          "newDirection": null
+        },
+        "compiler": "remove-provenance",
+        "moderation": "auto",
+        "history": [],
+        "referenceRoleWording": "authorized property only",
+        "evidenceVersion": "original",
+        "strictModeration": false,
+        "recovery": "original-only",
+        "estimator": "unqualified",
+        "checker": {
+          "mode": "off",
+          "backend": "none",
+          "policy": "benign-fixtures-v1",
+          "context": "brief"
+        },
+        "attachedModeration": "off",
+        "semantics": "original",
+        "modality": "image"
+      },
+      "sourceHash": "d608d89c086c922391585375c4f72271becd129c9dcf1db81ede8bbb03d9b1de",
+      "plannerHash": "96f5c74f6a759b7da28dab1677e86e6fac8a698414db0b4b1cd99db5ae360e9c",
+      "promptHash": "2c6dd9093385ddd45b877cbb68fc1e3883b4925aecbe63060720e7a222cf7084",
+      "referenceHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "changedFactors": [
+        "compiler",
+        "prompt"
+      ],
+      "coverage": {
+        "required": 1,
+        "covered": 1,
+        "method": "literal anchors; human blinded semantic fidelity still required"
+      },
+      "interpretation": "prespecified factor contrast",
+      "id": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2"
+    }
+  ],
+  "trials": [
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:ff8fd341236f8bd50a22da8db982edf5d948b029f8c5176e104cc74169a83d37"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:95ef6c375cd02f76cc6520550498d1415ab4591842529dd5ed5eb0260e4b1847"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:18e9009078ccdaacba0a90c58ad4322acbe0ca25231fb212fafc28e52822890e"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:6e3b734e124f7140d33ced7802996f6b7055bc6168cddb978e0a7710b467b82d"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:39137a3ebb7d5e1e30730310e260bc815809596af86f09ae67be5fe0b6044fbb",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:957bbd10bd880a3989734c9eea73cd25b024255311311e309a14009853b685bb"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:30ab619c5080dd7483cd95330ca8654d70ef0bc7756a0aaba466ce11b93937df",
+      "cellId": "cell:5d5e266b1fee5ad16126faccdfae4ada248eeba7ab104f8b3829d02f731c02b7",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:7ee27341f083f243a490f4b60d396d4f65d6a62d7f593cb1108420633277b60f"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+      "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:7c6938c139c46a9e424f427b009e4f1f547b9f7b617611860f525c0f6d26f447"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+      "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:8d10cda17257e0c07130a59d21bf0ecd4c6613ebdb674cf16aebcfbd15096ac5"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+      "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:1666318ceb351ce5a390af1d1f077a3c9427898016f97a6a498180beeeac2d73"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+      "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:9ae9d8ef9d6ad571c07cd02a83fa97cb40903c78cd4df45a6533b52630041d00"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+      "cellId": "cell:8dc355fc950aa71eaac4f355ef3c747d71b0c03f188a1cafb7092ce6d761c794",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:d0b47a94e30cbc9367ca7654de857946a228a1c87b809e57fd99c66c145af349"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:b1633b9c6a549274bbabd7984b515d983f31440a29ca19e5e22bf04aa4ede689",
+      "cellId": "cell:db00432e2d4996938be1c71c2f6b8c94819ff3f79da77e165acfd8e644acc194",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:b85dc482e48db959b1f8ce85ef0ff03a76ddd076d290a6ebf7e9b30682eeeb0b"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+      "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:303c76d6d73174db5aec7fce3b84de6a3ac43655d38dc6d69c44b014d33e6d72"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+      "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:a69b6e5ec5904dc40fae35aa9c1b061969eb1da3b948c814b98bf49fc82759c1"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+      "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:13bfd9b30906b0e622162ee224a66faf72df84d132d299d361424fad8a520d3e"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+      "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:d020a293bcc73ea621f72da71fe53f9af748482f7a751d26fb213b4a16299d3a"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+      "cellId": "cell:cbe618d81ed1fc79a898069d76ab0b5acf404a2bf755dd6e125d2345f6519043",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:d43c2bd6cb3470bc55d5c5b6b7111f374bc3b8987c369bc7257965126ca12a2d"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:272b680f6045c60f3533c62463e2ff6f46f293a2bb8b4f71bc1a0700a72a81be",
+      "cellId": "cell:6c4467429eae9a6dc84e064a00116cebe8b2233b19931352ff1eead01fdb4236",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:6322e80c05e4e21e7c0cd5d676c6241997f24269a6ab783090e549ba653fa71e"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+      "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:1414a949f2ce4556202362d66547d7e683e0fc38c2e8416a49b3437988ae87bd"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+      "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:a93671f4748fa484eacc0b6e36271834b1840393b7d2f22dc96a163737da2fca"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+      "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:8fe5cbad56b45ce7422a1d9bc575f3d66224bb25ef9b5d6f76870be650305cd5"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+      "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:c230dfa9e9d72150c6ec8f93ff36ec0f7eb24f03d1159459b504509ca7fb053c"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+      "cellId": "cell:43464971565b96ccb8f487f7c08635da54f1a23f0ee153225de0c2f0f8710272",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:9e678dcebe47267d1bb9a2d7cc77dbb5c045bd1669979cf75f9cc5b07c1f091b"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:9139978504eacae48bafc0aabe1846d28fef63e53ba7fb9f0f3c341b01844ad3",
+      "cellId": "cell:9e303651a882ac6d64313decdfd8dea837685ed6782b315493527c5905ff9f03",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:6ff3e028b617841612c01209041b0f4bacd2b1a730e857c7bcc30c2b4a213250"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+      "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:53abe1eb5aa1c956d9dd3e4c4e08c2e3d25c1bfe95a207bb9d5824f3e10de5dc"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+      "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:082e3ffbcda1296b120582339d82964a82261c28f26fad3b8604121ac67b6a42"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+      "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:96cd0c3f232a84b6e293234db56d4313e53cfce5d28c5cb0f2e6c280dd5a11e8"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+      "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:a4a2c9f21ce7b4942b3cb139c4d3cc9d060106135167a1d2f3484b569c0a2a11"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+      "cellId": "cell:be886e0ab278c7c2bcf0f7c60d8718d5434df898edc6c60f9f3eb429560951f8",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:86c7beebf8faadaf18c189b6fb3fc6d40a35cd946e9ba736bfc8f5b4d6a8c1cc"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:3b1b1bd46746176c845afe0056fd4e86a24e5e541f1b29cd615f0be19add7979",
+      "cellId": "cell:694dd72f43f1c1b62a2eb308d7b6f02759ab0cb5b9933fed0c3e0f789585cca6",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:247416135e0955b7b76e9fcd52225869f7dbb11f5a5b26e2ebfa1391ba7b5d5c"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+      "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:20d33c5e4ea3a570cca1133215f25f6716152bc44df1a3c0d9b224af4a8e435d"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+      "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+      "repeat": 0,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:30bfdbc1b3eba35558d7b7c3541cbbdc8eb973f146a0abb91bad6dc905805894"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+      "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:5384ede2e20d2cfda99f0b8126e34efbc2a2852c3db7bf6c86335cd5bb0320b9"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+      "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+      "repeat": 1,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:cdc0e44229c3e4a07a82a90476539da6df1c84c656fb5af27ab06f4a074ea0b6"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+      "cellId": "cell:091cca756306ec7fc211cd365428ac50616cca598830e1cf22b29df9b7f3c9f2",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:92597c4ec63f41b110a9eae444e941fd8c4ee05f4f73a72599277b94aa04cb97"
+    },
+    {
+      "experiment": "first-screen-proposed-E2a",
+      "caseId": "case:84b5b8b020317f8be56e217b668b3ad48bc7e7de8415e81a532b14be8b613a49",
+      "cellId": "cell:41f0dd332b1ee219fd3ba6496779269e6d7f26479ec15a0858aee91237ce48ee",
+      "repeat": 2,
+      "plannedCalls": {
+        "planner": 0,
+        "media": 1,
+        "moderation": 1,
+        "evaluator": 1,
+        "contextChecker": 0,
+        "status": 0,
+        "result": 0
+      },
+      "newPurchase": "not_authorized",
+      "id": "trial:af8afe13c52e5b2fdc7eb68f421f92e463d975b517e56e2210b1879dbab75429"
+    }
+  ],
+  "allowedFactors": [
+    "compiler",
+    "prompt"
+  ],
+  "interpretation": "Six synthetic strata × three correlated repetitions × two frozen prompt arms. Incident-equivalent is synthetic; actual private incident requires a new authorized manifest with captured source/direction, not substitution.",
+  "repetitions": 3,
+  "plannedCalls": {
+    "planner": 0,
+    "media": 36,
+    "moderation": 36,
+    "evaluator": 36,
+    "contextChecker": 0,
+    "status": 0,
+    "result": 0
+  },
+  "callBudgetBasis": "maximum prespecified stage slots; a downstream evaluator not initiated after failure stays unexecuted",
+  "counts": {
+    "planned": 36,
+    "initiated": 0,
+    "dispatched": 0,
+    "completed": 0,
+    "blocked": 0,
+    "unexecuted": 36
+  },
+  "budget": {
+    "currency": "USD",
+    "maximumCostMicrousd": null,
+    "authorizedCostMicrousd": 0,
+    "actualCostMicrousd": 0,
+    "unknownExposure": "all future planner/media/check/evaluator consumption unqualified",
+    "maxConcurrent": 1,
+    "maxUnreconciled": 0
+  },
+  "stopRules": [
+    "unexpected_unsafe_output",
+    "critical_intent_loss",
+    "budget_bound",
+    "unknown_financial_exposure",
+    "systematic_access_failure",
+    "invalid_comparison_infrastructure"
+  ],
+  "gates": [
+    "exact_manifest_user_review",
+    "existing_credential_consent_and_budget_workflow",
+    "A_stage_evidence",
+    "F_capability_and_consumption_qualification",
+    "zero_replacement_purchase_admission",
+    "actual_private_incident_not_yet_admitted",
+    "actual_candidate_compiler_capture_required"
+  ],
+  "review": {
+    "reviewedManifestId": null,
+    "spendAuthorized": false
+  },
+  "id": "manifest:c104c84276a82a27d7735d95115b99aedf5971303f2044fbdb4bd3e2379d3fc2"
+}

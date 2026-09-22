@@ -53,6 +53,10 @@ test('omitted experiment parameters stay omitted, explicit provider defaults rem
  const b=experiment(cell({enabled:true,settings:{quality:'auto',moderation:'auto',stream:false}}));
  assert.equal(a.settings.quality.sent.state,'omitted'); assert.equal(a.settings.quality.effective,'auto');
  assert.equal(b.settings.quality.sent.state,'explicit');assert.equal(b.settings.stream.sent.value,false);
+ const jpeg=experiment(cell({enabled:true,settings:{outputFormat:'jpeg'}}));
+ assert.equal(jpeg.settings.outputCompression.sent.state,'omitted'); assert.equal(jpeg.settings.outputCompression.effective,100);
+ assert.equal(validate(cell({settings:{inputFidelity:'high'}})).valid,false);
+ assert.throws(()=>production({falConfigured:false},{outputFalImage:{}}),/native_output_requires/);
 });
 test('reject unsupported cells before a mocked submission boundary',async()=>{
  let calls=0;
