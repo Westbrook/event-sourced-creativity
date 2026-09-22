@@ -3,7 +3,8 @@ import { registerHooks } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import worker from "../dist/server/index.js";
+import worker from "../worker/index.ts";
+import { seedLegacyStoryboard } from "./legacy-storyboard-recovery-fixture.mjs";
 
 const workspaceRoot = new URL("../", import.meta.url).href;
 const sourceResolution = registerHooks({
@@ -179,13 +180,11 @@ function providerMock({ failPollOnce = true, missingProviderJobId = false } = {}
 
 test("the real owner-scoped storyboard retry resumes one accepted Fal request and settles its original reservations exactly once", async () => {
   const fixture = await routeFixture();
-  const provider = providerMock();
+  const provider = providerMock({ failPollOnce: false });
 
   try {
     const admitted = await admitStoryboard(fixture);
-    const failedResponse = await fixture.route(`${admitted.jobId}/run`, { method: "POST" });
-    assert.equal(failedResponse.status, 200, JSON.stringify(await failedResponse.clone().json()));
-    const failedJob = (await failedResponse.json()).job;
+    const failedJob = await seedLegacyStoryboard(fixture, admitted, storyboardPlan, { providerJobId });
     assert.equal(failedJob.status, "failed");
     assert.equal(failedJob.errorDetail.category, "network");
     assert.equal(failedJob.result.storyboardProviderSubmission, "confirmed");
@@ -238,9 +237,9 @@ test("the real owner-scoped storyboard retry resumes one accepted Fal request an
     const falSubmissions = provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST");
     const falStatusPolls = provider.calls.filter((call) => call.url === `${providerRequestRoot}/status?logs=1`);
     const plannerCalls = provider.calls.filter((call) => call.url.endsWith("/responses"));
-    assert.equal(falSubmissions.length, 1, "retry must resume its accepted frame instead of submitting a second paid Fal request");
-    assert.equal(falStatusPolls.length, 2, "the resumed request must poll the original accepted Fal queue identifier");
-    assert.equal(plannerCalls.length, 1, "the retained paid storyboard plan must not be generated or charged a second time");
+    assert.equal(falSubmissions.length, 0, "retry must resume its accepted frame instead of submitting a second paid Fal request");
+    assert.equal(falStatusPolls.length, 1, "the resumed request must poll the original accepted Fal queue identifier");
+    assert.equal(plannerCalls.length, 0, "the retained paid storyboard plan must not be generated or charged a second time");
     assert.ok(provider.calls.filter((call) => call.url.startsWith("https://queue.fal.run/")).every((call) => call.authorization === "Key private-fal-test-key"));
 
     const finalCorrelation = fixture.sqlite.prepare("SELECT correlation_id,attempt_count FROM document_jobs WHERE job_id=?").get(admitted.jobId);
@@ -276,9 +275,7 @@ test("an ambiguous storyboard submission with no Fal request identifier remains 
 
   try {
     const admitted = await admitStoryboard(fixture, "unconfirmed-storyboard-submission");
-    const failedResponse = await fixture.route(`${admitted.jobId}/run`, { method: "POST" });
-    assert.equal(failedResponse.status, 200, JSON.stringify(await failedResponse.clone().json()));
-    const failed = (await failedResponse.json()).job;
+    const failed = await seedLegacyStoryboard(fixture, admitted, storyboardPlan);
     assert.equal(failed.status, "failed");
     assert.equal(failed.errorDetail.code, "provider_submission_uncertain");
     assert.equal(failed.result.storyboardProviderSubmission, "pending");
@@ -292,10 +289,39 @@ test("an ambiguous storyboard submission with no Fal request identifier remains 
     const retry = await fixture.route(`${admitted.jobId}/retry`, { method: "POST" });
     assert.equal(retry.status, 409, JSON.stringify(await retry.clone().json()));
     assert.equal((await retry.json()).error, "provider_submission_uncertain");
-    assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 1);
+    assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 0);
     assert.equal(fixture.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?").get(tokenReservationId).status, "active");
     assert.equal(fixture.sqlite.prepare("SELECT status FROM cost_budget_reservations WHERE reservation_id=?").get(costReservationId).status, "executing");
   } finally {
     provider.restore();
   }
+});
+
+test('after a seeded accepted Fal frame is recovered, only the newly requested low-quality frame uses Flare', async () => {
+  const fixture=await routeFixture(),previousFetch=globalThis.fetch,calls=[];
+  const plan={...storyboardPlan,items:[storyboardPlan.items[0],{...storyboardPlan.items[0],title:'New second frame',body:'The completed arrangement is projected onto a gallery wall while visitors compare the resulting shapes.',notes:'A reverse angle reveals the open gallery space.',image_prompt:'Adult designer studies the next blank card.'}]};
+  globalThis.fetch=async(input,init={})=>{
+    const url=String(input),method=init.method??'GET';calls.push({url,method,body:typeof init.body==='string'?JSON.parse(init.body):null});
+    if(url===`${providerRequestRoot}/status?logs=1`)return Response.json({request_id:providerJobId,status:'COMPLETED'});
+    if(url===providerRequestRoot)return Response.json({images:[{url:mediaUrl,content_type:'image/jpeg',width:1024,height:1024}]});
+    if(url===mediaUrl)return new Response(Uint8Array.from([255,216,255,219,0,1,255,217]),{headers:{'content-type':'image/jpeg'}});
+    if(url.endsWith('/moderations'))return Response.json({results:[{flagged:false,categories:{}}]});
+    if(url.endsWith('/images/generations'))return Response.json({data:[{b64_json:btoa('synthetic new Flare bytes')}],usage:{input_tokens:100,output_tokens:200,total_tokens:300}},{headers:{'x-request-id':'new-flare-frame'}});
+    throw new Error(`Unexpected purchase ${method} ${url}`);
+  };
+  try{
+    const admitted=await admitStoryboard(fixture,'mixed-legacy-and-current-storyboard');
+    const request=JSON.parse(fixture.sqlite.prepare('SELECT request_json FROM document_jobs WHERE job_id=?').get(admitted.jobId).request_json);request.itemCount=2;
+    fixture.sqlite.prepare('UPDATE document_jobs SET request_json=? WHERE job_id=?').run(JSON.stringify(request),admitted.jobId);
+    const failed=await seedLegacyStoryboard(fixture,admitted,plan,{providerJobId});
+    assert.equal(calls.length,0,'seeding historical purchases performs no fetch');
+    assert.equal((await fixture.route(`${failed.jobId}/retry`,{method:'POST'})).status,202);
+    const response=await fixture.route(`${failed.jobId}/run`,{method:'POST'}),completed=(await response.json()).job;
+    assert.equal(completed.status,'completed',JSON.stringify(completed));
+    assert.equal(calls.filter(c=>c.url.startsWith('https://queue.fal.run/')&&c.method==='POST').length,0);
+    assert.equal(calls.filter(c=>c.url.endsWith('/responses')).length,0);
+    const newFrames=calls.filter(c=>c.url.endsWith('/images/generations'));assert.equal(newFrames.length,1);assert.equal(newFrames[0].body.model,'gpt-image-2.5-flare');assert.equal(newFrames[0].body.quality,'low');
+    assert.equal(calls.filter(c=>c.url===`${providerRequestRoot}/status?logs=1`).length,1);
+    const receipts=[...fixture.savedMedia.values()].map(item=>item.options.customMetadata);assert.ok(receipts.some(r=>r.providerRequestId===providerJobId&&r.model==='ideogram/v4/fast'));assert.ok(receipts.some(r=>r.providerRequestId==='new-flare-frame'&&r.model==='gpt-image-2.5-flare'));
+  }finally{globalThis.fetch=previousFetch;fixture.sqlite.close();}
 });

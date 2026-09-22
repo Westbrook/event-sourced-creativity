@@ -4,7 +4,8 @@ import { registerHooks } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import worker from "../dist/server/index.js";
+import worker from "../worker/index.ts";
+import { seedLegacyStoryboard, LEGACY_STORYBOARD_PROMPT } from "./legacy-storyboard-recovery-fixture.mjs";
 
 const workspaceRoot = new URL("../", import.meta.url).href;
 const sourceResolution = registerHooks({
@@ -125,7 +126,7 @@ async function admitStoryboard(fixture, itemCount = 1) {
 function providerMock(fixture, { itemCount = 1, historyMode = "unique" } = {}) {
   const previousFetch = globalThis.fetch;
   const calls = [];
-  let firstPrompt = "";
+  let firstPrompt = LEGACY_STORYBOARD_PROMPT;
   let submissions = 0;
 
   globalThis.fetch = async (input, init = {}) => {
@@ -215,9 +216,7 @@ function reservationStates(fixture, failed) {
 
 async function failedUnknownStoryboard(fixture) {
   const admitted = await admitStoryboard(fixture);
-  const response = await fixture.route(`${admitted.jobId}/run`, { method: "POST" });
-  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
-  const failed = (await response.json()).job;
+  const failed = await seedLegacyStoryboard(fixture, admitted, storyboardPlan(1));
   assert.equal(failed.status, "failed");
   assert.equal(failed.errorDetail.code, "provider_submission_uncertain");
   assert.equal(failed.result.storyboardProviderSubmission, "pending");
@@ -277,7 +276,7 @@ test("an owner reconciles the exact already-paid Fal storyboard request and comp
     assert.equal(historyQuery.get("limit"), "25");
     assert.equal(historyQuery.get("expand"), "payloads");
     assert.equal(histories[0].url.includes(provider.firstPrompt()), false, "the private creative prompt must never be exposed in the management URL");
-    assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 1);
+    assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 0);
 
     const retriedResponse = await fixture.route(`${failed.jobId}/retry`, { method: "POST" });
     assert.equal(retriedResponse.status, 202, JSON.stringify(await retriedResponse.clone().json()));
@@ -291,9 +290,9 @@ test("an owner reconciles the exact already-paid Fal storyboard request and comp
     assert.equal(completedResponse.status, 200, JSON.stringify(await completedResponse.clone().json()));
     const completed = (await completedResponse.json()).job;
     assert.equal(completed.status, "completed", JSON.stringify({ errorDetail: completed.errorDetail, result: completed.result, calls: provider.calls }));
-    assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 1,
+    assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 0,
       "recovery must never submit a second paid Fal request for the accepted frame");
-    assert.equal(provider.calls.filter((call) => call.url.endsWith("/responses")).length, 1,
+    assert.equal(provider.calls.filter((call) => call.url.endsWith("/responses")).length, 0,
       "the already-paid storyboard planner must never be called again");
     assert.equal(fixture.sqlite.prepare("SELECT status FROM budget_reservations WHERE reservation_id=?")
       .get(originalReservations.tokenReservationId).status, "settled");
@@ -333,7 +332,7 @@ for (const previousEvidence of ["submission", "frame"]) {
       const preserved = JSON.parse(fixture.sqlite.prepare("SELECT result_json FROM document_jobs WHERE job_id=?").get(failed.jobId).result_json);
       assert.equal(preserved.providerSubmissions[pending.clientRequestId].status, "pending");
       assert.equal(reservationStates(fixture, failed).cost, "executing");
-      assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 1);
+      assert.equal(provider.calls.filter((call) => call.url === providerEndpoint && call.method === "POST").length, 0);
     } finally {
       provider.restore();
     }

@@ -7,7 +7,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Proposed finite pure-preflight qualification; source authored, not executed here.
-// Owner runs the integrated extraction only after all 21 runtime paths are reviewed/pinned.
+// Owner runs the integrated extraction only after all runtime paths are reviewed/pinned.
 // Whole actual functions only: no source slicing, provider/HTTP/authority substitute,
 // native preparation, mixed wrapper, aggregate Runtime or legacy adapter import.
 const rootInput = process.env.FORMA_EXPERIENCE_PREFLIGHT_CANDIDATE_ROOT;
@@ -18,6 +18,7 @@ const manifest = JSON.parse(readFileSync(manifestInput, 'utf8'));
 assert.equal(manifest.reviewedFor, 'image-slides-pure-preflight');
 const modulePaths = [
   'worker/image-generation-policy.ts', 'worker/openai-image-route-contract.ts',
+  'worker/output-fal-image-contract.ts', 'src/model/output-fal-image-contract.ts', 'src/model/fal-image-identity.ts',
   'worker/output-image-slides-preflight.ts', 'worker/image-adapter-selection.ts', 'worker/fal-image-identity.ts',
   'src/model/output-execution-policy.ts', 'src/model/image-format.ts', 'src/model/block-types.ts',
   'src/model/managed-production.ts', 'src/model/presentation-source.ts', 'src/model/generation-budget.ts',
@@ -334,7 +335,7 @@ test('actual selector preserves configured Fal models/identity and its legacy Op
     [env, { outputFormat: 'webp' }, 'Ideogram 4 does not return WebP'],
   ]) {
     const fallback = selectAdapter(candidateEnv, options);
-    assert.deepEqual([fallback.providerName, fallback.model, fallback.reason], ['openai', 'gpt-image-2', reason]);
+    assert.deepEqual([fallback.providerName, fallback.model, fallback.reason], ['openai', 'gpt-image-2.5-sunburst', reason]);
   }
   // Selector compatibility is not configured-Fal execution. The separate
   // bounded preflight above refuses its explicitly requested fallback route.

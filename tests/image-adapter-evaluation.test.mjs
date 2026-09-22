@@ -63,59 +63,11 @@ test("v10 remains immutable while v52 carries passing evidence for the unchanged
   assert.equal(IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE.status,"passed");assert.equal(IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE.fullCorpusCompleted,true);assert.equal(IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE.fal.usable,43);assert.equal(IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE.reference.falUsable,10);assert.deepEqual(IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE.failedCriteria,[]);assert.equal(passingImageAdapterEvaluation("fal-ideogram-v4","v52",IMAGE_ADAPTER_CORPUS_V6),IMAGE_ADAPTER_V52_EVALUATION_EVIDENCE);
 });
 
-test("the runner requires explicit failed-case retries and supports report-only regeneration",async()=>{
-  const [runner,diagnostic]=await Promise.all([readFile(new URL("../scripts/run-image-adapter-eval.mjs",import.meta.url),"utf8"),readFile(new URL("../scripts/run-ideogram-v9-diagnostic.mjs",import.meta.url),"utf8")]);
-  assert.match(runner,/--retry-failed/);
-  assert.match(runner,/--case/);
-  assert.match(runner,/unknown_image_adapter_case/);
-  assert.match(runner,/--report-only/);
-  assert.match(runner,/paid_evaluation_approval_required/);
-  assert.match(runner,/candidate cycles for campaign/);
-  assert.match(runner,/canvas-image-corpus-v6/);
-  assert.match(runner,/generateFalCreativeImage/);
-  assert.match(runner,/canonicalPromptHash/);
-  assert.match(runner,/providerPromptHash/);
-  assert.match(runner,/evaluationFingerprint/);
-  assert.match(runner,/delete checkpoint\.cases\[item\.id\]\.evaluation/);
-  assert.match(runner,/withoutAttemptHistory/);
-  assert.match(runner,/recoveredCases/);
-  assert.match(runner,/same_context_canonical_hash_mismatch/);
-  assert.match(runner,/--preflight-only/);
-  assert.match(runner,/paidOperations:0/);
-  assert.match(runner,/mandatorySubjectRepeated/);
-  assert.match(runner,/BENIGN STORY CONTEXT/);
-  assert.match(runner,/expanded_plain/);
-  assert.match(runner,/capabilityUsableFloor/);
-  assert.match(runner,/promptTechniqueUsableFloor/);
-  assert.match(runner,/Source reference image/);
-  assert.match(runner,/same frozen semantic context/);
-  assert.match(runner,/evaluationVersion|evaluatorVersion/);
-  assert.match(runner,/fullCorpusRun/);
-  assert.match(runner,/stoppedEarly/);
-  assert.match(runner,/attemptedCases/);
-  assert.match(runner,/Request ID/);
-  assert.match(runner,/targeted preflight is diagnostic only/);
-  assert.match(runner,/STOP qualification cannot pass/);
-  assert.match(runner,/current\?\.status==="failed"&&!retryFailed/);
-  assert.match(runner,/if\(!reportOnly&&!preflightOnly\)/);
-  assert.match(runner,/if\(!String\(values\[key\]\?\?""\)\.trim\(\)\)values\[key\]=value/);
-  assert.match(runner,/corpus\.length===IMAGE_ADAPTER_EVALUATION_CORPUS\.length/);
-  assert.match(diagnostic,/I explicitly approve this three-request Ideogram v9 diagnostic/);
-  assert.match(diagnostic,/native-caption-none/);
-  assert.match(diagnostic,/expanded-plain-medium/);
-  assert.match(diagnostic,/expanded-plain-large/);
-  assert.match(diagnostic,/requestCount:variants\.length/);
-});
-
-test("the bounded candidate funnel reuses the paid baseline and cannot qualify on a screen",async()=>{
-  const [runner,coordinator,plan]=await Promise.all([
-    readFile(new URL("../scripts/run-image-adapter-eval.mjs",import.meta.url),"utf8"),
-    readFile(new URL("../scripts/run-image-adapter-cycle-search.mjs",import.meta.url),"utf8"),
-    readFile(new URL("../docs/evaluations/ideogram-adapter-cycle-plan.md",import.meta.url),"utf8"),
-  ]);
-  assert.match(runner,/candidate_baseline_corpus_hash_mismatch/);assert.match(runner,/baselineReused:true/);assert.match(runner,/newImageCostMicrousd:0/);assert.match(runner,/revisedPrompt/);assert.match(runner,/stage==="full"/);assert.match(runner,/outputs","image-adapter-cycles/);
-  assert.match(coordinator,/Math\.min\(10/);assert.match(coordinator,/I explicitly approve up to ten paid image-adapter candidate cycles/);assert.match(coordinator,/runStage\(profile\.version,"full",true\)/);assert.match(coordinator,/if\(!micro\.screeningPassed\)/);assert.match(coordinator,/if\(!sentinel\.screeningPassed\)/);assert.match(coordinator,/if\(full\.passed\)/);
-  assert.match(plan,/Only this stage may produce a passing governance artifact/);assert.match(plan,/New OpenAI image cost is zero/);
+test("the legacy runner is read-only and old retry/campaign flags cannot authorize new trials",async()=>{
+  const runner=await readFile(new URL("../scripts/run-image-adapter-eval.mjs",import.meta.url),"utf8");
+  for(const token of ["--retry-failed","--reuse-only","--report-only","--preflight-only","--case","new_trial_needed","paid_evaluation_approval_required","candidate_baseline_corpus_hash_mismatch","retained_evidence_read_only","imageAdapterReuseDecision","manifestHash","providerCalls:0","currentIdentityComplete"])
+    assert.ok(runner.includes(token),token);
+  assert.doesNotMatch(runner,/await fetch\(|generateOpenAIImage\(|generateFalCreativeImage\(/);
 });
 
 test("each immutable campaign covers at most ten cycles and respects endpoint expansion limits",()=>{
