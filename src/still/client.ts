@@ -77,6 +77,7 @@ export class StillClient {
   recoveredWrite = false;
   private creation: { signature: string; projectId: string; documentId: string } | null = null;
   get hasUnconfirmedWrite() { return !!this.pendingWrite || !!operationJournal.write(this.journalScope); }
+  get pendingWriteId() { return (this.pendingWrite ?? operationJournal.write(this.journalScope))?.correlationId ?? ''; }
   get pendingGeneration() { return operationJournal.generation(this.journalScope, this.position.documentId); }
   get scopeKey() { return scope(this.session); }
   get projection() {
@@ -249,6 +250,27 @@ export class StillClient {
     })); check();
     if (!verified.every(Boolean)) return false;
     this.retirePendingWrite(); this.recoveredWrite = true; this.onChange(); return true;
+  }
+  /** Receipt lookup is independent of a form draft and never repeats a write. */
+  async checkPendingSave() {
+    const check=await this.verifyScope(),correlationId=this.pendingWriteId;
+    if(!correlationId)return {confirmed:true,correlationId};
+    await this.refresh();check();
+    const confirmed=await this.recoverPendingWrite();check();
+    if(!confirmed&&this.pendingWriteId!==correlationId)throw new Error('The pending save changed. Check it again.');
+    return {confirmed,correlationId};
+  }
+  /** Explicit acknowledgement of uncertainty; only releases this tab's lock.
+   * It neither cancels the original server request nor submits another one. */
+  async startNewSave(correlationId:string) {
+    if(!correlationId||this.pendingWriteId!==correlationId)throw new Error('The pending save changed. Check it again.');
+    const result=await this.checkPendingSave();
+    if(result.correlationId!==correlationId)throw new Error('The pending save changed. Check it again.');
+    if(!result.confirmed){
+      if(this.pendingWriteId!==correlationId)throw new Error('The pending save changed. Check it again.');
+      this.retirePendingWrite();
+    }
+    this.creation=null;this.onChange();return result;
   }
   async append(events: EventInput[]) {
     const check = await this.verifyScope();
