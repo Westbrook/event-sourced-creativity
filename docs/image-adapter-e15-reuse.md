@@ -1,6 +1,6 @@
 # E15: retained image evaluation reuse
 
-Local change at reviewed base `1587f9067162e38ce437d9cf443faf5620b388ae`. Branch: `codex/forma-e15-eval-reuse`. No production routing, provider request, deployment, Replay admission or incident-evidence changes.
+E15 was implemented offline at reviewed base `1587f9067162e38ce437d9cf443faf5620b388ae` and committed as `2cf112a4` on `codex/forma-e15-eval-reuse`. The user subsequently authorized integration with current main and Production publication. E15 changes no production routing, provider requests, Replay admission or incident evidence; publication does not authorize a live evaluation or purchase.
 
 The old evaluation runner is now a **read-only inspector**. Its blanket paid flag and `--retry-failed` flag are not manifest authorization. It contains no image generation or evaluator fetch path. An intentional new request belongs in B's new frozen trial harness, after its independent authorization and F's financial qualification; neither this change nor B's initial offline harness grants live dispatch.
 
@@ -56,7 +56,7 @@ The old pure-preflight fixture closure adds only `worker/output-fal-image-contra
 
 ## B / H handoff
 
-- Dependency: F capability commit `57ded238` (local equivalent `9b6ed8f7`). F's later experiment-only JPEG-default correction does not change the production resolver used here; H should integrate F's complete final series before combining work.
+- Dependency: F capability commit `57ded238` (local equivalent `9b6ed8f7`). Integration with main `571026a9` retains F's complete final contracts, including effective JPEG compression and unsupported native-route guards, plus A's evidence and B's frozen harness. The two duplicate-cherry-pick merge conflicts retained main's F files unchanged.
 - B owns the new manifests and harness. E15 exports `imageAdapterRequestIdentity`, `imageAdapterIdentityHash`, `imageAdapterReuseDecision` and `imageAdapterFailureReceipt` from `scripts/image-adapter-eval-cache.mjs`. `imageAdapterReuseDecision(receipt, expectedIdentity, { readArtifact })` intentionally has no dispatch callback. It returns the original receipt separately from its decision.
 - No shared `worker/openai-adapter.ts` or `worker/document-jobs-api.ts` edits. A retains central integration and global report ownership until H takes over.
 - H must retain B's frozen-trial authorization, immutable dispatch journal, unknown-exposure stops and F's unqualified financial cells. This runner's review manifest is not an execution manifest or authorization token.
@@ -64,3 +64,7 @@ The old pure-preflight fixture closure adds only `worker/output-fal-image-contra
 - Cross-media: apply identity and no-repurchase decisions per paid child operation, not per parent title. Audio segments, video scenes, 3D assets and mixed storyboard frames can retain different providers/models. Reconcile each original purchase; validate retained byte digests and settings independently; never clear uncertain spend because a new cache key or parent manifest exists. Preserve authorization and retention before serving private evidence.
 
 The original Image 2 incident and investigation remain read-only. No success-rate, latency, cost-consumption or moderation improvement is claimed from these mocked tests.
+
+## Main integration verification
+
+At merge `a83373db`, 65 focused E15/recovery/save-repair tests, 67 shared evidence and frozen-harness tests, three Replay refusal checks and the one hash-pinned selector check pass offline. Full TypeScript and focused E15 lint pass. The release must also include the coordinated save-form recovery commit before final build. Preserve the existing disabled-Memory release policy and its 41 verified migrations: the generic Sites packager copies the full source migration directory and must not be uploaded. Use the repository's verified `scripts/package-disabled-memory-release.mjs` artifact from the same committed build for publication. No live generation is part of verification.
