@@ -1,0 +1,867 @@
+{
+  "sourceLedger": [
+    {
+      "sourcePath": "/document/id",
+      "value": "fixture-document-e2a",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/document/title",
+      "value": "Synthetic literary street control",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/block_id",
+      "value": "fixture-subject",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/type",
+      "value": "subject",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/role",
+      "value": "subject",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/intent",
+      "value": "include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/effect",
+      "value": "must_include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/handle",
+      "value": "subject/atticus-finch",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/properties/text",
+      "value": "Atticus Finch, an adult fictional lawyer, stands on the left holding a closed portfolio.",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/properties/authority",
+      "value": "authored",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/properties/weight",
+      "value": 1,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/properties/spatial_scope/kind",
+      "value": "region",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/properties/spatial_scope/region",
+      "value": "left",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/properties/spatial_scope/polarity",
+      "value": "inside",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/properties/spatial_scope/falloff",
+      "value": "hard",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/0/properties/spatial_scope/feather",
+      "value": 0,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/block_id",
+      "value": "fixture-research",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/type",
+      "value": "environment",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/role",
+      "value": "environment",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/intent",
+      "value": "include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/effect",
+      "value": "must_include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/handle",
+      "value": "environment/courthouse",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/properties/label",
+      "value": "Approved period setting",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/properties/text",
+      "value": "A small Alabama courthouse street in the 1930s; the courthouse is behind the lawyer.",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/properties/subtype",
+      "value": "Place",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/properties/intent",
+      "value": "include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/properties/weight",
+      "value": 0.8,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/properties/authority",
+      "value": "authored",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/properties/context_detail",
+      "value": true,
+      "disposition": "nonvisual-provenance-removed",
+      "contract": "approved-context-proposal-v1"
+    },
+    {
+      "sourcePath": "/facts/1/properties/source_execution_id",
+      "value": "fixture-execution-e2a",
+      "disposition": "nonvisual-provenance-removed",
+      "contract": "approved-context-proposal-v1"
+    },
+    {
+      "sourcePath": "/facts/1/properties/source_proposal_id",
+      "value": "fixture-proposal-e2a",
+      "disposition": "nonvisual-provenance-removed",
+      "contract": "approved-context-proposal-v1"
+    },
+    {
+      "sourcePath": "/facts/1/properties/source_excerpt",
+      "value": "Keep the courthouse behind the lawyer.",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/properties/human_edited",
+      "value": false,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/1/properties/created_from",
+      "value": "approved-context-proposal",
+      "disposition": "nonvisual-provenance-removed",
+      "contract": "approved-context-proposal-v1"
+    },
+    {
+      "sourcePath": "/facts/2/block_id",
+      "value": "fixture-palette",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/type",
+      "value": "palette",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/role",
+      "value": "palette",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/intent",
+      "value": "include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/effect",
+      "value": "must_include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/handle",
+      "value": "palette/ochre-ink",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/properties/label",
+      "value": "Muted ochre and ink blue",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/properties/colors/0",
+      "value": "#B88A44",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/properties/colors/1",
+      "value": "#1C304A",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/properties/weight",
+      "value": 0.8,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/properties/spatial_scope/kind",
+      "value": "document",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/properties/spatial_scope/polarity",
+      "value": "inside",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/properties/spatial_scope/falloff",
+      "value": "hard",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/2/properties/spatial_scope/feather",
+      "value": 0,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/block_id",
+      "value": "fixture-sign",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/type",
+      "value": "text",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/role",
+      "value": "text",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/intent",
+      "value": "include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/effect",
+      "value": "must_include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/handle",
+      "value": "text/sign",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/text",
+      "value": "Display exactly: CASE 7f4c20aa-9123-4f00-8777-abc123def456",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/exact_text",
+      "value": "CASE 7f4c20aa-9123-4f00-8777-abc123def456",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/quote",
+      "value": "source_execution_id is deliberately printed on the sign.",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/authored_record/source_execution_id",
+      "value": "authored-opaque-id",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/authored_record/provenance/created_from",
+      "value": "PRINT THIS",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/authored_record/provenance/source_proposal_id",
+      "value": "VISIBLE-PROPOSAL",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/weight",
+      "value": 1,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/spatial_scope/kind",
+      "value": "aabb",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/spatial_scope/aabb/x",
+      "value": 0.65,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/spatial_scope/aabb/y",
+      "value": 0.1,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/spatial_scope/aabb/width",
+      "value": 0.25,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/spatial_scope/aabb/height",
+      "value": 0.2,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/spatial_scope/polarity",
+      "value": "inside",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/spatial_scope/falloff",
+      "value": "soft",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/3/properties/spatial_scope/feather",
+      "value": 0.1,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/block_id",
+      "value": "fixture-exclusion",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/type",
+      "value": "exclusion",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/role",
+      "value": "exclusion",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/intent",
+      "value": "prohibit",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/effect",
+      "value": "must_not_include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/handle",
+      "value": "exclusion/red",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/text",
+      "value": "No red lettering outside the sign rectangle.",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/weight",
+      "value": 1,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/spatial_scope/kind",
+      "value": "aabb",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/spatial_scope/aabb/x",
+      "value": 0.65,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/spatial_scope/aabb/y",
+      "value": 0.1,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/spatial_scope/aabb/width",
+      "value": 0.25,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/spatial_scope/aabb/height",
+      "value": 0.2,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/spatial_scope/polarity",
+      "value": "outside",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/spatial_scope/falloff",
+      "value": "hard",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/4/properties/spatial_scope/feather",
+      "value": 0,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/5/block_id",
+      "value": "fixture-style",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/5/type",
+      "value": "style",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/5/role",
+      "value": "style",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/5/intent",
+      "value": "include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/5/effect",
+      "value": "must_include",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/5/handle",
+      "value": "style/print",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/5/properties/text",
+      "value": "Restrained print illustration with fine paper grain.",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/facts/5/properties/weight",
+      "value": 0.7,
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/0/relation_id",
+      "value": "fixture-relation-location",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/0/from_block_id",
+      "value": "fixture-subject",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/0/to_block_id",
+      "value": "fixture-research",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/0/kind",
+      "value": "environment_reference",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/0/properties/instruction",
+      "value": "The courthouse belongs behind this subject.",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/1/relation_id",
+      "value": "fixture-relation-style",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/1/from_block_id",
+      "value": "fixture-subject",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/1/to_block_id",
+      "value": "fixture-style",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/1/kind",
+      "value": "style_reference",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/relationships/1/properties/instruction",
+      "value": "Apply print treatment to the lawyer.",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/pins/0",
+      "value": "fixture-subject",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/standing_constraints/0/axis",
+      "value": "additions",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/standing_constraints/0/polarity",
+      "value": "prohibit",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    },
+    {
+      "sourcePath": "/standing_constraints/0/value",
+      "value": "No watermarks or extra captions.",
+      "disposition": "unchanged-in-compiler-input",
+      "contract": null
+    }
+  ],
+  "removed": [
+    {
+      "sourcePath": "/facts/1/properties/context_detail",
+      "value": true,
+      "blockId": "fixture-research",
+      "contract": "approved-context-proposal-v1"
+    },
+    {
+      "sourcePath": "/facts/1/properties/source_execution_id",
+      "value": "fixture-execution-e2a",
+      "blockId": "fixture-research",
+      "contract": "approved-context-proposal-v1"
+    },
+    {
+      "sourcePath": "/facts/1/properties/source_proposal_id",
+      "value": "fixture-proposal-e2a",
+      "blockId": "fixture-research",
+      "contract": "approved-context-proposal-v1"
+    },
+    {
+      "sourcePath": "/facts/1/properties/created_from",
+      "value": "approved-context-proposal",
+      "blockId": "fixture-research",
+      "contract": "approved-context-proposal-v1"
+    }
+  ],
+  "requirementCoverage": [
+    {
+      "id": "identity",
+      "text": "identity",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/0/properties/text"
+      ],
+      "mustContain": [
+        "Atticus Finch",
+        "adult fictional lawyer",
+        "closed portfolio"
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "approved-research",
+      "text": "approved-research",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/1/properties/text"
+      ],
+      "mustContain": [
+        "Alabama",
+        "1930s",
+        "courthouse is behind the lawyer"
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "approved-excerpt",
+      "text": "approved-excerpt",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/1/properties/source_excerpt"
+      ],
+      "mustContain": [
+        "Keep the courthouse behind the lawyer."
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "palette",
+      "text": "palette",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/2/properties/colors"
+      ],
+      "mustContain": [
+        "#B88A44",
+        "#1C304A"
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "exact-display",
+      "text": "exact-display",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/3/properties/exact_text"
+      ],
+      "mustContain": [
+        "CASE 7f4c20aa-9123-4f00-8777-abc123def456"
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "authored-provenance-words",
+      "text": "authored-provenance-words",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/3/properties/quote"
+      ],
+      "mustContain": [
+        "source_execution_id is deliberately printed on the sign."
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "nested-authored-opaque",
+      "text": "nested-authored-opaque",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/3/properties/authored_record"
+      ],
+      "mustContain": [
+        "authored-opaque-id",
+        "PRINT THIS",
+        "VISIBLE-PROPOSAL"
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "scope",
+      "text": "scope",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/3/properties/spatial_scope"
+      ],
+      "mustContain": [
+        "left 65%, top 10%, width 25%, height 20%"
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "negative-scope",
+      "text": "negative-scope",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/4/properties/spatial_scope"
+      ],
+      "mustContain": [
+        "everywhere outside the document-relative rectangle",
+        "Intent: prohibit",
+        "No red lettering outside the sign rectangle."
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "style",
+      "text": "style",
+      "critical": true,
+      "sourcePaths": [
+        "/facts/5/properties/text"
+      ],
+      "mustContain": [
+        "Restrained print illustration with fine paper grain."
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "relationship",
+      "text": "relationship",
+      "critical": true,
+      "sourcePaths": [
+        "/relationships/0"
+      ],
+      "mustContain": [
+        "environment_reference",
+        "The courthouse belongs behind this subject."
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "reference-role",
+      "text": "reference-role",
+      "critical": true,
+      "sourcePaths": [
+        "/relationships/1"
+      ],
+      "mustContain": [
+        "style_reference",
+        "Apply print treatment to the lawyer."
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    },
+    {
+      "id": "global-exclusion",
+      "text": "global-exclusion",
+      "critical": true,
+      "sourcePaths": [
+        "/standing_constraints/0/value"
+      ],
+      "mustContain": [
+        "No watermarks or extra captions."
+      ],
+      "before": true,
+      "after": true,
+      "method": "source-path equality and literal render anchors; not visual fidelity"
+    }
+  ]
+}
