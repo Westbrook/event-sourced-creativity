@@ -1,3 +1,5 @@
+import type { GenerationEvidenceObserver, OperationEvidence } from "../src/model/generation-outcome-evidence.ts";
+import { checkpointGenerationEvidence, evidenceSha256, operationEvidence } from "./generation-evidence.ts";
 import { openAIImageModel } from "./image-generation-policy.ts";
 import { readBoundedAssistantProviderResponse } from './assistant-provider.ts';
 import { memoryDerivationJsonUniqueKeys } from './memory-derivation-result.ts';
@@ -52,18 +54,20 @@ import { priceCurrentOpenAITextUsage, readOpenAITextUsage } from "./openai-text-
 type OpenAIError = { message?: string; type?: string; code?: string | null; param?: string | null };
 type OpenAIResponse = { id?: string; model?: string; service_tier?:string; status?: string; incomplete_details?:{reason?:string}; output_text?: string; output?: Array<{ type?:string; content?: Array<{ type?: string; text?: string; refusal?:string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number; input_tokens_details?:{cached_tokens?:number;cache_write_tokens?:number};output_tokens_details?:{reasoning_tokens?:number} }; error?: OpenAIError };
 type OpenAIImageUsage = { input_tokens?: number; output_tokens?: number; total_tokens?: number; input_tokens_details?: { text_tokens?: number; image_tokens?: number } };
-type OpenAIImageResponse = { created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: OpenAIImageUsage; error?: OpenAIError };
+type OpenAIImageResponse = { model?:string; id?:string; created?: number; data?: Array<{ b64_json?: string; revised_prompt?: string }>; usage?: OpenAIImageUsage; error?: OpenAIError };
 type FalQueueStatus = "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | "CANCELLED";
 type FalQueueResponse = { status?: FalQueueStatus; request_id?: string; response_url?:string; status_url?:string; cancel_url?:string; queue_position?: number; logs?: Array<{ message?: string; timestamp?: string }>; metrics?: { inference_time?: number }; error?: OpenAIError };
 type FalVideoFile = { url?: string; content_type?: string; file_name?: string; file_size?: number };
 type FalVideoResponse = { video?: FalVideoFile; data?: { video?: FalVideoFile }; error?: OpenAIError };
-type OpenAIImageStreamEvent = { type?: string; b64_json?: string; created_at?: number; size?: string; output_format?: ImageOutputFormat; partial_image_index?: number; usage?: OpenAIImageUsage; error?: { message?: string } };
+type OpenAIImageStreamEvent = { type?: string; b64_json?: string; created_at?: number; size?: string; output_format?: ImageOutputFormat; partial_image_index?: number; usage?: OpenAIImageUsage; error?: OpenAIError; code?:string; message?:string; moderation_details?:unknown; model?:string; revised_prompt?:string };
 export type CreativeChatMutation = { operation: "create" | "edit" | "remove"; target_block_id: string | null; type: BlockKind; subtype: string; instruction: string; handle: string; reference_pixel_mode: ReferencePixelMode | "unchanged"; image_format: { aspect_ratio:string; width:number; height:number } | null };
 export type CreativeChatResponse = { reply: string; mutations: CreativeChatMutation[]; preview_direction: string; preview_worthy: boolean };
 export type ImageReference = { bytes: Uint8Array; mimeType: string; blockId?: string; referenceId?: string; label?: string; mode?: ReferencePixelMode; source: "uploaded-reference" | "ideation-preview" | "locked-study"; provider?:string|null; providerModel?:string|null; providerRequestId?:string|null; providerMediaUrl?:string|null };
 export type ImageOutputFormat = "png" | "jpeg" | "webp";
 export type CreativeImagePartial = { bytes: Uint8Array; index: number; mimeType: string; width: number; height: number };
 export type CreativeImageOptions = {
+  onEvidence?: GenerationEvidenceObserver;
+  evidenceContext?: Partial<OperationEvidence>;
   /** Private Memory route: bounded non-streaming receipt retained before verified accounting. */
   privateImageReceipt?:{signal:AbortSignal;onReceipt:(raw:string,requestId:string|null)=>Promise<void>};
   safetyAcknowledgement?: import("./image-safety-acknowledgement.ts").ImageSafetyAcknowledgement;
@@ -392,7 +396,7 @@ export async function generateLiveReplayPlan(env:WorkerEnv,userId:string,seed:st
   return{responseId:body.id??"",model:body.model??env.OPENAI_MODEL??"gpt-5.6-terra",output,raw,latencyMs:Date.now()-started,usage:{inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)}};
 }
 
-export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>, signal?: AbortSignal, locale?: string, onProviderSubmission?: PaidProviderSubmissionObserver, executionOptions?:{onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;onBeforeProviderDispatch?:(clientRequestId:string)=>void;outputTargetInstructions?:string}) {
+export async function generateCreativeDirection(env: WorkerEnv, userId: string, snapshot: Record<string, unknown>, signal?: AbortSignal, locale?: string, onProviderSubmission?: PaidProviderSubmissionObserver, executionOptions?:{onEvidence?:GenerationEvidenceObserver;evidenceContext?:Partial<OperationEvidence>;onBeforeProviderAttempt?:(attempt:ProviderAttemptPreflight)=>void|Promise<void>;onBeforeProviderDispatch?:(clientRequestId:string)=>void;outputTargetInstructions?:string}) {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
   const started = Date.now();
   const responseLocale=assistantResponseLocale(locale);
@@ -404,16 +408,27 @@ export async function generateCreativeDirection(env: WorkerEnv, userId: string, 
   const requestBody=JSON.stringify({model:env.OPENAI_MODEL??"gpt-5.6-terra",instructions,input:plannerInput,
     text:OPENAI_IMAGE_DIRECTION_CONTRACT.text,
     reasoning:OPENAI_IMAGE_DIRECTION_CONTRACT.reasoning,max_output_tokens:OPENAI_IMAGE_DIRECTION_CONTRACT.maximumOutputTokens,store:OPENAI_IMAGE_DIRECTION_CONTRACT.store,safety_identifier:identifier});
+  const evidenceOperation=operationEvidence("openai",OPENAI_IMAGE_DIRECTION_CONTRACT.api,submission.model,{text:OPENAI_IMAGE_DIRECTION_CONTRACT.text,reasoning:OPENAI_IMAGE_DIRECTION_CONTRACT.reasoning,max_output_tokens:OPENAI_IMAGE_DIRECTION_CONTRACT.maximumOutputTokens,store:OPENAI_IMAGE_DIRECTION_CONTRACT.store},{adapterVersion:"creative-direction@1587f906",overrideProvenance:env.OPENAI_MODEL?"configured OPENAI_MODEL":"application-default",...executionOptions?.evidenceContext,requestSha256:await evidenceSha256(requestBody)});
+  await checkpointGenerationEvidence(executionOptions?.onEvidence,submission.clientRequestId,"request",evidenceOperation,"planner",{dispatchState:"not_dispatched"},{requestBody});
   await executionOptions?.onBeforeProviderAttempt?.({model:submission.model,maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:OPENAI_IMAGE_DIRECTION_CONTRACT.maximumOutputTokens,
     clientRequestId:submission.clientRequestId,logicalCallKey:"planning:initial",requestDigest:await sha256Bytes(new TextEncoder().encode(requestBody))});
   await onProviderSubmission?.(submission);
   executionOptions?.onBeforeProviderDispatch?.(submission.clientRequestId);
   const response = await openAIRequest(OPENAI_IMAGE_DIRECTION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),"X-Client-Request-Id":submission.clientRequestId},signal,body:requestBody});
   if(!response.ok&&definitiveProviderRejection(response.status))await onProviderSubmission?.({...submission,status:"rejected",costMicrousd:0});
-  const body = await response.json() as OpenAIResponse;
-  if (!response.ok) throw providerErrorFromResponse(response, body, `openai_${response.status}`, `Creative-direction planner instructions:\n${instructions}\n\nPlanner input:\n${plannerInput}`);
+  const responseBody = await response.text();
+  let body: OpenAIResponse = {};try{body=JSON.parse(responseBody) as OpenAIResponse;}catch{/* Retain malformed response before interpretation. */}
+  const refusal=body.output?.flatMap(item=>item.content??[]).find(item=>item.type==="refusal");
+  const evidenceOutcome={dispatchState:"response_received" as const,contentOutcome:refusal?"refused" as const:body.status==="incomplete"?"invalid" as const:response.ok&&responseText(body)?"usable" as const:"unknown" as const,accountingState:verifiedUsage(body.usage)?"usage_recorded" as const:"unknown" as const};
+  const retainPlannerResponse=()=>checkpointGenerationEvidence(executionOptions?.onEvidence,submission.clientRequestId,"response",{...evidenceOperation,returnedModel:body.model??null,requestId:response.headers.get("x-request-id"),responseId:body.id??null,responseSha256:responseDigest},"planner",evidenceOutcome,{responseBody});
+  const responseDigest=await evidenceSha256(responseBody);
+  if(!response.ok)await retainPlannerResponse();
+  if (!response.ok) throw providerErrorFromResponse(response, body, `openai_${response.status}`, `Creative-direction planner instructions:\n${instructions}\n\nPlanner input:\n${plannerInput}`,"planner");
   const paidUsage={inputTokens:Number(body.usage?.input_tokens??0),outputTokens:Number(body.usage?.output_tokens??0),totalTokens:Number(body.usage?.total_tokens??0)};
-  await onProviderSubmission?.({...submission,status:"completed",providerRequestId:body.id??response.headers.get("x-request-id")??undefined,...paidUsage,...(verifiedUsage(body.usage)?{costMicrousd:priceTextUsageBreakdownMicrousd(submission.model,paidUsage).totalMicrousd}:{})});
+  await onProviderSubmission?.({...submission,status:"completed",requestDigest:evidenceOperation.requestSha256??undefined,responseDigest:await evidenceSha256(responseBody),effectiveModel:body.model,httpRequestId:response.headers.get("x-request-id")??undefined,contentOutcome:evidenceOutcome.contentOutcome,accountingState:evidenceOutcome.accountingState,providerRequestId:body.id??response.headers.get("x-request-id")??undefined,...(verifiedUsage(body.usage)?paidUsage:{}),...(verifiedUsage(body.usage)?{costMicrousd:priceTextUsageBreakdownMicrousd(submission.model,paidUsage).totalMicrousd}:{})});
+  await retainPlannerResponse();
+  if(refusal)throw new ProviderRequestError({code:"provider_planner_refusal",category:"safety",scope:"request",action:"edit_request",message:refusal.refusal??"The planner declined this request.",retryable:false,retryAfterMs:null,requestId:body.id??null,httpStatus:response.status,pipelineStage:"planner",providerModerationStage:"unknown"});
+  if(body.status==="incomplete"||body.error)throw new ProviderRequestError({...classifyProviderFailure(new Error(body.error?.message??"provider_response_incomplete"),response,body),code:body.error?.code??"provider_response_incomplete",pipelineStage:"planner"});
   if(onProviderSubmission&&!verifiedUsage(body.usage))throw missingUsageReceipt(body.id??null);
   const text = responseText(body);
   if (!text) throw new Error("provider_returned_no_output");
@@ -426,7 +441,7 @@ export const buildSpatialDirectives=buildSpatialPromptDirectives;
 export const buildPixelReferenceDirectives=(references:ImageReference[])=>buildReferencePromptDirectives(referenceDescriptors(references));
 export const buildCreativeImagePrompt=(snapshot:Record<string,unknown>,direction:Record<string,unknown>,references:ImageReference[] = [],technique:PromptTechnique="prose",options:Pick<CreativeImageOptions,"size"|"quality"|"partialImages"|"outputImageFormat"|"outputTargetInstructions">={})=>{
   const prepared=buildBoundedPromptRepresentation(normalizePromptTechnique(technique),snapshot,direction,referenceDescriptors(references),options);
-  if(!prepared.fits)throw new ProviderRequestError({code:"image_prompt_too_long",category:"provider",scope:"request",action:"edit_request",message:`The creative context is still ${prepared.finalLength.toLocaleString()} characters after safe compaction; the image provider accepts at most ${prepared.limit.toLocaleString()}. Shorten unusually long block instructions or split this work into a smaller document.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
+  if(!prepared.fits)throw new ProviderRequestError({code:"image_prompt_too_long",pipelineStage:"compiler",category:"provider",scope:"request",action:"edit_request",message:`The creative context is still ${prepared.finalLength.toLocaleString()} characters after safe compaction; the image provider accepts at most ${prepared.limit.toLocaleString()}. Shorten unusually long block instructions or split this work into a smaller document.`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   return prepared.prompt;
 };
 
@@ -443,14 +458,14 @@ export const validateImageReferences=(references:ImageReference[])=>{
   return references;
 };
 
-async function readImageStream(response:Response,onEvent:(event:OpenAIImageStreamEvent)=>Promise<void>){
+async function readImageStream(response:Response,onEvent:(event:OpenAIImageStreamEvent,raw:string)=>Promise<void>){
   if(!response.body)throw new Error("provider_returned_no_stream");
   const reader=response.body.getReader();const decoder=new TextDecoder();let buffer="";
   const consume=async(final=false)=>{
     buffer=buffer.replaceAll("\r\n","\n");
     let boundary=buffer.indexOf("\n\n");
-    while(boundary>=0){const block=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);const data=block.split("\n").filter((line)=>line.startsWith("data:")).map((line)=>line.slice(5).trimStart()).join("\n");if(data&&data!=="[DONE]"){let event:OpenAIImageStreamEvent;try{event=JSON.parse(data) as OpenAIImageStreamEvent;}catch{throw new Error("provider_returned_invalid_stream_event");}await onEvent(event);}boundary=buffer.indexOf("\n\n");}
-    if(final&&buffer.trim()){const data=buffer.split("\n").filter((line)=>line.startsWith("data:")).map((line)=>line.slice(5).trimStart()).join("\n");if(data&&data!=="[DONE]"){let event:OpenAIImageStreamEvent;try{event=JSON.parse(data) as OpenAIImageStreamEvent;}catch{throw new Error("provider_returned_invalid_stream_event");}await onEvent(event);}buffer="";}
+    while(boundary>=0){const block=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);const data=block.split("\n").filter((line)=>line.startsWith("data:")).map((line)=>line.slice(5).trimStart()).join("\n");if(data&&data!=="[DONE]"){let event:OpenAIImageStreamEvent;try{event=JSON.parse(data) as OpenAIImageStreamEvent;}catch{throw new Error("provider_returned_invalid_stream_event");}await onEvent(event,data);}boundary=buffer.indexOf("\n\n");}
+    if(final&&buffer.trim()){const data=buffer.split("\n").filter((line)=>line.startsWith("data:")).map((line)=>line.slice(5).trimStart()).join("\n");if(data&&data!=="[DONE]"){let event:OpenAIImageStreamEvent;try{event=JSON.parse(data) as OpenAIImageStreamEvent;}catch{throw new Error("provider_returned_invalid_stream_event");}await onEvent(event,data);}buffer="";}
   };
   while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});await consume();}
   buffer+=decoder.decode();await consume(true);
@@ -460,33 +475,50 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   if(options.privateImageReceipt&&((options.partialImages??0)!==0||!options.onProviderSubmission))throw new Error('private_image_contract_invalid');
   if(!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const model=openAIImageModel(env,options.quality);const quality=options.quality??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.quality;const size=options.size??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.size;const sizeValidation=validateProviderImageSize(size);
-  if(model.startsWith("gpt-image-2")&&!sizeValidation.valid)throw new ProviderRequestError({code:"invalid_image_size",category:"provider",scope:"request",action:"edit_request",message:`The requested image size ${size} cannot be submitted to ${model}. ${sizeValidation.issues.join(" ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
+  if(model.startsWith("gpt-image-2")&&!sizeValidation.valid)throw new ProviderRequestError({code:"invalid_image_size",pipelineStage:"compiler",category:"provider",scope:"request",action:"edit_request",message:`The requested image size ${size} cannot be submitted to ${model}. ${sizeValidation.issues.join(" ")}`,retryable:false,retryAfterMs:null,requestId:null,httpStatus:400});
   const references=validateImageReferences(options.references??[]);const promptTechnique=normalizePromptTechnique(options.promptTechnique);const safetyInputDigest=await imageSafetyInputDigest(snapshot,{model,quality,size,promptTechnique},references);const acknowledgedPrompt=consumeImageSafetyDelivery(options.safetyAcknowledgement,safetyInputDigest);const prompt=acknowledgedPrompt||options.preparedPrompt?.trim()||buildCreativeImagePrompt(snapshot,direction,references,promptTechnique,{size,quality,partialImages:options.partialImages});const started=Date.now();
   await options.onStage?.("safety-review","Reviewing the exact image prompt and selected reference pixels.");
-  let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal,Boolean(options.privateImageReceipt));}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
-  if(moderation.flagged&&!acknowledgedPrompt)throw new ProviderRequestError({safetyInputDigest,code:"safety_preflight_flagged",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and the contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation",moderationReceipt:moderation},prompt);
+  let moderation:Awaited<ReturnType<typeof moderateExactImagePrompt>>;try{moderation=await moderateExactImagePrompt(env,prompt,references,options.signal,Boolean(options.privateImageReceipt),options.onEvidence);}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+  if(moderation.flagged&&!acknowledgedPrompt)throw new ProviderRequestError({safetyInputDigest,code:"safety_preflight_flagged",pipelineStage:"app_moderation",providerModerationStage:"unknown",category:"safety",scope:"request",action:"edit_request",message:`A preflight review identified likely safety concerns${moderation.categories.length?` in ${moderation.categories.join(", ")}`:""}. Review the exact prompt and the contributing context before retrying.`,retryable:false,retryAfterMs:null,requestId:moderation.requestId,httpStatus:400,riskCategories:moderation.categories,contributingReferenceIds:moderation.referenceIds,probe:"exact-prompt-and-reference-moderation",moderationReceipt:moderation},prompt);
   await options.onStage?.("provider-wait",acknowledgedPrompt?"Risks acknowledged. Sending the reviewed request to the image provider.":"Safety preflight passed. Waiting for the image provider.");
   const outputFormat=options.outputFormat??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputFormat;const outputCompression=Math.max(0,Math.min(100,Math.round(options.outputCompression??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.outputCompression)));const partialImages=options.partialImages??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.partialImages;const user=await safetyIdentifier(userId);
+  const evidenceId=options.providerClientRequestId??`image-evidence-${crypto.randomUUID()}`;
+  const imageSettings={n:OPENAI_IMAGE_GENERATION_CONTRACT.outputCount,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{})};
+  const evidenceOperation=operationEvidence("openai",references.length?"https://api.openai.com/v1/images/edits":OPENAI_IMAGE_GENERATION_CONTRACT.api,model,imageSettings,{adapterVersion:"openai-image-v5",compilerVersion:"prompt-structures@1587f906",requestedAlias:env.OPENAI_IMAGE_MODEL??null,overrideProvenance:quality==="low"?"shared-low-quality-flare":env.OPENAI_IMAGE_MODEL?"configured OPENAI_IMAGE_MODEL":"application-default",...options.evidenceContext,requestedQuality:options.quality??null});
+  let retainCompletedImageEvidence:(()=>Promise<void>)|undefined;
+  const retainImageResponse=async(raw:string,body:OpenAIImageResponse|OpenAIImageStreamEvent,httpResponse:Response,usable:boolean)=>{
+    const failure=body.error||("type" in body&&body.type==="error")?classifyProviderFailure(new Error("provider_image_error"),httpResponse,body):null;
+    // Media bytes already have artifact custody. Keep the exact envelope hash and non-pixel fields privately.
+    const responseBody=JSON.stringify(body, (key,value)=>key==="b64_json"?undefined:value);
+    const revised="data" in body?body.data?.[0]?.revised_prompt:(body as OpenAIImageStreamEvent).revised_prompt;
+    const responseSha256=await evidenceSha256(raw);
+    const retain=()=>checkpointGenerationEvidence(options.onEvidence,evidenceId,"response",{...evidenceOperation,requestId:httpResponse.headers.get("x-request-id"),responseId:"id" in body?body.id??null:null,returnedModel:body.model??null,responseSha256},"media_result",{dispatchState:"response_received",contentOutcome:usable?"usable":failure?.category==="safety"?"refused":"unknown",accountingState:verifiedUsage(body.usage)?"usage_recorded":"unknown",...(failure?{failureKind:failure.category==="network"?"transport":failure.category,correctiveActionScope:failure.scope,providerModerationStage:failure.providerModerationStage??"unknown"}:{})},{responseBody,...(typeof revised==="string"?{revisedPrompt:revised}:{})});
+    if(usable)retainCompletedImageEvidence=retain;else await retain();
+  };
   let response:Response;
   if(references.length){
     const form=new FormData();form.set("model",model);form.set("prompt",prompt);form.set("n",String(OPENAI_IMAGE_GENERATION_CONTRACT.outputCount));form.set("size",size);form.set("quality",quality);form.set("output_format",outputFormat);if(outputFormat!=="png")form.set("output_compression",String(outputCompression));if(partialImages){form.set("stream","true");form.set("partial_images",String(partialImages));}form.set("user",user);
     references.forEach((reference,index)=>{const buffer=reference.bytes.buffer.slice(reference.bytes.byteOffset,reference.bytes.byteOffset+reference.bytes.byteLength) as ArrayBuffer;const extension=reference.mimeType==="image/jpeg"?"jpg":reference.mimeType==="image/webp"?"webp":"png";form.append("image[]",new Blob([buffer],{type:reference.mimeType}),`${reference.source}-${index+1}.${extension}`);});
+    await checkpointGenerationEvidence(options.onEvidence,evidenceId,"request",evidenceOperation,"media_submission",{dispatchState:"not_dispatched"},{requestBody:JSON.stringify({encoding:"multipart-fields",fields:Object.fromEntries([...form.entries()].filter(([,value])=>typeof value==="string")),references:await Promise.all(references.map(async(reference,index)=>({index,mimeType:reference.mimeType,sha256:await sha256Bytes(reference.bytes)})))})});
     await options.onStage?.("provider-submit","Submitting the approved image request.");
     options.onBeforeProviderDispatch?.(options.providerClientRequestId??"");
     try{response=await openAIRequest("https://api.openai.com/v1/images/edits",{method:"POST",headers:{...openAIAuthHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:form,signal:options.signal});}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   }else{
+    const requestBody=JSON.stringify({model,prompt,n:OPENAI_IMAGE_GENERATION_CONTRACT.outputCount,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user});
+    evidenceOperation.requestSha256=await evidenceSha256(requestBody);
+    await checkpointGenerationEvidence(options.onEvidence,evidenceId,"request",evidenceOperation,"media_submission",{dispatchState:"not_dispatched"},{requestBody});
     await options.onStage?.("provider-submit","Submitting the approved image request.");
     options.onBeforeProviderDispatch?.(options.providerClientRequestId??"");
-    try{response=await openAIRequest(OPENAI_IMAGE_GENERATION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:JSON.stringify({model,prompt,n:OPENAI_IMAGE_GENERATION_CONTRACT.outputCount,size,quality,output_format:outputFormat,...(outputFormat!=="png"?{output_compression:outputCompression}:{}),...(partialImages?{stream:true,partial_images:partialImages}:{}),user}),signal:options.signal},undefined,options.privateImageReceipt?"caller-bounded":"classify");}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
+    try{response=await openAIRequest(OPENAI_IMAGE_GENERATION_CONTRACT.api,{method:"POST",headers:{...openAIHeaders(env),...(options.providerClientRequestId?{"X-Client-Request-Id":options.providerClientRequestId}:{})},body:requestBody,signal:options.signal},undefined,options.privateImageReceipt?"caller-bounded":"classify");}catch(error){if(error instanceof ProviderRequestError)throw new ProviderRequestError(error.detail,prompt);throw error;}
   }
   let privateRaw:string|undefined;
   if(options.privateImageReceipt){privateRaw=await readBoundedAssistantProviderResponse(response,options.privateImageReceipt.signal,1024*1024);if(!memoryDerivationJsonUniqueKeys(privateRaw))throw new Error('private_image_receipt_invalid');}
-  if(!response.ok){let error:OpenAIImageResponse={};try{error=privateRaw===undefined?await response.json():JSON.parse(privateRaw) as OpenAIImageResponse;}catch{/* Preserve the provider status when no JSON error body is available. */}throw providerErrorFromResponse(response,error,`openai_image_${response.status}`,prompt);}
+  if(!response.ok){let error:OpenAIImageResponse={};const raw=privateRaw??await response.text();try{error=JSON.parse(raw) as OpenAIImageResponse;}catch{/* Preserve provider status. */}await retainImageResponse(raw,error,response,false);throw providerErrorFromResponse(response,error,`openai_image_${response.status}`,prompt,"media_result");}
   const [requestedWidth,requestedHeight]=size.split("x").map(Number);let encoded="";let revisedPrompt:string|null=null;let createdAt:number|null=null;let usage:OpenAIImageUsage={};let completedSize:string=size;let completedFormat=outputFormat;let partialCount=0;
   if(partialImages){
-    try{await readImageStream(response,async(event)=>{if(event.error?.message)throw new ProviderRequestError(classifyProviderFailure(new Error(event.error.message)),prompt);if(event.type?.endsWith(".partial_image")&&event.b64_json){partialCount+=1;const eventSize=event.size??size;const [width,height]=eventSize.split("x").map(Number);await options.onPartial?.({bytes:decodeBase64Image(event.b64_json),index:Number(event.partial_image_index??partialCount-1),mimeType:imageMimeType(event.output_format??outputFormat),width,height});}if(event.type?.endsWith(".completed")&&event.b64_json){encoded=event.b64_json;createdAt=event.created_at??null;usage=event.usage??{};completedSize=event.size??size;completedFormat=event.output_format??outputFormat;}});}catch(error){if(error instanceof ProviderRequestError)throw error;throw new ProviderRequestError(classifyProviderFailure(error),prompt);}
+    try{await readImageStream(response,async(event,raw)=>{if(event.error||event.type==="error"){await retainImageResponse(raw,event,response,false);throw new ProviderRequestError({...classifyProviderFailure(new Error(event.error?.message??event.message??"provider_stream_error"),response,event),pipelineStage:"media_result"},prompt);}if(event.type?.endsWith(".partial_image")&&event.b64_json){partialCount+=1;const eventSize=event.size??size;const [width,height]=eventSize.split("x").map(Number);await options.onPartial?.({bytes:decodeBase64Image(event.b64_json),index:Number(event.partial_image_index??partialCount-1),mimeType:imageMimeType(event.output_format??outputFormat),width,height});}if(event.type?.endsWith(".completed")&&event.b64_json){await retainImageResponse(raw,event,response,true);revisedPrompt=event.revised_prompt??null;encoded=event.b64_json;createdAt=event.created_at??null;usage=event.usage??{};completedSize=event.size??size;completedFormat=event.output_format??outputFormat;}});}catch(error){if(error instanceof ProviderRequestError)throw error;throw new ProviderRequestError(classifyProviderFailure(error),prompt);}
   }else{
-    const body=(privateRaw===undefined?await response.json():JSON.parse(privateRaw)) as OpenAIImageResponse;encoded=body.data?.[0]?.b64_json??"";revisedPrompt=body.data?.[0]?.revised_prompt??null;createdAt=body.created??null;usage=body.usage??{};
+    const raw=privateRaw??await response.text();const body=JSON.parse(raw) as OpenAIImageResponse;await retainImageResponse(raw,body,response,Boolean(body.data?.[0]?.b64_json));encoded=body.data?.[0]?.b64_json??"";revisedPrompt=body.data?.[0]?.revised_prompt??null;createdAt=body.created??null;usage=body.usage??{};
   }
   if(options.privateImageReceipt){
     const u=usage as Record<string,unknown>,details=u.input_tokens_details as Record<string,unknown>|undefined;
@@ -497,9 +529,10 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
   if(privateRaw!==undefined)try{await options.privateImageReceipt!.onReceipt(privateRaw,response.headers.get('x-request-id'));}catch(error){privateReceiptFailed=true;privateReceiptError=error;}
   if(options.onProviderSubmission){
     const paidUsage={inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0),textInputTokens:Number(usage.input_tokens_details?.text_tokens??0),imageInputTokens:Number(usage.input_tokens_details?.image_tokens??0)};
-    await options.onProviderSubmission({clientRequestId:options.providerClientRequestId??`forma-image-${crypto.randomUUID()}`,provider:"openai",operation:"image",model,status:"completed",providerRequestId:response.headers.get("x-request-id")??undefined,...paidUsage,...(verifiedUsage(usage)?{costMicrousd:priceImageUsageBreakdownMicrousd(model,paidUsage,references.length>0).totalMicrousd}:{})});
-    if(!verifiedUsage(usage))throw missingUsageReceipt(response.headers.get("x-request-id"));
+    await options.onProviderSubmission({clientRequestId:options.providerClientRequestId??`forma-image-${crypto.randomUUID()}`,provider:"openai",operation:"image",model,status:"completed",contentOutcome:encoded?"usable":"invalid",accountingState:verifiedUsage(usage)?"usage_recorded":"unknown",requestDigest:evidenceOperation.requestSha256??undefined,providerRequestId:response.headers.get("x-request-id")??undefined,...(verifiedUsage(usage)?paidUsage:{}),...(verifiedUsage(usage)?{costMicrousd:priceImageUsageBreakdownMicrousd(model,paidUsage,references.length>0).totalMicrousd}:{})});
+    if(!verifiedUsage(usage)){await retainCompletedImageEvidence?.();throw missingUsageReceipt(response.headers.get("x-request-id"));}
   }
+  await retainCompletedImageEvidence?.();
   if(privateReceiptFailed)throw privateReceiptError;
   if(!encoded)throw new Error("provider_returned_no_image");const bytes=decodeBase64Image(encoded);const [width,height]=completedSize.split("x").map(Number);
   return{model,prompt,promptTechnique,bytes,revisedPrompt,createdAt,providerRequestId:response.headers.get("x-request-id"),latencyMs:Date.now()-started,usage:{inputTokens:Number(usage.input_tokens??0),outputTokens:Number(usage.output_tokens??0),totalTokens:Number(usage.total_tokens??0),textInputTokens:Number(usage.input_tokens_details?.text_tokens??0),imageInputTokens:Number(usage.input_tokens_details?.image_tokens??0)},width:Number.isFinite(width)?width:requestedWidth,height:Number.isFinite(height)?height:requestedHeight,mimeType:imageMimeType(completedFormat),quality,usedReference:references.length>0,referenceCount:references.length,referenceInputs:references.map((reference)=>({source:reference.source,blockId:reference.blockId??null,referenceId:reference.referenceId??null,label:reference.label??null,mode:reference.mode??null})),safetyProbeCount:moderation.probeCount,safetyCoverage:moderation.coverage,safetyRequestIds:moderation.requestIds,partialCount,outputFormat:completedFormat,outputCompression:completedFormat==="png"?null:outputCompression};

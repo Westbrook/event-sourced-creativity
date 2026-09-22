@@ -1,3 +1,4 @@
+import { IMAGE_CAPABILITY_VERSION, IMAGE_ROUTING_POLICY_VERSION } from "./image-operation-capabilities.ts";
 import { readOutputFalImageContract } from "./output-fal-image-contract.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { outputImageBudget } from "./output-image-budget.ts";
@@ -30,7 +31,7 @@ export async function generateCreativeImage(env:WorkerEnv,userId:string,snapshot
     const references=await Promise.all((options.references??[]).map(async(reference)=>({mimeType:reference.mimeType,sha256:await hash(reference.bytes)})));
     return hash(new TextEncoder().encode(JSON.stringify({model:submission.model,prompt:preparedPrompt,size:options.size,quality:options.quality,outputFormat:options.outputFormat??"png",references})));
   };
-  const observedOptions={...options,...(falContract?{outputFormat:"png" as const}:{}),...(preparedPrompt?{preparedPrompt}:{}),providerClientRequestId:submission.clientRequestId,onBeforeProviderDispatch:options.onBeforeProviderDispatch,
+  const observedOptions={...options,evidenceContext:{...options.evidenceContext,requestedAlias:env.OPENAI_IMAGE_MODEL??null,effectiveModel:submission.model,overrideProvenance:selection.reason,routingPolicyVersion:IMAGE_ROUTING_POLICY_VERSION,capabilityVersion:IMAGE_CAPABILITY_VERSION,adapterVersion:`${selection.adapterId}-${selection.adapterVersion}`},...(falContract?{outputFormat:"png" as const}:{}),...(preparedPrompt?{preparedPrompt}:{}),providerClientRequestId:submission.clientRequestId,onBeforeProviderDispatch:options.onBeforeProviderDispatch,
     ...(options.onProviderSubmission?{onProviderSubmission:async(receipt:PaidProviderSubmission)=>{submission=receipt;await options.onProviderSubmission?.(receipt);if(falContract&&receipt.status==="pending")attempted=true;}}:{}),
     onStage:async(stage:string,message:string)=>{
       // Validation and moderation run before this exact paid-dispatch boundary.

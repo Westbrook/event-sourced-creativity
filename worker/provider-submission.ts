@@ -51,3 +51,23 @@ export function paidProviderObserver(checkpoint: Record<string, unknown>, progre
     return next;
   };
 }
+
+/** Serial private-custody checkpoints; raw evidence never enters financial submission records. */
+export function privateGenerationEvidenceObserver(
+  retain: (evidence: import("../src/model/generation-outcome-evidence.ts").PrivateGenerationEvidence) => Promise<{ref:string;expiresAt:string|null}>,
+  checkpoint: Record<string,unknown>, progress?: Progress,
+): import("../src/model/generation-outcome-evidence.ts").GenerationEvidenceObserver {
+  let queue = Promise.resolve();
+  return evidence => {
+    const next = queue.then(async () => {
+      const stored = await retain(evidence);
+      const previous = checkpoint.generationEvidenceRefs && typeof checkpoint.generationEvidenceRefs === "object" ? checkpoint.generationEvidenceRefs as Record<string,unknown> : {};
+      const refs = {...previous, [`${evidence.evidenceId}:${evidence.phase}`]: {...stored, pipelineStage:evidence.outcome.pipelineStage}};
+      const patch = {generationEvidenceRefs:refs, generationOutcome:evidence.outcome};
+      await progress?.("evidence-checkpoint", "The private provider evidence is safely recorded.", patch);
+      Object.assign(checkpoint,patch);
+    });
+    queue = next.catch(()=>undefined);
+    return next;
+  };
+}

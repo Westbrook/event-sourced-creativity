@@ -1,3 +1,4 @@
+import { GENERATION_OUTCOME_SCHEMA, type GenerationOutcomeEvidence } from "./generation-outcome-evidence.ts";
 import { providerSubmissions, hasUnresolvedModel3dSubmission, hasUnresolvedProviderSubmission, hasUnsettledProviderSubmission, invalidProviderSubmissions } from "./provider-submission.ts";
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -209,4 +210,19 @@ export function isManagedVideoInspection(receipt: Record<string, unknown>) {
   const job = record(receipt.job), accounting = record(receipt.generation_receipt), checkpoint = record(receipt.artifact_checkpoint);
   return Boolean(checkpoint.managed_inputs) || (job.artifact_kind === "video" || accounting.artifact_kind === "video")
     && (job.production_mode === "managed" || accounting.production_mode === "managed" || record(record(receipt.private_input).request).production_mode === "managed");
+}
+
+/** New observations only. Historical missing fields remain absent; do not infer from UI names. */
+export function generationOutcomeSummary(checkpoint:Record<string,unknown>, failure:unknown=null, interruptedStage=""): GenerationOutcomeEvidence | null {
+  const raw=record(checkpoint.generationOutcome),detail=record(failure);
+  if(raw.schemaVersion!==GENERATION_OUTCOME_SCHEMA)return null;
+  const outcome={...raw} as GenerationOutcomeEvidence;
+  if(interruptedStage==="storage"&&failure)return {...outcome,pipelineStage:"storage",failureKind:"storage"};
+  if(typeof detail.pipelineStage==="string")outcome.pipelineStage=detail.pipelineStage as GenerationOutcomeEvidence["pipelineStage"];
+  if(failure){outcome.failureKind=detail.category==="network"?"transport":["provider_returned_invalid_json","provider_returned_no_output"].includes(String(detail.code))?"validation":detail.code==="provider_response_incomplete"?"incomplete":detail.category as GenerationOutcomeEvidence["failureKind"]??"unknown";
+    outcome.correctiveActionScope=detail.scope as GenerationOutcomeEvidence["correctiveActionScope"]??"unknown";
+    outcome.providerModerationStage=detail.providerModerationStage==="input"||detail.providerModerationStage==="output"?detail.providerModerationStage:"unknown";
+    if(detail.category==="safety")outcome.contentOutcome="refused";
+  }
+  return outcome;
 }
