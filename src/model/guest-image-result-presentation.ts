@@ -23,7 +23,7 @@ export type GuestImageResultClaimPayload = Readonly<{
   claimed_origin: GuestImageResultClaimEventOrigin;
   original_created_at: string;
   title: string;
-  model_id: "gpt-image-2";
+  model_id: "gpt-image-2" | "gpt-image-2.5-sunburst";
   planner_model_id: "gpt-5.6-terra";
   provider: "openai";
   prompt_technique: "prose" | "bullets" | "json" | "xml";
@@ -144,7 +144,7 @@ export function parseGuestImageResultClaimEvent(value: unknown): GuestImageResul
       || event.correlationId !== `guest-image-result-claim:v1:${p.custody_id}`
       || !iso(p.original_created_at) || p.original_created_at > event.occurredAt || !iso(p.content_expires_at)
       || p.content_expires_at <= event.occurredAt || typeof p.title !== "string" || p.title.length > 8192
-      || p.model_id !== "gpt-image-2" || p.planner_model_id !== "gpt-5.6-terra" || p.provider !== "openai"
+      || (p.model_id !== "gpt-image-2" && p.model_id !== "gpt-image-2.5-sunburst") || p.planner_model_id !== "gpt-5.6-terra" || p.provider !== "openai"
       || typeof p.prompt_technique !== "string" || !["prose", "bullets", "json", "xml"].includes(p.prompt_technique) || p.quality !== "high"
       || p.purpose !== "final" || p.source_surface !== "outputs"
       || typeof p.output_ref !== "string" || !/^guest-image-result-history-[a-f0-9]{64}$/u.test(p.output_ref)

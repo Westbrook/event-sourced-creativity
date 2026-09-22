@@ -23,7 +23,7 @@ export type SponsorImageCampaignTemplate = {
   maximumCalls: 2; maximumTokens: 128000; maximumMicrousd: number;
   calls: [
     { stage: "planning:initial"; provider: "openai"; model: "gpt-5.6-terra"; maximumMicrousd: number },
-    { stage: "image:initial"; provider: "openai"; model: "gpt-image-2"; maximumMicrousd: number },
+    { stage: "image:initial"; provider: "openai"; model: "gpt-image-2" | "gpt-image-2.5-sunburst"; maximumMicrousd: number },
   ];
   settings: { kind: "generate"; productionMode: "manual"; budgetAcknowledged: true; preflightAcknowledged: true;
     imageRender: ImageRender; imageBudget: ImageBudget; executionPolicy: typeof OUTPUT_NATIVE_EXECUTION_POLICY };
@@ -70,13 +70,13 @@ function validTemplate(raw: unknown): raw is SponsorImageCampaignTemplate {
     || !validTransport(raw.transport)) return false;
   const [planning, image] = raw.calls, settings = raw.settings;
   if (planning.stage !== "planning:initial" || planning.provider !== "openai" || planning.model !== "gpt-5.6-terra"
-    || image.stage !== "image:initial" || image.provider !== "openai" || image.model !== "gpt-image-2"
+    || image.stage !== "image:initial" || image.provider !== "openai" || (image.model !== "gpt-image-2" && image.model !== "gpt-image-2.5-sunburst")
     || Number(planning.maximumMicrousd) < 100_000 || raw.maximumMicrousd !== Number(planning.maximumMicrousd) + Number(image.maximumMicrousd)
     || settings.kind !== "generate" || settings.productionMode !== "manual" || settings.budgetAcknowledged !== true
     || settings.preflightAcknowledged !== true || !same(settings.executionPolicy, OUTPUT_NATIVE_EXECUTION_POLICY)) return false;
   const render = outputExactImageRender({ width: raw.width, height: raw.height });
   if (!render || render.size !== `${raw.width}x${raw.height}` || !same(settings.imageRender, render)) return false;
-  const budget = outputImageBudget("gpt-image-2", render.size);
+  const budget = outputImageBudget(image.model, render.size);
   return budget !== null && same(settings.imageBudget, budget) && image.maximumMicrousd === Math.max(900_000, budget.maximumMicrousd);
 }
 

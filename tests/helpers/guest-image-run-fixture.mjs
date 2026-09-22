@@ -71,7 +71,7 @@ export function installProviderWire(t, f) {
       check(() => assert.equal(body.model, 'omni-moderation-latest'));
       response = Response.json({ id: 'guest-local-safety', model: 'omni-moderation-latest', results: [{ flagged: false, categories: {}, category_scores: {} }] });
     } else {
-      check(() => { assert.equal(body.model, 'gpt-image-2'); assert.equal(body.n, 1); assert.equal(body.size, '1024x1024');
+      check(() => { assert.equal(body.model, f.imageModel); assert.equal(body.n, 1); assert.equal(body.size, '1024x1024');
         assert.equal(body.quality, 'high'); assert.equal(body.output_format, 'png'); assert.ok(body.prompt.includes(f.subject)); });
       if (state.imageFailure) throw state.imageFailure;
       state.imageBytes = validPng(1024, 1024);
@@ -144,7 +144,7 @@ export function assertKnownCall(f, call) {
   const planning = call.stage_key === 'planning:initial', wire = f.provider.calls.find(row => row.stage === (planning ? 'planner' : 'image'));
   assert.ok(wire); assert.ok(Object.hasOwn(expectedCallPrices, call.stage_key));
   assert.equal(call.status, 'settled'); assert.equal(call.used_microusd, expectedCallPrices[call.stage_key]);
-  assert.equal(call.provider, 'openai'); assert.equal(call.model, planning ? 'gpt-5.6-terra' : 'gpt-image-2');
+  assert.equal(call.provider, 'openai'); assert.equal(call.model, planning ? 'gpt-5.6-terra' : f.imageModel);
   assert.equal(call.slot_id, f.admitted.slotId); assert.equal(call.scope_key, f.initialSlot.scope_key);
   assert.equal(call.provider_response_id, planning ? 'guest-local-planner' : 'guest-local-image-request');
   assert.equal(call.client_request_id, wire.headers.get('x-client-request-id'));
@@ -164,7 +164,7 @@ export function assertNativeCompletion(f) {
   const completed = events.filter(event => event.type === 'GenerationCompleted'); assert.equal(completed.length, 1);
   const event = completed[0], body = event.payload;
   assert.equal(event.eventId, slot.outcome_event_id); assert.equal(event.correlationId, job.correlation_id);
-  assert.equal(body.document_id, f.session.documentId); assert.equal(body.model_id, 'gpt-image-2'); assert.equal(body.planner_model_id, 'gpt-5.6-terra');
+  assert.equal(body.document_id, f.session.documentId); assert.equal(body.model_id, f.imageModel); assert.equal(body.planner_model_id, 'gpt-5.6-terra');
   assert.equal(body.simulation, false); assert.equal(body.media_type, 'image/png'); assert.equal(body.image_width, 1024); assert.equal(body.image_height, 1024);
   assert.equal(body.source_surface, 'outputs'); assert.deepEqual(body.object_ids, [body.object_id]);
   const content = id => { const row = rows(f, 'private_content').find(row => row.content_id === id); assert.ok(row); assert.equal(row.owner_id, f.session.guestSubject); assert.equal(row.redacted_at, null); return row.content; };

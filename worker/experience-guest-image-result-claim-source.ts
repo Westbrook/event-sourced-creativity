@@ -22,9 +22,7 @@ import { takeGuestImageResultPutSettlement, takeGuestImageResultDestinationProof
 import type { Proof } from "./experience-guest-image-history.ts";
 import type { WorkerEnv } from "./runtime.ts";
 import { preparePrivateContent } from "./private-content-storage.ts";
-import { nativeMemoryAnswerExclusion } from "./memory-native-boundary.ts";
-import { nativeStructuredOriginSchemaRead } from "./memory-native-origin-schema.ts";
-import { nativeDocumentJobOriginSchemaRead } from "./memory-document-job-origin-schema.ts";
+import { nativeMemoryAnswerExclusion, nativePrivateContentMemorySchemaReads } from "./memory-native-boundary.ts";
 import { draftGuestImageResultClaimCandidate, finishGuestImageResultClaimCandidate } from "./experience-guest-image-result-claim.ts";
 import { guestImageResultClaimPublicationAvailable, guestImageResultPublishedGraphProofs, type GuestImageResultPublishedGraph } from "./experience-guest-image-result-facts.ts";
 import { guestImageResultWholeGraphProof } from "./experience-guest-image-result-custody.ts";
@@ -975,8 +973,7 @@ function finalPreparationEnvironment(state: FinalClaimState): WorkerEnv {
     if (key !== "prepare") return unavailableCopy();
     return (sql: string) => { readForms.add(sql); return owner.database.prepare(sql); };
   } });
-  nativeStructuredOriginSchemaRead(collect); nativeDocumentJobOriginSchemaRead(collect);
-  readForms.add("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='memory_native_answer_origins') AS origins,EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='assistant_turns') AS turns");
+  nativePrivateContentMemorySchemaReads(collect);
   const statement = (sql: string, bindings: readonly unknown[] = []): D1PreparedStatement => {
     if (encode.encode(sql).byteLength > 100_000 || bindings.length > 100) return unavailableCopy();
     envelopeBytes([...bindings], 1_048_576);

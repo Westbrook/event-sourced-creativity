@@ -2620,7 +2620,7 @@ export async function readGuestImageResultInputsResponse(request: Request, env: 
     const p = personal.canonical.payload;
     const view: GuestImageResultInputView = { schema_version: 2, origin: "guest-image-result-claim", claim: disclosure.snapshot.claim,
       output: { object_id: p.object_id, generation_id: p.generation_id, document_id: p.document_id, quality: "high", purpose: "final",
-        prompt_technique: p.prompt_technique, provider: "openai", model: "gpt-image-2", planner_model: "gpt-5.6-terra", source_surface: "outputs" },
+        prompt_technique: p.prompt_technique, provider: "openai", model: p.model_id, planner_model: "gpt-5.6-terra", source_surface: "outputs" },
       submitted_prompt: personal.prompt, retained_input_status: personal.prompt === null ? "unavailable" : "available",
       source_block_versions: p.source_block_versions, compile_event_id: null, document_snapshot: null, context_hash: null,
       reference_inputs: [], used_reference_pixels: false };

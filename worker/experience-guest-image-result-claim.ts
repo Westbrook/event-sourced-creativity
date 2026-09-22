@@ -23,7 +23,7 @@ export type GuestImageResultClaimBody = Readonly<{
 export type GuestImageResultClaimRetentionReceipt = Readonly<{ contentId: string; createdAt: string; expiresAt: string }>;
 type Five<T> = readonly [T, T, T, T, T];
 type Presentation = Readonly<{
-  title: string; model_id: "gpt-image-2"; planner_model_id: "gpt-5.6-terra"; provider: "openai";
+  title: string; model_id: "gpt-image-2" | "gpt-image-2.5-sunburst"; planner_model_id: "gpt-5.6-terra"; provider: "openai";
   prompt_technique: "prose" | "bullets" | "json" | "xml"; quality: "high"; purpose: "final"; source_surface: "outputs";
   latency_ms: number; source_block_versions: readonly Readonly<{ block_id: string; version: number }>[]; source_rights_digest: string;
 }>;
@@ -161,7 +161,7 @@ export async function draftGuestImageResultClaimCandidate(input: {
   const issuance = object(result.rows.issuance.envelope_json), blockIds = new Set([
     ...plan.events.flatMap(event => typeof event.payload.block_id === "string" ? [event.payload.block_id] : []), saved.requirementId]);
   if (compiled.length !== 1 || typeof p.title !== "string" || p.title.length > 8192 || !p.title.isWellFormed()
-    || p.model_id !== "gpt-image-2" || p.planner_model_id !== "gpt-5.6-terra" || p.provider !== "openai"
+    || (p.model_id !== "gpt-image-2" && p.model_id !== "gpt-image-2.5-sunburst") || p.planner_model_id !== "gpt-5.6-terra" || p.provider !== "openai"
     || !["prose", "bullets", "json", "xml"].includes(String(p.prompt_technique)) || p.quality !== "high" || p.purpose !== "final"
     || p.source_surface !== "outputs" || !integer(p.latency_ms, 0, Number.MAX_SAFE_INTEGER) || !hash(issuance.rightsDigest)
     || p.model_id !== copy.source.producerMetadata.model || p.provider !== copy.source.producerMetadata.provider

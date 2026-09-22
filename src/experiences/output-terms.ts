@@ -137,7 +137,8 @@ function imageSettings(settings: Data, payload: Data, target: Data, expectedSize
   const render = record(settings.imageRender), budget = record(settings.imageBudget);
   const format = record(render?.format), ratio = record(format?.aspect_ratio), dimensions = record(format?.dimensions);
   const imageMaximum = record((settings.calls as Json[])[1])?.maximumMicrousd;
-  if (settings.kind !== "generate" || target.model !== "gpt-image-2" || !render || !budget || !format || !ratio || !dimensions
+  const sunburst = target.model === "gpt-image-2.5-sunburst";
+  if (settings.kind !== "generate" || (!sunburst && target.model !== "gpt-image-2") || !render || !budget || !format || !ratio || !dimensions
     || !text(render.size) || (expectedSize !== undefined && render.size !== expectedSize)
     || format.schema_version !== 1 || dimensions.unit !== "px" || !positive(dimensions.width) || !positive(dimensions.height)
     || !positive(ratio.width) || !positive(ratio.height) || !same(payload.outputImageFormat!, format)) return null;
@@ -146,7 +147,12 @@ function imageSettings(settings: Data, payload: Data, target: Data, expectedSize
     || Math.max(width, height) / Math.min(width, height) > 3 || render.size !== `${width}x${height}`
     || !Number.isSafeInteger(width * ratio.height) || !Number.isSafeInteger(height * ratio.width)
     || width * ratio.height !== height * ratio.width) return null;
-  if (budget.version !== "gpt-image-2-doc-calculator-2026-08-27" || budget.quality !== "high"
+  if (budget.version !== (sunburst ? "gpt-image-2.5-sunburst-doc-calculator-2026-09-18" : "gpt-image-2-doc-calculator-2026-08-27")
+    || (sunburst ? canonicalJson(budget.calculatorSource ?? null) !== canonicalJson({
+      url: "https://developers.openai.com/_astro/GptImageTokenCalculator.react.DVgudqu4.js",
+      sha256: "db420638507abf236e5535e83759631734d4b47837eb2edf1f53af2461b0d8fa",
+      capturedAt: "2026-09-18T01:40:08Z", modelFamily: "gpt-image-2.5", qualityBase: 48,
+    }) : Object.hasOwn(budget, "calculatorSource")) || budget.quality !== "high"
     || budget.allowanceCode !== "output_native_image_allowance_verified" || !text(budget.allowanceDescription, 16384)
     || budget.maximumPromptBytes !== 32_000 || budget.maximumReferenceImages !== 0
     || !positive(budget.estimatedOutputTokens) || !positive(budget.maximumOutputTokens)

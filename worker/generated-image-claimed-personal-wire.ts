@@ -39,7 +39,7 @@ export type GuestImageResultDraftView = Readonly<{
 }>;
 export type GuestImageResultInputOutput = Readonly<{
   object_id: string; generation_id: string; document_id: string; quality: "high"; purpose: "final";
-  prompt_technique: "prose" | "bullets" | "json" | "xml"; provider: "openai"; model: "gpt-image-2";
+  prompt_technique: "prose" | "bullets" | "json" | "xml"; provider: "openai"; model: "gpt-image-2" | "gpt-image-2.5-sunburst";
   planner_model: "gpt-5.6-terra"; source_surface: "outputs";
 }>;
 export type GuestImageResultInputView = Readonly<{
@@ -152,7 +152,7 @@ export function parseGuestImageResultInputView(value: unknown): GuestImageResult
     if (!claim || !row(p) || !exact(p, ["object_id", "generation_id", "document_id", "quality", "purpose", "prompt_technique", "provider", "model", "planner_model", "source_surface"])
       || !uuid(p.generation_id) || p.object_id !== `object-${p.generation_id.slice(-8)}` || !uuid(p.document_id)
       || p.quality !== "high" || p.purpose !== "final" || typeof p.prompt_technique !== "string" || !["prose", "bullets", "json", "xml"].includes(p.prompt_technique)
-      || p.provider !== "openai" || p.model !== "gpt-image-2" || p.planner_model !== "gpt-5.6-terra" || p.source_surface !== "outputs") return null;
+      || p.provider !== "openai" || (p.model !== "gpt-image-2" && p.model !== "gpt-image-2.5-sunburst") || p.planner_model !== "gpt-5.6-terra" || p.source_surface !== "outputs") return null;
     if (v.retained_input_status === "available") {
       if (typeof v.submitted_prompt !== "string" || bytes(v.submitted_prompt) < 1 || bytes(v.submitted_prompt) > GUEST_IMAGE_PERSONAL_WIRE_LIMITS.promptBytes) return null;
     } else if (v.retained_input_status !== "unavailable" || v.submitted_prompt !== null) return null;
@@ -165,7 +165,7 @@ export function parseGuestImageResultInputView(value: unknown): GuestImageResult
     return Object.freeze({ schema_version: 2, origin: "guest-image-result-claim", claim,
       output: Object.freeze({ object_id: String(p.object_id), generation_id: p.generation_id, document_id: p.document_id,
         quality: "high", purpose: "final", prompt_technique: p.prompt_technique as GuestImageResultInputOutput["prompt_technique"],
-        provider: "openai", model: "gpt-image-2", planner_model: "gpt-5.6-terra", source_surface: "outputs" }),
+        provider: "openai", model: p.model, planner_model: "gpt-5.6-terra", source_surface: "outputs" }),
       submitted_prompt: v.submitted_prompt as string | null, retained_input_status: v.retained_input_status,
       source_block_versions: Object.freeze(versions), compile_event_id: null, document_snapshot: null, context_hash: null,
       reference_inputs: Object.freeze([]) as readonly [], used_reference_pixels: false });

@@ -4108,7 +4108,7 @@ const messages: Record<string, string> = {
   "system.auto.1wpawfk.164": "Character, location, identity, or object decisions were accepted independently and then consumed as structured decisions and image inputs by a composed-image stage.",
   "system.auto.qwie7b.43": "characters, exceeding the provider limit of",
   "system.auto.mfp62z.13": "Check on your",
-  "system.auto.o38976.96": "Check that the API key belongs to the selected project and that the project permits GPT Image 2.",
+  "system.auto.av7ijk.94": "Check that the API key belongs to the selected project and that the project permits GPT Image.",
   "system.auto.1o4l0s4.38": "Checking current generation readiness…",
   "system.auto.gy240y.25": "Checking provider status.",
   "system.auto.19gxo8l.19": "Checking readiness…",

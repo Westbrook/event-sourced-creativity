@@ -59,7 +59,7 @@ test("calls the direct Image API with GPT-image-2.5 Sunburst, project attributio
   }finally{globalThis.fetch=originalFetch;}
 });
 
-test("rejects invalid GPT Image 2 dimensions before a paid provider request",async()=>{
+test("rejects invalid GPT Image 2.5 Sunburst dimensions before a paid provider request",async()=>{
   const originalFetch=globalThis.fetch;let requests=0;globalThis.fetch=async()=>{requests+=1;return Response.json({});};
   try{
     await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Invalid portrait"},{quality:"low",size:"544x816"}),error=>{
@@ -108,7 +108,7 @@ test("moderates every reference with a valid one-image probe before a multi-imag
     assert.equal(new TextDecoder().decode(result.bytes),"composed-image");assert.equal(result.referenceCount,6);
     assert.equal(moderationInputs.length,7);assert.equal(moderationInputs[0].filter((item)=>item.type==="image_url").length,0);
     assert.ok(moderationInputs.slice(1).every((input)=>input.filter((item)=>item.type==="image_url").length===1));
-    assert.ok(editRequest?.body instanceof FormData);assert.equal(editRequest.body.getAll("image[]").length,6);
+    assert.ok(editRequest?.body instanceof FormData);assert.equal(editRequest.body.get("model"),"gpt-image-2.5-sunburst");assert.equal(result.model,"gpt-image-2.5-sunburst");assert.equal(editRequest.body.getAll("image[]").length,6);
   }finally{globalThis.fetch=originalFetch;}
 });
 
@@ -215,7 +215,7 @@ test("streams one early GPT Image preview before returning the completed JPEG",a
   globalThis.fetch=async(_url,init)=>{requestBody=JSON.parse(String(init.body));const events=[{type:"image_generation.partial_image",b64_json:btoa("partial-jpeg"),created_at:1,size:"816x816",quality:"low",output_format:"jpeg",partial_image_index:0},{type:"image_generation.completed",b64_json:btoa("final-jpeg"),created_at:2,size:"816x816",quality:"low",output_format:"jpeg",usage:{input_tokens:20,output_tokens:196,total_tokens:216}}];return new Response(events.map((event)=>`data: ${JSON.stringify(event)}\n\n`).join(""),{headers:{"content-type":"text/event-stream"}});};
   try{
     const result=await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Draft"},{quality:"low",size:"816x816",outputFormat:"jpeg",outputCompression:70,partialImages:1,onPartial:(partial)=>partials.push(partial)});
-    assert.equal(requestBody.stream,true);assert.equal(requestBody.partial_images,1);assert.equal(requestBody.output_format,"jpeg");assert.equal(partials.length,1);assert.equal(new TextDecoder().decode(partials[0].bytes),"partial-jpeg");assert.equal(partials[0].mimeType,"image/jpeg");assert.equal(new TextDecoder().decode(result.bytes),"final-jpeg");assert.equal(result.mimeType,"image/jpeg");assert.equal(result.partialCount,1);assert.equal(result.usage.totalTokens,216);
+    assert.equal(requestBody.model,"gpt-image-2.5-sunburst");assert.equal(result.model,"gpt-image-2.5-sunburst");assert.equal(requestBody.stream,true);assert.equal(requestBody.partial_images,1);assert.equal(requestBody.output_format,"jpeg");assert.equal(partials.length,1);assert.equal(new TextDecoder().decode(partials[0].bytes),"partial-jpeg");assert.equal(partials[0].mimeType,"image/jpeg");assert.equal(new TextDecoder().decode(result.bytes),"final-jpeg");assert.equal(result.mimeType,"image/jpeg");assert.equal(result.partialCount,1);assert.equal(result.usage.totalTokens,216);
   }finally{globalThis.fetch=originalFetch;}
 });
 

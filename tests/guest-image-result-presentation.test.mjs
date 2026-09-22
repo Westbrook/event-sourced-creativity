@@ -4,6 +4,8 @@ import { parseGuestImageResultClaimEvent, parseGuestImageResultClaimEventOrigin 
 import { createCreativeEventFold, foldEvents } from "../src/model/events.ts";
 import { eventMatchesProfile, PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
 import { describeOutput, describeOutputs, imageOutputNamingCandidate } from "../src/model/output-naming.ts";
+import { parseGuestImageResultInputView } from "../worker/generated-image-claimed-personal-wire.ts";
+import { createGuestImageResultLocalAdoptionPair, matchGuestImageResultLocalAdoptionPair } from "../worker/generated-image-claimed-local-adoption.ts";
 
 // Actual module imports and canonical event DTOs. This suite proves pure model
 // behavior, not publication, current custody, media availability or paid work.
@@ -106,6 +108,43 @@ test("claim EventOrigin is a detached closed identity value, not a completed rev
     value => { value.manifestDigest = sha; }, value => { value.kind = "guest-image-result-completed-review-v1"; },
     value => { value.version = 2; }, value => { value.claimEventId = "event-not-a-uuid"; }]) {
     const value = structuredClone(origin); mutate(value); assert.equal(parseGuestImageResultClaimEventOrigin(value), null);
+  }
+});
+
+test("Image 2 and Sunburst claim presentation and Inputs preserve original model identity", () => {
+  // Synthetic detached presentation/wire values only; these confer no custody or read authority.
+  for (const model of ["gpt-image-2", "gpt-image-2.5-sunburst"]) {
+    const f = fixture(); f.claim.payload.model_id = model;
+    assert.equal(parseGuestImageResultClaimEvent(f.claim)?.payload.model_id, model);
+    assert.equal(project(f.events).outputs[0].modelId, model);
+    const p = f.claim.payload;
+    const wire = { schema_version: 2, origin: "guest-image-result-claim",
+      claim: { version: 1, kind: "guest-image-result-completed-review-v1", custodyId, claimEventId, lineageDigest: manifest },
+      output: { object_id: outputId, generation_id: generationId, document_id: documentId, quality: "high", purpose: "final",
+        prompt_technique: p.prompt_technique, provider: "openai", model, planner_model: "gpt-5.6-terra", source_surface: "outputs" },
+      submitted_prompt: "A quiet teal geometric still life", retained_input_status: "available", source_block_versions: p.source_block_versions,
+      compile_event_id: null, document_snapshot: null, context_hash: null, reference_inputs: [], used_reference_pixels: false };
+    const parsed = parseGuestImageResultInputView(wire);
+    assert.ok(parsed); assert.equal(parsed.output.model, model); assertDeepFrozen(parsed);
+    const candidate = createGuestImageResultLocalAdoptionPair({
+      snapshot: { status: "current", ownerId: owner, projectId, documentId, outputId, generationId, sourceEventId: claimEventId,
+        contentRef: p.output_ref, contentSha256: null, revision: 0, editEventId: null,
+        media: { url: p.media_url, mediaType: "image/png", sha256: p.source_content_hash, width: p.image_width,
+          height: p.image_height, byteLength: p.image_byte_length }, sources: [], sourceIds: [], head: 107, claim: wire.claim },
+      title: p.title, canonical: f.claim, retainedExpiresAt: expiry, occurredAt: claimTime,
+      ids: Object.fromEntries(["referenceId", "blockId", "receiptEventId", "blockEventId", "correlationId"].map((key, index) =>
+        [key, `70000000-0000-4000-8000-00000000000${index}`])),
+    });
+    assert.ok(candidate); assert.equal(candidate.receipt.payload.model_id, model);
+    assert.equal(matchGuestImageResultLocalAdoptionPair(candidate, candidate)?.receipt.payload.model_id, model);
+    for (const unknown of ["gpt-image-2.5-flare", "gpt-image-2-future"]) {
+      const changed = structuredClone(wire); changed.output.model = unknown;
+      assert.equal(parseGuestImageResultInputView(changed), null);
+      const claim = structuredClone(f.claim); claim.payload.model_id = unknown;
+      assert.equal(parseGuestImageResultClaimEvent(claim), null);
+      const pair = structuredClone(candidate); pair.receipt.payload.model_id = unknown;
+      assert.equal(matchGuestImageResultLocalAdoptionPair(pair, pair), null);
+    }
   }
 });
 

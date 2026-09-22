@@ -19,20 +19,21 @@ after(()=>{globalThis.fetch=originalFetch;assert.equal(networkCalls,0);});
 const env={OPENAI_API_KEY:'no-network-fixture',OPENAI_MODEL:'gpt-5.6-terra',OPENAI_IMAGE_MODEL:'gpt-image-2'};
 const release=await registeredExperience('image');assert.ok(release);
 const schemaDigest=await digest(route.OPENAI_IMAGE_DIRECTION_SCHEMA);
-function transport() {
-  const image=selectImageAdapter(env,{quality:'high',size:'1024x1024',references:[]});
+function transport(imageEnv = env) {
+  const image=selectImageAdapter(imageEnv,{quality:'high',size:'1024x1024',references:[]});
   const p=route.OPENAI_IMAGE_DIRECTION_CONTRACT,i=route.OPENAI_IMAGE_GENERATION_CONTRACT,m=route.OPENAI_IMAGE_MODERATION_CONTRACT;
   return {planning:{api:p.api,maximumOutputTokens:p.maximumOutputTokens,reasoningEffort:p.reasoning.effort,verbosity:p.text.verbosity,
       format:{type:p.text.format.type,name:p.text.format.name,strict:p.text.format.strict,schemaDigest},store:p.store},
     image:{api:i.api,adapterId:image.adapterId,adapterVersion:image.adapterVersion,quality:i.defaults.quality,outputFormat:i.defaults.outputFormat,partialImages:i.defaults.partialImages,outputCount:i.outputCount},
     safety:{api:m.api,provider:'openai',model:m.model,maximumCalls:m.maximumCalls,input:m.input}};
 }
-async function native(source='Pear orchard at dusk',intent='image-a') {
-  const offered=await preflightOutputImageSlidesTarget({env,target:{id:intent,selected:true,blocking_issues:[],media_kind:'image',source_scope:{kind:'document'},aspect_ratio:{width:1,height:1},instruction_text:`Show ${source}`,label:`View ${intent}`,coverage:{kind:'document_outline'}},context:{snapshot:{facts:[{type:'subject',properties:{text:source}}]}}});
+async function native(source='Pear orchard at dusk',intent='image-a',model=env.OPENAI_IMAGE_MODEL) {
+  const imageEnv={...env,OPENAI_IMAGE_MODEL:model};
+  const offered=await preflightOutputImageSlidesTarget({env:imageEnv,target:{id:intent,selected:true,blocking_issues:[],media_kind:'image',source_scope:{kind:'document'},aspect_ratio:{width:1,height:1},instruction_text:`Show ${source}`,label:`View ${intent}`,coverage:{kind:'document_outline'}},context:{snapshot:{facts:[{type:'subject',properties:{text:source}}]}}});
   assert.equal(offered.available,true);
   const recipe={appId:'image',recipeVersion:`image@${release.definition.revision}`,releaseDigest:release.releaseHash,outputKind:'image',provider:offered.provider,model:offered.model,
     routeDigest:await digest(offered),settingsDigest:await digest(offered.settings),outputCount:1,durationMs:0,width:1024,height:1024,calls:{parsing:0,planning:1,render:1,repair:0},maximumTokens:offered.maximumTokens,maximumMicrousd:offered.maximumMicrousd};
-  return {recipe,offered,transport:transport()};
+  return {recipe,offered,transport:transport(imageEnv)};
 }
 function campaign(actual) {
   const {recipe,offered,transport}=actual,s=offered.settings,p=s.payload;
@@ -41,6 +42,23 @@ function campaign(actual) {
     settings:{kind:s.kind,productionMode:p.productionMode,budgetAcknowledged:p.budgetAcknowledged,preflightAcknowledged:p.preflightAcknowledged,imageRender:structuredClone(s.imageRender),imageBudget:structuredClone(s.imageBudget),executionPolicy:structuredClone(s.executionPolicy)},transport:structuredClone(transport)};
 }
 const actual=await native(),template=campaign(actual);
+
+test('Sunburst native quotes require their own exact model and calculator while historical templates remain unchanged',async()=>{
+  const sunburst=await native('Pear orchard at dusk','image-a','gpt-image-2.5-sunburst');
+  const sunburstTemplate=readSponsorCampaignTemplate(campaign(sunburst));
+  assert.equal(sunburstTemplate.calls[1].model,'gpt-image-2.5-sunburst');
+  assert.equal(sunburstTemplate.settings.imageBudget.version,'gpt-image-2.5-sunburst-doc-calculator-2026-09-18');
+  assert.equal(matchSponsorImageTemplate(sunburstTemplate,sunburst),true);
+  assert.equal(matchSponsorImageTemplate(sunburstTemplate,actual),false);
+  assert.equal(matchSponsorImageTemplate(template,sunburst),false);
+  assert.equal(readSponsorCampaignTemplate(template).calls[1].model,'gpt-image-2');
+  for(const mutate of [value=>{value.settings.imageBudget=structuredClone(template.settings.imageBudget);},
+    value=>{value.settings.imageBudget.calculatorSource.sha256='0'.repeat(64);},
+    value=>{delete value.settings.imageBudget.calculatorSource;}]){
+    const changed=structuredClone(sunburstTemplate);mutate(changed);
+    assert.throws(()=>readSponsorCampaignTemplate(changed),{code:'sponsor_campaign_template_invalid'});
+  }
+});
 
 test('a stable frozen template matches separate native source and intent quotes while their exact digests differ',async()=>{
   const second=await native('A ceramic bowl beside a studio window','image-b');

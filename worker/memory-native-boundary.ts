@@ -15,6 +15,12 @@ function nativeMemorySchemaReads(db: WorkerEnv["DB"], turn?: TurnAlias) {
   ];
 }
 
+/** Exact private-content schema-read forms, shared with bounded adapters.
+ * Preparing these three reads grants no schema qualification or content access. */
+export function nativePrivateContentMemorySchemaReads(db: WorkerEnv["DB"]) {
+  return nativeMemorySchemaReads(db);
+}
+
 /** One binding call, with both original triples and independent qualifications.
  * Fixed private-content aliases only; observations never come from a caller.
  * Each outcome preserves the storage boundary's optional-cleanup distinction.
