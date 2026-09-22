@@ -1,0 +1,43 @@
+{
+  "baseCommit": "2a0caa914a0c57002f9b69ff3b60cb3d6d8a687f",
+  "verification": "offline only",
+  "focusedTests": {
+    "command": "node --import tsx --test tests/sunburst-financial.test.mjs tests/image-financial-qualification.test.mjs tests/image-operation-capabilities.test.mjs",
+    "passed": 20,
+    "failed": 0
+  },
+  "typecheck": "tsc --noEmit passed",
+  "focusedLint": "passed",
+  "diffCheck": "passed",
+  "liveProviderCalls": 0,
+  "privateIncidentSourceReads": 0,
+  "productionFilesChanged": [],
+  "limitations": [
+    "No provider measured charge or consumption cap",
+    "No visual image fidelity evidence",
+    "H owns atomic ledger verification",
+    "C direction is synthetic; future separate preparation required"
+  ],
+  "files": [
+    {
+      "path": "evals/generation-reliability/sunburst-financial.mjs",
+      "sha256": "1678a6af0ad115dbe4ee3aef5b4f1a4faef3d35f3462586ae1a0e4bc05fd5c6f"
+    },
+    {
+      "path": "tests/sunburst-financial.test.mjs",
+      "sha256": "5e9aa17c6876cdbaf6de20887ef5b5f8660fb1d356405e9564391f08e84fce05"
+    },
+    {
+      "path": "docs/image-financial-qualification-task-f2.md",
+      "sha256": "21f3788298fa993ebe52c97c276d9ff842343ef1d95eb6c11d50dfeed726de91"
+    },
+    {
+      "path": "docs/evidence/f2-sunburst/financial-gate.json",
+      "sha256": "83d678eeeb6277f6fb542cb6057232dd56efe3e042f7827f565ddf703834a7c9"
+    },
+    {
+      "path": "docs/evidence/f2-sunburst/primary-evidence.json",
+      "sha256": "0470636d299d5ac5828044e6b56d34351ff37e6ab267e7ffa7ee7e03ad776598"
+    }
+  ]
+}
