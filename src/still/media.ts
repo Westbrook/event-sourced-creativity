@@ -39,11 +39,11 @@ export function stillVideo(src:string,artifact:DocumentArtifact) {
 }
 
 /** Pending and delivered images share a single frame and responsive geometry. */
-export function stillImageStage(title:string,metadata:unknown,src?:string){
+export function stillImageStage(title:string,metadata:unknown,src?:string,pending=false){
  const size=mediaSize(metadata),known=size.source==='metadata';
  return html`<section class="generation-stage image-stage"><span class="eyebrow">Image</span><h1>${title}</h1>${known?html`<p class="caption">${size.width} × ${size.height}</p>`:nothing}
-   <div class=${`image-frame ${known?'known-size':!src?'pending-size':''}`} style=${known?`--image-ratio:${size.width/size.height}`:nothing} aria-label=${src?nothing:'Image generation in progress'}>
-     ${src?stillImage(src,title,metadata,{loading:'eager'}):html`<en-skeleton shape="rectangle"></en-skeleton>`}
+   <div class=${`image-frame ${known?'known-size':!src?'pending-size':''}`} style=${known?`--image-ratio:${size.width/size.height}`:nothing} aria-busy=${pending?'true':nothing} aria-label=${pending||!src?'Image generation in progress':nothing}>
+     ${src?stillImage(src,pending?`Preview of ${title}`:title,metadata,{loading:'eager'}):html`<en-skeleton shape="rectangle"></en-skeleton>`}
    </div>
  </section>`;
 }

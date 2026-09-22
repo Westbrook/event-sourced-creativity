@@ -11,6 +11,10 @@ import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
 
 const messages: Record<string, string> = {
+  "image.progress.queued": "En attente",
+  "image.progress.preparing": "Préparation…",
+  "image.progress.generating": "Génération…",
+  "image.progress.saving": "Enregistrement…",
   "generation.reconciliation.heading": "Correction comptable autorisée",
   "generation.reconciliation.help": "Une décision distincte de l’opérateur pour cette vidéo d’origine ayant échoué. Le justificatif fournisseur reste inchangé.",
   "generation.reconciliation.inspect": "Examiner la correction autorisée",

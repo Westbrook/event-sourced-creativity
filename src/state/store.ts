@@ -1,3 +1,4 @@
+import { imageGenerationProgress } from "../model/image-generation-progress.ts";
 import { sharedIdeaEdits, independentIdeaEdits, ideaContentEdit } from '../model/shared-idea-edits.ts';
 import { chooseSharedIdeaEdit, IdeaEditCanceled } from '../ui/shared-idea-choice.ts';
 import { attachIdeaEvents, canAttachProjectIdea, ideaDependencies, ideaDocumentUses, ideasInDocument } from '../model/project-ideas';
@@ -651,7 +652,11 @@ export class FormaStore {
   setCanvasPlanningSelection(itemIds:readonly string[]){const canvas=this.canvasProjection.get(),scope=this.captureAuthorizationScope()?.key??"",next={scope,canvasId:canvas.selectedCanvasId,itemIds:[...itemIds].sort()};if(JSON.stringify(next)!==JSON.stringify(this.canvasPlanningSelection.get()))this.canvasPlanningSelection.set(next);}
   chooseCanvasPlanningDocument(documentId:string){const canvas=this.canvasProjection.get(),projection=this.projection.get(),scope=this.captureAuthorizationScope()?.key;if(!scope||!canvas.selectedCanvasId||!projection.documents.some((item)=>item.id===documentId&&item.projectId===canvas.projectId))return false;this.canvasPlanningChoices.set({...this.canvasPlanningChoices.get(),[`${scope}:${canvas.selectedCanvasId}`]:documentId});return true;}
   canvasPlanningDocumentId(selectedIds?:readonly string[]){const canvas=this.canvasProjection.get(),scope=this.captureAuthorizationScope()?.key??"",selection=this.canvasPlanningSelection.get();return canvasDocumentTarget(this.projection.get(),canvas,selectedIds??(selection.scope===scope&&selection.canvasId===canvas.selectedCanvasId?selection.itemIds:[]),this.canvasPlanningChoices.get()[`${scope}:${canvas.selectedCanvasId}`]??"");}
-  documentPreviewProgress(documentId=this.projection.get().documentId){const job=this.documentJobs.get().find((item)=>item.documentId===documentId&&item.kind==="preview"&&item.status==="running"&&item.result?.partialMediaUrl);if(!job)return null;return{jobId:job.jobId,mediaUrl:String(job.result!.partialMediaUrl),mediaType:String(job.result!.partialMediaType??"image/jpeg"),width:Number(job.result!.partialWidth??816),height:Number(job.result!.partialHeight??816),index:Number(job.result!.partialIndex??0),sourceSurface:job.sourceSurface};}
+  documentPreviewProgress(documentId=this.projection.get().documentId){
+    const jobs=this.documentJobs.get().filter(job=>job.documentId===documentId&&(job.kind==="preview"||job.kind==="generate")&&["queued","running","committing"].includes(job.status));
+    const job=jobs.sort((a,b)=>b.requestedAt.localeCompare(a.requestedAt)||b.requestedSequence-a.requestedSequence)[0];
+    return job?imageGenerationProgress(job,documentId):null;
+  }
   adaptiveStructureFor(documentId=this.projection.get().documentId){return this.adaptiveStructures.get()[documentId]??null;}
   /** Exact current-authority identity. Metadata alone supports receipt lookup, never private review or Apply. */
   #immutableAdaptiveOriginal<T>(value:T):T{

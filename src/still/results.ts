@@ -1,3 +1,4 @@
+import { imageGenerationStatus } from '../model/image-generation-progress.ts';
 import { generationOutcome } from './generation-outcome.ts';
 import type { CreativeEvent, CreativeProjection } from '../model/events.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
@@ -17,6 +18,7 @@ export function generationResult(job:DocumentJob,p:CreativeProjection,events:Cre
 }
 export function generationStatus(job:DocumentJob):string {
   if(job.status==='failed')return generationOutcome(job).title;
+  const imageStatus=imageGenerationStatus(job);if(imageStatus)return imageStatus;
   return ({queued:'Queued',running:'Generating…',committing:'Saving…',completed:'Loading result…',partial:'Partially complete',failed:'Generation failed',canceled:'Canceled'})[job.status];
 }
 export function generationPreview(job:DocumentJob,p:CreativeProjection,events:CreativeEvent[]) {

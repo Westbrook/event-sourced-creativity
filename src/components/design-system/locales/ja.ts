@@ -11,6 +11,10 @@ import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
 
 const messages: Record<string, string> = {
+  "image.progress.queued": "待機中",
+  "image.progress.preparing": "準備中…",
+  "image.progress.generating": "生成中…",
+  "image.progress.saving": "保存中…",
   "generation.reconciliation.heading": "承認済みの会計修正",
   "generation.reconciliation.help": "失敗した元の動画に対する、運用担当者による別個の判断です。プロバイダーの記録は変更しません。",
   "generation.reconciliation.inspect": "承認済み修正を確認",

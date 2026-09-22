@@ -11,6 +11,10 @@ import { FORMA_MODEL3D_VIEWER_MESSAGES } from "./model3d-viewer-messages.ts";
 import { REFERENCE_COMPOSITION_MESSAGES } from "./reference-composition-messages.ts";
 
 const messages: Record<string, string> = {
+  "image.progress.queued": "في الانتظار",
+  "image.progress.preparing": "جارٍ التحضير…",
+  "image.progress.generating": "جارٍ الإنشاء…",
+  "image.progress.saving": "جارٍ الحفظ…",
   "generation.reconciliation.heading": "تصحيح محاسبي مصرّح به",
   "generation.reconciliation.help": "قرار مستقل من المشغّل لهذه المحاولة الأصلية الفاشلة لإنشاء الفيديو. يبقى إيصال المزوّد دون تغيير.",
   "generation.reconciliation.inspect": "مراجعة التصحيح المصرّح به",

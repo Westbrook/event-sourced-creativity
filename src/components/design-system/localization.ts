@@ -19,6 +19,10 @@ export type FormaMessageCatalog = Readonly<Record<string, string>>;
 export type FormaDirection = "ltr" | "rtl";
 
 export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
+  "image.progress.queued": "Queued",
+  "image.progress.preparing": "Preparing…",
+  "image.progress.generating": "Generating…",
+  "image.progress.saving": "Saving…",
   "generation.reconciliation.heading": "Authorized accounting correction",
   "generation.reconciliation.help": "A separate operator decision for this original failed video. The provider receipt stays unchanged.",
   "generation.reconciliation.inspect": "Review authorized correction",
