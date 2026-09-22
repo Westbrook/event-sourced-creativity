@@ -9,7 +9,7 @@ const initial = [event(1,'ProjectCreated',{project_id:'p',name:'Project'}),event
 const json = (body,status=200) => new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
 const page = (events=[],head=2,content) => json({events,head,nextAfter:head,hasMore:false,...(content?{content}:{})});
 function client() { operationJournal.clearWrite('economy:personal');operationJournal.clearGeneration('economy:personal','d');const c=new StillClient();c.session=structuredClone(session);c.events=structuredClone(initial);c.head=2;c.position={...c.position,projectId:'p',documentId:'d',view:'document'};return c; }
-async function network(handler,run) { const saved=globalThis.fetch,calls=[];globalThis.fetch=async(url,init)=>{calls.push({url,init});return handler(url,init);};try {await run(calls);}finally{globalThis.fetch=saved;} }
+async function network(handler,run) { const saved=globalThis.fetch,calls=[];globalThis.fetch=async(url,init)=>{calls.push({url,init});return url.startsWith('/api/document-jobs/still-readiness?')?json({ready:true,documentId:'d'}):handler(url,init);};try {await run(calls);}finally{globalThis.fetch=saved;} }
 const deferred = () => {let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 
 test('bootstrap uses one session and the compact workspace history',async()=>{
@@ -57,13 +57,13 @@ test('unchanged artifact edits accept the canonical no-op receipt',async()=>{
 test('generation submits the reviewed source revision without a redundant history read',async()=>{
   const c=client(),draft=c.prepareGeneration('image');
   await network((url,init)=>{if(url==='/api/session?profile=still')return json(session);if(url.endsWith('/run'))return json({});assert.equal(url,'/api/document-jobs');const body=JSON.parse(init.body);assert.equal(body.payload.expectedDocumentRevision,draft.sourceRevision);assert.deepEqual(body.payload.snapshot,draft.sourceSnapshot);return json({job:{jobId:'j',documentId:'d',status:'queued'}});},async calls=>{
-    await c.generate(draft);assert.equal(calls.length,2);assert.ok(calls.every(c=>!c.url.startsWith('/api/events')));
+    await c.generate(draft);assert.equal(calls.length,3);assert.ok(calls.every(c=>!c.url.startsWith('/api/events')));
   });
 });
 test('server revision conflicts retain the reviewed draft and never retry admission',async()=>{
   const c=client(),draft=c.prepareGeneration('image');
   await network(url=>url==='/api/session?profile=still'?json(session):json({error:'context_source_version_mismatch',message:'Document changed'},409),async calls=>{
-    await assert.rejects(c.generate(draft),/Document changed/);assert.equal(calls.length,2);assert.equal(draft.attempted,false);assert.equal(c.pendingGeneration,null);
+    await assert.rejects(c.generate(draft),/Document changed/);assert.equal(calls.length,3);assert.equal(draft.attempted,false);assert.equal(c.pendingGeneration,null);
   });
 });
 test('a late history read cannot regress an acknowledged edit or the event cursor',async()=>{

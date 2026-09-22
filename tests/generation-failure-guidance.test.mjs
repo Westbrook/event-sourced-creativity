@@ -196,7 +196,7 @@ test("never projects raw provider diagnostics or private source content into cre
   ).join(" | ");
 
   const missingReceipt = generationFailureGuidance(null, privateDiagnostic);
-  assert.equal(missingReceipt.summary, "The provider could not complete this request. Review the saved inputs and technical receipt before trying again.");
+  assert.equal(missingReceipt.summary, "The cause of this incomplete generation is not recorded. Review the saved receipt before deciding what to do next.");
   assert.equal(missingReceipt.retryAllowed, true);
 
   const incomplete = generationFailureGuidance(failure({
@@ -217,7 +217,7 @@ test("never projects raw provider diagnostics or private source content into cre
     message: privateDiagnostic,
     retryable: false,
   }), privateDiagnostic);
-  assert.equal(unknown.summary, "Review the technical receipt, adjust the request if needed, and try again.");
+  assert.equal(unknown.summary, "The recorded details do not establish the cause. Review the attempt and its usage before deciding whether to start another request.");
   assert.equal(unknown.retryAllowed, false);
 
   for (const guidance of [missingReceipt, incomplete, unknown]) {

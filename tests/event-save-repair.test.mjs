@@ -6,9 +6,13 @@ import {spawnSync} from 'node:child_process';
 import {readLocalMigrations,migrateLocalDatabase} from '../scripts/lib/local-migrations.mjs';
 import {registerOutputSourceImports} from './output-server-test-helpers.mjs';
 const imports=registerOutputSourceImports();
+const {generationReadiness}=await import('../worker/generation-storage-readiness.ts');
 const {ensureSchema}=await import('../worker/runtime.ts');
 const {inspectEventSaveRepair,applyEventSaveRepair,inspectEventSaveCompilation,EVENT_SAVE_REPAIR_TABLES,EVENT_SAVE_REPAIR_BARRIERS,EVENT_SAVE_REPAIR_REMOVED,EVENT_SAVE_COMPILE_PROBE}=await import('../worker/event-save-repair.ts');
 const {inspectMemorySchemaRepair,applyMemorySchemaRepair}=await import('../worker/memory-schema-repair.ts');
+const {nativeMemoryAnswerExclusion}=await import('../worker/memory-native-boundary.ts');
+const {preparePrivateContent,storePrivateContent}=await import('../worker/private-content-storage.ts');
+const {loadPrivateContent}=await import('../worker/pilot-policy.ts');
 const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/event-write-primitives.ts');
 test.after(()=>imports.deregister());
 const authority={sql:'1',bindings:[]};
@@ -101,4 +105,74 @@ test('actual local D1 repairs atomically and rolls back all four real event save
  assert.equal((await db.prepare('SELECT count(*) AS n FROM events').first()).n,0);
  await save(db,'ProjectCreated');assert.equal((await db.prepare('SELECT count(*) AS n FROM events').first()).n,1);
  assert.deepEqual(await inspectEventSaveCompilation(db),{status:'pass'});
+ const env={DB:db};const readinessGuard=await nativeMemoryAnswerExclusion(env,{answerAlias:'private_content'});await db.prepare(`SELECT 1 FROM (SELECT '' AS content_id,'' AS kind) private_content WHERE ${readinessGuard.sql}`).bind(...readinessGuard.bindings).first();assert.equal((await generationReadiness(env)).ready,true);
+ const content=await storePrivateContent(env,'d1-owner','document-artifact','synthetic delivered result');
+ assert.equal((await loadPrivateContent(env,'d1-owner'))[content.contentId],'synthetic delivered result');
+ await db.prepare(`DROP TRIGGER ${EVENT_SAVE_REPAIR_BARRIERS[0].name}`).run();
+ assert.equal((await generationReadiness(env)).ready,false);
+ await assert.rejects(loadPrivateContent(env,'d1-owner'));
+});
+
+
+test('isolated Memory permits ordinary retained input, output and reload without enabling Memory',async t=>{
+ const f=await fixture(t),env={DB:f.db};
+ await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
+ const input=await storePrivateContent(env,'ordinary-owner','document-artifact-input','retained input');
+ const output=await storePrivateContent(env,'ordinary-owner','document-artifact','validated synthetic image metadata');
+ assert.deepEqual(await loadPrivateContent(env,'ordinary-owner'),{[input.contentId]:'retained input',[output.contentId]:'validated synthetic image metadata'});
+ assert.deepEqual(await loadPrivateContent(env,'different-owner'),{});
+ assert.deepEqual(await inspectEventSaveCompilation(f.db),{status:'pass'});
+ for(const table of EVENT_SAVE_REPAIR_TABLES)assert.throws(()=>f.sqlite.exec(`INSERT INTO ${table} DEFAULT VALUES`),/memory_inactive_save_repair/);
+ assert.equal((await inspectMemorySchemaRepair(f.db)).summary.status,'blocked');
+});
+
+for(const fault of ['barrier','receipt','unknown-trigger','schema-race','populated-race','database-change'])test('ordinary isolated boundary refuses '+fault,async t=>{
+ const f=await fixture(t),env={DB:f.db};
+ await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
+ const output=await storePrivateContent(env,'ordinary-owner','document-artifact','private result');
+ const guard=await nativeMemoryAnswerExclusion(env,{answerAlias:'private_content'});
+ if(fault==='barrier')f.sqlite.exec(`DROP TRIGGER ${EVENT_SAVE_REPAIR_BARRIERS[0].name}`);
+ if(fault==='receipt')f.sqlite.exec("UPDATE __forma_event_save_repair_receipts SET source_manifest='changed'");
+ if(fault==='unknown-trigger')f.sqlite.exec('CREATE TRIGGER unexpected_memory_reader AFTER INSERT ON private_content BEGIN SELECT count(*) FROM memory_derivation_consumers; END');
+ if(fault==='schema-race')f.sqlite.exec('CREATE TABLE changed_after_capture(id TEXT)');
+ if(fault==='populated-race'){
+  const barrier=EVENT_SAVE_REPAIR_BARRIERS.find(r=>r.tbl_name==='memory_derivation_qualifications');
+  f.sqlite.exec(`DROP TRIGGER ${barrier.name}`);
+  f.sqlite.exec("INSERT INTO memory_derivation_qualifications VALUES('test','"+'a'.repeat(64)+"','test','test','{}','"+'b'.repeat(64)+"','qualified','2026-01-01T00:00:00.000Z','2027-01-01T00:00:00.000Z')");
+  f.sqlite.exec(barrier.sql);
+ }
+ if(fault==='database-change'){
+  const original=f.db.batch;f.db.batch=async ss=>{const result=await original(ss);env.DB={...f.db};return result;};
+  await assert.rejects(preparePrivateContent(env,'ordinary-owner','provider-output','checkpoint'),/database_changed/);return;
+ }
+ const rows=await f.db.prepare(`SELECT content FROM private_content WHERE content_id=? AND ${guard.sql}`).bind(output.contentId,...guard.bindings).all();
+ assert.equal(rows.results.length,0,'stale witness must not authorize content');
+ if(fault!=='schema-race')await assert.rejects(loadPrivateContent(env,'ordinary-owner'),/memory_boundary_schema_unavailable/);
+});
+
+
+test('isolated schema delivers one mocked Still generation through admission, checkpoints, settlement and authorized reload',async t=>{
+ const f=await fixture(t);await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
+ const {default:worker}=await import('../worker/index.ts');const media=new Map(),background=[];
+ const env={DB:f.db,OPENAI_API_KEY:'offline-sentinel',OPENAI_MODEL:'gpt-5.6-terra',ASSETS:{fetch:async()=>new Response(null,{status:404})},MEDIA:{put:async(key,bytes)=>media.set(key,bytes),get:async()=>null}};
+ const request=(path,body)=>worker.fetch(new Request('http://localhost'+path,body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),env,{waitUntil:p=>background.push(p)});
+ const original=globalThis.fetch;let planner=0,image=0;
+ globalThis.fetch=async(url)=>{
+  if(String(url).endsWith('/moderations'))return Response.json({id:'offline-moderation',model:'omni-moderation-latest',results:[{flagged:false,categories:{},category_scores:{}}]});
+  if(String(url).endsWith('/responses')){planner++;return Response.json({id:'offline-direction',model:'gpt-5.6-terra',output_text:JSON.stringify({title:'Synthetic harbor',rationale:'Preserve the brief',scene:'A quiet harbor',palette:['blue','white','gray'],next_moves:['View result']}),usage:{input_tokens:100,output_tokens:100,total_tokens:200}});}
+  assert.equal(String(url),'https://api.openai.com/v1/images/generations');image++;return Response.json({data:[{b64_json:Buffer.from('offline-image-bytes').toString('base64')}],usage:{input_tokens:100,output_tokens:20,total_tokens:120,input_tokens_details:{text_tokens:100,image_tokens:0}}},{headers:{'x-request-id':'offline-image'}});
+ };t.after(()=>{globalThis.fetch=original;});
+ const session=await (await request('/api/session')).json();f.sqlite.prepare('UPDATE users SET consent_version=?').run('pilot-2026-08-10');
+ assert.equal((await request('/api/events?after=0&limit=2000&content=0')).status,200);while(background.length)await Promise.all(background.splice(0));
+ const previousId=crypto.randomUUID(),previousTime=new Date().toISOString(),previousExpiry=new Date(Date.now()+86400000).toISOString();
+ f.sqlite.prepare(`INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,requested_at,completed_at,expires_at,updated_at) VALUES(?,?,?,'doc-atmosphere','generate','failed','still',?,1,?,'{}',?,?,?,?)`).run(previousId,session.user.userId,'creative:'+session.user.userId,previousId,JSON.stringify({documentRevision:'original-recorded-revision'}),previousTime,previousTime,previousExpiry,previousTime);
+ const admitted=await request('/api/document-jobs',{kind:'generate',documentId:'doc-atmosphere',sourceSurface:'still',payload:{requestKey:'still:doc-atmosphere:1:offline-proof',previousAttemptId:previousId,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}});
+ assert.equal(admitted.status,202,await admitted.clone().text());const {job}=await admitted.json();
+ const response=await request(`/api/document-jobs/${job.jobId}/run`,{});assert.equal(response.status,200,await response.clone().text());const result=(await response.json()).job;
+ assert.equal(result.status,'completed',JSON.stringify(result.errorDetail));assert.equal(result.result.previousAttemptId,previousId);assert.equal(f.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(previousId).status,'failed');assert.equal(planner,1);assert.equal(image,1);assert.equal(media.size,1);
+ assert.ok(result.result.generationReceipt.settled_cost_microusd>0);assert.equal(result.result.generationReceipt.reservation_status,'settled');
+ const retained=await loadPrivateContent(env,session.user.userId);assert.ok(Object.keys(retained).length>0);assert.ok(Object.values(retained).some(value=>value.includes('Synthetic harbor')));
+ const detail=await request(`/api/document-jobs/${job.jobId}?inspection=1`);assert.equal((await detail.json()).job.status,'completed');
+ await request(`/api/document-jobs/${job.jobId}/run`,{});assert.equal(planner,1);assert.equal(image,1);
+ for(const table of EVENT_SAVE_REPAIR_TABLES)assert.equal(f.sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n,0);
 });

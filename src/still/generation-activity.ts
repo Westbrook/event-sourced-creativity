@@ -1,3 +1,4 @@
+import { generationOutcome } from './generation-outcome.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
 import { generationActive, generationFormat } from './results.ts';
 
@@ -50,5 +51,5 @@ export function generationCompletion(job: DocumentJob) {
       ? {message:`Your ${name} is partially complete.`, label:'Review generation', variant:'warning' as const}
       : job.status === 'canceled'
         ? {message:`Your ${name} generation was canceled.`, label:'Review generation', variant:'info' as const}
-        : {message:job.errorDetail?.message || job.error || `Your ${name} couldn’t be generated.`, label:'Review generation', variant:'danger' as const};
+        : {message:generationOutcome(job).title, label:'Review generation', variant:'danger' as const};
 }

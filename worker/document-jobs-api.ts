@@ -1,3 +1,5 @@
+import {logPreparationFailure} from './generation-preparation-error.ts';
+import { generationReadiness } from './generation-storage-readiness.ts';
 import { generationOutcomeSummary } from "../src/model/generation-execution-evidence.ts";
 import { providerFailureOrigin } from "./provider-errors.ts";
 import { ideasInDocument } from '../src/model/project-ideas.ts';
@@ -50,6 +52,7 @@ import {
   documentGenerationRevision,
   documentJobIsStale,
   documentJobCanRecoverProviderRender,
+  documentJobCanRecoverSingleProviderResult,
   documentJobTerminal,
   documentJobStopBudgetMessage,
   documentJobMaxAttempts,
@@ -569,6 +572,8 @@ function classifyDocumentJobFailure(input:unknown,existing:ProviderFailureDetail
     retryable:false,retryAfterMs:null,requestId:null,httpStatus:null,
   };
   const raw=input instanceof Error?input.message:typeof input==="string"?input:"";
+  const preparation = classifyProviderFailure(input);
+  if (preparation.code === 'generation_preparation_unavailable') return preparation;
   const evidence=[raw,existing?.code??"",existing?.message??""].filter(Boolean).join(" ");
   if(LOCAL_PERSISTENCE_FAILURE.test(evidence))return{
     code:"local_persistence_failed",category:"server",scope:"unknown",action:"contact_support",
@@ -1714,6 +1719,8 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   if(row.output_slot_id&&row.kind==="render_document"&&request.artifactKind==="video")for(const key of OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(model3dNativeCheckpoint(request))for(const key of MODEL3D_PRIVATE_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   const sanitizedResult=result?Object.fromEntries(Object.entries(result).filter(([key])=>!privateCheckpointKeys.has(key)&&!key.startsWith("outputVideo")&&(key!=="recoverablePresentationCandidate"||request.artifactKind==="slides"&&row.status==="failed"&&parsed.recoverablePresentationCandidate===true))):null;
+  if(sanitizedResult&&row.source_surface==='still'&&typeof request.previousAttemptId==='string')
+    Object.assign(sanitizedResult,{previousAttemptId:request.previousAttemptId,previousDocumentRevision:typeof request.previousDocumentRevision==='string'?request.previousDocumentRevision:null});
   const recoveredEventIds=recoveredFalImageEventIds(row,parsed);
   if(sanitizedResult&&recoveredEventIds)sanitizedResult.appendedEventIds=recoveredEventIds;
   if(sanitizedResult&&request.artifactKind==="model3d"&&!model3dNativeCheckpoint(request))Object.assign(sanitizedResult,model3dRecoveryProviderReceipt(parsed)??{});
@@ -2574,7 +2581,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
       return readJob(env,user.userId,row.job_id);
     }
     const completedAt = new Date().toISOString(),localDispatchStop=outputOperationExecution?.dispatchStop(error)??null;
-    const detail = localDispatchStop??classifyDocumentJobFailure(error);
+    const detail = localDispatchStop??classifyDocumentJobFailure(error);logPreparationFailure(detail,row.correlation_id);
     if(outputBinding){
       logOutputJobFailure(error);
       // Monetary evidence may converge independently of erased source bodies.
@@ -3195,6 +3202,18 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   // Share this request-local identity snapshot with the durable/shared route
   // checks. It is not publication authority: current custody is still checked
   // below and execution CAS binds the original request/checkpoint/attempt.
+  if(path==='still-readiness'&&request.method==='GET'){
+    const headers={'cache-control':'private, no-store'};
+    const documentId=new URL(request.url).searchParams.get('documentId')??'';
+    if(!documentId||documentId.length>160)return Response.json({error:'document_not_found'},{status:404,headers});
+    if(project&&!await activeProjectExecution(env,user,documentId))return Response.json({error:'document_not_found'},{status:404,headers});
+    const events=project?await readProjectSourceEvents(env,project):await readWorkspaceEvents(env,user.streamId);
+    const document=foldEvents(events,Infinity,documentId,project?.projectId??'').documents.find(d=>d.id===documentId&&!d.removed);
+    if(!document||project&&document.projectId!==project.projectId)return Response.json({error:'document_not_found'},{status:404,headers});
+    const readiness=await generationReadiness(env);
+    if(project&&!await activeProjectExecution(env,user,documentId))return Response.json({error:'document_not_found'},{status:404,headers});
+    return Response.json({...readiness,documentId},{headers});
+  }
   const pathJobId=path?decodeURIComponent(path.split("/")[0]!):null;
   const pathJob=pathJobId?await readJob(env,user.userId,pathJobId):null;
   if(path){
@@ -3537,6 +3556,15 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   }
   type DocumentJobAdmission={kind?:string;documentId?:string;sourceSurface?:string;payload?:Record<string,unknown>&{sceneMedium?:SceneMedium;sceneConfiguration?:SceneConfiguration}};let submittedInput:DocumentJobAdmission|null=null;
   if(request.method==="POST"&&!path){const consent=requireConsent(user);if(consent)return consent;submittedInput=await request.json() as DocumentJobAdmission;if(submittedInput.kind==="structure_adaptive")return Response.json({error:"adaptive_consent_required",submission:"not-submitted"},{status:428});const payload=submittedInput.payload;if(submittedInput.kind==="render_document"&&(payload?.artifactKind==="storyboard"||payload?.artifactKind==="video"||payload?.artifactKind==="audio")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before starting this render."},{status:428});}
+  if(request.method==='POST'&&path.endsWith('/retry')){
+    let review:Record<string,unknown>;try{review=await request.clone().json();}catch{review={};}
+    if(review.recoveryOnly===true){
+      const target=await readJob(env,user.userId,decodeURIComponent(path.slice(0,-6).replace(/\/$/,'')));
+      if(!target||target.stream_id!==user.streamId||target.attempt_count!==review.attemptCount
+        ||parseRequest(target).productionMode==='managed'||!documentJobCanRecoverSingleProviderResult(serializeJob(target)))
+        return Response.json({error:'original_result_recovery_unavailable',message:'The reviewed original result is no longer eligible for retrieval. Refresh this attempt. No new generation was started.'},{status:409,headers:{'cache-control':'private, no-store'}});
+    }
+  }
   if(request.method==="POST"&&path.endsWith("/retry")){const target=await readJob(env,user.userId,decodeURIComponent(path.slice(0,-6).replace(/\/$/,"")));if(target&&await env.DB.prepare("SELECT 1 FROM output_operation_slots WHERE job_id=?").bind(target.job_id).first())return Response.json({error:"output_retry_requires_new_authorization",message:"Use Output requirements to authorize an alternative. Retained presentation recovery does not create another provider request."},{status:409});if(target?.kind==="render_document"){const payload=parseRequest(target);if((payload.artifactKind==="storyboard"||payload.artifactKind==="video"||payload.artifactKind==="audio"||payload.artifactKind==="model3d")&&payload.paidMediaConfirmed!==true)return Response.json({error:"paid_media_confirmation_required",message:"Confirm paid media generation before recovering this render."},{status:428});}}
   const now = new Date().toISOString();
   // Neither passive polling nor an unauthorized paid request may reconcile or
@@ -4260,6 +4288,23 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const open=await stillGenerationOpen(user,documentId,stillRequest);
     if(!await env.DB.prepare(`SELECT 1 AS present WHERE ${open.sql}`).bind(...open.bindings).first())return Response.json({error:'generation_request_closed',message:'Review a new generation request.'},{status:409});
   }
+  // Lineage is retained in the immutable request because execution replaces result checkpoints.
+  delete payload.previousDocumentRevision;
+  let priorAttempt:DocumentJobRow|null=null;
+  if(payload.previousAttemptId!==undefined){
+    if(input.sourceSurface!=='still'||typeof payload.previousAttemptId!=='string'||payload.previousAttemptId.length>160)
+      return Response.json({error:'generation_previous_attempt_invalid'},{status:400});
+    priorAttempt=await readJob(env,user.userId,payload.previousAttemptId);
+    if(!priorAttempt||priorAttempt.stream_id!==user.streamId||priorAttempt.document_id!==documentId||!['failed','canceled'].includes(priorAttempt.status)
+      ||Date.parse(priorAttempt.expires_at)<=Date.now()||documentJobMemoryMarked(priorAttempt)
+      ||(project?!await activeProjectExecution(env,user,documentId,priorAttempt.job_id):!!await env.DB.prepare("SELECT 1 FROM project_resource_scopes WHERE resource_kind='job' AND resource_id=?").bind(priorAttempt.job_id).first()))
+      return Response.json({error:'generation_previous_attempt_unavailable'},{status:409});
+  }
+  if(priorAttempt)payload.previousDocumentRevision=generationRevisionFromRequest(parseRequest(priorAttempt),priorAttempt.document_id);
+  if(input.sourceSurface==='still'){
+    const readiness=await generationReadiness(env);
+    if(!readiness.ready)return Response.json({error:readiness.code,message:readiness.message,submission:'not-submitted'},{status:503,headers:{'cache-control':'private, no-store'}});
+  }
   if(sponsor&&(await readOutputAdmissionValue(outputPreparation?.readScope,"budget-scopes",()=>ownerDocumentBudgetScopes(env,user.userId,documentId,documentRecord.projectId))).length)
     return Response.json({error:"sponsor_organization_budget_unsupported"},{status:403});
   if(kind==="structure_adaptive"&&(String(input.sourceSurface??payload.sourceSurface??"")==="canvas"||payload.canvasId!==undefined)){
@@ -4569,7 +4614,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const deferredPrivate=outputPreparation?[] as D1PreparedStatement[]:undefined;
   const receipt=kind==="render_document"?await acceptedGenerationReceipt(env,admissionUser,payload,documentId,jobId,estimatedGenerationCostMicrousd,productionPlan,scenePrepared?.scope??projectContentScope,scenePrepared?.effectiveSnapshot??workflowPlanningSnapshot,deferredPrivate,outputPreparation?.readScope,nativeScene?.payload,Boolean(nativeStoryboard),Boolean(nativeVideo)):kind==="preview"||kind==="generate"?nativeImageJobReceipt(env,estimatedGenerationCostMicrousd):null;
   const sceneConfiguration=kind==="render_document"?sceneConfigurationFromRequest(payload):null;
-  const initialResult=receipt?{...(scenePrepared||nativeVideo||payload.artifactKind==="model3d"?{providerSubmissionProtocol:1,providerSubmissions:{}}:{}),artifactKind:String(payload.artifactKind??""),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
+  const initialResult=receipt?{...(priorAttempt?{previousAttemptId:priorAttempt.job_id,previousDocumentRevision:generationRevisionFromRequest(parseRequest(priorAttempt),priorAttempt.document_id)}:{}),...(scenePrepared||nativeVideo||payload.artifactKind==="model3d"?{providerSubmissionProtocol:1,providerSubmissions:{}}:{}),artifactKind:String(payload.artifactKind??""),...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),generationReceipt:receipt,stage:"queued",progressMessage:"The accepted generation and its private source receipt are safely recorded."}:null;
   if(outputPreparation){
     if(kind!=="generate"&&kind!=="render_document")return Response.json({error:"output_native_route_unsupported"},{status:422});
     const requiredTokens=kind==="generate"?32_000:documentRenderTokenReservation(String(payload.artifactKind),Math.max(1,Math.floor(Number(payload.itemCount??6))),2);

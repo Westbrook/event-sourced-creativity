@@ -1,7 +1,8 @@
 import base from '../../docs/fixtures/generation-outcome-v1.json' with {type:'json'};
 export const now='2026-09-22T12:00:00Z';
-export const scenarios=[...base.cases.map(c=>c.name),'access-error','rate-limit','incomplete-planner','expired-evidence','mixed-routes'];
+export const scenarios=[...base.cases.map(c=>c.name),'access-error','rate-limit','incomplete-planner','expired-evidence','mixed-routes','service-preparation'];
 export function fixture(name='image-output-block',id='original'){
+ if(name==='service-preparation')return {job:{jobId:id,documentId:'doc',kind:'generate',status:'failed',sourceSurface:'still',members:[],attemptCount:1,requestedAt:now,result:{generationReceipt:{provider_request_status:'not_submitted',source_transmission_status:'not_transmitted',settled_cost_microusd:0,reservation_microusd:1000000,reservation_status:'released'}},errorDetail:{code:'operation_failed',category:'unknown',scope:'unknown',action:'none',message:'memory_boundary_schema_unavailable',retryable:false}},content:{},unavailable:[]};
  const outcome={...(base.cases.find(c=>c.name===name)??base.cases[4])};delete outcome.name;
  if(name==='access-error')Object.assign(outcome,{failureKind:'access',contentOutcome:'unknown'});
  if(name==='rate-limit')Object.assign(outcome,{failureKind:'rate_limit',contentOutcome:'unknown'});

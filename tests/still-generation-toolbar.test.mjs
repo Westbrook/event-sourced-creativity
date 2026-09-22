@@ -1,3 +1,4 @@
+import {generationOutcome} from '../src/still/generation-outcome.ts';
 import {IdeaEditCanceled} from '../src/ui/shared-idea-choice.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,11 +15,11 @@ const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='St
 const methods=['canAcknowledgeSafety','acknowledgeSafety','generationCheckKey','isInlineGeneration','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','renderInlineGeneration','toolbarStatus','renderBusyDock','startGeneration','generate','run'];
 const code=ts.transpileModule(`class Recovery {${app.members.filter(n=>methods.includes(n.name?.getText(source))).map(n=>n.getText(source)).join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
-const Recovery=new Function('IdeaEditCanceled','documentJobCanAcknowledgeSafety','generationFormat','generationActive','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(IdeaEditCanceled,documentJobCanAcknowledgeSafety,generationFormat,generationActive,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
+const Recovery=new Function('generationOutcome','IdeaEditCanceled','documentJobCanAcknowledgeSafety','generationFormat','generationActive','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(generationOutcome,IdeaEditCanceled,documentJobCanAcknowledgeSafety,generationFormat,generationActive,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
 function fixture(status='failed') {
  const view=new Recovery();
  const calls=[];
- Object.assign(view,{busy:false,composing:false,decide:()=>{},changed:()=>{},begin:mode=>calls.push(['begin',mode]),startGeneration:format=>{assert.equal(view.generation,null);calls.push(['generate',format]);},client:{scopeKey:'owner',epoch:1,position:{recentActions:[],view:'generation',documentId:'doc',outputId:'job'},abilities:{generate:true,formats:['video']},jobs:[{jobId:'job',documentId:'doc',status,kind:'render_document',result:{artifactKind:'video'}}],pollJobs:async()=>calls.push(['poll']),refresh:async()=>calls.push(['refresh'])}});
+ Object.assign(view,{busy:false,composing:false,decide:()=>{},changed:()=>{},begin:mode=>calls.push(['begin',mode]),startGeneration:format=>{assert.equal(view.generation,null);calls.push(['generate',format]);},client:{scopeKey:'owner',epoch:1,position:{recentActions:[],view:'generation',documentId:'doc',outputId:'job'},abilities:{generate:true,formats:['video']},jobs:[{jobId:'job',documentId:'doc',status,kind:'render_document',result:{artifactKind:'video'}}],refreshGeneration:async()=>calls.push(['poll']),refresh:async()=>calls.push(['refresh'])}});
  return {view,calls};
 }
 test('status refresh reads only, confirms no new generation, and does not repeat provider error',async()=>{
@@ -28,15 +29,15 @@ test('status refresh reads only, confirms no new generation, and does not repeat
  }
 });
 test('failed or stale refresh never claims a successful check',async()=>{
- const {view}=fixture();view.client.pollJobs=async()=>{throw new Error('offline');};await view.refreshGenerationStatus();
+ const {view}=fixture();view.client.refreshGeneration=async()=>{throw new Error('offline');};await view.refreshGenerationStatus();
  assert.equal(view.generationCheck.message,'Couldn’t refresh status. No new generation was started.');
- view.client.pollJobs=async()=>{view.client.position.outputId='other';};await view.refreshGenerationStatus();
+ view.client.refreshGeneration=async()=>{view.client.position.outputId='other';};await view.refreshGenerationStatus();
  assert.notEqual(view.generationCheck.key,view.generationCheckKey());
 });
 test('only explicit inline reviews use a deterministic primary generation control',()=>{
  const {view,calls}=fixture();const actions=view.generationRecoveryActions();
  assert.equal(actions.some(a=>a.id==='ui:generate-new'),false);
- assert.equal(actions[0].label,'Refresh status');assert.equal(actions[0].variant,'secondary');
+ assert.equal(actions[0].label,'Review new paid request');assert.equal(actions[0].variant,'secondary');
  view.generation={attempted:true,providerModel:'old-model'};view.generateAgain('job');
  assert.deepEqual(calls,[['generate','video']]);assert.equal(view.isInlineGeneration(),true);
  view.pageActionLimit=2;view.toolbarLimit=2;view.compactDock=options=>options;assert.equal(view.renderGenerationStatusDock()[0].id,'ui:continue-generation');

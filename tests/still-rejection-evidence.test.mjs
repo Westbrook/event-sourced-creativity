@@ -6,6 +6,7 @@ import {fixture,scenarios} from './still-rejection-browser/fixtures.mjs';
 const model=read=>rejectionEvidence(read,documentGenerationInputInspection(read.job,[],read.content));
 for(const name of scenarios)test(`current-schema presentation: ${name}`,()=>{
  const read=fixture(name),result=model(read);
+ if(name==='service-preparation'){assert.equal(result.pipelineStage,'unknown');assert.equal(result.moderationStage,'unknown');assert.ok(result.sources.every(source=>source.status!=='retained'));return;}
  assert.equal(result.pipelineStage,read.job.errorDetail.pipelineStage);
  assert.equal(result.moderationStage,read.job.errorDetail.providerModerationStage);
  assert.equal(result.correctiveScope,name==='render-then-storage-failure'?'unknown':'request');

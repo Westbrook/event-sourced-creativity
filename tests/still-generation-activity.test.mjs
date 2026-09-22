@@ -25,7 +25,7 @@ test('clear, dismissal, acknowledgment, withdrawal, and non-generation lanes can
 test('completion wording distinguishes success, partial, failure and cancellation',()=>{
  assert.deepEqual(generationCompletion(done()),{message:'Your video is ready.',label:'View video',variant:'success'});
  assert.equal(generationCompletion(done({status:'partial'})).variant,'warning');
- assert.equal(generationCompletion(done({status:'failed',error:'Provider unavailable.'})).message,'Provider unavailable.');
+ assert.equal(generationCompletion(done({status:'failed',error:'Provider unavailable.'})).message,'The generation could not be completed');
  assert.equal(generationCompletion(done({status:'canceled'})).variant,'info');
 });
 

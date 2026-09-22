@@ -1,3 +1,4 @@
+import { generationOutcome } from './generation-outcome.ts';
 import type { CreativeEvent, CreativeProjection } from '../model/events.ts';
 import type { DocumentJob } from '../model/document-jobs.ts';
 
@@ -15,6 +16,7 @@ export function generationResult(job:DocumentJob,p:CreativeProjection,events:Cre
   return p.outputs.find(o=>(includeDiscarded||!o.discarded)&&o.documentId===job.documentId&&owned.some(e=>e.eventId===o.sourceEventId))?.id??'';
 }
 export function generationStatus(job:DocumentJob):string {
+  if(job.status==='failed')return generationOutcome(job).title;
   return ({queued:'Queued',running:'Generating…',committing:'Saving…',completed:'Loading result…',partial:'Partially complete',failed:'Generation failed',canceled:'Canceled'})[job.status];
 }
 export function generationPreview(job:DocumentJob,p:CreativeProjection,events:CreativeEvent[]) {
@@ -27,7 +29,7 @@ export function generationPreview(job:DocumentJob,p:CreativeProjection,events:Cr
 }
 export type StillResult = {id:string;view:'artifact'|'generation';title:string;kind:string;url:string;sequence:number;width?:number|null;height?:number|null;job?:DocumentJob};
 export function stillResults(p:CreativeProjection,jobs:DocumentJob[],events:CreativeEvent[]):StillResult[] {
-  const pending:StillResult[]=jobs.filter(j=>j.documentId===p.documentId&&generationFormat(j)&&!j.dismissedAt&&!generationResult(j,p,events,true)).map(job=>({
+  const pending:StillResult[]=jobs.filter(j=>j.documentId===p.documentId&&generationFormat(j)&&!generationResult(j,p,events,true)).map(job=>({
     id:job.jobId,view:'generation',title:generationPreview(job,p,events).title,kind:generationFormat(job),url:'',sequence:job.requestedSequence,job,
   }));
   const results:StillResult[]=[...pending,
