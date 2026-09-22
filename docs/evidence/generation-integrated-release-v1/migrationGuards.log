@@ -1,0 +1,10 @@
+✔ release migrations: disabled publication pins the deployed prefix without changing candidate SQL (287.621333ms)
+✔ release migrations: changed source journal refuses publication before copying (1.946459ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 372.856167

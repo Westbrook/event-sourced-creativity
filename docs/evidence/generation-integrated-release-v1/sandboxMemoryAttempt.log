@@ -1,0 +1,278 @@
+✔ private Memory image: approved native preview remains private and retires false (1399.706958ms)
+✔ private Memory image: approved native preview remains private and retires true (1317.5805ms)
+✔ private Memory image: withdrawal during image settles verified usage without publication false (995.3505ms)
+✔ private Memory image: withdrawal during image settles verified usage without publication true (1059.479666ms)
+✖ private Memory image: actual D1 preview and metadata-only maintenance false (527.353959ms)
+✖ private Memory image: actual D1 preview and metadata-only maintenance true
+✖ private Memory image: failure boundary wrong-approval
+✖ private Memory image: failure boundary source-withdrawn
+✖ private Memory image: failure boundary malformed-moderation
+✖ private Memory image: failure boundary moderation-withdrawal
+✖ private Memory image: failure boundary provider-rejection
+✖ private Memory image: failure boundary invalid-image
+✖ private Memory image: failure boundary unknown-usage
+✖ private Memory image: durable receipt and interrupted accounting resume
+✖ private Memory image: durable receipt and interrupted accounting withdraw-maintenance
+✖ private Memory image: late native source race quote
+✖ private Memory image: late native source race dispatch
+✖ private Memory image: late native source race receipt
+✖ private Memory image: late native source race result
+✖ private Memory image: lost publication acknowledgement never repurchases receipt
+✖ private Memory image: lost publication acknowledgement never repurchases result
+✖ private Memory image: restored private body without source cannot resurrect a preview
+✖ private Memory image: long response replays current native authority without extending the browser lease
+✖ private Memory image: changed provider configuration after safety review blocks dispatch provider-off
+✖ private Memory image: changed provider configuration after safety review blocks dispatch model
+✖ private Memory image: changed provider configuration after safety review blocks dispatch image-provider
+✖ private Memory image: real elapsed shared D1 response needs a separate current review
+✖ private Memory image: browser disconnect after dispatch does not lose accounting false
+✖ private Memory image: browser disconnect after dispatch does not lose accounting true
+✖ private Memory image: maximum aggregate current-source integration false
+✖ private Memory image: maximum aggregate current-source integration true
+✖ private Memory image: delayed receipt revalidates context-change
+✖ private Memory image: delayed receipt revalidates withdrawal
+✖ private Memory image: delayed receipt revalidates authority
+✖ private Memory image: delayed receipt revalidates configuration
+✖ private Memory image: fixed server processing deadline 90000
+✖ private Memory image: fixed server processing deadline 125000
+✖ private Memory image: maximum aggregate cold delayed invocation
+✖ private Memory image: serialization cannot extend the browser lease
+✖ private Memory image: late managed-pilot exclusion false/claim
+✖ private Memory image: late managed-pilot exclusion false/dispatch
+✖ private Memory image: late managed-pilot exclusion false/receipt
+✖ private Memory image: late managed-pilot exclusion true/claim
+✖ private Memory image: late managed-pilot exclusion true/dispatch
+✖ private Memory image: late managed-pilot exclusion true/receipt
+✖ private Memory image: canonical task identity missing
+✖ private Memory image: canonical task identity scope
+✖ private Memory image: canonical task identity binding
+✖ E2 private Memory native journey: custody-outage
+✖ E2 private Memory native journey: malformed
+✖ E2 private Memory native journey: duplicate-key
+✖ E2 private Memory native journey: oversized
+✖ E2 private Memory native journey: missing-usage
+✖ E2 private Memory native journey: multiple-images
+✖ E2 private Memory native journey: moderation-refusal
+ℹ tests 55
+ℹ suites 0
+ℹ pass 4
+ℹ fail 1
+ℹ cancelled 50
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6000.288375
+
+✖ failing tests:
+
+test at tests/assistant-runtime.test.mjs:20581:34
+✖ private Memory image: actual D1 preview and metadata-only maintenance false (527.353959ms)
+  Error: listen EPERM: operation not permitted 127.0.0.1
+      at Server.setupListenHandle [as _listen2] (node:net:1986:21)
+      at listenInCluster (node:net:2065:12)
+      at node:net:2274:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '127.0.0.1'
+  }
+
+test at tests/assistant-runtime.test.mjs:20581:34
+✖ private Memory image: actual D1 preview and metadata-only maintenance true
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20587:157
+✖ private Memory image: failure boundary wrong-approval
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20587:157
+✖ private Memory image: failure boundary source-withdrawn
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20587:157
+✖ private Memory image: failure boundary malformed-moderation
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20587:157
+✖ private Memory image: failure boundary moderation-withdrawal
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20587:157
+✖ private Memory image: failure boundary provider-rejection
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20587:157
+✖ private Memory image: failure boundary invalid-image
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20587:157
+✖ private Memory image: failure boundary unknown-usage
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20601:57
+✖ private Memory image: durable receipt and interrupted accounting resume
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20601:57
+✖ private Memory image: durable receipt and interrupted accounting withdraw-maintenance
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20614:59
+✖ private Memory image: late native source race quote
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20614:59
+✖ private Memory image: late native source race dispatch
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20614:59
+✖ private Memory image: late native source race receipt
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20614:59
+✖ private Memory image: late native source race result
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20623:40
+✖ private Memory image: lost publication acknowledgement never repurchases receipt
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20623:40
+✖ private Memory image: lost publication acknowledgement never repurchases result
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20629:1
+✖ private Memory image: restored private body without source cannot resurrect a preview
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20640:1
+✖ private Memory image: long response replays current native authority without extending the browser lease
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20646:63
+✖ private Memory image: changed provider configuration after safety review blocks dispatch provider-off
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20646:63
+✖ private Memory image: changed provider configuration after safety review blocks dispatch model
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20646:63
+✖ private Memory image: changed provider configuration after safety review blocks dispatch image-provider
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20678:1
+✖ private Memory image: real elapsed shared D1 response needs a separate current review
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20682:36
+✖ private Memory image: browser disconnect after dispatch does not lose accounting false
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20682:36
+✖ private Memory image: browser disconnect after dispatch does not lose accounting true
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20723:34
+✖ private Memory image: maximum aggregate current-source integration false
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20723:34
+✖ private Memory image: maximum aggregate current-source integration true
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20730:80
+✖ private Memory image: delayed receipt revalidates context-change
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20730:80
+✖ private Memory image: delayed receipt revalidates withdrawal
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20730:80
+✖ private Memory image: delayed receipt revalidates authority
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20730:80
+✖ private Memory image: delayed receipt revalidates configuration
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20740:42
+✖ private Memory image: fixed server processing deadline 90000
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20740:42
+✖ private Memory image: fixed server processing deadline 125000
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20746:1
+✖ private Memory image: maximum aggregate cold delayed invocation
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20751:1
+✖ private Memory image: serialization cannot extend the browser lease
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20757:84
+✖ private Memory image: late managed-pilot exclusion false/claim
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20757:84
+✖ private Memory image: late managed-pilot exclusion false/dispatch
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20757:84
+✖ private Memory image: late managed-pilot exclusion false/receipt
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20757:84
+✖ private Memory image: late managed-pilot exclusion true/claim
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20757:84
+✖ private Memory image: late managed-pilot exclusion true/dispatch
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20757:84
+✖ private Memory image: late managed-pilot exclusion true/receipt
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20769:51
+✖ private Memory image: canonical task identity missing
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20769:51
+✖ private Memory image: canonical task identity scope
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20769:51
+✖ private Memory image: canonical task identity binding
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20813:134
+✖ E2 private Memory native journey: custody-outage
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20813:134
+✖ E2 private Memory native journey: malformed
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20813:134
+✖ E2 private Memory native journey: duplicate-key
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20813:134
+✖ E2 private Memory native journey: oversized
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20813:134
+✖ E2 private Memory native journey: missing-usage
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20813:134
+✖ E2 private Memory native journey: multiple-images
+  'Promise resolution is still pending but the event loop has already resolved'
+
+test at tests/assistant-runtime.test.mjs:20813:134
+✖ E2 private Memory native journey: moderation-refusal
+  'Promise resolution is still pending but the event loop has already resolved'
