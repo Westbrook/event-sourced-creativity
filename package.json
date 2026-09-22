@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
-    "build": "node scripts/generate-custom-elements-manifest.mjs && node --experimental-strip-types scripts/check-system-localization.mjs && node build/clean-dist.mjs && WRANGLER_LOG_PATH=.wrangler/wrangler.log vite build",
+    "build": "node scripts/generate-custom-elements-manifest.mjs && node --experimental-strip-types scripts/check-system-localization.mjs && node scripts/generate-memory-schema-repair.mjs --check && node build/clean-dist.mjs && WRANGLER_LOG_PATH=.wrangler/wrangler.log vite build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite preview",
     "test": "node scripts/generate-custom-elements-manifest.mjs && node --experimental-strip-types scripts/check-system-localization.mjs && node build/clean-dist.mjs && vite build && node --import tsx --test tests/*.test.mjs",
     "test:a11y": "playwright test --config=playwright.a11y.config.mjs",

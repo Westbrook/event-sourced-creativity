@@ -21,6 +21,7 @@ export interface WorkerEnv {
   FORMA_SPONSOR_IMAGE_ENTRY?: SponsorImageEntryConfiguration;
   /** Default-off native memory read rollout; explicit enrollment and authority are still required. */
   FORMA_MEMORY_ENABLED?: string;
+  FORMA_MEMORY_SCHEMA_REPAIR_MANIFEST?: string;
   FORMA_MEMORY_USER_IDS?: string;
   /** Separate default-off document-profile purpose; no implicit reference-memory upgrade. */
   FORMA_MEMORY_PROFILE_ENABLED?: string;

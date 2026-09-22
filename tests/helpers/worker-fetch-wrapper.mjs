@@ -42,15 +42,23 @@ export async function readWorkerFetchWrapper(indexFile = new URL("../../worker/i
       };`;
   }
 
+  let memoryRepairPath = null;
+  if (/\bMEMORY_SCHEMA_REPAIR_PATH\b/u.test(wrapperText)) {
+    const source = await readFile(new URL("./memory-schema-repair-api.ts", indexUrl), "utf8");
+    const declarations = [...source.matchAll(/^export const MEMORY_SCHEMA_REPAIR_PATH='([^'\r\n]+)';$/gmu)];
+    assert.equal(declarations.length, 1, "The actual immutable Memory repair path must be located exactly once");
+    memoryRepairPath = declarations[0][1];
+  }
+
   function wrapper(status, sponsorResponseIdentity = "unhandled") {
     assert.ok(["unhandled", "returned", "different"].includes(sponsorResponseIdentity));
     assert.ok(supportsSponsorResponseIdentity || sponsorResponseIdentity === "unhandled", "This source has no sponsor response marker");
     let retentionCalls = 0, routes = 0;
     // Only observe the surrounding dispatch effects. Retention decisions execute
     // the complete production wrapper and its real selected-share classifier.
-    const fetch = new Function("routeResponse", "schedulePrivateContentRetention", "OUTPUT_SCHEMA_PREFLIGHT_PATH", "isSelectedOutputShareApiPath", "sponsorResponseIdentity", `${sponsorSetup}\nreturn (${wrapperText});`)(
+    const fetch = new Function("routeResponse", "schedulePrivateContentRetention", "OUTPUT_SCHEMA_PREFLIGHT_PATH", "isSelectedOutputShareApiPath", "sponsorResponseIdentity", "MEMORY_SCHEMA_REPAIR_PATH", `${sponsorSetup}\nreturn (${wrapperText});`)(
       async () => { routes++; return Response.json({ status }, { status }); },
-      () => { retentionCalls++; }, preflightPath, isSelectedOutputShareApiPath, sponsorResponseIdentity);
+      () => { retentionCalls++; }, preflightPath, isSelectedOutputShareApiPath, sponsorResponseIdentity, memoryRepairPath);
     return { fetch, counts: () => ({ retentionCalls, routes }) };
   }
   return { indexText, preflightPath, supportsSponsorResponseIdentity, wrapper };

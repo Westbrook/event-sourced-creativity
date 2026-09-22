@@ -1,3 +1,4 @@
+import {handleMemorySchemaRepair,MEMORY_SCHEMA_REPAIR_PATH} from './memory-schema-repair-api.ts';
 import {reconcileMemoryAuthoredImages} from './memory-authored-image.ts';
 import { reconcileMemoryImageUsage } from './memory-image-preview.ts';
 import { runScopeProfileScheduled,sweepScopeProfiles } from './memory-scope-profile-store.ts';
@@ -127,6 +128,7 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
+    if(url.pathname===MEMORY_SCHEMA_REPAIR_PATH)return handleMemorySchemaRepair(request,env);
     if(url.pathname===OUTPUT_SCHEMA_PREFLIGHT_PATH)return handleOutputSchemaPreflight(request,env);
     if(url.pathname.startsWith("/api/")&&!['GET','HEAD','OPTIONS'].includes(request.method)){
       const origin=request.headers.get("origin");
@@ -388,7 +390,7 @@ export default {
     const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
       ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
     const memoryBenchmarkRequest=pathname==="/api/internal/memory-benchmark"||pathname==="/api/internal/memory-benchmark/approval"||pathname==="/api/internal/memory-benchmark/reconcile"||pathname==="/api/internal/memory-benchmark/release-undispatched";
-    if(pathname.startsWith("/api/")&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!pathname.startsWith("/api/still/panel")&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
+    if(pathname.startsWith("/api/")&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!==MEMORY_SCHEMA_REPAIR_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!pathname.startsWith("/api/still/panel")&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");

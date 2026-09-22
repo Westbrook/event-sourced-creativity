@@ -105,3 +105,25 @@ test("integrated release retains the exact hosted-qualified 3D migration and nor
     assert.equal(response.headers.get("cache-control"), "private, no-store");
   }
 });
+
+for (const [method, suffix, cookie, expected] of [
+ ['PUT','','',405],['GET','?sql=SELECT%201','',400],['GET','','forma_impersonation=1',409],['GET','','forma_project_context=1',409],['POST','','',403],
+]) test(`Memory repair administration rejects ${method}/${suffix||cookie||'origin'} before DB access`,async()=>{
+ const {handleMemorySchemaRepair,MEMORY_SCHEMA_REPAIR_PATH}=await import('../worker/memory-schema-repair-api.ts');
+ const env={get DB(){assert.fail('No database access for rejected input');}};
+ const r=await handleMemorySchemaRepair(new Request('http://localhost'+MEMORY_SCHEMA_REPAIR_PATH+suffix,{method,headers:{cookie}}),env);
+ assert.equal(r.status,expected);assert.equal(r.headers.get('cache-control'),'private, no-store');
+});
+
+test('Memory repair actual Worker inspection is read-only, capability-protected and default-disabled',async t=>{
+ const {MEMORY_SCHEMA_REPAIR_PATH}=await import('../worker/memory-schema-repair-api.ts');
+ const f=await createSceneCostFixture(1);t.after(()=>f.close());await f.drainBackground();
+ const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
+ const r=await f.request(MEMORY_SCHEMA_REPAIR_PATH);assert.equal(r.status,200,await r.clone().text());
+ const html=await r.text();assert.match(html,/Memory schema repair inspection/);assert.doesNotMatch(html,/<form|keeper checks|in-memory-scene-test/);
+ await f.drainBackground();assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);
+ const denied=await f.request(MEMORY_SCHEMA_REPAIR_PATH,{method:'POST',headers:{origin:'http://localhost','content-type':'application/x-www-form-urlencoded'},body:'proof='+'0'.repeat(64)});
+ assert.equal(denied.status,403);assert.deepEqual(await denied.json(),{error:'repair_not_enabled'});
+ f.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run(f.owner);
+ assert.equal((await f.request(MEMORY_SCHEMA_REPAIR_PATH)).status,403);
+});
