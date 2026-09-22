@@ -12,7 +12,7 @@ import {documentJobCanAcknowledgeSafety} from '../src/model/document-jobs.ts';
 
 const source=ts.createSourceFile('app.ts',readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
 const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
-const methods=['canAcknowledgeSafety','acknowledgeSafety','generationCheckKey','isInlineGeneration','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','renderInlineGeneration','toolbarStatus','renderBusyDock','startGeneration','generate','run'];
+const methods=['checkServiceReadiness','renderNotifications','canAcknowledgeSafety','acknowledgeSafety','generationCheckKey','isInlineGeneration','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','renderInlineGeneration','toolbarStatus','renderBusyDock','startGeneration','generate','run'];
 const code=ts.transpileModule(`class Recovery {${app.members.filter(n=>methods.includes(n.name?.getText(source))).map(n=>n.getText(source)).join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
 const Recovery=new Function('generationOutcome','IdeaEditCanceled','documentJobCanAcknowledgeSafety','generationFormat','generationActive','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(generationOutcome,IdeaEditCanceled,documentJobCanAcknowledgeSafety,generationFormat,generationActive,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
@@ -89,4 +89,17 @@ test('fresh action rechecks selected job, capability, uncertain requests and bus
   const {view,calls}=fixture();const action=()=>view.generateAgain('job');change(view);action();assert.deepEqual(calls,[]);
  }
  for(const status of ['running','queued','committing','completed','partial']){const {view}=fixture(status);assert.equal(view.generationRecoveryActions().some(a=>a.id==='ui:generate-new'),false);}
+});
+
+test('creation storage failure offers a read-only service check and preserves the document',async()=>{
+ const {view,calls}=fixture();view.mode='generate';view.renderGenerationCompletions=()=>[];
+ view.isInlineGeneration=()=>false;let action;view.notification=(_key,_message,_tone,actions)=>{action=actions[0];};
+ await view.run(async()=>{throw new ApiError(503,{error:'generation_preparation_unavailable',message:'Storage unavailable.'});});
+ view.renderNotifications();assert.equal(action.label,'Check service readiness');
+ let checks=0;view.client.checkGenerationReadiness=async()=>{checks++;return{ready:false,message:'Storage unavailable. No generation was started.'};};
+ action.run();await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(checks,1);assert.match(view.error,/No generation was started/);assert.equal(view.errorCode,'generation_preparation_unavailable');
+ view.client.checkGenerationReadiness=async()=>{checks++;return{ready:true,message:'Service ready. No generation was started.'};};
+ await view.checkServiceReadiness();assert.equal(checks,2);assert.match(view.notice,/Service ready/);assert.equal(view.error,'');
+ assert.equal(view.client.position.documentId,'doc');assert.deepEqual(calls,[]);
 });

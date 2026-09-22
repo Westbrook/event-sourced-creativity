@@ -1,3 +1,6 @@
+// Keep this dependency static: the Worker entry does not expose internal exports
+// when a dynamic import is coalesced into that entry by the production bundler.
+import {readIsolatedMemoryContentBoundary} from './event-save-repair.ts';
 import { semanticConsumerSchemaSnapshot,qualifySemanticConsumerBoundary } from './memory-consumer-boundary.ts';
 import type { BudgetReservationGuard } from "./pilot-policy.ts";
 import type { WorkerEnv } from "./runtime.ts";
@@ -191,7 +194,6 @@ async function qualifyNativeMemoryAnswerExclusion(env: WorkerEnv, db: WorkerEnv[
     // The original qualifier remains strict for dedicated semantic consumers.
     if (!(error instanceof Error) || error.message!=='memory_boundary_schema_unavailable'
       || typeof flags.consumer_schema!=='string' || !flags.consumer_schema.includes('event_save_isolation_')) throw error;
-    const {readIsolatedMemoryContentBoundary}=await import('./event-save-repair.ts');
     if(env.DB!==db)throw new Error('memory_boundary_database_changed');
     const guard=await readIsolatedMemoryContentBoundary(db);
     if(env.DB!==db)throw new Error('memory_boundary_database_changed');

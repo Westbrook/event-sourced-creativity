@@ -151,9 +151,9 @@ for(const fault of ['barrier','receipt','unknown-trigger','schema-race','populat
 });
 
 
-test('isolated schema delivers one mocked Still generation through admission, checkpoints, settlement and authorized reload',async t=>{
+for (const runtime of ['source','production bundle']) test(`${runtime}: isolated schema delivers one mocked Still generation through readiness, admission, checkpoints, settlement and authorized reload`,async t=>{
  const f=await fixture(t);await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
- const {default:worker}=await import('../worker/index.ts');const media=new Map(),background=[];
+ const {default:worker}=runtime==='source'?await import('../worker/index.ts'):await import('../dist/server/index.js');const media=new Map(),background=[];
  const env={DB:f.db,OPENAI_API_KEY:'offline-sentinel',OPENAI_MODEL:'gpt-5.6-terra',ASSETS:{fetch:async()=>new Response(null,{status:404})},MEDIA:{put:async(key,bytes)=>media.set(key,bytes),get:async()=>null}};
  const request=(path,body)=>worker.fetch(new Request('http://localhost'+path,body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),env,{waitUntil:p=>background.push(p)});
  const original=globalThis.fetch;let planner=0,image=0;
@@ -164,6 +164,9 @@ test('isolated schema delivers one mocked Still generation through admission, ch
  };t.after(()=>{globalThis.fetch=original;});
  const session=await (await request('/api/session')).json();f.sqlite.prepare('UPDATE users SET consent_version=?').run('pilot-2026-08-10');
  assert.equal((await request('/api/events?after=0&limit=2000&content=0')).status,200);while(background.length)await Promise.all(background.splice(0));
+ const readiness=await request('/api/document-jobs/still-readiness?documentId=doc-atmosphere');
+ assert.equal(readiness.status,200);assert.equal((await readiness.json()).ready,true,'the deployed Worker must qualify the isolated storage boundary');
+ assert.equal(planner,0);assert.equal(image,0,'readiness must not call a provider');
  const previousId=crypto.randomUUID(),previousTime=new Date().toISOString(),previousExpiry=new Date(Date.now()+86400000).toISOString();
  f.sqlite.prepare(`INSERT INTO document_jobs(job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,request_json,result_json,requested_at,completed_at,expires_at,updated_at) VALUES(?,?,?,'doc-atmosphere','generate','failed','still',?,1,?,'{}',?,?,?,?)`).run(previousId,session.user.userId,'creative:'+session.user.userId,previousId,JSON.stringify({documentRevision:'original-recorded-revision'}),previousTime,previousTime,previousExpiry,previousTime);
  const admitted=await request('/api/document-jobs',{kind:'generate',documentId:'doc-atmosphere',sourceSurface:'still',payload:{requestKey:'still:doc-atmosphere:1:offline-proof',previousAttemptId:previousId,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}});
