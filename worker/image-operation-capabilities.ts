@@ -111,7 +111,7 @@ export function resolveExperimentImageOperation(input: ImageExperimentCell & { e
   return { version: IMAGE_CAPABILITY_VERSION, routingPolicyVersion: "experiment-fixed-model-v1", selectionMode: "experiment" as const,
     provider: "openai" as const, model: input.model, requestedModel: input.model, ...imageModelIdentity(input.model), endpoint: input.endpoint,
     referenceCount: input.referenceCount, routeFactor: input.referenceCount ? "reference-presence-selects-edit" : "no-reference-generation",
-    settings: Object.fromEntries(Object.entries({ quality: "auto", size: "auto", outputFormat: "png", outputCompression: null, moderation: "auto", stream: false, partialImages: 0, background: "auto" }).map(([key, fallback]) => {
+    settings: Object.fromEntries(Object.entries({ quality: "auto", size: "auto", outputFormat: "png", outputCompression: ["jpeg", "webp"].includes(input.settings.outputFormat ?? "png") ? 100 : null, moderation: "auto", stream: false, partialImages: 0, background: "auto" }).map(([key, fallback]) => {
       const value = input.settings[key as keyof ImageExperimentCell["settings"]];
       return [key, setting(value, value, value ?? fallback, value === undefined ? "documented-provider-default" : "experiment-explicit")];
     })), liveDispatchAuthorized: false as const };
