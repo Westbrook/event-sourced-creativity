@@ -4,7 +4,7 @@ import type { Position } from './decisions.ts';
 export const STILL_FORMATS = ['image','short_story','scene','slides','storyboard','video','audio','model3d'] as const;
 // Addresses open views/forms only. Mutations such as lock, export, save, or generate
 // are deliberately absent: visiting a link is never an instruction to execute one.
-export const STILL_MODES = ['actions','workspaces','new-project','new-document','add-context','edit-block','rename','intent','edit-artifact','use-in','reuse','split-context','research-context','find-references','compose','surprise','clarify'] as const;
+export const STILL_MODES = ['actions','workspaces','new-project','new-document','add-context','edit-block','rename','intent','edit-artifact','use-in','reuse','split-context','research-context','find-references','supply-reference','compose','clarify'] as const;
 export type StillRoute = Pick<Position,'projectId'|'documentId'|'blockId'|'outputId'|'view'> & { itemIndex:number; page:number; mode:string; format:string; legacy?:boolean; itemExplicit?:boolean };
 const empty = ():StillRoute => ({projectId:'',documentId:'',blockId:'',outputId:'',view:'projects',itemIndex:0,page:0,mode:'',format:''});
 // IDs reject path separators and control characters after decoding.
@@ -40,6 +40,7 @@ export function parseStillRoute(value:string|URL):StillRoute|null {
       }else if(parts[i]==='results'){route.view='results';i++;}
       else if(parts[i]==='generation'){
         const job=id(parts[++i]??'');if(!job)return null;route.outputId=job;route.view='generation';i++;
+        if(parts[i]==='rejection'){route.view='rejection';i++;}
       }
       else if(parts[i]==='result'){
         const result=id(parts[++i]??'');if(!result)return null;route.outputId=result;route.view='artifact';i++;
@@ -55,7 +56,8 @@ export function parseStillRoute(value:string|URL):StillRoute|null {
     if(!route.documentId)return null;route.mode='generate';i++;
     if(parts[i]){if(!STILL_FORMATS.includes(parts[i] as typeof STILL_FORMATS[number]))return null;route.format=parts[i++];}
   }else if(parts[i]==='action'){
-    const mode=parts[++i];if(!STILL_MODES.includes(mode as typeof STILL_MODES[number]))return null;
+    const requestedMode=parts[++i];
+    const mode=requestedMode==='surprise'?'add-context':requestedMode;if(!STILL_MODES.includes(mode as typeof STILL_MODES[number]))return null;
     route.mode=mode;i++;
   }
   if(i!==parts.length)return null;
@@ -72,13 +74,13 @@ export function stillPath(route:StillRoute):string {
     if(route.view==='artifact'){
       path+=`/result/${encode(route.outputId)}`;
       if(route.itemIndex)path+=`/item/${route.itemIndex+1}`;
-    }else if(route.view==='generation')path+=`/generation/${encode(route.outputId)}`;
+    }else if(['generation','rejection'].includes(route.view))path+=`/generation/${encode(route.outputId)}${route.view==='rejection'?'/rejection':''}`;
     else if(route.view==='results')path+='/results';
     else if(route.blockId)path+=`/block/${encode(route.blockId)}`;
   }
   if(route.page)path+=`/page/${route.page+1}`;
   if(route.mode==='generate')path+=`/create${route.format?`/${route.format}`:''}`;
-  else if(route.mode)path+=`/action/${route.mode}`;
+  else if(route.mode)path+=`/action/${route.mode==='surprise'?'add-context':route.mode}`;
   if(!parseStillRoute(path))throw new Error('Invalid Still address');
   return path;
 }
@@ -96,7 +98,7 @@ export function stillRouteProblem(route:StillRoute,p:CreativeProjection,resultCo
   if(route.blockId&&!p.blocks.some(x=>x.id===route.blockId&&x.documentId===route.documentId&&x.projectId===route.projectId&&!x.removed))return 'Idea unavailable';
   const artifact=p.artifacts.find(x=>x.id===route.outputId&&x.documentId===route.documentId);
   // Generation membership is checked against the authorized jobs endpoint by the view.
-  if(route.view!=='generation'&&route.outputId&&!artifact&&!p.outputs.some(x=>x.id===route.outputId&&x.documentId===route.documentId&&!x.discarded))return 'Result unavailable';
+  if(!['generation','rejection'].includes(route.view)&&route.outputId&&!artifact&&!p.outputs.some(x=>x.id===route.outputId&&x.documentId===route.documentId&&!x.discarded))return 'Result unavailable';
   if((route.itemIndex||route.itemExplicit)&&(!artifact||!['slides','storyboard'].includes(artifact.kind)||!artifact.items[route.itemIndex]))return 'Item unavailable';
   const count=route.view==='projects'?p.projects.length:route.view==='documents'?p.documents.filter(d=>!d.removed).length:route.view==='document'?p.blocks.filter(b=>!b.removed).length:resultCount??p.outputs.filter(o=>!o.discarded).length+p.artifacts.length;
   if(route.page&&route.page*3>=count)return 'Page unavailable';

@@ -66,7 +66,8 @@ export function buildContextApplicationPlan(input:{projection:CreativeProjection
         roots.set(item.key,copied.get(existing.id)!);
       }
     }else if(item.research){
-      if(item.edit||item.research.area!=="learned"||(item.research.type==="reference"||item.research.type==="model3d"))throw new Error("context_changes_review_only");
+      if(item.research.area!=="learned"||(item.research.type==="reference"||item.research.type==="model3d"))throw new Error("context_changes_review_only");
+      if(item.edit&&(Object.keys(item.edit).some(key=>key!=="label")||typeof item.edit.label!=="string"||!item.edit.label.trim()||item.edit.label.trim().length>160))throw new Error("context_changes_invalid_edit");
       roots.set(item.key,createId());
     }else throw new Error("context_changes_proposal_missing");
   }
@@ -96,7 +97,7 @@ export function buildContextApplicationPlan(input:{projection:CreativeProjection
     changes.push({kind:relation.kind===ACTION_PARTICIPANT_RELATION?"participant":"link",label:labelOf(available.get(relation.fromBlockId)!),text:labelOf(available.get(relation.toBlockId)!),type:relation.kind,sourceId:relation.fromBlockId,targetId:relation.toBlockId});
   }
   for(const item of proposals){
-    const proposal=newProposals.get(item.key),suggestion=item.research,id=roots.get(item.key)!;
+    const proposal=newProposals.get(item.key),suggestion=item.research&&item.edit?.label!==undefined?{...item.research,label:item.edit.label.trim()}:item.research,id=roots.get(item.key)!;
     if(proposal||suggestion&&!suggestion.blockId){
       const detail=proposal??suggestion!,references:Array<{block_id:string;handle:string;role:string}>=[];
       if(proposal?.type==="action")for(const participant of proposal.participants){
@@ -114,7 +115,7 @@ export function buildContextApplicationPlan(input:{projection:CreativeProjection
         }
       }
       const normalized=normalizeActionBlockReferences(references);
-      events.push({type:"BlockCreated",payload:{...scope,block_id:id,type:detail.type,handle:`${detail.type}/${slug(detail.label)}`,position:position(),properties:{label:detail.label,text:detail.text,subtype:detail.subtype,intent:"include",weight:.8,authority:"authored",context_detail:true,source_execution_id:item.executionId,source_proposal_id:item.proposalId,...(proposal?{source_excerpt:proposal.sourceExcerpt,human_edited:Boolean(item.edit),...(!proposal.addendum?{source_block_id:target.id}:{})}:suggestion?.sourceUrl?{source_url:suggestion.sourceUrl}:{}),...(normalized.length?{block_references:[]}:{}),created_from:"approved-context-proposal"},source_surface:"approved-context-proposal"}});blockIds.push(id);
+      events.push({type:"BlockCreated",payload:{...scope,block_id:id,type:detail.type,handle:`${detail.type}/${slug(detail.label)}`,position:position(),properties:{label:detail.label,text:detail.text,subtype:detail.subtype,intent:"include",weight:.8,authority:"authored",context_detail:true,source_execution_id:item.executionId,source_proposal_id:item.proposalId,...(proposal?{source_excerpt:proposal.sourceExcerpt,human_edited:Boolean(item.edit),...(!proposal.addendum?{source_block_id:target.id}:{})}:{...(suggestion?.sourceUrl?{source_url:suggestion.sourceUrl}:{}),human_edited:Boolean(item.edit)}),...(normalized.length?{block_references:[]}:{}),created_from:"approved-context-proposal"},source_surface:"approved-context-proposal"}});blockIds.push(id);
       changes.push({kind:"create",label:detail.label,text:detail.text,type:detail.type,targetId:id});
       if(normalized.length){deferred.push({type:"BlockPropertyEdited",payload:{...scope,block_id:id,property_path:"block_references",old_value:[],new_value:normalized,source_surface:"approved-context-proposal"}});for(const reference of normalized){addRelation(id,reference.block_id,ACTION_PARTICIPANT_RELATION,{participant_role:reference.role,handle:reference.handle});changes.push({kind:"participant",label:detail.label,text:reference.handle,type:reference.role,targetId:reference.block_id});}}
     }

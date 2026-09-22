@@ -1,3 +1,4 @@
+import { documentJobImageSize } from './document-job-image-size.ts';
 import { authorizeImageSafetyDelivery } from "./image-safety-acknowledgement.ts";
 import { requireGuestImageExecution, prepareGuestImageJobClaim, type GuestImageExecutionAuthority } from "./experience-guest-image-execution.ts";
 import { readSponsorJobStatus, sponsorJobReadPredicate } from "./experience-sponsor-job-read.ts";
@@ -1697,6 +1698,7 @@ async function retainedSafetyPrompt(env:WorkerEnv,user:PilotUser,row:DocumentJob
 
 function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | null = null, detail = true) {
   const parsed = parseResult(row); const result = row.result_json ? parsed : null; const request = parseRequest(row); const identity = generationRequestIdentity(row.kind, request, row.document_id);
+  const imageSize=documentJobImageSize(row.kind,request);
   const sceneConfiguration=row.kind==="render_document"?sceneConfigurationFromRequest(request):null;
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
@@ -1721,6 +1723,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
     ...(documentJobMemoryMarked(row)?{memoryMode:"recall" as const,noAutomaticRetry:true as const}:{}),
     ...(outputJobIsDurable(row) ? { executionOwner: "durable" as const } : {}),
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
+    ...(imageSize?{imageSize}:{}),
     ...(row.kind==="structure_adaptive"&&typeof request.canvasId==="string"&&request.canvasId?{canvasId:request.canvasId}:{}),
     ...(consentedAdaptiveJob(row)?{planningExecutionId:row.job_id,planningProjectScope:request.projectScope===true,planningLocale:typeof request.locale==="string"?request.locale:"en"}:{}),
     ...(sceneConfiguration?{sceneMedium:sceneConfiguration.medium,sceneConfiguration}:{}),
@@ -2018,8 +2021,8 @@ async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow
   const errorDetail:ProviderFailureDetail = detail??{ code:"execution_interrupted",category:"server",scope:"unknown",action:"contact_support",message:"The server lost contact with this operation before it finished.",retryable:false,retryAfterMs:null,requestId:null,httpStatus:null };
   const parentId = parentJobIdFromRequest(parseRequest(row));
   const failedResult=JSON.stringify({...parseResult(row),errorDetail,stage:"failed",progressMessage:failureProgressMessage(errorDetail)});
-  const terminal = env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND status IN ('queued','running','committing') AND correlation_id=? AND result_json IS ? AND (status='queued' OR lease_expires_at<=? OR updated_at<=?) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides' AND EXISTS(SELECT 1 FROM events terminal WHERE terminal.stream_id=document_jobs.stream_id AND terminal.correlation_id=document_jobs.correlation_id AND terminal.type IN('DocumentRenderCompleted','DocumentRenderFailed')))")
-    .bind(errorDetail.code,now,failedResult,parentId,now,now,row.job_id,user.userId,row.correlation_id,observedResult,now,staleBefore);
+  const terminal = env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,result_json=?,notified_at=CASE WHEN ? IS NULL THEN notified_at ELSE ? END,updated_at=? WHERE job_id=? AND owner_id=? AND status IN ('queued','running','committing') AND correlation_id=? AND result_json IS ? AND (status='queued' OR lease_expires_at<=? OR updated_at<=?) AND NOT EXISTS(SELECT 1 FROM events terminal WHERE (? IS NULL OR (document_jobs.kind='render_document' AND json_extract(document_jobs.request_json,'$.artifactKind')='slides')) AND terminal.stream_id=document_jobs.stream_id AND terminal.correlation_id=document_jobs.correlation_id AND ((document_jobs.kind='render_document' AND terminal.type IN('DocumentRenderCompleted','DocumentRenderFailed')) OR (document_jobs.kind='generate' AND terminal.type IN('GenerationCompleted','GenerationFailed')) OR (document_jobs.kind='preview' AND terminal.type IN('IdeationPreviewCompleted','GenerationFailed'))))")
+    .bind(errorDetail.code,now,failedResult,parentId,now,now,row.job_id,user.userId,row.correlation_id,observedResult,now,staleBefore,row.output_slot_id??null);
   // Project the terminal native job and its existing monetary evidence together.
   // Pending/uncertain calls remain held; this never creates an attempt or grant.
   const result=row.output_slot_id?(await env.DB.batch([terminal,...prepareOutputJobOutcomeStatements(env,row,{completedAt:now,resultJson:failedResult})]))[0]!:await terminal.run();
@@ -2031,6 +2034,17 @@ async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow
     try{await appendAuditEvent(env,user.streamId,"worker:scheduler","JobAttemptInterrupted",{job_id:row.job_id,document_id:row.document_id,kind:row.kind,attempt:row.attempt_count,reason:errorDetail.code,released_reservation_count:0,provider_submission_status:"submission_unknown"},row.correlation_id);}catch(error){console.error("document_job_interruption_audit_failed",row.job_id,error instanceof Error?error.message:"unknown");}
   }else await releaseInterruptedAttempt(env,user,row,errorDetail.code);
   await refreshGenerationReceipt(env,user,row,{},errorDetail,previousStage);await reconcileParentForChild(env,row);
+}
+
+/** Observation may reconcile an expired foreground attempt, never dispatch new paid work. */
+async function reconcileStaleForegroundJob(env:WorkerEnv,user:PilotUser,row:DocumentJobRow) {
+  if(!rowIsStale(row)||!requiresForegroundDocumentExecution(row))return;
+  // A result can be committed before the worker loses its final job-status write.
+  if(operationFinished(await readCorrelatedEvents(env,user.streamId,[row.correlation_id]),row)) {
+    await runDocumentJob(env,user,row.job_id,row);
+    return;
+  }
+  await failStaleJob(env,user,row,unsafePaidRecovery(row)??undefined);
 }
 
 function operationFinished(events: Awaited<ReturnType<typeof readWorkspaceEvents>>, row: DocumentJobRow) {
@@ -2802,7 +2816,7 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
         if(scope){await cancelProjectActorJobs(env,user,{organizationId:scope.organization_id,projectAccessId:scope.project_access_id,actorUserId:running.owner_id});continue;}
         return;
       }
-      if(requiresForegroundDocumentExecution(running)){await failStaleJob(env,owner,running,unsafePaidRecovery(running)??undefined);continue;}
+      if(requiresForegroundDocumentExecution(running)){await reconcileStaleForegroundJob(env,owner,running);continue;}
       const recovered = await runDocumentJob(env, owner, running.job_id);
       if (!recovered || recovered.status === "queued" || recovered.status === "running" || recovered.status === "committing") return;
       continue;
@@ -3459,7 +3473,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const canvasReadable=hasCapability(principal,"project.canvas.use",{organizationId:project.organizationId,projectAccessId:project.projectAccessId});
     const rows=await env.DB.prepare(`SELECT job.job_id,job.owner_id,job.stream_id,job.document_id,job.kind,job.status,job.source_surface,job.correlation_id,job.requested_sequence,
       json_type(job.request_json,'$.memoryMode') IS NOT NULL AS memory_recall_mode,
-      json_object('documentRevision',json_extract(job.request_json,'$.documentRevision'),'requestKey',json_extract(job.request_json,'$.requestKey'),
+      json_object('requestedImageSize',json(json_extract(job.request_json,'$.requestedImageSize')),'documentRevision',json_extract(job.request_json,'$.documentRevision'),'requestKey',json_extract(job.request_json,'$.requestKey'),
         'sourcePreviewId',json_extract(job.request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(job.request_json,'$.promptTechnique'),
         'promptFanId',json_extract(job.request_json,'$.promptFanId'),'parentJobId',json_extract(job.request_json,'$.parentJobId'),
         'fanKind',json_extract(job.request_json,'$.fanKind'),'artifactKind',json_extract(job.request_json,'$.artifactKind'),'productionMode',json_extract(job.request_json,'$.productionMode'),'itemCount',json_extract(job.request_json,'$.itemCount'),'canvasId',json_extract(job.request_json,'$.canvasId'),
@@ -3487,6 +3501,17 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ORDER BY CASE WHEN job.status IN('queued','running','committing') THEN 0 ELSE 1 END,job.requested_at DESC LIMIT 120`)
       .bind(project.ownerUserId,principal.userId,user.streamId,project.projectAccessId,project.organizationId,project.projectId,Number(readOnlyPlanning),Number(canvasReadable),requestedId,requestedId,Number(activeOnly),document,document,now,...readGuard.bindings,requestedId).all<DocumentJobRow>();
     if(path&&!rows.results.length)return Response.json({error:"job_not_found"},{status:404});
+    // Only reconcile the current actor's ordinary foreground receipts, after the
+    // scoped read guard succeeds. Inspection and read-only planning never mutate.
+    if(!readOnlyPlanning&&query.get("inspection")!=="1")for(let index=0;index<rows.results.length;index++){
+      const visible=rows.results[index]!;
+      if(!rowIsStale(visible)||!requiresForegroundDocumentExecution(visible))continue;
+      const retained=await readJob(env,user.userId,visible.job_id);
+      if(!retained||outputJobIsDurable(retained)||retained.output_slot_id||documentJobMemoryMarked(retained)||!await activeProjectExecution(env,user,retained.document_id,retained.job_id))continue;
+      await reconcileStaleForegroundJob(env,user,retained);
+      const fresh=await readJob(env,user.userId,retained.job_id);
+      if(fresh)rows.results[index]={...visible,status:fresh.status,error_message:fresh.error_message,result_json:fresh.result_json,completed_at:fresh.completed_at,lease_expires_at:fresh.lease_expires_at,updated_at:fresh.updated_at};
+    }
     const activeBlocker=[...rows.results].filter((row)=>!documentJobMemoryMarked(row)&&row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
     const recoveryBlocker=activeBlocker&&rowIsStale(activeBlocker)?activeBlocker:null;
     const adaptiveCertified=await Promise.all(rows.results.map(async(row)=>row.kind==="structure_adaptive"?certifiedAdaptiveJob(env,user,await readJob(env,user.userId,row.job_id)??row,false,query.get("inspection")==="1"):row));
@@ -3617,7 +3642,20 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const conflict = () => Response.json({ error: "Generation issue could not be dismissed" }, { status: 409, headers });
     const target = await readJob(env, user.userId, jobId);
     if (!target || target.stream_id !== user.streamId) return notFound();
-    if (target.status !== "failed" && target.status !== "partial") return Response.json({ error: "terminal_failure_required" }, { status: 409, headers });
+    if (!["failed", "partial", "completed", "canceled"].includes(target.status)) return Response.json({ error: "terminal_job_required" }, { status: 409, headers });
+    // Still supplies the displayed attempt, so a late gesture cannot dismiss a retry.
+    // Existing Forma callers without an attempt retain the server-snapshot contract.
+    let input: unknown;
+    try { const body = await request.text(); input = body ? JSON.parse(body) : {}; }
+    catch { return Response.json({ error: "invalid_dismissal" }, { status: 400, headers }); }
+    if (!input || typeof input !== "object" || Array.isArray(input)) return conflict();
+    if (Object.hasOwn(input, "attempt")) {
+      const attempt = (input as { attempt: unknown }).attempt;
+      if (!attempt || typeof attempt !== "object" || Array.isArray(attempt)) return conflict();
+      const observed = attempt as Record<string, unknown>;
+      if (observed.documentId !== target.document_id || observed.attemptCount !== target.attempt_count
+        || observed.status !== target.status || observed.completedAt !== target.completed_at) return conflict();
+    }
     // SQL NULL is an absent checkpoint; malformed or non-object retained data is not.
     const readDismissedAt = (row: DocumentJobRow): string | null | undefined => {
       if (row.result_json === null) return null;
@@ -3638,7 +3676,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       AND selection.organization_id=? AND selection.project_access_id=? AND selection.revoked_at IS NULL
       AND selection.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))` : "";
     const scopeBindings = [...(authority?.bindings ?? []), ...(project ? [project.contextId, user.userId, project.organizationId, project.projectAccessId] : [])];
-    // Change only dismissal metadata on the exact observed failed attempt.
+    // Change only dismissal metadata on the exact observed terminal attempt.
     const changed = originalDismissal === null ? await env.DB.prepare(`UPDATE document_jobs
       SET result_json=json_set(COALESCE(result_json,'{}'),'$.dismissedAt',strftime('%Y-%m-%dT%H:%M:%fZ','now')),
         updated_at=MAX(updated_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -4024,7 +4062,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const readVisibleJobs = () => env.DB.prepare(`SELECT job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,
       json_type(request_json,'$.outputDurable') IS NOT NULL AS output_durable_owner,
       CASE WHEN json_extract(request_json,'$.documentRevision') IS NULL THEN request_json ELSE json_object(
-        'documentRevision',json_extract(request_json,'$.documentRevision'),'requestKey',json_extract(request_json,'$.requestKey'),
+        'requestedImageSize',json(json_extract(request_json,'$.requestedImageSize')),'documentRevision',json_extract(request_json,'$.documentRevision'),'requestKey',json_extract(request_json,'$.requestKey'),
         'sourcePreviewId',json_extract(request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(request_json,'$.promptTechnique'),
         'promptFanId',json_extract(request_json,'$.promptFanId'),'parentJobId',json_extract(request_json,'$.parentJobId'),
         'fanKind',json_extract(request_json,'$.fanKind'),'artifactKind',json_extract(request_json,'$.artifactKind'),'productionMode',json_extract(request_json,'$.productionMode'),'itemCount',json_extract(request_json,'$.itemCount'),'canvasId',json_extract(request_json,'$.canvasId'),
@@ -4050,11 +4088,18 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     const parents = rows.filter((row) => !outputJobIsDurable(row) && row.kind === "prompt_fan" && ["queued","running","committing"].includes(row.status));
     for(const parent of parents){const updated=await reconcilePromptFanParent(env,user.userId,parent.job_id);if(!updated||updated.status!==parent.status||updated.result_json!==parent.result_json||updated.error_message!==parent.error_message||updated.completed_at!==parent.completed_at)reconciled=true;}
-    for (const row of rows) if (!documentJobMemoryMarked(row) && !outputJobIsDurable(row) && rowIsStale(row) && row.attempt_count >= documentJobMaxAttempts(row.kind)) {
+    // A detail poll of a queued job must also reconcile its earlier expired blocker.
+    const recoveryRows=[...rows];
+    if(path){
+      const blocker=await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1`).bind(user.userId,user.streamId).first<DocumentJobRow>();
+      if(blocker&&!recoveryRows.some(row=>row.job_id===blocker.job_id))recoveryRows.push(blocker);
+    }
+    for (const row of recoveryRows) if (!documentJobMemoryMarked(row) && !outputJobIsDurable(row) && rowIsStale(row) && (requiresForegroundDocumentExecution(row)||row.attempt_count >= documentJobMaxAttempts(row.kind))) {
       // A compact list row must never replace the retained recovery checkpoint.
-      const retained = path ? row : await readJob(env, user.userId, row.job_id);
-      if (retained && rowIsStale(retained) && retained.attempt_count >= documentJobMaxAttempts(retained.kind)) {
-        await failStaleJob(env, user, retained);
+      const retained = await readJob(env, user.userId, row.job_id);
+      if (retained && rowIsStale(retained)) {
+        if(requiresForegroundDocumentExecution(retained))await reconcileStaleForegroundJob(env,user,retained);
+        else if(retained.attempt_count >= documentJobMaxAttempts(retained.kind))await failStaleJob(env, user, retained);
         reconciled = true;
       }
     }
@@ -4081,6 +4126,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   const kind = input.kind as DocumentJobKind; const payload = input.payload && typeof input.payload === "object" ? { ...input.payload } : {};
   // Freeze the Still image policy on new jobs; retained jobs keep their original route.
   delete payload.stillImageProvider;
+  delete payload.requestedImageSize;
   if (!outputPreparation && input.sourceSurface === "still" && ["preview", "generate", "prompt_fan", "render_document"].includes(kind)) {
     payload.stillImageProvider = "openai";
     env = stillImageEnvironment(env, "still", payload);
@@ -4220,6 +4266,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
   if(kind==="preview"||kind==="generate"||kind==="prompt_fan"||kind==="render_document"){
     try{
       const trusted=nativeDocumentJobContext(events,documentId,project?.projectId??documentRecord.projectId,payload);
+      const requestedImageSize=documentJobImageSize(kind,payload);
+      if(requestedImageSize)payload.requestedImageSize=requestedImageSize;
       if(outputPreparation){
         Object.assign(payload,await outputPreparation.compile(trusted));
         payload.outputExecution=outputPreparation.outputExecution;

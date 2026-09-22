@@ -42,17 +42,20 @@ test('real admission and job execution use GPT-image with an Ideogram deployment
   try {
     const decision=await f.request('/api/still/decision',f.json({projectId:f.projectId,documentId:f.documentId,view:'choose-format',recentActions:[]}));
     assert.ok((await decision.json()).candidateIds.includes('image'),'Jev can recommend GPT-image without Fal');
-    const request={kind:'generate',documentId:f.documentId,sourceSurface:'still',payload:{requestKey:`still:${f.documentId}:4:gpt-policy`,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true,productionMode:'manual',stillImageProvider:'fal-ideogram'}};
+    const request={kind:'generate',documentId:f.documentId,sourceSurface:'still',payload:{requestKey:`still:${f.documentId}:4:gpt-policy`,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true,productionMode:'manual',stillImageProvider:'fal-ideogram',requestedImageSize:{width:1,height:1}}};
     const response=await f.request('/api/document-jobs',f.json(request));
     assert.equal(response.status,202,await response.clone().text());
     const {job}=await response.json();
     const row=f.sqlite.prepare('SELECT request_json FROM document_jobs WHERE job_id=?').get(job.jobId);
     assert.equal(JSON.parse(row.request_json).stillImageProvider,'openai');
+    assert.ok(job.imageSize?.width>1,'Server resolves dimensions rather than trusting the client hint');
+    assert.deepEqual(job.imageSize,JSON.parse(row.request_json).requestedImageSize);
     await f.drainBackground();
     await f.run(job.jobId);
     assert.equal(imageRequests.length,1);
     assert.equal(imageRequests[0].url,'https://api.openai.com/v1/images/generations');
     assert.equal(imageRequests[0].body.model,'gpt-image-2.5-sunburst');
+    assert.equal(imageRequests[0].body.size,`${job.imageSize.width}x${job.imageSize.height}`,'Pending dimensions match the actual provider request');
     const finished=f.sqlite.prepare('SELECT status,result_json FROM document_jobs WHERE job_id=?').get(job.jobId);
     assert.equal(finished.status,'failed');
     assert.match(JSON.stringify(JSON.parse(finished.result_json).errorDetail),/Simulated definitive rejection/);

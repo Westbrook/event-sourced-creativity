@@ -9,7 +9,7 @@ still-app .still-shell { display: flex; flex-direction: column; min-height: 100d
 still-app .masthead { position: sticky; top: 0; z-index: 6; flex: none; height: 104px; display: flex; align-items: center; gap: 20px; pointer-events: none; }
 still-app .header-stamp { background: var(--en-color-canvas); border: 0; border-radius: 3px; box-shadow: none; pointer-events: auto; }
 still-app[data-header-scrolled] .header-stamp { box-shadow: 0 0 6px var(--still-shadow); }
-still-app .wordmark { display: flex; align-items: center; justify-content: center; flex: none; width: 100px; height: 64px; color: inherit; text-decoration: none; font-family: Georgia, 'Times New Roman', serif; font-size: 35px; letter-spacing: -2px; line-height: 1; }
+still-app .wordmark { display: flex; align-items: center; justify-content: center; flex: none; padding-inline: 32px; margin-inline-start: -32px; height: 64px; color: inherit; text-decoration: none; font-family: Georgia, 'Times New Roman', serif; font-size: 35px; letter-spacing: -2px; line-height: 1; }
 still-app .wordmark > span { color: var(--en-color-brand); }
 still-app .location-label, still-app .session-status { color: var(--en-color-text-muted); font-size: 12px; letter-spacing: .01em; }
 still-app .session-status { margin-left: auto; padding: 12px 15px; text-align: center; }
@@ -26,7 +26,7 @@ still-app .work-row:hover { color: var(--en-color-brand); }
 still-app .work-number { font-size: 11px; color: var(--en-color-text-muted); font-variant-numeric: tabular-nums; min-width: 18px; }
 still-app .work-row strong { display: block; font-size: 21px; font-weight: 400; }
 still-app .work-row small { display: block; margin-top: 4px; color: var(--en-color-text-muted); font-size: 12px; }
-still-app .row-arrow { margin-left: auto; font-size: 22px; color: var(--en-color-text-muted); }
+still-app .row-arrow { margin-left: auto; --en-icon-size: 22px; color: var(--en-color-text-muted); }
 still-app .empty-copy { color: var(--en-color-text-muted); font-size: 17px; margin-top: 36px; line-height: 1.8; }
 still-app .action-dock { position: fixed; z-index: 5; bottom: 0; left: 0; right: 0; padding: 36px 24px max(25px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--en-color-canvas) 24%); display: flex; align-items: center; flex-direction: column; gap: 10px; }
 still-app .dock-caption { font-size: 11px; letter-spacing: .03em; color: var(--en-color-text-muted); }
@@ -74,8 +74,15 @@ still-app .quiet-state { min-height: 52vh; display: flex; justify-content: cente
 still-app .quiet-state p { color: var(--en-color-text-muted); }
 still-app .still-mark { width: 30px; height: 30px; border: 1px solid var(--en-color-boundary); border-radius: 50%; box-shadow: 8px 0 0 -1px var(--en-color-canvas), 9px 0 0 0 var(--en-color-line); }
 still-app .check { display:block;margin:16px 0; }
-still-app .image-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100dvh - 265px); }
-still-app .image-stage img { height: auto; max-width: 100%; max-height: calc(100dvh - 300px); object-fit: contain; }
+still-app .image-frame { --image-max-height: min(60dvh, 720px); max-width: 100%; }
+still-app .image-frame.known-size, still-app .image-frame.pending-size { width: min(100%, 950px, calc(var(--image-max-height) * var(--image-ratio))); aspect-ratio: var(--image-ratio); }
+/* A provisional layout only; actual request dimensions always take precedence. */
+still-app .image-frame.pending-size { --image-ratio: calc(4 / 3); }
+@media (orientation: portrait) {
+  still-app .image-frame.pending-size { --image-ratio: calc(3 / 4); }
+}
+still-app .image-frame img { display: block; width: 100%; height: auto; max-height: var(--image-max-height); object-fit: contain; }
+still-app .image-frame en-skeleton { display: block; height: 100%; --en-skeleton-size: 100%; }
 still-app figcaption, still-app .caption { font-size: 12px; color: var(--en-color-text-muted); margin-top: 16px; text-align: center; }
 still-app .results-page { max-width: 1050px; margin: 5vh auto; }
 still-app .result-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 42px; }
@@ -100,16 +107,19 @@ still-app .media-stage h1 { font-size: 35px; margin: 24px 0; }
 still-app .media-stage p { color: var(--en-color-text-muted); font-size: 14px; }
 still-app .media-stage.audio { padding: 7vh 0; }
 still-app audio { width: min(600px, 100%); margin: 40px 0 20px; }
-still-app .sound-form { height: 180px; display: flex; align-items: center; gap: 5px; justify-content: center; }
-still-app .sound-form i { width: 3px; border-radius: 20px; background: var(--en-color-text-muted); }
+still-app still-audio-player { display: block; }
+still-app .audio-waveform { height: 180px; width: min(600px, 100%); margin-inline: auto; display: grid; place-items: center; color: var(--en-color-text-muted); font-size: 14px; }
+still-app .audio-waveform svg { display: block; width: 100%; height: 100%; }
+still-app .audio-waveform path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+still-app .audio-waveform line { stroke: currentColor; opacity: .25; vector-effect: non-scaling-stroke; }
 still-app still-model-view { display: block; height: min(65vh, 700px); width: 100%; }
 still-app still-model-view canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-still-app .progress-return { position: fixed; left: 12px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 10; font-size: 10px; padding: 7px 9px; background: var(--en-color-canvas); color: var(--en-color-text-muted); border: 1px solid var(--en-color-line); border-radius: 20px; text-decoration: none; }
+still-app .progress-return { display: inline-flex; align-items: center; gap: 4px; --en-icon-size: 1em; position: fixed; left: 12px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 10; font-size: 10px; padding: 7px 9px; background: var(--en-color-canvas); color: var(--en-color-text-muted); border: 1px solid var(--en-color-line); border-radius: 20px; text-decoration: none; }
 @keyframes still-pulse { 50% { opacity: .3; } }
 @media (max-width: 720px) {
   still-app .still-shell { padding: 0 23px max(180px, var(--dock-height, 180px)); }
   still-app .masthead { height: 80px; gap: 20px; }
-  still-app .wordmark { width: 82px; height: 56px; font-size: 30px; }
+  still-app .wordmark { height: 56px; font-size: 30px; }
   still-app .location-label { margin-left: auto; font-size: 11px; }
   still-app .library-page, still-app .document-page, still-app .form-page { margin-top: 6vh; }
   still-app .library-page h1 { font-size: 45px; }
@@ -143,7 +153,7 @@ still-app main h1:focus { outline:none; }
 .context-reference { height: auto; max-width: 100%; max-height: 20rem; object-fit: contain; margin: 1rem 0; }
 .context-error { color: var(--en-color-danger-text); padding: 1rem 0; }
 .change-review { border-top: 1px solid var(--en-color-line); padding: 1.4rem 0; }
-.source-link { display: inline-flex; align-items: center; padding: .75rem; color: inherit; font-size: .875rem; }
+.source-link { display: inline-flex; align-items: center; gap: .375rem; --en-icon-size: 1em; padding: .75rem; color: inherit; font-size: .875rem; }
 .assembly-list { padding-inline-start: 1.5rem; }
 .assembly-list li { padding: 1rem 0; }
 .context-flow blockquote { border-inline-start: 2px solid var(--en-color-line); margin: 2rem 0; padding-inline-start: 1rem; opacity: .75; }
@@ -181,9 +191,35 @@ still-app .palette-result[aria-selected="true"], still-app .palette-result:hover
 still-app .palette-find { border-top: 1px solid var(--en-color-line); margin-top: 8px; }
 still-app .palette-hint { color: var(--en-color-text-muted); font-size: 12px; }
 
-/* Fixed library region: notifications do not participate in content layout. */
-still-app .generation-notifications { --en-toast-region-width: 30rem; --en-toast-region-layer: 40; --en-toast-region-max-size: 55dvh; }
-still-app .generation-notifications en-toast { --en-toast-background: var(--en-color-surface); --en-toast-color: var(--en-color-text); }
+/* A quiet notification line shares the toolbar's fixed, measured footprint. */
+still-app .dock-stack { position: fixed; z-index: 5; bottom: 0; left: 0; right: 0; padding: 36px 24px max(25px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--en-color-canvas) 24%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+still-app .dock-stack > .action-dock { position: static; width: 100%; padding: 0; background: none; }
+still-app .has-developer .dock-stack { right: var(--developer-width); }
+still-app .generation-notifications { width: min(100%, 36rem); --en-toast-region-max-size: min(45dvh, 24rem); --en-toast-region-gap: 4px; }
+still-app .generation-notifications:not(:has(en-toast)) { display: none; }
+still-app .generation-notifications::part(region) { justify-items: center; scrollbar-gutter: auto; padding: 6px; }
+still-app .generation-notifications en-toast {
+  --en-toast-background: transparent; --en-toast-color: var(--en-color-text-muted);
+  --en-toast-icon-color: var(--en-color-text-muted); --en-toast-warning-icon-color: var(--en-color-text-muted); --en-toast-danger-icon-color: var(--en-color-text-muted); --en-toast-success-icon-color: var(--en-color-text-muted);
+  --en-toast-border-color: transparent; --en-toast-padding: 0; --en-toast-radius: 0; --en-toast-shadow: none; --en-toast-stack-offset: 0px;
+}
+still-app .generation-notifications en-toast[open]::part(base) { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 8px; max-width: 100%; border: 0; min-block-size: 36px; }
+still-app .generation-notifications en-toast::part(content) { display: contents; }
+still-app .generation-notifications en-toast::part(icon) { flex: none; --en-icon-size: 16px; }
+still-app .notification-summary { flex: 0 1 auto; min-width: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+still-app .generation-notifications en-toast::part(actions) { flex: none; }
+still-app .generation-notifications en-toast::part(close) { min-inline-size: 36px; min-block-size: 36px; padding: 0; border-radius: var(--en-radius-pill, 9999px); background: transparent; }
+still-app .generation-notifications en-toast[duration]:not([duration="0"])::part(close) { display: none; }
+still-app .generation-notifications en-button[slot="actions"] { margin: 0; }
+still-app .notification-review::part(control) { min-height: 36px; padding-inline: 6px; background: transparent; border-color: transparent; text-decoration: underline; text-underline-offset: 3px; }
+still-app .notification-detail { order: -1; flex: 1 0 100%; min-width: 0; margin-bottom: 8px; padding: var(--en-space-4, 16px); background: var(--en-color-surface); color: var(--en-color-text); border: 1px solid var(--en-color-line); border-radius: var(--en-radius-container, 16px); box-shadow: 0 0 6px var(--still-shadow); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+still-app .notification-detail[hidden] { display: none; }
+still-app .notification-detail-actions { display: flex; justify-content: end; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+still-app .notification-detail-actions:empty { display: none; }
+@media(max-width: 1023px) { still-app .has-developer .dock-stack { right: 0; } }
+@media(max-width: 600px) { still-app .dock-stack { padding-inline: 12px; padding-bottom: max(20px, env(safe-area-inset-bottom)); } }
+
+
 
 still-app .pending-thumbnail { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--en-color-surface-subtle); overflow: hidden; }
 still-app .pending-thumbnail en-skeleton { position: absolute; inset: 0; --en-skeleton-size: 100%; opacity: .6; }
@@ -231,3 +267,49 @@ still-app .all-list-rows > li { margin:0; padding:0; }
 still-app .all-list-rows .context-block { margin-left:0; }
 still-app .all-list-rows .result { display:grid; grid-template-columns:100px minmax(0,1fr); gap:20px; align-items:center; padding:20px 0; border-top:1px solid var(--en-color-line); }
 still-app .all-list-rows .result img, still-app .all-list-rows .result-word, still-app .all-list-rows .pending-thumbnail { width:100px; height:100px; object-fit:cover; }
+
+/* Content-first idea selection uses En Reve button focus and activation. */
+still-app .idea-choices { display: grid; gap: 12px; margin-block: 24px; }
+still-app en-button.idea-choice { display: block; width: 100%; }
+still-app en-button.idea-choice::part(control) { width: 100%; text-align: start; justify-content: start; border-radius: 16px; padding: 20px; white-space: normal; }
+still-app en-button.idea-choice::part(label) { width: 100%; }
+still-app en-button.idea-choice[data-selected]::part(control) { border-color: var(--en-color-text); }
+still-app .idea-choice-copy { display: grid; gap: 8px; }
+still-app .idea-choice-name, still-app .idea-choice-selected { font-weight: 600; }
+still-app .idea-choice-category, still-app .idea-choice-parent { color: var(--en-color-text-muted); font-size: 14px; }
+still-app .idea-choice-description { font-weight: 400; line-height: 1.5; }
+still-app .idea-choice-description.prominent { font-family: Georgia, serif; font-size: 22px; }
+
+still-app .audio-waveform .waveform-played { color: var(--en-color-brand); }
+still-app .audio-waveform .waveform-playhead { stroke: var(--en-color-brand); opacity: .8; stroke-width: 1; }
+
+/* Inspection is deliberately more expansive than the regular content canvas. */
+still-rejection-page { display: block; min-width: 0; }
+still-app .rejection-page { max-width: 980px; width: 100%; margin-inline: auto; overflow-wrap: anywhere; }
+still-app .rejection-page h1 { font-size: clamp(2.5rem, 6vw, 5rem); }
+still-app .rejection-page h2 { font-size: 1.65rem; margin-block: 0 1rem; line-height: 1.3; }
+still-app .rejection-page h3 { font-size: 1.15rem; margin-block: 0 1rem; }
+still-app .rejection-page section { margin-block: 3rem; }
+still-app .rejection-page p { font-size: 1rem; line-height: 1.7; max-width: 76ch; margin-block: 0 1.15rem; }
+still-app .rejection-page .rejection-lead { font-size: 1.2rem; }
+still-app .rejection-page blockquote { margin: 1rem 0 1.5rem; padding: clamp(1.25rem, 3vw, 2rem); border: 0; background: var(--en-color-surface-subtle); border-radius: var(--en-radius-container); font-size: 1.1rem; line-height: 1.7; }
+still-app .rejection-quote-label { display: block; font-size: .8rem; font-weight: 600; color: var(--en-color-text-muted); margin-block-end: .75rem; letter-spacing: .04em; text-transform: uppercase; }
+still-app .rejection-section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .75rem 1.5rem; margin-block-end: 1rem; }
+still-app .rejection-section-heading :is(h2, h3) { margin: 0; }
+still-app .rejection-copy { flex: 0 0 auto; }
+still-app .rejection-export { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem 1rem; }
+still-app .rejection-export > span { flex: 1 1 20rem; font-size: .875rem; color: var(--en-color-text-muted); line-height: 1.5; }
+still-app .rejection-page .rejection-copy-status { margin-block: .75rem 0; font-size: .875rem; color: var(--en-color-text-muted); }
+still-app .rejection-copy-status:empty { margin: 0; }
+still-app .rejection-page details { margin-block: .75rem; padding: 1.25rem; border: 1px solid var(--en-color-line); border-radius: var(--en-radius-container); background: var(--en-color-surface); }
+still-app .rejection-page summary { cursor: pointer; font-weight: 600; line-height: 1.5; }
+still-app .rejection-page summary::marker { color: var(--en-color-text-muted); }
+still-app .rejection-evidence-tools { display: flex; justify-content: flex-end; margin-block: 1rem; }
+still-app .rejection-page pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; line-height: 1.65; padding: 1.25rem; margin-block: 1rem 1.5rem; background: var(--en-color-surface-subtle); border-radius: var(--en-radius-control); max-height: 36rem; overflow: auto; tab-size: 2; }
+still-app .rejection-page details pre { margin-block-end: 0; }
+still-app .rejection-page dl { margin: 0 0 1.5rem; padding: .5rem 1.25rem; border: 1px solid var(--en-color-line); border-radius: var(--en-radius-container); background: var(--en-color-surface); }
+still-app .rejection-page dl > div { display: grid; grid-template-columns: minmax(10rem, 1fr) minmax(0, 2fr); gap: 1rem; padding-block: .8rem; line-height: 1.5; }
+still-app .rejection-page dl > div + div { border-top: 1px solid var(--en-color-line); }
+still-app .rejection-page dt { color: var(--en-color-text-muted); font-weight: 400; font-size: .9rem; }
+still-app .rejection-page dd { margin: 0; font-variant-numeric: tabular-nums; }
+@media (max-width: 550px) { still-app .rejection-page dl > div { grid-template-columns: 1fr; gap: .25rem; } }

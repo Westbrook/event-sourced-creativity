@@ -56,7 +56,7 @@ export function refineMenu(selected:Action[],candidates:Action[],first:Record<st
   const use=candidates.find(a=>a.id==='use-in');
   if(target&&use&&good(first['use_use-in'],2))insert(use,'Concrete destination supports a connection',['use_use-in',`target_${target.i}`,`conflict_${target.i}`]);
   if(second.menu_redundant?.type==='noul'&&Number.isFinite(second.menu_redundant.noul)&&second.menu_redundant.noul!>=.8&&second.menu_redundant.noul!<=1){
-    const alternative=candidates.filter(a=>['surprise','compose','new-document','use-in'].includes(a.id)&&!actions.some(x=>x.id===a.id)&&good(first[`use_${a.id}`],2)&&good(second[`distinct_${a.id}`],2.5)).sort((a,b)=>second[`distinct_${b.id}`].score!-second[`distinct_${a.id}`].score!)[0];
+    const alternative=candidates.filter(a=>['add-context','compose','new-document','use-in'].includes(a.id)&&!actions.some(x=>x.id===a.id)&&good(first[`use_${a.id}`],2)&&good(second[`distinct_${a.id}`],2.5)).sort((a,b)=>second[`distinct_${b.id}`].score!-second[`distinct_${a.id}`].score!)[0];
     if(alternative)insert(alternative,'Useful distinct path replaces redundant group member',['menu_redundant',`distinct_${alternative.id}`,`use_${alternative.id}`]);
   }
   return {actions,adjustments,target:target&&actions.some(a=>a.id==='use-in')?target.d:undefined};

@@ -19,13 +19,13 @@ test('lean Still session omits unrelated budgets/governance and content IDs narr
 
 for(const certified of [false,true])test('personal prepared history reuses only certified unchanged snapshots and rebuilds changed/redacted evidence '+certified,async()=>{
  const f=await createSceneCostFixture(),saved=globalThis.fetch,realNow=Date.now;let clock=realNow()+1_000_000;Date.now=()=>clock;f.env.JEV_API_KEY='fake';globalThis.fetch=async()=>Response.json({model:'simulated',answers:{}});
- if(certified)f.sqlite.exec(readFileSync(new URL('../drizzle/0038_scene_source_generations.sql',import.meta.url),'utf8'));
+ if(certified)for(const file of ['0038_scene_source_generations.sql','0044_still_history_cache.sql'])f.sqlite.exec(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'));
  const call=async()=>{clock+=2000;const r=await f.request('/api/still/decision',f.json({view:'document',projectId:f.projectId,documentId:f.documentId,developer:true}));assert.equal(r.status,200,await r.clone().text());return r.json();};
  try{
   const first=await call();assert.equal(first.preparation.source,'fresh');
   const second=await call();assert.equal(second.preparation.source,certified?'snapshot':'fresh');assert.equal(second.preparation.eventsRead,certified?0:first.preparation.eventsRead);
   await appendAuditEvent(f.env,f.streamId,'user','ObjectViewed',{document_id:f.documentId,object_id:'x'});
-  delete f.env.JEV_API_KEY;const third=await call();assert.equal(third.preparation.source,'fresh');assert.equal(third.preparation.eventsRead,first.preparation.eventsRead+1);
+  delete f.env.JEV_API_KEY;const third=await call();assert.equal(third.preparation.source,certified?'incremental':'fresh');assert.equal(third.preparation.eventsRead,certified?1:first.preparation.eventsRead+1);
   const row=f.sqlite.prepare("SELECT private_event_id FROM event_private_payloads WHERE document_id=? AND redacted_at IS NULL LIMIT 1").get(f.documentId);assert.ok(row);
   f.sqlite.prepare("UPDATE event_private_payloads SET private_json='',redacted_at='2026-09-18T00:00:00.000Z' WHERE private_event_id=?").run(row.private_event_id);
   const fourth=await call();assert.equal(fourth.preparation.source,'fresh');

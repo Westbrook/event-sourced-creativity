@@ -66,7 +66,7 @@ test('budget review stays inline, requires explicit consent, and retains the sam
  const {view,calls}=executionFixture();let count=0;let request;
  view.client.generate=async draft=>{count++;request??=draft;assert.equal(draft,request);if(count===1)throw new ApiError(428,{error:'generation_budget_acknowledgement_required',message:'Review budget usage.'});assert.equal(draft.acknowledgements.budgetAcknowledged,true);return{jobId:'approved-job'};};
  await view.generateAgain('job');assert.deepEqual(calls,[]);assert.match(view.renderInlineGeneration(),/Review budget usage/);
- const action=view.generationRecoveryActions()[0];assert.equal(action.label,'I understand the risks');assert.equal(count,1);
+ const action=view.generationRecoveryActions()[0];assert.equal(action.label,'Acknowledge & send');assert.equal(count,1);
  await view.run(()=>view.generate());assert.deepEqual(calls,[['navigate','generation','approved-job']]);
 });
 test('blocked and uncertain requests remain on the old page without buying another attempt',async()=>{
@@ -75,7 +75,7 @@ test('blocked and uncertain requests remain on the old page without buying anoth
  await view.generateAgain('job');assert.equal(view.generationRecoveryActions()[0].disabled,true);assert.match(view.renderInlineGeneration(),/Generation blocked/);
  await view.run(()=>view.generate());assert.equal(count,1);assert.deepEqual(calls,[]);
  view.generationGate=null;view.client.generate=async draft=>{draft.attempted=true;throw new Error('Generation check unconfirmed.');};
- await view.run(()=>view.generate());assert.equal(view.generationRecoveryActions()[0].label,'Check generation');assert.match(view.renderInlineGeneration(),/Generation check unconfirmed/);assert.deepEqual(calls,[]);
+ await view.run(()=>view.generate());assert.equal(view.generationRecoveryActions()[0].label,'Check request');assert.match(view.renderInlineGeneration(),/Generation check unconfirmed/);assert.deepEqual(calls,[]);
 });
 test('a late accepted request does not redirect after the user leaves the original page',async()=>{
  const {view,calls}=executionFixture();let accept;

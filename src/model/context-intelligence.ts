@@ -1,3 +1,4 @@
+import { descriptiveIdeaName } from "./idea-names.ts";
 import { blockTypeDefinition, isBlockKind, suggestedSubtype, type BlockKind } from "./block-types.ts";
 import { ACTION_REFERENCE_ROLES, type ActionReferenceRole } from "./combined-context.ts";
 import type { CreativeBlock, CreativeBlockRelation } from "./events.ts";
@@ -35,6 +36,7 @@ export type ContextResearchSuggestion = {
   distance:number;
   sourceUrl:string|null;
   imageUrl:string|null;
+  fileKind?:string;
   license:string|null;
   attribution:string|null;
 };
@@ -139,11 +141,11 @@ export function contextResearchCandidates(target:CreativeBlock,blocks:readonly C
     }).sort((left,right)=>left.distance-right.distance||right.score-left.score||left.block.position.localeCompare(right.block.position));
 }
 
-export function newLearnedSuggestion(input:{id:string;type:unknown;subtype?:unknown;text:unknown;reason?:unknown;sourceUrl?:unknown;imageUrl?:unknown;license?:unknown;attribution?:unknown},existing:readonly CreativeBlock[]):ContextResearchSuggestion|null{
+export function newLearnedSuggestion(input:{id:string;label?:unknown;type:unknown;subtype?:unknown;text:unknown;reason?:unknown;sourceUrl?:unknown;imageUrl?:unknown;license?:unknown;attribution?:unknown},existing:readonly CreativeBlock[]):ContextResearchSuggestion|null{
   const type=String(input.type??"");if(!isBlockKind(type)||type==="model3d")return null;
   const text=normalize(String(input.text??""));if(!text||existing.some((block)=>researchBlockText(block).toLocaleLowerCase()===text.toLocaleLowerCase()))return null;
   const safeUrl=(value:unknown,host?:string)=>{try{const url=new URL(String(value??""));const local=url.hostname==="localhost"||url.hostname.endsWith(".localhost")||url.hostname==="[::1]"||/^(?:127\.|10\.|192\.168\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.)/u.test(url.hostname);return url.protocol==="https:"&&!url.username&&!url.password&&!local&&(!host||url.hostname===host)?url.toString():null;}catch{return null;}};
   const imageUrl=safeUrl(input.imageUrl,"upload.wikimedia.org"),sourceUrl=safeUrl(input.sourceUrl);
   const candidateSubtype=normalize(String(input.subtype??"")),subtype=blockTypeDefinition(type)?.subtypes.includes(candidateSubtype)?candidateSubtype:suggestedSubtype(type);
-  return{id:input.id,area:"learned",blockId:null,type,subtype,label:blockTypeDefinition(type)?.label??type,text,reason:normalize(String(input.reason??"")).slice(0,320),scope:"web",distance:2,sourceUrl,imageUrl,license:input.license?normalize(String(input.license)):null,attribution:input.attribution?normalize(String(input.attribution)):null};
+  return{id:input.id,area:"learned",blockId:null,type,subtype,label:descriptiveIdeaName(String(input.label??""),text,type),text,reason:normalize(String(input.reason??"")).slice(0,320),scope:"web",distance:2,sourceUrl,imageUrl,license:input.license?normalize(String(input.license)):null,attribution:input.attribution?normalize(String(input.attribution)):null};
 }

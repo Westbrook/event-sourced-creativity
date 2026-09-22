@@ -31,7 +31,8 @@ test('permission eligibility and rendering budget remain deterministic under arb
 test('question bank is expansive, typed, and names each action in its instructions',()=>{
   assert.ok(Object.keys(CREATIVE_QUESTIONS).length>=60);
   const candidates=eligibleActions(foldEvents(events,Infinity,'d','p'),position,abilities), questions=questionsFor(candidates);
-  for(const candidate of candidates) {if(candidate.id==='intent'){assert.equal(questions.use_intent,undefined);continue;}assert.ok(questions[`use_${candidate.id}`].instructions.includes(candidate.label));}
+  for(const candidate of candidates.filter(a=>a.id!=='intent')) assert.ok(questions[`use_${candidate.id}`].instructions.includes(candidate.label));
+  assert.equal(questions.use_intent,undefined,'Setting a goal is a palette utility, not a ranked next step');
   for(const q of Object.values(questions)) assert.ok(['noul','choice','score'].includes(q.type)&&q.instructions.length>15);
 });
 test('history aggregation retains old activity, removes forgotten attention and does not forward linked credentials',()=>{
@@ -61,7 +62,7 @@ test('recovering an accepted queued image resumes its original job without anoth
   operationJournal.saveGeneration('test:personal',{documentId:'d',format:'image',requestKey:key});
   globalThis.fetch=async url=>{
     if(url==='/api/session?profile=still')return json(session);
-    if(url==='/api/document-jobs/still-reconcile')return json({documentId:'d',requestKey:key,status:'found',job:{jobId:'accepted',documentId:'d',requestKey:key,kind:'generate',status:'queued'}});
+    if(url==='/api/document-jobs/still-reconcile')return json({documentId:'d',requestKey:key,status:'found',job:{jobId:'accepted',documentId:'d',requestKey:key,kind:'generate',status:'queued',sourceSurface:'still',attemptCount:0}});
     if(url==='/api/document-jobs'){admissions++;throw new Error('Unexpected new purchase');}
     if(url==='/api/document-jobs/accepted/run'){runs.push(url);return json({});}
     throw new Error(`Unexpected ${url}`);
@@ -147,7 +148,7 @@ test('specific creation suggestions require current intent and explicit format e
   const specific=selectActions(candidates,{...pos,intent:'Create an image'}, {...answers,requested_image:{type:'noul',noul:1}});
   assert.deepEqual(specific.map(a=>a.id),['image']);
   const viewed=questionsFor(candidates,{...position,view:'artifact'},'short_story');
-  assert.equal(viewed.protagonist,undefined);assert.equal(viewed.use_short_story,undefined);
+  assert.equal(viewed.protagonist,undefined,'Unused medium judgments are omitted from the live request');assert.equal(viewed.use_short_story,undefined);assert.ok(viewed.use_context);
   assert.ok(comprehensiveQuestionsFor(candidates,{...position,view:'artifact'},'short_story').protagonist);
 });
 test('choosing and changing formats is local and resets request-specific approval state',()=>{

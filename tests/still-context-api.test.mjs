@@ -9,7 +9,7 @@ import { compositionPlan } from '../src/still/composition.ts';
 
 for(const shared of [false,true])test(`Still context uses real retained authoring in ${shared?'shared':'personal'} scope`,async()=>{
   const f=await createSceneCostFixture(1,'visual',{shared}),saved=globalThis.fetch;
-  f.env.FORMA_ASSISTANT_PROVIDER_USER_IDS=f.owner;f.env.MEDIA=memoryMedia();
+  f.env.MEDIA=memoryMedia(); // Standard Still tools do not require Assistant pilot enrollment.
   let providerCalls=0,loseExecute=false,loseApply=false;
   globalThis.fetch=async(url,init)=>{
     if(String(url).startsWith('/')) {
@@ -26,8 +26,7 @@ for(const shared of [false,true])test(`Still context uses real retained authorin
   try {
     const c=new StillClient();await c.load();c.position={...c.position,projectId:f.projectId,documentId:f.documentId,blockId:'scene-reuse-direction',view:'document'};
     const flow=new ContextWorkflow(c,'decompose');await flow.resume();assert.equal(flow.status,'start');
-    await flow.prepareQuote();assert.equal(providerCalls,0);assert.equal(flow.quote.providerAvailable,true);
-    loseExecute=true;await assert.rejects(flow.analyze(),/lost analysis/);await flow.analyze();assert.equal(providerCalls,1);
+    assert.equal(providerCalls,0);loseExecute=true;await assert.rejects(flow.startAnalysis(),/lost analysis/);await flow.startAnalysis();assert.equal(providerCalls,1);
     assert.equal(flow.candidates.length,1);flow.candidates[0].included=true;await flow.prepareChanges();
     assert.ok(flow.preview.changes.some(c=>c.kind==='create'));loseApply=true;
     await assert.rejects(flow.apply(),/lost authoring/);await flow.apply();assert.equal(flow.status,'applied');

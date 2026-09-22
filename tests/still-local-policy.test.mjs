@@ -14,7 +14,7 @@ const ids=e=>e.selected.map(a=>a.id);
 test('page facts supply useful defaults without filling the toolbar',()=>{
  assert.deepEqual(ids(evaluate(projection,{...pos,view:'projects',projectId:'',documentId:''})),['new-project']);
  assert.deepEqual(ids(evaluate({...projection,blocks:[]},pos)),['add-context','documents']);
- assert.deepEqual(ids(evaluate(projection,{...pos,blockId:'b'})),['edit-block','compose','use-in','create']);
+ assert.deepEqual(ids(evaluate(projection,{...pos,blockId:'b'})),['edit-block','context','compose','use-in']);
  const locked=structuredClone(projection);locked.blocks[0].locked=true;
  assert.deepEqual(ids(evaluate(locked,{...pos,blockId:'b'})),['unlock','context']);
  const excluded=structuredClone(projection);excluded.blocks[0].properties.weight=0;

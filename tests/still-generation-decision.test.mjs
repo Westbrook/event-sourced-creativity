@@ -1,3 +1,4 @@
+import { pageToolbarCandidates, withDocumentReturn } from '../src/still/local-policy.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -15,7 +16,7 @@ const projection={...foldEvents([]),documents:[{id:'doc',projectId:'project'}],b
 test('uncertain jobs offer explicit new work without treating status reads as recovery',()=>{
  const candidates=eligibleActions(projection,position,abilities),ids=candidates.map(a=>a.id);
  assert.ok(ids.includes('generate-again'));assert.ok(ids.includes('refresh-generation'));
- assert.equal(candidates.find(a=>a.id==='generate-again').label,'Generate new presentation');
+ assert.equal(candidates.find(a=>a.id==='generate-again').label,'Retry dangerously');
  assert.equal(position.generation.mayDuplicateCharge,true);
  assert.match(position.generation.refreshEffect,/does not reconcile/);assert.doesNotMatch(JSON.stringify(position.generation),/PRIVATE/);
  assert.equal(selectActions(candidates,position)[0].id,'context');
@@ -39,7 +40,7 @@ test('a strong Jev rating never promotes an uncertain new purchase, and More has
  assert.ok(Object.values(presentToolbar(Object.keys(scores),scores,{more:true})).every(x=>x.variant==='secondary'));
 });
 
-for(const shared of [false,true])test(`server verifies job evidence and changes (${shared?'shared':'personal'})`,async()=>{
+for(const shared of [false,true])for(const view of ['generation','rejection'])test(`server verifies job evidence and changes (${shared?'shared':'personal'}, ${view})`,async()=>{
  const f=await createSceneCostFixture(1,'visual',{shared}),saved=globalThis.fetch;let calls=0;
  try {
   for(const file of ['0038_scene_source_generations.sql','0041_still_decision_cache.sql'])f.sqlite.exec(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'));
@@ -50,7 +51,7 @@ for(const shared of [false,true])test(`server verifies job evidence and changes 
    const a=f.sharing,event=await appendAuditEvent(f.env,f.streamId,`user:${f.owner}`,'ProjectDocumentJobQueued',{job_id:id,document_id:f.documentId,project_id:f.projectId,organization_id:a.organizationId,project_access_id:a.projectAccessId,history_owner_user_id:f.owner,actor_user_id:f.owner,kind:'render_document'});
    f.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,visibility,source_event_id,actor_user_id,created_at) VALUES(?,'job',?,?,?,?,'actor_private',?,?,?)").run(a.projectAccessId,id,a.organizationId,f.projectId,f.owner,event.eventId,f.owner,now);
   }
-  const input={...position,projectId:f.projectId,documentId:f.documentId,outputId:id,developer:true,generation:{status:'completed',acceptance:'confirmed'}};
+  const input={...position,view,projectId:f.projectId,documentId:f.documentId,outputId:id,developer:true,generation:{status:'completed',acceptance:'confirmed'}};
   const response=await f.request('/api/still/decision',f.json(input));assert.equal(response.status,200,await response.clone().text());
   const first=await response.json();const evidence=first.diagnostics.exchange.request.state.generation;
   assert.equal(evidence.status,'failed');assert.equal(evidence.acceptance,'unknown');assert.doesNotMatch(JSON.stringify(evidence),/PRIVATE/);assert.equal(first.policy,POLICY_VERSION);
@@ -70,9 +71,10 @@ test('generation pages render the shared ranked toolbar and More alternatives',a
  const method=app.members.find(n=>n.name?.getText(source)==='renderDock');
  const code=ts.transpileModule(`function renderDock()${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
  const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
- const render=new Function('html','nothing','generationActive','generationStatus','stillResults','nextToolbarActions','presentToolbar',code+';return renderDock;')(html,'',generationActive,generationStatus,stillResults,nextToolbarActions,presentToolbar);
+ const render=new Function('html','nothing','generationActive','generationStatus','stillResults','nextToolbarActions','presentToolbar','pageToolbarCandidates','withDocumentReturn',code+';return renderDock;')(html,'',generationActive,generationStatus,stillResults,nextToolbarActions,presentToolbar,pageToolbarCandidates,withDocumentReturn);
  const candidates=eligibleActions(projection,position,abilities);
  const view={client:{projection,position,session:{policy:{accepted:true}},jobs:[failed],events:[]},pageActionLimit:5,toolbarLimit:5,firstDockLimit:5,currentRouteProblem:()=>false,isInlineGeneration:()=>false,canAcknowledgeSafety:()=>false,candidates:()=>candidates,suggestions:selectActions(candidates,position),rankedActions:candidates,toolbarStatus:()=>'',toolbarSuggestions:xs=>xs.map(x=>`<button>${x.label}</button>`),button:label=>`<button>${label}</button>`,paletteButton:()=>'<button>Palette</button>',selectedGeneration:()=>failed,renderGenerationStatusDock:()=>assert.fail('Normal job page must use shared actions')};
+ view.decisionPosition=()=>position;view.preferredSuggestions=()=>view.suggestions;view.listKind=()=>undefined;view.listOptions=()=>[];
  const first=render.call(view);assert.match(first,/More/);assert.doesNotMatch(first,/Palette/);assert.ok((first.match(/<button>/g)??[]).length<=5);
  view.moreOpen=true;const more=render.call(view);assert.match(more,/Back/);assert.match(more,/Palette/);assert.ok((more.match(/<button>/g)??[]).length<=5);
 });
@@ -81,12 +83,13 @@ test('generation evidence in the request snapshot does not make the response sta
  const {default:ts}=await import('typescript');
  const {evaluateActions,POLICY_VERSION}=await import('../src/still/decisions.ts');
  const {responseDisposition}=await import('../src/still/diagnostics.ts');
+ const {matchingIdeaAssessment,cachedIdeaAssessment}=await import('../src/still/idea-assessment.ts');
  const source=ts.createSourceFile('app.ts',readFileSync(new URL('../src/still/app.ts',import.meta.url),'utf8'),ts.ScriptTarget.Latest,true);
  const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='StillApp');
  const method=app.members.find(n=>n.name?.getText(source)==='decide');
  const code=ts.transpileModule(`function decide(bypass=false)${method.body.getText(source)}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
  let scheduled;const document={activeElement:null},window={setTimeout:fn=>{scheduled=fn;return 0;}};
- const run=new Function('selectActions','evaluateActions','presentActions','responseDisposition','window','document','ApiError',code+';return decide;')(selectActions,evaluateActions,()=>({}),responseDisposition,window,document,Error);
+ const run=new Function('selectActions','evaluateActions','presentActions','responseDisposition','window','document','ApiError','matchingIdeaAssessment','cachedIdeaAssessment','POLICY_VERSION',code+';return decide;')(selectActions,evaluateActions,()=>({}),responseDisposition,window,document,Error,matchingIdeaAssessment,cachedIdeaAssessment,POLICY_VERSION);
  const candidates=eligibleActions(projection,position,abilities),received=[];
  const view={decisionTicket:0,client:{projection,position:{...position,generation:undefined},head:4,session:{policy:{accepted:true}}},currentRouteProblem:()=>false,isInlineGeneration:()=>false,canAcknowledgeSafety:()=>false,selectedGeneration:()=>failed,decisionPosition:()=>position,candidates:()=>candidates,changed(){},interactionScope:()=>'',diagnosticScope:()=>'',querySelector:()=>null,decisionBody:()=>position,requestDecision:async()=>({source:'jev',head:4,policy:POLICY_VERSION,actions:[{id:'context'}]}),recordDecision:(_r,disposition)=>received.push(disposition)};
  run.call(view);await scheduled();assert.deepEqual(received,['Applied']);assert.equal(view.decisionSource,'jev');

@@ -6,7 +6,7 @@ import type { ConsequentialPreview } from '../../worker/consequential-consent.ts
 import type { AuthoringPreview } from '../../worker/authoring-commits.ts';
 
 export type ContextQuote = ConsequentialPreview & { providerAvailable: boolean; canExecute?: boolean };
-export type IdeaCandidate = { selection: ContextProposalSelection; proposal?: DecompositionProposal; research?: ContextResearchSuggestion; included: boolean; text: string };
+export type IdeaCandidate = { selection: ContextProposalSelection; proposal?: DecompositionProposal; research?: ContextResearchSuggestion; included: boolean; text: string; label?: string };
 /** Independent orchestration of Forma's retained execution and authoring protocols. */
 export class ContextWorkflow {
   readonly target: { projectId: string; documentId: string; blockId: string; canvasId: null };
@@ -17,7 +17,7 @@ export class ContextWorkflow {
   publicQuery = '';
   status = 'start';
   stale = false;
-  constructor(readonly client: StillClient, readonly kind: 'decompose' | 'research') {
+  constructor(readonly client: StillClient, readonly kind: 'decompose' | 'research', readonly purpose: 'research'|'references' = 'research') {
     const { projectId, documentId, blockId } = client.position;
     this.target = { projectId, documentId, blockId, canvasId: null }; this.scopeKey = client.scopeKey;
   }
@@ -35,21 +35,30 @@ export class ContextWorkflow {
     if (result.preview) { this.validate(result.preview); this.preview = result.preview; this.status = result.status; this.stale = !!result.stale; }
     if (result.status === 'applied') { await this.client.refresh(); this.status = 'applied'; }
   }
+  /** A chosen Still action prepares its retained request and runs it without a cost-review screen. */
+  async startAnalysis(publicQuery = this.publicQuery) {
+    if (!this.quote || this.quote.status === 'quoted' && this.quote.publicQuery !== publicQuery.trim()) {
+      this.publicQuery = publicQuery.trim();
+      await this.prepareQuote();
+    }
+    // An uncertain or completed attempt is retrieved, never replaced by a new execution.
+    await this.analyze();
+  }
   async prepareQuote() {
     const check = await this.guard();
     if (this.quote && this.quote.status !== 'quoted') throw new Error('Check the original analysis before starting another.');
-    const result = await api<{ quote: ContextQuote }>(`/api/context/${this.kind}`, { ...this.target, action: 'quote', publicQuery: this.publicQuery.trim() }); check();
+    const result = await api<{ quote: ContextQuote }>(`/api/context/${this.kind}`, { ...this.target, analysisProfile:'still-ideas-v1', purpose:this.purpose, action: 'quote', publicQuery: this.publicQuery.trim() }); check();
     this.validate(result.quote); this.quote = result.quote; this.publicQuery = result.quote.publicQuery ?? ''; this.status = 'quote';
   }
   async analyze() {
     const check = await this.guard(), quote = this.quote;
-    if (!quote) throw new Error('Review a current cost first.');
+    if (!quote) throw new Error('Prepare the analysis first.');
     const next = contextConsentAction(quote.status, quote.providerAvailable, quote.canExecute ?? quote.providerAvailable);
     if (next.disabled) throw new Error('Analysis is unavailable for this account.');
     // Mark uncertainty before dispatch, so interrupted replies can only be retrieved.
     if (next.action === 'execute') this.quote = { ...quote, status: 'uncertain' };
     try {
-      const result = await api<{ plan?: DecompositionPlan; report?: ContextResearchReport; executionId: string; bindingHash: string; status?: string; quote?: ContextQuote }>(`/api/context/${this.kind}`, { ...this.target, publicQuery: this.publicQuery, action: next.action, executionId: quote.executionId, approvedBindingHash: quote.bindingHash }); check();
+      const result = await api<{ plan?: DecompositionPlan; report?: ContextResearchReport; executionId: string; bindingHash: string; status?: string; quote?: ContextQuote }>(`/api/context/${this.kind}`, { ...this.target, analysisProfile:'still-ideas-v1', purpose:this.purpose, publicQuery: this.publicQuery, action: next.action, executionId: quote.executionId, approvedBindingHash: quote.bindingHash }); check();
       if (!result.plan && !result.report) { this.quote = { ...quote, status: result.status ?? 'uncertain' }; throw new Error('The original analysis is still pending. Check it again shortly.'); }
       let retained = quote;
       if (result.quote) {
@@ -58,7 +67,7 @@ export class ContextWorkflow {
         retained = result.quote;
       }
       if (result.executionId !== retained.executionId || result.bindingHash !== retained.bindingHash || result.plan && result.plan.sourceBlockId !== this.target.blockId || result.report && result.report.blockId !== this.target.blockId) throw new Error('The analysis identity could not be verified.');
-      if (!this.candidates.length) this.candidates = [...(result.plan ? [...result.plan.proposals,...result.plan.addenda].map(proposal => ({ proposal, text: proposal.text, id: proposal.id })) : []), ...(result.report ? [...result.report.inferred,...result.report.related,...result.report.learned].map(research => ({ research, text: research.text, id: research.id })) : [])].map(item => ({ ...item, selection: { executionId: result.executionId, bindingHash: result.bindingHash, proposalId: item.id }, included: false }));
+      if (!this.candidates.length) this.candidates = [...(result.plan ? [...result.plan.proposals,...result.plan.addenda].map(proposal => ({ proposal, label: proposal.label, text: proposal.text, id: proposal.id })) : []), ...(result.report ? [...result.report.inferred,...result.report.related,...result.report.learned].map(research => ({ research, label: research.label, text: research.text, id: research.id })) : [])].map(item => ({ ...item, selection: { executionId: result.executionId, bindingHash: result.bindingHash, proposalId: item.id }, included: false }));
       this.quote = { ...retained, status: 'completed' }; this.status = 'candidates';
     } catch (error) {
       const body = error instanceof ApiError ? error.body : {};
@@ -68,7 +77,16 @@ export class ContextWorkflow {
   }
   async prepareChanges() {
     const check = await this.guard();
-    const selections = this.candidates.filter(c => c.included && !(c.research?.type === 'reference' && !c.research.blockId)).map(c => ({ ...c.selection, ...(c.proposal && c.text !== c.proposal.text ? { edit: { text: c.text } } : {}) }));
+    const selections = this.candidates.filter(c => c.included && !(c.research?.type === 'reference' && !c.research.blockId)).map(c => {
+      const original = c.proposal ?? c.research;
+      const edit: NonNullable<ContextProposalSelection['edit']> = {};
+      if (c.proposal && c.text !== c.proposal.text) edit.text = c.text;
+      if (c.label !== undefined && c.label !== original?.label && (c.proposal || !c.research?.blockId)) {
+        if (!c.label.trim() || c.label.trim().length > 160) throw new Error('Give each selected idea a name of 1–160 characters.');
+        edit.label = c.label.trim();
+      }
+      return { ...c.selection, ...(Object.keys(edit).length ? { edit } : {}) };
+    });
     if (!selections.length) throw new Error('Choose at least one idea to keep.');
     const result = await api<{ preview: AuthoringPreview }>('/api/context/apply', { ...this.target, action: 'preview', selections }); check();
     this.validate(result.preview); this.preview = result.preview; this.status = 'review'; this.stale = false;

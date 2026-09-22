@@ -19,16 +19,16 @@ test('batched assessment and optional evidence have paired, sanitized traces; en
   };
   const request=async(developer=true)=>{clock+=2000;bodies=[];const r=await f.request('/api/still/decision',f.json({projectId:f.projectId,documentId:f.documentId,blockId:'scene-reuse-direction',view:'document',developer,cacheBypass:true}));assert.equal(r.status,200,await r.clone().text());return r.json();};
   try{
-    const counts=f.counts(),good=await request();assert.equal(bodies.length,2);assert.equal(good.diagnostics.passes.length,2);
+    const counts=f.counts(),good=await request();assert.equal(bodies.length,3);assert.equal(good.diagnostics.passes.length,3);
     assert.equal(bodies[0].state.compositions.length,4);assert.ok(good.targets['use-in']);
     assert.deepEqual(good.rankedActions.map(a=>a.id),good.diagnostics.actions.filter(a=>a.rank).sort((a,b)=>a.rank-b.rank).map(a=>a.action.id));
     assert.ok(good.rankedActions.length>good.actions.length);
     for(const a of good.rankedActions)assert.ok(good.presentation[a.id].usefulProbability>=0&&good.presentation[a.id].usefulProbability<=1);
-    for(let i=0;i<2;i++)assert.deepEqual(good.diagnostics.passes[i].exchange.request,bodies[i]);
+    for(let i=0;i<3;i++)assert.deepEqual(good.diagnostics.passes[i].exchange.request,bodies[i]);
     assert.equal(good.diagnostics.passes[1].model,'simulated-enrichment');assert.ok(good.diagnostics.passes[1].questions.some(q=>q.id==='target_0'));
     assert.ok(!good.diagnostics.questions.some(q=>q.id==='target_0'));assert.doesNotMatch(JSON.stringify(good),/fixture-secret-key|DO_NOT_FORWARD/);
     const ordinary=await request(false);assert.equal(ordinary.diagnostics,undefined);assert.deepEqual(ordinary.actions,good.actions);assert.deepEqual(ordinary.rankedActions,good.rankedActions);
-    failSecond=true;const failed=await request();assert.equal(bodies.length,2);assert.deepEqual(failed.actions,good.actions);assert.equal(failed.targets,undefined);
+    failSecond=true;const failed=await request();assert.equal(bodies.length,3);assert.deepEqual(failed.actions,good.actions);assert.equal(failed.targets,undefined);
     assert.equal(failed.cache.stored,false);assert.equal(failed.diagnostics.passes[1].status,'failed');assert.equal(failed.diagnostics.passes[1].model,undefined);assert.ok(failed.diagnostics.passes[1].exchange);assert.equal(failed.diagnostics.passes[1].exchange.responseStatus,undefined);
     assert.deepEqual(f.counts(),counts);
   }finally{globalThis.fetch=fetch;Date.now=now;await f.drainBackground();f.close();}

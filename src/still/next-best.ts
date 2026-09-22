@@ -1,3 +1,4 @@
+import { isIdeaPage, DOCUMENT_RETURN_REASON } from './local-policy.ts';
 import type { Action, Question, Position } from './decisions.ts';
 import type { EmphasisEvidence } from './presentation.ts';
 
@@ -5,10 +6,12 @@ export const NEXT_BEST_POLICY={confidence:.6,probability:.5,gap:.15,scoreConfide
 export type NextBestAnswer={status:string;choice?:string;confidence?:number;probabilities?:Record<string,number>};
 export type NextBestAssessment={enabled:boolean;accepted:boolean;reason:string;choice?:string;confidence?:number;probability?:number;runnerUp?:string;gap?:number;usefulProbability?:number;usefulnessConfidence?:number};
 /** Product affordances, not inferred user intent or a ranking of content rows. */
-export function toolbarDecisionContext(position:Pick<Position,'view'|'palette'>,candidates:Pick<Action,'id'>[]){
+export function toolbarDecisionContext(position:Pick<Position,'view'|'palette'> & Partial<Pick<Position,'blockId'>>,candidates:Pick<Action,'id'>[]){
+  const idea=isIdeaPage({...position,blockId:position.blockId??''});
   const listing=position.view==='projects'?'projects':position.view==='documents'?'documents':null;
   const preferred=listing==='projects'?'new-project':listing==='documents'?'new-document':null;
   return {
+    ...(idea?{focus:'One context block, not the whole document',navigation:{action:'context',reason:DOCUMENT_RETURN_REASON},continuation:'After adding or editing an idea, View document lets the user review the assembled context and then Choose output. This is a useful available path, not evidence of an intent to generate.',maintenance:'Renaming the parent document belongs on the document page or in the command palette, not among focused-idea toolbar suggestions.'}:{}),
     surface:position.palette?'command palette':position.view==='choose-format'?'output toolbar':'action toolbar',
     contentNavigation:listing?`Existing ${listing} are opened directly from the page's content listing. Content navigation and listing order are outside this toolbar recommendation.`:'Content items are directly interactive; the toolbar supplements them.',
     defaultAction:!position.palette&&preferred&&candidates.some(a=>a.id===preferred)?preferred:null,

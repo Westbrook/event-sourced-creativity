@@ -1,13 +1,20 @@
 import { ACTIONS } from './decisions.ts';
 /** Immediate, factual help remains available if optional wording enrichment is slow. */
 export const ACTION_HELP:Record<string,string>={
+ 'inspect-rejection':'Review the original inputs, rejection details, and recorded usage before deciding what to change.',
+ 'view-output':'Return to this attempt’s output or status without sending another request.',
+ 'generate-again':'Start a separate paid attempt. Unchanged inputs may fail again and still incur costs.',
  'new-project':'Start a project to collect related ideas and documents.',
  'new-document':'Create a document in this project. Add ideas and make outputs from them.',
  'add-context':'Add one idea, detail, constraint, or reference to this document.',
+ 'reuse':'Copy an existing idea from another document into this document.',
+ 'clarify':'Add a direction idea describing what matters for this document.',
+ 'intent':'Tell Still your next goal to guide its action suggestions.',
  'edit-block':'Change this idea without rewriting the rest of the document.',
  'split-context':'Break this idea into smaller pieces you can edit and reuse separately.',
- 'research-context':'Research this idea and review information to add as context.',
- 'find-references':'Find reference images for this idea and review them before adding.',
+ 'research-context':'Find sourced details that make this idea more precise, then review what to add.',
+ 'find-references':'Find files that clarify this idea, then review their sources before adding.',
+ 'supply-reference':'Attach a file you already have to make this idea more precise.',
  'use-in':'Choose another document where this idea could be useful.',
  compose:'Combine smaller ideas while keeping their parts available to edit.',
  create:'Choose an output to make from the current document and its active context.',
@@ -26,11 +33,73 @@ export const ACTION_HELP:Record<string,string>={
  'ui:palette':'Search all available actions. Open this anytime with Command or Control + K.',
  'ui:previous-page':'Show the previous set of items.', 'ui:next-page':'Show the next set of items.',
 };
-export function actionHelp(id:string,label:string){return ACTION_HELP[id]??({'Back':'Return to the previous step.','More':'See the next suggested actions.','Other outputs':'Choose another available output format.','More results':'Show the next set of items.','Previous results':'Show the previous set of items.','New project':ACTION_HELP['new-project'],'Document':ACTION_HELP.document,'Results':ACTION_HELP.results,'Palette':ACTION_HELP['ui:palette'],'Download':'Download this result to your device.'} as Record<string,string>)[label]??ACTIONS.find(a=>a.id===id)?.description??`Use “${label}” for the next step.`;}
+/** Workflow commands have known outcomes. Keep their help immediate and tied to the actual step. */
+export function workflowHelp(mode:string,id:string,label:string,unconfirmedSave=false):string|undefined{
+ if(!mode||mode==='generate')return;
+ if(label==='Check save')return 'Check whether the earlier save completed before continuing.';
+ if(label==='More actions')return 'See the remaining actions for this step.';
+ const save:Record<string,string>={
+  'new-project':'Create this project. Add documents when you’re ready.',
+  'new-document':'Create this document in the current project and open it.',
+  'add-context':'Add this idea to the document so you can use it in your work.',
+  'edit-block':'Save changes to this idea and return to your content.',
+  rename:'Save the document’s new name.',
+  'edit-artifact':'Save your edits to this result.',
+ };
+ if(label==='Save')return save[mode]??(id.startsWith('workflow:source-refine:')?'Save the shared direction after splitting this idea.':undefined);
+ if(label==='Back'){
+  if(unconfirmedSave)return 'Return to your content. The earlier save is still unconfirmed.';
+  if(mode==='use-in'&&id.startsWith('workflow:review:'))return 'Return to destination selection without applying this change.';
+  if(id.startsWith('workflow:intake:'))return 'Return to the suggestions without adding this reference.';
+  if(id.startsWith('workflow:compose-behavior:')||id.startsWith('workflow:compose-review:'))return 'Return to choosing the ideas in this group.';
+  return ({
+   'new-project':'Return without creating a new project.',
+   'new-document':'Return without creating a new document.',
+   'add-context':'Return without adding a new idea.',
+   'edit-block':'Return without saving your edits to this idea.',
+   rename:'Return without changing the document’s name.',
+   'edit-artifact':'Return without saving your edits to this result.',
+   intent:'Return without changing your next goal.',
+   reuse:'Return without copying an idea.',
+   workspaces:'Keep the current workspace and return.',
+  } as Record<string,string>)[mode]??'Close this workflow and return to your content.';
+ }
+ const help:Record<string,string>={
+  'Suggest actions':'Use this goal to update Still’s suggested actions.',
+  'Open':'Switch to the selected workspace.',
+  'Copy idea':'Save an independent copy of this idea in the selected document.',
+  'Link idea':'Use this existing idea in the selected destination.',
+  'Save group':'Save this group and its chosen relationships.',
+  'Keep original':'Keep the original shared direction and finish.',
+  'Edit shared direction':'Refine the shared direction now that the smaller ideas are saved.',
+  'Explore again':'Start another exploration of this idea.',
+  'Split idea':ACTION_HELP['split-context'],
+  'Research idea':ACTION_HELP['research-context'],
+  'Find reference':ACTION_HELP['find-references'],
+  'Check analysis':'Check the status of the existing analysis.',
+  'Add reference':'Review this reference before adding it to your document.',
+  'Apply':'Save the reviewed changes to your document.',
+  'Change selection':'Return to the suggestions to change what you include.',
+  'Close':'Close this workflow and return to your content.',
+  'Review':'Review how this idea will be used in the selected destination before saving.',
+  'Continue':'Choose how the ideas in this group relate to each other.',
+  'Preview':'Review the group and its relationships before saving.',
+  'Add':'Include the selected idea in this group.',
+  'Remove last':'Remove the last idea from this group’s selection.',
+  'Select':'Include this suggestion in the changes you will review.',
+  'Deselect':'Leave this suggestion out of the changes you will review.',
+  'Previous':'View the previous suggestion.',
+  'Next':mode==='use-in'?'Choose where to use the selected idea.':'View the next suggestion.',
+ };
+ if(label==='Add reference'&&id.startsWith('workflow:intake:'))return 'Save this reference with its source and credit.';
+ if(label.startsWith('Review ('))return 'Review your selected suggestions before applying them.';
+ return help[label];
+}
+export function actionHelp(id:string,label:string){if(label.startsWith('Back to '))return `Return to the ${label.slice(8)} without starting a generation.`;return ACTION_HELP[id]??({'Back':'Return to the previous view.','Save':'Save your changes.','Check save':'Check whether the earlier save completed before continuing.','More actions':'See the next suggested actions.','Other outputs':'Choose another available output format.','Next page':'Show the next set of items.','Previous page':'Show the previous set of items.','New project':ACTION_HELP['new-project'],'View document':ACTION_HELP.document,'View results':ACTION_HELP.results,'Find action':ACTION_HELP['ui:palette'],'Download':'Download this result to your device.','Estimate cost':'Get a cost estimate before deciding whether to generate.','Check request':'Look for the existing request; an existing queued job may resume.','Review new request':'Prepare a separate request to review before generating.','Review ideas':'Review the ideas contributing to this request.','Acknowledge & send':'Acknowledge the displayed review and send the request. Usage may be charged.','Previous slide':'View the previous slide.','Next slide':'View the next slide.','Previous frame':'View the previous storyboard frame.','Next frame':'View the next storyboard frame.'} as Record<string,string>)[label]??ACTION_HELP[ACTIONS.find(a=>a.label===label)?.id??'']??ACTIONS.find(a=>a.id===id)?.description??`Choose “${label}”.`;}
 export function readOnboardingFlag(url:string,storage:Pick<Storage,'getItem'>){const q=new URL(url).searchParams;return q.has('onboarding')||q.has('onbaording')||storage.getItem('still:flag:onboarding')==='true';}
 
 export const ONBOARDING_MODEL='gpt-5.6-luna' as const;
-export const ONBOARDING_VERSION=2;
+export const ONBOARDING_VERSION=7;
 export type OnboardingContext={
  surface?:'main'|'more'|'formats'|'workflow';
  basis?:Record<string,'next-best'|'model-ranked'|'page-default'|'local'|'alternative'>;
@@ -64,8 +133,9 @@ export function onboardingContext(raw:unknown,actions:string[]):OnboardingContex
  if(Array.isArray(r.recentActions))out.recentActions=r.recentActions.slice(-12).filter((id):id is string=>typeof id==='string'&&(ACTIONS.some(a=>a.id===id||`completed:${a.id}`===id)||['ui:more','ui:palette'].includes(id))).slice(-4);
  return out;
 }
-export type OnboardingResult={source:'local'|'model';reason?:string;tips:Record<string,string>;model?:string;elapsedMs?:number;requestElapsedMs?:number;cache?:import('./decision-cache.ts').DecisionCacheInfo};
-export const ONBOARDING_VIEWS=['projects','documents','document','block','results','result','generation','choose-format','edit','create','other'];
+export type OnboardingTiming={authorizationMs:number;preparationMs:number;cacheReadMs:number;reservationMs:number;providerMs:number;settlementMs:number;cacheWriteMs:number;serverMs:number;cacheSource:'none'|'memory'|'durable'|'shared'};
+export type OnboardingResult={source:'local'|'model';reason?:string;tips:Record<string,string>;model?:string;elapsedMs?:number;requestElapsedMs?:number;timing?:OnboardingTiming;cache?:import('./decision-cache.ts').DecisionCacheInfo};
+export const ONBOARDING_VIEWS=['projects','documents','document','block','results','result','generation','rejection','choose-format','edit','create','other'];
 export function onboardingInput(raw:unknown):OnboardingInput|null{
  if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
  const r=raw as Record<string,unknown>;

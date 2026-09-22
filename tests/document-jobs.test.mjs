@@ -129,7 +129,7 @@ test("recovers an expired running job before advancing queued document renders",
   assert.match(jobsApi,/if \(!rowIsStale\(running\)\) return;/);
   assert.match(jobsApi,/const recovered = await runDocumentJob\(env, owner, running\.job_id\);/);
   assert.match(jobsApi,/if \(recoveryBlocker&&!requiresForegroundDocumentExecution\(recoveryBlocker\)\) context\?\.waitUntil\(driveDocumentQueue\(env, user\)\);/);
-  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(running\)\)\{await failStaleJob\(env,owner,running,unsafePaidRecovery\(running\)\?\?undefined\);continue;\}/);
+  assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(running\)\)\{await reconcileStaleForegroundJob\(env,owner,running\);continue;\}/);
   assert.match(jobsApi,/if\(requiresForegroundDocumentExecution\(next\)\)return;/);
   assert.match(jobsApi,/if \(context&&!requiresForegroundDocumentExecution\(existing\)\)/);
   assert.match(jobsApi,/stage: "queue-recovery"/);
@@ -244,7 +244,7 @@ test("atomically hands both paid-render reservations to the recovered provider a
   assert.match(jobsApi,/const claims=await env\.DB\.batch\(claimStatements\);/u);
   assert.match(jobsApi,/claims\.length!==claimStatements\.length/u,"the complete atomic acknowledgement is required");
   assert.match(jobsApi,/claimed = claims\[sceneClaimPrefix\.length\];/u,"the claim result accounts for the preceding Scene assertions");
-  assert.match(jobsApi,/outputAdmissionAssertions=\[\.\.\.outputProof\.assertions,\.\.\.\(jobAuthority\?\[jobAuthority\]:\[\]\)\]/u,
+  assert.match(jobsApi,/outputAdmissionAssertions=\[\.\.\.\(sponsorExecution\?\.assertions\?\?\[\]\),\.\.\.outputProof\.assertions,\.\.\.\(jobAuthority\?\[jobAuthority\]:\[\]\)\]/u,
     "the retained admission assertions contain both current source proof and exact actor-private project-job custody");
   assert.match(jobsApi,/const jobAuthority=documentJobProjectAuthority\(user,row\.document_id,jobId\)/u);
   assert.match(jobsApi,/const freshOutput=Boolean\(outputBinding&&row\.status==="queued"&&row\.attempt_count===0\)/u,
@@ -444,7 +444,7 @@ test("settles generation capacity by reservation identity and repairs orphaned f
   assert.match(jobsApi,/releaseBudgetReservationsForCorrelation\(env,user,row\.correlation_id/);
   assert.doesNotMatch(jobsApi,/releaseBudget\(env, user\.userId, reservedTokens\)/);
   assert.doesNotMatch(eventsApi,/releaseBudget\(env,ownerId,reserved\)/);
-  assert.match(eventsApi,/const billingOwnerId=auth\.user\.billingUserId\?\?actorUserId/);
+  assert.match(eventsApi,/const ordinaryBillingOwnerId=auth\.user\.billingUserId\?\?actorUserId/);
   assert.match(eventsApi,/settleBudget\(env,billingOwnerId,reservation\.reservationId/);
   assert.match(eventsApi,/const plannerCharge=\(failedBillableTokens>0\|\|failedActualCost>0\)\?makeEvent/);
   assert.match(actions,/aria-describedby=\$\{previewFanBudgetBlocked&&budgetNoteVisible\?this\.#budgetNoteId:nothing\}/);

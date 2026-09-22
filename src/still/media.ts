@@ -1,4 +1,4 @@
-import { html } from 'lit';
+import { html, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 import type { DocumentArtifact } from '../model/document-artifacts.ts';
 
@@ -24,6 +24,8 @@ export function captureMediaSize(event:Event) {
   const height=element.tagName==='IMG'?(element as HTMLImageElement).naturalHeight:(element as HTMLVideoElement).videoHeight;
   if(dimension(width)&&dimension(height)){
     element.width=width;element.height=height;element.dataset.sizeSource='intrinsic';
+    const frame=element.closest<HTMLElement>('.image-frame');
+    if(frame){frame.style.setProperty('--image-ratio',String(width/height));frame.classList.add('known-size');}
   }
 }
 export function stillImage(src:string,alt:string,metadata?:unknown,options:{className?:string;loading?:'lazy'|'eager'}={}) {
@@ -34,4 +36,14 @@ export function stillImage(src:string,alt:string,metadata?:unknown,options:{clas
 export function stillVideo(src:string,artifact:DocumentArtifact) {
   const size=videoSize(artifact,src);
   return keyed(src,html`<video controls playsinline src=${src} width=${size.width} height=${size.height} data-size-source=${size.source} preload="metadata" @loadedmetadata=${captureMediaSize}></video>`);
+}
+
+/** Pending and delivered images share a single frame and responsive geometry. */
+export function stillImageStage(title:string,metadata:unknown,src?:string){
+ const size=mediaSize(metadata),known=size.source==='metadata';
+ return html`<section class="generation-stage image-stage"><span class="eyebrow">Image</span><h1>${title}</h1>${known?html`<p class="caption">${size.width} × ${size.height}</p>`:nothing}
+   <div class=${`image-frame ${known?'known-size':!src?'pending-size':''}`} style=${known?`--image-ratio:${size.width/size.height}`:nothing} aria-label=${src?nothing:'Image generation in progress'}>
+     ${src?stillImage(src,title,metadata,{loading:'eager'}):html`<en-skeleton shape="rectangle"></en-skeleton>`}
+   </div>
+ </section>`;
 }

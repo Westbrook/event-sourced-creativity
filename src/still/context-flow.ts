@@ -1,3 +1,6 @@
+import { descriptiveIdeaName, genericIdeaName, ideaExcerpt } from '../model/idea-names.ts';
+import { ideaActionTargets } from './idea-actions.ts';
+import type { WorkflowAction, WorkflowToolbar } from './workflow-toolbar.ts';
 import { stillImage } from './media.ts';
 import './form-elements.js';
 import { LitElement, html, nothing } from 'lit';
@@ -6,16 +9,22 @@ import { ApiError, StillClient } from './client.ts';
 import { ContextWorkflow, type IdeaCandidate } from './context-workflow.ts';
 import { compositionPlan, editableIdea } from './composition.ts';
 import { isContextCompositionRelation } from '../model/combined-context.ts';
-import { acquiredReferenceEvents } from './reference.ts';
+import { acquiredReferenceEvents, suppliedReferenceEvents } from './reference.ts';
 import { documentSource } from './context.ts';
 import type { EventInput } from '../model/events.ts';
 
 const value = (v: unknown) => typeof v === 'string' ? v : '';
 const sourceURL = (v: unknown) => { try { const u = new URL(String(v)); return u.protocol === 'https:' && !u.username && !u.password ? u.href : ''; } catch { return ''; } };
 export class StillContextFlow extends LitElement {
-  static properties = { client: { attribute: false }, action: { type: String } };
+  static properties = { client: { attribute: false }, action: { type: String }, suggestedTarget: { type: String } };
   declare client: StillClient;
   action = '';
+  suggestedTarget = '';
+  private selectedIdea = '';
+  private ideaSearch = '';
+  private nameDraft = '';
+  private renamePlan: EventInput[] | null = null;
+  private file:File|null = null;
   private flow!: ContextWorkflow;
   private busy = false;
   private error = '';
@@ -45,25 +54,67 @@ export class StillContextFlow extends LitElement {
   protected firstUpdated() {
     this.scopeKey = this.client.scopeKey; this.targetId = this.client.position.blockId;
     this.revision = documentSource(this.client.projection,this.client.position.documentId).revision;
+    if (!this.targetId && this.action!=='compose') {
+      const targets=ideaActionTargets(this.client.projection,this.client.position,this.action);
+      this.selectedIdea=targets.some(b=>b.id===this.suggestedTarget)?this.suggestedTarget:targets.length===1?targets[0].id:'';
+      this.phase='select-idea';this.requestUpdate();return;
+    }
+    if(this.action==='supply-reference'){this.phase='supply';this.requestUpdate();return;}
     if (this.action === 'compose') {
       const block = this.client.projection.blocks.find(b => b.id === this.targetId);
       this.application = value((block?.properties.context_group as Record<string,unknown>)?.application) || 'isolate';
       this.members = this.client.projection.blockRelations.filter(r=>!r.removed && r.fromBlockId===this.targetId && isContextCompositionRelation(r.kind)).sort((a,b)=>Number(a.properties.member_order??0)-Number(b.properties.member_order??0)).map(r=>r.toBlockId);
       this.compositionBaseline=JSON.stringify([this.members,this.application]);this.phase = 'compose'; this.requestUpdate();
     } else {
-      this.flow = new ContextWorkflow(this.client,this.action==='split-context'?'decompose':'research');
+      this.flow = new ContextWorkflow(this.client,this.action==='split-context'?'decompose':'research',this.action==='find-references'?'references':'research');
+      if(this.flow.kind==='research'){const block=this.client.projection.blocks.find(b=>b.id===this.targetId);this.query=String(block?.properties.text??block?.handle??'').slice(0,140);}
       void this.run(async()=>{await this.flow.resume();this.phase=this.flow.preview?'review':'start'; if(this.flow.status==='applied') this.phase='completed';});
     }
   }
   private focusKey = '';
-  protected updated() { const key=`${this.phase}:${this.index}`; if(key===this.focusKey)return;this.focusKey=key; const heading=this.querySelector('h1') as HTMLElement|null;if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});} }
+  protected updated() { this.dispatchEvent(new Event('workflow-toolbar-change',{bubbles:true})); const key=`${this.phase}:${this.index}`; if(key===this.focusKey)return;this.focusKey=key; const heading=this.querySelector('h1') as HTMLElement|null;if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});} }
   private done() { this.dispatchEvent(new CustomEvent('context-done',{bubbles:true})); }
   private back() { this.dispatchEvent(new CustomEvent('context-back',{bubbles:true})); }
-  private button(label:string,action:()=>void,primary=false,disabled=false) { return html`<en-button variant=${primary?'primary':'ghost'} .disabled=${this.busy||this.composing||disabled} @click=${action}>${label}</en-button>`; }
+  private command(label:string,run:()=>void,primary=false,disabled=false):WorkflowAction { return {id:`workflow:${this.phase}:${label.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`,label,run:()=>{if(!this.busy&&!this.composing&&!disabled)run();},variant:primary?'primary':'ghost',disabled:this.busy||this.composing||disabled}; }
+  get toolbar():WorkflowToolbar {return {actions:this.commands(),status:this.busy?'Working…':!this.flow&&!['compose','supply-reference'].includes(this.action)&&!['select-idea','rename-idea'].includes(this.phase)?'Loading…':''};}
+  private commands():WorkflowAction[] {
+    const back=()=>this.command('Back',()=>this.back());
+    if(this.phase==='select-idea')return [this.command('Continue',()=>this.dispatchEvent(new CustomEvent('context-select',{bubbles:true,detail:this.selectedIdea})),true,!this.selectedIdea),back()];
+    if(this.phase==='rename-idea')return [this.command(this.client.hasUnconfirmedWrite?'Check save':'Save name',()=>void this.run(async()=>{
+      if(!this.client.hasUnconfirmedWrite){
+        await this.guardSource();
+        const block=ideaActionTargets(this.client.projection,this.client.position,this.action).find(b=>b.id===this.selectedIdea);
+        if(!block)throw new Error('This idea is no longer editable.');
+        this.renamePlan=[{type:'BlockPropertyEdited',payload:{project_id:block.projectId,document_id:block.documentId,block_id:block.id,property_path:'label',old_value:block.properties.label??null,new_value:this.nameDraft.trim()}}];
+      }
+      if(!this.renamePlan)throw new Error('Reopen the original name review.');
+      await this.client.append(this.renamePlan);this.renamePlan=null;
+      this.revision=documentSource(this.client.projection,this.client.position.documentId).revision;this.phase='select-idea';
+    }),true,!this.nameDraft.trim()||this.nameDraft.trim().length>160),this.command('Back',()=>{this.phase='select-idea';this.requestUpdate();},false,this.client.hasUnconfirmedWrite)];
+    if(this.phase==='supply')return [this.command(this.client.hasUnconfirmedWrite?'Check save':'Attach file',()=>void this.run(()=>this.supplyReference()),true,!this.rights||!this.file),back()];
+    if(this.action==='compose'){
+      if(this.phase==='compose-review')return [this.command(this.client.hasUnconfirmedWrite?'Check save':'Save group',()=>void this.run(async()=>{if(!this.client.hasUnconfirmedWrite)await this.guardSource();await this.client.append(this.plan);this.done();}),true),this.command('Back',()=>{this.phase='compose';this.requestUpdate();},false,this.client.hasUnconfirmedWrite)];
+      if(this.phase==='compose-behavior')return [this.command('Preview',()=>void this.run(async()=>{await this.guardSource();this.plan=compositionPlan(this.client.projection,this.targetId,this.members,this.application);this.phase='compose-review';}),true),this.command('Back',()=>{this.phase='compose';this.requestUpdate();})];
+      return [this.command('Add',()=>{this.members=[...this.members,this.member];this.member='';this.requestUpdate();},false,!this.member||this.members.length>=40),this.command('Remove last',()=>{this.members=this.members.slice(0,-1);this.requestUpdate();},false,!this.members.length),this.command('Continue',()=>{this.phase='compose-behavior';this.requestUpdate();},true),back()];
+    }
+    const flow=this.flow;if(!flow)return [];
+    if(this.phase==='source-refine')return [this.command(this.client.hasUnconfirmedWrite?'Check save':'Save',()=>void this.run(async()=>{if(!this.client.hasUnconfirmedWrite)await this.guardSource();await this.client.append([{type:'BlockPropertyEdited',payload:{block_id:this.targetId,property_path:'text',old_value:this.sourceBase,new_value:this.sourceDraft}}]);this.done();}),true),this.command('Keep original',()=>this.done(),false,this.client.hasUnconfirmedWrite)];
+    if(this.phase==='completed')return [this.command('Edit shared direction',()=>{this.reviewSource();this.requestUpdate();}),this.command('Explore again',()=>void this.run(async()=>{await flow.dismiss();this.phase='start';}),true),this.command('Close',()=>this.back())];
+    if(this.phase==='start') {
+      const checking=!!flow.quote&&flow.quote.status!=='quoted';
+      const label=checking?'Check analysis':flow.kind==='decompose'?'Split idea':this.action==='find-references'?'Find reference':'Research idea';
+      return [this.command(label,()=>void this.run(()=>this.analyze()),true,!checking&&(this.query.length>140||flow.kind==='research'&&!this.query.trim())),back()];
+    }
+    if(this.phase==='intake'&&this.intake?.research)return [this.command(this.client.hasUnconfirmedWrite?'Check save':'Add reference',()=>void this.run(()=>this.file?this.supplyReference():this.importReference()),true,!this.rights||!this.file&&!this.intake?.research?.imageUrl),this.command('Back',()=>{this.phase='candidates';this.requestUpdate();},false,this.client.hasUnconfirmedWrite)];
+    if(this.phase==='review'&&flow.preview)return [this.command(flow.status==='applying'?'Check save':'Apply',()=>void this.run(()=>this.apply()),true,flow.stale),...(flow.status!=='applying'?[this.command('Change selection',()=>void this.run(async()=>{await flow.dismiss();this.phase=flow.candidates.length?'candidates':'start';}))]:[]),this.command('Close',()=>this.back())];
+    const candidate=flow.candidates[this.index],r=candidate?.research,proposal=candidate?.proposal;
+    if(!candidate)return [this.command('Close',()=>this.back())];
+    const reference=r?.type==='reference'&&r.area==='learned'&&!r.blockId;
+    return [reference?this.command('Add reference',()=>{this.intake=candidate;this.file=null;this.rights=false;this.referenceEvents=null;this.phase='intake';this.requestUpdate();},true,!(candidate.label??r?.label??'').trim()||(candidate.label??'').trim().length>160):this.command(candidate.included?'Deselect':'Select',()=>{candidate.included=!candidate.included;this.requestUpdate();},true,!!proposal&&(!candidate.text.trim()||candidate.text.length>1800)||(!!proposal||r?.area==='learned'&&!r.blockId)&&(!(candidate.label??proposal?.label??r?.label??'').trim()||(candidate.label??'').trim().length>160)),this.command('Previous',()=>{this.index=(this.index-1+flow.candidates.length)%flow.candidates.length;this.requestUpdate();},false,flow.candidates.length<2),this.command('Next',()=>{this.index=(this.index+1)%flow.candidates.length;this.requestUpdate();},false,flow.candidates.length<2),this.command(`Review (${flow.candidates.filter(c=>c.included).length})`,()=>void this.run(()=>this.review()),false,!flow.candidates.some(c=>c.included)),this.command('Close',()=>this.back())];
+  }
   private async run(work:()=>Promise<void>) { if(this.busy||this.composing)return; this.busy=true;this.error='';this.requestUpdate();try {await work();}catch(e){this.error=e instanceof Error?e.message:'This step was interrupted.';}finally{this.busy=false;this.requestUpdate();} }
-  private field(label:string,text:string,change:(v:string)=>void,rows=4) { return html`<en-textarea label=${label} .value=${live(text)} rows=${rows} .disabled=${this.busy||this.client.hasUnconfirmedWrite} @en-input=${(e:CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.requestUpdate();}}></en-textarea>`; }
-  private async prepare() { this.flow.publicQuery=this.query; await this.flow.prepareQuote(); this.phase='quote'; }
-  private async analyze() { await this.flow.analyze(); this.phase='candidates';this.index=0; }
+  private field(label:string,text:string,change:(v:string)=>void,rows=4,disabled=false) { return html`<en-textarea label=${label} .value=${live(text)} rows=${rows} .disabled=${disabled||this.busy||this.client.hasUnconfirmedWrite} @en-input=${(e:CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.requestUpdate();}}></en-textarea>`; }
+  private async analyze() { await this.flow.startAnalysis(this.query); this.phase='candidates';this.index=0; }
   private async review() { await this.flow.prepareChanges();this.phase='review'; }
   private async apply() {
     await this.flow.apply();
@@ -75,12 +126,6 @@ export class StillContextFlow extends LitElement {
   private reviewSource() {
     this.sourceBase=value(this.client.projection.blocks.find(b=>b.id===this.targetId)?.properties.text);this.sourceDraft=this.sourceBase;
     this.revision=documentSource(this.client.projection,this.client.position.documentId).revision;this.phase='source-refine';
-  }
-  private privateInput() {
-    const input=this.flow.quote?.privateInput as Record<string,unknown>|undefined;
-    if(!input)return nothing;
-    const entries=[input.source,input.target,...['document_blocks','project_blocks','protected_constraints'].flatMap(key=>Array.isArray(input[key])?input[key] as unknown[]:[])].filter((v):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v));
-    return html`<div class="analysis-input"><span class="eyebrow">Private analysis context</span>${entries.map(entry=>html`<p>${value(entry.text)}</p>`)}</div>`;
   }
   private async guardSource() {
     const check=await this.client.verifyScope(); await this.client.refresh();check();
@@ -115,36 +160,72 @@ export class StillContextFlow extends LitElement {
     if(!this.client.hasUnconfirmedWrite)await this.guardSource();
     await this.client.append(this.referenceEvents);this.done();
   }
+  private filePicker() {return html`<input class="reference-file-input" type="file" hidden accept=".png,.jpg,.jpeg,.webp,.mp4,.mp3,.wav,.m4a,.aac,.ogg,.flac,.webm,.pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx,.glb" ?disabled=${this.busy||!!this.referenceEvents||this.client.hasUnconfirmedWrite} @change=${(e:Event)=>{this.file=(e.target as HTMLInputElement).files?.[0]??null;this.rights=false;this.requestUpdate();}}><en-button variant="secondary" .disabled=${this.busy||!!this.referenceEvents||this.client.hasUnconfirmedWrite} @click=${()=>this.querySelector<HTMLInputElement>('.reference-file-input')?.click()}>${this.file?'Change file':'Choose file'}</en-button>${this.file?html`<p>${this.file.name} · ${(this.file.size/1024/1024).toFixed(1)} MB</p>`:nothing}<p class="caption">Images and documents ≤12 MB · audio and MP4 ≤25 MB · GLB ≤64 MB</p><en-checkbox label="I can use this file. It contains no sensitive personal data." .checked=${this.rights} .disabled=${this.busy||!!this.referenceEvents} @en-change=${(e:CustomEvent<{proposed:boolean}>)=>{this.rights=e.detail.proposed;this.requestUpdate();}}></en-checkbox>`;}
+  private async supplyReference(){
+    if(!this.file||!this.rights)throw new Error('Choose a file and confirm its permissions.');
+    const check=this.client.hasUnconfirmedWrite?await this.client.verifyScope():await this.guardSource();
+    if(this.scopeKey!==this.client.scopeKey||this.targetId!==this.client.position.blockId)throw new Error('Reopen the original idea.');
+    if(!this.referenceEvents){
+      const form=new FormData();form.append('file',this.file);form.append('rightsConfirmed','true');form.append('nonSensitiveConfirmed','true');
+      const response=await fetch('/api/media',{method:'POST',credentials:'same-origin',body:form});
+      const media=await response.json();if(!response.ok)throw new ApiError(response.status,media);check();
+      const target=this.client.projection.blocks.find(b=>b.id===this.targetId);if(!target)throw new Error('Idea unavailable.');
+      this.referenceEvents=suppliedReferenceEvents(target,this.client.projection,media,this.intake??undefined);
+    }
+    if(!this.client.hasUnconfirmedWrite)await this.guardSource();
+    await this.client.append(this.referenceEvents);this.done();
+  }
+  private nameField(name:string,change:(name:string)=>void) {
+    return html`<en-text-field label="Idea name" .value=${live(name)} maxlength="160" .disabled=${this.busy||this.client.hasUnconfirmedWrite} @en-input=${(e:CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=!!e.detail.isComposing;if(!this.composing)this.requestUpdate();}}></en-text-field>`;
+  }
+  private renderIdeaPicker() {
+    const targets=ideaActionTargets(this.client.projection,this.client.position,this.action),search=this.ideaSearch.trim().toLocaleLowerCase();
+    const copy:Record<string,[string,string]>={
+      'find-references':['Find references for an idea','Choose the idea you want supporting images, files, or other references for.'],
+      'research-context':['Research an idea','Choose the idea you want sourced details and world knowledge for.'],
+      'split-context':['Split an idea','Choose the idea you want to separate into smaller, reusable ideas.'],
+      'supply-reference':['Supply a reference for an idea','Choose the idea you want to attach your own image, file, or other reference to.'],
+    };
+    const [title,guidance]=copy[this.action]??['Choose an idea','Choose the idea you want to work with.'];
+    const name=(b:typeof targets[number])=>value(b.properties.label)||b.handle;
+    const selected=targets.find(b=>b.id===this.selectedIdea);
+    const shown=targets.filter(b=>!search||[name(b),b.handle,value(b.properties.text)].join(' ').toLocaleLowerCase().includes(search));
+    return html`<h1>${title}</h1><p>${guidance}</p>${targets.length>6?html`<en-search-input label="Search ideas" description="Search names and descriptions" .value=${live(this.ideaSearch)} @en-input=${(e:CustomEvent<{value:string}>)=>{this.ideaSearch=e.detail.value;this.requestUpdate();}}></en-search-input>`:nothing}
+      <div class="idea-choices" role="group" aria-label="Choose an idea">${shown.map(b=>{
+        const description=value(b.properties.text),generic=genericIdeaName(name(b),b.type);
+        const parents=this.client.projection.blockRelations.filter(r=>!r.removed&&r.toBlockId===b.id&&isContextCompositionRelation(r.kind)).map(r=>this.client.projection.blocks.find(parent=>parent.id===r.fromBlockId&&!parent.removed)).filter(parent=>!!parent);
+        return html`<en-button class="idea-choice" variant="secondary" ?data-selected=${this.selectedIdea===b.id} .disabled=${this.busy} @click=${()=>{this.selectedIdea=b.id;this.requestUpdate();}}><span class="idea-choice-copy"><span class=${generic?'idea-choice-category':'idea-choice-name'}>${name(b)}</span>${description?html`<span class=${generic?'idea-choice-description prominent':'idea-choice-description'}>${ideaExcerpt(description)}</span>`:nothing}<span class="idea-choice-parent">${parents.length?'Part of: '+parents.map(parent=>descriptiveIdeaName(name(parent!),value(parent!.properties.text),parent!.type)).join(' · '):'Top-level idea in this document'}</span>${this.selectedIdea===b.id?html`<span class="idea-choice-selected">Selected</span>`:nothing}</span></en-button>`;
+      })}</div>${!shown.length?html`<p role="status">${targets.length?'No ideas match your search.':'No editable ideas are available for this action.'}</p>`:nothing}
+      ${selected?html`<p class="caption" role="status">Selected: ${descriptiveIdeaName(name(selected),value(selected.properties.text),selected.type)}</p>${genericIdeaName(name(selected),selected.type)&&value(selected.properties.text)?html`<en-button variant="ghost" @click=${()=>{this.nameDraft=descriptiveIdeaName('',value(selected.properties.text),selected.type);this.renamePlan=null;this.phase='rename-idea';this.requestUpdate();}}>Suggest a clearer name</en-button>`:nothing}`:nothing}`;
+  }
   private renderCompose() {
     const blocks=this.client.projection.blocks, parent=blocks.find(b=>b.id===this.targetId);
     const choices=blocks.filter(b=>editableIdea(b)&&b.id!==this.targetId&&!this.members.includes(b.id));
-    return html`<span class="eyebrow">${parent?.handle}</span><h1>Arrange ideas</h1><p>Removed members stay in the document.</p><ol class="assembly-list">${this.members.map(id=>html`<li><strong>${blocks.find(b=>b.id===id)?.handle}</strong><p>${value(blocks.find(b=>b.id===id)?.properties.text)}</p></li>`)}</ol>${this.phase==='compose-review'?html`<p class="cost-note">${this.application==='ordered'?'Ordered group.':this.application==='recur'?'Recurring group.':this.application==='co_locate'?'Same setting.':'Focused group.'}</p><div class="form-actions">${this.button(this.client.hasUnconfirmedWrite?'Check save':'Save group',()=>void this.run(async()=>{if(!this.client.hasUnconfirmedWrite)await this.guardSource();await this.client.append(this.plan);this.done();}),true)}${this.button('Back',()=>{this.phase='compose';this.requestUpdate();},false,this.client.hasUnconfirmedWrite)}</div>`:html`<en-select class="select-label" label="Idea" .value=${this.member} @en-change=${(e: CustomEvent<{proposed:string;value:string}>)=>{this.member=e.detail.proposed;this.requestUpdate();}}><en-select-option value="">Choose an idea</en-select-option>${choices.map(b=>html`<en-select-option value=${b.id}>${b.handle}</en-select-option>`)}</en-select><div class="form-actions">${this.button('Add',()=>{this.members=[...this.members,this.member];this.member='';this.requestUpdate();},false,!this.member||this.members.length>=40)}${this.button('Remove last',()=>{this.members=this.members.slice(0,-1);this.requestUpdate();},false,!this.members.length)}${this.button('Continue',()=>{this.phase='compose-behavior';this.requestUpdate();},true)}${this.button('Back',()=>this.back())}</div>`}`;
+    return html`<span class="eyebrow">${parent?.handle}</span><h1>Arrange ideas</h1><p>Removed members stay in the document.</p><ol class="assembly-list">${this.members.map(id=>html`<li><strong>${blocks.find(b=>b.id===id)?.handle}</strong><p>${value(blocks.find(b=>b.id===id)?.properties.text)}</p></li>`)}</ol>${this.phase==='compose-review'?html`<p class="cost-note">${this.application==='ordered'?'Ordered group.':this.application==='recur'?'Recurring group.':this.application==='co_locate'?'Same setting.':'Focused group.'}</p>`:html`<en-select class="select-label" label="Idea" .value=${this.member} @en-change=${(e: CustomEvent<{proposed:string;value:string}>)=>{this.member=e.detail.proposed;this.requestUpdate();}}><en-select-option value="">Choose an idea</en-select-option>${choices.map(b=>html`<en-select-option value=${b.id}>${b.handle}</en-select-option>`)}</en-select>`}`;
   }
   private renderBody() {
     const block=this.client?.projection.blocks.find(b=>b.id===this.targetId);
+    if(this.phase==='select-idea')return this.renderIdeaPicker();
+    if(this.phase==='rename-idea')return html`<h1>Rename idea</h1><p>This suggestion uses the existing description. Edit it before saving; the idea’s content and relationships stay the same.</p>${this.nameField(this.nameDraft,v=>this.nameDraft=v)}<p class="context-preview">${value(this.client.projection.blocks.find(b=>b.id===this.selectedIdea)?.properties.text)}</p>`;
+    if(this.phase==='supply')return html`<span class="eyebrow">${block?.handle}</span><h1>Supply reference</h1><p class="context-preview">${value(block?.properties.text)}</p>${this.filePicker()}`;
     if(this.action==='compose') {
-      if(this.phase==='compose-behavior')return html`<h1>Group behavior</h1><en-select class="select-label" label="Relationship" .value=${this.application} @en-change=${(e: CustomEvent<{proposed:string;value:string}>)=>{this.application=e.detail.proposed;this.requestUpdate();}}><en-select-option value="isolate">Focused group</en-select-option><en-select-option value="co_locate">Same setting</en-select-option><en-select-option value="ordered">In order</en-select-option><en-select-option value="recur">Recurring</en-select-option></en-select><div class="form-actions">${this.button('Preview',()=>void this.run(async()=>{await this.guardSource();this.plan=compositionPlan(this.client.projection,this.targetId,this.members,this.application);this.phase='compose-review';}),true)}${this.button('Back',()=>{this.phase='compose';this.requestUpdate();})}</div>`;
+      if(this.phase==='compose-behavior')return html`<h1>Group behavior</h1><en-select class="select-label" label="Relationship" .value=${this.application} @en-change=${(e: CustomEvent<{proposed:string;value:string}>)=>{this.application=e.detail.proposed;this.requestUpdate();}}><en-select-option value="isolate">Focused group</en-select-option><en-select-option value="co_locate">Same setting</en-select-option><en-select-option value="ordered">In order</en-select-option><en-select-option value="recur">Recurring</en-select-option></en-select>`;
       return this.renderCompose();
     }
     const flow=this.flow;if(!flow)return html`<p>Loading…</p>`;
-    if(this.phase==='source-refine')return html`<h1>Shared direction</h1><p>Ideas saved. Remove repeated details; keep shared constraints.</p>${this.field('Text',this.sourceDraft,v=>this.sourceDraft=v)}<div class="change-review">${flow.preview?.changes.filter(c=>c.kind==='create').map(c=>html`<p><strong>${c.label}</strong> · ${c.text}</p>`)}</div><div class="form-actions">${this.button(this.client.hasUnconfirmedWrite?'Check save':'Save',()=>void this.run(async()=>{if(!this.client.hasUnconfirmedWrite)await this.guardSource();await this.client.append([{type:'BlockPropertyEdited',payload:{block_id:this.targetId,property_path:'text',old_value:this.sourceBase,new_value:this.sourceDraft}}]);this.done();}),true)}${this.button('Keep original',()=>this.done(),false,this.client.hasUnconfirmedWrite)}</div>`;
-    if(this.phase==='completed')return html`<h1>Saved</h1><div class="form-actions">${this.button('Edit shared direction',()=>{this.reviewSource();this.requestUpdate();})}${this.button('Explore again',()=>void this.run(async()=>{await flow.dismiss();this.phase='start';}),true)}${this.button('Close',()=>this.back())}</div>`;
-    if(this.phase==='start')return html`<span class="eyebrow">${block?.handle}</span><h1>${flow.kind==='decompose'?'Split idea':this.action==='find-references'?'Find references':'Research'}</h1><p class="context-preview">${value(block?.properties.text)}</p><p>${flow.kind==='decompose'?'Review smaller ideas. Keep what helps.':'Add a public topic to search the web and find images.'}</p>${flow.kind==='research'?this.field('Public topic · optional · 140 characters max',this.query,v=>this.query=v,2):nothing}<div class="form-actions">${this.button('Review cost',()=>void this.run(()=>this.prepare()),true,this.query.length>140)}${this.button('Back',()=>this.back())}</div>`;
-    if(this.phase==='quote') {
-      const q=flow.quote;
-      if(!q)return html`<h1>Review needed</h1>${this.button('Review cost',()=>void this.run(()=>this.prepare()),true)}${this.button('Back',()=>this.back())}`;
-      return html`<span class="eyebrow">${q.provider} · ${q.models.join(', ')}</span><h1>${q.status==='quoted'?'Review analysis':'Analysis status'}</h1><p>Maximum cost: $${(q.maximumMicrousd/1e6).toFixed(4)} · ${q.providerCalls} ${q.providerCalls===1?'provider call':'provider calls'} · ${q.searchCalls} ${q.searchCalls===1?'search':'searches'}</p><p>${q.publicQuery?`Public search: ${q.publicQuery}`:'Private analysis. No web search.'}</p>${this.privateInput()}${!q.providerAvailable?html`<p>Analysis unavailable for this account.</p>`:nothing}<div class="form-actions">${this.button(q.status==='quoted'?'Approve analysis':'Check analysis',()=>void this.run(()=>this.analyze()),true,q.status==='quoted'&&(!q.providerAvailable||q.canExecute===false))}${this.button('Back',()=>this.back())}</div>`;
-    }
+    if(this.phase==='source-refine')return html`<h1>Shared direction</h1><p>Ideas saved. Remove repeated details; keep shared constraints.</p>${this.field('Text',this.sourceDraft,v=>this.sourceDraft=v)}<div class="change-review">${flow.preview?.changes.filter(c=>c.kind==='create').map(c=>html`<p><strong>${c.label}</strong> · ${c.text}</p>`)}</div>`;
+    if(this.phase==='completed')return html`<h1>Saved</h1>`;
+    if(this.phase==='start')return html`<span class="eyebrow">${block?.handle}</span><h1>${flow.kind==='decompose'?'Split idea':this.action==='find-references'?'Find reference':'Research idea'}</h1><p class="context-preview">${value(block?.properties.text)}</p><p>${flow.kind==='decompose'?'Review smaller ideas. Keep what helps.':this.action==='find-references'?'Find files that make this idea more precise.':'Review sourced details to enrich this idea.'}</p>${flow.kind==='research'?this.field('Public search topic · 140 characters max',this.query,v=>this.query=v,2,!!flow.quote&&flow.quote.status!=='quoted'):nothing}`;
     if(this.phase==='intake'&&this.intake?.research) {
       const r=this.intake.research;
-      return html`<h1>${r.label}</h1>${r.imageUrl?stillImage(r.imageUrl,r.label,undefined,{className:'reference-study',loading:'eager'}):nothing}<p>${r.attribution} · ${r.license}</p><p>Private copy with source and credit. Image guidance stays off.</p><en-checkbox class="check" label="I can use this image. It contains no sensitive personal data." .checked=${this.rights} .disabled=${this.busy||!!this.referenceEvents} @en-change=${(e: CustomEvent<{proposed:boolean}>)=>{this.rights=e.detail.proposed;this.requestUpdate();}}></en-checkbox><div class="form-actions">${this.button(this.client.hasUnconfirmedWrite?'Check save':'Add reference',()=>void this.run(()=>this.importReference()),true,!this.rights)}${this.button('Back',()=>{this.phase='candidates';this.requestUpdate();},false,this.client.hasUnconfirmedWrite)}</div>`;
+      return html`<h1>${this.intake.label??r.label}</h1>${r.imageUrl?stillImage(r.imageUrl,r.label,undefined,{className:'reference-study',loading:'eager'}):nothing}<p>${r.attribution} · ${r.license}</p><p>Private copy with source and credit. Direct media guidance stays off.</p>${!r.imageUrl?html`<p>Open the source, obtain a permitted file, then attach it here.</p><a href=${sourceURL(r.sourceUrl)} target="_blank" rel="noopener noreferrer">Open source</a>${this.filePicker()}`:nothing}${r.imageUrl?html`<en-checkbox class="check" label="I can use this image. It contains no sensitive personal data." .checked=${this.rights} .disabled=${this.busy||!!this.referenceEvents} @en-change=${(e: CustomEvent<{proposed:boolean}>)=>{this.rights=e.detail.proposed;this.requestUpdate();}}></en-checkbox>`:nothing}`;
     }
-    if(this.phase==='review'&&flow.preview) return html`<span class="eyebrow">${flow.preview.blockCount} ${flow.preview.blockCount===1?'block':'blocks'} · ${flow.preview.relationCount} ${flow.preview.relationCount===1?'relationship':'relationships'}</span><h1>Review changes</h1>${flow.preview.changes.map(change=>html`<div class="change-review"><span class="eyebrow">${change.kind} · ${change.label}</span><p>${change.kind==='group'?({isolate:'Focused group',co_locate:'Same setting',ordered:'In this order',recur:'Recurring'}[change.text]??change.text):change.text}</p></div>`)}<p>Original wording is preserved.</p>${flow.stale?html`<p>Review outdated. Reopen the document.</p>`:nothing}<div class="form-actions">${this.button(flow.status==='applying'?'Check save':'Apply',()=>void this.run(()=>this.apply()),true,flow.stale)}${flow.status!=='applying'?this.button('Change selection',()=>void this.run(async()=>{await flow.dismiss();this.phase=flow.candidates.length?'candidates':'start';})):nothing}${this.button('Close',()=>this.back())}</div>`;
+    if(this.phase==='review'&&flow.preview) return html`<span class="eyebrow">${flow.preview.blockCount} ${flow.preview.blockCount===1?'block':'blocks'} · ${flow.preview.relationCount} ${flow.preview.relationCount===1?'relationship':'relationships'}</span><h1>Review changes</h1>${flow.preview.changes.map(change=>html`<div class="change-review"><span class="eyebrow">${change.kind} · ${change.label}</span><p>${change.kind==='group'?({isolate:'Focused group',co_locate:'Same setting',ordered:'In this order',recur:'Recurring'}[change.text]??change.text):change.text}</p></div>`)}<p>Original wording is preserved.</p>${flow.stale?html`<p>Review outdated. Reopen the document.</p>`:nothing}`;
     const candidate=flow.candidates[this.index],r=candidate?.research,proposal=candidate?.proposal;
-    if(!candidate)return html`<h1>No suggestions</h1><p>Try adding more detail.</p>${this.button('Close',()=>this.back())}`;
+    if(!candidate)return html`<h1>No suggestions</h1><p>Try adding more detail.</p>`;
     const reference=r?.type==='reference'&&r.area==='learned'&&!r.blockId,source=sourceURL(r?.sourceUrl);
-    return html`<span class="eyebrow">${this.index+1} / ${flow.candidates.length} · ${candidate.included?'Selected':reference?'Reference':'Suggestion'}</span><h1>${proposal?.label??r?.label}</h1>${reference&&r?.imageUrl?stillImage(r.imageUrl,r.label,undefined,{className:'reference-study',loading:'eager'}):nothing}${proposal?this.field('Idea',candidate.text,v=>candidate.text=v):html`<p class="context-preview">${candidate.text}</p>`}${proposal?.sourceExcerpt?html`<blockquote>${proposal.sourceExcerpt}</blockquote>`:nothing}${r?.reason?html`<p>${r.reason}</p>`:nothing}${r?.license?html`<p class="caption">${r.attribution} · ${r.license}</p>`:nothing}<div class="form-actions">${reference?this.button('Add reference',()=>{this.intake=candidate;this.rights=false;this.referenceEvents=null;this.phase='intake';this.requestUpdate();},true):this.button(candidate.included?'Deselect':'Select',()=>{candidate.included=!candidate.included;this.requestUpdate();},true,!!proposal&&(!candidate.text.trim()||candidate.text.length>1800))}${this.button('Next',()=>{this.index=(this.index+1)%flow.candidates.length;this.requestUpdate();},false,flow.candidates.length<2)}${source?html`<a class="source-link" href=${source} target="_blank" rel="noopener noreferrer">Source ↗</a>`:nothing}${this.button(`Review (${flow.candidates.filter(c=>c.included).length})`,()=>void this.run(()=>this.review()),false,!flow.candidates.some(c=>c.included))}${this.button('Close',()=>this.back())}</div>`;
+    return html`<span class="eyebrow">${this.index+1} / ${flow.candidates.length} · ${candidate.included?'Selected':reference?'Reference':'Suggestion'}</span><h1>${candidate.label??proposal?.label??r?.label}</h1>${proposal||r?.area==='learned'&&!r.blockId?this.nameField(candidate.label??proposal?.label??r?.label??'',v=>candidate.label=v):nothing}${reference&&r?.imageUrl?stillImage(r.imageUrl,r.label,undefined,{className:'reference-study',loading:'eager'}):nothing}${proposal?this.field('Idea',candidate.text,v=>candidate.text=v):html`<p class="context-preview">${candidate.text}</p>`}${proposal?.sourceExcerpt?html`<blockquote>${proposal.sourceExcerpt}</blockquote>`:nothing}${r?.reason?html`<p>${r.reason}</p>`:nothing}${r?.license?html`<p class="caption">${r.attribution} · ${r.license}</p>`:nothing}${source?html`<a class="source-link" href=${source} target="_blank" rel="noopener noreferrer">Source <en-icon name="link" aria-hidden="true"></en-icon></a>`:nothing}`;
   }
-  render() { return html`<section class="form-page context-flow" aria-busy=${this.busy}>${this.renderBody()}${this.error?html`<p class="context-error" role="alert">${this.error}</p>`:nothing}${this.busy?html`<p role="status">Working…</p>`:nothing}</section>`; }
+  render() { return html`<section class="form-page context-flow" aria-busy=${this.busy}>${this.renderBody()}${this.error?html`<p class="context-error" role="alert">${this.error}</p>`:nothing}</section>`; }
 }
 if(!customElements.get('still-context-flow'))customElements.define('still-context-flow',StillContextFlow);
