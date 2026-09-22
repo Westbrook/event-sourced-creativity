@@ -48,10 +48,10 @@ async function requestModeration(env: WorkerEnv, input: unknown, signal?: AbortS
   await checkpointGenerationEvidence(onEvidence,evidenceId,"request",operation,"app_moderation",{dispatchState:"not_dispatched"},{requestBody});
   const response = await fetch(OPENAI_IMAGE_MODERATION_CONTRACT.api, { method: "POST", headers: headers(env), signal, body: requestBody });
   let body: ModerationResponse = {};
-  let responseBody="";let uniqueKeys=false;
+  let responseBody="";let uniqueKeys=false;let responseReadComplete=false;
   if(strict&&!signal)throw Error('private_image_moderation_invalid');
   try {
-    responseBody=await readBoundedAssistantProviderResponse(response,signal??new AbortController().signal,65536);
+    responseBody=await readBoundedAssistantProviderResponse(response,signal??new AbortController().signal,65536);responseReadComplete=true;
     uniqueKeys=memoryDerivationJsonUniqueKeys(responseBody);
     const parsed:unknown=JSON.parse(responseBody);
     if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))body=parsed as ModerationResponse;
@@ -61,7 +61,7 @@ async function requestModeration(env: WorkerEnv, input: unknown, signal?: AbortS
     if(signal?.aborted)throw error;
   }
   const shapeValid = uniqueKeys && validModerationResults(body,expectedResults);
-  await checkpointGenerationEvidence(onEvidence,evidenceId,"response",{...operation,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id")??response.headers.get("openai-request-id"),responseId:body?.id??null,responseSha256:await evidenceSha256(responseBody)},"app_moderation",{dispatchState:"response_received",contentOutcome:shapeValid?"usable":"invalid"},{responseBody,safety:{schemaVersion:"forma-safety-evidence-v1",source:"standalone_omni",stage:"unknown",verdict:shapeValid?(body.results!.some(result=>result.flagged)?"flagged":"clear"):"unknown",validity:shapeValid?"valid":"invalid",expectedResultCount:expectedResults,returnedResultCount:Array.isArray(body?.results)?body.results.length:null,requestedModel:operation.effectiveModel,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id"),responseId:body?.id??null}});
+  await checkpointGenerationEvidence(onEvidence,evidenceId,"response",{...operation,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id")??response.headers.get("openai-request-id"),responseId:body?.id??null,responseSha256:responseReadComplete?await evidenceSha256(responseBody):null},"app_moderation",{dispatchState:"response_received",contentOutcome:shapeValid?"usable":"invalid"},{...(responseReadComplete?{responseBody}:{}),safety:{schemaVersion:"forma-safety-evidence-v1",source:"standalone_omni",stage:"unknown",verdict:shapeValid?(body.results!.some(result=>result.flagged)?"flagged":"clear"):"unknown",validity:shapeValid?"valid":"invalid",expectedResultCount:expectedResults,returnedResultCount:Array.isArray(body?.results)?body.results.length:null,requestedModel:operation.effectiveModel,returnedModel:body?.model??null,requestId:response.headers.get("x-request-id"),responseId:body?.id??null}});
   if (!response.ok) throw providerErrorFromResponse(response, body, `openai_moderation_${response.status}`,null,"app_moderation");
   if(!shapeValid){
     if(strict)throw Error('private_image_moderation_invalid');
