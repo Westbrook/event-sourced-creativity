@@ -955,7 +955,7 @@ export class StillApp extends LitElement {
     void this.run(async()=>{await this.client.acknowledgeGenerationSafety(job);this.generationCheck=null;this.navigate('generation',{outputId:job.jobId});});
   }
   private generationRecoveryActions() {
-    const job=this.selectedGeneration(),format=job&&generationFormat(job);
+    const job=this.selectedGeneration();
     const inline=this.isInlineGeneration(),draft=inline?this.generation:null,review=inline?this.generationGate:null;
     const outcome=job?generationOutcome(job):null;
     return [
