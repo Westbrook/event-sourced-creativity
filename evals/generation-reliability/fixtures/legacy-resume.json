@@ -1,10 +1,43 @@
 {
   "provenance": "Task K synthetic shapes from tests/image-adapter-eval-reuse.test.mjs; no user or historical provider payloads",
   "receipts": [
-    {"status":"failed","provider":"openai","providerRequestId":"original-request"},
-    {"status":"failed","provider":"openai","detail":{"code":"provider_submission_uncertain"}},
-    {"status":"failed","provider":"openai","detail":{"category":"network"}},
-    {"status":"failed","provider":"fal","providerSubmissions":{"old":{"status":"pending","provider":"fal","model":"ideogram/v4/fast"}}},
-    {"status":"failed","provider":"openai","generationReceipt":{"provider_request_status":"submission_unknown"}}
-  ]
+    {
+      "status": "failed",
+      "provider": "openai",
+      "providerRequestId": "original-request"
+    },
+    {
+      "status": "failed",
+      "provider": "openai",
+      "detail": {
+        "code": "provider_submission_uncertain"
+      }
+    },
+    {
+      "status": "failed",
+      "provider": "openai",
+      "detail": {
+        "category": "network"
+      }
+    },
+    {
+      "status": "failed",
+      "provider": "fal",
+      "providerSubmissions": {
+        "old": {
+          "status": "pending",
+          "provider": "fal",
+          "model": "ideogram/v4/fast"
+        }
+      }
+    },
+    {
+      "status": "failed",
+      "provider": "openai",
+      "generationReceipt": {
+        "provider_request_status": "submission_unknown"
+      }
+    }
+  ],
+  "sourceCommit": "2cf112a468f4a00f9ae5c4137a5250a873a3f129"
 }
