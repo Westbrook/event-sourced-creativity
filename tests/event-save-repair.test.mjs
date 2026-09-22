@@ -160,7 +160,7 @@ for (const runtime of ['source','production bundle']) test(`${runtime}: isolated
  globalThis.fetch=async(url)=>{
   if(String(url).endsWith('/moderations'))return Response.json({id:'offline-moderation',model:'omni-moderation-latest',results:[{flagged:false,categories:{},category_scores:{}}]});
   if(String(url).endsWith('/responses')){planner++;return Response.json({id:'offline-direction',model:'gpt-5.6-terra',output_text:JSON.stringify({title:'Synthetic harbor',rationale:'Preserve the brief',scene:'A quiet harbor',palette:['blue','white','gray'],next_moves:['View result']}),usage:{input_tokens:100,output_tokens:100,total_tokens:200}});}
-  assert.equal(String(url),'https://api.openai.com/v1/images/generations');image++;return Response.json({data:[{b64_json:Buffer.from('offline-image-bytes').toString('base64')}],usage:{input_tokens:100,output_tokens:20,total_tokens:120,input_tokens_details:{text_tokens:100,image_tokens:0}}},{headers:{'x-request-id':'offline-image'}});
+  assert.equal(String(url),'https://api.openai.com/v1/images/generations');image++;return new Response('data: '+JSON.stringify({type:'image_generation.completed',b64_json:Buffer.from('offline-image-bytes').toString('base64'),size:'1536x1024',output_format:'png',usage:{input_tokens:100,output_tokens:20,total_tokens:120,input_tokens_details:{text_tokens:100,image_tokens:0}}})+'\n\n',{headers:{'content-type':'text/event-stream','x-request-id':'offline-image'}});
  };t.after(()=>{globalThis.fetch=original;});
  const session=await (await request('/api/session')).json();f.sqlite.prepare('UPDATE users SET consent_version=?').run('pilot-2026-08-10');
  assert.equal((await request('/api/events?after=0&limit=2000&content=0')).status,200);while(background.length)await Promise.all(background.splice(0));
@@ -177,5 +177,49 @@ for (const runtime of ['source','production bundle']) test(`${runtime}: isolated
  const retained=await loadPrivateContent(env,session.user.userId);assert.ok(Object.keys(retained).length>0);assert.ok(Object.values(retained).some(value=>value.includes('Synthetic harbor')));
  const detail=await request(`/api/document-jobs/${job.jobId}?inspection=1`);assert.equal((await detail.json()).job.status,'completed');
  await request(`/api/document-jobs/${job.jobId}/run`,{});assert.equal(planner,1);assert.equal(image,1);
+ // Original evidence inspection is an independently authenticated observation,
+ // including in the exact Worker bundle shipped to production.
+ const requested=f.sqlite.prepare("SELECT sequence FROM events WHERE correlation_id=(SELECT correlation_id FROM document_jobs WHERE job_id=?) AND type='GenerationRequested'").get(job.jobId);
+ const evidencePath=`/api/generation-evidence?documentId=doc-atmosphere&requestedSequence=${requested.sequence}`;
+ const hostedHeaders={'oai-authenticated-user-id':session.user.userId,'oai-authenticated-user-email':session.user.email};
+ const inspect=(path=evidencePath,headers=hostedHeaders,method='GET')=>worker.fetch(new Request('https://forma.test'+path,{headers,method}),env,{waitUntil:()=>assert.fail('inspection scheduled background work')});
+ const beforeChanges=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
+ const evidenceResponse=await inspect();assert.equal(evidenceResponse.status,200,await evidenceResponse.clone().text());
+ const evidence=await evidenceResponse.json();assert.equal(evidence.custody.jobExpiresAt,f.sqlite.prepare('SELECT expires_at FROM document_jobs WHERE job_id=?').get(job.jobId).expires_at);assert.equal(evidence.job.job_id,job.jobId);
+ assert.ok(evidence.records.some(record=>record.content.includes('Synthetic harbor')));
+ assert.ok(evidence.records.some(record=>record.content.includes('requestBody')));
+ assert.equal(evidence.unavailable.length,0);assert.equal(evidenceResponse.headers.get('cache-control'),'private, no-store');
+ assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,beforeChanges,'inspection must issue no writes');
+ const html=await inspect(evidencePath.replace('/api/','/'));assert.equal(html.status,200);assert.match(await html.text(),/id="evidence"/);
+ assert.equal((await inspect(evidencePath,{})).status,401);
+ assert.equal((await inspect(evidencePath,{...hostedHeaders,'oai-authenticated-user-id':'another-owner'})).status,404);
+ assert.equal((await inspect(evidencePath,{...hostedHeaders,cookie:'forma_project_context=selected'})).status,404);
+ assert.equal((await inspect(evidencePath,hostedHeaders,'POST')).status,405);
+ assert.equal((await inspect(evidencePath+'&contentId=unrelated')).status,400);
+ const originalJob=f.sqlite.prepare('SELECT * FROM document_jobs WHERE job_id=?').get(job.jobId);
+ for(const fault of ['expired-job','memory','durable']){
+   if(fault==='expired-job')f.sqlite.prepare("UPDATE document_jobs SET expires_at='2000-01-01' WHERE job_id=?").run(job.jobId);
+   else f.sqlite.prepare('UPDATE document_jobs SET request_json=? WHERE job_id=?').run(JSON.stringify({...JSON.parse(originalJob.request_json),[fault==='memory'?'memoryMode':'outputDurable']:true}),job.jobId);
+   assert.equal((await inspect()).status,404,fault);
+   f.sqlite.prepare('UPDATE document_jobs SET request_json=?,expires_at=? WHERE job_id=?').run(originalJob.request_json,originalJob.expires_at,job.jobId);
+ }
+ const retainedRecord=evidence.records[0];
+ f.sqlite.prepare("UPDATE private_content SET expires_at='2000-01-01' WHERE content_id=?").run(retainedRecord.content_id);
+ const expired=await (await inspect()).json();assert.ok(expired.unavailable.some(row=>row.contentId===retainedRecord.content_id));assert.ok(!expired.records.some(row=>row.content_id===retainedRecord.content_id));
+ f.sqlite.prepare('UPDATE private_content SET expires_at=?,redacted_at=? WHERE content_id=?').run(retainedRecord.expires_at,new Date().toISOString(),retainedRecord.content_id);
+ assert.ok((await (await inspect()).json()).unavailable.some(row=>row.contentId===retainedRecord.content_id));
+ f.sqlite.prepare('UPDATE private_content SET redacted_at=NULL WHERE content_id=?').run(retainedRecord.content_id);
+ f.sqlite.prepare('UPDATE private_content SET owner_id=? WHERE content_id=?').run('different-owner',retainedRecord.content_id);
+ assert.ok((await (await inspect()).json()).unavailable.some(row=>row.contentId===retainedRecord.content_id));
+ f.sqlite.prepare('UPDATE private_content SET owner_id=? WHERE content_id=?').run(session.user.userId,retainedRecord.content_id);
+ const scope=(kind,id)=>f.sqlite.prepare("INSERT INTO project_resource_scopes(project_access_id,resource_kind,resource_id,organization_id,project_id,owner_user_id,actor_user_id,visibility,created_at) VALUES('fixture-scope',?,?,'fixture-org','fixture-project',?,?,'actor_private',?)").run(kind,id,session.user.userId,session.user.userId,new Date().toISOString());
+ scope('content',retainedRecord.content_id);
+ assert.ok((await (await inspect()).json()).unavailable.some(row=>row.contentId===retainedRecord.content_id));
+ scope('job',job.jobId);assert.equal((await inspect()).status,404,'personal reader refuses shared jobs');
+ f.sqlite.prepare("DELETE FROM project_resource_scopes WHERE project_access_id='fixture-scope'").run();
+ // Requalification must refuse a catalog whose isolation witness was changed.
+ f.sqlite.exec(`DROP TRIGGER ${EVENT_SAVE_REPAIR_BARRIERS[0].name}`);
+ assert.equal((await inspect()).status,503);
+ assert.equal(planner,1);assert.equal(image,1,'inspection must make no provider call');
  for(const table of EVENT_SAVE_REPAIR_TABLES)assert.equal(f.sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n,0);
 });
