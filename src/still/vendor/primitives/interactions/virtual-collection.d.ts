@@ -3,7 +3,7 @@ import type { VirtualCollection } from '../state/virtual-collection.js';
 import type { ScrollToKeyOptions } from './scroll-into-view.js';
 export type { ScrollToKeyOptions } from './scroll-into-view.js';
 export interface VirtualCollectionControllerOptions {
-    /** Explicit scrolling surface; a public scrollElement API avoids reaching into private shadow markup. */
+    /** Explicit scrolling surface. Pass document.scrollingElement for document scrolling; otherwise use a public scrollElement API. */
     viewport: () => HTMLElement | null | undefined;
     /** The native ul/ol/tbody that contains the rows returned by the rendering adapter. */
     content: () => Element | null | undefined;

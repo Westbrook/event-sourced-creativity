@@ -20,6 +20,7 @@ import { fetchDecision } from './decision-transport.ts';
 import { actionHelp, workflowHelp, readOnboardingFlag, ONBOARDING_VIEWS, type OnboardingContext, type OnboardingResult } from './onboarding.ts';
 import { OnboardingController } from './onboarding-client.ts';
 import { onboardingCopy } from './onboarding-copy.ts';
+import { toolbarTooltip } from './toolbar-tooltip.ts';
 import './vendor/elements/define/tooltip.js';
 import { DecisionMemo, stableDecisionKey } from './decision-cache.ts';
 import { StillAttentionObserver } from './attention-observer.ts';
@@ -35,6 +36,7 @@ import { localHistoryEvidence } from './history.ts';
 import { LitElement, html, nothing, type TemplateResult } from 'lit';
 import { live } from 'lit/directives/live.js';
 import { keyed } from 'lit/directives/keyed.js';
+import { repeat } from 'lit/directives/repeat.js';
 import './vendor/tokens/default.css';
 import './theme.css';
 import './vendor/elements/define/button.js';
@@ -254,7 +256,13 @@ export class StillApp extends LitElement {
     };
   }
   private setOnboarding=(e:CustomEvent<{value:boolean}>)=>{this.onboarding=e.detail.value===true;try{localStorage.setItem('still:flag:onboarding',String(this.onboarding));}catch{}const url=new URL(location.href);url.searchParams.delete('onboarding');url.searchParams.delete('onbaording');history.replaceState(history.state,'',url);this.activeAddress=this.address();this.changed();};
-  private help(id:string,label:string){return this.onboarding&&!this.measuringDock?keyed(this.toolbarHelpEpoch,html`<en-tooltip for=${id} inline="center" block="start" warmup-group="still-onboarding" show-delay="250"><span slot="content">${onboardingCopy(workflowHelp(this.mode,id.replace('still-help-',''),label,this.client.hasUnconfirmedWrite)??this.onboardingHelp.help(this.onboardingScope(),id.replace('still-help-',''))??actionHelp(id.replace('still-help-',''),label))}</span></en-tooltip>`):nothing;}
+  private help(id:string,label:string){
+    // Lit can reuse a toolbar slot for another action or the same action on a new page.
+    // Retire the previous help instance so its open state and delayed work cannot follow it.
+    const key=JSON.stringify([this.onboardingScope(),this.page,this.itemIndex,this.generation?.format,id,label,this.toolbarHelpEpoch]);
+    // A keyed repeat removes the old part and runs its async-directive disconnect cleanup.
+    return this.onboarding&&!this.measuringDock?repeat([key],key=>key,()=>html`<en-tooltip ${toolbarTooltip()} for=${id} inline="center" block="start" warmup-group="still-onboarding" show-delay="250"><span slot="content">${onboardingCopy(workflowHelp(this.mode,id.replace('still-help-',''),label,this.client.hasUnconfirmedWrite)??this.onboardingHelp.help(this.onboardingScope(),id.replace('still-help-',''))??actionHelp(id.replace('still-help-',''),label))}</span></en-tooltip>`):nothing;
+  }
   private density=5;
   private get pageActionLimit(){return this.developer?this.density:5;}
   private setDensity=(e:CustomEvent<{value:number}>)=>{this.density=actionLimit(e.detail.value);this.moreOpen=false;this.client.position.actionLimit=this.pageActionLimit;this.changed();};
