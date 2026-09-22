@@ -76,7 +76,9 @@ function certifiedSceneLocalStop(checkpoint:Record<string,unknown>,receipt:Recor
     ||detail.action!=="check_project"||detail.retryable!==false||detail.requestId!==null)return null;
   const id=text(certificate.stopped_client_request_id);if(!id)return null;
   const stopped=record(record(checkpoint.providerSubmissions)[id]);
-  return Object.keys(stopped).sort().join(",")==="clientRequestId,costMicrousd,model,operation,provider,status"
+  // Match the server reader: retain valid current digests and exact legacy observations.
+  return Object.keys(stopped).filter(key=>key!=="requestDigest").sort().join(",")==="clientRequestId,costMicrousd,model,operation,provider,status"
+    &&(!Object.hasOwn(stopped,"requestDigest")||typeof stopped.requestDigest==="string"&&/^[a-f0-9]{64}$/u.test(stopped.requestDigest))
     &&stopped.clientRequestId===id&&stopped.provider==="openai"&&stopped.operation==="planning"&&stopped.model===receipt.model
     &&stopped.status==="rejected"&&stopped.costMicrousd===0?id:null;
 }

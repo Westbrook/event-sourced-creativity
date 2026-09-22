@@ -461,9 +461,10 @@ for(const cachedPlan of [true,false]){
         usage:{input_tokens:newPlannerUsage.inputTokens,output_tokens:newPlannerUsage.outputTokens,total_tokens:newPlannerUsage.totalTokens}});
     };
     try{
-      assert.equal((await worker.request("/api/document-jobs")).status,200);
-      await worker.drainBackground();
+      // Explicit foreground recovery must precede observation, which terminalizes stale jobs.
+      if(!cachedPlan){assert.equal((await worker.request("/api/document-jobs")).status,200);await worker.drainBackground();}
       assert.equal((await worker.request(`/api/document-jobs/${jobId}/run`,{method:"POST"})).status,200);
+      assert.equal((await worker.request("/api/document-jobs")).status,200);await worker.drainBackground();
       const job=worker.sqlite.prepare("SELECT status,error_message FROM document_jobs WHERE job_id=?").get(jobId);
       assert.equal(job.status,cachedPlan?"completed":"failed",job.error_message??"planner recovery should finish");
       if(!cachedPlan)assert.equal(job.error_message,"provider_result_recovery_unavailable");
@@ -486,6 +487,29 @@ for(const cachedPlan of [true,false]){
     }finally{globalThis.fetch=originalFetch;}
   });
 }
+
+for(const artifactKind of ["short_story","video"])test(`observation terminalizes a stale ${artifactKind} original without dispatch or a replacement`,async t=>{
+  const worker=await integratedProductionWorker(),jobId="observed-original-"+artifactKind;
+  t.after(async()=>{await worker.drainBackground();worker.sqlite.close();});
+  const fixture=await integratedInterruptedRender(worker,{jobId,artifactKind,paidProvider:artifactKind==="video"});
+  const usage=interruptedDocumentJobUsage(fixture.checkpoint,fixture.payload),calls=[];
+  t.mock.method(globalThis,"fetch",async(...args)=>{calls.push(args);assert.fail("Observation cannot dispatch provider recovery");});
+  assert.equal((await worker.request("/api/document-jobs")).status,200);await worker.drainBackground();
+  const read=()=>worker.sqlite.prepare("SELECT * FROM document_jobs WHERE job_id=?").get(jobId);
+  const stopped=read();assert.equal(stopped.status,"failed");assert.equal(stopped.error_message,"execution_interrupted");
+  assert.equal(stopped.attempt_count,1);assert.equal(stopped.correlation_id,fixture.correlation);
+  const checkpoint=JSON.parse(stopped.result_json);assert.deepEqual(checkpoint.artifactPlan,fixture.plan);
+  assert.equal(checkpoint.plannerResponseId,fixture.checkpoint.plannerResponseId);
+  if(artifactKind==="video")assert.deepEqual(checkpoint.productionSceneReceipts,fixture.checkpoint.productionSceneReceipts);
+  assert.equal((await worker.request(`/api/document-jobs/${jobId}/run`,{method:"POST"})).status,200);
+  assert.deepEqual(read(),stopped,"a terminal original cannot be restarted by /run");assert.deepEqual(calls,[]);
+  assert.equal(worker.sqlite.prepare("SELECT COUNT(*) AS n FROM budget_reservations").get().n,1);
+  assert.equal(worker.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations").get().n,1);
+  assert.equal((await readBudgets(worker.environment,fixture.owner)).user.reserved,0);
+  assert.equal((await readCostBudgets(worker.environment,fixture.owner)).user.reservedMicrousd,0);
+  assert.equal((await readBudgets(worker.environment,fixture.owner)).user.used,usage.totalTokens);
+  assert.equal((await readCostBudgets(worker.environment,fixture.owner)).user.usedMicrousd,usage.totalCostMicrousd);
+});
 
 test("a stale committing render fails safely and releases both reservations without replaying provider work",async()=>{
   const worker=await integratedProductionWorker();
@@ -785,9 +809,10 @@ test("the bundled worker resumes a submitted scene without a duplicate provider 
     throw new Error(`Unexpected provider request: ${url}`);
   };
   try{
-    assert.equal((await request("/api/document-jobs")).status,200);
-    await drainBackground();
+    // Resume the retained original in the explicit foreground request.
+    // List observation intentionally terminalizes stale foreground work.
     assert.equal((await request(`/api/document-jobs/${jobId}/run`,{method:"POST"})).status,200);
+    assert.equal((await request("/api/document-jobs")).status,200);await drainBackground();
     const job=sqlite.prepare("SELECT status,correlation_id,error_message FROM document_jobs WHERE job_id=?").get(jobId);
     assert.equal(job.status,"completed",job.error_message??"recovered job should finish");
     assert.equal(job.correlation_id,`${jobId}:attempt:2`);

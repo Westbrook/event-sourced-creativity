@@ -191,6 +191,8 @@ const contradictions=[
   ["malformed extra observer",f=>updatePolicyCheckpoint(f,c=>{c.providerSubmissions.malformed=null;})],
   ["legacy uncertainty",f=>updatePolicyCheckpoint(f,c=>{c.providerSubmissionLegacyUncertain=true;})],
   ...["pending","accepted","completed"].map(status=>["stopped unit became "+status,f=>updatePolicyCheckpoint(f,c=>{Object.values(c.providerSubmissions)[0].status=status;})]),
+  ...[null, 7, "", "not-a-digest", "A".repeat(64)].map(requestDigest=>["invalid stopped request digest "+JSON.stringify(requestDigest),f=>updatePolicyCheckpoint(f,c=>{Object.values(c.providerSubmissions)[0].requestDigest=requestDigest;})]),
+  ["extra stopped observation field",f=>updatePolicyCheckpoint(f,c=>{Object.values(c.providerSubmissions)[0].callerCertified=true;})],
   ["rejected provider response ID",f=>updatePolicyCheckpoint(f,c=>{Object.values(c.providerSubmissions)[0].providerRequestId="provider-really-replied";})],
   ["rejected positive cost",f=>updatePolicyCheckpoint(f,c=>{Object.values(c.providerSubmissions)[0].costMicrousd=1400;})],
   ["rejected missing exact cost",f=>updatePolicyCheckpoint(f,c=>{delete Object.values(c.providerSubmissions)[0].costMicrousd;})],
@@ -372,6 +374,8 @@ test("summary certificate requires original server row/receipt/unit and cannot s
     for(const change of [
       c=>{delete c.scenePolicyStopSummary;},c=>{c.scenePolicyStopSummary=true;},c=>{c.scenePolicyStopSummary.extra=1;},c=>{c.scenePolicyStopSummary.version="caller";},
       c=>{c.scenePolicyStopSummary.input_ref="other";},c=>{c.scenePolicyStopSummary.source_snapshot_sha256="0".repeat(64);},c=>{c.scenePolicyStopSummary.stopped_client_request_id="other";},
+      ...[null,7,"","not-a-digest","A".repeat(64)].map(requestDigest=>c=>{Object.values(c.providerSubmissions)[0].requestDigest=requestDigest;}),
+      c=>{Object.values(c.providerSubmissions)[0].callerCertified=true;},
       c=>{c.scenePolicyStopSummary.evidence_sha256="not-a-digest";},c=>{Object.values(c.providerSubmissions)[0].providerRequestId="real-provider-response";},
     ]){const altered=structuredClone(input);change(altered);assert.equal(generationExecutionSummary(altered,failure,identity).actual_provider_call_count,1);}
     for(const status of ["pending","accepted","completed"]){
@@ -387,7 +391,8 @@ test("summary certificate requires original server row/receipt/unit and cannot s
       const altered=structuredClone(input);altered.providerSubmissions.additional=malformed;
       const summary=generationExecutionSummary(altered,failure,identity);assert.equal(summary.provider_submission_uncertain,true);assert.equal(summary.provider_request_status,"submission_unknown");
       assert.equal(summary.settled_cost_microusd,null);assert.notEqual(summary.reservation_status,"released");
-      assert.equal(summary.actual_provider_call_count,0);assert.equal(summary.actual_planner_call_count,0);assert.equal(summary.source_transmission_status,"unknown");assert.equal(summary.unresolved_provider_call_count,null);
+      // Malformed evidence keeps the total lower bound, but cannot establish a complete planner/media breakdown.
+      assert.equal(summary.actual_provider_call_count,0);assert.equal(summary.actual_planner_call_count,null);assert.equal(summary.actual_media_call_count,null);assert.equal(summary.provider_call_breakdown_complete,false);assert.equal(summary.source_transmission_status,"unknown");assert.equal(summary.unresolved_provider_call_count,null);
       altered.providerSubmissions["known-pending"]={clientRequestId:"known-pending",provider:"openai",operation:"planning",model:input.generationReceipt.model,status:"pending"};
       const mixed=generationExecutionSummary(altered,failure,identity);assert.equal(mixed.actual_provider_call_count,0);assert.equal(mixed.source_transmission_status,"unknown");assert.equal(mixed.unresolved_provider_call_count,null);assert.equal(mixed.provider_submission_uncertain,true);
     }
@@ -395,6 +400,8 @@ test("summary certificate requires original server row/receipt/unit and cannot s
     assert.equal(generationExecutionSummary(legacy,failure,identity).provider_submission_uncertain,true);
     const typedOnly=structuredClone(input);delete typedOnly.scenePolicyStopSummary;
     assert.equal(generationExecutionSummary(typedOnly,failure,identity).actual_provider_call_count,1);
+    const historical=structuredClone(input);delete Object.values(historical.providerSubmissions)[0].requestDigest;
+    assert.equal(generationExecutionSummary(historical,failure,identity).actual_provider_call_count,0,"legacy exact observations remain readable without refreshing their envelope");
     assert.equal(JSON.stringify(input),original);
   }finally{f.close();}
 });
@@ -421,7 +428,8 @@ test("malformed and known-pending evidence preserves an earlier real paid respon
     altered.providerSubmissions["known-pending"]={clientRequestId:"known-pending",provider:"openai",operation:"planning",model:input.generationReceipt.model,status:"pending"};
     altered.providerSubmissions["malformed"]={clientRequestId:"malformed",provider:"openai",operation:"planning",model:input.generationReceipt.model,status:"made-up"};
     const summary=generationExecutionSummary(altered,altered.errorDetail,identity);
-    assert.equal(summary.actual_provider_call_count,1);assert.equal(summary.actual_planner_call_count,1);assert.equal(summary.source_transmission_status,"transmitted");
+    // The known original count/charge survives; malformed evidence makes the category breakdown unknown.
+    assert.equal(summary.actual_provider_call_count,1);assert.equal(summary.actual_planner_call_count,null);assert.equal(summary.actual_media_call_count,null);assert.equal(summary.provider_call_breakdown_complete,false);assert.equal(summary.source_transmission_status,"transmitted");
     assert.equal(summary.provider_request_status,"submission_unknown");assert.equal(summary.unresolved_provider_call_count,null);assert.equal(summary.provider_submission_uncertain,true);
     assert.equal(summary.settled_cost_microusd,1400);assert.equal(summary.reservation_status,"unknown");
     assert.equal(f.cost()[0].used_microusd,1400);assert.equal(f.tokens()[0].used_tokens,200);assert.equal(JSON.stringify(input),before);

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
 import ts from "typescript";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire, registerHooks } from "node:module";
 import * as lit from "lit";
 const { nothing } = lit;
@@ -75,7 +75,8 @@ async function loadActual(relative) {
     else if (specifier === "lit/directives/cache.js") dependencies.set(specifier, { cache });
     else if (specifier === "lit/directives/keyed.js") dependencies.set(specifier, { keyed });
     else if (specifier === "lit/directives/repeat.js") dependencies.set(specifier, { repeat });
-    else if (specifier.startsWith("lit/")) dependencies.set(specifier, await import(specifier));
+    // Extracted data-URL fixtures have no package base; resolve from the real fixture root.
+    else if (specifier.startsWith("lit/")) dependencies.set(specifier, await import(pathToFileURL(createRequire(new URL("package.json", root)).resolve(specifier)).href));
     else if (/\/(?:forma-element|presentational-element)(?:\.ts)?$/.test(specifier)) dependencies.set(specifier, { FormaElement: ElementPort, FormaPresentationalElement: ElementPort, icon: () => nothing, copyTextToClipboard: async value => { activeFixture.clipboard.push(value); return true; } });
     else if (specifier === "./modal-dialog") dependencies.set(specifier, modalPort);
     else if (/\/icons$/.test(specifier)) dependencies.set(specifier, { icon: () => nothing, registerIcons() {} });

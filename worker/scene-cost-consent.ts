@@ -385,7 +385,10 @@ export async function readScenePolicyStopEvidence(
   for(const [key,value] of Object.entries(checkpoint.providerSubmissions)){
     if(!sceneObject(value)||key!==value.clientRequestId||value.provider!=="openai"||value.operation!=="planning"||value.model!==candidate.model)return null;
     if(key===witness.client_request_id){
-      if(witness.stage!=="after-pending"||Object.keys(value).sort().join(",")!=="clientRequestId,costMicrousd,model,operation,provider,status"
+      // Current observers retain the request digest; legacy stops omit it.
+      // Neither shape proves a local stop without the canonical witness above.
+      if(witness.stage!=="after-pending"||Object.keys(value).filter(key=>key!=="requestDigest").sort().join(",")!=="clientRequestId,costMicrousd,model,operation,provider,status"
+        ||Object.hasOwn(value,"requestDigest")&&(typeof value.requestDigest!=="string"||!/^[a-f0-9]{64}$/u.test(value.requestDigest))
         ||value.status!=="rejected"||value.costMicrousd!==0)return null;
       stopped++;continue;
     }

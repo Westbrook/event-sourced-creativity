@@ -1,0 +1,39 @@
+# E4 — retained recovery baseline cleanup
+
+22 September 2026. Local E continuation from published Production 519, `fd714354d3b2f5a963ca6e104bc3ea0d69a7176d`, on `codex/forma-e4-baseline` in `/private/tmp/forma-e4-baseline`. The historical E worktree remains at its original E3 commit because its history cannot fast-forward to the integrated release. E3's three published repairs remain closed. No merge, publication, provider call, installation or activation is included.
+
+## Reproduction and classification
+
+The exact retained groups reproduce on unchanged published source: **40/99** policy/composer checks and **0/2** freshly built bundled recoveries. All **61 failure names match** the integrated release baseline. These are reported test failures, including nested parent failures and cascades, not 61 independent product defects. Commands, raw results, source hashes, and complete failed-name lists are retained in [verification.json](evidence/generation-e4/verification.json).
+
+| Distinct cause | Classification | Evidence and smallest correction |
+| --- | --- | --- |
+| Scene observer adds `requestDigest`, but canonical stop reader and summary reader reject every extra key | Production regression from observer/reader contract drift | The native stop contains exactly the original six fields plus a valid request digest. Both readers now accept only that optional lowercase 64-hex field, retaining the exact six-field historical shape. All other keys, positive/unknown costs, provider IDs and missing witnesses still fail closed. |
+| Dynamic `import(specifier)` runs inside an extracted data-URL fixture | Fixture extraction defect | Resolve installed Lit dependencies from the real fixture root and import a file URL. The actual component and directive execute; no renderer method or assertion is suppressed. |
+| Composer input helper selects `maxlength="120"`, which current guidance inputs no longer have | Fixture selector drift exposed after import repair | Select the actual input by its `name`. The import-only repaired suite exposed 31 failures out of 93 tests; the first exact failure was the helper finding no input. Preserve audience/tone edits and the real handler. |
+| Bundled tests poll a stale job before requesting original foreground recovery | Intended guard denial with obsolete sequence | Since `ee4730b6`, ordinary GET observation terminalizes expired foreground jobs without provider work. Explicit `/run` first exercises the existing original recovery path. Polling still runs afterward; all completion, no-POST/no-replacement, original identity and exact token/cost/reservation assertions remain. Two added tests separately prove GET-first terminalization and refusal to restart the terminal original. |
+| Two malformed-observer checks expect an exact planner count with incomplete evidence | Intended conservative guard with obsolete expectation | The existing shared contract preserves the known total lower bound and paid amount while returning null planner/media counts and `provider_call_breakdown_complete:false`. The updated tests assert all these terms together, preserve transmitted/unknown distinctions, inspect original ledgers, and verify no mutation. No product accounting behavior is changed. |
+
+The policy reader mismatch is one shared cause implemented at two consumers. It prevents canonical certification, inflates the apparent call count by one local stop, and cascades into proof, forged-marker and race tests. The forged-marker tests originally serialized an undefined certificate, omitting their intended attack field; with canonical certification restored they execute the actual rejection checks. The two malformed-breakdown expectations emerge only after the main mismatch is repaired.
+
+## Preserved contracts
+
+A valid digest is evidence metadata, never local-stop authority by itself. The server still validates exact original job/request/attempt, source and consent binding, native private audit witness, complete all-attempt audit/token/cost families, custody, selected authority, row snapshot, expiry, revocation and final compare-and-swap. The client projection still requires the server certificate and matching original row identity. Invalid digest types/length/case and extra observation fields have explicit negative coverage. Legacy observations without a digest remain readable without rewriting historical envelopes.
+
+A completed zero-token provider response remains a transmitted call. A local stop excludes only its exact witnessed non-dispatched unit. Earlier paid, unknown, malformed or pending evidence remains visible; positive settled amounts and original reservations are not recast as unused. Fresh safe-unused proof permits only a separate free preparation and separate approval. No financial policy is selected.
+
+The bundled paid-draft journey uses the retained planner response without a new request. Submitted video-Scene recovery uses original provider GETs and the original reservations, verifies exact settlement and leaves no stranded reservation. The distinction between explicit foreground recovery and observation is tested in both directions; no runtime guard was broadened.
+
+## Verification and limits
+
+Final affected verification: **621/621 passing**, with zero skipped or cancelled tests: 252 policy/composer, 301 adjacent, and 68 complete document-reservation tests on the final freshly built Worker. TypeScript, changed-file ESLint, diff check and local production build pass (existing large-chunk warning retained). See the machine-readable verification for exact commands, raw logs and hashes. The primary target run exercises the previously unloaded composer tests and the previously cascading nested policy tests; its denominator is therefore larger than the historical baseline. Diagnostic intermediate failures are retained and are not counted as final passing checks.
+
+Policy fixtures execute real SQLite statements with the existing depth-100 compiler and binding-100 checks. The affected native Scene and connected-driver tests retain full argument-32, depth-100, compound-select-5, binding-100 and SQL-100,000-byte checks and require zero compatibility exceptions. Native here means the real application/D1-shaped SQL path in a mocked local SQLite fixture, not a deployed D1 probe. No strict compiler is disabled and no compatibility-only pass is promoted to strict qualification. Bundled recovery uses the freshly built Worker with mocked transport and disposable SQLite; it is not a deployed-engine or full-repository qualification.
+
+The unchanged historical test **“new runner rejects live flags; checked study remains immutable and offline”** remains separately failing with `immutable_study_changed_create_new_reviewed_version`. Its historical envelope, checker and test are preserved. No envelope is refreshed to improve counts. The E4 cleanup does not qualify a new release envelope.
+
+## Handoff
+
+H continuation owns trusted source/configuration, and F4 owns preparation settlement and pending schema integration. Both received the E4 scope and findings. E4 edits neither shared host nor schema, provider request builder, production routing, Memory/Replay restrictions or retention policy. Canonical report updates use its atomic helper and touch only E4 task/handoff entries. User review remains unacknowledged.
+
+The actual source/request/direction, selected financial policy and live authority remain absent for this task. Hosts and pending schemas remain inactive. The [additive transfer ledger](generation-cross-media-transfer-e2.md#e4-continuation--published-519-baseline) retains named owners and modality-specific tests/metrics. Image findings do not establish other-media quality. Broader compiler, portrait/reference, listening, layout, continuity and geometry experiments remain deferred, independent of this cleanup and the first image operation unless an applicable shared defect is demonstrated.
