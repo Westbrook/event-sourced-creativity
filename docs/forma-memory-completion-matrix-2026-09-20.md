@@ -1,8 +1,9 @@
 # Memory implementation completion matrix
 
-**Current release update:** The user authorized merge and publication; source is
-on remote `main`. The first publication failed during hosted SQL execution.
-Guarded default-disabled recovery is in progress; see the [merge/publication and migration-hold receipt](forma-memory-publication-2026-09-21.md).
+**Current release update:** Merged to remote `main` and published successfully as
+production **496**, source `45fdacfa`. This is default-disabled application delivery;
+31 candidate Memory migrations remain held after the failed495 SQL attempt.
+See the [merge/publication and migration-hold receipt](forma-memory-publication-2026-09-21.md).
 Earlier local-only release statements below are historical. Activation remains gated.
 
 Updated2026-09-21. This is the **current native implementation ledger** for the
@@ -11,7 +12,7 @@ Older dated checkpoints below preserve the investigation history; their former
 “remaining” lists are superseded by this table, not new outstanding assignments.
 
 **Current state: all six native implementation workstreams complete and locally
-qualified; ready for integration review.**
+qualified; integrated and published default-disabled in496.**
 The last code commit is `bd6c4ef3`, following the `b945511c` merge of local main
 `00e23d97`. [Optional image schema qualification](forma-memory-authored-image-schema-2026-09-21.md)
 fixes six maintenance regressions found by the exhaustive custody run.

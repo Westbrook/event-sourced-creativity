@@ -73,5 +73,21 @@ scheduling and explicit user consent in the
 
 ## Recovery outcome
 
-The guarded recovery publication is in progress. Do not infer success until the
-saved-version and terminal deployment receipts are recorded here.
+The guarded recovery publication **succeeded** at2026-09-22T01:07:12Z:
+
+- Published source on remote `main`: `45fdacfaeda9b12f2b342d2f8a8225a80e6901fc`.
+- Production version **496**: `appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_11279f97f09c819197158ef159ca5007`.
+- Deployment: `appgdep_6ab1d4ace2ec81919ffccdd7ba7dc0bd`, terminal `succeeded`, no failure message.
+- [Production Forma](https://forma-creative-studio.reve-ai-0869.chatgpt.site).
+- Saved archive SHA-256: `8f96789022be1520378d189708269a5fc01e2deca5b2e1d514290aa3c8c921b5`;614 normalized files,42,741,760 bytes.
+- Post-publication Sites reads confirm environment revision13, no Memory keys,
+  `workspace_all` audience, access revision7 and zero external visitors.
+- Read-only HTTP smoke: unauthenticated home401; existing Sites dispatch
+  credential home200; session401 without a signed-in user cookie.
+  This verifies availability/access enforcement, not signed-in Memory acceptance.
+
+The failed495 receipt above is retained. Successful496 publication does **not**
+repair or qualify the partially installed Memory schema. All held migrations,
+activation, scheduling, user consent and service-dependent work remain tracked.
+A subsequent documentation-only commit records this receipt; it is not a different
+runtime deployment and does not require publishing a second identical application.

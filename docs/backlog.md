@@ -673,8 +673,15 @@ and their linked To Dos. This is not a production completion claim.
 
 ## MEM-060 — Authorized publication and hosted migration hold
 
-Main was fast-forwarded and pushed tof28e6b19. Version495 publication failed
-with an incomplete-input SQLite error after partial schema creation.
-The [merge/publication and migration-hold receipt](forma-memory-publication-2026-09-21.md) tracks the guarded code-only
-publication, pinned deployed migration prefix and exact-schema/receipt repair
-required before activation. No failed deployment is marked published.
+**Code publication: Done. Hosted schema repair/qualification: Blocked — supported
+exact-schema inspection and migration execution required. Owner: Memory task;
+production publisher notified.**
+
+Remote `main` source `45fdacfa` is published successfully in production496.
+The first495 attempt failed with an incomplete-input SQLite error and partial
+schema creation. The [publication receipt](forma-memory-publication-2026-09-21.md)
+records both outcomes and the guarded packaging commands. The durable release
+hold retains the exact41-migration production494 prefix and excludes31 candidate
+Memory migrations. Before activation, inspect exact schema/applied receipts,
+repair and qualify isolated hosted execution, then explicitly lift the hold.
+Memory activation, enrollment and scheduling remain off; existing audience unchanged.
