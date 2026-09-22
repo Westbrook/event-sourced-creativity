@@ -33,7 +33,8 @@ export function parseStillRoute(value:string|URL):StillRoute|null {
   const parts=path.slice('/still/'.length).split('/');let i=0;
   if(parts[i]==='project'){
     const project=id(parts[++i]??'');if(!project)return null;route.projectId=project;route.view='documents';i++;
-    if(parts[i]==='document'){
+    if(parts[i]==='ideas'){route.view='ideas';i++;if(parts[i]==='block'){const block=id(parts[++i]??'');if(!block)return null;route.blockId=block;i++;}}
+    else if(parts[i]==='document'){
       const document=id(parts[++i]??'');if(!document)return null;route.documentId=document;route.view='document';i++;
       if(parts[i]==='block'){
         const block=id(parts[++i]??'');if(!block)return null;route.blockId=block;i++;
@@ -49,7 +50,7 @@ export function parseStillRoute(value:string|URL):StillRoute|null {
     }
   }
   if(parts[i]==='page'){
-    if(!['projects','documents','results','document'].includes(route.view)||!!route.blockId)return null;
+    if(!['projects','documents','ideas','results','document'].includes(route.view)||!!route.blockId)return null;
     const page=index(parts[++i]??'');if(page===null)return null;route.page=page;i++;
   }
   if(parts[i]==='create'){
@@ -68,6 +69,7 @@ export function stillPath(route:StillRoute):string {
   let path='/still';
   const encode=(value:string)=>{if(!id(encodeURIComponent(value)))throw new Error('Invalid Still address');return encodeURIComponent(value);};
   if(route.projectId)path+=`/project/${encode(route.projectId)}`;
+  if(route.view==='ideas'){if(!route.projectId||route.documentId)throw new Error('Ideas address requires a project');path+='/ideas';if(route.blockId)path+=`/block/${encode(route.blockId)}`;}
   if(route.documentId){
     if(!route.projectId)throw new Error('Document address requires its project');
     path+=`/document/${encode(route.documentId)}`;
@@ -95,12 +97,12 @@ export function stillURL(route:StillRoute,current:string|URL):string {
 export function stillRouteProblem(route:StillRoute,p:CreativeProjection,resultCount?:number):string {
   if(route.projectId&&!p.projects.some(x=>x.id===route.projectId))return 'Project unavailable';
   if(route.documentId&&!p.documents.some(x=>x.id===route.documentId&&x.projectId===route.projectId&&!x.removed))return 'Document unavailable';
-  if(route.blockId&&!p.blocks.some(x=>x.id===route.blockId&&x.documentId===route.documentId&&x.projectId===route.projectId&&!x.removed))return 'Idea unavailable';
+  if(route.blockId&&!(route.view==='ideas'?p.libraryBlocks:p.blocks).some(x=>x.id===route.blockId&&(route.view==='ideas'||x.documentId===route.documentId)&&x.projectId===route.projectId&&!x.removed))return 'Idea unavailable';
   const artifact=p.artifacts.find(x=>x.id===route.outputId&&x.documentId===route.documentId);
   // Generation membership is checked against the authorized jobs endpoint by the view.
   if(!['generation','rejection'].includes(route.view)&&route.outputId&&!artifact&&!p.outputs.some(x=>x.id===route.outputId&&x.documentId===route.documentId&&!x.discarded))return 'Result unavailable';
   if((route.itemIndex||route.itemExplicit)&&(!artifact||!['slides','storyboard'].includes(artifact.kind)||!artifact.items[route.itemIndex]))return 'Item unavailable';
-  const count=route.view==='projects'?p.projects.length:route.view==='documents'?p.documents.filter(d=>!d.removed).length:route.view==='document'?p.blocks.filter(b=>!b.removed).length:resultCount??p.outputs.filter(o=>!o.discarded).length+p.artifacts.length;
+  const count=route.view==='projects'?p.projects.length:route.view==='documents'?p.documents.filter(d=>!d.removed).length:route.view==='ideas'?p.libraryBlocks.length:route.view==='document'?p.blocks.filter(b=>!b.removed).length:resultCount??p.outputs.filter(o=>!o.discarded).length+p.artifacts.length;
   if(route.page&&route.page*3>=count)return 'Page unavailable';
   return '';
 }

@@ -9,7 +9,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-21';
+export const POLICY_VERSION = 'still-22';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback; generation?:GenerationDecisionContext };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -19,11 +19,12 @@ export const ACTIONS: readonly Action[] = [
   { id: 'refresh-generation', label: 'Refresh status', group: 'reflect', description: 'Reread the selected generation’s saved status. Does not reconcile a missing receipt, resume provider work, or start a new paid request.' },
   { id: 'generate-again', label: 'Retry dangerously', group: 'make', description: 'Explicitly start a separate paid generation in the original format with current document context. Unchanged inputs may be rejected again while still incurring costs. This does not resume the original and may duplicate a charge when acceptance is unknown.' },
   { id: 'projects', label: 'View projects', group: 'navigate', description: 'Browse and resume an accessible creative project.' },
+  { id: 'ideas', label: 'View ideas', group: 'navigate', description: 'Browse all project ideas. Likely useful from Documents: discover, edit and reuse ideas across documents.' },
   { id: 'documents', label: 'View documents', group: 'navigate', description: 'Browse documents in this project.' },
   { id: 'new-project', label: 'New project', group: 'write', description: 'Create a named Forma project. Documents and ideas are added separately.' },
   { id: 'new-document', label: 'New document', group: 'write', description: 'Create a document in the current project, optionally starting with an idea.' },
   { id: 'add-context', label: 'Add idea', group: 'context', description: 'Write an authored context block to add an idea, detail, constraint, or variation that will guide the creative work. The user writes and accepts it; this does not generate a result or create an alternate document.' },
-  { id: 'edit-block', label: 'Edit idea', group: 'write', description: 'Edit the selected context block without replacing other work.' },
+  { id: 'edit-block', label: 'Edit idea', group: 'write', description: 'Edit this project idea. Shared content changes wherever this idea is used; independent forks remain separate.' },
   { id: 'split-context', label: 'Split idea', group: 'context', description: 'Review a cost, then extract independently useful decisions into editable child blocks while keeping their source and relationships.' },
   { id: 'research-context', label: 'Research idea', group: 'context', description: 'Review research cost, then find related project ideas or sourced information for the selected thought. Public search uses a separately supplied public subject.' },
   { id: 'find-references', label: 'Find reference', group: 'context', description: 'Search for file-based evidence—images, video, audio, 3D models or documents—then review sources and permissions before attaching a chosen reference.' },
@@ -32,7 +33,7 @@ export const ACTIONS: readonly Action[] = [
   { id: 'rename', label: 'Rename document', group: 'write', description: 'Rename the current creative document.' },
   { id: 'context', label: 'View document', group: 'navigate', description: 'Return from an individual idea or result to the whole document. Review its assembled context, continue editing, or choose an output from there; opening the document does not start generation.' },
   { id: 'use-in', label: 'Use idea in…', group: 'context', description: 'Choose a character, composition or another document in the current authorized workspace. Review linking the selected idea or copying its complete related set before saving. The destination is never inferred as permission to save.' },
-  { id: 'reuse', label: 'Copy existing idea', group: 'context', description: 'Reuse an existing context block from this project in the current document.' },
+  { id: 'reuse', label: 'Use existing idea', group: 'context', description: 'Reuse an existing context block from this project in the current document.' },
   { id: 'lock', label: 'Lock idea', group: 'context', description: 'Lock the selected context block as a creative constraint.' },
   { id: 'unlock', label: 'Unlock idea', group: 'context', description: 'Unlock the selected block for further editing.' },
   { id: 'toggle-context', label: 'Toggle context', group: 'context', description: 'Include or exclude the selected context block from generation.' },
@@ -54,7 +55,7 @@ export const ACTIONS: readonly Action[] = [
 
 export function evaluateEligibility(p: CreativeProjection, pos: Position, abilities: Abilities) {
   const document = !!pos.documentId && p.documents.some(d => d.id === pos.documentId && !d.removed);
-  const block = p.blocks.find(b => b.id === pos.blockId && !b.removed);
+  const block = (pos.view==='ideas'?p.libraryBlocks:p.blocks).find(b => b.id === pos.blockId && !b.removed);
   const artifact = p.artifacts.find(a => a.id === pos.outputId);
   const exclusion = (a: Action): string => {
     if (['refresh-generation','generate-again','inspect-rejection','view-output'].includes(a.id)) {
@@ -69,6 +70,8 @@ export function evaluateEligibility(p: CreativeProjection, pos: Position, abilit
     if (a.id === 'projects') return pos.view === 'projects' ? 'Already viewing projects' : '';
     if (a.id === 'intent') return '';
     if (a.id === 'new-project') return abilities.projectCreate ? '' : 'Project creation unavailable';
+    if(a.id==='ideas')return !pos.projectId?'Select a project':pos.view==='ideas'&&!pos.blockId?'Already viewing ideas':'';
+    if(pos.view==='ideas'&&['add-context','edit-block','lock','unlock','use-in'].includes(a.id)){if(!abilities.author)return 'Author permission required';if(a.id==='add-context')return '';if(a.id==='use-in')return block?editableIdea(block)?'':'Select an editable idea':p.libraryBlocks.some(editableIdea)?'':'An editable idea is required';if(!block)return 'Select an idea';if(a.id==='unlock')return block.locked?'':'Already unlocked';return block.locked?'Idea is locked':a.id==='edit-block'&&!editableIdea(block)?'Use the dedicated editor for this idea':'';}
     if (a.id === 'documents') return pos.view === 'documents' ? 'Already viewing documents' : pos.projectId ? '' : 'Select a project';
     if (a.id === 'new-document') return !pos.projectId ? 'Select a project' : abilities.author ? '' : 'Author permission required';
     if (!document) return 'Select a document';
@@ -84,7 +87,7 @@ export function evaluateEligibility(p: CreativeProjection, pos: Position, abilit
     if (a.id === 'compose') return !editableIdea(block) ? 'Select an editable idea' : p.blocks.some(b => b.id !== block.id && editableIdea(b)) ? '' : 'Another editable idea required';
     if (['edit-block','lock','toggle-context'].includes(a.id)) return !block ? 'Select an idea' : block.locked ? 'Idea is locked' : '';
     if (a.id === 'unlock') return block?.locked ? '' : 'Select a locked idea';
-    if (a.id === 'reuse') return p.libraryBlocks.some(b => !b.removed && b.documentId !== pos.documentId) ? '' : 'No ideas in other documents';
+    if (a.id === 'reuse') return p.libraryBlocks.some(b => !b.removed && !p.blocks.some(used=>used.id===b.id)) ? '' : 'No ideas in other documents';
     return '';
   };
   return ACTIONS.map(a => { const reason = exclusion(a); return { action: a.id === 'toggle-context' && block ? { ...a, label: Number(block.properties.weight ?? 1) > 0 ? 'Exclude idea' : 'Include idea' } : a, eligible: !reason, reason }; });
@@ -279,7 +282,7 @@ export function rankAllFormats(candidates: Action[], answers: Record<string, Ans
 
 // Signals refine ranking only; no answer can authorize a mutation or introduce an action.
 const SIGNALS: Record<string, { yes?: string[]; no?: string[] }> = {
-  projects: { yes: ['returning', 'existing_start'] }, documents: { yes: ['returning', 'reuse_result'] },
+  ideas: { yes: ['existing_start','manage_ideas','independent_reuse'] }, projects: { yes: ['returning', 'existing_start'] }, documents: { yes: ['returning', 'reuse_result'] },
   'new-project': { yes: ['first_step'] }, 'new-document': { yes: ['reuse_result', 'viewpoint'] },
   'add-context': { yes: ['missing_reference', 'sensory', 'causality', 'establishing_beat', 'evidence', 'scene_to_character', 'blocked_input'] },
   'split-context': { yes: ['benefit_split-context','independent_change','independent_reuse','independent_sources','portable_motif'] },
@@ -389,7 +392,8 @@ export function selectActions(candidates: Action[], pos: Position, answers: Reco
 
 const safeText = (v: unknown, max = 1000) => typeof v === 'string' ? v.replace(/https?:\/\/\S+/g, '[linked resource]').slice(0, max) : '';
 export function buildDecisionState(events: CreativeEvent[], position: Position, abilities: Abilities, head: number, content: Record<string,string> = {}, prepared?:CreativeProjection) {
-  const p = prepared ?? foldEvents(events, Infinity, position.documentId, position.projectId);
+  const canonical = prepared ?? foldEvents(events, Infinity, position.documentId, position.projectId);
+  const p = position.view==='ideas'?{...canonical,documentId:'',documentTitle:'Ideas',blocks:canonical.libraryBlocks,blockRelations:canonical.libraryBlockRelations}:canonical;
   const summary=historySummary(events),{useful,creative,counts}=summary??preparedHistory(events);
   const compact = compactHistoryEvent;
   const candidates = eligibleActions(p, position, abilities);

@@ -1,3 +1,4 @@
+import { ideasInDocument } from './project-ideas.ts';
 import { projectGeneratedImageEdit, projectGuestImageResultEdit, type EditableGeneratedImageOutput, type GeneratedImageEditSnapshot, type GuestImageResultEditSnapshot } from "./generated-image-revision.ts";
 import { originalGeneratedImageUrl } from "./generated-image-original-url.ts";
 import { foldEvents, type CreativeEvent, type CreativeBlock } from "./events.ts";
@@ -88,8 +89,7 @@ function select(input: GeneratedImageEditRead | null, sourceId: string | null, n
   const revision = output.imageRevision?.revision ?? 0, editEventId = output.imageRevision?.editEventId ?? null;
   // Only actual eligible reference blocks already present in this Document may
   // supply the compositor. A generated output alone does not create one.
-  const sources = referenceCompositionSources(projection.libraryBlocks.filter(block => block.documentId === input.documentId
-    && block.projectId === input.projectId), events, now).filter(source => {
+  const sources = referenceCompositionSources(ideasInDocument(projection,input.documentId).filter(block => block.projectId === input.projectId), events, now).filter(source => {
     if (referenceCompositionMediaUrl(source.mediaUrl) !== source.mediaUrl) return false;
     try { return mediaKeyMatchesOwnerNamespace(decodeURIComponent(source.mediaUrl.slice("/api/media/".length)), input.ownerId); }
     catch { return false; }
@@ -440,7 +440,7 @@ function selectGuestImageResultMetadataCore(input: GuestImageResultMetadataSelec
   const localContext: ClaimedLocalContext = { ownerId: input.ownerId, projectId: input.projectId, documentId: input.documentId, outputId: input.outputId,
     origin, claim, mediaUrl, mediaSha256, width: output.width!, height: output.height!, revision, editEventId,
     editSequence: output.imageRevision?.editSequence ?? origin.sequence, expiresAt: p.content_expires_at };
-  const blocks = projection.libraryBlocks.filter(block => block.documentId === input.documentId && block.projectId === input.projectId);
+  const blocks = ideasInDocument(projection,input.documentId).filter(block=>block.projectId===input.projectId);
   const markedBlocks = new Set<string>(), markedReferences = new Set<string>();
   for (const event of events) {
     const data = event.type === "BlockCreated" ? event.payload.properties : event.type === "ReferenceIngested" || event.type === "RightsAsserted" ? event.payload : null;

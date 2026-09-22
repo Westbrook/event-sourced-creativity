@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../model/project-ideas.ts';
 import '../components/memory-resource-controls.ts';
 import { openOutputReferenceDestination } from "../components/output-reference-navigation";
 import { navigateInApp, navigationPresentationMatches, type CommandDeparture, type LocalNavigation } from "../components/command-departure";
@@ -809,7 +810,7 @@ export class CanvasApplication extends FormaElement {
 
   async #createCanvas(){if(!this.#canEditCanvas())return;const name=this.#canvasName.trim()||"Untitled board";const project=this.store.projection.get();const id=uid();const appended=await this.#commit([{type:"CanvasCreated",payload:{canvas_id:id,project_id:project.projectId,name,slug:canvasSlug(name),created_from:"canvas-home"}}]);if(appended.length){this.#newCanvasOpen=false;this.#canvasName="";this.#go(`/canvas/${encodeURIComponent(id)}/${canvasSlug(name)}`);}}
   #sources():Source[]{const p=this.store.projection.get();const canvas=this.store.canvasProjection.get();return[
-    ...p.documents.map((item)=>({kind:"document" as const,id:item.id,title:item.title,body:`${p.libraryBlocks.filter((block)=>block.documentId===item.id).length} decisions · ${p.libraryOutputs.filter((output)=>output.documentId===item.id).length} images · ${p.libraryArtifacts.filter((artifact)=>artifact.documentId===item.id).length} stories, presentations, or motion results`,blockType:"document"})),
+    ...p.documents.map((item)=>({kind:"document" as const,id:item.id,title:item.title,body:`${ideasInDocument(p,item.id).length} decisions · ${p.libraryOutputs.filter((output)=>output.documentId===item.id).length} images · ${p.libraryArtifacts.filter((artifact)=>artifact.documentId===item.id).length} stories, presentations, or motion results`,blockType:"document"})),
     ...p.libraryBlocks.map((item)=>({kind:(item.type==="reference"?"reference":item.type==="sketch"?"sketch":"block") as CanvasSourceKind,id:item.id,title:String(item.properties.label??item.handle),body:textForBlock(item),blockType:item.type})),
     ...p.libraryArtifacts.map((item)=>this.#artifactSource(item)),
     ...p.libraryOutputs.map((item)=>this.#outputSource(item)),
@@ -867,7 +868,7 @@ export class CanvasApplication extends FormaElement {
         for(const[memberOrder,childId]of set.itemIds.entries()){const child=byId.get(childId);if(!child)continue;const group:CombinedContextMembership={contextSetId:set.id,name:set.name,role:set.role as CombinedContextRole,target:set.target,application:set.application as CombinedContextApplication,relativity:set.relativity,memberOrder,sourceCanvasId:set.canvasId};visit(child,[...parents,group]);}
         return;
       }
-      const sourceIds=item.sourceKind==="document"?projection.libraryBlocks.filter((block)=>block.documentId===item.sourceId).map((block)=>block.id):[item.sourceId];for(const sourceId of sourceIds)for(const group of parents)append(sourceId,group);
+      const sourceIds=item.sourceKind==="document"?ideasInDocument(projection,item.sourceId).map((block)=>block.id):[item.sourceId];for(const sourceId of sourceIds)for(const group of parents)append(sourceId,group);
     };
     for(const item of items)visit(item);return memberships;
   }
@@ -878,7 +879,7 @@ export class CanvasApplication extends FormaElement {
     const expanded=this.#expandedSelection(selected);const sourceBlockIds=new Set<string>();
     for(const item of expanded){
       if(["block","reference","sketch"].includes(item.sourceKind))sourceBlockIds.add(item.sourceId);
-      if(item.sourceKind==="document")for(const block of projection.libraryBlocks)if(block.documentId===item.sourceId)sourceBlockIds.add(block.id);
+      if(item.sourceKind==="document")for(const block of ideasInDocument(projection,item.sourceId))sourceBlockIds.add(block.id);
     }
     for(const relation of projection.libraryBlockRelations)if(relation.kind==="artifact_contains"&&sourceBlockIds.has(relation.fromBlockId))sourceBlockIds.add(relation.toBlockId);
     const sourceBlocks=projection.libraryBlocks.filter((block)=>sourceBlockIds.has(block.id));
@@ -1940,7 +1941,7 @@ const canvas=this.store.canvasProjection.get(),site=this.#site(),actionId=uid();
     const presentation=content?.presentation??artifact.presentation;
     const deckItems=items.map((entry):DocumentArtifactDraftItem=>({title:entry.title,body:entry.body,notes:entry.notes,image_prompt:entry.imagePrompt,slide:entry.slide}));
     const projection=this.store.projection.get();
-    const sourceBlocks=projection.libraryBlocks.filter((block)=>block.scope==="document"&&block.documentId===artifact.documentId&&block.projectId===projection.projectId);
+    const sourceBlocks=ideasInDocument(projection,artifact.documentId);
     const delivery=artifactDeliveryFor(this.store,artifact,undefined,this.store.canvasProjection.get().selectedCanvasId);
     const session=this.store.session.get(),project=session?.projectContext,events=this.store.events.get(),review=artifactReviewState(artifact,sourceBlocks,events),releaseAllowed=!project||(!project.managedPilot&&!artifactSourceVersions(artifact.id,events))||delivery.approved;
     const completed=events.find((event)=>event.eventId===artifact.sourceEventId),rendered=[...events].reverse().find((event)=>event.type==="DocumentRenderRequested"&&String(event.payload.artifact_id??"")===artifact.id),renderedBy=rendered?.actor.startsWith("user:")?rendered.actor.slice(5):"";

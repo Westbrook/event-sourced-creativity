@@ -58,7 +58,7 @@ test('listing pages nominate toolbar affordances without adding content navigati
  const events=[{eventId:'p',sequence:1,type:'ProjectCreated',occurredAt:'2026-09-20',payload:{project_id:'p',name:'Project'}},{eventId:'d',sequence:2,type:'DocumentCreated',occurredAt:'2026-09-20',payload:{project_id:'p',document_id:'d',title:'Existing document'}}];
  const base={projectId:'',documentId:'',blockId:'',outputId:'',intent:'',recentActions:[]};
  const abilities={author:true,projectCreate:true,generate:true,formats:['image']};
- for(const [view,projectId,defaultAction] of [['projects','','new-project'],['documents','p','new-document']]){
+ for(const [view,projectId,defaultAction] of [['projects','','new-project'],['documents','p','ideas']]){
   const pos={...base,view,projectId};const {state,candidates}=buildDecisionState(events,pos,abilities,2);
   const question=questionsFor(candidates,pos).next_best_action;
   assert.equal(state.toolbarDecision.defaultAction,defaultAction);
@@ -71,8 +71,8 @@ test('listing pages nominate toolbar affordances without adding content navigati
   assert.match(questionsFor(candidates,pos)['use_'+defaultAction].instructions,/Follow state.guidance and toolbarDecision/);
   assert.match(state.guidance,/usefulness as an invitation/);assert.match(state.guidance,/not next-click probability/);
   const denied=buildDecisionState(events,pos,{...abilities,author:false,projectCreate:false},2);
-  assert.equal(denied.state.toolbarDecision.defaultAction,null);
-  assert.equal(questionsFor(denied.candidates,pos).next_best_action.criteria[defaultAction],undefined);
+  assert.equal(denied.state.toolbarDecision.defaultAction,view==='documents'?'ideas':null);
+  if(view==='projects')assert.equal(questionsFor(denied.candidates,pos).next_best_action.criteria[defaultAction],undefined);else assert.ok(questionsFor(denied.candidates,pos).next_best_action.criteria.ideas);
  }
  // Defaults describe the page, never overwrite explicit intent or apply to other surfaces.
  const explicit=buildDecisionState(events,{...base,view:'documents',projectId:'p',intent:'Return to my projects'},abilities,2).state;

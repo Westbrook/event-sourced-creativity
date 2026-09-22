@@ -1,5 +1,18 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.l50wya.48": "Open the document to review its output settings.",
+  "system.auto.1g2f6bi.49": "Shared idea output notices application interface.",
+  "system.auto.1bpd6ra.145": "Application-connected shared idea output notices interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+  "system.auto.102vvve.33": "Where should these changes apply?",
+  "system.auto.eh2hxg.40": "This idea is used in multiple documents:",
+  "system.auto.18vvhv2.105": "Apply changes everywhere, or create a new idea for this document. Other documents will keep the original.",
+  "system.auto.f0nsxe.98": "Apply changes everywhere, or create a new project idea. Existing documents will keep the original.",
+  "system.auto.1x8pj96.15": "Create new idea",
+  "system.auto.yepf09.22": "Apply to all documents",
+  "system.auto.bkpl70.19": "Out-of-date outputs",
+  "system.auto.1m8pbfb.18": "Output out of date",
+  "system.auto.pfbest.70": "A shared idea changed elsewhere. Would you like to update this output?",
+  "system.auto.1x3tu3e.24": "Review and update output",
   "system.auto.1r90hqw.52": "Memory image preview controls application interface.",
   "system.auto.1rhlryl.226": "Separate private-image purchase/review and exact authored-image acceptance. Nothing is published without the additional scope-bound checkbox; private pixels never enter browser persistence. Source retirement removes this view.",
   "system.auto.1658tge.44": "Memory profile review application interface.",
@@ -6373,5 +6386,18 @@ Object.assign(messages, {
 });
 
 Object.assign(messages, { "system.auto.scxocd.15": "Sponsored Image" });
+
+Object.assign(messages, {
+  "system.auto.5fp1d8.104": "All ideas in this project, including ideas used in documents. Edits are shared wherever an idea is used.",
+  "system.auto.wdg6dx.12": "project idea",
+  "system.auto.vi4a6i.44": "Open this canvas block in its canvas editor.",
+  "system.auto.pl5yr7.126": "Ideas belong to this project. Edits are shared across every document that uses this idea. Fork to make an independent version.",
+  "system.auto.e8736z.68": "{description}. This idea can be used in any document in the project.",
+  "system.auto.rjlzv9.124": "It will disappear from the project and every document that uses it. Its event history remains available for replay and Undo.",
+  "system.auto.1w7w8fs.69": "Idea used in the open document. Edits are shared wherever it is used.",
+  "system.auto.1f0ayfn.95": "This removes its use in this document. The idea remains in the project. Undo restores this use.",
+  "system.auto.y4aub.6": "Blocks",
+  "system.auto.19palh6.15": "Reusable blocks"
+});
 
 export default messages;

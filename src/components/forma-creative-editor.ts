@@ -400,7 +400,7 @@ export class FormaCreativeEditor extends AlternativeStudio {
 
   async #duplicate(item: CreativeBlock) {const sourceOwner=this.store.captureSourceOwnership();if(!this.store.sourceOwnershipActive(sourceOwner))return;
     const projection = this.store.projection.get();
-    if(item.properties.source_artifact_id){if(item.properties.source_artifact_item_id){this.store.toast(item.properties.source_artifact_kind==="video"?"Copy the complete video to keep every scene connected.":"Copy the complete storyboard to keep every frame connected.");return;}const copied=await this.store.copyLibraryBlockSet(item.id,projection.documentId,"creative-editor");if(copied&&!("publication"in copied)&&this.store.sourceOwnershipActive(sourceOwner)){this.#selectedId=copied.rootBlockId;this.requestUpdate();}return;}
+    if(item.properties.source_artifact_id){if(item.properties.source_artifact_item_id){this.store.toast(item.properties.source_artifact_kind==="video"?"Copy the complete video to keep every scene connected.":"Copy the complete storyboard to keep every frame connected.");return;}const copied=await this.store.copyLibraryBlockSet(item.id,projection.documentId,"creative-editor",true);if(copied&&!("publication"in copied)&&this.store.sourceOwnershipActive(sourceOwner)){this.#selectedId=copied.rootBlockId;this.requestUpdate();}return;}
     const id = crypto.randomUUID();
     const copied=copyOutputRequirementBlock(item,id,new Map([[item.id,id]]));
     const appended = await this.store.append({

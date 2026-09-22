@@ -1,3 +1,5 @@
+import { sharedIdeaEdits, independentIdeaEdits, ideaContentEdit } from '../model/shared-idea-edits.ts';
+import { chooseSharedIdeaEdit, IdeaEditCanceled } from '../ui/shared-idea-choice.ts';
 import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { generationResult } from './results.ts';
 import { GenerationActivity, generationNoticeKey } from './generation-activity.ts';
@@ -69,7 +71,7 @@ export class StillClient {
   private contentWrites = new Map<string, number>();
   private polling: { key: string; promise: Promise<void> } | null = null;
   private hydrating: { epoch: number; promise: Promise<void> } | null = null;
-  private projected: { events: CreativeEvent[]; length: number; document: string; project: string; value: ReturnType<typeof foldEvents> } | null = null;
+  private projected: { view:string; events: CreativeEvent[]; length: number; document: string; project: string; value: ReturnType<typeof foldEvents> } | null = null;
   private get journalScope() { return this.session ? `${this.session.user.userId}:${this.session.projectContext?.projectAccessId ?? 'personal'}` : ''; }
   private retirePendingWrite() { this.pendingWrite = null; operationJournal.clearWrite(this.journalScope); }
   recoveredWrite = false;
@@ -79,9 +81,10 @@ export class StillClient {
   get scopeKey() { return scope(this.session); }
   get projection() {
     const { documentId: document, projectId: project } = this.position, previous = this.projected;
-    if (previous?.events === this.events && previous.length === this.events.length && previous.document === document && previous.project === project) return previous.value;
-    const value = foldEvents(this.events, Infinity, document, project);
-    this.projected = { events: this.events, length: this.events.length, document, project, value }; return value;
+    if (previous?.view===this.position.view && previous.events === this.events && previous.length === this.events.length && previous.document === document && previous.project === project) return previous.value;
+    const folded = foldEvents(this.events, Infinity, document, project);
+    const value = this.position.view==='ideas'?{...folded,documentId:"",documentTitle:"Ideas",blocks:folded.libraryBlocks,blockRelations:folded.libraryBlockRelations}:folded;
+    this.projected = { view:this.position.view, events: this.events, length: this.events.length, document, project, value }; return value;
   }
   private clearSource() { ++this.epoch; this.generationRunAfter.clear(); this.generationActivity.clear(); this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.creation = null; this.projected = null; this.contentWrites.clear(); }
   private async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
@@ -119,14 +122,14 @@ export class StillClient {
     return { author, generate: !!s && !s.impersonation && (shared ? shared.permissions.includes('project.output.request') : author), projectCreate: author && !shared, formats: [...(p?.plannerConfigured ? ['image', 'storyboard'] : []), ...(p?.plannerConfigured ? ['short_story', 'scene', 'slides'] : []), ...(p?.videoConfigured ? ['video'] : []), ...(p?.audioConfigured ? ['audio'] : []), ...(p?.model3dConfigured ? ['model3d'] : [])] };
   }
   fence() { const epoch = this.epoch, key = scope(this.session); return () => { if (epoch !== this.epoch || key !== scope(this.session)) throw new Error('Workspace changed. Check the original workspace.'); }; }
-  async load(options: { hydrateContent?: boolean; route?: {documentId:string} } = {}) {
+  async load(options: { hydrateContent?: boolean; route?: {documentId:string;view?:string} } = {}) {
     const epoch = ++this.epoch;
     this.generationActivity.clear();
     this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.session = null; this.projected = null; this.contentWrites.clear();
     const session = await api<Session>('/api/session?profile=still');
     if (epoch !== this.epoch) return;
     this.session = session; this.pendingWrite = operationJournal.write(this.journalScope);
-    if (session.policy.accepted) { if(options.route){await this.loadRoute(options.route.documentId);this.historyComplete=false;}else{this.historyComplete=true;await this.refreshSource(this.fence(), options.hydrateContent !== false);await this.recoverPendingWrite();} }
+    if (session.policy.accepted) { if(options.route&&options.route.view!=='ideas'){await this.loadRoute(options.route.documentId);this.historyComplete=false;}else{this.historyComplete=true;await this.refreshSource(this.fence(), options.hydrateContent !== false);await this.recoverPendingWrite();} }
     this.onChange();
   }
   private async loadRoute(documentId:string){
@@ -251,7 +254,18 @@ export class StillClient {
     const check = await this.verifyScope();
     const exportOnly = events.every(e => ['ObjectExported', 'DocumentArtifactExported'].includes(e.type));
     if (!this.abilities.author && !(exportOnly && this.session?.projectContext)) throw new Error('This workspace is read only.');
-    const inputs: EventInput[] = events.map(e => ({ ...e, payload: { ...e.payload, source_surface: 'still', interaction_policy: POLICY_VERSION } }));
+    events=events.map(e=>e.type.startsWith('Block')&&!Object.hasOwn(e.payload,'document_id')?{...e,payload:{...e.payload,document_id:this.position.documentId}}:e);
+    if(events.some(ideaContentEdit)&&!this.historyComplete){await this.completeHistory();check();}
+    const shared=sharedIdeaEdits(this.projection,events);
+    let replacementId='';
+    if(shared.length&&typeof document!=='undefined'&&!this.hasUnconfirmedWrite){
+      const head=this.head,position=JSON.stringify(this.position),epoch=this.epoch;
+      const current=()=>this.head===head&&this.epoch===epoch&&JSON.stringify(this.position)===position;
+      const choice=await chooseSharedIdeaEdit([...new Set(shared.flatMap(x=>x.documents.map(d=>d.title)))],this.position.documentId?this.projection.documentTitle:'',current);
+      check();if(!current())throw new IdeaEditCanceled();
+      if(choice==='new'){const plan=independentIdeaEdits(this.projection,events,this.position.documentId);events=plan.events;replacementId=plan.ids.get(this.position.blockId)??'';}
+    }
+    const inputs: EventInput[] = events.map(e => ({ ...e, payload: { ...e.payload, ...(e.type.startsWith('Block')?{project_id:e.payload.project_id??this.position.projectId,document_id:e.payload.document_id??this.position.documentId}:{}), source_surface: 'still', interaction_policy: POLICY_VERSION } }));
     this.pendingWrite ??= operationJournal.write(this.journalScope);
     const signature = await digest(inputs); check();
     if (this.pendingWrite) {
@@ -292,6 +306,7 @@ export class StillClient {
     }
     this.retirePendingWrite();
     this.applyReceipt(result);
+    if(replacementId)this.position={...this.position,blockId:replacementId};
   }
   async createProject(name: string) {
     const signature = JSON.stringify(['project', name]);
@@ -308,7 +323,7 @@ export class StillClient {
     this.creation = null; return { projectId, documentId };
   }
   blockEvent(text: string, handle: string, type = 'direction', projectId = this.position.projectId, documentId = this.position.documentId): EventInput {
-    return { type: 'BlockCreated', payload: { block_id: crypto.randomUUID(), project_id: projectId, document_id: documentId, scope: 'document', type, handle, position: String(this.head + 1), properties: { text, weight: .8, authority: 'authored' } } };
+    return { type: 'BlockCreated', payload: { block_id: crypto.randomUUID(), project_id: projectId, document_id: documentId, scope: documentId?'document':'library', project_owned:true, type, handle, position: String(this.head + 1), properties: { text, weight: .8, authority: 'authored' } } };
   }
   async switchWorkspace(project?: NonNullable<Session['projects']>[number]) {
     this.generationActivity.clear();

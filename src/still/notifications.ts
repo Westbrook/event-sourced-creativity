@@ -20,7 +20,7 @@ export const canContinueReview = (review: GenerationReview | null) => review?.ke
 /** A compact invitation; the complete message remains available for review and announcements. */
 export function quietNotification(message:string,variant:string) {
   const text=message.trim();
-  const summary=/unconfirmed|couldn.t confirm|cannot confirm/i.test(text)?'Request unconfirmed'
+  const summary=/output is out of date/i.test(text)?'Output out of date':/unconfirmed|couldn.t confirm|cannot confirm/i.test(text)?'Request unconfirmed'
     :text.length<=64&&!/[\r\n]/.test(text)?text
     :variant==='warning'?'Review needed':variant==='danger'?'Action needed':variant==='success'?'Update ready':'Update';
   return {summary,label:variant==='warning'||variant==='danger'?'Review':'Details'};

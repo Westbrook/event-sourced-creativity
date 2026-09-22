@@ -1,5 +1,18 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.l50wya.48": "Ouvrez le document pour vérifier ses paramètres de sortie.",
+  "system.auto.1g2f6bi.49": "Interface des notifications de résultats liés aux idées partagées.",
+  "system.auto.1bpd6ra.145": "Interface de notifications de résultats liés aux idées partagées connectée à l’application. Vérifiez ses attributs, propriétés JavaScript et événements avant de l’intégrer.",
+  "system.auto.102vvve.33": "Où appliquer ces modifications ?",
+  "system.auto.eh2hxg.40": "Cette idée est utilisée dans plusieurs documents :",
+  "system.auto.18vvhv2.105": "Appliquez les modifications partout, ou créez une nouvelle idée pour ce document. Les autres documents conserveront l’original.",
+  "system.auto.f0nsxe.98": "Appliquez les modifications partout, ou créez une nouvelle idée de projet. Les documents existants conserveront l’original.",
+  "system.auto.1x8pj96.15": "Créer une nouvelle idée",
+  "system.auto.yepf09.22": "Appliquer à tous les documents",
+  "system.auto.bkpl70.19": "Résultats obsolètes",
+  "system.auto.1m8pbfb.18": "Résultat obsolète",
+  "system.auto.pfbest.70": "Une idée partagée a été modifiée ailleurs. Voulez-vous mettre à jour ce résultat ?",
+  "system.auto.1x3tu3e.24": "Vérifier et mettre à jour le résultat",
   "system.auto.1r90hqw.52": "Interface de contrôle des aperçus privés de mémoire.",
   "system.auto.1rhlryl.226": "Achat et aperçu privés de l’image, puis acceptation distincte de l’image créée. Rien n’est publié sans la case supplémentaire liée au périmètre ; les pixels privés ne sont jamais stockés dans le navigateur. Le retrait de la source ferme cette vue.",
   "system.auto.1658tge.44": "Interface de revue du profil Mémoire.",
@@ -6345,5 +6358,18 @@ Object.assign(messages, {
 });
 
 Object.assign(messages, { "system.auto.scxocd.15": "Image sponsorisée" });
+
+Object.assign(messages, {
+  "system.auto.5fp1d8.104": "Toutes les idées de ce projet, y compris celles utilisées dans des documents. Les modifications sont partagées partout où une idée est utilisée.",
+  "system.auto.wdg6dx.12": "idée du projet",
+  "system.auto.vi4a6i.44": "Ouvrez ce bloc dans son éditeur de canevas.",
+  "system.auto.pl5yr7.126": "Les idées appartiennent à ce projet. Les modifications sont partagées entre tous les documents qui utilisent cette idée. Créez une copie indépendante pour une autre version.",
+  "system.auto.e8736z.68": "{description}. Cette idée peut être utilisée dans tout document du projet.",
+  "system.auto.rjlzv9.124": "Elle disparaîtra du projet et de tous les documents qui l’utilisent. Son historique reste disponible pour la relecture et l’annulation.",
+  "system.auto.1w7w8fs.69": "Idée utilisée dans le document ouvert. Les modifications sont partagées partout où elle est utilisée.",
+  "system.auto.1f0ayfn.95": "Cette action retire l’idée de ce document. Elle reste dans le projet. Annuler rétablit son utilisation.",
+  "system.auto.y4aub.6": "Blocs",
+  "system.auto.19palh6.15": "Blocs réutilisables"
+});
 
 export default messages;

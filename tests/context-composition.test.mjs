@@ -110,7 +110,7 @@ test("normalized composition supports broad trees, deterministic sibling order, 
   assert.equal(validateContextCompositionGraph({blocks:projection.blocks,relations:projection.blockRelations,events:[{type:"BlockRelationAdded",payload:{project_id:"project-woman",document_id:"document-woman",relation_id:"shared-eye-color",from_block_id:identifiers.face,to_block_id:identifiers.color,kind:CONTEXT_CONTAINS_RELATION,properties:{member_order:3}}}]}),null,"a deliberate shared branch remains a directed acyclic graph");
 });
 
-test("graph admission rejects cycles, duplicates, locked endpoints, cross-document links, and invalid order atomically",()=>{
+test("graph admission rejects cycles, duplicates, locked endpoints, cross-project links, and invalid order atomically",()=>{
   const projection=foldEvents(womanHistory(),Number.POSITIVE_INFINITY,"document-woman","project-woman");
   const graph={blocks:projection.blocks,relations:projection.blockRelations};
   const edge=(from,to,properties={member_order:0})=>({type:"BlockRelationAdded",payload:{project_id:"project-woman",document_id:"document-woman",relation_id:`new-${from}-${to}`,from_block_id:from,to_block_id:to,kind:CONTEXT_CONTAINS_RELATION,properties}});
@@ -121,7 +121,8 @@ test("graph admission rejects cycles, duplicates, locked endpoints, cross-docume
   assert.equal(validateContextCompositionGraph({...graph,events:[{type:"BlockLocked",payload:{block_id:identifiers.woman}},edge(identifiers.woman,identifiers.other)]}).code,"context_composition_locked");
   assert.equal(validateContextCompositionGraph({...graph,events:[edge(identifiers.other,identifiers.woman),edge(identifiers.color,identifiers.other)]}).code,"context_composition_cycle","a later edge sees every earlier edge in the same atomic request");
   const foreign={...projection.blocks.find((block)=>block.id===identifiers.other),documentId:"foreign-document"};
-  assert.equal(validateContextCompositionGraph({...graph,blocks:[...projection.blocks.filter((block)=>block.id!==identifiers.other),foreign],events:[edge(identifiers.woman,identifiers.other)]}).code,"context_composition_cross_document");
+  assert.equal(validateContextCompositionGraph({...graph,blocks:[...projection.blocks.filter((block)=>block.id!==identifiers.other),foreign],events:[edge(identifiers.woman,identifiers.other)]}),null);
+  assert.equal(validateContextCompositionGraph({...graph,blocks:[...projection.blocks.filter((block)=>block.id!==identifiers.other),{...foreign,projectId:"foreign-project"}],events:[edge(identifiers.woman,identifiers.other)]}).code,"context_composition_cross_project");
 });
 
 test("composition-only edits invalidate exact-source approvals and preserve structural provenance",()=>{

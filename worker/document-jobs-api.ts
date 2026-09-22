@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../src/model/project-ideas.ts';
 import { documentJobImageSize } from './document-job-image-size.ts';
 import { authorizeImageSafetyDelivery } from "./image-safety-acknowledgement.ts";
 import { requireGuestImageExecution, prepareGuestImageJobClaim, type GuestImageExecutionAuthority } from "./experience-guest-image-execution.ts";
@@ -4332,7 +4333,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       WHERE binding.project_access_id=? AND binding.organization_id=? AND member.target_block_id=? LIMIT 1`)
       .bind(project.projectAccessId,project.organizationId,blockId).first();
     if(governed)return Response.json({error:"organization_context_package_decision_immutable"},{status:403});
-    const block=projection.libraryBlocks.find((candidate)=>candidate.id===blockId&&candidate.documentId===documentId&&candidate.type==="reference"&&String(candidate.properties.reference_id??"")===referenceId);
+    const block=ideasInDocument(projection,documentId).find((candidate)=>candidate.id===blockId&&candidate.type==="reference"&&String(candidate.properties.reference_id??"")===referenceId);
     const resources=block?await env.DB.prepare("SELECT COUNT(*) AS count FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND owner_user_id=? AND ((resource_kind='document' AND resource_id=?) OR (resource_kind='block' AND resource_id=?) OR (resource_kind='reference' AND resource_id=?))")
       .bind(project.projectAccessId,project.organizationId,project.ownerUserId,documentId,blockId,referenceId).first<{count:number}>():null;
     if(Number(resources?.count??0)!==3)return Response.json({error:"project_reference_not_authorized"},{status:403});

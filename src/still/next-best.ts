@@ -9,7 +9,7 @@ export type NextBestAssessment={enabled:boolean;accepted:boolean;reason:string;c
 export function toolbarDecisionContext(position:Pick<Position,'view'|'palette'> & Partial<Pick<Position,'blockId'>>,candidates:Pick<Action,'id'>[]){
   const idea=isIdeaPage({...position,blockId:position.blockId??''});
   const listing=position.view==='projects'?'projects':position.view==='documents'?'documents':null;
-  const preferred=listing==='projects'?'new-project':listing==='documents'?'new-document':null;
+  const preferred=listing==='projects'?'new-project':listing==='documents'?'ideas':null;
   return {
     ...(idea?{focus:'One context block, not the whole document',navigation:{action:'context',reason:DOCUMENT_RETURN_REASON},continuation:'After adding or editing an idea, View document lets the user review the assembled context and then Choose output. This is a useful available path, not evidence of an intent to generate.',maintenance:'Renaming the parent document belongs on the document page or in the command palette, not among focused-idea toolbar suggestions.'}:{}),
     surface:position.palette?'command palette':position.view==='choose-format'?'output toolbar':'action toolbar',

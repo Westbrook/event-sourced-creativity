@@ -26,7 +26,7 @@ export type GenerationPromotionSignal = {
   evidenceRefs: string[];
 };
 
-const DOCUMENT_CHANGES = /^(BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited|ExtractionCompleted)$/;
+const DOCUMENT_CHANGES = /^(BlockDocumentAttached|BlockDocumentDetached|BlockCreated|BlockPropertyEdited|BlockWeightSet|BlockRemoved|BlockRestored|ChipEdited|ExtractionCompleted)$/;
 
 export function generationPromotionSignals(events: CreativeEvent[]): GenerationPromotionSignal[] {
   return events.filter((event) => event.type === "IdeationPromoted").map((promotion) => {

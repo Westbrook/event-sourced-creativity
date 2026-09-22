@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../src/model/project-ideas.ts';
 import { type CreativeEvent } from "../src/model/events.ts";
 import { originalGeneratedImageUrl } from "../src/model/generated-image-original-url.ts";
 import {readImageWitness,imageWitnessStatement,imageWitnessAcknowledged,imageWitnessPublished,IMAGE_STREAM_SCAN_LIMITS,type ImageWitnessGuard} from './generated-image-witness.ts';
@@ -285,7 +286,7 @@ async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string
   }
   requireFact(new Set(retained.flatMap(item => item.envelope.imageRevision ? [item.envelope.imageRevision.operationSha256] : [])).size === edits.length);
   life.readStage="sources";
-  const sources = referenceCompositionSources(projection.libraryBlocks.filter(block => block.documentId === document.id && block.projectId === document.projectId), events)
+  const sources = referenceCompositionSources(ideasInDocument(projection,document.id).filter(block=>block.projectId===document.projectId), events)
     .filter(item => mediaKey(item.mediaUrl, actor.userId) !== null);
   requireFact(sources.length <= 128 && new Set(sources.map(item => item.id)).size === sources.length);
   const sourceIds = sources.filter(item => {

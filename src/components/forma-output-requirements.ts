@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../model/project-ideas.ts';
 import { outputNavigationMatches, type OutputNavigationReference, type OutputNavigationSection } from "../model/output-navigation";
 import { captureOutputNavigationFocus, outputNavigationOwnedRouteFocus, type OutputNavigationFocusLease } from "./output-navigation-focus";
 import { html, noChange, nothing, type PropertyValues } from "lit";
@@ -636,7 +637,7 @@ export class FormaOutputRequirements extends FormaElement {
       documentContext: this.#documentDisplayContext(snapshot.documentId, snapshot.projectId),
       label: proposal.spec.label, originalText: proposal.spec.original_text, spec: proposal.spec,
       canEdit: !this.inspectionOnly && snapshot.permissions.canAuthor,
-      sourceOptions: this.store.projection.get().libraryBlocks.filter(block => block.documentId === snapshot.documentId && !block.removed && block.type.toLowerCase() !== "output").map(block => ({ id: block.id, label: String(block.properties.label ?? block.handle) })),
+      sourceOptions: ideasInDocument(this.store.projection.get(),snapshot.documentId).filter(block=>block.type.toLowerCase()!=="output").map(block => ({ id: block.id, label: String(block.properties.label ?? block.handle) })),
       planSuggestions: proposal.planSuggestions,
     };
     return html`<section class="output-recipe-draft" data-output-recipe-draft=${proposal.requirementId}>
@@ -1011,7 +1012,7 @@ export class FormaOutputRequirements extends FormaElement {
         unresolvedGroups: sourceReady && summary?.scope_known ? summary.unresolved_required_groups : null,
         selectedResultFiles: sourceReady && summary?.scope_known ? (snapshot as OutputRequirementsSnapshot & { requirementFileCounts?: Record<string, number | null> }).requirementFileCounts?.[row.blockId] ?? null : null,
       },
-      sourceOptions: this.store.projection.get().libraryBlocks.filter((block) => block.documentId === snapshot.documentId && !block.removed && block.type.toLowerCase() !== "output").map((block) => ({ id: block.id, label: String(block.properties.label ?? block.handle) })),
+      sourceOptions: ideasInDocument(this.store.projection.get(),snapshot.documentId).filter(block=>block.type.toLowerCase()!=="output").map((block) => ({ id: block.id, label: String(block.properties.label ?? block.handle) })),
       planSuggestions: { countPolicies: { ...savedOptions.count_policies }, suggestedCounts: { ...savedOptions.suggested_counts } },
       results: results.map((result) => ({ targetId: result.targetId, artifactId: result.assetId, revision: result.resultRevision, title: snapshot.assets.find((asset) => asset.id === result.assetId)?.name ?? this.#t("file", "File"), stateLabel: this.#resultLabel(result), canOpen: sourceReady && snapshot.permissions.canDownload && snapshot.assets.some((asset) => asset.id === result.assetId && asset.available) })),
     };
@@ -2371,7 +2372,7 @@ export class FormaOutputRequirements extends FormaElement {
           ? this.#t("acceptCountExact", "Accept exactly {value} {unit}.", { value: this.i18n.number(quantity.value), unit: this.#label("unit", quantity.unit) })
           : quantity ? this.#t("acceptCountUnresolved", "The content count acceptance rule still needs a decision.") : "";
     const aim = target.suggested_count ?? (policy?.kind === "flexible" ? policy.aim : undefined);
-    const sourceBlocks = this.store.projection.get().libraryBlocks.filter((block) => block.documentId === snapshot.documentId && !block.removed && block.type.toLowerCase() !== "output");
+    const sourceBlocks = ideasInDocument(this.store.projection.get(),snapshot.documentId).filter(block=>block.type.toLowerCase()!=="output");
     const source = target.source_scope.kind === "document"
       ? html`<span dir="auto">${this.documentName || this.#t("sourceWholeDocument", "This Document’s source context")}</span>`
       : target.source_scope.kind === "blocks"

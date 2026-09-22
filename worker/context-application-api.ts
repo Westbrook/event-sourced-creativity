@@ -38,7 +38,7 @@ async function contextApplicationSourceProof(env:WorkerEnv,prepared:Exclude<Awai
   const {binding,principal,projection}=prepared,scope=binding.scope,owner=scope?.ownerUserId??principal.userId;
   const types=new Set(["ProjectCreated","ProjectOpened","ProjectRenamed","ProjectStateChanged",
     "DocumentCreated","DocumentForked","DocumentRenamed","DocumentOpened","DocumentRemoved","DocumentRestored",
-    "BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRehomed",
+    "BlockDocumentAttached", "BlockDocumentDetached", "BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRehomed",
     "BlockRelationAdded","BlockRelationRemoved","ChipEdited","ExtractionRequested","ExtractionCompleted","ExtractionFailed",
     "ImageFocalPointCalculated","ReferenceIngested","RightsAsserted","CanvasCreated","CanvasRemoved","CanvasRestored"]);
   const dependencies=prepared.events.filter(event=>types.has(event.type));

@@ -11,7 +11,7 @@ export const PROJECT_BOOTSTRAP_EVENT_TYPES = [
   ...OUTPUT_REQUIREMENT_EVENT_TYPES,
   "ProjectCreated", "ProjectOpened", "ProjectRenamed", "ProjectStateChanged",
   "DocumentCreated", "DocumentForked", "DocumentOpened", "DocumentRenamed",
-  "DocumentRemoved", "DocumentRestored", "BlockCreated", "BlockRemoved",
+  "DocumentRemoved", "DocumentRestored", "BlockDocumentAttached","BlockDocumentDetached","BlockCreated", "BlockRemoved",
   "BlockRestored", "BlockRehomed", "CollectionCreated", "CollectionRemoved",
   "CollectionRestored", "IdeationPreviewCompleted", "GenerationCompleted", "GuestImageResultClaimed",
   "DocumentRenderCompleted", "DocumentArtifactEdited", "GeneratedImageEdited", "OutputRenamed", "ArtifactReviewRequested", "ArtifactApproved", "ArtifactChangesRequested", "ObjectDiscarded", "ObjectPinned", "ObjectUnpinned",

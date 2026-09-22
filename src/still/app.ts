@@ -1,3 +1,6 @@
+import { sharedIdeaOutputNotices } from '../model/shared-idea-output-freshness.ts';
+import { IdeaEditCanceled } from '../ui/shared-idea-choice.ts';
+import { attachIdeaEvents, ideaDocumentUses } from '../model/project-ideas.ts';
 import './rejection-page.ts';
 import { stillPageTitle } from './page-title.ts';
 import { isIdeaPage, pageToolbarCandidates, withDocumentReturn, DOCUMENT_RETURN_REASON } from './local-policy.ts';
@@ -391,7 +394,7 @@ export class StillApp extends LitElement {
   private async run(work: () => Promise<void>) {
     if (this.busy || this.composing) return;
     this.busy = true; this.error = ''; this.changed();
-    try { await work(); } catch (error) { this.error = error instanceof Error ? error.message : 'Could not complete this step.'; }
+    try { await work(); } catch (error) { if(!(error instanceof IdeaEditCanceled))this.error = error instanceof Error ? error.message : 'Could not complete this step.'; }
     finally { this.busy = false; this.loading = false; this.changed(); }
   }
   private async loadWorkspace() {
@@ -711,6 +714,7 @@ export class StillApp extends LitElement {
     if (id === 'refresh-generation') return void this.refreshGenerationStatus();
     if (id === 'generate-again') return void this.generateAgain(this.client.position.outputId);
     if (id === 'projects') return this.navigate('projects', { projectId: '', documentId: '' });
+    if (id === 'ideas') return this.navigate('ideas', { documentId: '' });
     if (id === 'documents') return this.navigate('documents', { documentId: '' });
     if (id === 'context') return this.navigate('document');
     if (id === 'results') return this.navigate('results');
@@ -800,7 +804,7 @@ export class StillApp extends LitElement {
       await c.append([{ type: 'DocumentRenamed', payload: { document_id: p.documentId, old_title: this.editBase.title ?? p.documentTitle, new_title: this.titleDraft.trim() } }]); this.closeMode();
     } else if (this.mode === 'intent') { c.position.intent = this.bodyDraft.trim(); this.closeMode(); return; }
     else if (this.mode === 'edit-artifact') { if (this.missingWriting()) throw new Error('Wait for the writing to load.'); await c.editArtifact(c.position.outputId, this.editBase.item !== undefined ? (parseDocumentArtifactContent(c.content[p.artifacts.find(a => a.id === c.position.outputId)?.contentRef ?? ''])?.content_markdown ?? '') : this.bodyDraft, this.editBase.revision ?? 0, this.editBase.item !== undefined ? [{index:this.editBase.item,body:this.bodyDraft}] : undefined); this.closeMode(); }
-    else if (this.mode === 'reuse') { const b = p.libraryBlocks.find(x => x.id === this.choice); if (!b) throw new Error('Choose a context block.'); const event = c.blockEvent(text(b.properties.text), b.handle, b.type); event.payload.properties = { ...b.properties, source_block_id: b.id, weight: .8 }; if (!c.hasUnconfirmedWrite || !this.pendingBlock) { if(this.pendingBlock) Object.assign(event.payload,{block_id:this.pendingBlock.payload.block_id,position:this.pendingBlock.payload.position}); this.pendingBlock=event; } await c.append([this.pendingBlock]); this.rememberCompletion(this.mode);this.closeMode(); }
+    else if (this.mode === 'reuse') { const b=p.libraryBlocks.find(x=>x.id===this.choice);if(!b)throw new Error('Choose an idea.');const events=attachIdeaEvents(b,c.position.documentId,p.libraryBlocks,p.libraryBlockRelations);if(events.length)await c.append(events);this.rememberCompletion(this.mode);this.closeMode(); }
     this.notice = 'Saved.'; this.changed(); this.decide();
   }
   private async generate() {
@@ -945,8 +949,12 @@ export class StillApp extends LitElement {
     const routeProblem=this.currentRouteProblem(p);
     if (routeProblem) return html`<section class="quiet-state"><h1>${routeProblem}</h1>${this.button('Projects',()=>this.navigate('projects',{projectId:'',documentId:''}))}</section>`;
     if (this.mode) return this.renderMode();
+    if(pos.view==='ideas'){
+      const ideas=p.libraryBlocks.filter(b=>!b.removed&&(!pos.blockId||b.id===pos.blockId));
+      return html`<article class="document-page"><span class="eyebrow">${p.projectName}</span><h1>${pos.blockId?ideas[0]?.handle??'Idea unavailable':'Ideas'}</h1>${this.renderList(ideas,(b,i)=>html`<a class="context-block" data-attention-id=${`block:${b.id}`} href=${this.viewURL('ideas',{documentId:'',blockId:pos.blockId?'':b.id})} @click=${(e:MouseEvent)=>this.follow(e,'ideas',{documentId:'',blockId:pos.blockId?'':b.id})}><span class="block-index">${String(i+1).padStart(2,'0')}</span><div><span class="block-label">${b.handle}${b.locked?' · locked':''}</span>${safeMedia(text(b.properties.media_url))&&b.type==='reference'&&(!b.properties.media_type||text(b.properties.media_type).startsWith('image/'))?stillImage(safeMedia(text(b.properties.media_url)),b.handle,b.properties,{className:'context-reference'}):nothing}<p>${text(b.properties.text)||text(b.properties.description)||text(b.properties.label)||(b.properties.media_url||b.properties.model_url?'File reference':'Empty idea')}</p><small>${ideaDocumentUses(b).filter(u=>p.documents.some(d=>d.id===u.documentId)).map(u=>p.documents.find(d=>d.id===u.documentId)?.title).join(' · ')||'Project idea'}</small></div></a>`,'context-blocks')}${!ideas.length?html`<p class="empty-copy">No ideas yet.</p>`:nothing}${pos.blockId?html`<p class="context-preview">Edits to this idea are shared wherever it is used.</p>`:nothing}</article>`;
+    }
     if (pos.view === 'projects' || pos.view === 'documents') {
-      const projects = pos.view === 'projects', items = projects ? p.projects.map(x => ({ id: x.id, title: x.name, detail: `${x.documentCount} ${x.documentCount === 1 ? 'document' : 'documents'}` })) : p.documents.filter(d => !d.removed).map(d => ({ id: d.id, title: d.title, detail: '' }));
+      const projects = pos.view === 'projects', items = projects ? p.projects.map(x => ({ id: x.id, title: x.name, detail: `${x.documentCount} ${x.documentCount === 1 ? 'document' : 'documents'}` })) : p.documents.filter(d => !d.removed).map(d => ({ id: d.id, title: d.title, detail: sharedIdeaOutputNotices(p,c.events).some(n=>n.documentId===d.id)?'Output out of date':'' }));
       return html`<section class="library-page">${projects ? nothing : html`<span class="eyebrow">${p.projectName}</span>`}<h1>${projects ? 'Projects' : 'Documents'}</h1>${this.renderList(items,(x, i) => html`<a data-attention-id=${`${projects?'project':'document'}:${x.id}`} class="work-row" href=${projects?this.viewURL('documents',{projectId:x.id,documentId:''}):this.viewURL('document',{documentId:x.id})} @click=${(e:MouseEvent)=>projects?this.follow(e,'documents',{projectId:x.id,documentId:''}):this.follow(e,'document',{documentId:x.id})}><span class="work-number">${String(i + 1).padStart(2, '0')}</span><span><strong>${x.title}</strong>${x.detail ? html`<small>${x.detail}</small>` : nothing}</span><en-icon class="row-arrow" name="arrow-right" aria-hidden="true"></en-icon></a>`,'work-list')}${!items.length ? html`<p class="empty-copy">${projects ? 'No projects yet.' : this.client.abilities.author ? 'Create a document to collect your ideas.' : 'No documents yet.'}</p>` : nothing}</section>`;
     }
     if (pos.view === 'results') {
@@ -995,7 +1003,7 @@ export class StillApp extends LitElement {
       </section>`;
     }
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><en-select class="select-label" label="Workspace" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Personal projects</en-select-option>${this.client.session?.projects?.map(p => html`<en-select-option value=${p.projectAccessId}>${p.projectName} · ${p.role}</en-select-option>`)}</en-select></section>`;
-    if (mode === 'reuse') return html`<section class="form-page"><h1>Copy existing idea</h1><en-select class="select-label" label="Idea" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Choose an idea</en-select-option>${p.libraryBlocks.filter(b => !b.removed && b.documentId !== p.documentId).map(b => html`<en-select-option value=${b.id}>${b.handle} · ${b.type}</en-select-option>`)}</en-select><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p></section>`;
+    if (mode === 'reuse') return html`<section class="form-page"><h1>Use existing idea</h1><en-select class="select-label" label="Idea" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Choose an idea</en-select-option>${p.libraryBlocks.filter(b => !b.removed && !p.blocks.some(used=>used.id===b.id)).map(b => html`<en-select-option value=${b.id}>${b.handle} · ${b.type}</en-select-option>`)}</en-select><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p></section>`;
     const titles: Record<string, string> = { 'new-project': 'New project', 'new-document': 'New document', 'add-context': 'Add idea', 'edit-block': 'Edit idea', rename: 'Rename document', intent: 'Set next goal', 'edit-artifact': 'Edit result' };
     const named = ['new-project', 'new-document', 'add-context', 'rename'].includes(mode);
     const fields=html`${mode!=='new-project'&&p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' && mode !== 'new-project' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}`;
@@ -1015,7 +1023,7 @@ export class StillApp extends LitElement {
   }
   private generationBackLabel() {
     const p=this.client.position;
-    return `Back to ${p.view==='document'?(p.blockId?'idea':'document'):({projects:'projects',documents:'documents',results:'results',generation:'generation',artifact:'result',output:'result'} as Record<string,string>)[p.view]??'document'}`;
+    return `Back to ${p.view==='document'?(p.blockId?'idea':'document'):({projects:'projects',documents:'documents',ideas:'ideas',results:'results',generation:'generation',artifact:'result',output:'result'} as Record<string,string>)[p.view]??'document'}`;
   }
   private renderGenerationDock() {
     const g=this.directGeneration?null:this.generation;
@@ -1051,7 +1059,7 @@ export class StillApp extends LitElement {
       const back:WorkflowAction={id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'};
       if(this.mode==='edit-artifact'&&this.missingWriting())toolbar={actions:[back]};
       else if(this.mode==='workspaces')toolbar={actions:[{id:'workflow:open',label:'Open',variant:'primary',run:()=>void this.run(async()=>{await this.client.switchWorkspace(this.client.session?.projects?.find(p=>p.projectAccessId===this.choice));this.navigate(this.client.position.view,this.client.position);})},back]};
-      else toolbar={actions:[{id:'workflow:save',label:this.mode==='intent'?'Suggest actions':this.client.hasUnconfirmedWrite?'Check save':this.mode==='reuse'?'Copy idea':'Save',variant:'primary',disabled:this.mode==='reuse'&&!this.choice,run:()=>this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},back]};
+      else toolbar={actions:[{id:'workflow:save',label:this.mode==='intent'?'Suggest actions':this.client.hasUnconfirmedWrite?'Check save':this.mode==='reuse'?'Use idea':'Save',variant:'primary',disabled:this.mode==='reuse'&&!this.choice,run:()=>this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},back]};
     }
     if(!toolbar.actions.length&&!toolbar.status)return nothing;
     if(toolbar.actions.length>this.toolbarLimit)return this.compactDock(toolbar.actions,'More actions',toolbar.status);
@@ -1144,6 +1152,7 @@ export class StillApp extends LitElement {
           else this.navigate('results');
         }},
       ],()=>void this.dismissGenerationNotice(failed)):nothing}
+      ${!this.mode?sharedIdeaOutputNotices(this.client.projection,this.client.events).map(n=>this.notification(`shared-idea:${n.key}`,`${n.documentTitle}: a shared idea changed elsewhere. This ${FORMATS[n.kind]??n.kind} output is out of date. Would you like to update it?`,'warning',[{label:this.client.abilities.generate?'Review and update output':'View document',disabled:this.preventsRouteChange(),run:()=>{this.navigate('document',{documentId:n.documentId});if(this.client.abilities.generate)this.begin('generate');}}],undefined,n.documentId)):nothing}
       ${this.notice?this.notification(`notice:${this.noticeVersion}`,this.notice,'success',[],()=>{this.notice='';}):nothing}
     </en-toast-region>`;
   }

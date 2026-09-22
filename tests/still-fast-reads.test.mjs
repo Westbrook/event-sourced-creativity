@@ -53,7 +53,7 @@ test('route startup returns the selected document before background workspace hy
   let release,waiting;globalThis.fetch=(url,init)=>String(url).includes('profile=workspace')?new Promise(r=>{release=()=>f.request(url,init).then(r);waiting=true;}):f.request(url,init);
   const c=new StillClient();c.position={...c.position,projectId:f.projectId,documentId:f.documentId,view:'document'};
   await c.load({hydrateContent:false,route:{documentId:f.documentId}});
-  assert.equal(c.historyComplete,false);assert.ok(c.projection.blocks.some(b=>b.id==='scene-reuse-direction'));assert.ok(!c.events.some(e=>e.payload.block_id==='other-block'));
+  assert.equal(c.historyComplete,false);assert.ok(c.projection.blocks.some(b=>b.id==='scene-reuse-direction'));assert.ok(!c.projection.blocks.some(b=>b.id==='other-block'),'Shared idea history is available without including unused ideas in the document');
   const background=c.completeHistory();await Promise.resolve();assert.equal(waiting,true);assert.ok(c.projection.blocks.length);release();await background;
   assert.equal(c.historyComplete,true);assert.ok(c.events.some(e=>e.payload.block_id==='other-block'));
  }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}

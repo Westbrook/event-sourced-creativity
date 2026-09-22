@@ -265,7 +265,7 @@ async function sourceAdmission(env: WorkerEnv, prepared: Prepared, intent: CopyI
     !block.removed && block.scope === "document" && block.projectId === binding.projectId && block.documentId === binding.documentId);
   const dependencyTypes = new Set(["ProjectCreated", "ProjectOpened", "ProjectRenamed", "ProjectStateChanged",
     "DocumentCreated", "DocumentForked", "DocumentRenamed", "DocumentOpened", "DocumentRemoved", "DocumentRestored",
-    "BlockCreated", "BlockRenamed", "BlockPropertyEdited", "BlockWeightSet", "BlockLocked", "BlockUnlocked", "BlockRemoved", "BlockRestored", "BlockRehomed",
+    "BlockDocumentAttached", "BlockDocumentDetached", "BlockCreated", "BlockRenamed", "BlockPropertyEdited", "BlockWeightSet", "BlockLocked", "BlockUnlocked", "BlockRemoved", "BlockRestored", "BlockRehomed",
     "BlockRelationAdded", "BlockRelationRemoved", "ChipEdited", "ExtractionRequested", "ExtractionCompleted", "ExtractionFailed",
     "ImageFocalPointCalculated", "ReferenceIngested", "RightsAsserted", "CanvasCreated", "CanvasRemoved", "CanvasRestored", ...folderTypes]);
   const dependencies = events.filter((event) => dependencyTypes.has(event.type));

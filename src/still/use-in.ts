@@ -1,3 +1,4 @@
+import { attachIdeaEvents, ideasInDocument } from '../model/project-ideas.ts';
 import { foldEvents, type CreativeEvent, type EventInput } from '../model/events.ts';
 import { combinedContextMemberships, combinedContextRoleForBlockType, isContextCompositionRelation, normalizeActionBlockReferences, validateContextCompositionGraph } from '../model/combined-context.ts';
 import { copyOutputRequirementBlock } from '../model/output-requirement-copy.ts';
@@ -13,11 +14,10 @@ export function destinationsFor(events:CreativeEvent[],position:Pick<Position,'p
     const descendants=new Map<string,string[]>();for(const relation of p.libraryBlockRelations)if(!relation.removed&&isContextCompositionRelation(relation.kind)){if(!descendants.has(relation.fromBlockId))descendants.set(relation.fromBlockId,[]);descendants.get(relation.fromBlockId)!.push(relation.toBlockId);}
     for(const id of blockedTargets)for(const child of descendants.get(id)??[])blockedTargets.add(child);
     for(const relation of p.libraryBlockRelations)if(!relation.removed&&isContextCompositionRelation(relation.kind)&&relation.toBlockId===position.blockId)blockedTargets.add(relation.fromBlockId);
-    const blocksByDocument=new Map<string,typeof p.libraryBlocks>();for(const b of p.libraryBlocks){if(!blocksByDocument.has(b.documentId))blocksByDocument.set(b.documentId,[]);blocksByDocument.get(b.documentId)!.push(b);}
     for(const d of p.documents.filter(d=>!d.removed&&d.projectId===project.id)){
       if(d.id!==position.documentId)items.push({id:`document:${d.id}`,projectId:project.id,documentId:d.id,blockId:'',label:d.title,project:project.name,document:d.title,kind:'document'});
-      for(const b of (blocksByDocument.get(d.id)??[]).filter(b=>!blockedTargets.has(b.id)&&editableIdea(b))){
-        items.push({id:`block:${b.id}`,projectId:project.id,documentId:d.id,blockId:b.id,label:String(b.properties.label||b.handle),project:project.name,document:d.title,kind:b.type==='subject'?'character / subject':b.properties.context_group||b.type==='composition'?'composition':b.type});
+      for(const b of ideasInDocument(p,d.id).filter(b=>!blockedTargets.has(b.id)&&editableIdea(b))){
+        items.push({id:`block:${d.id}:${b.id}`,projectId:project.id,documentId:d.id,blockId:b.id,label:String(b.properties.label||b.handle),project:project.name,document:d.title,kind:b.type==='subject'?'character / subject':b.properties.context_group||b.type==='composition'?'composition':b.type});
       }
     }
   }
@@ -29,9 +29,9 @@ export type UseInPlan={events:EventInput[];sourceId:string;destination:Destinati
 // The native append transaction remains the authority for scope, graph and stream-head validation.
 export function useInPlan(events:CreativeEvent[],position:Position,sourceId:string,destinationId:string,createId:()=>string=()=>crypto.randomUUID()):UseInPlan{
   const sourceProjection=foldEvents(events,Infinity,position.documentId,position.projectId);
-  const source=sourceProjection.blocks.find(b=>b.id===sourceId);
+  const source=sourceProjection.libraryBlocks.find(b=>b.id===sourceId);
   if(!editableIdea(source))throw new Error('Choose an editable idea.');
-  const destination=destinationsFor(events,{...position,blockId:sourceId}).find(d=>d.id===destinationId);
+  const destination=destinationsFor(events,{...position,blockId:sourceId}).find(d=>d.id===destinationId||destinationId===`block:${d.blockId}`);
   if(!destination)throw new Error('Destination unavailable.');
   const p=foldEvents(events,Infinity,destination.documentId,destination.projectId);
   const target=destination.blockId?p.blocks.find(b=>b.id===destination.blockId):undefined;
@@ -41,7 +41,8 @@ export function useInPlan(events:CreativeEvent[],position:Position,sourceId:stri
   const live=sourceProjection.libraryBlockRelations.filter(r=>!r.removed);
   const copied=new Map<string,string>();
   let rootId=source.id;
-  if(source.documentId!==destination.documentId){
+  if(source.projectId===destination.projectId){changes.push(...attachIdeaEvents(source,destination.documentId,sourceProjection.libraryBlocks,sourceProjection.libraryBlockRelations));}
+  else {
     const available=new Map(sourceProjection.libraryBlocks.filter(b=>!b.removed).map(b=>[b.id,b]));
     const pending=[source.id];
     for(const id of pending){

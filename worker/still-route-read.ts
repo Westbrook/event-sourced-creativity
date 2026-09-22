@@ -3,7 +3,7 @@ import type { WorkerEnv } from './runtime.ts';
 // Keep structural records and legacy events without explicit ownership. Only
 // drop events explicitly belonging to another document; never infer ownership
 // from the requested URL. The full workspace catches up independently.
-export const stillDocumentPredicate=(alias:string)=>`(json_extract(${alias}.payload,'$.document_id') IS NULL OR json_extract(${alias}.payload,'$.document_id')=? OR ${alias}.type IN('ProjectCreated','ProjectOpened','ProjectRenamed','ProjectStateChanged','DocumentCreated','DocumentForked','DocumentOpened','DocumentRenamed','DocumentRemoved','DocumentRestored','BlockRehomed','BlockRelationAdded','BlockRelationRemoved'))`;
+export const stillDocumentPredicate=(alias:string)=>`(json_extract(${alias}.payload,'$.document_id') IS NULL OR json_extract(${alias}.payload,'$.document_id')=? OR ${alias}.type IN('ProjectCreated','ProjectOpened','ProjectRenamed','ProjectStateChanged','DocumentCreated','DocumentForked','DocumentOpened','DocumentRenamed','DocumentRemoved','DocumentRestored','BlockDocumentAttached','BlockDocumentDetached','BlockCreated','BlockPropertyEdited','BlockRenamed','BlockWeightSet','BlockLocked','BlockUnlocked','BlockRemoved','BlockRestored','ChipEdited','ExtractionRequested','ExtractionCompleted','ExtractionFailed','BlockRehomed','BlockRelationAdded','BlockRelationRemoved'))`;
 export async function readStillRoutePage(env:WorkerEnv,stream:string,documentId:string,after:number,limit:number){
  const size=Math.max(1,Math.min(5000,Math.floor(limit)||5000));
  const [page,current]=await env.DB.batch<Record<string,unknown>>([

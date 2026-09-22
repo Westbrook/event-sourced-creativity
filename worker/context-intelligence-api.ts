@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../src/model/project-ideas.ts';
 import { STILL_IDEA_PROFILE, STILL_IDEA_MODEL, STILL_IDEA_OUTPUT_TOKENS, stillIdeaCost, referenceSearchSchema, referenceSearchInstructions } from './still-idea-analysis.ts';
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import { foldCanvasEvents } from "../src/canvas/model.ts";
@@ -110,7 +111,7 @@ export async function prepareContextIntelligence(request:Request,env:WorkerEnv,o
   const projection=foldEvents(events,Number.POSITIVE_INFINITY,documentId,projectId);
   if(projection.projectId!==projectId||!projection.documents.some((document)=>document.id===documentId&&document.projectId===projectId))return response({error:"context_document_denied"},403);
   if(!shared){const custody=await resolveOwnerExecutionScope(env,principal,documentId,projectId);if(custody.denied)return response({error:"context_custody_unavailable"},403);scope=custody.scope;}
-  const target=projection.libraryBlocks.find((block)=>block.id===blockId&&block.projectId===projectId&&!block.removed&&(block.scope==="library"||block.scope==="canvas"||block.documentId===documentId));
+  const target=projection.libraryBlocks.find((block)=>block.id===blockId&&block.projectId===projectId&&!block.removed&&(block.scope==="library"||block.scope==="canvas"||ideasInDocument(projection,documentId).some(b=>b.id===block.id)));
   if(!target)return response({error:"context_block_not_found"},404);
   if(target.scope==="canvas"&&!(scope?hasCapability(principal,"project.canvas.use",scope):principal.access.canvasAccess))return response({error:"context_canvas_denied"},403);
   if(target.scope==="canvas"&&clean(body.canvasId,120)!==target.canvasId)return response({error:"context_canvas_required"},409);
@@ -122,7 +123,7 @@ export async function prepareContextIntelligence(request:Request,env:WorkerEnv,o
     return Boolean(latest&&["owned","owned_or_licensed","account-generated"].includes(String(latest.payload.rights_class??"")));
   };
   if(target.locked&&operation==="decompose"||target.properties.organization_context_package_binding_id||target.properties.source_evidence_hash||!providerEligible(target))return response({error:"context_block_protected"},403);
-  const protectedBlocks=operation==="research"?projection.libraryBlocks.filter((block)=>!block.removed&&block.projectId===projectId&&block.documentId===documentId&&(block.locked||block.type==="exclusion"||["avoid","prohibit"].includes(String(block.properties.intent??"")))):[];
+  const protectedBlocks=operation==="research"?ideasInDocument(projection,documentId).filter((block)=>!block.removed&&block.projectId===projectId&&(block.locked||block.type==="exclusion"||["avoid","prohibit"].includes(String(block.properties.intent??"")))):[];
   if(protectedBlocks.some((block)=>!providerEligible(block)||block.properties.source_evidence_hash||block.properties.organization_context_package_binding_id))return response({error:"context_protected_constraints_unavailable"},403);
   if(protectedBlocks.reduce((total,block)=>total+researchBlockText(block).length,0)>8_000)return response({error:"context_protected_constraints_too_large"},413);
   const addedText=clean(body.addedText,1800),addedType=clean(body.addedType,48),sourceText=operation==="decompose"&&addedText?addedText:researchBlockText(target);

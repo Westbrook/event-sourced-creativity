@@ -17651,6 +17651,47 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/shared-idea-output-notices.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "SharedIdeaOutputNotices",
+          "tagName": "forma-shared-idea-output-notices",
+          "customElement": true,
+          "summary": "Shared idea output notices application interface.",
+          "description": "Application-connected shared idea output notices interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",
+          "superclass": {
+            "name": "FormaElement",
+            "module": "src/components/forma-element.ts"
+          },
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-shared-idea-output-notices",
+          "declaration": {
+            "name": "SharedIdeaOutputNotices",
+            "module": "src/components/shared-idea-output-notices.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "SharedIdeaOutputNotices",
+          "declaration": {
+            "name": "SharedIdeaOutputNotices",
+            "module": "src/components/shared-idea-output-notices.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/spatial-scope-editor.ts",
       "declarations": [
         {

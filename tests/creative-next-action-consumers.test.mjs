@@ -140,7 +140,7 @@ async function openTwoChoiceChooser(f, resume, path, choices) {
   assert.equal(dialogs(f).length, 1); assert.equal(chooser.owner.tag, "forma-workspace");
   assert.equal(chooser.owner.store, f.store); assert.ok(chooser.owner.isConnected);
   const formats = f.tree().visible("button").filter(node => withinTwoChoice(node, chooser) && node.owner.tag === "forma-ui-choice-card");
-  assert.deepEqual(formats.map(node => node.attributes["data-choice-value"]), ["image", "short_story", "scene", "slides", "storyboard", "video", "audio"]);
+  assert.deepEqual(formats.map(node => node.attributes["data-choice-value"]), ["image", "short_story", "scene", "slides", "storyboard", "video", "audio", "model3d"]);
   const second = onlyTwoChoice(formats.filter(node => node.attributes["data-choice-value"] === path.medium), "one exact visible second format choice");
   assert.equal(JSON.stringify(chosen.target), target, "opening did not rewrite the original descriptor");
   return { chosen, target, chooser, second };
@@ -177,7 +177,7 @@ for (const path of twoChoicePaths) test("F ordinary " + path.route + " reaches e
   } else {
     assert.equal(settings.owner.documentId, f.documentId);
     const kinds = tree.visible("input").filter(node => withinTwoChoice(node, settings) && node.attributes.name === "artifact-kind");
-    assert.equal(kinds.length, 6); assert.deepEqual(kinds.filter(node => node.port.checked).map(node => node.port.value), [path.medium]);
+    assert.equal(kinds.length, 7); assert.deepEqual(kinds.filter(node => node.port.checked).map(node => node.port.value), [path.medium]);
     assert.ok(tree.visible("button").some(node => withinTwoChoice(node, settings) && (node.attributes.type ?? "submit") === "submit"), "submission remains a separate unactivated action");
     const audience = onlyTwoChoice(tree.visible("input").filter(node => withinTwoChoice(node, settings) && node.attributes.list === "document-artifact-audiences-" + f.documentId.replace(/[^a-z0-9_-]/gi, "-")), "existing raw audience field");
     const raw = "  Unsent " + path.route + " audience  "; audience.port.value = raw; await f.act(audience, "input");

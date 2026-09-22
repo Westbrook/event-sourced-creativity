@@ -3,7 +3,7 @@ import { combinedContextRoleForBlockType, isContextCompositionRelation, validate
 import { creativeContextRightsIssue } from '../model/context-health.ts';
 import { isOutputContextBlock } from '../model/output-source-policy.ts';
 export function editableIdea(block: CreativeBlock | undefined): block is CreativeBlock {
-  return !!block && !block.removed && !block.locked && block.scope === 'document' && !['reference','model3d','action'].includes(block.type) && !isOutputContextBlock(block) && !block.properties.model_url && !block.properties.source_evidence_hash && !Object.keys(block.properties).some(k => k.startsWith('organization_context_')) && !creativeContextRightsIssue(block.properties);
+  return !!block && !block.removed && !block.locked && block.scope !== 'canvas' && !['reference','model3d','action'].includes(block.type) && !isOutputContextBlock(block) && !block.properties.model_url && !block.properties.source_evidence_hash && !Object.keys(block.properties).some(k => k.startsWith('organization_context_')) && !creativeContextRightsIssue(block.properties);
 }
 export function compositionPlan(projection: CreativeProjection, parentId: string, members: string[], application: string): EventInput[] {
   const parent = projection.blocks.find(b => b.id === parentId);

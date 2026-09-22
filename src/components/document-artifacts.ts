@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../model/project-ideas.ts';
 import { storyboardAudienceHtml } from "../model/storyboard-audience.ts";
 import { documentJobCanCheckSavedPresentationReceipt, savedPresentationReceiptCheckMessage, type PresentationReceiptCheckStatus } from "../model/presentation-receipt-check.ts";
 import { html, noChange, nothing, type PropertyValues } from "lit";
@@ -520,7 +521,7 @@ export class DocumentArtifacts extends FormaElement {
     this.#clearPrivateGenerationInputs();super.disconnectedCallback();
   }
   #projection(){const current=this.store.projection.get();return this.documentId&&this.documentId!==current.documentId?foldEvents(this.store.events.get(),Number.POSITIVE_INFINITY,this.documentId,current.projectId):current;}
-  #artifactSourceBlocks(artifact:Pick<DocumentArtifact,"documentId">){const current=this.store.projection.get();return current.libraryBlocks.filter((block)=>block.scope==="document"&&block.documentId===artifact.documentId&&block.projectId===current.projectId);}
+  #artifactSourceBlocks(artifact:Pick<DocumentArtifact,"documentId">){const current=this.store.projection.get();return ideasInDocument(current,artifact.documentId);}
   #eligibleAudioVideos(){
     const events=this.store.events.get();
     return this.#projection().artifacts.filter((artifact)=>{

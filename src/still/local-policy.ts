@@ -40,10 +40,11 @@ export function localActionRules(p:CreativeProjection,pos:Position):LocalRule[]{
   const rules:LocalRule[]=[];const add=(id:string,reason:string)=>{if(!rules.some(r=>r.id===id))rules.push({id,reason});};
   const blocks=p.blocks.filter(b=>!b.removed),active=blocks.filter(b=>Number(b.properties.weight??1)>0);
   const block=blocks.find(b=>b.id===pos.blockId),hasResults=p.outputs.some(o=>!o.discarded)||p.artifacts.length>0;
-  const reusable=p.libraryBlocks.some(b=>!b.removed&&b.documentId!==pos.documentId);
+  const reusable=p.libraryBlocks.some(b=>!b.removed&&!p.blocks.some(used=>used.id===b.id));
   const done=pos.recentActions.findLast(id=>id.startsWith('completed:'))?.slice(10);
   if(pos.view==='projects'){add('new-project',p.projects.length?'Start another project':'Your workspace has no projects');return rules;}
-  if(pos.view==='documents'){add('new-document',p.documents.some(d=>!d.removed)?'Add a document to this project':'This project has no documents');add('projects','Browse another project');return rules;}
+  if(pos.view==='ideas'){if(pos.blockId){if(block?.locked)add('unlock','Unlock this shared project idea');add('edit-block','Edit the shared project idea');add('use-in','Use this idea in a document');add('ideas','Browse every idea in the project');}else{add('add-context','Keep a new project idea without choosing a document');add('documents','Browse this project’s documents');}return rules;}
+  if(pos.view==='documents'){add('ideas','Browse and reuse ideas across this project');add('new-document',p.documents.some(d=>!d.removed)?'Add a document to this project':'This project has no documents');add('projects','Browse another project');return rules;}
   if(pos.view==='rejection'){
     add('context','Review and revise the source document');add('view-output','Return to this attempt');add('clarify','Clarify the intended request');add('add-context','Change the contributing ideas');add('create','Consider another output');add('generate-again','Deliberately start another paid attempt');return rules;
   }

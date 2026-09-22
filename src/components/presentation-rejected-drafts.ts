@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../model/project-ideas.ts';
 import { html, nothing } from "lit";
 import type { DocumentJob } from "../model/document-jobs";
 import type { CapturedSourceOwnership } from "../state/store";
@@ -360,7 +361,7 @@ export class PresentationRejectedDrafts extends FormaElement {
     if (this.#comparison === "requested") return html`<article class="presentation-rejected-draft-reference"><h3>${this.i18n.t("presentation.draft.requestedTitle", "Requested presentation")}</h3><p>${this.i18n.t("presentation.draft.requestedCounts", "{requested} requested slides · {planned} planned slides · {batches} provider batches", { requested: this.#requestedCountLabel(current), planned: this.i18n.number(current.plannedSlideCount), batches: this.i18n.number(current.providerBatchCount) })}</p><p>${current.reviewOnlyReason === "validation-provenance-unavailable" ? this.i18n.t("presentation.draft.provenanceUnavailable", "The original validation decision could not be verified. This saved draft remains private and review-only; current checks cannot approve or promote it.") : current.complete ? this.i18n.t("presentation.draft.requestComplete", "This response satisfies its page contract, but remains a private unapproved draft.") : current.issues.length && current.issues.every((issue) => issue.overridable) ? this.i18n.t("presentation.draft.preference", "presentation preference; still requires explicit revision and full validation") : this.i18n.t("presentation.draft.requestIncomplete", "This response is incomplete or failed a mandatory source, authorization, or structure requirement.")}</p>${current.missingContextGroupLabels.length ? html`<p>${this.i18n.t("presentation.draft.missingContext", "Missing Combined Context:")} ${current.missingContextGroupLabels.join(" · ")}</p>` : nothing}</article>`;
     if (this.#comparison === "source") {
       const projection = this.store.projection.get();
-      const blocks = projection.libraryBlocks.filter((block) => block.documentId === this.documentId && Number(block.properties.weight ?? .5) > 0);
+      const blocks = ideasInDocument(projection,this.documentId).filter(block=>Number(block.properties.weight??.5)>0);
       return html`<article class="presentation-rejected-draft-reference"><h3>${this.i18n.t("presentation.draft.sourceTitle", "Current authorized source material")}</h3><ol>${blocks.map((block) => html`<li><b>${String(block.properties.label ?? block.handle ?? block.type)}</b><p>${String(block.properties.text ?? block.properties.instruction ?? "")}</p></li>`)}</ol><p>${this.i18n.t("presentation.draft.sourceNotice", "Current source changes do not authorize sharing, exporting, or promoting a historical draft.")}</p></article>`;
     }
     if (this.#comparison === "accepted") {

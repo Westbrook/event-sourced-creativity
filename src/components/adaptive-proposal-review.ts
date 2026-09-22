@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../model/project-ideas.ts';
 import type { AuthoringPreview } from "../../worker/authoring-commits";
 import type { FormaStore } from "../state/store";
 import { adaptiveProposalOptions, adaptiveProposalSelections, type AdaptiveProposalSelection, type AdaptiveProposalReceipt as CanonicalAdaptiveProposalReceipt } from "../model/adaptive-proposal-application";
@@ -452,7 +453,7 @@ export function createAdaptiveProposalReview(store:FormaStore,destination:()=>{d
     openOutputRequirement:async(blockId,ownership)=>{
       const target=destination(),scope=adaptiveProposalScope(store,target.documentId,target.canvasId),authorization=store.captureAuthorizationScope();
       const route=store.route.get(),projection=store.projection.get(),client=store.outputRequirements;
-      const block=projection.libraryBlocks.find(item=>item.id===blockId&&item.projectId===scope?.projectId&&item.documentId===scope?.documentId
+      const block=ideasInDocument(projection,scope?.documentId??"").find(item=>item.id===blockId&&item.projectId===scope?.projectId
         &&item.scope==="document"&&!item.removed&&isOutputContextType(item.type));
       if(!scope||!authorization||!client||!block||!ownership.current())return false;
       const sourceFocus=captureOutputNavigationFocus(document);

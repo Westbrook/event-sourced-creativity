@@ -2,7 +2,7 @@ export type ListType='projects'|'documents'|'ideas'|'results';
 export const LIST_PAGE_SIZE=3;
 const types:ListType[]=['projects','documents','ideas','results'];
 export function listType(view:string,mode='',blockId=''):ListType|undefined{
- if(mode)return;
+ if(mode||blockId)return;
  return view==='document'&&!blockId?'ideas':types.includes(view as ListType)?view as ListType:undefined;
 }
 export class ListDisplay {

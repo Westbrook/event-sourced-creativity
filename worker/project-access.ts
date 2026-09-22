@@ -1,3 +1,6 @@
+import { ideaDocumentUses } from "../src/model/project-ideas.ts";
+import { validateIdeaMembershipEvents, projectOwnedIdeaInput } from "./idea-membership-guards.ts";
+import { isIdeaMembershipEvent } from "../src/model/project-ideas.ts";
 import { memoryCreationKind,memoryOutputCreation } from '../src/model/memory-creation-review.ts';
 import { authoringEventProof, authoringSidecarProof } from './authoring-event-proof.ts';
 import { prepareProjectBlockUndoRestore } from './project-block-restore.ts';
@@ -36,7 +39,7 @@ export type { ProjectSourceScope };
 const PROJECT_EVENT_TYPES=new Set([
   ...OUTPUT_REQUIREMENT_EVENT_TYPES,
   "ProjectCreated","ProjectRenamed","ProjectStateChanged","DocumentCreated","DocumentForked","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","EmptyCanvasChosen",
-  "BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRehomed",
+  "BlockDocumentAttached","BlockDocumentDetached","BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet","BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRehomed",
   "BlockRelationAdded","BlockRelationRemoved","ReferenceIngested","RightsAsserted","RegionPromoted","ExtractionRequested","ExtractionCompleted","ExtractionFailed","ExtractionSuperseded","ImageFocalPointCalculated","ChipEdited",
   "CollectionCreated","CollectionRenamed","CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved",
   "ContextCompiled","GenerationCompleted","IdeationPreviewCompleted","IdeationPromoted","DocumentRenderCompleted","DocumentArtifactEdited","DocumentArtifactExported","ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","ChatMessageSent","AssistantReasoned",
@@ -45,7 +48,7 @@ const PROJECT_EVENT_TYPES=new Set([
   "CanvasRegisterSet","CanvasLockAcquired","CanvasLockReleased","StrokeAdded","StrokeErased","ContextSetFormalized","CanvasItemRemoved","CanvasItemRestored","CanvasRenamed","CanvasRemoved","CanvasRestored",
 ]);
 const PROJECT_MUTATION_TYPES=new Set([
-  "DocumentCreated","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet",
+  "DocumentCreated","DocumentRenamed","DocumentRemoved","DocumentRestored","DocumentProductionWorkflowConfigured","BlockDocumentAttached","BlockDocumentDetached","BlockCreated","BlockRenamed","BlockPropertyEdited","BlockWeightSet",
   "BlockLocked","BlockUnlocked","BlockRemoved","BlockRestored","BlockRelationAdded","BlockRelationRemoved","CollectionCreated","CollectionRenamed",
   "CollectionRemoved","CollectionRestored","CollectionItemAdded","CollectionItemRemoved","CollectionItemMoved","ObjectSaved","ObjectPinned","ObjectUnpinned",
   "ObjectDiscarded","ObjectExported","OutputRenamed","DocumentArtifactEdited","DocumentArtifactExported","ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","AddedToLibrary","RemovedFromLibrary","ChipEdited","ReferenceIngested","RightsAsserted",
@@ -940,8 +943,8 @@ export async function readProjectSourceEvents(env:WorkerEnv,scope:ProjectSourceS
 type PendingProjectResources=Map<string,Set<string>>;
 
 const blockScopeKey=(payload:Record<string,unknown>)=>{
-  const document=String(payload.document_id??""),canvas=String(payload.canvas_id??""),scope=canvas||payload.scope==="canvas"?"canvas":payload.scope==="library"||payload.library_block===true?"library":"document";
-  return`${scope}:${scope==="document"?document:scope==="canvas"?canvas:""}`;
+  const canvas=String(payload.canvas_id??""),scope=canvas||payload.scope==="canvas"?"canvas":payload.scope==="library"||payload.library_block===true?"library":"document";
+  return scope==="canvas"?`canvas:${canvas}`:"project";
 };
 
 async function blockResourceMetadata(env:WorkerEnv,context:ProjectRequestContext,id:string,pending:PendingProjectResources){
@@ -1490,8 +1493,13 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
         property="weight";actual=block.properties.weight;expected=payload.previous_weight;next=payload.weight;
         guarded=Object.prototype.hasOwnProperty.call(payload,"previous_weight")&&Object.prototype.hasOwnProperty.call(block.properties,"weight");
       }else continue;
+      const use=payload.document_id&&payload.scope!=="library"?ideaDocumentUses(block).find(u=>u.documentId===payload.document_id):undefined;
+      if(use&&property==="weight")actual=use.weight??block.properties.weight;
+      if(use&&property==="position")actual=use.position;
       if(guarded&&!sameValue(actual,expected))return Response.json({error:"context_value_conflict",blockId:id,property,
         message:"Another collaborator changed this exact decision. Your change was not saved; review the latest value and try again."},{status:409});
+      if(use&&property==="weight"){use.weight=Number(next??.5);continue;}
+      if(use&&property==="position"){use.position=String(next??use.position);continue;}
       if(property==="handle")block.handle=String(next??block.handle);
       else if(property==="type")block.type=String(next??block.type);
       else if(property==="position")block.position=String(next??block.position);
@@ -1541,7 +1549,13 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
     }
   }
   const needsReviewValidation=incoming.some((event)=>ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??"")));
-  const validatedOwnerHead=needsReviewValidation?await streamHead(env,ownerStream):null;
+  const needsMembershipValidation=incoming.some(event=>(isIdeaMembershipEvent(String(event.type))||event.type==='BlockRehomed'));
+  const validatedOwnerHead=needsReviewValidation||needsMembershipValidation?await streamHead(env,ownerStream):null;
+  if(needsMembershipValidation){
+    const issue=validateIdeaMembershipEvents(await readProjectSourceEvents(env,context),incoming);
+    if(issue)return Response.json(issue,{status:409});
+  }
+  if(!atomicSidecars)for(let index=0;index<incoming.length;index++)incoming[index]!.payload=projectOwnedIdeaInput(incoming[index]!).payload;
   const reviewEvents=needsReviewValidation?await readProjectSourceEvents(env,context):null;
   if(incoming.some((event)=>event.type==="BlockRelationRemoved"||event.type==="BlockRelationAdded"&&isContextCompositionRelation(event.payload?.kind))){
     const graphEvents=reviewEvents??await readProjectSourceEvents(env,context);

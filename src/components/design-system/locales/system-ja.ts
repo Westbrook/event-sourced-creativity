@@ -1,5 +1,18 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.l50wya.48": "ドキュメントを開いて出力設定を確認してください。",
+  "system.auto.1g2f6bi.49": "共有アイデアの出力通知インターフェース。",
+  "system.auto.1bpd6ra.145": "アプリに接続された共有アイデアの出力通知インターフェース。組み込む前に属性、JavaScriptプロパティ、イベントを確認してください。",
+  "system.auto.102vvve.33": "変更をどこに適用しますか？",
+  "system.auto.eh2hxg.40": "このアイデアは複数のドキュメントで使われています：",
+  "system.auto.18vvhv2.105": "すべてに変更を適用するか、このドキュメント用に新しいアイデアを作成します。他のドキュメントは元の内容を保持します。",
+  "system.auto.f0nsxe.98": "すべてに変更を適用するか、プロジェクトに新しいアイデアを作成します。既存のドキュメントは元の内容を保持します。",
+  "system.auto.1x8pj96.15": "新しいアイデアを作成",
+  "system.auto.yepf09.22": "すべてのドキュメントに適用",
+  "system.auto.bkpl70.19": "古い出力",
+  "system.auto.1m8pbfb.18": "出力が古くなっています",
+  "system.auto.pfbest.70": "共有アイデアが別の場所で変更されました。この出力を更新しますか？",
+  "system.auto.1x3tu3e.24": "出力を確認して更新",
   "system.auto.1r90hqw.52": "メモリー画像プレビュー操作用のアプリケーションインターフェース。",
   "system.auto.1rhlryl.226": "非公開画像の購入・閲覧と、作成画像の明示的な採用を分離します。対象範囲を確認する追加チェックボックスなしでは公開せず、非公開の画素をブラウザーに永続保存しません。元の情報が無効になると、この画面を削除します。",
   "system.auto.1658tge.44": "メモリプロフィール確認のアプリケーションインターフェース。",
@@ -6345,5 +6358,18 @@ Object.assign(messages, {
 });
 
 Object.assign(messages, { "system.auto.scxocd.15": "スポンサー提供の画像" });
+
+Object.assign(messages, {
+  "system.auto.5fp1d8.104": "ドキュメントで使われているものを含む、このプロジェクトのすべてのアイデアです。編集はアイデアが使われているすべての場所に反映されます。",
+  "system.auto.wdg6dx.12": "プロジェクトのアイデア",
+  "system.auto.vi4a6i.44": "このキャンバスのブロックをキャンバスエディターで開いてください。",
+  "system.auto.pl5yr7.126": "アイデアはこのプロジェクトに属します。編集はこのアイデアを使うすべてのドキュメントに反映されます。独立したバージョンを作るにはフォークしてください。",
+  "system.auto.e8736z.68": "{description}。このアイデアはプロジェクト内のどのドキュメントでも使えます。",
+  "system.auto.rjlzv9.124": "プロジェクトと、それを使うすべてのドキュメントから非表示になります。イベント履歴は再生や元に戻す操作のために残ります。",
+  "system.auto.1w7w8fs.69": "開いているドキュメントでアイデアを使用しました。編集は使用されているすべての場所に反映されます。",
+  "system.auto.1f0ayfn.95": "このドキュメントでの使用を解除します。アイデアはプロジェクトに残ります。「元に戻す」で使用を復元できます。",
+  "system.auto.y4aub.6": "ブロック",
+  "system.auto.19palh6.15": "再利用可能なブロック"
+});
 
 export default messages;

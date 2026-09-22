@@ -1,3 +1,6 @@
+import { sharedIdeaEdits, independentIdeaEdits, ideaContentEdit } from '../model/shared-idea-edits.ts';
+import { chooseSharedIdeaEdit, IdeaEditCanceled } from '../ui/shared-idea-choice.ts';
+import { attachIdeaEvents, canAttachProjectIdea, ideaDependencies, ideaDocumentUses, ideasInDocument } from '../model/project-ideas';
 import { documentJobCanAcknowledgeSafety } from "../model/document-jobs.ts";
 import { hasServerExecutionOwner } from "../model/output-durable-observation.ts";
 import { isStandaloneExperienceRoute } from "../experiences/host-route.ts";
@@ -581,7 +584,7 @@ export class FormaStore {
     if (projection.documentId && canonicalRoute !== currentRoute) this.setRoute(canonicalRoute, { replace: true });
   }
   #generationContext(documentId=this.projection.get().documentId,contextRootBlockId="",characterOutputKind:"headshot"|"character_sheet"="headshot",projection=this.projection.get()) {
-    const documentBlocks=projection.libraryBlocks.filter((block)=>block.documentId===documentId);
+    const documentBlocks=ideasInDocument(projection,documentId);
     let blocks=documentBlocks;
     if(contextRootBlockId){
       const selected=new Set([contextRootBlockId]),pending=[contextRootBlockId];
@@ -5221,7 +5224,24 @@ export class FormaStore {
   async appendBatchWithReceipt(events:EventInput[],options:AppendOptions={}):Promise<EventWriteResult>{
     // Copy once: later caller mutations must not change the admitted request/digest.
     let retained:EventInput[];try{retained=JSON.parse(JSON.stringify(events)) as EventInput[];}catch{retained=[];}
+    const localDocument=this.projection.get().documentId;
+    retained=retained.map(event=>(event.type==='BlockWeightSet'||event.type==='BlockPropertyEdited'&&['position','weight'].includes(String(event.payload.property_path)))&&!event.payload.document_id&&event.payload.scope!=='library'&&!this.route.get().includes('library')?{...event,payload:{...event.payload,document_id:localDocument}}:event);
+    retained=retained.map(event=>ideaContentEdit(event)&&event.payload.document_id===undefined?{...event,payload:{...event.payload,document_id:this.route.get().includes('library')?'':localDocument}}:event);
+    let editCanceled=false;
+    const shared=sharedIdeaEdits(this.projection.get(),retained);
+    if(shared.length&&typeof document!=='undefined'){
+      const owner=this.captureSourceOwnership(),head=this.head.get(),route=this.route.get();
+      const current=()=>this.sourceOwnershipActive(owner)&&this.head.get()===head&&this.route.get()===route&&(!options.current||options.current());
+      try{
+        const documentId=route.includes('library')?'':localDocument;
+        const choice=await chooseSharedIdeaEdit([...new Set(shared.flatMap(x=>x.documents.map(d=>d.title)))],documentId?this.projection.get().documentTitle:'',current,s=>this.#systemNotice(s));
+        if(!current())throw new IdeaEditCanceled();
+        if(choice==='new')retained=independentIdeaEdits(this.projection.get(),retained,documentId).events;
+        options={...options,expected:head};
+      }catch(error){if(!(error instanceof IdeaEditCanceled))throw error;editCanceled=true;}
+    }
     const admission=await this.#admitEventWrite(retained,retained.length>1?"batch":"append",options.expected),observation=admission.observation;
+    if(editCanceled)return this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:false},[],"none",options);
     if(!admission.admitted){
       if(admission.reused)return this.#withheldEventWrite(observation);
       if(!admission.capacity&&this.sourceOwnershipScopeActive(observation.source))this.toast(this.#systemNotice("Too many original changes await confirmation. No new change was sent."));
@@ -5315,10 +5335,17 @@ export class FormaStore {
     }
   }
 
-  async copyLibraryBlockSet(rootBlockId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="library"){
+  async copyLibraryBlockSet(rootBlockId:string,destinationDocumentId=this.projection.get().documentId,sourceSurface="library",independent=false){
     const sourceOwner=this.captureSourceOwnership();if(!this.sourceOwnershipActive(sourceOwner))return null;
     const projection=this.projection.get();const available=new Map(projection.libraryBlocks.filter((block)=>!block.removed&&block.projectId===projection.projectId).map((block)=>[block.id,block]));const root=available.get(rootBlockId);
     if(!root){this.toast("That reusable context is no longer available.");return null;}
+    if(!projection.documents.some(document=>document.id===destinationDocumentId&&document.projectId===root.projectId)){this.toast("Choose a document");return null;}
+    if(!independent&&canAttachProjectIdea(root)){
+      const events=attachIdeaEvents(root,destinationDocumentId,projection.libraryBlocks,projection.libraryBlockRelations);
+      if(events.length){const write=await this.appendBatchWithReceipt(events);if(write.publication!=="published"||!this.sourceOwnershipActive(sourceOwner))return this.#withheldWrite(write);if(!write.appended.length)return null;}
+      this.patchUi({focusBlockId:root.id});this.toast("Idea used in the open document. Edits are shared wherever it is used.");
+      return {rootBlockId:root.id,blockCount:ideaDependencies([root.id],projection.libraryBlocks,projection.libraryBlockRelations).length,relationCount:0};
+    }
     const connected=new Set([root.id]);let changed=true;while(changed){changed=false;for(const relation of projection.libraryBlockRelations){if(connected.has(relation.fromBlockId)&&available.has(relation.toBlockId)&&!connected.has(relation.toBlockId)){connected.add(relation.toBlockId);changed=true;}}}
     if([...connected].some((id)=>Boolean(available.get(id)?.properties.organization_context_package_binding_id))){this.toast("Organization context must be adopted through its approved package.");return null;}
     const blocks=[...connected].map((id)=>available.get(id)!).sort((left,right)=>left.id===root.id?-1:right.id===root.id?1:left.position.localeCompare(right.position));const ids=new Map(blocks.map((block)=>[block.id,crypto.randomUUID()]));const contextSetId=crypto.randomUUID();const base=this.head.get()+1;
@@ -5348,6 +5375,7 @@ export class FormaStore {
     const ownedIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===target.id).map((relation)=>relation.toBlockId));
     const owned=projection.libraryBlocks.filter((block)=>ownedIds.has(block.id));
     if(owned.some((block)=>block.locked)){this.toast(target.properties.source_artifact_kind==="video"?"Unlock every linked video scene before removing this input.":"Unlock every linked storyboard frame before removing this input.");return[];}
+    if(input.payload.scope!=="library"&&canAttachProjectIdea(target)&&projection.documentId)return [{type:"BlockDocumentDetached",payload:{...input.payload,block_id:target.id,project_id:target.projectId,document_id:projection.documentId,position:ideaDocumentUses(target).find(u=>u.documentId===projection.documentId)?.position??target.position,weight:ideaDocumentUses(target).find(u=>u.documentId===projection.documentId)?.weight}}];
     return ownedOutputBlockRemovalEvents(target,projection.libraryBlocks,projection.libraryBlockRelations,input);
   }
 
@@ -5382,7 +5410,7 @@ export class FormaStore {
     this.#outputInputReveal?.cancel();
     const projection=this.projection.get(),sourceRoute=this.route.get(),authorization=this.captureAuthorizationScope();
     const targetDocument=projection.documents.find(item=>item.id===destinationDocumentId&&!item.removed);
-    const targetBlock=projection.libraryBlocks.find(item=>item.id===blockId&&item.documentId===destinationDocumentId&&!item.removed);
+    const targetBlock=ideasInDocument(projection,destinationDocumentId).find(item=>item.id===blockId&&!item.removed);
     const sessionDetails=()=>{
       const session=this.session.get(),context=session?.projectContext;
       return JSON.stringify([context??null,session?.capabilities??[],session?.impersonation?.expiresAt??null]);
@@ -5413,7 +5441,7 @@ export class FormaStore {
       const current=this.projection.get(),session=this.session.get(),context=session?.projectContext;
       const permissions=context?.permissions??session?.capabilities??[];
       const document=current.documents.find(item=>item.id===destinationDocumentId&&!item.removed);
-      const block=current.libraryBlocks.find(item=>item.id===blockId&&item.documentId===destinationDocumentId&&!item.removed);
+      const block=ideasInDocument(current,destinationDocumentId).find(item=>item.id===blockId&&!item.removed);
       return !closed&&this.#outputInputReveal===owner&&this.authorizationScopeActive(authorization)&&sessionDetails()===authorityDetails
         &&permissions.includes("project.read")&&permissions.includes("project.author")
         &&(!context||context.projectId===projectId&&Date.parse(context.expiresAt)>Date.now())
@@ -5586,7 +5614,7 @@ export class FormaStore {
     const current=()=>{const state=this.projection.get(),actual=target?state.libraryBlocks.find(block=>block.id===target.id):null;
       return this.sourceOwnershipActive(source)&&state.documentId===originDocumentId&&guard()
         &&(!target||Boolean(actual&&!actual.locked&&!actual.removed&&actual.type==="reference"&&targetFingerprint===generationRevisionFor({media:actual.properties.media_url,recipe:actual.properties.reference_composition})))
-        &&!validateReferenceComposition(recipe,referenceCompositionSources(target?state.libraryBlocks.filter(block=>block.id!==target.id&&block.projectId===target.projectId&&(block.documentId===documentId||retainedSources.has(block.id))):state.blocks,this.events.get()));};
+        &&!validateReferenceComposition(recipe,referenceCompositionSources(target?state.libraryBlocks.filter(block=>block.id!==target.id&&block.projectId===target.projectId&&(ideasInDocument(state,documentId).some(b=>b.id===block.id)||retainedSources.has(block.id))):state.blocks,this.events.get()));};
     try{
       if(!current()||capture.blob.type!=="image/png")return false;
       const form=new FormData();form.append("file",new File([capture.blob],"reference-composition.png",{type:"image/png"}));
@@ -5652,7 +5680,7 @@ export class FormaStore {
     if(!artifact){this.toast("That output is no longer available.");return null;}
     if(artifact.kind==="model3d"){const readiness=model3dArtifactContextReadiness(artifact);if(!readiness.supported){this.toast(readiness.reason??"This model needs a self-contained GLB before it can be used as context.");return null;}}
     const document=projection.documents.find((candidate)=>candidate.id===destinationDocumentId);if(!document){this.toast("Choose an available document before adding output context.");return null;}
-    const existingBlocks=projection.libraryBlocks.filter((block)=>block.documentId===destinationDocumentId&&block.properties.source_artifact_id===artifact.id);const existingRoot=existingBlocks.find((block)=>!block.properties.source_artifact_item_id);const ownedChildIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const existingSourceItemIds=existingBlocks.filter((block)=>ownedChildIds.has(block.id)).map((block)=>String(block.properties.source_artifact_item_id??"")).filter(Boolean);const contextSetId=String(existingRoot?.properties.context_set_id??"")||undefined;
+    const existingBlocks=ideasInDocument(projection,destinationDocumentId).filter((block)=>block.properties.source_artifact_id===artifact.id);const existingRoot=existingBlocks.find((block)=>!block.properties.source_artifact_item_id);const ownedChildIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const existingSourceItemIds=existingBlocks.filter((block)=>ownedChildIds.has(block.id)).map((block)=>String(block.properties.source_artifact_item_id??"")).filter(Boolean);const contextSetId=String(existingRoot?.properties.context_set_id??"")||undefined;
     const availableFrames=artifact.kind==="storyboard"?artifact.items.filter((item)=>Boolean(item.mediaUrl)).length:artifact.kind==="video"?artifact.items.filter((item)=>Boolean(item.mediaUrl)&&String(item.mediaType??"").startsWith("video/")).length:0;
     if(existingRoot&&existingSourceItemIds.length>=availableFrames){if(options.reveal!==false)await this.revealOutputInput(existingRoot.id,destinationDocumentId);return{rootBlockId:existingRoot.id,created:false,blockCount:0,availableMemberCount:1+availableFrames};}
     const retained=artifact.contentRef?await this.ensurePrivateContent(artifact.contentRef):null;if(!this.sourceOwnershipActive(sourceOwner))return null;let content=parseDocumentArtifactContent(retained??undefined);const existingDraft=existingRoot?outputInputDraft(existingRoot):null;if(content&&existingDraft)content={...content,title:existingDraft.title,summary:existingDraft.summary,content_markdown:existingDraft.markdown,items:existingDraft.items.map((item)=>({title:item.title,body:item.body,notes:item.notes,image_prompt:item.image_prompt,context_group_ids:item.context_group_ids,slide:item.slide??null}))};if(content&&artifact.kind==="slides"&&options.presentation)content={...content,presentation:structuredClone(options.presentation)};
@@ -5680,11 +5708,11 @@ export class FormaStore {
         &&this.route.get()===sourceRoute&&this.projection.get().documentId===destinationDocumentId&&this.projection.get().projectId===document.projectId);
     };
     if(!imageCurrent())return null;
-    const parent=options.contextParentBlockId?projection.libraryBlocks.find((block)=>block.id===options.contextParentBlockId&&block.documentId===destinationDocumentId):undefined;
+    const parent=options.contextParentBlockId?ideasInDocument(projection,destinationDocumentId).find((block)=>block.id===options.contextParentBlockId):undefined;
     if(options.contextParentBlockId&&(!parent||parent.locked))return null;
-    const currentImageSources=output.imageRevision||sourceSurface==="generated-image-editor"?referenceCompositionSources(projection.libraryBlocks.filter(block=>block.documentId===destinationDocumentId),this.events.get()):null;
+    const currentImageSources=output.imageRevision||sourceSurface==="generated-image-editor"?referenceCompositionSources(ideasInDocument(projection,destinationDocumentId),this.events.get()):null;
     const currentImageHash=output.imageRevision?.mediaSha256??this.events.get().find(event=>event.eventId===output.sourceEventId)?.payload.source_content_hash;
-    const existing=projection.libraryBlocks.find((block)=>block.documentId===destinationDocumentId&&block.properties.source_output_id===output.id
+    const existing=ideasInDocument(projection,destinationDocumentId).find((block)=>block.properties.source_output_id===output.id
       &&(!currentImageSources||block.type==="reference"&&!block.removed&&block.properties.source_generation_id===output.generationId
         &&block.properties.source_output_content_ref===output.contentRef&&block.properties.source_document_id===output.documentId
         &&(()=>{const receipt=[...this.events.get()].reverse().find(event=>event.type==="ReferenceIngested"&&event.payload.reference_id===block.properties.reference_id)?.payload;
@@ -6251,9 +6279,9 @@ export class FormaStore {
     const projection=this.projection.get();if(!projection.documents.some((document)=>document.id===documentId)){this.toast("Choose an available document before reusing the selected outputs.");return null;}
     const unique=new Map<string,{sourceKind:string;sourceId:string}>();for(const item of items)if(item.sourceKind==="output"||item.sourceKind==="artifact")unique.set(`${item.sourceKind}:${item.sourceId}`,item);
     for(const item of unique.values()){
-      if(item.sourceKind==="output"){const output=projection.libraryOutputs.find((candidate)=>candidate.id===item.sourceId),existing=projection.libraryBlocks.find((block)=>block.documentId===documentId&&block.properties.source_output_id===item.sourceId);if(!output||!existing?.properties.media_url&&!output.mediaUrl){this.toast("A selected generated image is unavailable, so your document was left unchanged.");return null;}continue;}
+      if(item.sourceKind==="output"){const output=projection.libraryOutputs.find((candidate)=>candidate.id===item.sourceId),existing=ideasInDocument(projection,documentId).find((block)=>block.properties.source_output_id===item.sourceId);if(!output||!existing?.properties.media_url&&!output.mediaUrl){this.toast("A selected generated image is unavailable, so your document was left unchanged.");return null;}continue;}
       const artifact=projection.libraryArtifacts.find((candidate)=>candidate.id===item.sourceId);if(!artifact){this.toast("A selected output is unavailable, so your document was left unchanged.");return null;}
-      const existingRoot=projection.libraryBlocks.find((block)=>block.documentId===documentId&&block.properties.source_artifact_id===artifact.id&&!block.properties.source_artifact_item_id);const ownedIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const finished=new Set(artifact.items.filter((entry)=>Boolean(entry.mediaUrl)&&(artifact.kind!=="video"||String(entry.mediaType??"").startsWith("video/"))).map((entry)=>entry.id));const available=new Set(projection.libraryBlocks.filter((block)=>ownedIds.has(block.id)&&finished.has(String(block.properties.source_artifact_item_id??""))).map((block)=>String(block.properties.source_artifact_item_id)));if(existingRoot&&((artifact.kind!=="storyboard"&&artifact.kind!=="video")||available.size===finished.size))continue;
+      const existingRoot=ideasInDocument(projection,documentId).find((block)=>block.properties.source_artifact_id===artifact.id&&!block.properties.source_artifact_item_id);const ownedIds=new Set(projection.libraryBlockRelations.filter((relation)=>relation.kind==="artifact_contains"&&relation.fromBlockId===existingRoot?.id).map((relation)=>relation.toBlockId));const finished=new Set(artifact.items.filter((entry)=>Boolean(entry.mediaUrl)&&(artifact.kind!=="video"||String(entry.mediaType??"").startsWith("video/"))).map((entry)=>entry.id));const available=new Set(projection.libraryBlocks.filter((block)=>ownedIds.has(block.id)&&finished.has(String(block.properties.source_artifact_item_id??""))).map((block)=>String(block.properties.source_artifact_item_id)));if(existingRoot&&((artifact.kind!=="storyboard"&&artifact.kind!=="video")||available.size===finished.size))continue;
       if(artifact.contentRef&&!parseDocumentArtifactContent(await this.ensurePrivateContent(artifact.contentRef)??undefined)){this.toast(this.#systemNotice("{title} is unavailable, so your document was left unchanged.",{title:artifact.title}));return null;}
     }
     const rootIds:string[]=[];for(const item of unique.values()){const result=item.sourceKind==="output"?await this.addImageOutputAsContext(item.sourceId,documentId,`${sourceSurface}-output`,{reveal:false}):await this.addArtifactAsContext(item.sourceId,documentId,`${sourceSurface}-artifact`,{reveal:false});if(!this.sourceOwnershipActive(sourceOwner)||!result||"publication"in result||!result.rootBlockId)return null;rootIds.push(result.rootBlockId);}
@@ -6265,7 +6293,7 @@ export class FormaStore {
     const selectedDocumentIds=selectedItems.filter((item)=>item.sourceKind==="document").map((item)=>item.sourceId);const anchorDocumentId=destinationDocumentId??this.canvasPlanningDocumentId();if(!anchorDocumentId||!projection.documents.some((document)=>document.id===anchorDocumentId&&document.projectId===canvas.projectId)||contextSet.canvasId!==canvas.selectedCanvasId){this.toast(currentFormaLocale().messages["next.exact.chooseDocument"]??"Choose a document");return false;}
     const blockIds=new Set(contextSet.blockIds);for(const nestedId of visitedSets){const nested=canvas.contextSets.find((candidate)=>candidate.id===nestedId);for(const blockId of nested?.blockIds??[])blockIds.add(blockId);}
     const roots=await this.adoptCanvasOutputItems(selectedItems,anchorDocumentId);if(!roots)return false;projection=this.projection.get();for(const rootId of roots)blockIds.add(rootId);
-    for(const documentId of [...contextSet.documentIds,...selectedDocumentIds])for(const block of projection.libraryBlocks)if(block.documentId===documentId)blockIds.add(block.id);
+    for(const documentId of [...contextSet.documentIds,...selectedDocumentIds])for(const block of ideasInDocument(projection,documentId))blockIds.add(block.id);
     let expanded=true;while(expanded){expanded=false;for(const relation of projection.libraryBlockRelations)if((relation.kind==="artifact_contains"||isContextCompositionRelation(relation.kind))&&blockIds.has(relation.fromBlockId)&&!blockIds.has(relation.toBlockId)){blockIds.add(relation.toBlockId);expanded=true;}}
     const blocks=projection.libraryBlocks.filter((block)=>blockIds.has(block.id));const selectedBySource=new Map(selectedItems.map((item)=>[item.sourceId,item]));
     const factBlocks=blocks.filter((block)=>!isOutputContextBlock(block));const factBlockIds=new Set(factBlocks.map((block)=>block.id));
@@ -7105,7 +7133,7 @@ function historyHlc(event:CreativeEvent,mode:"undo"|"redo"){
 
 function inverseEvent(event: CreativeEvent): EventInput | null {
   const p = event.payload;
-  const pairs: Record<string, string> = { BlockLocked: "BlockUnlocked", BlockUnlocked: "BlockLocked", BlockRemoved: "BlockRestored", BlockRestored: "BlockRemoved", BlockRelationAdded: "BlockRelationRemoved", BlockRelationRemoved: "BlockRelationAdded", DocumentRemoved: "DocumentRestored", DocumentRestored: "DocumentRemoved", ObjectPinned: "ObjectUnpinned", ObjectUnpinned: "ObjectPinned", AddedToLibrary: "RemovedFromLibrary", RemovedFromLibrary: "AddedToLibrary", CanvasItemRemoved:"CanvasItemRestored", CanvasItemRestored:"CanvasItemRemoved", CanvasArrangementRemoved:"CanvasArrangementRestored", CanvasArrangementRestored:"CanvasArrangementRemoved", CanvasRemoved:"CanvasRestored", CanvasRestored:"CanvasRemoved", MembershipAdded:"MembershipRemoved", MembershipRemoved:"MembershipAdded" };
+  const pairs: Record<string, string> = { BlockLocked: "BlockUnlocked", BlockUnlocked: "BlockLocked", BlockDocumentAttached:"BlockDocumentDetached", BlockDocumentDetached:"BlockDocumentAttached", BlockRemoved: "BlockRestored", BlockRestored: "BlockRemoved", BlockRelationAdded: "BlockRelationRemoved", BlockRelationRemoved: "BlockRelationAdded", DocumentRemoved: "DocumentRestored", DocumentRestored: "DocumentRemoved", ObjectPinned: "ObjectUnpinned", ObjectUnpinned: "ObjectPinned", AddedToLibrary: "RemovedFromLibrary", RemovedFromLibrary: "AddedToLibrary", CanvasItemRemoved:"CanvasItemRestored", CanvasItemRestored:"CanvasItemRemoved", CanvasArrangementRemoved:"CanvasArrangementRestored", CanvasArrangementRestored:"CanvasArrangementRemoved", CanvasRemoved:"CanvasRestored", CanvasRestored:"CanvasRemoved", MembershipAdded:"MembershipRemoved", MembershipRemoved:"MembershipAdded" };
   if (pairs[event.type]) return { type: pairs[event.type], payload: p };
   if (event.type === "BlockCreated") return { type: "BlockRemoved", payload: { block_id: p.block_id, project_id:p.project_id, document_id:p.document_id, canvas_id:p.canvas_id, source_canvas_id:p.source_canvas_id, reason: "undo-created-block" } };
   if (event.type === "DocumentCreated") return { type: "DocumentRemoved", payload: { document_id:p.document_id, project_id:p.project_id, canvas_id:p.canvas_id, source_canvas_id:p.source_canvas_id, was_current:true, reason:"undo-created-document" } };

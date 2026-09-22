@@ -1,3 +1,4 @@
+import { ideasInDocument } from './project-ideas.ts';
 import { blockTypeDefinition } from "./block-types.ts";
 import { foldEvents, type CreativeEvent, type CreativeProjection } from "./events.ts";
 import { generationPromotionSignals } from "./generation-signals.ts";
@@ -192,6 +193,9 @@ function collectionIdsFor(projection: CreativeProjection, objectId: string, docu
   const document = projection.membership[documentId];
   if (direct) ids.add(direct.collectionId);
   if (document) ids.add(document.collectionId);
+  if(projection.libraryBlocks.some(block=>block.id===objectId))for(const candidate of projection.documents){
+    const filed=projection.membership[candidate.id];if(filed&&ideasInDocument(projection,candidate.id).some(block=>block.id===objectId))ids.add(filed.collectionId);
+  }
   return [...ids];
 }
 

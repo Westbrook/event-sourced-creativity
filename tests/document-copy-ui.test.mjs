@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../src/model/project-ideas.ts';
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -196,7 +197,7 @@ function fixture(overrides = {}) {
   function createHost() {
     const native = overrides.nativeNavigation;
     if (native) { Object.assign(native.frame, { store, i18n }); native.ports.bindFixture(native.frame); }
-    const ports = { store, document: native?.ports.documentPort ?? document,
+    const ports = { ideasInDocument, store, document: native?.ports.documentPort ?? document,
       HTMLElement: native?.ports.ElementPort ?? HTMLElement, HostBase: native?.ports.ElementPort ?? Object,
       ensureModalDialog: native?.ports.modalPort.ensureModalDialog ?? ensureModalDialog,
       navigateInApp: native?.navigateInApp, captureOutputNavigationFocus, i18n, html, nothing, icon: () => "",

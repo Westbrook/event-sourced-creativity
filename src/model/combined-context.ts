@@ -148,8 +148,7 @@ export function validateContextCompositionGraph(input:{
     if(!input.ignoreLocks&&(parent.locked||child.locked))return issue(index,"context_composition_locked","Unlock both context decisions before changing their relationship.");
     const project=String(payload.project_id??"");
     if(parent.projectId&&child.projectId&&parent.projectId!==child.projectId||project&&(parent.projectId&&parent.projectId!==project||child.projectId&&child.projectId!==project))return issue(index,"context_composition_cross_project","Context decisions cannot be connected across projects.");
-    const document=String(payload.document_id??"");
-    if(parent.documentId&&child.documentId&&parent.documentId!==child.documentId||document&&(parent.documentId&&parent.documentId!==document||child.documentId&&child.documentId!==document))return issue(index,"context_composition_cross_document","Context decisions must belong to the same document.");
+    // Ideas and their composition graph belong to the project; document uses are independent.
     const properties=record(payload.properties),specified=properties.member_order??properties.order;
     if(specified!==undefined&&(typeof specified!=="number"||!Number.isSafeInteger(specified)||specified<0))return issue(index,"context_composition_order_invalid","The position of a context decision must be a nonnegative whole number.");
     if([...relations.values()].some((relation)=>relation.fromBlockId===from&&relation.toBlockId===to))return issue(index,"context_composition_duplicate","This context decision is already included in that group.");

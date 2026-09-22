@@ -7,7 +7,7 @@ const SAFE_SCALAR_FIELDS = new Set([
   "surface", "context", "capture_version", "terminal_type", "terminal_ref", "property_path", "format", "rights_class",
   "authority", "visibility", "polarity", "decision", "phase", "rank", "index", "revision", "artifact_revision", "restored_from_revision", "revision_action", "content_sha256", "version", "sequence", "head",
   "simulation", "synthetic", "retryable", "active", "locked", "removed", "confirmed", "paid_media_confirmed",
-  "live_preview", "preview_generated", "preview_queued", "preview_suppressed", "used_reference_pixels", "media_inspected",
+  "project_owned", "preserve_project_ideas", "live_preview", "preview_generated", "preview_queued", "preview_suppressed", "used_reference_pixels", "media_inspected",
   "friction_score", "outcome_weight", "weight", "relativity", "threshold", "width", "height", "actor", "source_surface",
   "artifact_kind", "job_kind", "source_type", "assertion_method", "trigger_kind", "presentation_mode", "viewer_kind",
   "mock_data_source", "error_category", "error_code", "error_class", "prompt_technique", "technique", "view", "created_from", "interaction", "study", "used_uploaded_reference_pixels", "used_locked_study_pixels",

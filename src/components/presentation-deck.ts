@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../model/project-ideas.ts';
 import { html, nothing } from "lit";
 import { applySlideStylePreset, formatPresentationQuantity, isSlideStylePresetId, normalizeSlideItem, normalizeSlidePresentation, SLIDE_STYLE_PRESETS, slideStylePresetDefinition, type DocumentArtifactDraftItem, type SlidePresentation, type SlideStylePresetId } from "../model/document-artifacts";
 import { combinedContextMemberships } from "../model/combined-context";
@@ -273,7 +274,7 @@ export class PresentationDeck extends FormaElement{
   #touchEnd(event:PointerEvent,total:number){if(event.pointerType!=="touch"||!this.#touchStart)return;const horizontal=event.clientX-this.#touchStart.x,vertical=event.clientY-this.#touchStart.y;this.#touchStart=null;if(Math.abs(horizontal)<48||Math.abs(horizontal)<Math.abs(vertical)*1.5)return;const rtl=this.matches(":dir(rtl)");this.#setIndex(this.#index+(horizontal<0===!rtl?1:-1),total);}
   #evidence(item:DocumentArtifactDraftItem):DeckEvidence{
     const projection=this.store.projection.get(),documentId=this.documentId||projection.documentId;
-    const blocks=[...new Map([...projection.blocks,...projection.libraryBlocks].filter((block)=>block.documentId===documentId&&block.projectId===projection.projectId&&!block.removed).map((block)=>[block.id,block])).values()];
+    const blocks=ideasInDocument(projection,documentId);
     const authorized=new Map<string,{label:string;kind:"Source decision"|"Combined context"}>();
     for(const block of blocks){const label=visibleSourceLabel(String(block.properties.label??block.handle??block.type),this.i18n.system("Authorized source"));authorized.set(block.id,{label,kind:"Source decision"});for(const membership of combinedContextMemberships(block.properties))if(!authorized.has(membership.contextSetId))authorized.set(membership.contextSetId,{label:visibleSourceLabel(membership.name,this.i18n.system("Authored context")),kind:"Combined context"});}
     const slide=item.slide as DeckVisual|null,citations=slide?.citations??[],references=[...new Set([...(item.context_group_ids??[]),...(slide?.sourceIds??[]),...(slide?.visual.data.flatMap((entry)=>(entry as DeckVisualDatum).sourceIds??[])??[]),...(slide?.quote?.sourceId?[slide.quote.sourceId]:[]),...citations.flatMap((citation)=>citation.sourceId?[citation.sourceId]:[])])];

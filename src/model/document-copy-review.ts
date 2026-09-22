@@ -1,3 +1,4 @@
+import { ideasInDocument } from './project-ideas.ts';
 import type { AuthoringPreview } from "../../worker/authoring-commits.ts";
 import type { CreativeProjection } from "./events.ts";
 import { normalizeDocumentDuplicationTitle } from "./document-duplication.ts";
@@ -70,7 +71,7 @@ export function documentCopyIntent(target: DocumentCopyTarget, details: Document
 /** Local invalidation only. The server independently checks complete source, rights and custody at commit. */
 export function documentCopySourceRevision(projection: CreativeProjection, target: DocumentCopyTarget): string {
   const source = projection.documents.find((item) => item.id === target.documentId && item.projectId === target.projectId);
-  const blocks = projection.libraryBlocks.filter((item) => item.documentId === target.documentId && item.projectId === target.projectId);
+  const blocks = ideasInDocument(projection,target.documentId).filter(item=>item.projectId===target.projectId);
   const ids = new Set(blocks.map((item) => item.id));
   return JSON.stringify({
     source, blocks: [...blocks].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0),

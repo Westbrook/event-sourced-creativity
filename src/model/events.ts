@@ -1,3 +1,4 @@
+import { ideaDependencies, ideaDocumentUses, ideasInDocument, type IdeaDocumentUse } from "./project-ideas.ts";
 import { createGuestImageResultOriginIndex, type GuestImageResultClaimEventOrigin } from "./guest-image-result-presentation.ts";
 import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
 import { projectGeneratedImageEdit, projectGuestImageResultEdit, type GeneratedImageOutputEdit } from "./generated-image-revision.ts";
@@ -34,6 +35,10 @@ export type EventInput = {
 };
 
 export type CreativeBlock = {
+  /** Project identity is canonical. documentId/scope retain a compatibility location; documentUses carries membership. */
+  documentUses?: IdeaDocumentUse[];
+  originDocumentId?: string;
+  projectOwned?: boolean;
   id: string;
   documentId: string;
   canvasId: string;
@@ -320,7 +325,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
         const document=documents.get(String(p.document_id??""));if(document&&!document.removed){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;document.sourceEvents.push(event.eventId);}break;
       }
       case "DocumentRemoved": case "DocumentRestored": {
-        const document=documents.get(String(p.document_id??""));if(document){document.removed=event.type==="DocumentRemoved";document.sourceEvents.push(event.eventId);if(event.type==="DocumentRestored"&&p.was_current){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;}}break;
+        const document=documents.get(String(p.document_id??""));if(document){document.removed=event.type==="DocumentRemoved";if(document.removed&&p.preserve_project_ideas===true)for(const block of blocks.values())if(block.projectId===document.projectId&&ideaDocumentUses(block).some(use=>use.documentId===document.id))block.projectOwned=true;document.sourceEvents.push(event.eventId);if(event.type==="DocumentRestored"&&p.was_current){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;}}break;
       }
       case "BlockCreated": {
         const id = String(p.block_id);
@@ -328,20 +333,37 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
         const documentId = scope === "document" ? String(p.document_id ?? state.documentId) : "";
         const canvasId = scope === "canvas" ? String(p.canvas_id ?? "") : "";
         const projectId = String(p.project_id ?? (documentId ? documents.get(documentId)?.projectId : state.projectId) ?? state.projectId);
-        blocks.set(id, { id, documentId, canvasId, projectId, scope, type: String(p.type ?? "text"), handle: String(p.handle ?? id), position: String(p.position ?? "a0"), removed: false, locked: false, properties: { ...asRecord(p.properties) }, sourceEvents: [event.eventId] });
+        blocks.set(id, { id, documentUses: documentId ? [{documentId,position:String(p.position ?? "a0"),sourceEvents:[]}] : [], originDocumentId:documentId, projectOwned:p.project_owned === true, documentId, canvasId, projectId, scope, type: String(p.type ?? "text"), handle: String(p.handle ?? id), position: String(p.position ?? "a0"), removed: false, locked: false, properties: { ...asRecord(p.properties) }, sourceEvents: [event.eventId] });
         break;
       }
-      case "BlockRehomed": { const b=blocks.get(String(p.block_id??""));if(b){const nextScope=String(p.scope??"library") as CreativeBlock["scope"];b.scope=nextScope;b.documentId=nextScope==="document"?String(p.document_id??""):"";b.canvasId=nextScope==="canvas"?String(p.canvas_id??""):"";b.projectId=String(p.project_id??b.projectId);b.sourceEvents.push(event.eventId);}break; }
+      case "BlockDocumentAttached": case "BlockDocumentDetached": {
+        const block=blocks.get(String(p.block_id??"")), documentId=String(p.document_id??""), document=documents.get(documentId);
+        if(!block||block.removed||!document||document.projectId!==block.projectId||p.project_id!==block.projectId)break;
+        const uses=ideaDocumentUses(block), existing=uses.find(use=>use.documentId===documentId&&!use.inherited);
+        if(event.type==="BlockDocumentAttached"&&!document.removed&&!existing)block.documentUses=[...uses.filter(use=>use.documentId!==documentId),{documentId,position:String(p.position??block.position),...(typeof p.weight==="number"?{weight:p.weight}:{}),sourceEvents:[event.eventId]}];
+        if(event.type==="BlockDocumentDetached")block.documentUses=uses.filter(use=>use.documentId!==documentId);
+        block.projectOwned=true;
+        if(event.type==='BlockDocumentAttached'){
+          const available=[...blocks.values()].filter(candidate=>candidate.projectId===block.projectId&&(candidate.projectOwned||candidate.scope!=='document'||ideaDocumentUses(candidate).some(use=>documents.has(use.documentId)&&!documents.get(use.documentId)!.removed)));
+          for(const dependency of ideaDependencies([block.id],available,[...blockRelations.values()]))dependency.projectOwned=true;
+        }
+        break;
+      }
+      case "BlockRehomed": { const b=blocks.get(String(p.block_id??""));if(b){const nextScope=String(p.scope??"library") as CreativeBlock["scope"];b.scope=nextScope;b.documentId=nextScope==="document"?String(p.document_id??""):"";b.canvasId=nextScope==="canvas"?String(p.canvas_id??""):"";b.projectId=String(p.project_id??b.projectId);b.documentUses=b.documentId?[{documentId:b.documentId,position:b.position,sourceEvents:[event.eventId]}]:[];b.sourceEvents.push(event.eventId);}break; }
       case "BlockRenamed": { const b = blocks.get(String(p.block_id)); if (b) { b.handle = String(p.new_handle ?? b.handle); b.sourceEvents.push(event.eventId); } break; }
       case "BlockPropertyEdited": {
         const b = blocks.get(String(p.block_id)); const path = String(p.property_path ?? "");
-        if (b && path === "position") b.position = String(p.new_value ?? b.position);
+        let use=b&&p.document_id&&p.scope!=="library"?ideaDocumentUses(b).find(use=>use.documentId===p.document_id):undefined;
+        if(b&&p.document_id&&p.scope!=="library"&&!use&&["position","weight"].includes(path)&&documents.get(String(p.document_id))?.projectId===b.projectId){use={documentId:String(p.document_id),position:b.position,sourceEvents:[],inherited:true};b.documentUses=[...ideaDocumentUses(b),use];}
+        if(b&&path==="weight"&&use){use.weight=Number(p.new_value??.5);b.sourceEvents.push(event.eventId);break;}
+        if(b&&path==="position"&&use){use.position=String(p.new_value??use.position);b.sourceEvents.push(event.eventId);break;}
+        if (b && path === "position") { b.position = String(p.new_value ?? b.position); for(const use of ideaDocumentUses(b))use.position=b.position; }
         else if (b && path === "type") b.type = String(p.new_value ?? b.type);
         else if (b && path) { b.properties = audioMetadataAfterSourceEdit(b.type, b.properties, path, p.new_value); b.properties[path] = p.new_value; }
         if (b) b.sourceEvents.push(event.eventId);
         break;
       }
-      case "BlockWeightSet": { const b = blocks.get(String(p.block_id)); if (b) { b.properties.weight = Number(p.weight ?? .5); b.sourceEvents.push(event.eventId); } break; }
+      case "BlockWeightSet": { const b = blocks.get(String(p.block_id)); let use=b&&p.document_id&&p.scope!=="library"?ideaDocumentUses(b).find(use=>use.documentId===p.document_id):undefined; if(b&&p.document_id&&p.scope!=="library"&&!use&&documents.get(String(p.document_id))?.projectId===b.projectId){use={documentId:String(p.document_id),position:b.position,sourceEvents:[],inherited:true};b.documentUses=[...ideaDocumentUses(b),use];} if(use&&b){use.weight=Number(p.weight??.5);b.sourceEvents.push(event.eventId);break;} if (b) { b.properties.weight = Number(p.weight ?? .5); b.sourceEvents.push(event.eventId); } break; }
       case "BlockLocked": case "BlockUnlocked": { const b = blocks.get(String(p.block_id)); if (b) { b.locked = event.type === "BlockLocked"; b.sourceEvents.push(event.eventId); } break; }
       case "BlockRemoved": case "BlockRestored": { const b = blocks.get(String(p.block_id)); if (b) { b.removed = event.type === "BlockRemoved"; b.sourceEvents.push(event.eventId); } break; }
       case "BlockRelationAdded": {
@@ -629,13 +651,20 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
     const itemProjectId=documents.get(id)?.projectId??blocks.get(id)?.projectId??collections.get(id)?.projectId??(outputs.get(id)?.documentId?documents.get(outputs.get(id)!.documentId)?.projectId:undefined);
     if(!visibleCollections.has(filed.collectionId)||(documents.has(id)&&!visibleDocumentIds.has(id))||(blocks.has(id)&&blocks.get(id)!.removed)||(itemProjectId&&itemProjectId!==state.projectId))delete membership[id];
   }
-  state.libraryBlocks = [...blocks.values()].filter((b) => !b.removed&&b.projectId===state.projectId&&(b.scope==="library"||b.scope==="canvas"||visibleDocumentIds.has(b.documentId))).sort((a, b) => a.position.localeCompare(b.position));
+  const visibleIdeaRoots = [...blocks.values()].filter(b=>!b.removed&&b.projectId===state.projectId&&(b.projectOwned||b.scope!=="document"||ideaDocumentUses(b).some(use=>visibleDocumentIds.has(use.documentId))));
+  const projectRelations=[...blockRelations.values()].filter(r=>!r.removed&&r.projectId===state.projectId);
+  const projectIdeas=visibleIdeaRoots;
   state.documents = visibleDocuments;
   const selectedDocument=selectedDocumentId?visibleDocuments.find((document)=>document.id===selectedDocumentId):undefined;
   if(selectedDocument){state.documentId=selectedDocument.id;state.documentTitle=selectedDocument.title;}
   else if(!visibleDocumentIds.has(state.documentId)){const fallback=visibleDocuments[0];state.documentId=fallback?.id??"";state.documentTitle=fallback?.title??"No document open";state.latestCompile=null;}
   if(state.documentId)state.latestCompile=documentCompiles.get(state.documentId)??null;
-  state.blocks = state.libraryBlocks.filter((block) => block.scope==="document"&&block.documentId === state.documentId);
+  // Library contains canonical project ideas. Document views add local usage values.
+  state.libraryBlocks=projectIdeas.map(block=>block.scope==='canvas'?block:{...block,
+    documentId:ideaDocumentUses(block).find(u=>!u.inherited&&visibleDocumentIds.has(u.documentId))?.documentId??'',
+    scope:ideaDocumentUses(block).some(u=>!u.inherited&&visibleDocumentIds.has(u.documentId))?'document' as const:'library' as const,
+  }).sort((a,b)=>a.position.localeCompare(b.position));
+  state.blocks=ideasInDocument({libraryBlocks:state.libraryBlocks,libraryBlockRelations:projectRelations},state.documentId);
   const visibleBlockIds=new Set(state.libraryBlocks.map((block)=>block.id));const documentBlockIds=new Set(state.blocks.map((block)=>block.id));
   state.libraryBlockRelations=[...blockRelations.values()].filter((relation)=>!relation.removed&&relation.projectId===state.projectId&&visibleBlockIds.has(relation.fromBlockId)&&visibleBlockIds.has(relation.toBlockId));
   state.blockRelations=state.libraryBlockRelations.filter((relation)=>documentBlockIds.has(relation.fromBlockId)&&documentBlockIds.has(relation.toBlockId));
@@ -660,7 +689,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
     return [scoped];
   });
   state.annotations = [...annotations.values()]; state.preferences = [...preferences.values()]; state.conditions = [...conditions.values()];
-  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));const projectOutputs=[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded);const projectArtifacts=[...artifacts.values()].filter((artifact)=>documentIds.has(artifact.documentId)).sort((left,right)=>right.sequence-left.sequence);const history=generationHistoryItems(projectOutputs);return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.scope==="library"||block.scope==="canvas"||documentIds.has(block.documentId))).length,outputCount:history.length+projectArtifacts.length,artifactCount:projectArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:projectArtifacts.slice(0,2)};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
+  state.projects=[...projects.values()].map((project)=>{const projectDocuments=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed);const documentIds=new Set(projectDocuments.map((document)=>document.id));const projectOutputs=[...outputs.values()].filter((output)=>documentIds.has(output.documentId)&&!output.discarded);const projectArtifacts=[...artifacts.values()].filter((artifact)=>documentIds.has(artifact.documentId)).sort((left,right)=>right.sequence-left.sequence);const history=generationHistoryItems(projectOutputs);return{...project,documentCount:projectDocuments.length,collectionCount:[...collections.values()].filter((collection)=>collection.projectId===project.id&&!collection.removed).length,blockCount:[...blocks.values()].filter((block)=>block.projectId===project.id&&!block.removed&&(block.projectOwned||block.scope==="library"||block.scope==="canvas"||ideaDocumentUses(block).some(use=>documentIds.has(use.documentId)))).length,outputCount:history.length+projectArtifacts.length,artifactCount:projectArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:projectArtifacts.slice(0,2)};}).sort((a,b)=>a.id===state.projectId?-1:b.id===state.projectId?1:b.lastSequence-a.lastSequence);
   if(!state.projects.length&&state.projectId){const history=generationHistoryItems(state.libraryOutputs);state.projects=[{id:state.projectId,name:state.projectName,state:state.projectState,createdSequence:0,lastSequence:0,documentCount:state.documents.length,collectionCount:state.collections.length,blockCount:state.libraryBlocks.length,outputCount:history.length+state.libraryArtifacts.length,artifactCount:state.libraryArtifacts.length,recentGenerations:history.slice(0,2),recentArtifacts:state.libraryArtifacts.slice(0,2)}];}
   return state;
   };

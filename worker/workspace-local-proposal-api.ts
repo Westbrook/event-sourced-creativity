@@ -1,3 +1,4 @@
+import { ideasInDocument } from '../src/model/project-ideas.ts';
 import { isOutputContextType } from "../src/model/output-requirements.ts";
 import { outputAuthoringBlocksFromEvents, prepareOutputRequirementClientEvents, type OutputAuthoringGuardResult } from "./output-requirement-event-guards.ts";
 import { buildWorkspaceQuickEditPlan, normalizeWorkspaceQuickEditIntent, validWorkspaceQuickEditEvents, WORKSPACE_QUICK_EDIT_VERSION, type WorkspaceQuickEditIntent } from "../src/model/workspace-local-proposal.ts";
@@ -194,7 +195,7 @@ export async function handleWorkspaceLocalProposal(request: Request, env: Worker
   const author = await prepareWorkspace(request, env, body, "author");
   if (author instanceof Response) return author;
   try {
-    const target = intent.targetBlockId ? author.projection.libraryBlocks.find((block) => block.id === intent.targetBlockId && block.scope === "document" && block.documentId === author.binding.documentId) : undefined;
+    const target = intent.targetBlockId ? ideasInDocument(author.projection,author.binding.documentId).find(block=>block.id===intent.targetBlockId) : undefined;
     if (target && isOutputContextType(target.type)) return response({ error: "output_requirement_endpoint_required", status: "not-applied", blockId: target.id }, 409);
     const planned = buildWorkspaceQuickEditPlan({ projection: author.projection, intent, sourceHead: author.sourceHead });
     const output = prepareOutputRequirementClientEvents(planned.events, outputAuthoringBlocksFromEvents(author.events));

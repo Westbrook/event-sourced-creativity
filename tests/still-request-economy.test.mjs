@@ -57,7 +57,7 @@ test('unchanged artifact edits accept the canonical no-op receipt',async()=>{
 test('generation submits the reviewed source revision without a redundant history read',async()=>{
   const c=client(),draft=c.prepareGeneration('image');
   await network((url,init)=>{if(url==='/api/session?profile=still')return json(session);if(url.endsWith('/run'))return json({});assert.equal(url,'/api/document-jobs');const body=JSON.parse(init.body);assert.equal(body.payload.expectedDocumentRevision,draft.sourceRevision);assert.deepEqual(body.payload.snapshot,draft.sourceSnapshot);return json({job:{jobId:'j',documentId:'d',status:'queued'}});},async calls=>{
-    await c.generate(draft);assert.equal(calls.length,3);assert.ok(calls.every(c=>!c.url.startsWith('/api/events')));
+    await c.generate(draft);assert.equal(calls.length,2);assert.ok(calls.every(c=>!c.url.startsWith('/api/events')));
   });
 });
 test('server revision conflicts retain the reviewed draft and never retry admission',async()=>{

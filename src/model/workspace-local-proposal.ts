@@ -1,3 +1,4 @@
+import { ideasInDocument } from './project-ideas.ts';
 import { blockIntentFor, suggestedSubtype, type BlockKind } from "./block-types.ts";
 import { creativeContextRightsValidity } from "./context-health.ts";
 import type { CreativeBlock, CreativeProjection, EventInput } from "./events.ts";
@@ -30,7 +31,7 @@ export function buildWorkspaceQuickEditPlan(input: {
   const document = projection.documents.find((item) => item.id === projection.documentId && item.projectId === projection.projectId && !item.removed);
   if (!document) throw new Error("workspace_quick_edit_document_unavailable");
   const scope = { project_id: projection.projectId, document_id: document.id, source_surface: "workspace-quick-edit", source_operation_id: intent.operationId };
-  const blocks = projection.libraryBlocks.filter((block) => block.projectId === projection.projectId && block.documentId === document.id && block.scope === "document" && !block.removed);
+  const blocks = ideasInDocument(projection,document.id);
   const temperature = workspaceQuickEditNeedsTarget(intent.prompt), target = intent.targetBlockId ? blocks.find((block) => block.id === intent.targetBlockId) : undefined;
   if (intent.targetBlockId && (!target || target.type !== "palette" || !temperature)) throw new Error("workspace_quick_edit_target_unavailable");
   if (temperature && !target) throw new Error("workspace_quick_edit_target_required");

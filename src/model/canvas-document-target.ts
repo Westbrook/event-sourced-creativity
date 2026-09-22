@@ -1,3 +1,4 @@
+import { ideasInDocument } from './project-ideas.ts';
 import type { CanvasProjection, CanvasItem } from "../canvas/model.ts";
 import type { CreativeProjection } from "./events.ts";
 import type { DocumentJob } from "./document-jobs.ts";
@@ -7,7 +8,7 @@ import type { DocumentJob } from "./document-jobs.ts";
 export function canvasDocumentTarget(projection:CreativeProjection,canvas:CanvasProjection,selectedIds:readonly string[]=[],chosenId=""):string{
   if(!canvas.selectedCanvasId||canvas.projectId!==projection.projectId||!canvas.canvases.some((board)=>board.id===canvas.selectedCanvasId&&board.projectId===projection.projectId))return"";
   const available=new Set(projection.documents.filter((document)=>document.projectId===projection.projectId).map((document)=>document.id));
-  const documentsFor=(item:CanvasItem):string[]=>item.sourceKind==="document"?[item.sourceId]:item.sourceKind==="context"?canvas.contextSets.find((set)=>set.id===item.sourceId)?.documentIds??[]:item.sourceKind==="output"?[projection.libraryOutputs.find((output)=>output.id===item.sourceId)?.documentId??""]:item.sourceKind==="artifact"?[projection.libraryArtifacts.find((artifact)=>artifact.id===item.sourceId)?.documentId??""]:[projection.libraryBlocks.find((block)=>block.id===item.sourceId&&!block.removed)?.documentId??""];
+  const documentsFor=(item:CanvasItem):string[]=>item.sourceKind==="document"?[item.sourceId]:item.sourceKind==="context"?canvas.contextSets.find((set)=>set.id===item.sourceId)?.documentIds??[]:item.sourceKind==="output"?[projection.libraryOutputs.find((output)=>output.id===item.sourceId)?.documentId??""]:item.sourceKind==="artifact"?[projection.libraryArtifacts.find((artifact)=>artifact.id===item.sourceId)?.documentId??""]:projection.documents.filter(document=>ideasInDocument(projection,document.id).some(block=>block.id===item.sourceId)).map(document=>document.id);
   const unique=(items:readonly CanvasItem[])=>[...new Set(items.flatMap(documentsFor).filter((id)=>available.has(id)))];
   // An explicit selection is authoritative even after a collaborator removes it.
   // Dropping unresolved members would silently turn B (or A+B) into another target.

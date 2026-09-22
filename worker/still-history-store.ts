@@ -5,7 +5,7 @@ import {decisionHash} from './still-decision-store.ts';
 
 export type PreparedHistory={version:string;head:number;privateCount:number;events:CreativeEvent[];checkpoint:HistoryCheckpoint};
 const ttl=24*60*60_000,maxPlain=16_000_000,maxEncoded=1_500_000;
-export const historyStoreKey=(owner:string,stream:string,scope:string)=>decisionHash({schema:1,owner,stream,scope});
+export const historyStoreKey=(owner:string,stream:string,scope:string)=>decisionHash({schema:2,owner,stream,scope});
 async function boundedBytes(stream:ReadableStream<Uint8Array>,limit:number){
  const reader=stream.getReader(),chunks:Uint8Array[]=[];let size=0;
  try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw Error('history_cache_capacity');}chunks.push(value);}}

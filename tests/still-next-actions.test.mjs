@@ -33,10 +33,10 @@ test('use-in adds destination-to-source without replacing any member, including 
   assert.throws(()=>useInPlan(apply(events,plan),position,'cap','block:person'));
   assert.throws(()=>useInPlan(events,position,'cap','block:brim'),/unavailable/i);
 });
-test('cross-document copies preserve complete nested ideas and remap relationships',()=>{
-  const events=fixture(),plan=useInPlan(events,position,'cap','block:other-person');assert.equal(plan.mode,'copy');assert.equal(plan.copies.length,2);
-  const result=foldEvents(apply(events,plan),Infinity,'other','p'),root=result.blocks.find(b=>b.id===plan.rootId),child=result.blocks.find(b=>b.properties.copied_from_block_id==='brim');
-  assert.equal(root.properties.copied_from_block_id,'cap');assert.ok(child);
+test('cross-document uses preserve shared nested ideas and relationships',()=>{
+  const events=fixture(),plan=useInPlan(events,position,'cap','block:other-person');assert.equal(plan.mode,'link');assert.equal(plan.copies.length,0);
+  const result=foldEvents(apply(events,plan),Infinity,'other','p'),root=result.blocks.find(b=>b.id===plan.rootId),child=result.blocks.find(b=>b.id==='brim');
+  assert.equal(root.id,'cap');assert.ok(child);
   assert.ok(result.blockRelations.some(r=>r.fromBlockId===root.id&&r.toBlockId===child.id));assert.ok(result.blockRelations.some(r=>r.fromBlockId==='other-person'&&r.toBlockId===root.id));
   assert.equal(foldEvents(apply(events,plan),Infinity,'d','p').blocks.find(b=>b.id==='cap').properties.text,'A Spurs baseball cap.');
 });
@@ -44,7 +44,7 @@ test('document destinations copy into the exact personal project and protected d
   const events=fixture(),plan=useInPlan(events,position,'cap','document:cross');
   assert.ok(plan.events.every(e=>e.payload.project_id==='other-project'&&e.payload.document_id==='cross'));
   assert.equal(foldEvents(apply(events,plan),Infinity,'cross','other-project').blocks.length,2);
-  assert.ok(!destinationsFor(events,position).some(d=>d.id==='block:brim'));assert.ok(destinationsFor(events,{...position,blockId:'brim'}).some(d=>d.id==='block:person'));
+  assert.ok(!destinationsFor(events,position).some(d=>d.blockId==='brim'));assert.ok(destinationsFor(events,{...position,blockId:'brim'}).some(d=>d.blockId==='person'));
   const locked=[...events,event('BlockLocked',{block_id:'brim'},events.length+1)];assert.throws(()=>useInPlan(locked,position,'cap','document:cross'),/related idea/i);
   assert.throws(()=>useInPlan(events,position,'cap','document:unknown'),/unavailable/i);
 });
