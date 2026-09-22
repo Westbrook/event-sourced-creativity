@@ -1725,7 +1725,7 @@ test("blocked document generation reuses one workspace projection for its forced
   const now = new Date().toISOString();
   const expires = new Date(Date.now() + 3_600_000).toISOString();
   database.sqlite.prepare("INSERT INTO provider_health(scope_key,status,scope,message,observed_at,expires_at,retry_after_ms,request_id) VALUES(?,?,?,?,?,?,?,?)")
-    .run("openai:default:gpt-image-2", "credits_blocked", "account", "Blocked for regression", now, expires, null, null);
+    .run("openai:default:gpt-image-2.5-sunburst", "credits_blocked", "account", "Blocked for regression", now, expires, null, null);
   database.reset();
 
   const response = await request("/api/document-jobs", {

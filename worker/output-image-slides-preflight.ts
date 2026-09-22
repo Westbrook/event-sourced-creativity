@@ -112,7 +112,7 @@ export async function preflightOutputImageSlidesTarget(input:OutputBridgeTargetI
   const imageRender=outputExactImageRender(target.aspect_ratio);
   if(!imageRender)return unavailable(target.id,"output_native_image_ratio_unsupported","The provider cannot create this exact ratio within its dimension limits. Adopt a verified file or explicitly revise the requirement.");
   const referenceCount=facts.filter(fact=>fact.type==="reference"&&fact.active!==false&&Number(record(fact.properties).weight??.5)>0&&sendsReferencePixels(record(fact.properties).pixel_reference_mode)).length;
-  if(referenceCount)return unavailable(target.id,"output_native_reference_input_unpriced","This bounded image route cannot yet price GPT Image 2 reference-pixel input. No requested reference is omitted: use an inspected owned image or explicitly change the reference requirement.");
+  if(referenceCount)return unavailable(target.id,"output_native_reference_input_unpriced","This bounded image route cannot yet price GPT Image reference-pixel input. No requested reference is omitted: use an inspected owned image or explicitly change the reference requirement.");
   const referenceStubs=Array.from({length:referenceCount},()=>({bytes:new Uint8Array(0),mimeType:"image/png",source:"uploaded-reference" as const}));
   const requestedProvider=(env.FORMA_IMAGE_PROVIDER??"openai").trim().toLowerCase();
   if(["fal","fal-ideogram","ideogram","ideogram-4"].includes(requestedProvider)&&!env.FAL_KEY?.trim())return unavailable(target.id,"output_native_fal_image_unconfigured","Fal key unavailable");

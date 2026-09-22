@@ -855,10 +855,10 @@ const groups = {
     "プロバイダーは寸法制限内でこの正確な縦横比を生成できません。検査済みファイルを採用するか、要件を明示的に改訂してください。",
   ] },
   referenceInputUnpriced: { codes: "output_native_reference_input_unpriced", text: [
-    "This bounded image route cannot yet price reference-pixel input for GPT Image 2. No requested reference is omitted: use an inspected owned image or explicitly change the reference requirement.",
-    "Ce parcours d’image plafonné ne peut pas encore tarifer l’entrée de pixels de référence pour GPT Image 2. Aucune référence demandée n’est omise : utilisez une image possédée et inspectée ou modifiez explicitement l’exigence de référence.",
-    "لا يستطيع مسار الصور المحدود هذا تسعير إدخال بكسلات المرجع لـ GPT Image 2 حتى الآن. لا يُحذف أي مرجع مطلوب: استخدم صورة تملكها وقد فُحصت أو غيّر متطلب المرجع صراحةً.",
-    "この費用枠付き画像生成経路では、GPT Image 2の参照画像ピクセル入力の料金をまだ算定できません。依頼された参照を省くことはありません。所有する検査済み画像を使うか、参照要件を明示的に変更してください。",
+    "This bounded image route cannot yet price reference-pixel input for GPT Image. No requested reference is omitted: use an inspected owned image or explicitly change the reference requirement.",
+    "Ce parcours d’image plafonné ne peut pas encore tarifer l’entrée de pixels de référence pour GPT Image. Aucune référence demandée n’est omise : utilisez une image possédée et inspectée ou modifiez explicitement l’exigence de référence.",
+    "لا يستطيع مسار الصور المحدود هذا تسعير إدخال بكسلات المرجع لـ GPT Image حتى الآن. لا يُحذف أي مرجع مطلوب: استخدم صورة تملكها وقد فُحصت أو غيّر متطلب المرجع صراحةً.",
+    "この費用枠付き画像生成経路では、GPT Imageの参照画像ピクセル入力の料金をまだ算定できません。依頼された参照を省くことはありません。所有する検査済み画像を使うか、参照要件を明示的に変更してください。",
   ] },
   nativeAdapterUnsupported: { codes: "output_native_image_adapter_unsupported", text: [
     "This bounded image route currently supports only the configured OpenAI adapter. The selected provider is not replaced silently; adopt an owned image instead.",

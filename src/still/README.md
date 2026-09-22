@@ -76,7 +76,7 @@ The current palette uses `en-dialog`, with same-root native combobox/listbox sem
 
 ## Image provider
 
-New Still jobs use the configured OpenAI GPT-image model (default `gpt-image-2`) for image generation and image reference edits, including image stages in rendered artifacts. Job admission saves `stillImageProvider: "openai"` server-side and applies that policy to readiness, pricing, and execution. Existing jobs without the marker retain their original provider/recovery behavior. Forma’s image default and the audio, video, and 3D providers remain independent.
+New Still jobs use the configured OpenAI GPT-image model (default `gpt-image-2.5-sunburst`) for image generation and image reference edits, including image stages in rendered artifacts. Job admission saves `stillImageProvider: "openai"` server-side and applies that policy to readiness, pricing, and execution. Existing jobs without the marker retain their original provider/recovery behavior. Forma’s image default and the audio, video, and 3D providers remain independent.
 
 ## Create-page choices
 

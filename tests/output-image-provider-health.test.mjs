@@ -16,9 +16,15 @@ function fixture(provider='openai',model='gpt-image-2'){
 for(const provider of ['openai','fal'])test(provider+' exact dispatched and settled native image marks only matching health with request ID',async()=>{
  const f=fixture(provider,provider==='fal'?'ideogram/v4':'gpt-image-2');try{const sidecars=prepareOutputImageProviderHealth(f.env,f.input);assert.equal(sidecars.length,3);await f.DB.batch([f.DB.prepare("INSERT INTO published VALUES ('event')"),...sidecars]);const rows=f.sqlite.prepare('SELECT * FROM provider_health').all();assert.equal(rows.length,1);assert.equal(rows[0].scope_key,provider==='fal'?'fal:ideogram/v4':'openai:project:gpt-image-2');assert.equal(rows[0].request_id,'response');assert.equal(rows[0].status,'healthy');assert.equal(f.sqlite.prepare('SELECT count(*) n FROM output_atomic_assertions').get().n,0);}finally{f.sqlite.close();}
 });
+test('default Sunburst completion updates its matching health identity while legacy health remains separate',async()=>{
+ const f=fixture('openai','gpt-image-2.5-sunburst');delete f.env.OPENAI_IMAGE_MODEL;
+ try{await f.DB.batch(prepareOutputImageProviderHealth(f.env,f.input));const rows=f.sqlite.prepare('SELECT scope_key,status FROM provider_health').all();assert.deepEqual(rows.map(row=>({...row})),[{scope_key:'openai:project:gpt-image-2.5-sunburst',status:'healthy'}]);
+ f.input.events[0].payload.model_id='gpt-image-2';assert.equal(prepareOutputImageProviderHealth(f.env,f.input).length,0);
+ }finally{f.sqlite.close();}
+});
 test('configured scope retains existing aliases/defaults without treating fallback route as proof',()=>{
  for(const name of ['fal','fal-ideogram','ideogram'])assert.deepEqual(configuredImageHealthIdentity({FORMA_IMAGE_PROVIDER:name}),{provider:'fal',model:'ideogram/v4'});
- assert.deepEqual(configuredImageHealthIdentity({}),{provider:'openai',model:'gpt-image-2'});
+ assert.deepEqual(configuredImageHealthIdentity({}),{provider:'openai',model:'gpt-image-2.5-sunburst'});
  const f=fixture();try{f.env.FORMA_IMAGE_PROVIDER='fal';assert.equal(prepareOutputImageProviderHealth(f.env,f.input).length,0);}finally{f.sqlite.close();}
 });
 const negatives=[
@@ -49,5 +55,5 @@ for(const [column,value]of [['status','uncertain'],['provider','fal'],['model','
 test('sidecar wiring preserves existing personal rollback and project last-result ordering',()=>{
  const source=readFileSync(new URL('../worker/output-execution-control.ts',import.meta.url),'utf8');assert(source.includes('...prepareOutputImageProviderHealth(env,{job,slot,events,routes:settings.calls,claimedCalls,observedReceipts}),...prepareOutputNativeProjectPublicationStatements'));
  assert(source.includes("scope.kind===\"personal\"&&events.length?outputAssertionStatements"));assert(source.includes('publicationScopesComplete=Number(results.at(-1)?.meta.changes??0)===1'));
- assert(source.indexOf('call.settled=receipt.status==="completed"&&known')>source.indexOf('await settleOutputProviderCall(env,'));
+ assert(source.indexOf('call.settled=receipt.status==="completed"&&known')>source.indexOf('await settleOutputProviderCall(financialEnvironment,'));
 });

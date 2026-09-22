@@ -1,3 +1,4 @@
+import { OPENAI_IMAGE_GENERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import {memoryAuthoredBlockIds,memoryAuthoredAttribution} from '../src/model/memory-authorship.ts';
 import { appendNativeDocumentView } from './memory-document-view.ts';
 import { presentActorArtifactPage } from './memory-artifact-presentation.ts';
@@ -264,9 +265,9 @@ async function seedIfEmpty(env:WorkerEnv,streamId:string) {
   const specs:Array<[string,string,Record<string,unknown>]> = [
     ["user","ProjectCreated",{project_id:"project-atmosphere",name:"Studio launch",state:"active"}],
     ["user","DocumentCreated",{document_id:"doc-atmosphere",handle:"atmosphere-studies",title:"Atmosphere studies"}],
-    ["worker:registry","ModelRegistered",{model_id:"gpt-image-2",planner_model_id:"gpt-5.6-terra",provider:"openai",status:"human-gated"}],
+    ["worker:registry","ModelRegistered",{model_id:env.OPENAI_IMAGE_MODEL??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model,planner_model_id:env.OPENAI_MODEL??"gpt-5.6-terra",provider:"openai",status:"human-gated"}],
     ["worker:registry","AdapterVersioned",{adapter_id:"openai-image",version:"v1",contract_version:3}],
-    ["worker:registry","CapabilityDeclared",{model_id:"gpt-image-2",capabilities:["image-generation","private-asset-output","context-snapshot"]}],
+    ["worker:registry","CapabilityDeclared",{model_id:env.OPENAI_IMAGE_MODEL??OPENAI_IMAGE_GENERATION_CONTRACT.defaults.model,capabilities:["image-generation","private-asset-output","context-snapshot"]}],
     ["user","SessionOpened",{session_id:"session-today",snapshot_ref:null}],
     ["user","BlockCreated",{block_id:"block-direction",type:"direction",handle:"direction/nocturne",properties:{text:"A quiet interior that feels held between dusk and night.",weight:.92,authority:"authored"},position:"a0"}],
     ["user","ReferenceIngested",{reference_id:"ref-window-light",source_type:"upload",source_ref:"seed://window-light",content_hash:"seed-window-light",rights_class:"owned"}],

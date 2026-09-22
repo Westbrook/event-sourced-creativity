@@ -26,8 +26,8 @@ const allowed = new Set(['events', 'event_private_payloads', 'event_write_stage'
   'experience_guest_sessions', attemptTable]);
 const mutation = /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE\s+[\w"]+\s+SET|DELETE\s+FROM|REPLACE\s+INTO|CREATE\s+(?:TABLE|TRIGGER)|DROP\s+(?:TABLE|TRIGGER)|ALTER\s+TABLE)\b/iu;
 const claimError = error => { assert.match(String(error), /guest_image_result_/u); return true; };
-async function readyFixture(t, { freshRetry = false, copyMode = 'ready' } = {}) {
-  const f = await copyWriterFixture(t), writer = installCopyWriterGuards(f, t);
+async function readyFixture(t, { freshRetry = false, copyMode = 'ready', ...fixtureOptions } = {}) {
+  const f = await copyWriterFixture(t, fixtureOptions), writer = installCopyWriterGuards(f, t);
   let ready;
   try {
     const reserved = await genuineReservation(f, writer);
@@ -177,8 +177,8 @@ function preserved(fixture) {
 }
 const options = { timeout: 30000 };
 
-test('genuine ready whole-graph claim positive preserves original image and publishes five bodies atomically', options, async t => {
-  const f = await readyFixture(t), result = await api.claimGuestImageResult(f.f.request, f.f.env, f.ready);
+for (const imageModel of ['gpt-image-2', 'gpt-image-2.5-sunburst']) test('genuine ready whole-graph claim positive preserves original image and publishes five bodies atomically: ' + imageModel, options, async t => {
+  const f = await readyFixture(t, { imageModel }), result = await api.claimGuestImageResult(f.f.request, f.f.env, f.ready);
   assert.equal(result.status, 'claimed'); assert.equal(result.custodyTransferred, true); assert.equal(result.publicReadAvailable, false);
   const row = rows(f.f, 'experience_guest_image_result_custodies')[0], lineage = JSON.parse(row.lineage_json);
   assert.equal(rows(f.f, 'experience_guest_image_result_custodies').length, 1);
@@ -190,10 +190,16 @@ test('genuine ready whole-graph claim positive preserves original image and publ
   assert.equal(f.state.publicationBatches, 1); assert.equal(f.state.headCalls, 1);
   const canonical = rows(f.f, 'events').filter(event => event.type === 'GuestImageResultClaimed'); assert.equal(canonical.length, 1);
   const body = JSON.parse(rows(f.f, 'event_private_payloads').find(value => value.private_event_id === canonical[0].event_id).private_json);
+  assert.equal(f.f.envelope.recipe.model, imageModel); assert.equal(f.f.completed.body.model_id, imageModel);
+  assert.equal(f.f.provider.calls.find(call => call.stage === 'image').body.model, imageModel);
+  assert.equal(body.model_id, imageModel); assert.equal(lineage.originalCompletion.model, imageModel);
   assert.equal(Object.keys(body).length, 29); assert.equal(body.object_id, f.f.completed.body.object_id);
   assert.equal(body.original_created_at, lineage.originalCompletion.occurredAt); assert.equal(body.source_rights_digest, JSON.parse(rows(f.f, 'experience_sponsor_issuances')[0].envelope_json).rightsDigest);
   assert.equal(rows(f.f, 'events').filter(event => event.type === 'GenerationCompleted').length, 1);
   preserved(f);
+  // Switching the configured default cannot rewrite or invalidate a retained
+  // Image 2 completion; both historical and Sunburst claims remain readable.
+  f.f.env.OPENAI_IMAGE_MODEL = 'gpt-image-2.5-sunburst';
   const beforeRead = snapshot(f.f);
   const read = await custody.readGuestImageResultCustody(new Request(f.f.request), f.f.env, { sessionId: row.session_id, custodyId: row.custody_id });
   assert.ok(read); assert.equal(read.documentId, f.f.session.documentId); assert.deepEqual(read.completedReview, result.completedReview);

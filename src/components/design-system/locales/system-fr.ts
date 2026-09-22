@@ -4111,7 +4111,7 @@ const messages: Record<string, string> = {
   "system.auto.1wpawfk.164": "Les décisions concernant les personnages, lieux, identités ou objets ont été acceptées séparément, puis utilisées comme décisions structurées et éléments d’image lors d’une étape de composition.",
   "system.auto.qwie7b.43": "caractères, dépassant la limite du fournisseur de",
   "system.auto.mfp62z.13": "Consultez votre",
-  "system.auto.o38976.96": "Vérifiez que la clé API appartient au projet sélectionné et que celui-ci autorise GPT Image 2.",
+  "system.auto.av7ijk.94": "Vérifiez que la clé API appartient au projet sélectionné et que celui-ci autorise GPT Image.",
   "system.auto.1o4l0s4.38": "Vérification de la disponibilité actuelle pour la génération…",
   "system.auto.gy240y.25": "Vérification de l’état du fournisseur.",
   "system.auto.19gxo8l.19": "Vérification de la disponibilité…",

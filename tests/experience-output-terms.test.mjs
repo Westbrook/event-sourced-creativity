@@ -44,6 +44,32 @@ function grant(offer) {
 const options = (output = "image", extra = {}) => ({ now, output, targetId: "target-original", ...extra });
 const values = rows => Object.fromEntries(rows.map(entry => [entry.label, entry.value]));
 
+test("OpenAI native terms retain the quoted model and require model-specific calculator provenance", async () => {
+  for (const model of ["gpt-image-2", "gpt-image-2.5-sunburst"]) {
+    const target = await preflightOutputImageSlidesTarget({
+      env: { OPENAI_API_KEY: "inert-not-a-credential", OPENAI_IMAGE_MODEL: model },
+      target: { id: "target-original", label: "Image", selected: true, blocking_issues: [], source_scope: { kind: "document" }, media_kind: "image",
+        aspect_ratio: { width: 1, height: 1 }, coverage: { kind: "document_context" }, instruction_text: "1 image" },
+      context: { snapshot: { facts: [{ block_id: "subject", type: "subject", active: true, properties: { text: "A lamp", weight: 1 } }] } },
+    });
+    assert.equal(target.available, true);
+    const offer = fixture(); offer.targets = [target]; offer.maximumMicrousd = target.maximumMicrousd;
+    const result = outputTerms(offer, options());
+    assert.equal(result.available, true, model); assert.equal(values(result.targets[0].rows).Model, model);
+    const mismatched = structuredClone(offer);
+    mismatched.targets[0].settings.imageBudget.version = model === "gpt-image-2"
+      ? "gpt-image-2.5-sunburst-doc-calculator-2026-09-18" : "gpt-image-2-doc-calculator-2026-08-27";
+    assert.equal(outputTerms(mismatched, options()).available, false);
+    if (model === "gpt-image-2.5-sunburst") {
+      for (const mutate of [budget => { delete budget.calculatorSource; }, budget => { budget.calculatorSource.qualityBase = 96; },
+        budget => { budget.calculatorSource.sha256 = "0".repeat(64); }, budget => { budget.calculatorSource.extra = true; }]) {
+        const changed = structuredClone(offer); mutate(changed.targets[0].settings.imageBudget);
+        assert.equal(outputTerms(changed, options()).available, false);
+      }
+    }
+  }
+});
+
 async function falOffer() {
   const target = await preflightOutputImageSlidesTarget({
     env: { OPENAI_API_KEY: "inert-not-a-credential", FAL_KEY: "inert-not-a-credential", FORMA_IMAGE_PROVIDER: "fal-ideogram", FAL_IMAGE_MODEL: "ideogram/v4" },
@@ -100,6 +126,7 @@ test("helper imports only canonical types and closed pure output contracts", () 
     'import { readModel3dExecutionOffer } from "../model/output-model3d-offer.ts";',
     'import type { Model3dOutputContract } from "../model/output-model3d-contract.ts";',
     'import type { Model3dMiniAppCostPreview } from "../model/model3d-mini-app-consent.ts";',
+    'import { model3dMiniAppAttemptMatches } from "../model/model3d-mini-app-consent.ts";',
     'import { EXPERIENCE_AUDIO_INTENT } from "./contracts.ts";',
     'import { parseAudioOutputContract, type AudioOutputContract } from "../model/output-audio-contract.ts";',
     'import { parseAudioMiniAppCostPreview, type AudioMiniAppCostPreview } from "../model/audio-mini-app-consent.ts";',

@@ -143,7 +143,8 @@ function parsePair(value: unknown): GuestImageResultLocalAdoptionPair | null {
     || !historyRef(r.source_content_ref) || !historyRef(r.source_prompt_ref) || r.source_content_ref === r.source_prompt_ref
     || !iso(r.source_expires_at) || r.source_expires_at <= (receipt.recordedAt as string)
     || r.source_surface !== "generated-image-editor" || r.source_type !== "claimed-generated-output" || r.operation_scope !== "local-image-composition"
-    || r.source_ref !== r.media_url || r.media_type !== "image/png" || r.rights_class !== "owned" || r.provider !== "openai" || r.model_id !== "gpt-image-2"
+    || r.source_ref !== r.media_url || r.media_type !== "image/png" || r.rights_class !== "owned" || r.provider !== "openai"
+    || (r.model_id !== "gpt-image-2" && r.model_id !== "gpt-image-2.5-sunburst")
     || r.source_document_id !== r.document_id || receipt.streamId !== "creative:" + media.ownerId || block.streamId !== receipt.streamId
     || !integer(receipt.sequence, 1, Number.MAX_SAFE_INTEGER - 1) || block.sequence !== receipt.sequence + 1
     || block.correlationId !== receipt.correlationId || block.recordedAt !== receipt.recordedAt

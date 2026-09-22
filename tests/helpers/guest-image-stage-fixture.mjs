@@ -65,14 +65,16 @@ async function approvePolicy(f,policy=f.policy,approvalId='synthetic-image-appro
   const req=new Request(`${origin}/unregistered-guest-approval`,{method:'POST',headers:{origin,'content-type':'application/json','oai-authenticated-user-id':payer,'oai-authenticated-user-email':`${payer}@example.invalid`},body:JSON.stringify(command)});
   const approved=await approveGuestSponsorCampaign(req,f.env);assert.equal(approved.status,'approved');return compiled;
 }
-async function baseFixture(t,{memory=false,approved=true,draftLifetimeMs=120000,policyChange,subjectText=subject}={}){
+async function baseFixture(t,{memory=false,approved=true,draftLifetimeMs=120000,policyChange,subjectText=subject,imageModel='gpt-image-2'}={}){
+  assert.ok(['gpt-image-2','gpt-image-2.5-sunburst'].includes(imageModel));
   const f=outputTestDatabase();
   // This frozen helper labels WITH statements as reads. Execute the native resource CTE insertion as a write so its acknowledgment reports real SQLite changes.
   const nativeBatch=f.DB.batch;f.DB.batch=statements=>nativeBatch.call(f.DB,statements.map(statement=>{if(/WITH[\s\S]*INSERT INTO experience_sponsor_resource_receipts/u.test(statement.sql)){const execute=statement.execute;statement.execute=function(kind){return execute.call(this,kind==='all'?'run':kind);};}return statement;}));
   t.after(()=>f.sqlite.close());await ensureSchema(f.env);
   for(const sql of [...GUEST_CUSTODY_SCHEMA,...GUEST_SOURCE_SCHEMA,...SPONSOR_ENTITLEMENT_SCHEMA,...SPONSOR_RESOURCE_SCHEMA,...SPONSOR_APPROVAL_SCHEMA,...SPONSOR_DRIVER_SCHEMA])f.sqlite.exec(sql);
   if(memory)installMemory(f);insert(f,'users',{user_id:payer,email:`${payer}@example.invalid`,display_name:payer,role:'creator',consent_version:POLICY_VERSION,consented_at:time,created_at:time,updated_at:time});
-  Object.assign(f.env,{OPENAI_API_KEY:'no-network-fixture',OPENAI_MODEL:'gpt-5.6-terra',OPENAI_IMAGE_MODEL:'gpt-image-2'});
+  f.imageModel=imageModel;
+  Object.assign(f.env,{OPENAI_API_KEY:'no-network-fixture',OPENAI_MODEL:'gpt-5.6-terra',OPENAI_IMAGE_MODEL:imageModel});
   let egress=0,media=0;t.mock.method(globalThis,'fetch',()=>{egress++;throw Error('network forbidden');});for(const method of ['get','head','put','delete','list'])t.mock.method(f.env.MEDIA,method,()=>{media++;throw Error('media forbidden');});
   t.after(()=>{assert.equal(egress,0);assert.equal(media,0);});const now=f.sqlite.prepare(`SELECT ${GUEST_DB_NOW} AS now`).get().now;
   const terms=readGuestCustodyTerms({version:1,policyId:'guest-policy',origin,startsAtMs:now-60000,expiresAtMs:now+600000,sessionLifetimeMs:300000,leaseLifetimeMs:60000,maximumSessions:5,maximumLeaseAcquisitions:3});

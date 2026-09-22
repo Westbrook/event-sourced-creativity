@@ -14,8 +14,9 @@ test("selects Ideogram models by quality and preserves the multi-reference contr
   assert.equal(selectImageAdapter(env,{quality:"high"}).model,"ideogram/v4");
   const reference={bytes:new Uint8Array([1]),mimeType:"image/png",source:"uploaded-reference"};
   assert.equal(selectImageAdapter(env,{quality:"high",references:[reference]}).model,"ideogram/v4/image-to-image");
-  const fallback=selectImageAdapter({...env,OPENAI_IMAGE_MODEL:"gpt-image-2"},{references:[reference,reference]});
-  assert.equal(fallback.provider,"openai");assert.match(fallback.reason,/one reference/i);
+  const fallback=selectImageAdapter(env,{references:[reference,reference]});
+  assert.equal(fallback.provider,"openai");assert.equal(fallback.model,"gpt-image-2.5-sunburst");assert.match(fallback.reason,/one reference/i);
+  assert.equal(selectImageAdapter(env,{quality:"low",outputFormat:"webp"}).model,"gpt-image-2.5-sunburst");
 });
 
 test("derives canonical Fal queue receipts from the application root instead of routed model endpoints",()=>{
