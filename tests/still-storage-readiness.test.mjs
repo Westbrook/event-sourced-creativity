@@ -38,3 +38,11 @@ test('explicit original-result recovery is revalidated before maintenance or pro
   assert.deepEqual(f.counts(),before);assert.equal(calls,0);
  }finally{globalThis.fetch=saved;await f.drainBackground();f.close();}
 });
+
+test('readiness diagnostics retain bounded causes without returning private database messages',async()=>{
+ const {generationReadiness,storageReadinessFailureCode}=await import('../worker/generation-storage-readiness.ts');
+ assert.equal(storageReadinessFailureCode(new Error('outer',{cause:new Error('D1_ERROR: Expression tree is too large (maximum depth 100) PRIVATE SQL')})),'database_expression_limit');
+ assert.equal(storageReadinessFailureCode(new Error('SECRET source')),'unclassified_storage_check');
+ const f=await createSceneCostFixture(1,'visual');f.env.DB.batch=async()=>{throw new Error('native_structured_origin_schema_unavailable');};
+ let observed;const result=await generationReadiness(f.env,d=>{observed=d;});assert.equal(result.ready,false);assert.equal(observed.phase,'boundary');assert.equal(observed.code,'native_structured_origin_schema_unavailable');assert.equal(Object.hasOwn(result,'diagnostic'),false);
+});

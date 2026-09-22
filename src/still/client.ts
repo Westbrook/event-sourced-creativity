@@ -436,7 +436,7 @@ export class StillClient {
       if (!validation.valid) throw new Error(validation.issues.map(i => i.message).join(' '));
     }
     const readiness=await this.checkGenerationReadiness(check);check();
-    if(!readiness.ready)throw new Error(readiness.message);
+    if(!readiness.ready)throw new ApiError(503,{error:'generation_preparation_unavailable',message:readiness.message});
     const request = this.generationPayload(draft), journalScope = this.journalScope;
     Object.assign(request.payload, { paidMediaConfirmed: true, ...draft.acknowledgements });
     operationJournal.saveGeneration(this.journalScope,{documentId:draft.documentId,format:draft.format,requestKey:String(request.payload.requestKey)});

@@ -122,10 +122,11 @@ export class StillApp extends LitElement {
   private busy = false;
   private generationCheck: {key:string;message:string} | null = null;
   private inlineGenerationKey = '';
+  private errorCode = '';
   private errorMessage = '';
   private errorVersion = 0;
   private get error() { return this.errorMessage; }
-  private set error(value:string) { this.errorMessage=value; ++this.errorVersion; }
+  private set error(value:string) { this.errorMessage=value;this.errorCode=''; ++this.errorVersion; }
   private noticeMessage = '';
   private noticeVersion = 0;
   private get notice() { return this.noticeMessage; }
@@ -396,7 +397,7 @@ export class StillApp extends LitElement {
   private async run(work: () => Promise<void>) {
     if (this.busy || this.composing) return;
     this.busy = true; this.error = ''; this.changed();
-    try { await work(); } catch (error) { if(!(error instanceof IdeaEditCanceled))this.error = error instanceof Error ? error.message : 'Could not complete this step.'; }
+    try { await work(); } catch (error) { if(!(error instanceof IdeaEditCanceled)){this.error = error instanceof Error ? error.message : 'Could not complete this step.';this.errorCode=error instanceof ApiError?String(error.body.error??''):'';} }
     finally { this.busy = false; this.loading = false; this.changed(); }
   }
   private async loadWorkspace() {
@@ -920,7 +921,10 @@ export class StillApp extends LitElement {
       const readiness=await this.client.checkGenerationReadiness();
       if(key!==this.generationCheckKey())return;
       if(readiness.ready){this.serviceReadyKey=key;this.serviceReadyUntil=Date.now()+60_000;}
-      this.generationCheck={key,message:`${readiness.message} Checked at ${new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}.`};this.changed();
+      const message=`${readiness.message} Checked at ${new Date().toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}.`;
+      this.generationCheck={key,message};
+      if(this.mode==='generate'){if(readiness.ready)this.notice=message;else{this.error=message;this.errorCode='generation_preparation_unavailable';}}
+      this.changed();
     });
   }
   private reviewNewPaidGeneration(jobId:string) {
@@ -1191,6 +1195,7 @@ export class StillApp extends LitElement {
     return html`<en-toast-region class="generation-notifications" placement="inline" label="Notifications" max="2">
       ${this.renderGenerationCompletions()}
       ${this.error&&!inline?this.notification(`error:${this.errorVersion}`,this.error,'danger',[
+        this.errorCode==='generation_preparation_unavailable'?{label:'Check service readiness',run:()=>void this.checkServiceReadiness()}:
         this.generation?.attempted?{label:'Check request',run:()=>void this.run(()=>this.generate())}:
         this.mode==='generate'?{label:'Review ideas',run:()=>this.reviewContext()}:
         {label:this.startupFailed?'Reload':'Review step',run:()=>this.startupFailed?void this.run(()=>this.loadWorkspace()):this.focusContent()},

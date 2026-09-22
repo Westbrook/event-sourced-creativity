@@ -1,3 +1,4 @@
+import {generationReadiness,type StorageReadinessDiagnostic} from './generation-storage-readiness.ts';
 import {holdAdministratorAuthority} from './budget-hold-dispositions.ts';
 import {configuredPilotAdmissionGuard,requireExistingHoldAdministrator} from './pilot-policy.ts';
 import {canReadOutputSchemaPreflight} from './output-schema-preflight.ts';
@@ -38,8 +39,10 @@ export async function handleMemorySchemaRepair(request:Request,env:WorkerEnv):Pr
   }
   const plan=await (saveRepair?inspectEventSaveRepair:inspectMemorySchemaRepair)(env.DB);
   const compilation=saveRepair?await inspectEventSaveCompilation(env.DB):undefined;
+  let storageDiagnostic:StorageReadinessDiagnostic|undefined;
+  const storageReadiness=saveRepair?await generationReadiness(env,value=>{storageDiagnostic=value;}):undefined;
   const form=enabled&&(plan.summary.status==='ready'||saveRepair&&plan.summary.status==='complete')?`<form method="post" action="${path}"><input type="hidden" name="proof" value="${plan.proof}"><button type="submit">${saveRepair?(plan.summary.status==='complete'?'Verify saves with rolled-back probes':'Repair saves and block inactive Memory writes'):'Apply pinned Memory schema repair'}</button></form>`:'';
-  return new Response('<!doctype html><html lang="en"><meta charset="utf-8"><title>'+title+'</title><h1>'+title+' inspection</h1><pre>'+escape(JSON.stringify({...plan.summary,repairEnabled:enabled,...(compilation?{saveCompilation:compilation}:{})},null,2))+'</pre><p>Administrator-only, fixed schema operation. No arbitrary SQL, row export, enrollment, provider calls or schedules. Unknown schemas and populated new Memory tables block repair.</p>'+form+'</html>',{headers:{...headers,'content-type':'text/html; charset=utf-8'}});
+  return new Response('<!doctype html><html lang="en"><meta charset="utf-8"><title>'+title+'</title><h1>'+title+' inspection</h1><pre>'+escape(JSON.stringify({...plan.summary,repairEnabled:enabled,...(compilation?{saveCompilation:compilation,storageReadiness,storageDiagnostic}:{})},null,2))+'</pre><p>Administrator-only, fixed schema operation. No arbitrary SQL, row export, enrollment, provider calls or schedules. Unknown schemas and populated new Memory tables block repair.</p>'+form+'</html>',{headers:{...headers,'content-type':'text/html; charset=utf-8'}});
  }catch(error){
   const code=saveRepair&&error instanceof Error&&/^event_save_repair_[a-z_]+$/.test(error.message)?error.message:'memory_schema_repair_unavailable';
   // The authenticated maintenance form must visibly report a failed operation.
