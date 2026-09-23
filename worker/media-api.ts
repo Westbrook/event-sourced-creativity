@@ -15,6 +15,8 @@ import { SAFE_UPLOADED_IMAGE_TYPES, sha256Hex, ownedCompositionSourcesValid } fr
 import { beginSponsorNativeImageRead } from "./experience-sponsor-native-image-read.ts";
 import { readSponsorGeneratedImageMedia } from "./generated-image-api.ts";
 import { SponsorReadLimitError } from "./experience-sponsor-read-attempts.ts";
+import { VIDEO_COVER_QUERY } from "../src/model/video-cover.ts";
+import { handleVideoCover } from "./video-cover.ts";
 export { verifyReferenceCompositionAssets, verifySourceDocumentEvidence } from "./source-reference-evidence.ts";
 
 const SAFE_UPLOADED_DOCUMENT_TYPES = new Set([
@@ -279,8 +281,9 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
   return Response.json({key,url:`/api/media/${encodeURIComponent(key)}`,name:file.name,mimeType,contentHash,kind:modelMime?"model3d":isVideo?"video":isAudio?"audio":SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)?"image":"document",rights:"asserted",size:file.size,...(timing?{durationSeconds:timing.durationSeconds}:{}),...(extraction&&sourceEvidenceHash?{extraction,sourceEvidenceHash}:{}),...(managedPilot?{sourceClassification:managedPilot.source_classification}:{})});
 }
 export async function getMedia(request:Request,key:string,env:WorkerEnv){
+  const cover=new URL(request.url).searchParams.get(VIDEO_COVER_QUERY)==="webp";
   const scoped=hasProjectContextCookie(request);
-  const auth=await requireUser(request,env,"viewer",scoped?{account:"principal"}:{});if(auth.response||!auth.user)return auth.response!;
+  const auth=await requireUser(request,env,cover&&request.method==="POST"&&!scoped?"creator":"viewer",scoped?{account:"principal"}:{});if(auth.response||!auth.user)return auth.response!;
   const selected=scoped?await readProjectRequestContext(request,env,auth.user):{context:null,response:null};
   if(selected.response)return selected.response;
   if(selected.context)await synchronizeProjectScope(env,selected.context);
@@ -295,6 +298,13 @@ export async function getMedia(request:Request,key:string,env:WorkerEnv){
   }else if(selected.context)return new Response("Forbidden",{status:403});
   const owner=resource?.owner_user_id??auth.user.userId;
   if(!mediaKeyMatchesOwnerNamespace(key,owner)||!await memoryAuthoredImageMediaAllowed(env,owner,key))return new Response("Forbidden",{status:403});
+  if(cover){
+    const writable=resource?hasCapability(auth.user,"project.author",{organizationId:resource.organization_id,projectAccessId:resource.project_access_id}):(auth.user.role==="creator"||auth.user.role==="admin");
+    if(request.method==="POST"){const consent=requireConsent(auth.user);if(consent)return consent;if(!writable)return new Response("Forbidden",{status:403});}
+    const source=await env.MEDIA.head(key);
+    if(!source||source.customMetadata?.ownerId!==owner)return new Response("Not found",{status:404});
+    return handleVideoCover(request,env,key,source,owner,writable);
+  }
   {
     try{
       const sponsored=await beginSponsorNativeImageRead(request,env,auth.user,{mediaKey:key,ownerUserId:owner});
@@ -315,6 +325,8 @@ export async function getMedia(request:Request,key:string,env:WorkerEnv){
   }
   if(!object||!await memoryAuthoredImageMediaAllowed(env,owner,key))return new Response("Not found",{status:404});
   if(object.customMetadata?.ownerId!==owner)return new Response("Forbidden",{status:403});
+  // Derivatives must always pass through the original video's access and existence checks.
+  if(object.customMetadata?.source==="video-cover"){void object.body.cancel().catch(()=>undefined);return new Response("Forbidden",{status:403});}
   const headers=new Headers();object.writeHttpMetadata(headers);headers.set("etag",object.httpEtag);applySafeMediaResponseHeaders(headers);
   const mimeType=String(headers.get("content-type")??"").toLowerCase();
   if(!mimeType.startsWith("image/")&&!mimeType.startsWith("video/")&&!mimeType.startsWith("audio/")){

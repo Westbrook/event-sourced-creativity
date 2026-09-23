@@ -895,7 +895,7 @@ forma-library .page-header--library > .page-header-actions > form > .file-button
 }
 .document-card-preview > i > :is(forma-output-visual, forma-artifact-summary),
 .document-card-preview > i > forma-artifact-summary > .artifact-summary,
-.document-card-preview > i > forma-artifact-summary > .artifact-summary > :is(video, .artifact-summary-frames, forma-presentation-slide, .artifact-summary-copy),
+.document-card-preview > i > forma-artifact-summary > .artifact-summary > :is(video, forma-video-cover, .artifact-summary-frames, forma-presentation-slide, .artifact-summary-copy),
 .document-card-preview > i > forma-output-visual > :is(.generated-output-trigger, .generated-output-image) {
   inline-size: 100%;
   block-size: 100%;

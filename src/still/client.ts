@@ -1,4 +1,5 @@
 import { defaultGenerationSettings, validateGenerationOptions, type GenerationSettings } from './generation-settings.ts';
+import { warmCompletedVideoCovers } from '../media/video-cover.ts';
 import { normalizeAudioRequestProfile } from '../model/audio.ts';
 import { generationOutcome } from './generation-outcome.ts';
 import {stageEvidenceRefs} from './rejection-evidence.ts';
@@ -619,6 +620,11 @@ export class StillClient {
         // delta that is known to start after the job acknowledgement.
         if (this.refreshing) await this.refreshing;
         await this.refreshSource(check);
+        check();
+        if(!this.session?.impersonation){
+          const completed=new Set(jobs.filter(job=>job.status==='completed'&&previous.some(before=>before.jobId===job.jobId&&!terminal(before))).map(job=>job.result?.artifactId));
+          warmCompletedVideoCovers(this.events.filter(event=>completed.has(String(event.payload.artifact_id??''))));
+        }
       }
     })().catch(error=>{
       if(read===this.jobRead&&key===this.jobsKey){this.jobsError=error instanceof Error?error.message:'Could not load generations.';this.onChange();}

@@ -1,4 +1,5 @@
 import { imageGenerationProgress } from "../model/image-generation-progress.ts";
+import { warmCompletedVideoCovers } from "../media/video-cover.ts";
 import { sharedIdeaEdits, independentIdeaEdits, ideaContentEdit } from '../model/shared-idea-edits.ts';
 import { chooseSharedIdeaEdit, IdeaEditCanceled } from '../ui/shared-idea-choice.ts';
 import { attachIdeaEvents, canAttachProjectIdea, ideaDependencies, ideaDocumentUses, ideasInDocument } from '../model/project-ideas';
@@ -559,6 +560,7 @@ export class FormaStore {
     if(!events.length)return;
     const session=this.session.get();if(session&&events.some((event)=>event.type==="AttentionSignalsForgotten"))void clearAnalyticsSnapshots(this.#snapshotIdentity(session),true);
     if(readOnly)return;
+    if(!read&&!session?.impersonation)warmCompletedVideoCovers(events);
     if(session?.projectContext&&events.some((event)=>["ArtifactReviewRequested","ArtifactApproved","ArtifactChangesRequested","DocumentArtifactEdited","DocumentRenderCompleted","BlockCreated","BlockPropertyEdited","BlockRemoved","BlockRestored","BlockRelationAdded","BlockRelationRemoved","RightsAsserted"].includes(event.type))){void this.syncProjectNotifications();void this.syncReviewInbox();}
     else if(session?.projectContext&&events.some((event)=>event.type==="OutputRenamed"))void this.syncReviewInbox();
     window.dispatchEvent(new CustomEvent("forma-events-appended",{detail:{events}}));

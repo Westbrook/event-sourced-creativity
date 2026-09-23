@@ -1,3 +1,5 @@
+import { VIDEO_COVER_QUERY } from '../src/model/video-cover.ts';
+import { handleVideoCover } from './video-cover.ts';
 import {memoryAuthoredImageMediaAllowed} from './memory-authored-image-custody.ts';
 import { audioPlaybackTiming } from "../src/model/audio.ts";
 import { foldEvents } from "../src/model/events";
@@ -169,6 +171,7 @@ export async function handleSharedMedia(request:Request,env:WorkerEnv,rawToken:s
   const object=await env.MEDIA.get(key);if(!object||!await memoryAuthoredImageMediaAllowed(env,scope.ownerId,key))return new Response("Not found",{status:404});if(object.customMetadata?.ownerId!==scope.ownerId)return new Response("Forbidden",{status:403});const headers=new Headers();object.writeHttpMetadata(headers);headers.set("etag",object.httpEtag);applySafeMediaResponseHeaders(headers);
   const mimeType=String(headers.get("content-type")??"").toLowerCase();
   if(mimeType.startsWith("audio/")||mimeType.startsWith("video/")){const events=await readWorkspaceEvents(env,String(row.stream_id));const projection=foldEvents(events,Number.POSITIVE_INFINITY,scope.resourceId,scope.projectId);const current=documentShareScope(projection,scope.ownerId,scope.resourceId,scope.projectId);if(!current||!shareAllowsMedia(current,key)||mimeType.startsWith("audio/")&&!shareAllowsCurrentAudio(projection,scope.ownerId,key))return new Response("Forbidden",{status:403});}
+  if(new URL(request.url).searchParams.get(VIDEO_COVER_QUERY)==='webp'){void object.body.cancel().catch(()=>undefined);return handleVideoCover(request,env,key,object,scope.ownerId,false);}
   if((mimeType.startsWith("audio/")||mimeType.startsWith("video/"))&&typeof object.size==="number"&&Number.isSafeInteger(object.size)&&object.size>=0){headers.set("accept-ranges","bytes");const range=request.headers.get("range");if(range){const match=range.match(/^bytes=(\d*)-(\d*)$/i);let offset=0,length=0;if(match&&(match[1]||match[2])){if(match[1]){offset=Number(match[1]);const end=match[2]?Math.min(object.size-1,Number(match[2])):object.size-1;length=end-offset+1;}else{length=Math.min(object.size,Number(match[2]));offset=object.size-length;}}if(!match||!Number.isSafeInteger(offset)||!Number.isSafeInteger(length)||offset<0||length<=0||offset>=object.size){headers.set("content-range",`bytes */${object.size}`);return new Response(null,{status:416,headers});}const partial=await env.MEDIA.get(key,{range:{offset,length}});if(!partial||partial.customMetadata?.ownerId!==scope.ownerId)return new Response("Not found",{status:404});headers.set("content-range",`bytes ${offset}-${offset+length-1}/${object.size}`);headers.set("content-length",String(length));return new Response(partial.body,{status:206,headers});}}
   return new Response(object.body,{headers});
 }

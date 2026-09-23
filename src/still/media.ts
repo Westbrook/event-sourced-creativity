@@ -2,6 +2,7 @@ import { html, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 import { ref } from 'lit/directives/ref.js';
 import type { DocumentArtifact } from '../model/document-artifacts.ts';
+import { ensureVideoCover } from '../media/video-cover.ts';
 
 type Size = { width:number; height:number };
 const dimension=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0&&value<=65535;
@@ -40,7 +41,10 @@ export function stillImage(src:string,alt:string,metadata?:unknown,options:{clas
 }
 export function stillVideo(src:string,artifact:DocumentArtifact) {
   const size=videoSize(artifact,src);
-  return keyed(src,html`<video controls playsinline src=${src} width=${size.width} height=${size.height} data-size-source=${size.source} preload="metadata" @loadedmetadata=${captureMediaSize} @resize=${captureMediaSize} ${ref(element=>{if(element)syncMediaSize(element as HTMLVideoElement);})}></video>`);
+  return keyed(src,html`<video controls playsinline src=${src} width=${size.width} height=${size.height} data-size-source=${size.source} preload="metadata" @loadedmetadata=${captureMediaSize} @resize=${captureMediaSize} ${ref(element=>{if(element){const video=element as HTMLVideoElement;syncMediaSize(video);if(video.dataset.coverSource!==src){video.dataset.coverSource=src;void ensureVideoCover(src);}}})}></video>`);
+}
+export function stillVideoCover(src:string,title:string) {
+  return keyed(src,html`<forma-video-cover .source=${src} .label=${title}></forma-video-cover>`);
 }
 
 /** Pending and delivered images share a single frame and responsive geometry. */

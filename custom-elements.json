@@ -17868,6 +17868,119 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/video-cover.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "FormaVideoCover",
+          "tagName": "forma-video-cover",
+          "customElement": true,
+          "summary": "Display a saved WebP cover for a video.",
+          "description": "Display a saved WebP cover for a video.",
+          "superclass": {
+            "name": "LitElement",
+            "package": "lit"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "eager",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "eager"
+            },
+            {
+              "kind": "field",
+              "name": "image",
+              "type": {
+                "text": "unknown"
+              },
+              "attribute": "image"
+            },
+            {
+              "kind": "field",
+              "name": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "label",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "kind": "field",
+              "name": "source",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "attribute": "source"
+            }
+          ],
+          "attributes": [
+            {
+              "name": "eager",
+              "fieldName": "eager",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false"
+            },
+            {
+              "name": "image",
+              "fieldName": "image",
+              "type": {
+                "text": "unknown"
+              }
+            },
+            {
+              "name": "label",
+              "fieldName": "label",
+              "type": {
+                "text": "string"
+              },
+              "default": "''",
+              "description": "Author-supplied, localized visible label or accessible action name."
+            },
+            {
+              "name": "source",
+              "fieldName": "source",
+              "type": {
+                "text": "string"
+              },
+              "default": "''"
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": true
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-video-cover",
+          "declaration": {
+            "name": "FormaVideoCover",
+            "module": "src/components/video-cover.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "FormaVideoCover",
+          "declaration": {
+            "name": "FormaVideoCover",
+            "module": "src/components/video-cover.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/video-reference-preflight.ts",
       "declarations": [
         {

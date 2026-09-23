@@ -2184,6 +2184,8 @@ Object.assign(messages, {
   "account.days.zero": "{count} يوم",
   "component.forma-area-navigation.summary": "يعرض خيارات التنقل بين أقسام التطبيق.",
   "component.forma-area-navigation.title": "التنقل بين الأقسام",
+  "component.forma-video-cover.title": "غلاف الفيديو",
+  "component.forma-video-cover.summary": "يعرض صورة غلاف WebP محفوظة للفيديو.",
   "component.forma-artifact-summary.summary": "يلخص المخرجات وحالتها والبيانات المهمة.",
   "component.forma-artifact-summary.title": "ملخص المخرجات",
   "component.forma-collection-tree.summary": "ينظم المجموعات ومحتواها ضمن تسلسل هرمي.",

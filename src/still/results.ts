@@ -36,7 +36,7 @@ export function stillResults(p:CreativeProjection,jobs:DocumentJob[],events:Crea
   }));
   const results:StillResult[]=[...pending,
     ...p.outputs.filter(o=>!o.discarded).map(o=>({id:o.id,view:'artifact' as const,title:o.title??'Image',kind:'image',url:o.mediaUrl??'',width:o.width,height:o.height,sequence:o.sequence})),
-    ...p.artifacts.map(a=>({id:a.id,view:'artifact' as const,title:a.title,kind:a.kind,url:'',sequence:a.sequence})),
+    ...p.artifacts.map(a=>({id:a.id,view:'artifact' as const,title:a.title,kind:a.kind,url:a.kind==='video'?a.mediaUrl??'':'',sequence:a.sequence})),
   ];
   return results.sort((a,b)=>b.sequence-a.sequence||((b.job?.requestedAt??'').localeCompare(a.job?.requestedAt??'')));
 }
