@@ -1,3 +1,4 @@
+import { deleteVideoCovers } from './video-cover.ts';
 import { reconcileOutputAssetStorage } from "./output-asset-storage-control.ts";
 import { reconcileOutputNativeStorage } from "./output-private-execution.ts";
 import { organizationOutputAssetInventory, organizationOutputDeletionStatements, organizationOutputSubmissionBlockers, outputAssetCustodyMatches, outputOrganizationDeletionGuard, outputRecoveryRecordIsInert, outputRequirementRecoveryRecords } from "./output-requirement-retention.ts";
@@ -1238,6 +1239,7 @@ async function processDeletion(request:Request,env:WorkerEnv,actor:PilotUser,org
         const remains=typeof env.MEDIA.head==="function"?await env.MEDIA.head(key):await env.MEDIA.get(key);
         if(remains)throw new Error("media_delete_verification_failed");
       }
+      await deleteVideoCovers(env.MEDIA,key,String(resource.owner_user_id));
       await env.DB.prepare("UPDATE organization_deletion_items SET status='deleted',attempt_count=attempt_count+1,error_code=NULL,updated_at=? WHERE job_id=? AND organization_id=? AND resource_kind='media' AND resource_id=?")
         .bind(now, jobId, organizationId, String(resource.resource_id)).run();
     } catch (error) {

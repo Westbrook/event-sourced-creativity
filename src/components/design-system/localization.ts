@@ -1552,6 +1552,8 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "command.undo": "Undo last authored change",
   "component.forma-area-navigation.summary": "Adapt capability-filtered audience task navigation to existing application compositions.",
   "component.forma-area-navigation.title": "Area navigation",
+  "component.forma-video-cover.title": "Video cover",
+  "component.forma-video-cover.summary": "Display a saved WebP cover for a video.",
   "component.forma-artifact-summary.summary": "Summarize a document-derived story, presentation, storyboard, or motion outcome.",
   "component.forma-artifact-summary.title": "Artifact summary",
   "component.forma-collection-tree.summary": "Browse and manage authored project collections and their contextual actions.",

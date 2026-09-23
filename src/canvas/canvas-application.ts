@@ -1,3 +1,4 @@
+import "../components/video-cover.ts";
 import { ideasInDocument } from '../model/project-ideas.ts';
 import '../components/memory-resource-controls.ts';
 import { openOutputReferenceDestination } from "../components/output-reference-navigation";
@@ -1164,7 +1165,7 @@ const canvas=this.store.canvasProjection.get(),site=this.#site(),actionId=uid();
   #outputVisual(output:CreativeOutput,item:CanvasItem){return html`<div class="canvas-image-interaction"><forma-output-visual .output=${output} .compact=${true}></forma-output-visual><button type="button" class="canvas-image-open" aria-label=${this.i18n.system("Open generated image {id} at full size. Shift-click to add this idea to the selection", { id: output.id })} title="Open full image · Shift-click to add this idea to the selection" @pointerdown=${(event:PointerEvent)=>event.stopPropagation()} @click=${(event:MouseEvent)=>this.#openCanvasOutput(event,output,item)}><span>Open full image</span></button></div>`;}
   #artifactPreview(artifact:DocumentArtifact){
     const label=this.i18n.system(documentArtifactDefinition(artifact.kind).label);
-    if(artifact.kind==="video"&&artifact.mediaUrl)return html`<video src=${artifact.mediaUrl} preload="metadata" muted playsinline aria-label=${artifact.title}></video>`;
+    if(artifact.kind==="video"&&artifact.mediaUrl)return html`<forma-video-cover .source=${artifact.mediaUrl} .label=${artifact.title}></forma-video-cover>`;
     if(artifact.kind==="storyboard"&&artifact.items.some((entry)=>entry.mediaUrl))return html`<div class="canvas-artifact-frames">${artifact.items.slice(0,4).map((entry)=>entry.mediaUrl?html`<img src=${entry.mediaUrl} alt="" loading="lazy">`:nothing)}</div>`;
     if(artifact.kind==="slides"){const content=parseDocumentArtifactContent(this.store.content.get()[artifact.contentRef??""]),receipt=artifact.items[0],source=content?.items[0];const item:DocumentArtifactDraftItem={title:source?.title??receipt?.title??artifact.title,body:source?.body??receipt?.body??artifact.summary,notes:source?.notes??receipt?.notes??"",image_prompt:source?.image_prompt??receipt?.imagePrompt??"",slide:source?.slide??receipt?.slide??null};return html`<div class="canvas-artifact-slide-preview"><forma-presentation-slide .item=${item} .presentation=${content?.presentation??artifact.presentation} .index=${0} .total=${artifact.itemCount} .compact=${true} .showFooterLabel=${readSlideFooterLabelPreference()}></forma-presentation-slide></div>`;}
     return html`<div class="canvas-artifact-symbol"><span aria-hidden="true">${icon(artifactIcon(artifact.kind))}</span><small>${label}</small></div>`;

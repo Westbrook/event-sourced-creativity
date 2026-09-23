@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import {createServer} from 'vite';
 import {chromium} from '@playwright/test';
 test('Still list toolbar, palette, navigation and En Reve virtual collections',async t=>{
- const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-still-lists',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body><style>.all-list-viewport{height:400px;overflow:auto}.all-list-rows{list-style:none;margin:0;padding:0}.all-list-rows a{display:block;padding:24px}</style></body></html>');});}}]});let browser;
+ const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-still-lists',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body><style>.all-list-rows{list-style:none;margin:0;padding:0}.all-list-rows a{display:block;padding:24px}</style></body></html>');});}}]});let browser;
  try{
   await server.listen();browser=await chromium.launch({headless:true});const page=await browser.newPage();page.setDefaultTimeout(5000);page.setDefaultNavigationTimeout(10000);
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/still`);
   await page.evaluate(async()=>{
-   const {html,LitElement}=await import('/node_modules/lit/index.js');const {StillApp}=await import('/src/still/app.ts');const {ACTIONS}=await import('/src/still/decisions.ts');
+   const {html,LitElement}=await import('/node_modules/lit/index.js');const {StillApp}=await import('/src/still/app.ts');const {ACTIONS}=await import('/src/still/decisions.ts');const {foldEvents}=await import('/src/model/events.ts');
    class FixtureApp extends StillApp{
     connectedCallback(){LitElement.prototype.connectedCallback.call(this);}
     updated(){} scheduleDockFit(){} currentRouteProblem(){return '';}
@@ -16,14 +16,14 @@ test('Still list toolbar, palette, navigation and En Reve virtual collections',a
     decide(){} render(){return html`<main id="still-content">${this.renderCanvas()}</main>${this.renderDock()}${this.renderPalette()}`;}
    }
    customElements.define('fixture-app',FixtureApp);const app=window.app=new FixtureApp();
-   app.loading=false;app.client={epoch:1,scopeKey:'test',session:{policy:{accepted:true},user:{role:'creator'}},abilities:{author:true,generate:false,projectCreate:true,formats:[]},position:{projectId:'',documentId:'',blockId:'',outputId:'',view:'projects',intent:'',recentActions:[]},jobs:[],events:[],jobsLoaded:true,pollJobs:async()=>{},projection:{projectId:'p0',projectName:'Project',documentId:'d0',documentTitle:'Ideas',projects:Array.from({length:7},(_,i)=>({id:'p'+i,name:'Project '+i,documentCount:7})),documents:Array.from({length:7},(_,i)=>({id:'d'+i,title:'Document '+i,projectId:'p0'})),blocks:Array.from({length:7},(_,i)=>({id:'b'+i,type:'subject',handle:'Idea '+i,properties:{text:'Idea content '+i},documentId:'d0',projectId:'p0'})),outputs:[],artifacts:[],blockRelations:[]}};
+   app.loading=false;app.client={epoch:1,scopeKey:'test',session:{policy:{accepted:true},user:{role:'creator'}},abilities:{author:true,generate:false,projectCreate:true,formats:[]},position:{projectId:'',documentId:'',blockId:'',outputId:'',view:'projects',intent:'',recentActions:[]},jobs:[],events:[],jobsLoaded:true,pollJobs:async()=>{},projection:{...foldEvents([]),projectId:'p0',projectName:'Project',documentId:'d0',documentTitle:'Ideas',projects:Array.from({length:7},(_,i)=>({id:'p'+i,name:'Project '+i,documentCount:7})),documents:Array.from({length:7},(_,i)=>({id:'d'+i,title:'Document '+i,projectId:'p0'})),blocks:Array.from({length:7},(_,i)=>({id:'b'+i,type:'subject',handle:'Idea '+i,properties:{text:'Idea content '+i},documentId:'d0',projectId:'p0'})),outputs:[],artifacts:[],blockRelations:[]}};
    app.suggestions=[ACTIONS.find(a=>a.id==='new-project')];app.rankedActions=app.candidates();document.body.append(app);await app.updateComplete;
    window.virtualItems=Array.from({length:1000},(_,i)=>({id:'item-'+i,content:html`<a href=${'#item-'+i}>Item ${i}</a>`}));
   });
   const button=name=>page.getByRole('button',{name,exact:true});
   await t.test('Show all and Show less return to the first toolbar after changing the list',async()=>{
    assert.equal(await page.locator('.work-row').count(),3);assert.equal(await button('Show all').count(),0);
-   assert.equal(await page.locator('.work-row en-icon svg[aria-hidden=\"true\"]').count(),3);
+   assert.equal(await page.locator('.work-row en-icon svg[aria-hidden="true"]').count(),3);
    assert.equal(await page.getByRole('link',{name:/^01\s*Project 0\s*7 documents$/}).count(),1);
    await button('More actions').click();await button('Show all').click();
    await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===7);
@@ -44,7 +44,8 @@ test('Still list toolbar, palette, navigation and En Reve virtual collections',a
    await page.evaluate(()=>window.app.navigate('projects',{projectId:'',documentId:''}));await page.waitForFunction(()=>document.querySelectorAll('.work-row').length===7);
   });
   await t.test('Ideas use the same controls, and a directly selected idea is never paginated away',async()=>{
-   await page.evaluate(()=>window.app.navigate('document',{projectId:'p0',documentId:'d0'}));await page.waitForFunction(()=>document.querySelectorAll('.context-block').length===3);
+   await page.evaluate(()=>window.app.navigate('document',{projectId:'p0',documentId:'d0'}));await page.waitForFunction(()=>document.querySelectorAll('.context-block').length===7);
+   await button('More actions').click();await button('Show less').click();await page.waitForFunction(()=>document.querySelectorAll('.context-block').length===3);
    await button('More actions').click();await button('Show all').click();await page.waitForFunction(()=>document.querySelectorAll('.context-block').length===7);
    await page.evaluate(()=>window.app.navigate('document',{projectId:'p0',documentId:'d0',blockId:'b6'}));await page.waitForFunction(()=>document.querySelector('[aria-current="true"]')?.textContent.includes('Idea 6'));
    assert.ok(!(await page.evaluate(()=>window.app.paletteOptions().map(a=>a.id))).includes('ui:show-all'));

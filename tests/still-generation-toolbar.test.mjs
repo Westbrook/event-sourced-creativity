@@ -1,3 +1,4 @@
+import {validateGenerationOptions} from '../src/still/generation-settings.ts';
 import {generationOutcome} from '../src/still/generation-outcome.ts';
 import {IdeaEditCanceled} from '../src/ui/shared-idea-choice.ts';
 import test from 'node:test';
@@ -15,7 +16,7 @@ const app=source.statements.find(n=>ts.isClassDeclaration(n)&&n.name?.text==='St
 const methods=['checkServiceReadiness','renderNotifications','canAcknowledgeSafety','acknowledgeSafety','generationCheckKey','isInlineGeneration','selectedGeneration','canGenerateAgain','refreshGenerationStatus','generateAgain','generationRecoveryActions','renderGenerationStatusDock','renderInlineGeneration','toolbarStatus','renderBusyDock','startGeneration','generate','run'];
 const code=ts.transpileModule(`class Recovery {${app.members.filter(n=>methods.includes(n.name?.getText(source))).map(n=>n.getText(source)).join('\n')}}`,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
 const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
-const Recovery=new Function('generationOutcome','IdeaEditCanceled','documentJobCanAcknowledgeSafety','generationFormat','generationActive','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(generationOutcome,IdeaEditCanceled,documentJobCanAcknowledgeSafety,generationFormat,generationActive,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
+const Recovery=new Function('validateGenerationOptions','generationOutcome','IdeaEditCanceled','documentJobCanAcknowledgeSafety','generationFormat','generationActive','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(validateGenerationOptions,generationOutcome,IdeaEditCanceled,documentJobCanAcknowledgeSafety,generationFormat,generationActive,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
 function fixture(status='failed') {
  const view=new Recovery();
  const calls=[];

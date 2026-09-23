@@ -5,6 +5,7 @@ import { icon } from "./icons";
 import { FormaPresentationalElement } from "./presentational-element";
 import "./icons-media";
 import "./presentation-slide";
+import "./video-cover";
 
 /** One reusable visual summary for every non-image creative result. */
 export class FormaArtifactSummary extends FormaPresentationalElement {
@@ -17,7 +18,7 @@ export class FormaArtifactSummary extends FormaPresentationalElement {
     const definition = documentArtifactDefinition(artifact.kind);
     const first = artifact.items[0];
     const media = artifact.kind === "video" && artifact.mediaUrl
-      ? html`<video preload="metadata" muted playsinline src=${artifact.mediaUrl} aria-label=${artifact.title}></video>`
+      ? html`<forma-video-cover .source=${artifact.mediaUrl} .label=${artifact.title}></forma-video-cover>`
       : artifact.kind === "storyboard" && artifact.items.some((item) => item.mediaUrl)
         ? html`<div class="artifact-summary-frames">${artifact.items.filter((item) => item.mediaUrl).slice(0, 4).map((item) => html`<img src=${item.mediaUrl!} alt=${item.title} loading="lazy" decoding="async" style=${focalPointCss(item.focalPoint)}>` )}</div>`
         : artifact.kind === "slides" && first

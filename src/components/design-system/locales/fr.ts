@@ -2135,6 +2135,8 @@ Object.assign(messages, {
   "catalog.resultsFiltered.many": "{count} composants disponibles pour « {query} ».",
   "component.forma-area-navigation.summary": "Présente la navigation horizontale d’une zone de l’application.",
   "component.forma-area-navigation.title": "Navigation de section",
+  "component.forma-video-cover.title": "Couverture vidéo",
+  "component.forma-video-cover.summary": "Affiche une image de couverture WebP enregistrée pour une vidéo.",
   "component.forma-artifact-summary.summary": "Résume un livrable, son état et ses métadonnées utiles.",
   "component.forma-artifact-summary.title": "Résumé du livrable",
   "component.forma-collection-tree.summary": "Organise des collections et leurs contenus dans une hiérarchie.",

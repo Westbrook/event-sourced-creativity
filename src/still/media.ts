@@ -1,6 +1,8 @@
 import { html, nothing } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
+import { ref } from 'lit/directives/ref.js';
 import type { DocumentArtifact } from '../model/document-artifacts.ts';
+import { ensureVideoCover } from '../media/video-cover.ts';
 
 type Size = { width:number; height:number };
 const dimension=(value:unknown):value is number=>typeof value==='number'&&Number.isSafeInteger(value)&&value>0&&value<=65535;
@@ -20,6 +22,9 @@ export function videoSize(artifact:DocumentArtifact,url:string) {
 export function captureMediaSize(event:Event) {
   const element=event.currentTarget as HTMLImageElement|HTMLVideoElement|null;
   if(!element)return;
+  syncMediaSize(element);
+}
+function syncMediaSize(element:HTMLImageElement|HTMLVideoElement) {
   const width=element.tagName==='IMG'?(element as HTMLImageElement).naturalWidth:(element as HTMLVideoElement).videoWidth;
   const height=element.tagName==='IMG'?(element as HTMLImageElement).naturalHeight:(element as HTMLVideoElement).videoHeight;
   if(dimension(width)&&dimension(height)){
@@ -31,11 +36,15 @@ export function captureMediaSize(event:Event) {
 export function stillImage(src:string,alt:string,metadata?:unknown,options:{className?:string;loading?:'lazy'|'eager'}={}) {
   const size=mediaSize(metadata);
   // Recreate on source changes so an old image's intrinsic dimensions cannot leak into a new fallback.
-  return keyed(src,html`<img src=${src} alt=${alt} class=${options.className??''} width=${size.width} height=${size.height} data-size-source=${size.source} loading=${options.loading??'lazy'} decoding="async" referrerpolicy="no-referrer" @load=${captureMediaSize} />`);
+  // A fresh ref callback also restores decoded geometry when metadata changes without a new load.
+  return keyed(src,html`<img src=${src} alt=${alt} class=${options.className??''} width=${size.width} height=${size.height} data-size-source=${size.source} loading=${options.loading??'lazy'} decoding="async" referrerpolicy="no-referrer" @load=${captureMediaSize} ${ref(element=>{if(element)syncMediaSize(element as HTMLImageElement);})} />`);
 }
 export function stillVideo(src:string,artifact:DocumentArtifact) {
   const size=videoSize(artifact,src);
-  return keyed(src,html`<video controls playsinline src=${src} width=${size.width} height=${size.height} data-size-source=${size.source} preload="metadata" @loadedmetadata=${captureMediaSize}></video>`);
+  return keyed(src,html`<video controls playsinline src=${src} width=${size.width} height=${size.height} data-size-source=${size.source} preload="metadata" @loadedmetadata=${captureMediaSize} @resize=${captureMediaSize} ${ref(element=>{if(element){const video=element as HTMLVideoElement;syncMediaSize(video);if(video.dataset.coverSource!==src){video.dataset.coverSource=src;void ensureVideoCover(src);}}})}></video>`);
+}
+export function stillVideoCover(src:string,title:string) {
+  return keyed(src,html`<forma-video-cover .source=${src} .label=${title}></forma-video-cover>`);
 }
 
 /** Pending and delivered images share a single frame and responsive geometry. */
