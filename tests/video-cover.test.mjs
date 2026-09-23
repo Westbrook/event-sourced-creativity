@@ -65,3 +65,31 @@ test('erasure removes all cover revisions and refuses mismatched custody',async(
   await assert.rejects(()=>deleteVideoCovers(f.MEDIA,f.key,'another-owner'),/owner_mismatch/);
   assert.equal(f.rows.size,2);
 });
+
+test('legacy video checksum backfill preserves the source and avoids rereading MP4 bytes after saving', async () => {
+  const f=fixture();delete f.rows.get(f.key).customMetadata.sha256;
+  let sourceReads=0;const get=f.MEDIA.get;f.MEDIA.get=async key=>{if(key===f.key)sourceReads++;return get(key);};
+  const missing=await f.request();assert.equal(missing.status,404);
+  const digest=missing.headers.get('x-video-source-sha256');
+  assert.equal(digest,'039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81');
+  assert.equal((await f.request(f.post(webp,digest))).status,200);
+  const before=sourceReads;
+  assert.equal((await f.request({},false)).status,200);
+  assert.equal((await f.request(f.post(webp,digest))).status,200);
+  assert.equal(sourceReads,before);assert.equal(f.writes.length,1);
+  assert.equal(f.rows.get(f.key).customMetadata.sha256,undefined);
+  f.rows.get(f.key).bytes=new Uint8Array([4,5,6]);
+  const replaced=await f.request();assert.equal(replaced.status,404);
+  assert.notEqual(replaced.headers.get('x-video-source-sha256'),digest);
+  assert.equal((await f.request(f.post(webp,digest))).status,409);
+  await deleteVideoCovers(f.MEDIA,f.key,f.owner);assert.equal(f.rows.size,1);
+});
+test('legacy sources fail closed on unauthorized creation, oversized content and concurrent replacement', async () => {
+  const f=fixture();delete f.rows.get(f.key).customMetadata.sha256;
+  assert.equal((await f.request(f.post(),false)).status,403);
+  const source=await f.MEDIA.head(f.key);
+  assert.equal((await handleVideoCover(new Request(f.url),{MEDIA:f.MEDIA},f.key,{...source,size:32_000_001},f.owner,true)).status,413);
+  f.rows.get(f.key).bytes=new Uint8Array([7,8,9]);
+  assert.equal((await handleVideoCover(new Request(f.url),{MEDIA:f.MEDIA},f.key,source,f.owner,true)).status,409);
+  assert.equal(f.writes.length,0);
+});

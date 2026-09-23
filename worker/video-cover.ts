@@ -23,6 +23,8 @@ export async function deleteVideoCovers(media: R2Bucket, sourceKey: string, owne
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor);
 }
+const MAX_LEGACY_VIDEO_BYTES = 32_000_000;
+
 type StoredObject = NonNullable<Awaited<ReturnType<R2Bucket['head']>>>;
 const mime = (object: StoredObject) => { const headers = new Headers(); object.writeHttpMetadata(headers); return headers.get('content-type'); };
 function sourceHash(source: StoredObject, owner: string) {
@@ -30,14 +32,14 @@ function sourceHash(source: StoredObject, owner: string) {
   return metadata?.ownerId === owner && metadata.source === 'provider-generated-media'
     && mime(source) === 'video/mp4' && /^[a-f0-9]{64}$/.test(metadata.sha256 ?? '') ? metadata.sha256! : null;
 }
-async function boundedBody(request: Request) {
-  if (!request.body || Number(request.headers.get('content-length') ?? 0) > VIDEO_COVER_MAX_BYTES) throw Error('cover_too_large');
+async function boundedBody(request: Pick<Request, 'body' | 'headers'>, maximum = VIDEO_COVER_MAX_BYTES) {
+  if (!request.body || Number(request.headers.get('content-length') ?? 0) > maximum) throw Error('cover_too_large');
   const reader = request.body.getReader(), chunks: Uint8Array[] = []; let length = 0;
   try {
     for (;;) {
       const next = await reader.read(); if (next.done) break;
       length += next.value.length;
-      if (length > VIDEO_COVER_MAX_BYTES || chunks.length >= 4096) throw Error('cover_too_large');
+      if (length > maximum || chunks.length >= 4096) throw Error('cover_too_large');
       chunks.push(next.value);
     }
   } finally { void reader.cancel().catch(() => undefined); reader.releaseLock(); }
@@ -50,20 +52,42 @@ async function boundedBody(request: Request) {
 export async function handleVideoCover(request: Request, env: WorkerEnv, sourceKey: string, source: StoredObject, owner: string, writable: boolean) {
   const headers = new Headers({ 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox" });
   const reply = (status: number, code: string) => Response.json({ error: code }, { status, headers });
-  const sourceSha256 = sourceHash(source, owner);
-  if (!sourceSha256) return reply(404, 'video_cover_source_unavailable');
-  const key = videoCoverKey(sourceKey, sourceSha256);
-  headers.set('x-video-source-sha256', sourceSha256);
+  const recordedHash = sourceHash(source, owner);
+  // Older generated videos retained their owner and source, but not a checksum.
+  // Bind those covers to the immutable R2 object version without rewriting the original.
+  const legacy = !recordedHash && source.customMetadata?.sha256 === undefined
+    && source.customMetadata?.ownerId === owner && source.customMetadata?.source === 'provider-generated-media'
+    && mime(source) === 'video/mp4' && Boolean(source.httpEtag);
+  if (!recordedHash && !legacy) return reply(404, 'video_cover_source_unavailable');
+  const sourceEtag = source.httpEtag;
+  const identity = recordedHash ?? await hash(new TextEncoder().encode(`legacy-video-cover-v1:${sourceEtag}:${source.size}`));
+  const key = videoCoverKey(sourceKey, identity);
   headers.set('x-video-cover-writable', writable ? '1' : '0');
   const current = async () => {
     const value = await env.MEDIA.head(sourceKey);
-    return value && sourceHash(value, owner) === sourceSha256;
+    return value && value.httpEtag === sourceEtag && (recordedHash ? sourceHash(value, owner) === recordedHash
+      : value.customMetadata?.ownerId === owner && value.customMetadata?.source === 'provider-generated-media'
+        && value.customMetadata?.sha256 === undefined && mime(value) === 'video/mp4');
   };
   const existing = await env.MEDIA.get(key);
-  if (existing && (existing.customMetadata?.sourceKey !== sourceKey || existing.customMetadata?.sourceSha256 !== sourceSha256
+  if (existing && (existing.customMetadata?.sourceKey !== sourceKey
+    || !/^[a-f0-9]{64}$/.test(existing.customMetadata?.sourceSha256 ?? '')
+    || (recordedHash ? existing.customMetadata?.sourceSha256 !== recordedHash : existing.customMetadata?.sourceEtag !== sourceEtag)
     || existing.customMetadata?.ownerId !== owner || mime(existing) !== 'image/webp')) {
     void existing.body.cancel().catch(() => undefined); return reply(409, 'video_cover_invalid');
   }
+  if (request.method === 'POST' && !writable) { void existing?.body.cancel().catch(() => undefined); return reply(403, 'video_cover_write_forbidden'); }
+  let sourceSha256 = recordedHash ?? existing?.customMetadata?.sourceSha256;
+  if (!sourceSha256) {
+    if (!writable) return reply(404, 'video_cover_missing');
+    if (typeof source.size !== 'number' || !Number.isSafeInteger(source.size) || source.size < 1 || source.size > MAX_LEGACY_VIDEO_BYTES) return reply(413, 'video_cover_source_too_large');
+    const original = await env.MEDIA.get(sourceKey);
+    if (!original || original.httpEtag !== sourceEtag) { void original?.body.cancel().catch(() => undefined); return reply(409, 'video_cover_source_changed'); }
+    try { sourceSha256 = await hash(await boundedBody(new Response(original.body), MAX_LEGACY_VIDEO_BYTES)); }
+    catch { return reply(413, 'video_cover_source_too_large'); }
+    if (!await current()) return reply(409, 'video_cover_source_changed');
+  }
+  headers.set('x-video-source-sha256', sourceSha256);
   if (request.method === 'GET') {
     if (!existing) return reply(404, 'video_cover_missing');
     if (!await current()) { void existing.body.cancel().catch(() => undefined); return reply(409, 'video_cover_source_changed'); }
@@ -81,7 +105,7 @@ export async function handleVideoCover(request: Request, env: WorkerEnv, sourceK
   catch { return reply(400, 'video_cover_invalid'); }
   if (!await current()) return reply(409, 'video_cover_source_changed');
   await env.MEDIA.put(key, bytes.buffer, { onlyIf: { etagDoesNotMatch: '*' }, httpMetadata: { contentType: 'image/webp' }, customMetadata: {
-    ownerId: owner, artifactId: source.customMetadata!.artifactId ?? '', source: 'video-cover', sourceKey, sourceSha256,
+    ownerId: owner, artifactId: source.customMetadata!.artifactId ?? '', source: 'video-cover', sourceKey, sourceSha256, ...(legacy ? { sourceEtag } : {}),
     sha256: await hash(bytes), mimeType: 'image/webp', width: String(size.width), height: String(size.height), capture: 'browser-frame-v1',
   } });
   if (!await current()) { await env.MEDIA.delete(key); return reply(409, 'video_cover_source_changed'); }
