@@ -98,7 +98,8 @@ export async function handleGenerationEvidenceRead(request:Request,env:WorkerEnv
       ||JSON.stringify((await readContent()).results)!==JSON.stringify(contents)
       ||(await readNativeRetainedPrincipal(env,identity)).principal.auth_json!==firstAuth.principal.auth_json||env.DB!==db)throw fail();
     await sourceEvidence?.recheck();
-    const response=reply({schemaVersion:'forma-original-generation-evidence-v1',retrievedAt:new Date().toISOString(),
+    const sourceDiagnostic=sourceEvidence?.certificate.status==='unavailable'?sourceEvidence.certificate:null;
+    const response=sourceDiagnostic?reply({error:sourceDiagnostic.error,diagnostic:sourceDiagnostic},409):reply({schemaVersion:'forma-original-generation-evidence-v1',retrievedAt:new Date().toISOString(),
       custody:{ownerId:identity.userId,streamId:stream,documentId,generationId,requestedSequence:sequence,jobExpiresAt:job.expires_at,scope:'personal',readOnly:true},
       limitations:['Only original retained bytes are returned; no historical source is reconstructed.','Application usage and settlement records are not independent verified incurred charges.','Current deployment configuration is not proof of the original account, payer, region or credential binding.'],
       job,events,records,...(sourceEvidence?{sourceEvidence:sourceEvidence.certificate}:{}),

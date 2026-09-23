@@ -123,6 +123,18 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
   const exclusion = await nativeMemoryAnswerExclusion(bounded, { answerAlias: 'private_content' });
   const witnesses: Array<() => Promise<unknown>> = [], captured: unknown[] = [];
   const capture = async <T>(read: () => Promise<T>): Promise<T> => { const value = await read(); witnesses.push(read); captured.push(value); return value; };
+  const recheck = async () => {
+    if (env.DB !== db || Date.parse(job.expires_at) <= Date.now()) fail('custody_changed');
+    for (let i = 0; i < witnesses.length; i++) if (!equal(await witnesses[i]!(), captured[i])) fail('producer_changed');
+    if (!equal(await db.prepare(footprintSql).bind(job.stream_id).first(), footprint)) fail('history_changed');
+    await verifyOutputSourceRead(bounded, trusted.scope, trusted.ownerHead, [outputScopeAuthority(trusted.scope, 'read'), noPilot, ...trusted.sourceAssertions, ...deadlines]);
+    const latest = await requireExistingHoldAdministrator(request, bounded);
+    if (!latest.user || latest.response || canonicalConsent(latest.user.authorizationSnapshot) !== beforeAuth || env.DB !== db) fail('authority_changed');
+  };
+  const checkDeadline = () => {
+    if (expiryDeadlines.some(d => !Number.isFinite(d) || d <= Date.now()) || env.DB !== db) fail('custody_expired');
+    if (!equal(configuration, { plannerModel: env.OPENAI_MODEL, imageModel: env.OPENAI_IMAGE_MODEL, projectHeader: env.OPENAI_PROJECT, pilot: env.FORMA_PILOT_COHORT_ID })) fail('configuration_changed');
+  };
   const readContent = async (id: string, kind: string) => {
     ids([id]);
     const row = await capture(() => bounded.DB.prepare(`SELECT content_id,kind,content,created_at,expires_at FROM private_content
@@ -144,7 +156,37 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
     AND NOT EXISTS(SELECT 1 FROM project_event_scopes s WHERE s.event_id=event.event_id)
     ORDER BY event.sequence LIMIT 257`;
   const sourceEvents = await capture(async () => (await bounded.DB.prepare(eventQuery('event.event_id IN(SELECT value FROM json_each(?))')).bind(job.stream_id, JSON.stringify(refIds), requestedSequence, job.owner_id, job.document_id, trusted.scope.projectId).all<Row>()).results);
-  if (sourceEvents.length !== refIds.length) fail('original_events_unavailable');
+  if (sourceEvents.length !== refIds.length) {
+    // Diagnose only server-resolved references from the authenticated history.
+    // Read booleans, never rejected private bodies or another owner's metadata.
+    const diagnosticRows = await capture(async () => (await bounded.DB.prepare(`SELECT event.event_id,
+      event.sequence<? AS before_request,
+      length(CAST(event.payload AS BLOB))<=${MAX_CELL} AS public_payload_within_limit,
+      secret.private_event_id IS NULL AS no_private_row,
+      secret.owner_id=? AS private_owner_matches,
+      secret.document_id=? AS private_document_matches,
+      secret.project_id=? AS private_project_matches,
+      secret.redacted_at IS NULL AS private_unredacted,
+      length(CAST(secret.private_json AS BLOB))<=${MAX_CELL} AS private_payload_within_limit,
+      NOT EXISTS(SELECT 1 FROM project_event_scopes s WHERE s.event_id=event.event_id) AS personal_scope
+      FROM events event LEFT JOIN event_private_payloads secret ON secret.private_event_id=event.event_id
+      WHERE event.stream_id=? AND event.event_id IN(SELECT value FROM json_each(?)) ORDER BY event.sequence LIMIT 129`)
+      .bind(requestedSequence, job.owner_id, job.document_id, trusted.scope.projectId, job.stream_id, JSON.stringify(refIds)).all<Row>()).results);
+    const eventChecks = refIds.map(eventId => {
+      const row = diagnosticRows.find(r => r.event_id === eventId);
+      const failedChecks = !row ? ['event_in_owner_stream'] : [
+        ...['before_request', 'public_payload_within_limit', 'personal_scope'].filter(k => row[k] !== 1),
+        ...(row.no_private_row === 1 ? [] : ['private_owner_matches', 'private_document_matches', 'private_project_matches', 'private_unredacted', 'private_payload_within_limit'].filter(k => row[k] !== 1)),
+      ];
+      return { eventId, eventType: trusted.events.find(e => e.eventId === eventId)?.type, failedChecks };
+    });
+    if (eventChecks.filter(e => !e.failedChecks.length).length !== sourceEvents.length) fail('history_changed');
+    const certificate = { schemaVersion: 'forma-generation-source-diagnostic-v1', status: 'unavailable' as const,
+      error: 'generation_source_original_events_unavailable', requiredEventCount: refIds.length, availableEventCount: sourceEvents.length,
+      eventChecks, eligibility: { eligibleForReview: false, humanReviewed: false, executionAuthorized: false } };
+    await recheck(); checkDeadline();
+    return { certificate, recheck, checkDeadline };
+  }
   const verifyEventBodies = (events: Row[]) => {
     for (const event of events) {
       const publicBody = parse(event.payload), folded = trusted.events.find(e => e.eventId === event.event_id);
@@ -205,7 +247,7 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
     producerChains.push({ preview, receipt, approvalEvents, executions });
   }
   const certificate = {
-    schemaVersion: 'forma-generation-source-evidence-v1', status: 'complete', authority: 'current-personal-administrator',
+    schemaVersion: 'forma-generation-source-evidence-v1', status: 'complete' as const, authority: 'current-personal-administrator',
     historical: { documentRevision: historical.documentRevision, sourceBlockVersions: historical.sourceBlockVersions, snapshot: originalSnapshot, sourceEvents, producerChains, originalRequestSequence: requestedSequence },
     current: { documentRevision: source.documentRevision, sourceBlockVersions: source.sourceBlockVersions, sourceDigest: trusted.sourceDigest, ownerHead: trusted.ownerHead,
       projectHead: trusted.projectHead, snapshot: { ...source.snapshot, document: { id: job.document_id, title: trusted.projection.documents.find(d => d.id === job.document_id)?.title } },
@@ -217,18 +259,6 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
     limitations: ['Read-only observation, not a study grant or billing attestation.', 'Preview/execution confirmation deadlines remain historical; private-row retention is independently checked.', 'No synthetic producer binding or missing body is reconstructed.'],
   };
   if (bytes(certificate) > MAX_REPLY) fail('reply_capacity_exceeded');
-  const recheck = async () => {
-    if (env.DB !== db || Date.parse(job.expires_at) <= Date.now()) fail('custody_changed');
-    for (let i = 0; i < witnesses.length; i++) if (!equal(await witnesses[i]!(), captured[i])) fail('producer_changed');
-    if (!equal(await db.prepare(footprintSql).bind(job.stream_id).first(), footprint)) fail('history_changed');
-    await verifyOutputSourceRead(bounded, trusted.scope, trusted.ownerHead, [outputScopeAuthority(trusted.scope, 'read'), noPilot, ...trusted.sourceAssertions, ...deadlines]);
-    const latest = await requireExistingHoldAdministrator(request, bounded);
-    if (!latest.user || latest.response || canonicalConsent(latest.user.authorizationSnapshot) !== beforeAuth || env.DB !== db) fail('authority_changed');
-  };
-  const checkDeadline = () => {
-    if (expiryDeadlines.some(d => !Number.isFinite(d) || d <= Date.now()) || env.DB !== db) fail('custody_expired');
-    if (!equal(configuration, { plannerModel: env.OPENAI_MODEL, imageModel: env.OPENAI_IMAGE_MODEL, projectHeader: env.OPENAI_PROJECT, pilot: env.FORMA_PILOT_COHORT_ID })) fail('configuration_changed');
-  };
   await recheck(); checkDeadline();
   return { certificate, recheck, checkDeadline };
 }

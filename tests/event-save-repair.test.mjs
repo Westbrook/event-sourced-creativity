@@ -199,6 +199,8 @@ for (const runtime of ['source','production bundle']) test(`${runtime}: isolated
    f.sqlite.prepare("UPDATE event_private_payloads SET document_id='doc-atmosphere',project_id='project-atmosphere',private_json=? WHERE private_event_id=?").run(JSON.stringify({...JSON.parse(row.private_json),document_id:'doc-atmosphere',project_id:'project-atmosphere'}),row.private_event_id);
  }
  const approval=await approvedSourceFixture(f,env,session.user.userId);
+ const opened=makeEvent('creative:'+session.user.userId,f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head+1,'user:'+session.user.userId,'offline','source-diagnostic','DocumentOpened',{project_id:'project-atmosphere',document_id:'doc-atmosphere'});
+ const openedValues=eventWriteBindings(opened);await env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${openedValues.map(()=>'?').join(',')})`).bind(...openedValues).run();
  const readiness=await request('/api/document-jobs/still-readiness?documentId=doc-atmosphere');
  assert.equal(readiness.status,200);assert.equal((await readiness.json()).ready,true,'the deployed Worker must qualify the isolated storage boundary');
  assert.equal(planner,0);assert.equal(image,0,'readiness must not call a provider');
@@ -258,6 +260,25 @@ for (const runtime of ['source','production bundle']) test(`${runtime}: isolated
      }
    }
  };
+ // Rejected sidecars disclose only failed predicate names after all normal
+ // principal/job/source rechecks; no rejected body or actual identity is returned.
+ {
+   const originalRow=f.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(opened.eventId);
+   // Native document navigation may omit project_id. Its sidecar correctly has
+   // NULL, so generic source integrity passes but exact project custody fails.
+   const bodyBefore=JSON.parse(originalRow.private_json);delete bodyBefore.project_id;
+   f.sqlite.prepare('UPDATE event_private_payloads SET project_id=NULL,private_json=? WHERE private_event_id=?').run(JSON.stringify(bodyBefore),opened.eventId);
+   try{
+     const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
+     const response=await inspect(sourcePath),raw=await response.text();assert.equal(response.status,409,raw);
+     const body=JSON.parse(raw);assert.equal(body.error,'generation_source_original_events_unavailable');
+     assert.equal(body.diagnostic.status,'unavailable');assert.equal(body.diagnostic.eligibility.eligibleForReview,false);
+     assert.deepEqual(body.diagnostic.eventChecks.filter(e=>e.failedChecks.length),[{eventId:opened.eventId,eventType:'DocumentOpened',failedChecks:['private_project_matches']}]);
+     assert.equal(body.diagnostic.requiredEventCount-body.diagnostic.availableEventCount,1);
+     assert.equal(body.records,undefined);assert.equal(body.sourceEvidence,undefined);
+     assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);assert.equal(providerCalls,inspectionProviderCalls);
+   }finally{f.sqlite.prepare('UPDATE event_private_payloads SET project_id=?,private_json=? WHERE private_event_id=?').run(originalRow.project_id,originalRow.private_json,opened.eventId);}
+ }
  for(const value of ['0','true',''])assert.equal((await inspect(evidencePath+'&includeSource='+value)).status,400,'source inclusion requires literal 1');
  await sourceFault(()=>f.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run(session.user.userId),'generation_source_administrator_required');
  await sourceFault(()=>f.sqlite.prepare("UPDATE document_jobs SET request_json=json_set(request_json,'$.snapshot.facts[0].properties.rights_expires_at','2000-01-01T00:00:00.000Z') WHERE job_id=?").run(job.jobId),'generation_source_original_rights_expired');
