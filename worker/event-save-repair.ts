@@ -158,3 +158,12 @@ export async function readIsolatedMemoryContentBoundary(db:D1Database) {
   AND EXISTS(SELECT 1 FROM ${receipt} WHERE repair_id=? AND source_manifest=? AND typeof(applied_at)='text'))`,
   bindings:[plan.snapshot,EVENT_SAVE_REPAIR_ID,manifest.sha256]};
 }
+
+/** Fixed observation capability for the standalone current-source reader.
+ * These are the unchanged reads used by the isolated boundary, never repair DDL. */
+export const EVENT_SAVE_BOUNDARY_READ_QUERIES = Object.freeze([
+ `SELECT ${snapshotSQL} AS snapshot,${settingsSQL} AS settings,EXISTS(SELECT 1 FROM sqlite_schema WHERE name='${guard}') AS reserved`,
+ ...Object.keys(manifest.dependencies).map(table=>`SELECT name,upper(type) AS type,pk,hidden FROM pragma_table_xinfo('${table}') ORDER BY cid`),
+ `SELECT repair_id,source_manifest,applied_at FROM ${receipt} LIMIT 2`,
+ `SELECT ${emptySQL} AS empty`,
+]);

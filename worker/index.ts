@@ -1,3 +1,4 @@
+import { handleCurrentSourceRead, CURRENT_SOURCE_PATH } from './generation-current-source-read.ts';
 import {handleOrdinaryImageQueue} from './ordinary-image-queue.ts';
 import { handleGenerationEvidenceRead, GENERATION_EVIDENCE_PATH, GENERATION_EVIDENCE_PAGE } from './generation-evidence-read.ts';
 import {handleMemorySchemaRepair,MEMORY_SCHEMA_REPAIR_PATH,EVENT_SAVE_REPAIR_PATH} from './memory-schema-repair-api.ts';
@@ -131,6 +132,7 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
     if(url.pathname.startsWith("/api/internal/ordinary-images/"))return handleOrdinaryImageQueue(request,env);
+    if(url.pathname===CURRENT_SOURCE_PATH)return handleCurrentSourceRead(request,env);
     if(url.pathname===GENERATION_EVIDENCE_PATH||url.pathname===GENERATION_EVIDENCE_PAGE)return handleGenerationEvidenceRead(request,env);
     if(url.pathname===MEMORY_SCHEMA_REPAIR_PATH||url.pathname===EVENT_SAVE_REPAIR_PATH)return handleMemorySchemaRepair(request,env);
     if(url.pathname===OUTPUT_SCHEMA_PREFLIGHT_PATH)return handleOutputSchemaPreflight(request,env);
@@ -394,7 +396,7 @@ export default {
     const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
       ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
     const memoryBenchmarkRequest=pathname==="/api/internal/memory-benchmark"||pathname==="/api/internal/memory-benchmark/approval"||pathname==="/api/internal/memory-benchmark/reconcile"||pathname==="/api/internal/memory-benchmark/release-undispatched";
-    if(pathname.startsWith("/api/")&&pathname!==GENERATION_EVIDENCE_PATH&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!==MEMORY_SCHEMA_REPAIR_PATH&&pathname!==EVENT_SAVE_REPAIR_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!pathname.startsWith("/api/still/panel")&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
+    if(pathname.startsWith("/api/")&&pathname!==GENERATION_EVIDENCE_PATH&&pathname!==CURRENT_SOURCE_PATH&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!==MEMORY_SCHEMA_REPAIR_PATH&&pathname!==EVENT_SAVE_REPAIR_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!pathname.startsWith("/api/still/panel")&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");
