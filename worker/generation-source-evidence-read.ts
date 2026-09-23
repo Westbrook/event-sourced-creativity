@@ -7,6 +7,7 @@ import { canonicalConsent, consentHash } from './consequential-consent.ts';
 import { nativeMemoryAnswerExclusion } from './memory-native-boundary.ts';
 import { foldEvents } from '../src/model/events.ts';
 import { authoritativeCreativeContext } from './context-authority.ts';
+import { scopeObservationQuery, classifyScopeObservation } from './generation-source-scope-observation.ts';
 
 const MAX_ROWS = 50_000, MAX_HISTORY_BYTES = 64 * 1024 * 1024, MAX_CELL = 2_200_000, MAX_REPLY = 12_000_000;
 const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -181,9 +182,21 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
       return { eventId, eventType: trusted.events.find(e => e.eventId === eventId)?.type, failedChecks };
     });
     if (eventChecks.filter(e => !e.failedChecks.length).length !== sourceEvents.length) fail('history_changed');
+    const scopeObservations = [];
+    for (const check of eventChecks.filter(e => e.failedChecks.length)) {
+      // Only scope-only failures receive additional observations. All other
+      // custody failures remain opaque, including foreign/redacted sidecars.
+      if (check.failedChecks.some(k => !['private_document_matches','private_project_matches'].includes(k))) continue;
+      const event = trusted.events.find(e => e.eventId === check.eventId);
+      if (!event) fail('history_changed');
+      const query = scopeObservationQuery(event, job.owner_id, job.document_id, trusted.scope.projectId, requestedSequence, MAX_CELL);
+      const row = await capture(() => bounded.DB.prepare(query.sql).bind(...query.bindings).first<Row>());
+      if (!row || row.event_identity_matches !== 1 || row.private_body_matches_history !== 1) fail('producer_changed');
+      scopeObservations.push({ eventId: check.eventId, ...classifyScopeObservation(row, event.type) });
+    }
     const certificate = { schemaVersion: 'forma-generation-source-diagnostic-v1', status: 'unavailable' as const,
       error: 'generation_source_original_events_unavailable', requiredEventCount: refIds.length, availableEventCount: sourceEvents.length,
-      eventChecks, eligibility: { eligibleForReview: false, humanReviewed: false, executionAuthorized: false } };
+      eventChecks, scopeObservations, eligibility: { eligibleForReview: false, humanReviewed: false, executionAuthorized: false } };
     await recheck(); checkDeadline();
     return { certificate, recheck, checkDeadline };
   }

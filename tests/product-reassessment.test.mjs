@@ -19,6 +19,7 @@ import { validateArtifactReview } from "../worker/artifact-review.ts";
 import { projectAnalyticsPayload } from "../worker/analytics-api.ts";
 import { appendEvents, appendEventsWithClientReceipts, ensureSchema, makeEvent, readEventPage, StaleSequenceError, sweepExpiredPrivateContent } from "../worker/runtime.ts";
 import { publicEventPayload } from "../worker/event-privacy.ts";
+import { scopeObservationQuery, classifyScopeObservation } from "../worker/generation-source-scope-observation.ts";
 import { migrateLegacyEventPayloads } from "../worker/event-privacy-migration.ts";
 import { artifactReviewState, assessCreativeContext } from "../src/model/context-health.ts";
 import { foldEvents } from "../src/model/events.ts";
@@ -276,6 +277,32 @@ test("historical privacy migration closes unknown public identifier leaks withou
   const redacted=sqlite.prepare("SELECT private_json,redacted_at FROM event_private_payloads WHERE private_event_id=?").get(erased.eventId);
   assert.equal(redacted.private_json,"");assert.ok(redacted.redacted_at);
   assert.doesNotMatch(JSON.stringify(sqlite.prepare("SELECT payload FROM events").all()),/ALREADY_ERASED_4821/);
+});
+
+test("historical privacy migration scope observation uses the actual projection and does not infer membership",async()=>{
+  const {sqlite,env}=governedEventDatabase();await ensureSchema(env);
+  const originals=[
+    ['BlockPropertyEdited',{block_id:'legacy-block',property_path:'text',new_value:'Private legacy text',source_block_versions:[{block_id:'legacy-block',version:'2'}]}],
+    ['DocumentRenamed',{document_id:'document-safe',new_title:'Private legacy title'}],
+    ['DocumentRenamed',{document_id:'document-safe',project_id:'foreign-project',new_title:'Private conflicting title'}],
+  ].map(([type,payload],i)=>makeEvent('creative:owner',i+1,'user','legacy-client','legacy-correlation',type,payload));
+  for(const e of originals)sqlite.prepare('INSERT INTO events(event_id,stream_id,sequence,occurred_at,recorded_at,actor,client_id,correlation_id,causation_id,compensates_event_id,schema_version,type,payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(e.eventId,e.streamId,e.sequence,e.occurredAt,e.recordedAt,e.actor,e.clientId,e.correlationId,e.causationId,e.compensatesEventId,e.schemaVersion,e.type,JSON.stringify(e.payload));
+  assert.equal((await migrateLegacyEventPayloads(env)).migratedEvents,3);
+  const observe=e=>{const q=scopeObservationQuery(e,'owner','document-safe','project-safe',10,2_200_000);return classifyScopeObservation(sqlite.prepare(q.sql).get(...q.bindings),e.type);};
+  const before=sqlite.prepare('SELECT total_changes() AS n').get().n;
+  for(const [i,e] of originals.entries()){
+    const o=observe(e);assert.equal(o.classification,i===2?'explicit_conflicting_scope':'absent_scope_metadata');
+    assert.equal(o.envelope.migrationCompatible,true);assert.equal(o.membershipProven,false);
+    if(i===0)assert.equal(o.envelope.writerCompatible,false,'migration numeric-version filtering differs from the current JS writer');
+  }
+  assert.equal(sqlite.prepare('SELECT total_changes() AS n').get().n,before);
+  // A NULL sidecar with an explicit original claim is inconsistent, not absent.
+  sqlite.prepare('UPDATE event_private_payloads SET project_id=NULL WHERE private_event_id=?').run(originals[2].eventId);
+  assert.equal(observe(originals[2]).classification,'inconsistent_producer_envelope');
+  sqlite.prepare("UPDATE event_private_payloads SET owner_id='wrong-owner' WHERE private_event_id=?").run(originals[1].eventId);
+  assert.equal(observe(originals[1]).classification,'unavailable');
+  sqlite.close();
 });
 
 test("historical privacy migration preserves SQLite rowids, event identities, client receipts, project cursors, and exact folds", async () => {

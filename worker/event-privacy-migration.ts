@@ -31,6 +31,11 @@ const publicPayloadSql = `json_patch(${publicScalarSql},json_object('_private_re
   'origin',CASE WHEN json_type(events.payload,'$.origin.synthetic') IN('true','false')
     THEN json(json_object('synthetic',json(CASE WHEN json_type(events.payload,'$.origin.synthetic')='true' THEN 'true' ELSE 'false' END))) END))`;
 
+/** Pure projection only; callers supply code-owned SQL expressions, never user input.
+ * Reuse the historical contract without running the migration or initializing storage. */
+export const legacyPublicPayloadExpression = (payload: string, eventId: string) =>
+  publicPayloadSql.replaceAll('events.payload', payload).replaceAll('events.event_id', eventId);
+
 const EVENTS_REBUILD_SQL = `CREATE TABLE events_privacy_rebuild (
   event_id TEXT PRIMARY KEY NOT NULL,stream_id TEXT NOT NULL,sequence INTEGER NOT NULL,
   occurred_at TEXT NOT NULL,recorded_at TEXT NOT NULL,actor TEXT NOT NULL,client_id TEXT NOT NULL,

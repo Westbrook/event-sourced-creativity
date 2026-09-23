@@ -179,7 +179,7 @@ async function approvedSourceFixture(f,env,owner){
 }
 
 
-for (const runtime of ['source','production bundle']) test(`${runtime}: isolated schema delivers one mocked Still generation through readiness, admission, checkpoints, settlement and authorized reload`,async t=>{
+for (const runtime of ['source','production bundle']) for (const scopeCase of ['complete','scope observation']) test(`${runtime}: isolated schema delivers ${scopeCase} through one mocked Still generation`,async t=>{
  const f=await fixture(t);await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
  const {default:worker}=runtime==='source'?await import('../worker/index.ts'):await import('../dist/server/index.js');const media=new Map(),background=[];
  const env={DB:f.db,OPENAI_API_KEY:'offline-sentinel',OPENAI_MODEL:'gpt-5.6-terra',ASSETS:{fetch:async()=>new Response(null,{status:404})},MEDIA:{put:async(key,bytes)=>media.set(key,bytes),get:async()=>null}};
@@ -201,6 +201,30 @@ for (const runtime of ['source','production bundle']) test(`${runtime}: isolated
  const approval=await approvedSourceFixture(f,env,session.user.userId);
  const opened=makeEvent('creative:'+session.user.userId,f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head+1,'user:'+session.user.userId,'offline','source-diagnostic','DocumentOpened',{project_id:'project-atmosphere',document_id:'doc-atmosphere'});
  const openedValues=eventWriteBindings(opened);await env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${openedValues.map(()=>'?').join(',')})`).bind(...openedValues).run();
+ const scopeFixtures=[];
+ if(scopeCase==='scope observation'){
+   const definitions=[
+     // Recreated and rehomed subjects must not gain membership from today's fold.
+     ['BlockCreated',{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:'recreated-subject',type:'direction',scope:'document',properties:{text:'Earlier subject'}},null],
+     ['BlockCreated',{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:'recreated-subject',type:'direction',scope:'document',properties:{text:'Recreated subject'}},null],
+     ['BlockRehomed',{project_id:'different-private-project',document_id:'foreign-document',block_id:'recreated-subject',scope:'document'},'explicit_conflicting_scope'],
+     ['BlockRehomed',{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:'recreated-subject',scope:'document'},null],
+     ['BlockDocumentDetached',{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:'recreated-subject'},null],
+     ['BlockDocumentAttached',{project_id:'project-atmosphere',document_id:'doc-atmosphere',block_id:'recreated-subject'},null],
+     ['BlockPropertyEdited',{block_id:'recreated-subject',property_path:'text',new_value:'Current subject text'},'absent_scope_metadata'],
+     ['BlockPropertyEdited',{block_id:'block-direction',property_path:'scope_fixture',new_value:'Private diagnostic sentinel'},'absent_scope_metadata'],
+     ['DocumentRenamed',{document_id:'doc-atmosphere',new_title:'Omitted project'},'absent_scope_metadata'],
+     ['DocumentRenamed',{document_id:'doc-atmosphere',project_id:'different-private-project',new_title:'Conflicting project'},'explicit_conflicting_scope'],
+     ['DocumentRenamed',{document_id:'doc-atmosphere',project_id:null,new_title:'Null project'},'absent_scope_metadata'],
+     ['DocumentRenamed',{document_id:'doc-atmosphere',project_id:'',new_title:'Empty project'},'unresolved_scope'],
+     ['DocumentOpened',{document_id:'doc-atmosphere'},'unresolved_scope'],
+   ];
+   for(const [type,payload,classification] of definitions){
+     const event=makeEvent('creative:'+session.user.userId,f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head+1,'user:'+session.user.userId,'offline','scope-observation',type,payload);
+     const values=eventWriteBindings(event);await env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${values.map(()=>'?').join(',')})`).bind(...values).run();
+     if(classification)scopeFixtures.push({event,classification});
+   }
+ }
  const readiness=await request('/api/document-jobs/still-readiness?documentId=doc-atmosphere');
  assert.equal(readiness.status,200);assert.equal((await readiness.json()).ready,true,'the deployed Worker must qualify the isolated storage boundary');
  assert.equal(planner,0);assert.equal(image,0,'readiness must not call a provider');
@@ -232,6 +256,74 @@ for (const runtime of ['source','production bundle']) test(`${runtime}: isolated
  const sourceBeforeChanges=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
 
 
+ if(scopeCase==='scope observation'){
+   const beforeProvider=providerCalls;
+   const observe=async()=>{
+     const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
+     const response=await inspect(sourcePath),raw=await response.text();assert.equal(response.status,409,raw);
+     const body=JSON.parse(raw);assert.equal(body.error,'generation_source_original_events_unavailable');
+     assert.equal(body.diagnostic.eligibility.eligibleForReview,false);assert.equal(body.records,undefined);assert.equal(body.sourceEvidence,undefined);
+     assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);assert.equal(providerCalls,beforeProvider);
+     assert.ok(!raw.includes('different-private-project'));assert.ok(!raw.includes('Private diagnostic sentinel'));
+     return body.diagnostic;
+   };
+   const diagnostic=await observe();assert.equal(diagnostic.requiredEventCount-diagnostic.availableEventCount,scopeFixtures.length);
+   for(const {event,classification} of scopeFixtures){
+     const observation=diagnostic.scopeObservations.find(o=>o.eventId===event.eventId);
+     assert.equal(observation.classification,classification);assert.equal(observation.membershipProven,false);
+     assert.equal(observation.eventIdentityMatches,true);assert.equal(observation.privateBodyMatchesHistory,true);assert.equal(observation.envelope.writerCompatible,true);
+     assert.equal(observation.envelope.producerAttribution,'not_established');
+   }
+   assert.equal(diagnostic.scopeObservations.find(o=>o.eventId===scopeFixtures.find(f=>f.event.type==='BlockPropertyEdited').event.eventId).scopes.document.payload,'missing');
+   const event=scopeFixtures.find(f=>f.event.type==='DocumentRenamed').event,originalRow=f.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(event.eventId);
+   // Preserve folded content and metadata while breaking the public envelope.
+   f.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(JSON.stringify({...event.payload,source_surface:'different'}),event.eventId);
+   try{assert.equal((await observe()).scopeObservations.find(o=>o.eventId===event.eventId).classification,'inconsistent_producer_envelope');}
+   finally{f.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(originalRow.private_json,event.eventId);}
+   for(const fault of ['claimed-scope','wrong-owner','redacted']){
+     if(fault==='claimed-scope')f.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(JSON.stringify({...event.payload,project_id:'project-atmosphere'}),event.eventId);
+     if(fault==='wrong-owner')f.sqlite.prepare("UPDATE event_private_payloads SET owner_id='foreign-owner' WHERE private_event_id=?").run(event.eventId);
+     if(fault==='redacted')f.sqlite.prepare("UPDATE event_private_payloads SET redacted_at='2026-01-01' WHERE private_event_id=?").run(event.eventId);
+     try{
+       const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
+       const response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409);assert.equal(body.diagnostic,undefined);
+       assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);assert.equal(providerCalls,beforeProvider);
+     }finally{f.sqlite.prepare('UPDATE event_private_payloads SET private_json=?,owner_id=?,redacted_at=? WHERE private_event_id=?').run(originalRow.private_json,originalRow.owner_id,originalRow.redacted_at,event.eventId);}
+   }
+   // Recheck observation, authority, retention and configuration after capture.
+   for(const race of ['scope','authority','expiry','configuration']){
+     const originalPrepare=f.db.prepare,jobExpiry=f.sqlite.prepare('SELECT expires_at FROM document_jobs WHERE job_id=?').get(job.jobId).expires_at,model=env.OPENAI_MODEL;
+     let reads=0,injectedChanges=0,injected=false;
+     f.db.prepare=sql=>{
+       const statement=originalPrepare(sql);if(!sql.startsWith('WITH expected(document_id'))return statement;
+       const bind=statement.bind.bind(statement);statement.bind=(...args)=>{
+         const bound=bind(...args),first=bound.first.bind(bound);bound.first=async()=>{
+           if(++reads===scopeFixtures.length+1){
+             const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;injected=true;
+             if(race==='scope')f.sqlite.prepare("UPDATE event_private_payloads SET project_id='raced' WHERE private_event_id=?").run(event.eventId);
+             if(race==='authority')f.sqlite.prepare("UPDATE users SET role='creator' WHERE user_id=?").run(session.user.userId);
+             if(race==='expiry')f.sqlite.prepare("UPDATE document_jobs SET expires_at='2000-01-01' WHERE job_id=?").run(job.jobId);
+             if(race==='configuration')env.OPENAI_MODEL='changed-after-capture';
+             injectedChanges=f.sqlite.prepare('SELECT total_changes() AS n').get().n-before;
+           }
+           return first();
+         };return bound;
+       };return statement;
+     };
+     try{
+       const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
+       const response=await inspect(sourcePath),body=await response.json();assert.ok([404,409].includes(response.status),JSON.stringify(body));assert.equal(body.diagnostic,undefined);assert.equal(injected,true);
+       if(race==='scope')assert.equal(body.error,'generation_source_producer_changed');
+       assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before+injectedChanges);assert.equal(providerCalls,beforeProvider);
+     }finally{
+       f.db.prepare=originalPrepare;env.OPENAI_MODEL=model;
+       f.sqlite.prepare('UPDATE event_private_payloads SET project_id=? WHERE private_event_id=?').run(originalRow.project_id,event.eventId);
+       f.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run(session.user.userId);
+       f.sqlite.prepare('UPDATE document_jobs SET expires_at=? WHERE job_id=?').run(jobExpiry,job.jobId);
+     }
+   }
+   return;
+ }
  const sourceResponse=await inspect(sourcePath);assert.equal(sourceResponse.status,200,await sourceResponse.clone().text());
  const sourceResult=await sourceResponse.json();
  assert.equal(sourceResult.sourceEvidence.status,'complete');
@@ -264,8 +356,8 @@ for (const runtime of ['source','production bundle']) test(`${runtime}: isolated
  // principal/job/source rechecks; no rejected body or actual identity is returned.
  {
    const originalRow=f.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(opened.eventId);
-   // Native document navigation may omit project_id. Its sidecar correctly has
-   // NULL, so generic source integrity passes but exact project custody fails.
+   // Fault injection: remove private scope while leaving the public claim intact.
+   // This is an inconsistent envelope, not a real producer omission.
    const bodyBefore=JSON.parse(originalRow.private_json);delete bodyBefore.project_id;
    f.sqlite.prepare('UPDATE event_private_payloads SET project_id=NULL,private_json=? WHERE private_event_id=?').run(JSON.stringify(bodyBefore),opened.eventId);
    try{
@@ -274,6 +366,7 @@ for (const runtime of ['source','production bundle']) test(`${runtime}: isolated
      const body=JSON.parse(raw);assert.equal(body.error,'generation_source_original_events_unavailable');
      assert.equal(body.diagnostic.status,'unavailable');assert.equal(body.diagnostic.eligibility.eligibleForReview,false);
      assert.deepEqual(body.diagnostic.eventChecks.filter(e=>e.failedChecks.length),[{eventId:opened.eventId,eventType:'DocumentOpened',failedChecks:['private_project_matches']}]);
+     assert.equal(body.diagnostic.scopeObservations[0].classification,'inconsistent_producer_envelope');
      assert.equal(body.diagnostic.requiredEventCount-body.diagnostic.availableEventCount,1);
      assert.equal(body.records,undefined);assert.equal(body.sourceEvidence,undefined);
      assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);assert.equal(providerCalls,inspectionProviderCalls);
