@@ -27,7 +27,19 @@ export type ProviderHealthSnapshot = {
   requestId: string | null;
 };
 
+/** Server-owned observation links. Never safety or admission authority. */
+export type AdvisoryModerationCapture = {
+  status: 'retained' | 'capture-incomplete' | 'unavailable';
+  reason?: string;
+  inspection?: 'unavailable-before-admission' | 'job-receipt';
+  origin?: {preflightId:string;requestKey:string;documentId:string;projectId:string;documentRevision:string;sourceSha256:string};
+  adoptedBy?: {preflightId:string;requestKey:string};
+  refs: Record<string,{ref:string;expiresAt:string;pipelineStage:'app_moderation';sha256:string}>;
+  unavailableRefs?: AdvisoryModerationCapture['refs'];
+};
+
 export type GenerationReadiness = {
+  advisoryCapture?: AdvisoryModerationCapture;
   preflightId: string;
   requestKey: string;
   documentId: string;

@@ -1,3 +1,5 @@
+import { advisoryModerationCapture, advisoryPersonalAllowed, qualifyAdvisoryCapture } from './advisory-moderation-evidence.ts';
+import { evidenceSha256 } from './generation-evidence.ts';
 import { draftImageEnvironment } from "./image-generation-policy.ts";
 import { OPENAI_IMAGE_GENERATION_CONTRACT } from "./openai-image-route-contract.ts";
 import { assertOutputAdmissionActor, assertOutputAdmissionBudget, outputAdmissionBudgetOwner, outputAdmissionSponsor, readOutputAdmissionValue, requireGuestImageAdmissionPreparation, type OutputAdmissionReads } from "./output-admission-reads.ts";
@@ -270,6 +272,17 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
     if(!await readOutputAdmissionValue(options.outputAdmissionReads,"governed-source-rights",()=>governedPackageSourceRightsCurrent(env,execution.organizationId,governedProjection.blocks)))
       throw new ContextIntegrityError("context_source_rights_expired","The original rights for an adopted organizational source are no longer valid.");
   }
+  const capturePersonal=input.kind==='generate'&&input.sourceSurface==='still'&&!execution&&!sponsor&&!hasWorkflow&&!options.outputAdmissionReads
+    &&(user.billingUserId??user.userId)===user.userId;
+  const cachedObservation=async(value:GenerationReadiness)=>{
+    if(!capturePersonal)return {...value,cached:true,advisoryCapture:undefined};
+    const capture=value.advisoryCapture;
+    const binding=capture?.adoptedBy??capture?.origin;
+    const advisoryCapture=binding&&(binding.preflightId!==value.preflightId||binding.requestKey!==value.requestKey)
+      ?{status:'unavailable' as const,reason:'preflight-binding-mismatch',refs:{}}
+      :await qualifyAdvisoryCapture(env,user,capture,{documentId:value.documentId,documentRevision:value.documentRevision});
+    return {...value,cached:true,advisoryCapture};
+  };
   let prefetched:PreflightRow|null|undefined;
   const claimedRevisionMatches=!hasWorkflow&&(!input.snapshot||documentGenerationRevision({snapshot:input.snapshot,sourceBlockVersions:input.sourceBlockVersions??[],documentId:input.documentId})===input.documentRevision);
   if(options.allowCache!==false&&!input.force&&claimedRevisionMatches&&input.requestKey&&input.documentRevision&&input.documentId){
@@ -278,7 +291,7 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
       const cached=JSON.parse(prefetched.result_json) as GenerationReadiness;
       const suppliedCanvas=input.snapshot?.canvas&&typeof input.snapshot.canvas==="object"?input.snapshot.canvas as Record<string,unknown>:{};
       const canvasId=String(input.canvasId??suppliedCanvas.canvas_id??""),contextSetId=String(input.contextSetId??suppliedCanvas.context_set_id??"");
-      if(cached.sourceContextHead===Number(prefetched.context_head??-1)&&String(cached.canvasId??"")===canvasId&&String(cached.contextSetId??"")===contextSetId&&cached.documentId===input.documentId&&cached.documentRevision===input.documentRevision&&cached.requestKey===input.requestKey&&cached.kind===input.kind&&cached.promptTechnique===technique&&(cached.productionMode??"manual")===productionMode)return{...cached,cached:true};
+      if(cached.sourceContextHead===Number(prefetched.context_head??-1)&&String(cached.canvasId??"")===canvasId&&String(cached.contextSetId??"")===contextSetId&&cached.documentId===input.documentId&&cached.documentRevision===input.documentRevision&&cached.requestKey===input.requestKey&&cached.kind===input.kind&&cached.promptTechnique===technique&&(cached.productionMode??"manual")===productionMode)return await cachedObservation(cached);
       prefetched=null;
     }catch{prefetched=null;/* Recompute malformed cache rows. */}
   }
@@ -306,7 +319,7 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
       const trustedContextHead=events.reduce((head,event)=>CONTEXT_MUTATION_TYPES.includes(event.type as typeof CONTEXT_MUTATION_TYPES[number])?Math.max(head,event.sequence):head,0);
       if(value.documentId===projection.documentId&&value.documentRevision===documentRevision&&value.requestKey===requestKey&&value.kind===input.kind&&value.promptTechnique===technique
         &&(value.productionMode??"manual")===productionMode&&String(value.canvasId??"")===String(input.canvasId??trustedCanvas.canvas_id??"")
-        &&String(value.contextSetId??"")===String(input.contextSetId??trustedCanvas.context_set_id??"")&&value.sourceContextHead===trustedContextHead)return{...value,cached:true};
+        &&String(value.contextSetId??"")===String(input.contextSetId??trustedCanvas.context_set_id??"")&&value.sourceContextHead===trustedContextHead)return await cachedObservation(value);
     }catch{/* Recompute malformed or cross-document cache rows. */}
   }
   let previous:GenerationReadiness|null=null;const previousRow=await readOutputAdmissionValue(options.outputAdmissionReads,"previous-image-preflight",()=>env.DB.prepare("SELECT result_json,expires_at FROM generation_preflights WHERE owner_id=? AND document_id=? AND request_key LIKE ? ORDER BY created_at DESC LIMIT 1").bind(user.userId,projection.documentId,`${cachePrefix}%`).first<PreflightRow>());if(previousRow)try{previous=JSON.parse(previousRow.result_json) as GenerationReadiness;}catch{/* A malformed historical cache must not block a new check. */}
@@ -331,17 +344,36 @@ export async function preflightGeneration(env:WorkerEnv,user:PilotUser,input:Gen
   }
   const unavailableReferenceIds=[...new Set([...missingReferences,...provenanceFailures.map(failure=>failure.blockId)])];
   add(unavailableReferenceIds.length?{id:"reference-availability",label:"Reference pixels",status:"fail",severity:"blocking",summary:provenanceFailures[0]?.summary??(pixelFacts.some(fact=>fact.type==="model3d"&&missingReferences.includes(String(fact.block_id??"")))?"Open the 3D model and save the image view you want to send before generating.":`${missingReferences.length} requested image reference${missingReferences.length===1?" is":"s are"} unavailable.`),action:"review_references",blockIds:unavailableReferenceIds}:{id:"reference-availability",label:"Reference pixels",status:"pass",severity:"info",summary:"Requested reference images and saved 3D views are available or context-only.",action:"none"});
+  let advisory:ReturnType<typeof advisoryModerationCapture>|undefined;
+  let advisoryCapture:GenerationReadiness['advisoryCapture'];
+  if(capturePersonal){
+    advisoryCapture={status:'unavailable',reason:'not-observed',refs:{}};
+    try{if(await advisoryPersonalAllowed(env,user,projection.documentId,projection.projectId)){
+      advisory=advisoryModerationCapture(env,user,{preflightId,requestKey,documentId:projection.documentId,projectId:projection.projectId,documentRevision,sourceSha256:await evidenceSha256(JSON.stringify(snapshot))});
+    }else advisoryCapture.reason='personal-custody-unavailable';}catch{advisoryCapture.reason='capture-preparation-failed';}
+  }
   const previousSafety=previous?.documentRevision===documentRevision&&(previous.productionMode??"manual")===productionMode&&(!hasWorkflow||previous.requestKey===requestKey)&&Date.parse(previous.expiresAt)>Date.now()?previous.probes.find((probe)=>probe.id==="context-safety"):null;
   if(options.allowProviderCalls===false)add(localContextSafetyProbe());
-  else if(previousSafety)add({...previousSafety,summary:`${previousSafety.summary} Reused for the same document revision; the exact prompt and selected pixels will still be checked before image work.`});
+  else if(previousSafety){
+    add({...previousSafety,summary:`${previousSafety.summary} Reused for the same document revision; the exact prompt and selected pixels will still be checked before image work.`});
+    if(advisory){
+      const prior=await cachedObservation(previous!);
+      advisoryCapture=await qualifyAdvisoryCapture(env,user,prior.advisoryCapture,{documentId:projection.documentId,projectId:projection.projectId,documentRevision,sourceSha256:advisory.capture.origin!.sourceSha256});
+      advisoryCapture.adoptedBy={preflightId,requestKey};
+    }
+  }
   else if(env.OPENAI_API_KEY&&!statusBlocksProvider(provider)&&remaining>=estimatedTokens&&!unavailableReferenceIds.length)try{
-    const moderation=await moderateGenerationSnapshot(env,snapshot);
+    const moderation=await moderateGenerationSnapshot(env,snapshot,undefined,advisory?{onEvidence:advisory.observe,onCaptureError:advisory.onCaptureError}:undefined);
     add(moderation.flagged?{id:"context-safety",label:"Context safety review",status:"warning",severity:"warning",summary:`Likely moderation concern${moderation.categories.length?`: ${moderation.categories.join(", ")}`:""}. Review the named context before sending it to the image workflow.`,action:"review_blocks",blockIds:moderation.blockIds,categories:moderation.categories}:{id:"context-safety",label:"Context safety review",status:"pass",severity:"info",summary:`Text context passed an advisory ${moderation.model} review in ${moderation.latencyMs}ms. Exact prompt and selected reference pixels will be checked again before image generation.`,action:"none"});
   }catch(error){const detail=classifyProviderFailure(error);const observed=await observeProviderFailure(env,detail);if(observed){provider=observed;add({id:"context-safety",label:"Context safety review",status:statusBlocksProvider(observed)?"fail":"unknown",severity:statusBlocksProvider(observed)?"blocking":"warning",summary:observed.message,action:statusBlocksProvider(observed)?"refresh_provider":"none"});}else add({id:"context-safety",label:"Context safety review",status:"unknown",severity:"warning",summary:"The advisory safety probe was unavailable. Generation can continue only after acknowledging that the request was not pre-screened.",action:"review_prompt"});}
+  if(advisory&&!previousSafety&&options.allowProviderCalls!==false){
+    advisoryCapture=await qualifyAdvisoryCapture(env,user,advisory.capture,{documentId:projection.documentId,documentRevision,sourceSha256:advisory.capture.origin!.sourceSha256});
+    advisoryCapture.adoptedBy={preflightId,requestKey};
+  }
   const {review,status,summary}=readinessSummary(probes);
   const canvas=baseSnapshot.canvas&&typeof baseSnapshot.canvas==="object"?baseSnapshot.canvas as Record<string,unknown>:{};
   const sourceContextHead=events.filter((event)=>CONTEXT_MUTATION_TYPES.includes(event.type as typeof CONTEXT_MUTATION_TYPES[number])).reduce((head,event)=>Math.max(head,event.sequence),0);
-  const result:GenerationReadiness={preflightId,requestKey,documentId:projection.documentId,documentRevision,sourceContextHead,...(canvas.canvas_id?{canvasId:String(canvas.canvas_id),contextSetId:String(canvas.context_set_id??"")}:{}),kind:input.kind,productionMode,promptTechnique:technique,status,summary,probes,provider,estimatedTokens,estimatedCostMicrousd:generationReadinessCostMicrousd(input.kind),estimatedSeconds:generationReadinessSeconds(input.kind),requiresAcknowledgement:review,checkedAt,expiresAt,cached:false,version:GENERATION_PREFLIGHT_VERSION};
+  const result:GenerationReadiness={...(advisoryCapture?{advisoryCapture}:{}),preflightId,requestKey,documentId:projection.documentId,documentRevision,sourceContextHead,...(canvas.canvas_id?{canvasId:String(canvas.canvas_id),contextSetId:String(canvas.context_set_id??"")}:{}),kind:input.kind,productionMode,promptTechnique:technique,status,summary,probes,provider,estimatedTokens,estimatedCostMicrousd:generationReadinessCostMicrousd(input.kind),estimatedSeconds:generationReadinessSeconds(input.kind),requiresAcknowledgement:review,checkedAt,expiresAt,cached:false,version:GENERATION_PREFLIGHT_VERSION};
   if(options.persist!==false)await env.DB.prepare("INSERT INTO generation_preflights (preflight_id,owner_id,stream_id,document_id,request_key,status,result_json,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(owner_id,request_key) DO UPDATE SET preflight_id=excluded.preflight_id,status=excluded.status,result_json=excluded.result_json,created_at=excluded.created_at,expires_at=excluded.expires_at").bind(preflightId,user.userId,user.streamId,projection.documentId,cacheKey,status,JSON.stringify(result),checkedAt,expiresAt).run();
   if(options.appendEvents!==false){await appendAuditEvent(env,user.streamId,"worker:policy","GenerationPreflightCompleted",{preflight_id:preflightId,document_id:projection.documentId,document_revision:documentRevision,request_key:requestKey,kind:input.kind,prompt_technique:technique,status,probe_results:probes.map((probe)=>({id:probe.id,status:probe.status,severity:probe.severity,block_ids:probe.blockIds??[],reference_ids:probe.referenceIds??[],categories:probe.categories??[]})),estimated_tokens:estimatedTokens,estimated_cost_microusd:result.estimatedCostMicrousd,estimated_seconds:result.estimatedSeconds,provider_status:provider.status,expires_at:expiresAt,preflight_version:GENERATION_PREFLIGHT_VERSION});if(previous&&previous.documentRevision!==documentRevision&&previous.status!=="ready"&&status!=="blocked")await appendAuditEvent(env,user.streamId,"worker:policy","GenerationRemediationApplied",{preflight_id:preflightId,previous_preflight_id:previous.preflightId,document_id:projection.documentId,previous_document_revision:previous.documentRevision,document_revision:documentRevision,previous_status:previous.status,status,changed_probes:previous.probes.filter((probe)=>probe.status!=="pass").map((probe)=>probe.id),source_surface:input.sourceSurface??"generation-controls",result:"readiness-improved-after-document-change",preflight_version:GENERATION_PREFLIGHT_VERSION});}
   return result;

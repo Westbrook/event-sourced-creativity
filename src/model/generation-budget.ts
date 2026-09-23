@@ -88,7 +88,7 @@ export function documentRenderTokenReservation(kind: string, itemCount = 1, maxi
 }
 
 const PRESENTATION_SERVER_OWNED_CHECKPOINT_FIELDS = [
-  "ordinaryImageExecution", "imageRecoveryAvailable", "generationEvidenceRefs", "generationOutcome", "imageResponseJournal", "imageResultState",
+  "ordinaryImageExecution", "imageRecoveryAvailable", "generationEvidenceRefs", "advisoryCapture", "generationOutcome", "imageResponseJournal", "imageResultState",
   "scenePolicyStopSummary", "outputVideoPlannerCheckpoint", "outputVideoPlannerEnvelope", "outputVideoMediaCheckpoint", "outputVideoMediaEnvelopes", "outputVideoMediaResult",
   "providerSubmissionProtocol", "providerSubmissionLegacyUncertain", "providerSubmissions", "presentationModelRoutes",
   "artifactId", "artifactPlan", "plannerUsage", "plannerResponseId", "plannerResponseIds", "plannerModel", "plannerLatencyMs", "plannerInput", "presentationProviderSubmission", "presentationProviderClientRequestId", "presentationCandidates", "presentationRecoveryOnly", "recoverablePresentationCandidate",

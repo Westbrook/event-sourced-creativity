@@ -1,3 +1,5 @@
+import { qualifyAdvisoryCapture } from './advisory-moderation-evidence.ts';
+import type { AdvisoryModerationCapture } from '../src/model/generation-readiness.ts';
 import { readGenerationSourceEvidence } from './generation-source-evidence-read.ts';
 import type { WorkerEnv } from './runtime.ts';
 import { hostedIdentity, readNativeRetainedPrincipal, Unavailable } from './native-retained-text-custody.ts';
@@ -73,8 +75,24 @@ export async function handleGenerationEvidenceRead(request:Request,env:WorkerEnv
     const generationId=parse(selected.payload).generation_id;if(typeof generationId!=='string')throw fail();
     if(events.some(event=>parse(event.payload).generation_id!==generationId))throw fail();
     const checkpoint=parse(job.result_json),refs=new Map<string,string[]>();
+    const jobRequest=parse(job.request_json),originalAdvisory=object(checkpoint.advisoryCapture);
+    const readAdvisory=async()=>{
+      if(!Object.keys(originalAdvisory).length)return undefined;
+      const binding=object(originalAdvisory.adoptedBy);
+      if(binding.preflightId!==jobRequest.preflightId||binding.requestKey!==jobRequest.requestKey)
+        return {status:'unavailable' as const,reason:'job-binding-mismatch',refs:{}};
+      return qualifyAdvisoryCapture(env,{userId:identity.userId,streamId:stream},originalAdvisory as AdvisoryModerationCapture,
+        {documentId,documentRevision:String(jobRequest.documentRevision??'')});
+    };
+    const advisoryCapture=await readAdvisory();
+    const unavailableAdvisoryRefs=new Set<string>();
+
     const add=(value:unknown,label:string)=>{if(typeof value!=='string'||!value)return;if(value.length>240)throw fail();refs.set(value,[...(refs.get(value)??[]),label]);};
-    for(const [key,value] of Object.entries(object(checkpoint.generationEvidenceRefs)))add(object(value).ref,`checkpoint:${key}`);
+    for(const [key,value] of Object.entries(object(checkpoint.generationEvidenceRefs))){
+      // A cache-linked advisory record must still match its original binding and deadline.
+      if(Object.hasOwn(object(originalAdvisory.refs),key)&&advisoryCapture?.refs[key]?.ref!==object(value).ref)unavailableAdvisoryRefs.add(String(object(value).ref));
+      add(object(value).ref,`checkpoint:${key}`);
+    }
     const receipt=object(checkpoint.generationReceipt);add(receipt.input_ref,'job:input');
     for(const event of events){const payload=event.private_json?parse(event.private_json):parse(event.payload);for(const key of ['output_ref','prompt_ref','input_ref'] as const)add(payload[key],`${event.type}:${key}`);}
     if(refs.size>32)throw fail();
@@ -85,7 +103,7 @@ export async function handleGenerationEvidenceRead(request:Request,env:WorkerEnv
       AND kind IN('provider-output','provider-response','prompt','document-artifact-input')
       AND NOT EXISTS(SELECT 1 FROM project_resource_scopes scope WHERE scope.resource_kind='content' AND scope.resource_id=private_content.content_id)
       AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes scope WHERE scope.content_id=private_content.content_id)
-      AND ${exclusion.sql} ORDER BY content_id`).bind(identity.userId,JSON.stringify([...refs.keys()]),...exclusion.bindings).all<Content>();
+      AND ${exclusion.sql} ORDER BY content_id`).bind(identity.userId,JSON.stringify([...refs.keys()].filter(id=>!unavailableAdvisoryRefs.has(id))),...exclusion.bindings).all<Content>();
     const contents=(await readContent()).results;
     if(byteLength(JSON.stringify({job,events,contents}))>12_000_000)throw fail();
     const sourceEvidence=url.searchParams.has('includeSource')?await readGenerationSourceEvidence(request,env,job,sequence):null;
@@ -97,15 +115,16 @@ export async function handleGenerationEvidenceRead(request:Request,env:WorkerEnv
       ||JSON.stringify((await readEvents()).results)!==JSON.stringify(events)
       ||JSON.stringify((await readContent()).results)!==JSON.stringify(contents)
       ||(await readNativeRetainedPrincipal(env,identity)).principal.auth_json!==firstAuth.principal.auth_json||env.DB!==db)throw fail();
+    if(JSON.stringify(await readAdvisory())!==JSON.stringify(advisoryCapture))throw fail();
     await sourceEvidence?.recheck();
     const sourceDiagnostic=sourceEvidence?.certificate.status==='unavailable'?sourceEvidence.certificate:null;
     const response=sourceDiagnostic?reply({error:sourceDiagnostic.error,diagnostic:sourceDiagnostic},409):reply({schemaVersion:'forma-original-generation-evidence-v1',retrievedAt:new Date().toISOString(),
       custody:{ownerId:identity.userId,streamId:stream,documentId,generationId,requestedSequence:sequence,jobExpiresAt:job.expires_at,scope:'personal',readOnly:true},
       limitations:['Only original retained bytes are returned; no historical source is reconstructed.','Application usage and settlement records are not independent verified incurred charges.','Current deployment configuration is not proof of the original account, payer, region or credential binding.'],
-      job,events,records,...(sourceEvidence?{sourceEvidence:sourceEvidence.certificate}:{}),
+      job,events,records,...(advisoryCapture?{advisoryCapture}:{}),...(sourceEvidence?{sourceEvidence:sourceEvidence.certificate}:{}),
       unavailable:[...refs].filter(([id])=>!contents.some(row=>row.content_id===id)).map(([contentId,linkedFrom])=>({contentId,linkedFrom,status:'not-retained-or-not-authorized'}))});
     sourceEvidence?.checkDeadline();
-    if([job.expires_at,...contents.map(row=>row.expires_at)].some(value=>Date.parse(value)<=Date.now()))throw fail();
+    if([job.expires_at,...Object.values(advisoryCapture?.refs??{}).map(ref=>ref.expiresAt),...contents.map(row=>row.expires_at)].some(value=>Date.parse(value)<=Date.now()))throw fail();
     return response;
   }catch(error){if(error instanceof Error&&/^generation_source_[a-z_]+$/u.test(error.message))return reply({error:error.message},409);return reply({error:error instanceof Unavailable?error.message:'generation_evidence_unavailable'},error instanceof Unavailable?404:503);}
 }

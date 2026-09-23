@@ -179,18 +179,18 @@ async function approvedSourceFixture(f,env,owner){
 }
 
 
-for (const runtime of ['source','production bundle']) for (const scopeCase of ['complete','scope observation','historical proof','historical missing project identity','historical recreated','historical rehomed','historical attached','historical census truncation']) test(`${runtime}: isolated schema delivers ${scopeCase} through one mocked Still generation`,async t=>{
+for (const runtime of ['source','production bundle']) for (const scopeCase of ['complete','ordinary provider failure','scope observation','historical proof','historical missing project identity','historical recreated','historical rehomed','historical attached','historical census truncation']) test(`${runtime}: isolated schema delivers ${scopeCase} through one mocked Still generation`,async t=>{
  const historicalCase=scopeCase.startsWith('historical ');
  const f=await fixture(t);await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
  const {default:worker}=runtime==='source'?await import('../worker/index.ts'):await import('../dist/server/index.js');const media=new Map(),background=[];
  const env={DB:f.db,OPENAI_API_KEY:'offline-sentinel',OPENAI_MODEL:'gpt-5.6-terra',ASSETS:{fetch:async()=>new Response(null,{status:404})},MEDIA:{put:async(key,bytes)=>media.set(key,bytes),get:async()=>null}};
  const request=(path,body)=>worker.fetch(new Request('http://localhost'+path,body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),env,{waitUntil:p=>background.push(p)});
- const original=globalThis.fetch;let planner=0,image=0,providerCalls=0;
- globalThis.fetch=async(url)=>{
-  providerCalls++;
+ const original=globalThis.fetch;let planner=0,image=0,providerCalls=0;const submittedBodies=[];
+ globalThis.fetch=async(url,init)=>{
+  providerCalls++;submittedBodies.push(init.body);
   if(String(url).endsWith('/moderations'))return Response.json({id:'offline-moderation',model:'omni-moderation-latest',results:[{flagged:false,categories:{},category_scores:{}}]});
   if(String(url).endsWith('/responses')){planner++;return Response.json({id:'offline-direction',model:'gpt-5.6-terra',output_text:JSON.stringify({title:'Synthetic harbor',rationale:'Preserve the brief',scene:'A quiet harbor',palette:['blue','white','gray'],next_moves:['View result']}),usage:{input_tokens:100,output_tokens:100,total_tokens:200}});}
-  assert.equal(String(url),'https://api.openai.com/v1/images/generations');image++;return new Response('data: '+JSON.stringify({type:'image_generation.completed',b64_json:Buffer.from('offline-image-bytes').toString('base64'),size:'1536x1024',output_format:'png',usage:{input_tokens:100,output_tokens:20,total_tokens:120,input_tokens_details:{text_tokens:100,image_tokens:0}}})+'\n\n',{headers:{'content-type':'text/event-stream','x-request-id':'offline-image'}});
+  assert.equal(String(url),'https://api.openai.com/v1/images/generations');image++;if(scopeCase==='ordinary provider failure')return Response.json({error:{code:'server_error',message:'offline image provider failure',param:'prompt'}},{status:503,headers:{'x-request-id':'offline-failed-image'}});return new Response('data: '+JSON.stringify({type:'image_generation.completed',b64_json:Buffer.from('offline-image-bytes').toString('base64'),size:'1536x1024',output_format:'png',usage:{input_tokens:100,output_tokens:20,total_tokens:120,input_tokens_details:{text_tokens:100,image_tokens:0}}})+'\n\n',{headers:{'content-type':'text/event-stream','x-request-id':'offline-image'}});
  };t.after(()=>{globalThis.fetch=original;});
  const session=await (await request('/api/session')).json();f.sqlite.prepare('UPDATE users SET consent_version=?').run('pilot-2026-08-10');
  // The historical-proof fixture requires authentic origin envelopes. Enrich
@@ -276,6 +276,36 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  const admitted=await request('/api/document-jobs',{kind:'generate',documentId:'doc-atmosphere',sourceSurface:'still',payload:{requestKey:'still:doc-atmosphere:1:offline-proof',previousAttemptId:previousId,paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:true}});
  assert.equal(admitted.status,202,await admitted.clone().text());const {job}=await admitted.json();
  const response=await request(`/api/document-jobs/${job.jobId}/run`,{});assert.equal(response.status,200,await response.clone().text());const result=(await response.json()).job;
+ if(scopeCase==='ordinary provider failure'){
+   assert.equal(result.result.advisoryCapture?.status,'retained',JSON.stringify(result.result.advisoryCapture));
+   assert.equal(result.status,'failed');assert.equal(planner,1);assert.equal(image,1);assert.equal(media.size,0);
+   const requested=f.sqlite.prepare("SELECT sequence FROM events WHERE correlation_id=(SELECT correlation_id FROM document_jobs WHERE job_id=?) AND type='GenerationRequested'").get(job.jobId);
+   const path=`/api/generation-evidence?documentId=doc-atmosphere&requestedSequence=${requested.sequence}`;
+   const inspect=headers=>worker.fetch(new Request('https://forma.test'+path,{headers}),env,{waitUntil:()=>assert.fail('inspection scheduled work')});
+   const headers={'oai-authenticated-user-id':session.user.userId,'oai-authenticated-user-email':session.user.email};
+   const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n,dispatches=providerCalls;
+   const response=await inspect(headers);assert.equal(response.status,200,await response.clone().text());const evidence=await response.json();
+   assert.equal(evidence.advisoryCapture?.status,'retained',JSON.stringify({capture:evidence.advisoryCapture,request:JSON.parse(evidence.job.request_json).documentRevision}));
+   assert.equal(evidence.job.job_id,job.jobId);assert.equal(evidence.job.status,'failed');assert.equal(evidence.unavailable.length,0);
+   const stages=evidence.records.flatMap(r=>{try{const e=JSON.parse(r.content);return e.schemaVersion==='forma-private-generation-evidence-v1'?[e]:[];}catch{return[];}});
+   for(const stage of ['planner','compiler','app_moderation','media_submission'])assert.ok(stages.some(e=>e.outcome.pipelineStage===stage),stage);
+   const failed=stages.find(e=>e.phase==='response'&&e.operation.requestId==='offline-failed-image'&&e.responseBody?.includes('offline image provider failure'));
+   assert.ok(failed);assert.equal(failed.outcome.failureKind,'server');assert.ok(failed.operation.responseSha256);
+   assert.equal(submittedBodies.length,4);
+   for(const body of submittedBodies){
+     const receipt=stages.find(e=>e.phase==='request'&&e.requestBody===body);
+     assert.ok(receipt,'all four actual request envelopes must be retained');
+     assert.equal(receipt.operation.requestSha256,await import('../worker/generation-evidence.ts').then(m=>m.evidenceSha256(body)));
+   }
+   assert.ok(stages.some(e=>e.requestBody?.includes('gpt-image-2.5-sunburst')));assert.ok(stages.some(e=>e.safety?.verdict==='clear'));
+   const compiled=evidence.events.find(e=>e.type==='ContextCompiled');assert.ok(JSON.parse(compiled.private_json).compiled_snapshot.facts.length>0);
+   assert.ok(JSON.parse(evidence.job.request_json).snapshot.facts.length>0);
+   assert.equal(response.headers.get('cache-control'),'private, no-store');
+   assert.notEqual((await inspect({})).status,200);
+   f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run('2000-01-01T00:00:00.000Z',evidence.records[0].content_id);
+   const expired=await inspect(headers);assert.equal(expired.status,200);const expiredBody=await expired.json();assert.ok(expiredBody.unavailable.length>0||expiredBody.advisoryCapture?.status==='capture-incomplete');assert.equal(expiredBody.records.some(r=>r.content_id===evidence.records[0].content_id),false);
+   assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before+1,'only fixture expiry mutation may write');assert.equal(providerCalls,dispatches,'inspection never dispatches or retries');return;
+ }
  assert.equal(result.status,'completed',JSON.stringify(result.errorDetail));assert.equal(result.result.previousAttemptId,previousId);assert.equal(f.sqlite.prepare('SELECT status FROM document_jobs WHERE job_id=?').get(previousId).status,'failed');assert.equal(planner,1);assert.equal(image,1);assert.equal(media.size,1);
  assert.ok(result.result.generationReceipt.settled_cost_microusd>0);assert.equal(result.result.generationReceipt.reservation_status,'settled');
  const retained=await loadPrivateContent(env,session.user.userId);assert.ok(Object.keys(retained).length>0);assert.ok(Object.values(retained).some(value=>value.includes('Synthetic harbor')));
@@ -294,6 +324,12 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  assert.ok(evidence.records.some(record=>record.content.includes('requestBody')));
  assert.equal(evidence.unavailable.length,0);assert.equal(evidenceResponse.headers.get('cache-control'),'private, no-store');
  assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,beforeChanges,'inspection must issue no writes');
+ if(scopeCase==='complete'){
+   const stages=evidence.records.flatMap(r=>{try{return[JSON.parse(r.content)];}catch{return[];}});
+   assert.equal(evidence.advisoryCapture?.status,'retained',JSON.stringify(evidence.advisoryCapture));
+   assert.equal(submittedBodies.length,4);
+   for(const body of submittedBodies){const e=stages.find(e=>e.requestBody===body);assert.ok(e);assert.equal(e.operation.requestSha256,await import('../worker/generation-evidence.ts').then(m=>m.evidenceSha256(body)));}
+ }
  const sourcePath=evidencePath+'&includeSource=1';
  f.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run(session.user.userId);
  if(scopeCase==='historical census truncation')f.sqlite.prepare("DELETE FROM event_private_payloads WHERE json_extract(private_json,'$.project_id')='census-fixture-0'").run();
@@ -595,4 +631,83 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  assert.equal((await inspect()).status,503);
  assert.equal(planner,1);assert.equal(image,1,'inspection must make no provider call');assert.equal(providerCalls,inspectionProviderCalls,'inspection must not add moderation or any other provider call');
  for(const table of EVENT_SAVE_REPAIR_TABLES)assert.equal(f.sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n,0);
+});
+
+// Prospective personal Image receipt custody. These tests never qualify source history.
+for(const runtime of ['source','production bundle'])for(const variant of ['fresh','full-cache','previous-safety','legacy','missing','expired','foreign','changed-binding','request-storage','response-storage','early-no-job','revoked-read','binding-read','extended-expiry','expiry-race','changed-revision','canceled','early-blocked'])test(`${runtime}: advisory custody ${variant}`,async t=>{
+ const f=await fixture(t);await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
+ const {default:worker}=runtime==='source'?await import('../worker/index.ts'):await import('../dist/server/index.js');
+ const env={DB:f.db,OPENAI_API_KEY:'offline-only',ASSETS:{fetch:async()=>new Response(null,{status:404})},MEDIA:{put:async()=>{},get:async()=>null}},background=[];
+ const request=(path,body)=>worker.fetch(new Request('http://localhost'+path,body===undefined?{}:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}),env,{waitUntil:p=>background.push(p)});
+ const original=globalThis.fetch,requests=[];globalThis.fetch=async(url,init)=>{
+   requests.push({url:String(url),body:init.body});const b=JSON.parse(init.body);
+   if(String(url).endsWith('/moderations'))return Response.json({id:'advisory-fixture',model:b.model,results:Array.from({length:Array.isArray(b.input)?b.input.length:1},()=>({flagged:variant==='early-no-job',categories:{violence:variant==='early-no-job'},category_scores:{violence:0}}))},{headers:{'x-request-id':'fixture-moderation'}});
+   if(String(url).endsWith('/responses'))return Response.json({id:'fixture-plan',model:b.model,output_text:JSON.stringify({title:'Fixture',scene:'A blue mug',palette:['blue','cream','orange'],rationale:'Fixture',next_moves:['Inspect','Stop']}),usage:{input_tokens:10,output_tokens:10,total_tokens:20}});
+   assert.equal(String(url),'https://api.openai.com/v1/images/generations');return Response.json({error:{code:'server_error',message:'fixture503'}},{status:503,headers:{'x-request-id':'fixture503'}});
+ };t.after(()=>{globalThis.fetch=original;});
+ const session=await(await request('/api/session')).json(),owner=session.user.userId;
+ f.sqlite.prepare('UPDATE users SET consent_version=?').run('pilot-2026-08-10');await request('/api/events?after=0&limit=2000&content=0');while(background.length)await Promise.all(background.splice(0));
+ if(variant.endsWith('-storage'))f.control.beforeBatch=ss=>{
+   f.control.failIndex=null;const phase=variant.split('-')[0];const index=ss.findIndex(s=>s.values.some(v=>typeof v==='string'&&v.includes('"advisory":')&&v.includes(`"phase":"${phase}"`)));
+   if(index>=0)f.control.failIndex=index;
+ };
+ const input={kind:'generate',documentId:'doc-atmosphere',sourceSurface:'still',requestKey:'first',productionMode:'manual',promptTechnique:'prose'};
+ const preflight=async value=>{const r=await request('/api/generation-readiness',value);assert.equal(r.status,200,await r.clone().text());return(await r.json()).readiness;};
+ const first=await preflight(input);assert.equal(requests.length,1);assert.equal(first.advisoryCapture.inspection,'unavailable-before-admission');
+ assert.equal(first.probes.find(p=>p.id==='context-safety').status,variant==='early-no-job'?'warning':'pass');
+ assert.equal(first.advisoryCapture.status,variant.endsWith('-storage')?'capture-incomplete':'retained');
+ assert.equal(JSON.stringify(first).includes('requestBody'),false);assert.equal(JSON.stringify(first).includes('responseBody'),false);
+ const originalCapture=structuredClone(first.advisoryCapture),firstRef=Object.values(first.advisoryCapture.refs)[0];
+ const replaceCache=change=>{const row=f.sqlite.prepare('SELECT rowid,result_json FROM generation_preflights WHERE owner_id=? ORDER BY created_at DESC LIMIT 1').get(owner),value=JSON.parse(row.result_json);change(value);f.sqlite.prepare('UPDATE generation_preflights SET result_json=? WHERE rowid=?').run(JSON.stringify(value),row.rowid);};
+ if(variant==='legacy')replaceCache(r=>delete r.advisoryCapture);
+ if(variant==='changed-binding')replaceCache(r=>r.advisoryCapture.origin.sourceSha256='0'.repeat(64));
+ if(variant==='missing')f.sqlite.prepare('DELETE FROM private_content WHERE content_id=?').run(firstRef.ref);
+ if(variant==='expired')f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run('2000-01-01T00:00:00.000Z',firstRef.ref);
+ if(variant==='extended-expiry')f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run('2099-01-01T00:00:00.000Z',firstRef.ref);
+ if(variant==='changed-revision'){const event=makeEvent('creative:'+owner,f.sqlite.prepare('SELECT MAX(sequence) AS n FROM events').get().n+1,'user:'+owner,'fixture','change','BlockPropertyEdited',{block_id:'block-direction',document_id:'doc-atmosphere',project_id:'project-atmosphere',property_path:'text',new_value:'Changed fixture source'});const values=eventWriteBindings(event);await f.db.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${values.map(()=>'?').join(',')})`).bind(...values).run();}
+ if(variant==='early-blocked'){const event=makeEvent('creative:'+owner,f.sqlite.prepare('SELECT MAX(sequence) AS n FROM events').get().n+1,'user:'+owner,'fixture','change','BlockCreated',{block_id:'unavailable-reference',document_id:'doc-atmosphere',project_id:'project-atmosphere',type:'reference',scope:'document',properties:{text:'Missing reference fixture',pixel_reference_mode:'preserve_subject',weight:1}});const values=eventWriteBindings(event);await f.db.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${values.map(()=>'?').join(',')})`).bind(...values).run();}
+ if(variant==='foreign')f.sqlite.prepare('UPDATE private_content SET owner_id=? WHERE content_id=?').run('foreign-fixture',firstRef.ref);
+ if(variant==='full-cache'){
+   const reused=await preflight({...input,documentRevision:first.documentRevision});assert.equal(reused.cached,true);assert.deepEqual(reused.advisoryCapture,first.advisoryCapture);assert.equal(requests.length,1);
+ }
+ if(['legacy','missing','expired','foreign','changed-binding','extended-expiry'].includes(variant)){const cached=await preflight({...input,documentRevision:first.documentRevision});assert.equal(cached.cached,true);assert.notEqual(cached.advisoryCapture.status,'retained');assert.equal(requests.length,1);}
+ if(variant==='previous-safety'){
+   const reused=await preflight({...input,requestKey:'second'});assert.equal(reused.cached,false);assert.deepEqual(reused.advisoryCapture.origin,first.advisoryCapture.origin);assert.deepEqual(reused.advisoryCapture.refs,first.advisoryCapture.refs);assert.equal(reused.advisoryCapture.adoptedBy.requestKey,'second');assert.equal(requests.length,1);
+ }
+ const admission={kind:'generate',documentId:'doc-atmosphere',sourceSurface:'still',payload:{requestKey:'admitted',paidMediaConfirmed:true,budgetAcknowledged:true,preflightAcknowledged:variant!=='early-no-job'}};
+ for(const forged of [{advisoryCapture:first.advisoryCapture},{generationEvidenceRefs:first.advisoryCapture.refs}]){
+   const r=await request('/api/document-jobs',{...admission,payload:{...admission.payload,...forged}});assert.equal(r.status,400);assert.equal(requests.length,1);
+ }
+ const beforeJobs=f.sqlite.prepare('SELECT COUNT(*) AS n FROM document_jobs').get().n;
+ const admitted=await request('/api/document-jobs',admission);
+ if(variant==='early-no-job'||variant==='early-blocked'){
+   assert.equal(admitted.status,variant==='early-no-job'?428:409);const body=await admitted.json();assert.equal(typeof body.error,'string');if(body.readiness)assert.equal(body.readiness.advisoryCapture.inspection??'unavailable-before-admission','unavailable-before-admission');
+   assert.equal(f.sqlite.prepare('SELECT COUNT(*) AS n FROM document_jobs').get().n,beforeJobs);assert.equal(requests.length,1);return;
+ }
+ assert.equal(admitted.status,202,await admitted.clone().text());const job=(await admitted.json()).job;
+ if(variant==='canceled'){const canceled=await request(`/api/document-jobs/${job.jobId}/cancel`,{});assert.equal(canceled.status,200);assert.equal((await canceled.json()).job.status,'canceled');assert.equal(requests.length,1);assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM events WHERE correlation_id=? AND type='GenerationRequested'").get(job.jobId).n,0);return;}
+ const expectedRequests=variant==='changed-revision'?5:4;
+ const response=await request(`/api/document-jobs/${job.jobId}/run`,{});assert.equal(response.status,200);assert.equal((await response.json()).job.status,'failed');assert.equal(requests.length,expectedRequests,'reuse cannot buy replacement moderation; changed source gets its normal new check');
+ const row=f.sqlite.prepare('SELECT * FROM document_jobs WHERE job_id=?').get(job.jobId),checkpoint=JSON.parse(row.result_json),capture=checkpoint.advisoryCapture;
+ const incomplete=['legacy','missing','expired','foreign','changed-binding','request-storage','response-storage','extended-expiry'].includes(variant);
+ assert.equal(capture.status==='retained',!incomplete,JSON.stringify(capture));
+ if(['missing','expired','foreign','extended-expiry'].includes(variant))assert.deepEqual(Object.values(capture.unavailableRefs)[0],firstRef,'original unavailable receipt identity and deadline survive adoption');
+ if(variant==='changed-revision'){assert.notEqual(capture.origin.documentRevision,originalCapture.origin.documentRevision);assert.notEqual(capture.origin.sourceSha256,originalCapture.origin.sourceSha256);}
+ else if(!incomplete){assert.deepEqual(capture.origin,originalCapture.origin);assert.deepEqual(capture.refs,originalCapture.refs);assert.equal(capture.adoptedBy.requestKey,'admitted');}
+ const sequence=f.sqlite.prepare("SELECT sequence FROM events WHERE correlation_id=? AND type='GenerationRequested'").get(row.correlation_id).sequence;
+ const inspect=()=>worker.fetch(new Request(`https://forma.test/api/generation-evidence?documentId=doc-atmosphere&requestedSequence=${sequence}`,{headers:{'oai-authenticated-user-id':owner,'oai-authenticated-user-email':session.user.email}}),env,{waitUntil:()=>assert.fail('inspection scheduled work')});
+ if(variant==='revoked-read')f.sqlite.prepare('UPDATE users SET consent_version=NULL WHERE user_id=?').run(owner);
+ if(variant==='binding-read'){checkpoint.advisoryCapture.adoptedBy.requestKey='wrong';f.sqlite.prepare('UPDATE document_jobs SET result_json=? WHERE job_id=?').run(JSON.stringify(checkpoint),job.jobId);}
+ let mutated=false;
+ if(variant==='expiry-race'){const prepare=f.db.prepare;f.db.prepare=sql=>{const wrap=st=>{const bind=st.bind.bind(st),all=st.all.bind(st);st.bind=(...args)=>wrap(bind(...args));st.all=async()=>{const r=await all();if(!mutated){mutated=true;f.sqlite.prepare('UPDATE private_content SET expires_at=? WHERE content_id=?').run('2000-01-01T00:00:00.000Z',firstRef.ref);}return r;};return st;};const st=prepare(sql);return sql.startsWith('SELECT content_id,content,expires_at FROM private_content')?wrap(st):st;};}
+ const changes=f.sqlite.prepare('SELECT total_changes() AS n').get().n,read=await inspect();
+ if(variant==='revoked-read'||variant==='expiry-race')assert.notEqual(read.status,200);
+ else{
+   assert.equal(read.status,200,await read.clone().text());const evidence=await read.json();
+   assert.equal(evidence.advisoryCapture.status==='retained',!incomplete&&variant!=='binding-read');
+   const records=evidence.records.flatMap(r=>{try{return[JSON.parse(r.content)];}catch{return[];}}).filter(r=>r.schemaVersion==='forma-private-generation-evidence-v1');
+   if(!incomplete&&variant!=='binding-read')for(const request of requests.slice(variant==='changed-revision'?1:0)){const retained=records.find(r=>r.requestBody===request.body);assert.ok(retained);assert.equal(retained.operation.requestSha256,await import('../worker/generation-evidence.ts').then(m=>m.evidenceSha256(request.body)));}
+   if(variant==='foreign'||variant==='binding-read')assert.equal(evidence.records.some(r=>r.content_id===firstRef.ref),false);
+ }
+ assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,changes+(mutated?1:0));assert.equal(requests.length,expectedRequests);
 });

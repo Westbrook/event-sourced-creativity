@@ -79,11 +79,16 @@ const summarize = (results: ModerationResult[]) => {
   return { flagged: results.some((result) => Boolean(result.flagged)), categories: [...categories].sort(), scores };
 };
 
-export async function moderateGenerationSnapshot(env: WorkerEnv, snapshot: Record<string, unknown>, signal?: AbortSignal): Promise<GenerationModerationReceipt> {
+export async function moderateGenerationSnapshot(env: WorkerEnv, snapshot: Record<string, unknown>, signal?: AbortSignal, advisory?: {onEvidence:GenerationEvidenceObserver;onCaptureError:()=>void}): Promise<GenerationModerationReceipt> {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
   const facts = Array.isArray(snapshot.facts) ? snapshot.facts : []; const mapped = facts.map((fact) => ({ id: String((fact as Record<string, unknown>)?.block_id ?? ""), text: factText(fact) })).filter((item) => item.text);
   const canonical = JSON.stringify(snapshot).slice(0, 28_000); const inputs = [canonical, ...mapped.slice(0, 24).map((item) => item.text)];
-  const { body, requestId, latencyMs } = await requestModeration(env, inputs, signal,false,undefined,inputs.length); const results = body.results ?? []; const summary = summarize(results);
+  // Advisory observation cannot suppress dispatch or erase a valid verdict.
+  // Exact-prompt moderation retains its existing strict checkpoint behavior.
+  const observe:GenerationEvidenceObserver|undefined=advisory?async evidence=>{
+    try{await advisory.onEvidence(evidence);}catch{try{advisory.onCaptureError();}catch{/* Capture reporting is observational too. */}}
+  }:undefined;
+  const { body, requestId, latencyMs } = await requestModeration(env, inputs, signal,false,observe,inputs.length); const results = body.results ?? []; const summary = summarize(results);
   const blockIds = mapped.slice(0, 24).filter((_, index) => Boolean(results[index + 1]?.flagged)).map((item) => item.id).filter(Boolean);
   return { available: true, ...summary, blockIds, referenceIds: [], model: body.model ?? OPENAI_IMAGE_MODERATION_CONTRACT.model, requestId, requestIds: requestId ? [requestId] : [], probeCount: 1, latencyMs, coverage: "text" };
 }
