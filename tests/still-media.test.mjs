@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {mediaSize,videoSize,captureMediaSize} from '../src/still/media.ts';
 import {stillResults} from '../src/still/results.ts';
 test('complete dimensions survive result listings and reference-property naming',()=>{
- const outputs=[{id:'portrait',width:768,height:1344,title:'Portrait',mediaUrl:'/api/media/a',sequence:1}];
+ const focalPoint={x:.8,y:.3,confidence:1,method:'attention-region-v2',sampleWidth:32,sampleHeight:32};
+ const outputs=[{focalPoint,id:'portrait',width:768,height:1344,title:'Portrait',mediaUrl:'/api/media/a',sequence:1}];
  const [result]=stillResults({documentId:'d',outputs,artifacts:[]},[],[]);
+ assert.deepEqual(result.focalPoint,focalPoint);
  assert.deepEqual(mediaSize(result),{width:768,height:1344,source:'metadata'});
  assert.deepEqual(mediaSize({image_width:2048,image_height:1024}),{width:2048,height:1024,source:'metadata'});
 });

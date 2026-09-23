@@ -14,7 +14,7 @@ import './all-list.ts';
 import './audio-player.ts';
 import { ListDisplay, listType, listControls, LIST_PAGE_SIZE } from './list-display.ts';
 import { assessNextBest, nextBestOrder, readNextBestFlag, type NextBestAnswer } from './next-best.ts';
-import { stillImage, stillVideoCover, stillVideo, stillImageStage } from './media.ts';
+import { stillResultThumbnail, stillImage, stillVideoCover, stillVideo, stillImageStage } from './media.ts';
 import { fitToolbarLimit } from './toolbar-fit.ts';
 import { generationOutcome } from './generation-outcome.ts';
 import { generationDecisionContext } from './generation-decision.ts';
@@ -1043,7 +1043,7 @@ export class StillApp extends LitElement {
     }
     if (pos.view === 'results') {
       const results = stillResults(p,c.jobs,c.events);
-      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1>${this.renderList(results,r => html`<a data-attention-id=${`result:${r.id}`} class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:r.kind==='video'&&safeMedia(r.url)?stillVideoCover(safeMedia(r.url),r.title):safeMedia(r.url) ? stillImage(safeMedia(r.url),r.title,r) : html`<div class="result-word">${FORMATS[r.kind]}</div>`}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`,'result-grid')}${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
+      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1>${this.renderList(results,r => html`<a data-attention-id=${`result:${r.id}`} class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${stillResultThumbnail(html`${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:r.kind==='video'&&safeMedia(r.url)?stillVideoCover(safeMedia(r.url),r.title):safeMedia(r.url) ? stillImage(safeMedia(r.url),r.title,r) : html`<div class="result-word">${FORMATS[r.kind]}</div>`}`,r.focalPoint)}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`,'result-grid')}${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     }
     if(pos.view==='rejection')return keyed(this.generationCheckKey(),html`<still-rejection-page .client=${c} .scope=${`${this.generationCheckKey()}/${this.selectedGeneration()?.updatedAt??''}/${this.selectedGeneration()?.status??''}`}></still-rejection-page>`);
     if(pos.view==='generation')return this.renderGeneration();

@@ -1,3 +1,4 @@
+import type { ImageFocalPoint } from '../model/focal-point.ts';
 import { imageGenerationStatus } from '../model/image-generation-progress.ts';
 import { generationOutcome } from './generation-outcome.ts';
 import type { CreativeEvent, CreativeProjection } from '../model/events.ts';
@@ -29,13 +30,13 @@ export function generationPreview(job:DocumentJob,p:CreativeProjection,events:Cr
   const width=size?Number(size[1]):job.imageSize?.width??0,height=size?Number(size[2]):job.imageSize?.height??0;
   return {title,...(Number.isSafeInteger(width)&&Number.isSafeInteger(height)&&width>0&&height>0&&width<=16384&&height<=16384?{width,height}:{})};
 }
-export type StillResult = {id:string;view:'artifact'|'generation';title:string;kind:string;url:string;sequence:number;width?:number|null;height?:number|null;job?:DocumentJob};
+export type StillResult = {id:string;view:'artifact'|'generation';title:string;kind:string;url:string;sequence:number;width?:number|null;height?:number|null;focalPoint?:ImageFocalPoint|null;job?:DocumentJob};
 export function stillResults(p:CreativeProjection,jobs:DocumentJob[],events:CreativeEvent[]):StillResult[] {
   const pending:StillResult[]=jobs.filter(j=>j.documentId===p.documentId&&generationFormat(j)&&!generationResult(j,p,events,true)).map(job=>({
     id:job.jobId,view:'generation',title:generationPreview(job,p,events).title,kind:generationFormat(job),url:'',sequence:job.requestedSequence,job,
   }));
   const results:StillResult[]=[...pending,
-    ...p.outputs.filter(o=>!o.discarded).map(o=>({id:o.id,view:'artifact' as const,title:o.title??'Image',kind:'image',url:o.mediaUrl??'',width:o.width,height:o.height,sequence:o.sequence})),
+    ...p.outputs.filter(o=>!o.discarded).map(o=>({id:o.id,view:'artifact' as const,title:o.title??'Image',kind:'image',url:o.mediaUrl??'',width:o.width,height:o.height,focalPoint:o.focalPoint,sequence:o.sequence})),
     ...p.artifacts.map(a=>({id:a.id,view:'artifact' as const,title:a.title,kind:a.kind,url:a.kind==='video'?a.mediaUrl??'':'',sequence:a.sequence})),
   ];
   return results.sort((a,b)=>b.sequence-a.sequence||((b.job?.requestedAt??'').localeCompare(a.job?.requestedAt??'')));

@@ -29,9 +29,10 @@ test('actual MP4 capture saves WebP; Forma and Still preview reloads request no 
       await page.evaluate(async source=>{
         const {html,render}=await import('/node_modules/lit/index.js');
         await import('/src/components/artifact-summary.ts');
-        const {stillVideoCover}=await import('/src/still/media.ts');
+        const {stillVideoCover,stillResultThumbnail}=await import('/src/still/media.ts');
+        const style=document.createElement('style');style.textContent=(await import('/src/still/style.css?raw')).default;document.head.append(style);
         const artifact={kind:'video',mediaUrl:source,title:'Saved video',items:[],summary:'Preview test'};
-        render(html`<style>body{font:16px system-ui;background:#f4f1eb;color:#302f2b}main{max-width:850px;margin:40px auto;display:grid;grid-template-columns:1fr 1fr;gap:24px}.artifact-summary{height:240px}h2{font-size:20px}</style><section><h2>Forma project</h2><forma-artifact-summary .artifact=${artifact}></forma-artifact-summary></section><section><h2>Still result</h2>${stillVideoCover(source,'Saved video')}</section>`,document.querySelector('main'));
+        render(html`<style>body{font:16px system-ui;background:#f4f1eb;color:#302f2b}main{max-width:850px;margin:40px auto;display:grid;grid-template-columns:1fr 1fr;gap:24px}.artifact-summary{height:240px}h2{font-size:20px}</style><section><h2>Forma project</h2><forma-artifact-summary .artifact=${artifact}></forma-artifact-summary></section><section><h2>Still result</h2><still-app><a class="result">${stillResultThumbnail(stillVideoCover(source,'Saved video'))}<span>Saved video</span></a></still-app></section>`,document.querySelector('main'));
       },sourceUrl);
       await page.waitForFunction(()=>document.querySelectorAll('forma-video-cover img').length===2,null,{timeout:30_000});
       await page.locator('forma-video-cover img').evaluateAll(images=>Promise.all(images.map(image=>image.decode())));
@@ -44,6 +45,11 @@ test('actual MP4 capture saves WebP; Forma and Still preview reloads request no 
       assert.equal(cover.contentType,'image/webp');const size=inspectVideoCover(cover.bytes);
       assert.ok(Math.max(size.width,size.height)<=960);assert.ok(cover.bytes.length<mp4.length);
       const dimensions=await page.locator('forma-video-cover img').first().evaluate(img=>({width:img.naturalWidth,height:img.naturalHeight}));assert.deepEqual(dimensions,size);
+    });
+    await t.test('Still cover fills a 4:3 crop and calculates a focal point after asynchronous loading',async()=>{
+      await page.waitForFunction(()=>document.querySelector('still-app img')?.style.getPropertyValue('--focal-x'));
+      const geometry=await page.locator('still-app img').evaluate(img=>({fit:getComputedStyle(img).objectFit,ratio:img.clientWidth/img.clientHeight,frame:img.closest('.result-thumbnail').clientWidth/img.closest('.result-thumbnail').clientHeight}));
+      assert.equal(geometry.fit,'cover');assert.ok(Math.abs(geometry.ratio-4/3)<.005);assert.ok(Math.abs(geometry.frame-4/3)<.005);
     });
     await t.test('subsequent page loads reuse only the server image',async()=>{
       requests.length=0;await mount();assert.equal(await page.locator('video').count(),0);

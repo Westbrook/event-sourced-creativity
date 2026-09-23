@@ -89,9 +89,12 @@ still-app figcaption, still-app .caption { font-size: 12px; color: var(--en-colo
 still-app .results-page { max-width: 1050px; margin: 5vh auto; }
 still-app .result-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 42px; }
 still-app .result { padding: 0; background: none; border: 0; text-align: left; }
-still-app .result img { width:100%; height:auto; }
+/* Results reserve one shape across media, placeholders, loading and list layouts. */
+still-app .result-thumbnail { width:100%; min-width:0; aspect-ratio:4 / 3; overflow:hidden; background:var(--en-color-surface-subtle); }
+still-app .result-thumbnail > *, still-app .result-thumbnail > forma-video-cover > :is(img,.video-cover-placeholder) { width:100%; height:100%; aspect-ratio:auto; }
+still-app .result-thumbnail img { object-fit:cover; object-position:var(--focal-x,50%) var(--focal-y,50%); }
 still-app .result > span { display: block; padding-top: 12px; font-size: 14px; }
-still-app .result-word { width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--en-color-surface-subtle); font: 27px Georgia, serif; color: var(--en-color-text-muted); }
+still-app .result-word { width: 100%; display: grid; place-items: center; background: var(--en-color-surface-subtle); font: 27px Georgia, serif; color: var(--en-color-text-muted); }
 still-app .writing { max-width: 720px; margin: 5vh auto 6vh; }
 still-app .writing h1 { margin-bottom: 48px; }
 still-app .prose { font: 21px/1.85 Georgia, 'Times New Roman', serif; letter-spacing: -.01em; }
@@ -221,7 +224,7 @@ still-app .notification-detail-actions:empty { display: none; }
 
 
 
-still-app .pending-thumbnail { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--en-color-surface-subtle); overflow: hidden; }
+still-app .pending-thumbnail { position: relative; display: grid; place-items: center; background: var(--en-color-surface-subtle); overflow: hidden; }
 still-app .pending-thumbnail en-skeleton { position: absolute; inset: 0; --en-skeleton-size: 100%; opacity: .6; }
 still-app .pending-thumbnail > span { position: relative; font: 27px Georgia, serif; }
 still-app .result small { display: block; margin-top: 6px; color: var(--en-color-text-muted); }
@@ -267,8 +270,7 @@ still-app .all-list-rows > li { margin:0; padding:0; }
 still-app .all-list-rows :is(a,button,en-button) { scroll-margin-block:calc(var(--list-header-inset, 0px) + 8px) calc(var(--list-dock-inset, 0px) + 8px); }
 still-app .all-list-rows .context-block { margin-left:0; }
 still-app .all-list-rows .result { display:grid; grid-template-columns:100px minmax(0,1fr); gap:20px; align-items:center; padding:20px 0; border-top:1px solid var(--en-color-line); }
-still-app .all-list-rows .result img { width:100px; height:auto; }
-still-app .all-list-rows .result-word, still-app .all-list-rows .pending-thumbnail { width:100px; height:100px; }
+
 
 /* Content-first idea selection uses En Reve button focus and activation. */
 still-app .idea-choices { display: grid; gap: 12px; margin-block: 24px; }

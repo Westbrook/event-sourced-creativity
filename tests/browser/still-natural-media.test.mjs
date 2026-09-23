@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createServer} from 'vite';
 import {chromium} from '@playwright/test';
 
-test('Still delivers images and videos in their intrinsic aspect ratio without fitted bars or cropping',async t=>{
+test('Still delivers images and videos at full size with intrinsic proportions and consistent Results crops',async t=>{
  const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-natural-media',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/fixture',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body><still-app></still-app></body></html>');});}}]});let browser;
  try{
   await server.listen();browser=await chromium.launch({headless:true});const page=await browser.newPage();page.setDefaultTimeout(5000);
@@ -11,8 +11,8 @@ test('Still delivers images and videos in their intrinsic aspect ratio without f
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/fixture`);
   await page.evaluate(async()=>{
    const {html,render}=await import('/node_modules/lit/index.js');
-   const {stillImage,stillImageStage,stillVideo}=await import('/src/still/media.ts');
-   const style=document.createElement('style');style.textContent=(await import('/src/still/style.css?raw')).default;document.head.append(style);
+   const {stillImage,stillImageStage,stillVideo,stillResultThumbnail}=await import('/src/still/media.ts');
+   const style=document.createElement('style');style.textContent=(await import('/src/still/style.css?raw')).default+(await import('/src/components/video-cover.css?raw')).default;document.head.append(style);
    window.sizes=[{width:960,height:540},{width:540,height:960},{width:800,height:800}];
    window.videos=[];
    // Encode actual media in the browser so videoWidth/videoHeight come from the decoder.
@@ -29,8 +29,8 @@ test('Still delivers images and videos in their intrinsic aspect ratio without f
     render(html`<main style="max-width:1100px;margin:auto">
      <div data-case="stage">${stillImageStage('Delivered image',metadata,src)}</div>
      <div data-case="preview">${stillImageStage('Preview',metadata,src,true)}</div>
-     <div data-case="grid" class="result-grid"><a class="result">${img()}</a></div>
-     <ul class="all-list-rows"><li data-case="list"><a class="result">${img()}<span>Result</span></a></li></ul>
+     <div data-case="grid" class="result-grid"><a class="result">${stillResultThumbnail(html`${img()}`,window.focus)}</a></div>
+     <ul class="all-list-rows"><li data-case="list"><a class="result">${stillResultThumbnail(html`${img()}`,window.focus)}<span>Result</span></a></li></ul>
      <div data-case="reference">${img('context-reference')}</div>
      <div data-case="study">${img('reference-study')}</div>
      <article data-case="slide" class="slide">${img()}<div><h1>Slide image</h1><p>Caption remains outside the image.</p></div></article>
@@ -48,8 +48,9 @@ test('Still delivers images and videos in their intrinsic aspect ratio without f
    for(const item of geometry){
     assert.ok(item.width>0&&item.height>0,JSON.stringify(item));
     // Both the element box and decoded media must have the same ratio: contain cannot hide bars.
-    assert.ok(Math.abs(item.width/item.height-item.naturalWidth/item.naturalHeight)<.002,JSON.stringify(item));
-    assert.notEqual(item.fit,'cover',JSON.stringify(item));assert.ok(item.width<=item.parentWidth+1,JSON.stringify(item));
+    const thumbnail=['grid','list'].includes(item.surface);
+    assert.ok(Math.abs(item.width/item.height-(thumbnail?4/3:item.naturalWidth/item.naturalHeight))<.002,JSON.stringify(item));
+    assert.equal(item.fit,thumbnail?'cover':'contain',JSON.stringify(item));assert.ok(item.width<=item.parentWidth+1,JSON.stringify(item));
     if(item.surface==='slide'){assert.equal(item.position,'static');assert.equal(item.opacity,'1');}
    }
    const frame=await page.locator('[data-case="stage"] .image-frame').boundingBox(),image=await page.locator('[data-case="stage"] img').boundingBox();
@@ -67,6 +68,29 @@ test('Still delivers images and videos in their intrinsic aspect ratio without f
   await t.test('missing and incorrect metadata yield to intrinsic dimensions on source replacement',async()=>{
    for(const metadata of [undefined,{width:2000,height:100}]){
     for(const index of [0,1,2,0]){await page.evaluate(({index,metadata})=>window.draw(index,metadata),{index,metadata});await check();}
+   }
+  });
+  await t.test('saved focal points update decoded thumbnails without changing full-size images',async()=>{
+   await page.evaluate(()=>{window.focus={x:.8,y:.25,confidence:1,method:'attention-region-v2',sampleWidth:32,sampleHeight:32};window.draw(1);});
+   await check();
+   assert.equal(await page.locator('[data-case="grid"] img').evaluate(image=>getComputedStyle(image).objectPosition),'80% 25%');
+   await page.evaluate(()=>{window.focus={...window.focus,x:.2,y:.9};window.draw(1);});
+   assert.equal(await page.locator('[data-case="grid"] img').evaluate(image=>getComputedStyle(image).objectPosition),'20% 90%');
+   assert.equal(await page.locator('[data-case="stage"] img').evaluate(image=>getComputedStyle(image).objectPosition),'50% 50%');
+  });
+  await t.test('mixed image, pending, unavailable video and text cards reserve identical geometry',async()=>{
+   await page.evaluate(async()=>{
+    const {html,render}=await import('/node_modules/lit/index.js');
+    const {stillResultThumbnail}=await import('/src/still/media.ts');
+    const contents=[html`<div class="pending-thumbnail"><en-skeleton></en-skeleton><span>Image</span></div>`,html`<div class="result-word">Story</div>`,html`<forma-video-cover><span class="video-cover-placeholder">Video</span></forma-video-cover>`];
+    const cards=()=>contents.map(content=>html`<a class="result">${stillResultThumbnail(content)}<span>Fall days</span></a>`);
+    render(html`<div class="result-grid">${cards()}</div><ul class="all-list-rows">${cards()}</ul>`,document.querySelector('still-app'));
+   });
+   for(const width of [1200,390]){
+    await page.setViewportSize({width,height:800});
+    const sizes=await page.locator('.result-thumbnail').evaluateAll(frames=>frames.map(frame=>{const rect=frame.getBoundingClientRect(),child=frame.firstElementChild.getBoundingClientRect();return {ratio:rect.width/rect.height,height:rect.height,childHeight:child.height};}));
+    for(const size of sizes){assert.ok(Math.abs(size.ratio-4/3)<.002);assert.ok(Math.abs(size.height-size.childHeight)<1,JSON.stringify(size));}
+    assert.ok(Math.abs(sizes[0].height-sizes[1].height)<1);assert.ok(Math.abs(sizes[1].height-sizes[2].height)<1);
    }
   });
   assert.deepEqual(errors,[]);

@@ -1,7 +1,8 @@
-import { html, nothing } from 'lit';
+import { html, nothing, type TemplateResult } from 'lit';
 import { keyed } from 'lit/directives/keyed.js';
 import { ref } from 'lit/directives/ref.js';
 import type { DocumentArtifact } from '../model/document-artifacts.ts';
+import { positionImageAtFocalPoint } from '../model/image-focus.ts';
 import { ensureVideoCover } from '../media/video-cover.ts';
 
 type Size = { width:number; height:number };
@@ -55,4 +56,15 @@ export function stillImageStage(title:string,metadata:unknown,src?:string,pendin
      ${src?stillImage(src,pending?`Preview of ${title}`:title,metadata,{loading:'eager'}):html`<en-skeleton shape="rectangle"></en-skeleton>`}
    </div>
  </section>`;
+}
+
+/** One crop frame for every Results format, including asynchronously loaded video covers. */
+export function stillResultThumbnail(content:TemplateResult,focalPoint?:unknown) {
+  const position=(image:HTMLImageElement)=>positionImageAtFocalPoint(image,focalPoint);
+  // Image load does not bubble; capture also reaches the cover component's light-DOM image.
+  const loaded={capture:true,handleEvent:(event:Event)=>{if(event.target instanceof HTMLImageElement)position(event.target);}};
+  return html`<div class="result-thumbnail" @load=${loaded} ${ref(element=>{
+    // Reapply changed metadata to already decoded images without requiring another load.
+    element?.querySelectorAll('img').forEach(image=>{if(image.complete&&image.naturalWidth)position(image);});
+  })}>${content}</div>`;
 }
