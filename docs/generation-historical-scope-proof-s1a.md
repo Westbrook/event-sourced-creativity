@@ -1,4 +1,22 @@
-# S1a — corrected historical proof validated for authorized release
+# S1a — corrected proof published; authentic history census refuses
+
+## Current result — Production537
+
+The reviewed missing-ID project-origin defect is corrected and validated:28 helper cases and14 source/actual rebuilt Worker journeys passed, including explicit-origin positives, real-writer missing-ID negatives and existing rejection/authority/retention/race checks. Main and published source are `cf4b8243d206cac897871998f433402cf1306f7a`. Native deployment `appgdep_6ab3edcb65a881918cb5edae12d010a7` succeeded as537, with environment16 and workspace audience revision7 unchanged. Exactly41 permitted migrations were packaged; no migration execution was invoked. The535/536 diagnostic was not duplicated. Unrelated main documents were preserved.
+
+The exact authenticated original source read was repeated at2026-09-23T15:19:41.861Z. Its4858 bytes are held read-only in existing protected custody; browser/local SHA256 `19e3a04edebd3280c3d76aee7b1a7944d19bcfc6b62303ee2681e1d7b9c983eb` matches. All three events are still `absent_scope_metadata`, each with `membershipProven:false` and `historicalProof.reason:historical_identity_census_unavailable`. Seven of ten original events pass. The original approval reader was not reached. No complete ten-event certificate, historical eligibility, current eligibility or offline comparison is claimed.
+
+This is not evidence that the selected ProjectCreated has a missing ID. The census refuses before the origin check when some pre-request lifecycle row fails owner-stream/private-owner/event-binding/redaction/private-JSON/envelope checks. The live response does not identify which predicate or whether that row belongs to the selected subject. Missing or foreign history cannot safely be ignored because it could hide a prior incarnation or transition.
+
+A bounded **local-only** follow-up adds one `failedCensusCheck` enum to this existing refusal, naming the first failed predicate without returning the row ID, body, owner value or scope. Every admission predicate, final recheck, budget and refusal remains unchanged. This additional diagnostic is not integrated or published. Review its exact diff before authorizing further publication. No historical records, absent scopes or producer chains are reconstructed.
+
+Smallest next decision: authorize only the reviewed state-only census diagnostic release and the same authenticated read. A concrete historical compatibility change can be considered only after that actual result; unavailable history must continue to refuse. Human fidelity, financial policy and paid execution remain separate and unauthorized.
+
+[Exact release receipt](evidence/generation-s1a/release537.json) · [Progress Report](http://127.0.0.1:4187/)
+
+## Prior536 observation and reviewed proof design
+
+The following records the prior observation and proof design; publication and live status above supersede its pending-release language.
 
 ## Integrated, published and live-verified are separate
 

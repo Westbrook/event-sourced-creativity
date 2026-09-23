@@ -216,7 +216,7 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
       const row = await observe(event);
       if (!row || row.event_identity_matches !== 1 || row.private_body_matches_history !== 1) fail('producer_changed');
       const observation = classifyScopeObservation(row, event.type);
-      let proof: { status: string; reason?: string } = { status: 'unavailable', reason: 'scope_not_genuinely_absent' };
+      let proof: { status: string; reason?: string; failedCensusCheck?: string } = { status: 'unavailable', reason: 'scope_not_genuinely_absent' };
       if (observation.classification === 'absent_scope_metadata') {
         const candidate = historicalScopeCandidate(history.historyRows, trusted.events, event, job.owner_id, job.document_id, trusted.scope.projectId, requestedSequence);
         proof = candidate;
@@ -241,9 +241,9 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
           } else proof = { status: 'unavailable', reason: 'historical_producer_envelope_unavailable' };
         }
       }
-      // Only the reason is disclosed when proof fails; candidate bodies stay
+      // Only predicate state is disclosed when proof fails; candidate bodies stay
       // internal even when some other original event still blocks the response.
-      scopeObservations.push({ eventId: check.eventId, ...observation, membershipProven: proof.status === 'proven', historicalProof: { status: proof.status, ...(proof.reason ? { reason: proof.reason } : {}) } });
+      scopeObservations.push({ eventId: check.eventId, ...observation, membershipProven: proof.status === 'proven', historicalProof: { status: proof.status, ...(proof.reason ? { reason: proof.reason } : {}), ...(proof.failedCensusCheck ? { failedCensusCheck: proof.failedCensusCheck } : {}) } });
     }
     if (sourceEvents.length + historicalSourceEvents.length !== refIds.length) {
     const certificate = { schemaVersion: 'forma-generation-source-diagnostic-v1', status: 'unavailable' as const,

@@ -393,6 +393,17 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
    // An unrelated origin changes without a new sequence or byte-count change.
    // It is outside the selected producer list but inside the absence census.
    const unrelated=f.sqlite.prepare("SELECT private_event_id,private_json FROM event_private_payloads WHERE json_extract(private_json,'$.project_id')='unrelated-project'").get();
+   // Delete only the unrelated fixture's retained envelope. The event was
+   // written by the real producer; no missing scope/body is reconstructed.
+   const retained=f.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(unrelated.private_event_id);
+   f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(unrelated.private_event_id);
+   try{
+     const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n,providerBefore=providerCalls;
+     const response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409);assert.equal(body.error,'generation_source_original_events_unavailable');
+     for(const event of historicalFixtures){const o=body.diagnostic.scopeObservations.find(o=>o.eventId===event.eventId);assert.equal(o.membershipProven,false);assert.deepEqual(o.historicalProof,{status:'unavailable',reason:'historical_identity_census_unavailable',failedCensusCheck:'private_owner'});}
+     assert.equal(body.sourceEvidence,undefined);assert.equal(body.records,undefined);assert.ok(!JSON.stringify(body).includes('unrelated-project'));assert.ok(!JSON.stringify(body).includes('Unused A'));
+     assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);assert.equal(providerCalls,providerBefore);
+   }finally{const keys=Object.keys(retained);f.sqlite.prepare(`INSERT INTO event_private_payloads(${keys.join(',')}) VALUES(${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>retained[k]));}
    const prepare=f.db.prepare;let injected=false,injectedChanges=0;
    f.db.prepare=sql=>{
      const statement=prepare(sql);if(!sql.startsWith('SELECT * FROM authoring_commits'))return statement;

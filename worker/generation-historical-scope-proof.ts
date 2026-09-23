@@ -1,7 +1,7 @@
 import type { CreativeEvent } from '../src/model/events.ts';
 
 type Row = Record<string, unknown>;
-type Result = { status: 'unavailable'; reason: string } | { status: 'candidate'; events: CreativeEvent[]; basis: { rule: string; eventSequence: number; throughSequenceExclusive: number; originEventIds: string[] } };
+type Result = { status: 'unavailable'; reason: string; failedCensusCheck?: string } | { status: 'candidate'; events: CreativeEvent[]; basis: { rule: string; eventSequence: number; throughSequenceExclusive: number; originEventIds: string[] } };
 const object = (v: unknown): Record<string, unknown> | null => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null;
 const identifier = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/u.test(v);
 const harmless = new Set(['ProjectCreated','ProjectOpened','ProjectRenamed','DocumentCreated','DocumentOpened','DocumentRenamed',
@@ -14,7 +14,7 @@ const understood = new Set([...harmless,'ProjectStateChanged','DocumentForked','
  * returned events against retained producer envelopes and witness the complete
  * raw history again. No fold defaults or current projection are used here. */
 export function historicalScopeCandidate(rows: Row[], events: CreativeEvent[], target: CreativeEvent, owner: string, document: string, project: string, before: number): Result {
-  const unavailable = (reason: string): Result => ({ status: 'unavailable', reason });
+  const unavailable = (reason: string, failedCensusCheck?: string): Result => ({ status: 'unavailable', reason, ...(failedCensusCheck ? { failedCensusCheck } : {}) });
   const p = target.payload, block = target.type === 'BlockPropertyEdited' ? p.block_id : null;
   if (target.type === 'BlockPropertyEdited' ? !identifier(block) || Object.hasOwn(p,'document_id') || Object.hasOwn(p,'project_id')
     : target.type !== 'DocumentRenamed' || p.document_id !== document || Object.hasOwn(p,'project_id')) return unavailable('unsupported_absence_shape');
@@ -26,10 +26,16 @@ export function historicalScopeCandidate(rows: Row[], events: CreativeEvent[], t
     if (!understood.has(String(row.type))) return unavailable('historical_event_type_unsupported');
     // A redacted/foreign/missing envelope could conceal an earlier incarnation
     // or transition. Refuse the proof instead of treating missing history as none.
-    if (row.stream_id !== 'creative:'+owner || row.owner_id !== owner || row.private_event_id !== row.event_id || row.redacted_at != null || typeof row.private_json !== 'string') return unavailable('historical_identity_census_unavailable');
+    // First failed predicate only: no row identity, body, owner value or scope.
+    if (row.stream_id !== 'creative:'+owner) return unavailable('historical_identity_census_unavailable', 'owner_stream');
+    if (row.owner_id !== owner) return unavailable('historical_identity_census_unavailable', 'private_owner');
+    if (row.private_event_id !== row.event_id) return unavailable('historical_identity_census_unavailable', 'private_event_binding');
+    if (row.redacted_at != null) return unavailable('historical_identity_census_unavailable', 'private_unredacted');
+    if (typeof row.private_json !== 'string') return unavailable('historical_identity_census_unavailable', 'private_json_available');
     let body: Record<string, unknown> | null, publicBody: Record<string, unknown> | null;
-    try { body = object(JSON.parse(row.private_json)); publicBody = object(JSON.parse(String(row.payload))); } catch { return unavailable('historical_identity_census_unavailable'); }
-    if (!body || !publicBody || publicBody._private_ref !== row.event_id) return unavailable('historical_identity_census_unavailable');
+    try { body = object(JSON.parse(row.private_json)); publicBody = object(JSON.parse(String(row.payload))); } catch { return unavailable('historical_identity_census_unavailable', 'envelope_json_valid'); }
+    if (!body || !publicBody) return unavailable('historical_identity_census_unavailable', 'envelope_objects');
+    if (publicBody._private_ref !== row.event_id) return unavailable('historical_identity_census_unavailable', 'public_private_ref');
     // Both producer contracts preserve these operational identities. An absent
     // public identifier must never hide a conflicting retained private subject.
     for (const key of ['block_id','document_id','project_id']) {

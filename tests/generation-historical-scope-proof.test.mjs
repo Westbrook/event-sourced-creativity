@@ -65,3 +65,17 @@ for(const [name,change] of [
  ['inconsistent public subject',r=>{r[2].payload=JSON.stringify({...JSON.parse(r[2].payload),block_id:'other'});}],
  ['missing private envelope',r=>{r[2].private_event_id=null;}],
 ])test('historical identity census refuses '+name,()=>{const f=fixture(),rows=f.events.map(row);change(rows);assert.equal(f.check(f.target,rows).status,'unavailable');});
+
+for(const [check,change] of [
+ ['owner_stream',r=>{r.stream_id='creative:foreign';}],
+ ['private_owner',r=>{r.owner_id='foreign';}],
+ ['private_event_binding',r=>{r.private_event_id=null;}],
+ ['private_unredacted',r=>{r.redacted_at='2026-01-01';}],
+ ['private_json_available',r=>{r.private_json=null;}],
+ ['envelope_json_valid',r=>{r.private_json='{';}],
+ ['envelope_objects',r=>{r.private_json='[]';}],
+ ['public_private_ref',r=>{r.payload=JSON.stringify({...JSON.parse(r.payload),_private_ref:'foreign'});}],
+])test('census refusal exposes only first failed predicate: '+check,()=>{
+ const f=fixture(),rows=f.events.map(row);change(rows[0]);
+ assert.deepEqual(f.check(f.target,rows),{status:'unavailable',reason:'historical_identity_census_unavailable',failedCensusCheck:check});
+});
