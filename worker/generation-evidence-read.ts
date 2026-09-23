@@ -1,3 +1,4 @@
+import { readGenerationSourceEvidence } from './generation-source-evidence-read.ts';
 import type { WorkerEnv } from './runtime.ts';
 import { hostedIdentity, readNativeRetainedPrincipal, Unavailable } from './native-retained-text-custody.ts';
 import { nativeMemoryAnswerExclusion } from './memory-native-boundary.ts';
@@ -18,23 +19,28 @@ type Event = {event_id:string;sequence:number;type:string;payload:string;correla
 type Content = {content_id:string;kind:string;content:string;created_at:string;expires_at:string};
 
 /** Explicit personal-owner inspection only. No initializers, retention sweep,
- * recovery, accounting, current-source reconstruction, or provider dispatch.
+ * recovery, accounting, or provider dispatch. Optional includeSource adds a
+ * separately authenticated current-source and original-approval observation.
  * The caller selects an original requested event, never arbitrary content IDs.
  */
 export async function handleGenerationEvidenceRead(request:Request,env:WorkerEnv):Promise<Response>{
   const url=new URL(request.url);
   const reply=(body:unknown,status=200)=>{
     const raw=JSON.stringify(body,null,2);
+    if(byteLength(raw)>12_000_000)throw new Unavailable('generation_evidence_reply_capacity_exceeded');
     if(url.pathname===GENERATION_EVIDENCE_PAGE&&!url.searchParams.has('download')){
       const download=new URL(url);download.searchParams.set('download','1');
-      return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Original generation evidence · Forma</title><style>body{font:16px/1.5 system-ui;margin:2rem;background:#faf9f6;color:#292724}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}aside{position:fixed;bottom:1rem;right:1rem;padding:.5rem;background:white;border:1px solid #ddd}</style><body><h1>Original generation evidence</h1><p>Private, read-only records retained for the selected attempt. Missing records remain missing. This view does not generate or reconcile anything.</p>${status===200?`<p><a href="${escape(download.pathname+download.search)}">Download private evidence</a></p>`:''}<pre id="evidence">${escape(raw)}</pre>${url.searchParams.has('progress-report')?'<aside aria-label="Developer tools"><a href="http://127.0.0.1:4187/">Progress Report</a></aside>':''}</body></html>`,{status,headers:{...headers,'content-type':'text/html; charset=utf-8','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"}});
+      const page=`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Original generation evidence · Forma</title><style>body{font:16px/1.5 system-ui;margin:2rem;background:#faf9f6;color:#292724}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}aside{position:fixed;bottom:1rem;right:1rem;padding:.5rem;background:white;border:1px solid #ddd}</style><body><h1>Original generation evidence</h1><p>Private, read-only records retained for the selected attempt. Missing records remain missing. This view does not generate or reconcile anything.</p>${status===200?`<p><a href="${escape(download.pathname+download.search)}">Download private evidence</a></p>`:''}<pre id="evidence">${escape(raw)}</pre>${url.searchParams.has('progress-report')?'<aside aria-label="Developer tools"><a href="http://127.0.0.1:4187/">Progress Report</a></aside>':''}</body></html>`;
+      if(byteLength(page)>12_000_000)throw new Unavailable('generation_evidence_reply_capacity_exceeded');
+      return new Response(page,{status,headers:{...headers,'content-type':'text/html; charset=utf-8','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"}});
     }
     return new Response(raw,{status,headers:{...headers,'content-type':'application/json; charset=utf-8',...(url.searchParams.has('download')?{'content-disposition':'attachment; filename="generation-evidence.json"'}:{})}});
   };
   if(request.method!=='GET')return reply({error:'method_not_allowed'},405);
   const documentId=url.searchParams.get('documentId')??'',sequence=Number(url.searchParams.get('requestedSequence'));
   if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(documentId)||!Number.isSafeInteger(sequence)||sequence<1
-    ||[...url.searchParams.keys()].some(key=>!['documentId','requestedSequence','download','progress-report'].includes(key)))return reply({error:'invalid_evidence_selection'},400);
+    ||(url.searchParams.has('includeSource')&&url.searchParams.get('includeSource')!=='1')
+    ||[...url.searchParams.keys()].some(key=>!['documentId','requestedSequence','download','progress-report','includeSource'].includes(key)))return reply({error:'invalid_evidence_selection'},400);
   const db=env.DB;
   try{
     const identity=hostedIdentity(request);if(!identity)return reply({error:'authentication_required'},401);
@@ -82,16 +88,23 @@ export async function handleGenerationEvidenceRead(request:Request,env:WorkerEnv
       AND ${exclusion.sql} ORDER BY content_id`).bind(identity.userId,JSON.stringify([...refs.keys()]),...exclusion.bindings).all<Content>();
     const contents=(await readContent()).results;
     if(byteLength(JSON.stringify({job,events,contents}))>12_000_000)throw fail();
+    const sourceEvidence=url.searchParams.has('includeSource')?await readGenerationSourceEvidence(request,env,job,sequence):null;
+    const records=await Promise.all(contents.map(async row=>({...row,sha256:await sha256(row.content),linkedFrom:refs.get(row.content_id)})));
+    if(byteLength(JSON.stringify({job,events,records,source:sourceEvidence?.certificate}))>12_000_000)throw new Unavailable('generation_source_reply_capacity_exceeded');
     // Recheck original custody, bytes, expiry and principal after all reads. A
     // concurrent erasure, transfer or account-policy change cannot reuse them.
     if(env.DB!==db||JSON.stringify((await readJob()).results)!==JSON.stringify(jobs.results)
       ||JSON.stringify((await readEvents()).results)!==JSON.stringify(events)
       ||JSON.stringify((await readContent()).results)!==JSON.stringify(contents)
       ||(await readNativeRetainedPrincipal(env,identity)).principal.auth_json!==firstAuth.principal.auth_json||env.DB!==db)throw fail();
-    return reply({schemaVersion:'forma-original-generation-evidence-v1',retrievedAt:new Date().toISOString(),
+    await sourceEvidence?.recheck();
+    const response=reply({schemaVersion:'forma-original-generation-evidence-v1',retrievedAt:new Date().toISOString(),
       custody:{ownerId:identity.userId,streamId:stream,documentId,generationId,requestedSequence:sequence,jobExpiresAt:job.expires_at,scope:'personal',readOnly:true},
       limitations:['Only original retained bytes are returned; no historical source is reconstructed.','Application usage and settlement records are not independent verified incurred charges.','Current deployment configuration is not proof of the original account, payer, region or credential binding.'],
-      job,events,records:await Promise.all(contents.map(async row=>({...row,sha256:await sha256(row.content),linkedFrom:refs.get(row.content_id)}))),
+      job,events,records,...(sourceEvidence?{sourceEvidence:sourceEvidence.certificate}:{}),
       unavailable:[...refs].filter(([id])=>!contents.some(row=>row.content_id===id)).map(([contentId,linkedFrom])=>({contentId,linkedFrom,status:'not-retained-or-not-authorized'}))});
-  }catch(error){return reply({error:error instanceof Unavailable?error.message:'generation_evidence_unavailable'},error instanceof Unavailable?404:503);}
+    sourceEvidence?.checkDeadline();
+    if([job.expires_at,...contents.map(row=>row.expires_at)].some(value=>Date.parse(value)<=Date.now()))throw fail();
+    return response;
+  }catch(error){if(error instanceof Error&&/^generation_source_[a-z_]+$/u.test(error.message))return reply({error:error.message},409);return reply({error:error instanceof Unavailable?error.message:'generation_evidence_unavailable'},error instanceof Unavailable?404:503);}
 }
