@@ -8,6 +8,7 @@ import { nativeMemoryAnswerExclusion } from './memory-native-boundary.ts';
 import { foldEvents } from '../src/model/events.ts';
 import { authoritativeCreativeContext } from './context-authority.ts';
 import { scopeObservationQuery, classifyScopeObservation } from './generation-source-scope-observation.ts';
+import { historicalCensusQuery, summarizeHistoricalCensus, HISTORICAL_CENSUS_LIMIT, HISTORICAL_CENSUS_CHUNK } from './generation-historical-census.ts';
 import { historicalScopeCandidate } from './generation-historical-scope-proof.ts';
 
 const MAX_ROWS = 50_000, MAX_HISTORY_BYTES = 64 * 1024 * 1024, MAX_CELL = 2_200_000, MAX_REPLY = 12_000_000;
@@ -34,8 +35,9 @@ const footprintSql = `SELECT COUNT(*) AS rows,COALESCE(MAX(sequence),0) AS head,
  * A page is admitted against the same complete SQL-side footprint before bytes
  * cross the DB boundary. Empty pages caused by a race are detected by head/count.
  */
-function boundedEnvironment(env: WorkerEnv, stream: string, footprint: Row) {
+function boundedEnvironment(env: WorkerEnv, stream: string, footprint: Row, owner: string) {
   const db = env.DB; let statements = 0, returnedBytes = 0, returnedRows = 0;
+  let historyPayloadWithheld = false;
   const historyRows: Row[] = [], historyWitnesses: Array<() => Promise<void>> = [];
   const checked = <T>(result: T): T => {
     returnedBytes += bytes(result); returnedRows += Array.isArray(record(result).results) ? (record(result).results as unknown[]).length : 1;
@@ -51,8 +53,9 @@ function boundedEnvironment(env: WorkerEnv, stream: string, footprint: Row) {
     let actual = sql, args = bindings;
     if (page && bindings.length) {
       if (bindings[0] !== stream || !Number.isSafeInteger(bindings[1]) || !Number.isSafeInteger(bindings[2]) || Number(bindings[2]) > 5000) fail('history_query_invalid');
-      actual = `WITH footprint AS (${footprintSql}) ${sql.replace('ORDER BY sequence ASC LIMIT ?', 'AND EXISTS(SELECT 1 FROM footprint WHERE rows=? AND head=? AND bytes=? AND largest=?) ORDER BY sequence ASC LIMIT ?')}`;
-      args = [stream, bindings[0], bindings[1], footprint.rows, footprint.head, footprint.bytes, footprint.largest, bindings[2]];
+      const safePage = sql.replace('SELECT * FROM events', "SELECT events.*,secret.private_event_id,secret.owner_id,secret.project_id,secret.document_id,CASE WHEN typeof(secret.private_json)='text' AND json_valid(secret.private_json) THEN secret.private_json ELSE NULL END AS private_json,secret.created_at,secret.redacted_at,CASE WHEN secret.private_event_id IS NOT NULL AND (typeof(secret.private_json)!='text' OR NOT json_valid(secret.private_json)) THEN 1 WHEN secret.private_event_id IS NULL AND EXISTS(SELECT 1 FROM event_private_payloads custody WHERE custody.private_event_id=events.event_id AND custody.redacted_at IS NULL) THEN 1 ELSE 0 END AS history_payload_withheld FROM events").replace('AND secret.redacted_at IS NULL', 'AND secret.redacted_at IS NULL AND secret.owner_id=?');
+      actual = `WITH footprint AS (${footprintSql}) ${safePage.replace('ORDER BY sequence ASC LIMIT ?', 'AND EXISTS(SELECT 1 FROM footprint WHERE rows=? AND head=? AND bytes=? AND largest=?) ORDER BY sequence ASC LIMIT ?')}`;
+      args = [stream, owner, bindings[0], bindings[1], footprint.rows, footprint.head, footprint.bytes, footprint.largest, bindings[2]];
     }
     const statement = () => { tick(); return db.prepare(actual).bind(...args); };
     const wrapped = {
@@ -60,6 +63,7 @@ function boundedEnvironment(env: WorkerEnv, stream: string, footprint: Row) {
       all: async () => {
         const result = checked(await statement().all<Row>());
         if (page) {
+          historyPayloadWithheld ||= result.results.some(row => row.history_payload_withheld === 1);
           historyRows.push(...result.results.filter(row => /^(Project|Document|Block)/u.test(String(row.type))));
           const digest = await consentHash(result.results);
           historyWitnesses.push(async () => { if (await consentHash(checked(await statement().all<Row>()).results) !== digest) fail('historical_subject_changed'); });
@@ -81,7 +85,7 @@ function boundedEnvironment(env: WorkerEnv, stream: string, footprint: Row) {
   // Unsupported referenced media fails closed instead of hydrating objects as a
   // side effect of qualifying this no-reference source reader.
   return { env: { ...env, DB: readonly, MEDIA: new Proxy(env.MEDIA ?? {}, { get: () => () => fail('media_reference_unsupported') }) } as WorkerEnv,
-    historyRows, recheckHistory: async () => { for (const witness of historyWitnesses) await witness(); } };
+    historyRows, payloadWithheld: () => historyPayloadWithheld, recheckHistory: async () => { for (const witness of historyWitnesses) await witness(); } };
 }
 
 /** Additional owner-administrator observation, opt-in from the original reader.
@@ -100,8 +104,8 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
   const beforeAuth = canonicalConsent(auth.user.authorizationSnapshot);
   const footprint = await db.prepare(footprintSql).bind(job.stream_id).first<Row>();
   if (!footprint || Number(footprint.rows) > MAX_ROWS || Number(footprint.bytes) > MAX_HISTORY_BYTES || Number(footprint.largest) > MAX_CELL) fail('history_capacity_exceeded');
-  const history = boundedEnvironment(env, job.stream_id, footprint), bounded = history.env;
-  let historicalProofUsed = false;
+  const history = boundedEnvironment(env, job.stream_id, footprint, job.owner_id), bounded = history.env;
+  let historicalProofUsed = false, censusObserved = false;
   const trusted = await continueOutputTrustedContext(request, bounded, job.document_id, 'read', { user: auth.user, principal: auth.user, response: null, impersonation: null });
   if (trusted instanceof Response) fail('current_context_unavailable');
   if (!trusted.context || trusted.scope.kind !== 'personal' || trusted.scope.ownerUserId !== job.owner_id
@@ -139,7 +143,7 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
   const recheck = async () => {
     if (env.DB !== db || Date.parse(job.expires_at) <= Date.now()) fail('custody_changed');
     for (let i = 0; i < witnesses.length; i++) if (!equal(await witnesses[i]!(), captured[i])) fail('producer_changed');
-    if (historicalProofUsed) await history.recheckHistory();
+    if (historicalProofUsed || censusObserved) await history.recheckHistory();
     if (!equal(await db.prepare(footprintSql).bind(job.stream_id).first(), footprint)) fail('history_changed');
     await verifyOutputSourceRead(bounded, trusted.scope, trusted.ownerHead, [outputScopeAuthority(trusted.scope, 'read'), noPilot, ...trusted.sourceAssertions, ...deadlines]);
     const latest = await requireExistingHoldAdministrator(request, bounded);
@@ -199,6 +203,23 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
     });
     if (eventChecks.filter(e => !e.failedChecks.length).length !== sourceEvents.length) fail('history_changed');
     const scopeObservations = [];
+    let censusSummary: ReturnType<typeof summarizeHistoricalCensus> | undefined;
+    const census = async () => {
+      if (censusSummary) return censusSummary;
+      censusObserved = true;
+      const prefix = history.historyRows.filter(r => Number(r.sequence) < requestedSequence);
+      const selected = prefix.slice(0,HISTORICAL_CENSUS_LIMIT), states: string[] = [];
+      for (let i=0;i<selected.length;i+=HISTORICAL_CENSUS_CHUNK) {
+        const chunk=selected.slice(i,i+HISTORICAL_CENSUS_CHUNK);
+        const query=historicalCensusQuery(chunk,job.owner_id,job.stream_id,requestedSequence);
+        const metadata=await capture(() => bounded.DB.prepare(query.sql).bind(...query.bindings).first<Row>());
+        const values=JSON.parse(String(metadata?.states));
+        if(!Array.isArray(values)||values.length!==chunk.length||values.some(v=>typeof v!=='string'))fail('census_observation_incomplete');
+        states.push(...values);
+      }
+      censusSummary=summarizeHistoricalCensus(prefix,trusted.events,states,job.owner_id,requestedSequence);
+      return censusSummary;
+    };
     const authenticatedHistory = new Map<string, Row | null>();
     const observe = async (event: typeof trusted.events[number]) => {
       if (authenticatedHistory.has(event.eventId)) return authenticatedHistory.get(event.eventId)!;
@@ -218,6 +239,7 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
       const observation = classifyScopeObservation(row, event.type);
       let proof: { status: string; reason?: string; failedCensusCheck?: string } = { status: 'unavailable', reason: 'scope_not_genuinely_absent' };
       if (observation.classification === 'absent_scope_metadata') {
+        await census();
         const candidate = historicalScopeCandidate(history.historyRows, trusted.events, event, job.owner_id, job.document_id, trusted.scope.projectId, requestedSequence);
         proof = candidate;
         if (candidate.status === 'candidate') {
@@ -248,11 +270,12 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
     if (sourceEvents.length + historicalSourceEvents.length !== refIds.length) {
     const certificate = { schemaVersion: 'forma-generation-source-diagnostic-v1', status: 'unavailable' as const,
       error: 'generation_source_original_events_unavailable', requiredEventCount: refIds.length, availableEventCount: sourceEvents.length,
-      eventChecks, scopeObservations, eligibility: { eligibleForReview: false, humanReviewed: false, executionAuthorized: false } };
+      eventChecks, scopeObservations, ...(censusSummary ? { historicalCensus: censusSummary } : {}), eligibility: { eligibleForReview: false, humanReviewed: false, executionAuthorized: false } };
     await recheck(); checkDeadline();
     return { certificate, recheck, checkDeadline };
     }
   }
+  if (history.payloadWithheld()) fail('historical_envelope_unavailable');
   const qualifiedSourceEvents = [...sourceEvents,...historicalSourceEvents].sort((a,b) => Number(a.sequence)-Number(b.sequence));
   const verifyEventBodies = (events: Row[]) => {
     for (const event of events) {

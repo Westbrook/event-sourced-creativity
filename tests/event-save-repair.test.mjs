@@ -179,7 +179,7 @@ async function approvedSourceFixture(f,env,owner){
 }
 
 
-for (const runtime of ['source','production bundle']) for (const scopeCase of ['complete','scope observation','historical proof','historical missing project identity','historical recreated','historical rehomed','historical attached']) test(`${runtime}: isolated schema delivers ${scopeCase} through one mocked Still generation`,async t=>{
+for (const runtime of ['source','production bundle']) for (const scopeCase of ['complete','scope observation','historical proof','historical missing project identity','historical recreated','historical rehomed','historical attached','historical census truncation']) test(`${runtime}: isolated schema delivers ${scopeCase} through one mocked Still generation`,async t=>{
  const historicalCase=scopeCase.startsWith('historical ');
  const f=await fixture(t);await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
  const {default:worker}=runtime==='source'?await import('../worker/index.ts'):await import('../dist/server/index.js');const media=new Map(),background=[];
@@ -217,7 +217,7 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  const approval=await approvedSourceFixture(f,env,session.user.userId);
  const opened=makeEvent('creative:'+session.user.userId,f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head+1,'user:'+session.user.userId,'offline','source-diagnostic','DocumentOpened',{project_id:'project-atmosphere',document_id:'doc-atmosphere'});
  const openedValues=eventWriteBindings(opened);await env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${openedValues.map(()=>'?').join(',')})`).bind(...openedValues).run();
- if(historicalCase&&scopeCase!=='historical proof'&&scopeCase!=='historical missing project identity'){
+ if(['historical recreated','historical rehomed','historical attached'].includes(scopeCase)){
    const block=f.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated') AND json_extract(private_json,'$.block_id')='block-direction'").get();
    const scoped={block_id:'block-direction',document_id:'doc-atmosphere',project_id:'project-atmosphere',scope:'document'};
    const transitions=scopeCase==='historical recreated'?[['BlockCreated',JSON.parse(block.private_json)]]
@@ -228,6 +228,7 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  const historicalFixtures=[];
  if(historicalCase)for(const [type,payload] of [
    ['ProjectCreated',{project_id:'unrelated-project',name:'Unused A'}],
+   ...Array.from({length:6},(_,i)=>['ProjectCreated',{project_id:'census-fixture-'+i,name:'Census private sentinel'}]),
    ['BlockPropertyEdited',{block_id:'block-direction',property_path:'proof_fixture',new_value:'Private original fixture'}],
    ['DocumentRenamed',{document_id:'doc-atmosphere',new_title:'First original rename'}],
    ['DocumentRenamed',{document_id:'doc-atmosphere',new_title:'Second original rename'}],
@@ -259,6 +260,14 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
      if(classification)scopeFixtures.push({event,classification});
    }
  }
+ if(scopeCase==='historical census truncation'){
+   // Real producer/staging writes exceed the diagnostic cap while staying
+   // inside the existing full-history row/byte limits. No post-boundary rows
+   // are relabeled as historical inputs.
+   const statement=f.sqlite.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${Array(17).fill('?').join(',')})`);
+   const head=f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head;
+   f.sqlite.exec('BEGIN');try{for(let i=1;i<=40001;i++)statement.run(...eventWriteBindings(makeEvent('creative:'+session.user.userId,head+i,'user:'+session.user.userId,'offline','bounded-census','ProjectOpened',{project_id:'unrelated-project'})));f.sqlite.exec('COMMIT');}catch(error){f.sqlite.exec('ROLLBACK');throw error;}
+ }
  const readiness=await request('/api/document-jobs/still-readiness?documentId=doc-atmosphere');
  assert.equal(readiness.status,200);assert.equal((await readiness.json()).ready,true,'the deployed Worker must qualify the isolated storage boundary');
  assert.equal(planner,0);assert.equal(image,0,'readiness must not call a provider');
@@ -287,9 +296,17 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,beforeChanges,'inspection must issue no writes');
  const sourcePath=evidencePath+'&includeSource=1';
  f.sqlite.prepare("UPDATE users SET role='admin' WHERE user_id=?").run(session.user.userId);
+ if(scopeCase==='historical census truncation')f.sqlite.prepare("DELETE FROM event_private_payloads WHERE json_extract(private_json,'$.project_id')='census-fixture-0'").run();
  const sourceBeforeChanges=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
 
 
+ if(scopeCase==='historical census truncation'){
+   const providerBefore=providerCalls,response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409,JSON.stringify(body));
+   assert.equal(body.error,'generation_source_original_events_unavailable');const c=body.diagnostic.historicalCensus;
+   assert.equal(c.examined,40000);assert.ok(c.total>40000);assert.equal(c.truncated,true);assert.equal(c.complete,false);assert.equal(c.unexamined,c.total-40000);assert.deepEqual(c.firstFailureCounts,{private_absent:1});
+   assert.equal(c.checks.private_presence.notEvaluated,c.unexamined);assert.equal(c.checks.envelope_objects.notEvaluated,c.unexamined+1);
+   assert.equal(body.records,undefined);assert.equal(body.sourceEvidence,undefined);assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,sourceBeforeChanges);assert.equal(providerCalls,providerBefore);return;
+ }
  if(historicalCase&&scopeCase!=='historical proof'){
    const providerBefore=providerCalls,response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409);assert.equal(body.error,'generation_source_original_events_unavailable');
    const rejected=body.diagnostic.scopeObservations.find(o=>o.eventId===historicalFixtures.find(e=>e.type==='BlockPropertyEdited').eventId);
@@ -393,17 +410,47 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
    // An unrelated origin changes without a new sequence or byte-count change.
    // It is outside the selected producer list but inside the absence census.
    const unrelated=f.sqlite.prepare("SELECT private_event_id,private_json FROM event_private_payloads WHERE json_extract(private_json,'$.project_id')='unrelated-project'").get();
-   // Delete only the unrelated fixture's retained envelope. The event was
-   // written by the real producer; no missing scope/body is reconstructed.
-   const retained=f.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(unrelated.private_event_id);
-   f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(unrelated.private_event_id);
-   try{
-     const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n,providerBefore=providerCalls;
-     const response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409);assert.equal(body.error,'generation_source_original_events_unavailable');
-     for(const event of historicalFixtures){const o=body.diagnostic.scopeObservations.find(o=>o.eventId===event.eventId);assert.equal(o.membershipProven,false);assert.deepEqual(o.historicalProof,{status:'unavailable',reason:'historical_identity_census_unavailable',failedCensusCheck:'private_owner'});}
-     assert.equal(body.sourceEvidence,undefined);assert.equal(body.records,undefined);assert.ok(!JSON.stringify(body).includes('unrelated-project'));assert.ok(!JSON.stringify(body).includes('Unused A'));
-     assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);assert.equal(providerCalls,providerBefore);
-   }finally{const keys=Object.keys(retained);f.sqlite.prepare(`INSERT INTO event_private_payloads(${keys.join(',')}) VALUES(${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>retained[k]));}
+   const censusRows=f.sqlite.prepare("SELECT * FROM event_private_payloads WHERE json_extract(private_json,'$.project_id') LIKE 'census-fixture-%' ORDER BY project_id").all();
+   const restoreCensus=()=>{for(const r of censusRows){const keys=Object.keys(r);f.sqlite.prepare(`INSERT OR REPLACE INTO event_private_payloads(${keys.join(',')}) VALUES(${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>r[k]));}};
+   const corruptCensus=()=>{
+     f.sqlite.prepare('DELETE FROM event_private_payloads WHERE private_event_id=?').run(censusRows[0].private_event_id);
+     f.sqlite.prepare("UPDATE event_private_payloads SET redacted_at='2026-01-01',owner_id='foreign',private_json='{' WHERE private_event_id=?").run(censusRows[1].private_event_id);
+     f.sqlite.prepare("UPDATE event_private_payloads SET owner_id='',private_json='{' WHERE private_event_id=?").run(censusRows[2].private_event_id);
+     f.sqlite.prepare("UPDATE event_private_payloads SET owner_id='bad owner',private_json='{' WHERE private_event_id=?").run(censusRows[3].private_event_id);
+     f.sqlite.prepare("UPDATE event_private_payloads SET owner_id='foreign',private_json='{' WHERE private_event_id=?").run(censusRows[4].private_event_id);
+     f.sqlite.prepare("UPDATE event_private_payloads SET private_json='{' WHERE private_event_id=?").run(censusRows[5].private_event_id);
+   };
+   for(const race of ['none','metadata','history']){
+     corruptCensus();const originalPrepare=f.db.prepare;let metadataReads=0,changed=false,injectedWrites=0;
+     f.db.prepare=sql=>{
+       const statement=originalPrepare(sql),bind=statement.bind.bind(statement);
+       statement.bind=(...args)=>{
+         const bound=bind(...args);
+         if(sql.includes('SELECT events.*,secret.private_event_id')){const all=bound.all.bind(bound);bound.all=async()=>{const r=await all();for(const row of r.results.filter(r=>censusRows.some(c=>c.private_event_id===r.event_id)))assert.equal(row.private_json,null,'foreign/redacted/malformed private bodies must not cross the DB boundary');return r;};}
+         if(sql.startsWith('WITH selected AS')){const first=bound.first.bind(bound);bound.first=async()=>{
+           if(++metadataReads===2&&race!=='none'){
+             const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
+             if(race==='metadata')f.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=NULL WHERE private_event_id=?").run(censusRows[1].private_event_id);
+             else f.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(unrelated.private_json.replace('Unused A','Unused B'),unrelated.private_event_id);
+             injectedWrites=f.sqlite.prepare('SELECT total_changes() AS n').get().n-before;changed=true;
+           }return first();};}
+         return bound;
+       };return statement;
+     };
+     try{
+       const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n,providerBefore=providerCalls;
+       const response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409,JSON.stringify(body));
+       if(race==='none'){
+         assert.equal(body.error,'generation_source_original_events_unavailable');const c=body.diagnostic.historicalCensus;
+         assert.deepEqual(c.firstFailureCounts,{private_absent:1,private_redacted:1,private_owner_missing:1,private_owner_invalid:1,private_owner_mismatch:1,private_json_malformed:1});
+         assert.equal(c.complete,true);assert.equal(c.truncated,false);assert.equal(c.total,c.examined);assert.equal(c.unexamined,0);assert.equal(c.identityChecksPassed+6,c.total);
+         assert.equal(c.checks.private_owner_valid.notEvaluated,2);assert.equal(c.checks.private_json_valid.notEvaluated,5);assert.equal(c.checks.envelope_objects.notEvaluated,6);
+         for(const o of body.diagnostic.scopeObservations)assert.equal(o.membershipProven,false);
+         assert.ok(!JSON.stringify(c).includes('census-fixture'));assert.ok(!JSON.stringify(c).includes('sentinel'));assert.ok(!JSON.stringify(c).includes(censusRows[0].private_event_id));
+       }else{assert.equal(changed,true);assert.equal(body.error,race==='metadata'?'generation_source_producer_changed':'generation_source_historical_subject_changed');assert.equal(body.diagnostic,undefined);}
+       assert.equal(body.sourceEvidence,undefined);assert.equal(body.records,undefined);assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before+injectedWrites);assert.equal(providerCalls,providerBefore);
+     }finally{f.db.prepare=originalPrepare;restoreCensus();f.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(unrelated.private_json,unrelated.private_event_id);}
+   }
    const prepare=f.db.prepare;let injected=false,injectedChanges=0;
    f.db.prepare=sql=>{
      const statement=prepare(sql);if(!sql.startsWith('SELECT * FROM authoring_commits'))return statement;
@@ -419,6 +466,17 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
      const response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409);assert.equal(body.error,'generation_source_historical_subject_changed');assert.equal(body.sourceEvidence,undefined);assert.equal(injected,true);
      assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before+injectedChanges);assert.equal(providerCalls,providerBefore);
    }finally{f.db.prepare=prepare;f.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(unrelated.private_json,unrelated.private_event_id);}
+ }
+ if(scopeCase==='complete'){
+   const e=makeEvent('creative:'+session.user.userId,f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head+1,'user:'+session.user.userId,'offline','masked-custody','ProjectOpened',{project_id:'unrelated-project'});
+   const values=eventWriteBindings(e);await env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${values.map(()=>'?').join(',')})`).bind(...values).run();
+   const saved=f.sqlite.prepare('SELECT * FROM event_private_payloads WHERE private_event_id=?').get(e.eventId);
+   for(const owner of [session.user.userId,'foreign']){
+     f.sqlite.prepare("UPDATE event_private_payloads SET owner_id=?,private_json='{' WHERE private_event_id=?").run(owner,e.eventId);
+     const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n,providerBefore=providerCalls,response=await inspect(sourcePath),body=await response.json();
+     assert.equal(response.status,409);assert.equal(body.error,'generation_source_historical_envelope_unavailable');assert.equal(body.sourceEvidence,undefined);assert.equal(body.records,undefined);assert.equal(providerCalls,providerBefore);assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);
+   }
+   f.sqlite.prepare('UPDATE event_private_payloads SET owner_id=?,private_json=? WHERE private_event_id=?').run(saved.owner_id,saved.private_json,e.eventId);
  }
  const inspectionProviderCalls=providerCalls;
  const expectSourceError=async(code)=>{
