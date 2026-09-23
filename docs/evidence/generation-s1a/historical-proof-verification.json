@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "verifiedAt": "2026-09-23T13:21:15.535160+00:00",
+  "verifiedAt": "2026-09-23T15:16:25.239026+00:00",
   "baseCommit": "f8751b5e1c6dbde004cbf384d4e238c2d6571483",
   "localProofPublished": false,
   "publishedVersion": 536,
   "publishedWorkerSha256": "e1f7287274f546753e45078c940ad6b0a1926e9bb7b535aad919f16380544f1e",
-  "localProofWorkerSha256": "77a01ec79ea9860b442ea8a3c464320cfb21b8b251461c17bae5d6b579148425",
+  "localProofWorkerSha256": "6b548276bae8d886999424381e2c806497819904605ffb2cee1ed148c991e752",
   "authenticClassification": {
     "capturedAt": "2026-09-23T13:07:53.332Z",
     "sha256": "27169b43f9171b7e4f81ee1f082500a44ce4ccdc669ce8d8623fdc78fe279a64",
@@ -16,12 +16,12 @@
   "tests": [
     {
       "command": "node --import tsx --test tests/generation-historical-scope-proof.test.mjs",
-      "passed": 24,
+      "passed": 28,
       "failed": 0
     },
     {
       "command": "node --import tsx --test --test-name-pattern='(source|production bundle): isolated schema delivers' tests/event-save-repair.test.mjs",
-      "passed": 12,
+      "passed": 14,
       "failed": 0
     }
   ],
@@ -40,10 +40,12 @@
   "inspectionWrites": 0,
   "inspectionProviderCalls": 0,
   "liveProviderCalls": 0,
-  "actualApprovalChain": "not reached; additional compatibility release requires review",
+  "actualApprovalChain": "Pending corrected authorized release and exact authenticated read",
   "historicalEligibility": "not live qualified",
   "currentEligibility": "not live qualified",
   "humanFidelity": "unreviewed",
   "accountingPolicy": "unselected",
-  "paidGenerationAuthorization": false
+  "paidGenerationAuthorization": false,
+  "reviewedProofBase": "1fce009fd93cf8dfdddd64b92888049c7084016d",
+  "reviewCorrection": "Require explicit valid ProjectCreated.project_id matching selected project; actual writer missing-ID negatives reject block edit and both renames in source and rebuilt Worker."
 }

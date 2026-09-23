@@ -179,7 +179,7 @@ async function approvedSourceFixture(f,env,owner){
 }
 
 
-for (const runtime of ['source','production bundle']) for (const scopeCase of ['complete','scope observation','historical proof','historical recreated','historical rehomed','historical attached']) test(`${runtime}: isolated schema delivers ${scopeCase} through one mocked Still generation`,async t=>{
+for (const runtime of ['source','production bundle']) for (const scopeCase of ['complete','scope observation','historical proof','historical missing project identity','historical recreated','historical rehomed','historical attached']) test(`${runtime}: isolated schema delivers ${scopeCase} through one mocked Still generation`,async t=>{
  const historicalCase=scopeCase.startsWith('historical ');
  const f=await fixture(t);await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
  const {default:worker}=runtime==='source'?await import('../worker/index.ts'):await import('../dist/server/index.js');const media=new Map(),background=[];
@@ -199,8 +199,9 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  if(historicalCase)f.db.prepare=sql=>{
    const statement=seedPrepare(sql);if(!/^INSERT INTO event_write_stage\s*\(/u.test(sql))return statement;
    const bind=statement.bind.bind(statement);statement.bind=(...a)=>{
-     if(['BlockCreated','ExtractionCompleted','ReferenceIngested','DocumentCreated'].includes(a[11])){
+     if(['BlockCreated','ExtractionCompleted','ReferenceIngested','DocumentCreated'].includes(a[11]) || scopeCase==='historical missing project identity' && a[11]==='ProjectCreated'){
        const e={eventId:a[0],streamId:a[1],sequence:a[2],occurredAt:a[3],recordedAt:a[4],actor:a[5],clientId:a[6],correlationId:a[7],causationId:a[8],compensatesEventId:a[9],schemaVersion:a[10],type:a[11],payload:{...JSON.parse(a[16]),project_id:'project-atmosphere',document_id:'doc-atmosphere'}};
+       if(a[11]==='ProjectCreated'){e.payload=JSON.parse(a[16]);delete e.payload.project_id;}
        a=eventWriteBindings(e);
      }
      return bind(...a);
@@ -216,7 +217,7 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  const approval=await approvedSourceFixture(f,env,session.user.userId);
  const opened=makeEvent('creative:'+session.user.userId,f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head+1,'user:'+session.user.userId,'offline','source-diagnostic','DocumentOpened',{project_id:'project-atmosphere',document_id:'doc-atmosphere'});
  const openedValues=eventWriteBindings(opened);await env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${openedValues.map(()=>'?').join(',')})`).bind(...openedValues).run();
- if(historicalCase&&scopeCase!=='historical proof'){
+ if(historicalCase&&scopeCase!=='historical proof'&&scopeCase!=='historical missing project identity'){
    const block=f.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated') AND json_extract(private_json,'$.block_id')='block-direction'").get();
    const scoped={block_id:'block-direction',document_id:'doc-atmosphere',project_id:'project-atmosphere',scope:'document'};
    const transitions=scopeCase==='historical recreated'?[['BlockCreated',JSON.parse(block.private_json)]]
@@ -292,7 +293,12 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  if(historicalCase&&scopeCase!=='historical proof'){
    const providerBefore=providerCalls,response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409);assert.equal(body.error,'generation_source_original_events_unavailable');
    const rejected=body.diagnostic.scopeObservations.find(o=>o.eventId===historicalFixtures.find(e=>e.type==='BlockPropertyEdited').eventId);
-   assert.equal(rejected.membershipProven,false);assert.equal(rejected.historicalProof.reason,scopeCase==='historical recreated'?'historical_origin_missing_or_recreated':'historical_subject_transition_unsupported');
+   assert.equal(rejected.membershipProven,false);assert.equal(rejected.historicalProof.reason,scopeCase==='historical missing project identity'?'historical_origin_scope_unproven':scopeCase==='historical recreated'?'historical_origin_missing_or_recreated':'historical_subject_transition_unsupported');
+   if(scopeCase==='historical missing project identity'){
+     const origin=f.sqlite.prepare("SELECT e.payload,p.private_json,p.project_id FROM events e JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.type='ProjectCreated' ORDER BY e.sequence LIMIT 1").get();
+     assert.equal(origin.project_id,null);assert.equal(Object.hasOwn(JSON.parse(origin.private_json),'project_id'),false);assert.equal(Object.hasOwn(JSON.parse(origin.payload),'project_id'),false);
+     for(const event of historicalFixtures){const observation=body.diagnostic.scopeObservations.find(o=>o.eventId===event.eventId);assert.equal(observation.classification,'absent_scope_metadata');assert.equal(observation.membershipProven,false);assert.equal(observation.historicalProof.reason,'historical_origin_scope_unproven');}
+   }
    assert.equal(body.sourceEvidence,undefined);assert.equal(body.records,undefined);assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,sourceBeforeChanges);assert.equal(providerCalls,providerBefore);
    return;
  }

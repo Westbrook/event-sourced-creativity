@@ -24,6 +24,19 @@ test('unique explicit origins qualify candidate membership at each original sequ
  assert.equal(f.check().status,'unavailable','a transition before the original request cannot be erased by current membership');
 });
 
+for(const [name,payload] of [['missing',{}],['null',{project_id:null}],['invalid',{project_id:'invalid project'}],['foreign',{project_id:'other'}]])
+test('real writer project origin refuses '+name+' identity for both subjects',()=>{
+ const f=fixture();f.events[0].payload=payload;
+ const rows=f.events.map(row);
+ for(const target of [f.target,f.rename])assert.equal(f.check(target,rows).status,'unavailable');
+ if(name==='missing'){
+   assert.equal(rows[0].project_id,null);
+   assert.equal(Object.hasOwn(JSON.parse(rows[0].private_json),'project_id'),false);
+   assert.equal(Object.hasOwn(JSON.parse(rows[0].payload),'project_id'),false);
+   assert.equal(f.check(f.target,rows).reason,'historical_origin_scope_unproven');
+ }
+});
+
 for(const [name,change] of [
  ['block recreated',f=>f.add('BlockCreated',{project_id:'project',document_id:'document',block_id:'block'})],
  ['document recreated',f=>f.add('DocumentCreated',{project_id:'project',document_id:'document'})],

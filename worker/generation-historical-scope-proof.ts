@@ -55,6 +55,7 @@ export function historicalScopeCandidate(rows: Row[], events: CreativeEvent[], t
   if (projectOrigins.length !== 1 || documentOrigins.length !== 1 || documentOrigin?.type !== 'DocumentCreated'
     || block !== null && blockOrigins.length !== 1) return unavailable('historical_origin_missing_or_recreated');
   if (!projectOrigin || !documentOrigin || projectOrigin.sequence >= documentOrigin.sequence || documentOrigin.sequence >= target.sequence
+    || !identifier(projectOrigin.payload.project_id) || projectOrigin.payload.project_id !== project
     || documentOrigin.payload.project_id !== project || documentOrigin.payload.document_id !== document
     || block !== null && (!blockOrigin || blockOrigin.sequence <= documentOrigin.sequence || blockOrigin.sequence >= target.sequence
       || blockOrigin.payload.project_id !== project || blockOrigin.payload.document_id !== document

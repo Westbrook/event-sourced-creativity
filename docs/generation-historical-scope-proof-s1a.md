@@ -1,4 +1,4 @@
-# S1a — authentic absence verified; historical proof ready for review
+# S1a — corrected historical proof validated for authorized release
 
 ## Integrated, published and live-verified are separate
 
@@ -16,7 +16,7 @@ All three have matching event identity, matching retained private body/history a
 
 ## Narrow local compatibility change
 
-The additional change is local and not integrated into main or published. It applies only to the authentic missing-field shapes: BlockPropertyEdited with both document/project keys absent and an explicit block ID, and DocumentRenamed with an explicit matching document ID and project key absent. Explicit NULL, empty strings, different scope, other event types and library/canvas claims do not receive this exception.
+The corrected change is validated locally for the user-authorized integration and publication. The reviewed missing-ID defect in1fce009f is fixed: ProjectCreated.project_id must be an explicit valid identifier equal to the selected project. Release and live-read receipts are recorded separately after deployment. It applies only to the authentic missing-field shapes: BlockPropertyEdited with both document/project keys absent and an explicit block ID, and DocumentRenamed with an explicit matching document ID and project key absent. Explicit NULL, empty strings, different scope, other event types and library/canvas claims do not receive this exception.
 
 A candidate must have exactly one explicit ProjectCreated and DocumentCreated in order, plus exactly one explicit BlockCreated for the block edit. Creation records must name the selected project/document; they must precede the affected event. The proof examines the complete authenticated prefix through the original generation request, including events between the affected edit and that request. Repeated creation/fork, removal/restoration, attachment/detachment, rehoming and project-state transitions remain rejected even if later events restore the current projection. Explicit scope conflict anywhere in the relevant subject history is rejected. No current projection or fold default supplies missing identity.
 
@@ -28,7 +28,7 @@ The returned original payload is unchanged, including NULL sidecar metadata. A s
 
 ## Validation and scope
 
-The focused suite covers 24 historical candidate cases and 12 source/actual compiled-Worker journeys. Positive omissions are persisted through the real event writer and staging trigger. The positive Worker fixture reaches its original retained approval commit, plan, consent, execution and result chain without backfilling any evidence. Negative compiled-Worker fixtures exercise recreated, rehomed and detached/reattached subjects; remaining cases cover explicit foreign scope, damaged envelopes, wrong owner/redaction, rights/retention, changed authority/configuration, unsupported events and mutation races. The new history witness catches an unrelated historical origin changed without advancing the head or changing the byte count. Inspection assertions require zero writes and zero provider calls.
+The focused suite covers 28 historical candidate cases and 14 source/actual compiled-Worker journeys. Positive omissions are persisted through the real event writer and staging trigger. The positive Worker fixture reaches its original retained approval commit, plan, consent, execution and result chain without backfilling any evidence. Real-writer missing-ID ProjectCreated fixtures reject all three absent-scope events in source and rebuilt Worker; helper negatives also cover null, invalid and foreign origin IDs. Positive explicit-origin coverage remains. Negative compiled-Worker fixtures exercise recreated, rehomed and detached/reattached subjects; remaining cases cover explicit foreign scope, damaged envelopes, wrong owner/redaction, rights/retention, changed authority/configuration, unsupported events and mutation races. The new history witness catches an unrelated historical origin changed without advancing the head or changing the byte count. Inspection assertions require zero writes and zero provider calls.
 
 TypeScript, changed-file lint, generated schema consistency, localization and clean build are checked. Exact results and the new local bundle identity are in `evidence/generation-s1a/historical-proof-verification.json`. Tests use offline fixtures, not a live key. No migrations, grants, provider calls, study activation, routing or accounting-policy changes occurred. Existing unrelated files in main are preserved.
 
@@ -36,7 +36,7 @@ TypeScript, changed-file lint, generated schema consistency, localization and cl
 
 The actual original approval chain has not run: Production536 still stops at the three absent-scope rows. Historical source qualification is pending the local proof running on authentic history; current eligibility must then be reported independently by the current authority/rights/source checks. The retained nine records at `rev-1pygpag` remain internally consistent, but internal agreement is not approval provenance, current eligibility or human fidelity acceptance.
 
-**Review the local proof diff and authorize its additional publication if acceptable.** Then repeat the exact authenticated original reader. It will either return the bounded historical-proof refusal, proceed to a precise original approval failure, or provide the complete source/approval certificate. No further reader scaffold or replacement planner is needed for that attempt. If source and approval qualify, the retained planner direction can support the genuine offline current-compiler/provenance-only comparison; preparing that comparison now would skip its explicit prerequisite.
+**The user authorized publishing the corrected proof after validation.** Next integrate and publish it, then repeat the exact authenticated original reader. It will either return the bounded historical-proof refusal, proceed to a precise original approval failure, or provide the complete source/approval certificate. No further reader scaffold or replacement planner is needed for that attempt. If source and approval qualify, the retained planner direction can support the genuine offline current-compiler/provenance-only comparison; preparing that comparison now would skip its explicit prerequisite.
 
 Human fidelity, accounting-policy selection and paid generation authorization remain separate and unselected. No additional production compatibility change was published under this continuation.
 
