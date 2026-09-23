@@ -179,7 +179,8 @@ async function approvedSourceFixture(f,env,owner){
 }
 
 
-for (const runtime of ['source','production bundle']) for (const scopeCase of ['complete','scope observation']) test(`${runtime}: isolated schema delivers ${scopeCase} through one mocked Still generation`,async t=>{
+for (const runtime of ['source','production bundle']) for (const scopeCase of ['complete','scope observation','historical proof','historical recreated','historical rehomed','historical attached']) test(`${runtime}: isolated schema delivers ${scopeCase} through one mocked Still generation`,async t=>{
+ const historicalCase=scopeCase.startsWith('historical ');
  const f=await fixture(t);await applyEventSaveRepair(f.db,(await inspectEventSaveRepair(f.db)).proof,authority);
  const {default:worker}=runtime==='source'?await import('../worker/index.ts'):await import('../dist/server/index.js');const media=new Map(),background=[];
  const env={DB:f.db,OPENAI_API_KEY:'offline-sentinel',OPENAI_MODEL:'gpt-5.6-terra',ASSETS:{fetch:async()=>new Response(null,{status:404})},MEDIA:{put:async(key,bytes)=>media.set(key,bytes),get:async()=>null}};
@@ -192,15 +193,47 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
   assert.equal(String(url),'https://api.openai.com/v1/images/generations');image++;return new Response('data: '+JSON.stringify({type:'image_generation.completed',b64_json:Buffer.from('offline-image-bytes').toString('base64'),size:'1536x1024',output_format:'png',usage:{input_tokens:100,output_tokens:20,total_tokens:120,input_tokens_details:{text_tokens:100,image_tokens:0}}})+'\n\n',{headers:{'content-type':'text/event-stream','x-request-id':'offline-image'}});
  };t.after(()=>{globalThis.fetch=original;});
  const session=await (await request('/api/session')).json();f.sqlite.prepare('UPDATE users SET consent_version=?').run('pilot-2026-08-10');
+ // The historical-proof fixture requires authentic origin envelopes. Enrich
+ // the synthetic bootstrap before the real writer and staging trigger persist it.
+ const seedPrepare=f.db.prepare;
+ if(historicalCase)f.db.prepare=sql=>{
+   const statement=seedPrepare(sql);if(!/^INSERT INTO event_write_stage\s*\(/u.test(sql))return statement;
+   const bind=statement.bind.bind(statement);statement.bind=(...a)=>{
+     if(['BlockCreated','ExtractionCompleted','ReferenceIngested','DocumentCreated'].includes(a[11])){
+       const e={eventId:a[0],streamId:a[1],sequence:a[2],occurredAt:a[3],recordedAt:a[4],actor:a[5],clientId:a[6],correlationId:a[7],causationId:a[8],compensatesEventId:a[9],schemaVersion:a[10],type:a[11],payload:{...JSON.parse(a[16]),project_id:'project-atmosphere',document_id:'doc-atmosphere'}};
+       a=eventWriteBindings(e);
+     }
+     return bind(...a);
+   };return statement;
+ };
  assert.equal((await request('/api/events?after=0&limit=2000&content=0')).status,200);while(background.length)await Promise.all(background.splice(0));
+ f.db.prepare=seedPrepare;
  // The demo bootstrap predates strict source custody. Give the synthetic seed
  // its explicit document/project identity before this test generates anything.
- for(const row of f.sqlite.prepare("SELECT private_event_id,private_json FROM event_private_payloads WHERE owner_id=? AND private_event_id IN(SELECT event_id FROM events WHERE type IN('BlockCreated','ExtractionCompleted','ReferenceIngested','DocumentCreated'))").all(session.user.userId)){
+ if(!historicalCase)for(const row of f.sqlite.prepare("SELECT private_event_id,private_json FROM event_private_payloads WHERE owner_id=? AND private_event_id IN(SELECT event_id FROM events WHERE type IN('BlockCreated','ExtractionCompleted','ReferenceIngested','DocumentCreated'))").all(session.user.userId)){
    f.sqlite.prepare("UPDATE event_private_payloads SET document_id='doc-atmosphere',project_id='project-atmosphere',private_json=? WHERE private_event_id=?").run(JSON.stringify({...JSON.parse(row.private_json),document_id:'doc-atmosphere',project_id:'project-atmosphere'}),row.private_event_id);
  }
  const approval=await approvedSourceFixture(f,env,session.user.userId);
  const opened=makeEvent('creative:'+session.user.userId,f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head+1,'user:'+session.user.userId,'offline','source-diagnostic','DocumentOpened',{project_id:'project-atmosphere',document_id:'doc-atmosphere'});
  const openedValues=eventWriteBindings(opened);await env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${openedValues.map(()=>'?').join(',')})`).bind(...openedValues).run();
+ if(historicalCase&&scopeCase!=='historical proof'){
+   const block=f.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id IN(SELECT event_id FROM events WHERE type='BlockCreated') AND json_extract(private_json,'$.block_id')='block-direction'").get();
+   const scoped={block_id:'block-direction',document_id:'doc-atmosphere',project_id:'project-atmosphere',scope:'document'};
+   const transitions=scopeCase==='historical recreated'?[['BlockCreated',JSON.parse(block.private_json)]]
+     :scopeCase==='historical rehomed'?[['BlockRehomed',{...scoped,project_id:'foreign-project',document_id:'foreign-document'}],['BlockRehomed',scoped]]
+     :[['BlockDocumentDetached',scoped],['BlockDocumentAttached',scoped]];
+   for(const [type,payload] of transitions){const event=makeEvent('creative:'+session.user.userId,f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head+1,'user:'+session.user.userId,'offline','historical-refusal',type,payload);const values=eventWriteBindings(event);await env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${values.map(()=>'?').join(',')})`).bind(...values).run();}
+ }
+ const historicalFixtures=[];
+ if(historicalCase)for(const [type,payload] of [
+   ['ProjectCreated',{project_id:'unrelated-project',name:'Unused A'}],
+   ['BlockPropertyEdited',{block_id:'block-direction',property_path:'proof_fixture',new_value:'Private original fixture'}],
+   ['DocumentRenamed',{document_id:'doc-atmosphere',new_title:'First original rename'}],
+   ['DocumentRenamed',{document_id:'doc-atmosphere',new_title:'Second original rename'}],
+ ]){
+   const event=makeEvent('creative:'+session.user.userId,f.sqlite.prepare('SELECT MAX(sequence) AS head FROM events').get().head+1,'user:'+session.user.userId,'offline','historical-proof',type,payload);
+   const values=eventWriteBindings(event);await env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${values.map(()=>'?').join(',')})`).bind(...values).run();if(type!=='ProjectCreated')historicalFixtures.push(event);
+ }
  const scopeFixtures=[];
  if(scopeCase==='scope observation'){
    const definitions=[
@@ -256,6 +289,13 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  const sourceBeforeChanges=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
 
 
+ if(historicalCase&&scopeCase!=='historical proof'){
+   const providerBefore=providerCalls,response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409);assert.equal(body.error,'generation_source_original_events_unavailable');
+   const rejected=body.diagnostic.scopeObservations.find(o=>o.eventId===historicalFixtures.find(e=>e.type==='BlockPropertyEdited').eventId);
+   assert.equal(rejected.membershipProven,false);assert.equal(rejected.historicalProof.reason,scopeCase==='historical recreated'?'historical_origin_missing_or_recreated':'historical_subject_transition_unsupported');
+   assert.equal(body.sourceEvidence,undefined);assert.equal(body.records,undefined);assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,sourceBeforeChanges);assert.equal(providerCalls,providerBefore);
+   return;
+ }
  if(scopeCase==='scope observation'){
    const beforeProvider=providerCalls;
    const observe=async()=>{
@@ -327,6 +367,13 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  const sourceResponse=await inspect(sourcePath);assert.equal(sourceResponse.status,200,await sourceResponse.clone().text());
  const sourceResult=await sourceResponse.json();
  assert.equal(sourceResult.sourceEvidence.status,'complete');
+ if(scopeCase==='historical proof'){
+   assert.equal(sourceResult.sourceEvidence.historical.historicalScopeProofs.length,3);
+   for(const event of historicalFixtures){
+     const proof=sourceResult.sourceEvidence.historical.historicalScopeProofs.find(p=>p.eventId===event.eventId);assert.equal(proof.eventSequence,event.sequence);assert.equal(proof.throughSequenceExclusive,requested.sequence);
+     const retained=sourceResult.sourceEvidence.historical.sourceEvents.find(e=>e.event_id===event.eventId);assert.equal(retained.private_project,null);assert.deepEqual(JSON.parse(retained.private_json),event.payload,'scope must not be backfilled into evidence');
+   }
+ }
  assert.equal(sourceResult.sourceEvidence.historical.producerChains.length,1);
  assert.equal(sourceResult.sourceEvidence.historical.producerChains[0].receipt.preview_id,approval.previewId);
  assert.equal(sourceResult.sourceEvidence.historical.producerChains[0].executions[0].execution.execution_id,approval.executionId);
@@ -336,6 +383,26 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
  assert.equal(sourceResult.sourceEvidence.eligibility.executionAuthorized,false);
  assert.equal(sourceResult.sourceEvidence.configuration.originalAccountBinding,null);
  assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,sourceBeforeChanges,'complete source inspection must issue no writes');
+ if(scopeCase==='historical proof'){
+   // An unrelated origin changes without a new sequence or byte-count change.
+   // It is outside the selected producer list but inside the absence census.
+   const unrelated=f.sqlite.prepare("SELECT private_event_id,private_json FROM event_private_payloads WHERE json_extract(private_json,'$.project_id')='unrelated-project'").get();
+   const prepare=f.db.prepare;let injected=false,injectedChanges=0;
+   f.db.prepare=sql=>{
+     const statement=prepare(sql);if(!sql.startsWith('SELECT * FROM authoring_commits'))return statement;
+     const bind=statement.bind.bind(statement);statement.bind=(...args)=>{
+       const bound=bind(...args),first=bound.first.bind(bound);bound.first=async()=>{
+         if(!injected){injected=true;const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;f.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(unrelated.private_json.replace('Unused A','Unused B'),unrelated.private_event_id);injectedChanges=f.sqlite.prepare('SELECT total_changes() AS n').get().n-before;}
+         return first();
+       };return bound;
+     };return statement;
+   };
+   try{
+     const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n,providerBefore=providerCalls;
+     const response=await inspect(sourcePath),body=await response.json();assert.equal(response.status,409);assert.equal(body.error,'generation_source_historical_subject_changed');assert.equal(body.sourceEvidence,undefined);assert.equal(injected,true);
+     assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before+injectedChanges);assert.equal(providerCalls,providerBefore);
+   }finally{f.db.prepare=prepare;f.sqlite.prepare('UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?').run(unrelated.private_json,unrelated.private_event_id);}
+ }
  const inspectionProviderCalls=providerCalls;
  const expectSourceError=async(code)=>{
    const before=f.sqlite.prepare('SELECT total_changes() AS n').get().n;
@@ -365,9 +432,9 @@ for (const runtime of ['source','production bundle']) for (const scopeCase of ['
      const response=await inspect(sourcePath),raw=await response.text();assert.equal(response.status,409,raw);
      const body=JSON.parse(raw);assert.equal(body.error,'generation_source_original_events_unavailable');
      assert.equal(body.diagnostic.status,'unavailable');assert.equal(body.diagnostic.eligibility.eligibleForReview,false);
-     assert.deepEqual(body.diagnostic.eventChecks.filter(e=>e.failedChecks.length),[{eventId:opened.eventId,eventType:'DocumentOpened',failedChecks:['private_project_matches']}]);
-     assert.equal(body.diagnostic.scopeObservations[0].classification,'inconsistent_producer_envelope');
-     assert.equal(body.diagnostic.requiredEventCount-body.diagnostic.availableEventCount,1);
+     assert.deepEqual(body.diagnostic.eventChecks.filter(e=>e.eventId===opened.eventId),[{eventId:opened.eventId,eventType:'DocumentOpened',failedChecks:['private_project_matches']}]);
+     assert.equal(body.diagnostic.scopeObservations.find(o=>o.eventId===opened.eventId).classification,'inconsistent_producer_envelope');
+     assert.equal(body.diagnostic.requiredEventCount-body.diagnostic.availableEventCount,1+historicalFixtures.length);
      assert.equal(body.records,undefined);assert.equal(body.sourceEvidence,undefined);
      assert.equal(f.sqlite.prepare('SELECT total_changes() AS n').get().n,before);assert.equal(providerCalls,inspectionProviderCalls);
    }finally{f.sqlite.prepare('UPDATE event_private_payloads SET project_id=?,private_json=? WHERE private_event_id=?').run(originalRow.project_id,originalRow.private_json,opened.eventId);}

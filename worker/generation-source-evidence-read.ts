@@ -8,6 +8,7 @@ import { nativeMemoryAnswerExclusion } from './memory-native-boundary.ts';
 import { foldEvents } from '../src/model/events.ts';
 import { authoritativeCreativeContext } from './context-authority.ts';
 import { scopeObservationQuery, classifyScopeObservation } from './generation-source-scope-observation.ts';
+import { historicalScopeCandidate } from './generation-historical-scope-proof.ts';
 
 const MAX_ROWS = 50_000, MAX_HISTORY_BYTES = 64 * 1024 * 1024, MAX_CELL = 2_200_000, MAX_REPLY = 12_000_000;
 const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -35,6 +36,7 @@ const footprintSql = `SELECT COUNT(*) AS rows,COALESCE(MAX(sequence),0) AS head,
  */
 function boundedEnvironment(env: WorkerEnv, stream: string, footprint: Row) {
   const db = env.DB; let statements = 0, returnedBytes = 0, returnedRows = 0;
+  const historyRows: Row[] = [], historyWitnesses: Array<() => Promise<void>> = [];
   const checked = <T>(result: T): T => {
     returnedBytes += bytes(result); returnedRows += Array.isArray(record(result).results) ? (record(result).results as unknown[]).length : 1;
     if (returnedBytes > MAX_HISTORY_BYTES * 3 || returnedRows > MAX_ROWS * 3) fail('read_budget_exceeded');
@@ -55,7 +57,15 @@ function boundedEnvironment(env: WorkerEnv, stream: string, footprint: Row) {
     const statement = () => { tick(); return db.prepare(actual).bind(...args); };
     const wrapped = {
       bind: (...v: unknown[]) => wrap(sql, v),
-      all: async () => checked(await statement().all()),
+      all: async () => {
+        const result = checked(await statement().all<Row>());
+        if (page) {
+          historyRows.push(...result.results.filter(row => /^(Project|Document|Block)/u.test(String(row.type))));
+          const digest = await consentHash(result.results);
+          historyWitnesses.push(async () => { if (await consentHash(checked(await statement().all<Row>()).results) !== digest) fail('historical_subject_changed'); });
+        }
+        return result;
+      },
       first: async () => checked(await statement().first()),
       run: async () => fail('write_forbidden'), raw: async () => fail('raw_read_forbidden'),
     } as D1PreparedStatement;
@@ -70,7 +80,8 @@ function boundedEnvironment(env: WorkerEnv, stream: string, footprint: Row) {
   } as unknown as WorkerEnv['DB'];
   // Unsupported referenced media fails closed instead of hydrating objects as a
   // side effect of qualifying this no-reference source reader.
-  return { ...env, DB: readonly, MEDIA: new Proxy(env.MEDIA ?? {}, { get: () => () => fail('media_reference_unsupported') }) } as WorkerEnv;
+  return { env: { ...env, DB: readonly, MEDIA: new Proxy(env.MEDIA ?? {}, { get: () => () => fail('media_reference_unsupported') }) } as WorkerEnv,
+    historyRows, recheckHistory: async () => { for (const witness of historyWitnesses) await witness(); } };
 }
 
 /** Additional owner-administrator observation, opt-in from the original reader.
@@ -89,7 +100,8 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
   const beforeAuth = canonicalConsent(auth.user.authorizationSnapshot);
   const footprint = await db.prepare(footprintSql).bind(job.stream_id).first<Row>();
   if (!footprint || Number(footprint.rows) > MAX_ROWS || Number(footprint.bytes) > MAX_HISTORY_BYTES || Number(footprint.largest) > MAX_CELL) fail('history_capacity_exceeded');
-  const bounded = boundedEnvironment(env, job.stream_id, footprint);
+  const history = boundedEnvironment(env, job.stream_id, footprint), bounded = history.env;
+  let historicalProofUsed = false;
   const trusted = await continueOutputTrustedContext(request, bounded, job.document_id, 'read', { user: auth.user, principal: auth.user, response: null, impersonation: null });
   if (trusted instanceof Response) fail('current_context_unavailable');
   if (!trusted.context || trusted.scope.kind !== 'personal' || trusted.scope.ownerUserId !== job.owner_id
@@ -127,6 +139,7 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
   const recheck = async () => {
     if (env.DB !== db || Date.parse(job.expires_at) <= Date.now()) fail('custody_changed');
     for (let i = 0; i < witnesses.length; i++) if (!equal(await witnesses[i]!(), captured[i])) fail('producer_changed');
+    if (historicalProofUsed) await history.recheckHistory();
     if (!equal(await db.prepare(footprintSql).bind(job.stream_id).first(), footprint)) fail('history_changed');
     await verifyOutputSourceRead(bounded, trusted.scope, trusted.ownerHead, [outputScopeAuthority(trusted.scope, 'read'), noPilot, ...trusted.sourceAssertions, ...deadlines]);
     const latest = await requireExistingHoldAdministrator(request, bounded);
@@ -157,6 +170,9 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
     AND NOT EXISTS(SELECT 1 FROM project_event_scopes s WHERE s.event_id=event.event_id)
     ORDER BY event.sequence LIMIT 257`;
   const sourceEvents = await capture(async () => (await bounded.DB.prepare(eventQuery('event.event_id IN(SELECT value FROM json_each(?))')).bind(job.stream_id, JSON.stringify(refIds), requestedSequence, job.owner_id, job.document_id, trusted.scope.projectId).all<Row>()).results);
+  // Keep the captured lookup immutable: accepted compatibility rows are a
+  // separate list so the original witness still compares the exact SQL result.
+  const historicalScopeProofs: unknown[] = [], historicalSourceEvents: Row[] = [];
   if (sourceEvents.length !== refIds.length) {
     // Diagnose only server-resolved references from the authenticated history.
     // Read booleans, never rejected private bodies or another owner's metadata.
@@ -183,23 +199,61 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
     });
     if (eventChecks.filter(e => !e.failedChecks.length).length !== sourceEvents.length) fail('history_changed');
     const scopeObservations = [];
+    const authenticatedHistory = new Map<string, Row | null>();
+    const observe = async (event: typeof trusted.events[number]) => {
+      if (authenticatedHistory.has(event.eventId)) return authenticatedHistory.get(event.eventId)!;
+      if (authenticatedHistory.size >= 128) fail('historical_subject_capacity_exceeded');
+      const query = scopeObservationQuery(event, job.owner_id, job.document_id, trusted.scope.projectId, requestedSequence, MAX_CELL);
+      const row = await capture(() => bounded.DB.prepare(query.sql).bind(...query.bindings).first<Row>());
+      authenticatedHistory.set(event.eventId,row); return row;
+    };
     for (const check of eventChecks.filter(e => e.failedChecks.length)) {
       // Only scope-only failures receive additional observations. All other
       // custody failures remain opaque, including foreign/redacted sidecars.
       if (check.failedChecks.some(k => !['private_document_matches','private_project_matches'].includes(k))) continue;
       const event = trusted.events.find(e => e.eventId === check.eventId);
       if (!event) fail('history_changed');
-      const query = scopeObservationQuery(event, job.owner_id, job.document_id, trusted.scope.projectId, requestedSequence, MAX_CELL);
-      const row = await capture(() => bounded.DB.prepare(query.sql).bind(...query.bindings).first<Row>());
+      const row = await observe(event);
       if (!row || row.event_identity_matches !== 1 || row.private_body_matches_history !== 1) fail('producer_changed');
-      scopeObservations.push({ eventId: check.eventId, ...classifyScopeObservation(row, event.type) });
+      const observation = classifyScopeObservation(row, event.type);
+      let proof: { status: string; reason?: string } = { status: 'unavailable', reason: 'scope_not_genuinely_absent' };
+      if (observation.classification === 'absent_scope_metadata') {
+        const candidate = historicalScopeCandidate(history.historyRows, trusted.events, event, job.owner_id, job.document_id, trusted.scope.projectId, requestedSequence);
+        proof = candidate;
+        if (candidate.status === 'candidate') {
+          let valid = true;
+          for (const producer of candidate.events) {
+            const evidence = await observe(producer);
+            if (!evidence || evidence.event_identity_matches !== 1 || evidence.private_body_matches_history !== 1
+              || evidence.writer_envelope_matches !== 1 && evidence.migration_envelope_matches !== 1
+              || evidence.document_sidecar_matches_payload !== 1 || evidence.project_sidecar_matches_payload !== 1) { valid = false; break; }
+          }
+          if (valid) {
+            historicalProofUsed = true;
+            // The body is the exact authenticated retained body already read by
+            // the native history reader. Never invent or backfill scope fields.
+            const raw = history.historyRows.find(r => r.event_id === event.eventId)!;
+            historicalSourceEvents.push({ event_id: raw.event_id, sequence: raw.sequence, type: raw.type, payload: raw.payload, actor: raw.actor,
+              client_id: raw.client_id, correlation_id: raw.correlation_id, occurred_at: raw.occurred_at, private_json: raw.private_json,
+              private_owner: raw.owner_id, private_document: raw.document_id, private_project: raw.project_id });
+            historicalScopeProofs.push({ eventId: event.eventId, ...candidate.basis, evidenceEventIds: candidate.events.map(e => e.eventId) });
+            proof = { status: 'proven' };
+          } else proof = { status: 'unavailable', reason: 'historical_producer_envelope_unavailable' };
+        }
+      }
+      // Only the reason is disclosed when proof fails; candidate bodies stay
+      // internal even when some other original event still blocks the response.
+      scopeObservations.push({ eventId: check.eventId, ...observation, membershipProven: proof.status === 'proven', historicalProof: { status: proof.status, ...(proof.reason ? { reason: proof.reason } : {}) } });
     }
+    if (sourceEvents.length + historicalSourceEvents.length !== refIds.length) {
     const certificate = { schemaVersion: 'forma-generation-source-diagnostic-v1', status: 'unavailable' as const,
       error: 'generation_source_original_events_unavailable', requiredEventCount: refIds.length, availableEventCount: sourceEvents.length,
       eventChecks, scopeObservations, eligibility: { eligibleForReview: false, humanReviewed: false, executionAuthorized: false } };
     await recheck(); checkDeadline();
     return { certificate, recheck, checkDeadline };
+    }
   }
+  const qualifiedSourceEvents = [...sourceEvents,...historicalSourceEvents].sort((a,b) => Number(a.sequence)-Number(b.sequence));
   const verifyEventBodies = (events: Row[]) => {
     for (const event of events) {
       const publicBody = parse(event.payload), folded = trusted.events.find(e => e.eventId === event.event_id);
@@ -207,12 +261,12 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
       if (!folded || folded.type !== event.type || !equal(folded.payload, parse(event.private_json ?? event.payload))) fail('original_body_changed');
     }
   };
-  verifyEventBodies(sourceEvents);
+  verifyEventBodies(qualifiedSourceEvents);
   const candidates = originalFacts.map((fact, factIndex) => ({ fact, factIndex, properties: record(fact.properties) })).filter(f => f.properties.created_from === 'approved-context-proposal');
   if (candidates.length > 16) fail('producer_capacity_exceeded');
   const producerChains: unknown[] = [], seen = new Set<string>();
   for (const candidate of candidates) {
-    const created = sourceEvents.find(e => e.type === 'BlockCreated' && parse(e.private_json ?? e.payload).block_id === candidate.fact.block_id);
+    const created = qualifiedSourceEvents.find(e => e.type === 'BlockCreated' && parse(e.private_json ?? e.payload).block_id === candidate.fact.block_id);
     const prefix = `authoring:${job.owner_id}:`;
     if (!created || created.actor !== `user:${job.owner_id}` || created.client_id !== 'web:context-approval' || !String(created.correlation_id).startsWith(prefix)) fail('approval_origin_unavailable');
     const previewId = String(created.correlation_id).slice(prefix.length); ids([previewId]);
@@ -251,7 +305,7 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
       }
       executions.push({ execution, consent, output });
     }
-    for (const c of candidates.filter(c => sourceEvents.some(e => e.correlation_id === created.correlation_id && e.type === 'BlockCreated' && parse(e.private_json ?? e.payload).block_id === c.fact.block_id))) {
+    for (const c of candidates.filter(c => qualifiedSourceEvents.some(e => e.correlation_id === created.correlation_id && e.type === 'BlockCreated' && parse(e.private_json ?? e.payload).block_id === c.fact.block_id))) {
       const event = plannedEvents.find(e => e.type === 'BlockCreated' && record(e.payload).block_id === c.fact.block_id), props = record(record(event?.payload).properties);
       if (props.created_from !== 'approved-context-proposal' || props.context_detail !== true || props.authority !== 'authored'
         || props.source_execution_id !== c.properties.source_execution_id || props.source_proposal_id !== c.properties.source_proposal_id
@@ -261,7 +315,7 @@ export async function readGenerationSourceEvidence(request: Request, env: Worker
   }
   const certificate = {
     schemaVersion: 'forma-generation-source-evidence-v1', status: 'complete' as const, authority: 'current-personal-administrator',
-    historical: { documentRevision: historical.documentRevision, sourceBlockVersions: historical.sourceBlockVersions, snapshot: originalSnapshot, sourceEvents, producerChains, originalRequestSequence: requestedSequence },
+    historical: { documentRevision: historical.documentRevision, sourceBlockVersions: historical.sourceBlockVersions, snapshot: originalSnapshot, sourceEvents: qualifiedSourceEvents, historicalScopeProofs, producerChains, originalRequestSequence: requestedSequence },
     current: { documentRevision: source.documentRevision, sourceBlockVersions: source.sourceBlockVersions, sourceDigest: trusted.sourceDigest, ownerHead: trusted.ownerHead,
       projectHead: trusted.projectHead, snapshot: { ...source.snapshot, document: { id: job.document_id, title: trusted.projection.documents.find(d => d.id === job.document_id)?.title } },
       sourceEvidence: trusted.sourceEvidence, sourceProblems: trusted.sourceProblems, preferenceCounts, sourceDeadlines: deadlines.map(d => d.deadlineMs), matchesHistorical: currentMatchesOriginal },
