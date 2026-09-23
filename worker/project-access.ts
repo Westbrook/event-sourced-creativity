@@ -369,7 +369,21 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
         AND strftime('%Y-%m-%dT%H:%M:%fZ',origin_retention.assigned_expires_at)=origin_retention.assigned_expires_at
       AND origin_retention.assigned_expires_at<=origin.source_retention_ceiling
       AND origin_retention.assigned_expires_at<=CASE WHEN origin_body.content_id=origin.manifest_content_ref THEN origin.manifest_expires_at ELSE origin.answer_expires_at END)`:'0';
+  // Unpublished ordinary images retain their original actor-private inputs.
+  // This preserves existing custody only; it grants no collaborative visibility.
+  const imageJournalCustody=`EXISTS(SELECT 1 FROM document_jobs image_job
+    JOIN project_resource_scopes image_scope ON image_scope.resource_kind='job' AND image_scope.resource_id=image_job.job_id
+    JOIN private_content image_journal ON image_journal.content_id=json_extract(image_job.result_json,'$.imageResponseJournal.contentRef')
+    WHERE resource.resource_kind='content' AND resource.visibility='actor_private'
+      AND image_scope.project_access_id=resource.project_access_id AND image_scope.organization_id=resource.organization_id
+      AND image_scope.project_id=resource.project_id AND image_scope.owner_user_id=resource.owner_user_id AND image_scope.actor_user_id=resource.actor_user_id
+      AND image_job.owner_id=resource.actor_user_id AND image_job.kind='generate' AND image_job.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      AND image_journal.owner_id=image_job.owner_id AND image_journal.kind='provider-response' AND image_journal.redacted_at IS NULL
+      AND image_journal.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND json_valid(image_journal.content)
+      AND json_extract(image_journal.content,'$.jobId')=image_job.job_id AND json_extract(image_journal.content,'$.correlationId')=image_job.correlation_id
+      AND resource.resource_id IN(json_extract(image_journal.content,'$.planned.contentId'),json_extract(image_journal.content,'$.prompt.contentId')))`;
   const previousResources=await env.DB.prepare(`SELECT resource.resource_kind,resource.resource_id,resource.source_event_id,resource.actor_user_id,
+    ${imageJournalCustody} AS private_image_journal,
     ${structuredLedgerCustody} AS private_structured_ledger,
     ${structuredOriginCustody} AS private_structured_origin,
     CASE WHEN retained.content_id IS NULL THEN 0 ELSE 1 END AS private_provider_response
@@ -407,7 +421,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
                 AND json_extract(issue_note.payload,'$.document_id')=job.document_id))))
       AND retained.redacted_at IS NULL AND retained.expires_at>?
     WHERE resource.project_access_id=? AND resource.organization_id=?`)
-    .bind(new Date().toISOString(),input.projectAccessId,input.organizationId).all<{resource_kind:string;resource_id:string;source_event_id:string|null;actor_user_id:string;private_structured_ledger:number;private_structured_origin:number;private_provider_response:number}>();
+    .bind(new Date().toISOString(),input.projectAccessId,input.organizationId).all<{resource_kind:string;resource_id:string;source_event_id:string|null;actor_user_id:string;private_image_journal:number;private_structured_ledger:number;private_structured_origin:number;private_provider_response:number}>();
   const actorJobs=previousResources.results.filter((resource)=>resource.resource_kind==="job");
   const actorByJobCorrelation=new Map<string,string>();
   if(actorJobs.length){
@@ -482,7 +496,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     ["project",new Set([input.projectId])],["document",documentIds],["block",blockIds],["relation",relationIds],
     ["collection",collectionIds],["output",outputIds],["artifact",artifactIds],["reference",referenceIds],["canvas",canvasIds],
     ["canvas_item",canvasItemIds],["canvas_arrangement",arrangementIds],["canvas_context",contextSetIds],["manifest_version",new Set(["canvas-v1"])],
-    ["content",new Set([...projectOutputs.flatMap((output)=>[output.contentRef,output.promptRef]).filter((value):value is string=>Boolean(value)),...projectArtifacts.flatMap((artifact)=>[artifact.contentRef,artifact.inputRef]).filter((value):value is string=>Boolean(value)),...conversationContent.map((item)=>item.id),...previousResources.results.filter((resource)=>resource.resource_kind==="content"&&(resource.actor_user_id!==input.ownerUserId||resource.private_provider_response===1||resource.private_structured_ledger===1||resource.private_structured_origin===1)).map((resource)=>resource.resource_id)])],
+    ["content",new Set([...projectOutputs.flatMap((output)=>[output.contentRef,output.promptRef]).filter((value):value is string=>Boolean(value)),...projectArtifacts.flatMap((artifact)=>[artifact.contentRef,artifact.inputRef]).filter((value):value is string=>Boolean(value)),...conversationContent.map((item)=>item.id),...previousResources.results.filter((resource)=>resource.resource_kind==="content"&&(resource.actor_user_id!==input.ownerUserId||resource.private_provider_response===1||resource.private_image_journal===1||resource.private_structured_ledger===1||resource.private_structured_origin===1)).map((resource)=>resource.resource_id)])],
     ["media",new Set([...projectOutputs.map((output)=>mediaKey(output.mediaUrl)),...projectArtifacts.flatMap(artifactMediaKeys),...referenceMedia.map((item)=>item.key)].filter(Boolean))],
   ]);
   for(const resource of previousResources.results){
@@ -495,7 +509,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
       if(pending)continue;
     }
     retainedResourceKeys.delete(`${resource.resource_kind}\u0000${resource.resource_id}`);
-    statements.push(env.DB.prepare("DELETE FROM project_resource_scopes WHERE project_access_id=? AND organization_id=? AND resource_kind=? AND resource_id=?")
+    statements.push(env.DB.prepare(`DELETE FROM project_resource_scopes AS resource WHERE project_access_id=? AND organization_id=? AND resource_kind=? AND resource_id=? AND NOT (${imageJournalCustody})`)
       .bind(input.projectAccessId,input.organizationId,resource.resource_kind,resource.resource_id));
   }
   const insertResource=(kind:string,id:string,visibility:ProjectPublicationResource["visibility"]="collaborative_output",sourceEventId:string|null=null,actorUserId=input.ownerUserId)=>{

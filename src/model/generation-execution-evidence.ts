@@ -219,8 +219,15 @@ export function generationOutcomeSummary(checkpoint:Record<string,unknown>, fail
   const detail=record(failure),raw=record(detail.outcome??checkpoint.generationOutcome);
   if(raw.schemaVersion!==GENERATION_OUTCOME_SCHEMA)return null;
   const outcome={...raw} as GenerationOutcomeEvidence;
-  if(interruptedStage==="storage"&&failure)return {...outcome,pipelineStage:"storage",failureKind:"storage"};
   if(typeof detail.pipelineStage==="string")outcome.pipelineStage=detail.pipelineStage as GenerationOutcomeEvidence["pipelineStage"];
+  // A pre-fetch private snapshot cannot negate a later paid-call checkpoint.
+  // Keep this projection stage-local: planning receipt does not prove image receipt.
+  const calls=providerSubmissions(checkpoint).filter(call=>outcome.pipelineStage==='planner'?call.operation==='planning':outcome.pipelineStage.startsWith('media_')&&call.operation!=='planning');
+  if(calls.some(call=>call.responseReceivedAt||call.providerRequestId||call.status==='completed'||call.status==='accepted'||call.status==='rejected'))outcome.dispatchState='response_received';
+  else if(calls.some(call=>call.status==='pending')&&outcome.dispatchState==='not_dispatched')outcome.dispatchState='dispatch_unknown';
+
+  if(interruptedStage==="storage"&&failure)return {...outcome,pipelineStage:"storage",failureKind:"storage"};
+
   if(failure){outcome.failureKind=detail.category==="network"?"transport":["moderation_response_invalid","provider_returned_invalid_json","provider_returned_no_output"].includes(String(detail.code))?"validation":detail.code==="provider_response_incomplete"?"incomplete":detail.category as GenerationOutcomeEvidence["failureKind"]??"unknown";
     outcome.correctiveActionScope=detail.scope as GenerationOutcomeEvidence["correctiveActionScope"]??"unknown";
     outcome.providerModerationStage=detail.providerModerationStage==="input"||detail.providerModerationStage==="output"?detail.providerModerationStage:"unknown";

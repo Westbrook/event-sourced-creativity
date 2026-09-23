@@ -1,3 +1,4 @@
+import {handleOrdinaryImageQueue} from './ordinary-image-queue.ts';
 import { handleGenerationEvidenceRead, GENERATION_EVIDENCE_PATH, GENERATION_EVIDENCE_PAGE } from './generation-evidence-read.ts';
 import {handleMemorySchemaRepair,MEMORY_SCHEMA_REPAIR_PATH,EVENT_SAVE_REPAIR_PATH} from './memory-schema-repair-api.ts';
 import {reconcileMemoryAuthoredImages} from './memory-authored-image.ts';
@@ -129,6 +130,7 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
+    if(url.pathname.startsWith("/api/internal/ordinary-images/"))return handleOrdinaryImageQueue(request,env);
     if(url.pathname===GENERATION_EVIDENCE_PATH||url.pathname===GENERATION_EVIDENCE_PAGE)return handleGenerationEvidenceRead(request,env);
     if(url.pathname===MEMORY_SCHEMA_REPAIR_PATH||url.pathname===EVENT_SAVE_REPAIR_PATH)return handleMemorySchemaRepair(request,env);
     if(url.pathname===OUTPUT_SCHEMA_PREFLIGHT_PATH)return handleOutputSchemaPreflight(request,env);

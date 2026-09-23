@@ -43,8 +43,10 @@ for(const shared of [false,true])test(`image job exposes a private preview befor
     finishStream();const completed=await running;
     assert.equal(completed.body.job.status,'completed',JSON.stringify(completed.body));
     assert.equal(paidImages,1);
-    const final=await f.request(checkpoint.partialMediaUrl.split('?')[0]);
-    assert.equal(final.status,200);assert.equal(await final.text(),'final-pixels');
+    const savedFinal=JSON.parse(f.sqlite.prepare("SELECT payload FROM events WHERE type='GenerationCompleted' ORDER BY sequence DESC LIMIT 1").get().payload);
+    assert.notEqual(savedFinal.media_url,checkpoint.partialMediaUrl.split('?')[0]);
+    const final=await f.request(checkpoint.partialMediaUrl.split('?')[0].replace('-partial.','.'));
+    assert.equal(final.status,200,JSON.stringify({savedFinal,response:await final.clone().text()}));assert.equal(await final.text(),'final-pixels');
     assert.equal(completed.body.job.result.partialMediaUrl,undefined);
   } finally {finishStream();if(running)await running;await f.drainBackground();globalThis.fetch=saved;f.close();}
 });

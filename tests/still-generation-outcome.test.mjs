@@ -55,3 +55,15 @@ test('schema subchecks produce bounded internal diagnostics without public sourc
   const log=preparationFailureDiagnostic(detail,'01a0cadd-2429-7893-9203-a123331424f1');assert.equal(log.correlationId,'01a0cadd-2429-7893-9203-a123331424f1');assert.equal(log.deploymentVersion,null);assert.doesNotMatch(JSON.stringify(log),/PRIVATE/);
  }
 });
+
+test('interrupted image distinguishes reserved allowance from charges and copies only bounded trace facts',()=>{
+ const result={generationReceipt:{provider_request_status:'submission_unknown',reservation_status:'executing',reservation_microusd:1000000},imageTrace:{clientRequestId:'client-original',providerRequestId:'req-original',lastRecordedStage:'media_result',prompt:'private source'}};
+ const out=generationOutcome(job({code:'provider_submission_uncertain'},result));assert.equal(out.title,'Generation was interrupted');assert.equal(out.canStartNew,false);
+ assert.ok(out.facts.some(f=>f.includes('$1 of allowance remains reserved')));assert.doesNotMatch(out.supportSummary,/private source/);assert.match(out.supportSummary,/req-original/);
+ assert.match(out.next,/only reads saved information/);
+});
+test('original image recovery requires server availability and never offers another purchase',()=>{
+ const result={imageResultState:'retained',imageRecoveryAvailable:true};const out=generationOutcome(job({},result));
+ assert.equal(out.recovery,'image');assert.equal(out.title,'Your image was generated');assert.equal(out.canStartNew,false);assert.match(out.next,/without requesting another image/);
+ assert.equal(generationOutcome(job({}, {...result,imageRecoveryAvailable:false})).recovery,null);
+});

@@ -16,6 +16,10 @@ export { StaleSequenceError, appendEvents };
 export { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
 
 export interface WorkerEnv {
+  /** Disabled until the companion consumer passes hosted qualification. */
+  FORMA_ORDINARY_IMAGE_QUEUE_QUALIFIED?: string;
+  FORMA_ORDINARY_IMAGE_QUEUE_SECRET?: string;
+  FORMA_ORDINARY_IMAGE_QUEUE_USERS?: string;
   /** Explicit server-owned intake/confirmation selection. Omitted stays inert;
    * this installs no policy/schema and never enables generation. */
   FORMA_SPONSOR_IMAGE_ENTRY?: SponsorImageEntryConfiguration;

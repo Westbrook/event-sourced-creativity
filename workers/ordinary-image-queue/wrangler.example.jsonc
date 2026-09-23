@@ -1,0 +1,13 @@
+{
+  "name": "forma-ordinary-image-queue",
+  "main": "index.ts",
+  "compatibility_date": "2026-09-22",
+  "workers_dev": false,
+  "triggers": {"crons": ["* * * * *"]},
+  "services": [{"binding": "APP", "service": "REPLACE_WITH_QUALIFIED_FORMA_WORKER"}],
+  "queues": {
+    "producers": [{"binding": "IMAGE_JOBS", "queue": "forma-ordinary-images"}],
+    "consumers": [{"queue": "forma-ordinary-images", "max_batch_size": 1, "max_concurrency": 1, "max_retries": 3, "dead_letter_queue": "forma-ordinary-images-dead"}]
+  },
+  "limits": {"cpu_ms": 300000}
+}

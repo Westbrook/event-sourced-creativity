@@ -550,13 +550,15 @@ export async function settleInterruptedDocumentJobReservations(
 /** Reconcile only an exact terminal legacy slide attempt; never admit or repeat provider work. */
 export async function settleLegacyPresentationReservations(
   env:WorkerEnv,user:PilotUser,job:DocumentReservationJob,
-  options:{reason?:string;assertions?:import("./output-requirements-ledger.ts").OutputSqlAssertion[]}={},
+  options:{reason?:string;originalImage?:true;assertions?:import("./output-requirements-ledger.ts").OutputSqlAssertion[]}={},
 ){
+  const image=options.originalImage===true;
+  const operation=image?"image-generation":"document-render:slides";
   const stop=(reason:string,status:"uncertain"|"conflict"="uncertain")=>({status,reason,settled:false,auditRepaired:false,usedTokens:0,usedMicrousd:0,releasedTokens:0,releasedMicrousd:0});
   const checkpoint=parseDocumentReservationJson(job.result_json),request=parseDocumentReservationJson(job.request_json);
   const integer=(value:unknown)=>typeof value==="number"&&Number.isSafeInteger(value)&&value>=0;
   const receipt=parseDocumentReservationJson(JSON.stringify(checkpoint.generationReceipt??{}));
-  if(job.owner_id!==user.userId||job.stream_id!==user.streamId||job.kind!=="render_document"||request.artifactKind!=="slides"
+  if(job.owner_id!==user.userId||job.stream_id!==user.streamId||(image?job.kind!=="generate"||parseDocumentReservationJson(JSON.stringify(checkpoint.imageResponseJournal??{})).version!==1:job.kind!=="render_document"||request.artifactKind!=="slides")
     ||!["failed","canceled","completed","partial"].includes(job.status))return stop("legacy_presentation_attempt_mismatch","conflict");
   await ensureSchema(env);
   if(await env.DB.prepare("SELECT 1 AS disposed FROM budget_hold_dispositions WHERE job_id=? AND operator_id=? AND correlation_id=?")
@@ -567,11 +569,11 @@ export async function settleLegacyPresentationReservations(
   const currentClient=String(checkpoint.presentationProviderClientRequestId??"");
   if(checkpoint.presentationProviderSubmission==="pending"&&(!currentClient||!calls.some(call=>call.clientRequestId===currentClient&&["completed","rejected"].includes(call.status))))return stop("legacy_presentation_unresolved_provider_call");
   if(currentClient&&!calls.some(call=>call.clientRequestId===currentClient))return stop("legacy_presentation_current_client_mismatch");
-  if(!currentClient&&(receipt.provider_request_status==="submission_unknown"||receipt.provider_submission_uncertain===true))return stop("legacy_presentation_current_client_missing");
+  if(!image&&!currentClient&&(receipt.provider_request_status==="submission_unknown"||receipt.provider_submission_uncertain===true))return stop("legacy_presentation_current_client_missing");
   let inputTokens=0,outputTokens=0,usedTokens=0,usedMicrousd=0;
   const responseIds=new Set<string>();
   for(const call of calls){
-    if(call.provider!=="openai"||call.operation!=="planning")return stop("legacy_presentation_call_identity_mismatch");
+    if(call.provider!=="openai"||(image?!["planning","image"].includes(call.operation):call.operation!=="planning"))return stop("legacy_presentation_call_identity_mismatch");
     if(call.status==="rejected"){
       if([call.costMicrousd,call.inputTokens,call.outputTokens,call.totalTokens].some(value=>value!==undefined&&value!==0))return stop("legacy_presentation_rejection_usage_conflict");
       continue;
@@ -614,7 +616,7 @@ export async function settleLegacyPresentationReservations(
   if(!reads[0]?.results.length)return stop("legacy_presentation_evidence_changed","conflict");
   if(reads[7]?.results.length)return stop("legacy_presentation_output_bound","conflict");
   if(!token||!cost||token.stream_id!==job.stream_id||cost.stream_id!==job.stream_id
-    ||token.correlation_id!==job.correlation_id||cost.correlation_id!==job.correlation_id||token.operation!=="document-render:slides"||cost.operation!==token.operation||token.period!==cost.period
+    ||token.correlation_id!==job.correlation_id||cost.correlation_id!==job.correlation_id||token.operation!==operation||cost.operation!==token.operation||token.period!==cost.period
     ||checkpoint.costReservationPeriod!==undefined&&checkpoint.costReservationPeriod!==cost.period
     ||![token.reserved_tokens,token.used_tokens,cost.reserved_microusd,cost.used_microusd].every(integer)
     ||!((token.status==="active"&&token.used_tokens===0)||(token.status===(usedTokens?"settled":"released")&&token.used_tokens===usedTokens))
@@ -665,7 +667,7 @@ export async function settleLegacyPresentationReservations(
   if(costActive)appendSettlement(costSettlementStatements(env,payer,cost,fixedScope?{cohort_id:String(fixedScope.cohort_id),organization_id:String(fixedScope.organization_id),actor_user_id:String(fixedScope.actor_user_id)}:null,usedMicrousd).statements,2+(cost.workspace_id!=="forma"?1:0)+(fixedScope?2:0));
   const eventIds:string[]=[];
   const appendFinancialEvent=async(type:string,payload:Record<string,unknown>,identity:unknown)=>{
-    const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify(["legacy-slides-settlement-v1",job.job_id,job.correlation_id,tokenId,costId,type,identity]))))).map(value=>value.toString(16).padStart(2,"0")).join("");
+    const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify([image?"ordinary-image-settlement-v1":"legacy-slides-settlement-v1",job.job_id,job.correlation_id,tokenId,costId,type,identity]))))).map(value=>value.toString(16).padStart(2,"0")).join("");
     const event=makeEvent(job.stream_id,0,"worker:policy","server:policy",token.correlation_id,type,payload);
     event.eventId=digest.slice(0,8)+"-"+digest.slice(8,12)+"-5"+digest.slice(13,16)+"-8"+digest.slice(17,20)+"-"+digest.slice(20,32);
     const bindings=eventWriteBindings(event);
@@ -673,12 +675,12 @@ export async function settleLegacyPresentationReservations(
       .bind(...bindings.slice(0,2),job.stream_id,...bindings.slice(3)));
     eventIds.push(event.eventId);
   };
-  const common={job_id:job.job_id,document_id:job.document_id,artifact_kind:"slides",reservation_id:tokenId,cost_reservation_id:costId,reason};
-  if(missingTokens||missingCost)await appendFinancialEvent("GenerationUsageRecorded",{...common,operation:"document-render:slides:reconciliation",
-    input_tokens:missingTokens?inputTokens-recordedInput:0,output_tokens:missingTokens?outputTokens-recordedOutput:0,total_tokens:missingTokens,planner_tokens:missingTokens,
-    cost_microusd:missingCost,planner_cost_microusd:missingCost,reserved_tokens:token.reserved_tokens,reserved_microusd:cost.reserved_microusd,
+  const common={job_id:job.job_id,document_id:job.document_id,artifact_kind:image?"image":"slides",reservation_id:tokenId,cost_reservation_id:costId,reason};
+  if(missingTokens||missingCost)await appendFinancialEvent("GenerationUsageRecorded",{...common,operation:operation+":reconciliation",
+    input_tokens:missingTokens?inputTokens-recordedInput:0,output_tokens:missingTokens?outputTokens-recordedOutput:0,total_tokens:missingTokens,...(image?{}:{planner_tokens:missingTokens}),
+    cost_microusd:missingCost,...(image?{}:{planner_cost_microusd:missingCost}),reserved_tokens:token.reserved_tokens,reserved_microusd:cost.reserved_microusd,
     planner_response_id:String(checkpoint.plannerResponseId??"")||[...responseIds].at(-1)||null,model_ids:[...new Set(calls.map(call=>call.model))],provider_call_count:calls.length},[recordedTokens,recordedCost,usedTokens,usedMicrousd]);
-  if(settled)await appendFinancialEvent("BudgetReleased",{...common,operation:"document-render:slides",reserved_tokens:tokenActive?token.reserved_tokens:0,used_tokens:tokenActive?usedTokens:0,released_tokens:tokenActive?Math.max(0,token.reserved_tokens-usedTokens):0,
+  if(settled)await appendFinancialEvent("BudgetReleased",{...common,operation,reserved_tokens:tokenActive?token.reserved_tokens:0,used_tokens:tokenActive?usedTokens:0,released_tokens:tokenActive?Math.max(0,token.reserved_tokens-usedTokens):0,
     reserved_microusd:costActive?cost.reserved_microusd:0,used_microusd:costActive?usedMicrousd:0,released_microusd:costActive?Math.max(0,cost.reserved_microusd-usedMicrousd):0},[tokenActive,costActive,usedTokens,usedMicrousd]);
   const finalProof={sql:"EXISTS(SELECT 1 FROM budget_reservations WHERE reservation_id=? AND owner_id=? AND status=? AND used_tokens=?) AND EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status=? AND used_microusd=?)"
     +" AND (SELECT COALESCE(SUM(COALESCE(json_extract(payload,'$.total_tokens'),0)),0) FROM events WHERE stream_id=? AND type='GenerationUsageRecorded' AND json_extract(payload,'$.reservation_id')=?)=?"

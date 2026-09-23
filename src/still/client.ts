@@ -487,7 +487,7 @@ export class StillClient {
     if(!this.abilities.generate||job.documentId!==this.position.documentId)throw new Error('Refresh this attempt before recovering it.');
     const recovery=generationOutcome(job).recovery;
     if(!recovery)throw new Error('No recoverable original result is recorded.');
-    const result=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(job.jobId)}/${recovery==='presentation'?'recover':'retry'}`,{recoveryOnly:true,attemptCount:job.attemptCount});
+    const result=await this.request<{job:DocumentJob}>(`/api/document-jobs/${encodeURIComponent(job.jobId)}/${recovery==='presentation'||recovery==='image'?'recover':'retry'}`,{recoveryOnly:true,attemptCount:job.attemptCount});
     check();if(result.job?.jobId!==job.jobId||result.job.documentId!==job.documentId)throw new Error('Recovery unconfirmed. Refresh status before trying again.');
     this.jobs=this.jobs.map(current=>current.jobId===job.jobId?result.job:current);this.onChange();
     if(['queued','running','committing'].includes(result.job.status))this.dispatchGeneration(result.job,true);

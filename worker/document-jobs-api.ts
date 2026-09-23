@@ -1,3 +1,5 @@
+import {ordinaryImageQueueOwned,ordinaryImageQueueEnrolls,ordinaryImageOutboxInsert,ordinaryImageClaimValid,type OrdinaryImageClaim} from "./ordinary-image-queue.ts";
+import { retainOrdinaryImage, recoverOrdinaryImage, type OrdinaryImageJournalInput, type SavedOrdinaryImage } from "./ordinary-image-journal.ts";
 import {logPreparationFailure} from './generation-preparation-error.ts';
 import { generationReadiness } from './generation-storage-readiness.ts';
 import { generationOutcomeSummary } from "../src/model/generation-execution-evidence.ts";
@@ -142,7 +144,7 @@ const MAX_PAYLOAD_BYTES = 750_000;
 const consentedAdaptiveJob=(row:Pick<DocumentJobRow,"kind"|"request_json">)=>row.kind==="structure_adaptive"&&parseRequest(row).adaptiveConsentVersion===1;
 const certifiedAdaptiveRows=new WeakSet<DocumentJobRow>();
 // Progress/failure writers never drop a raw paid response saved by a concurrent callback.
-const PRESERVE_ADAPTIVE_RECEIPT_SQL="json_patch(?,CASE WHEN kind='structure_adaptive' AND json_type(result_json,'$.adaptiveProviderReceipt')='object' THEN json_object('adaptiveProviderReceipt',json(json_extract(result_json,'$.adaptiveProviderReceipt'))) ELSE '{}' END)";
+const PRESERVE_ADAPTIVE_RECEIPT_SQL="json_patch(json_patch(?,CASE WHEN kind='structure_adaptive' AND json_type(result_json,'$.adaptiveProviderReceipt')='object' THEN json_object('adaptiveProviderReceipt',json(json_extract(result_json,'$.adaptiveProviderReceipt'))) ELSE '{}' END),CASE WHEN kind='generate' AND json_type(result_json,'$.imageResponseJournal')='object' THEN json_object('imageResponseJournal',json(json_extract(result_json,'$.imageResponseJournal')),'imageResultState',json_extract(result_json,'$.imageResultState')) ELSE '{}' END)";
 // Resolve execution lanes from immutable document-creation history, never
 // client-supplied request snapshots. Older seeded documents inherit the most
 // recent project that existed when their creation event was recorded.
@@ -374,7 +376,7 @@ async function anchorProjectJobs(env:WorkerEnv,user:PilotUser,jobs:Array<{jobId:
 
 function safeScopedJob(row:DocumentJobRow,recoveryBlocker:DocumentJobRow|null=null){
   const job=serializeJob(row,recoveryBlocker,false);
-  const sensitive=new Set(["generationEvidenceRefs","outputModel3d","model3dPreparation","model3dCostPreview","model3dCostConsent","outputAudioRequest","audioCostConsent","scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","plannerInput","providerInput","provider_input","videoInputReceipt","audioInputReceipt","model3dInputReceipt","model3dProviderFiles","model3dPrompt","model3dAdaptation","model3d_adaptation","model3dSettings","model3dReferenceBlockIds","model3d_prompt","model3d_settings","model3d_reference_block_ids","audioProfile","audio_profile","transcript","script","spokenScript","spoken_script","audioVideoArtifactId","videoReferenceId","video_reference_id","artifactPlan","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","contentRef","contentExpiresAt","contentSha256","productionPlan","productionSceneReceipts","productionFrameReceipts","productionAnchor","providerStatusUrl","providerResponseUrl","providerCancelUrl","moderationPromptRef","intentRef","providerJobId","providerRequestId","storyboardSafeRecovery","storyboardRejectedProviderReceipt","generationReceipt","generation_receipt","input_ref","inputRef","input_expires_at","source_snapshot_sha256","snapshot","document_snapshot","sourceAliasMap","sourceAliases","source_alias_map","source_aliases","settings","audience","tone"]);
+  const sensitive=new Set(["imageResponseJournal","generationEvidenceRefs","outputModel3d","model3dPreparation","model3dCostPreview","model3dCostConsent","outputAudioRequest","audioCostConsent","scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","plannerInput","providerInput","provider_input","videoInputReceipt","audioInputReceipt","model3dInputReceipt","model3dProviderFiles","model3dPrompt","model3dAdaptation","model3d_adaptation","model3dSettings","model3dReferenceBlockIds","model3d_prompt","model3d_settings","model3d_reference_block_ids","audioProfile","audio_profile","transcript","script","spokenScript","spoken_script","audioVideoArtifactId","videoReferenceId","video_reference_id","artifactPlan","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","contentRef","contentExpiresAt","contentSha256","productionPlan","productionSceneReceipts","productionFrameReceipts","productionAnchor","providerStatusUrl","providerResponseUrl","providerCancelUrl","moderationPromptRef","intentRef","providerJobId","providerRequestId","storyboardSafeRecovery","storyboardRejectedProviderReceipt","generationReceipt","generation_receipt","input_ref","inputRef","input_expires_at","source_snapshot_sha256","snapshot","document_snapshot","sourceAliasMap","sourceAliases","source_alias_map","source_aliases","settings","audience","tone"]);
   const recoverySummary=(value:unknown)=>value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key,item])=>["mode","original_source_revision","new_generation_requests","provider_retrieval_only","current_edits_preserved"].includes(key)&&["string","number","boolean"].includes(typeof item))):null;
   sensitive.add("audioOriginalSourceRecovery");
   const redact=(value:unknown):unknown=>Array.isArray(value)?value.map(redact):value&&typeof value==="object"?Object.fromEntries(Object.entries(value).filter(([key])=>!sensitive.has(key)).map(([key,item])=>[key,key==="recovery"?recoverySummary(item):redact(item)])):value;
@@ -1714,11 +1716,24 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
   const members = Array.isArray(parsed.members) ? parsed.members : [];
   const recovery = queueRecoveryPresentation(row, recoveryBlocker);
   const errorDetail=errorDetailFromResult(parsed);
-  const privateCheckpointKeys=new Set(["safetyAcknowledgement","scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote","memoryDocumentJobOrigin"]);
+  const privateCheckpointKeys=new Set(["imageResponseJournal","safetyAcknowledgement","scenePolicyStopSummary","providerSubmissions","providerSubmissionProtocol","providerSubmissionLegacyUncertain","presentationCandidates","presentationRecoveryOnly","providerResponseRef","candidateRaw","storyboardSafeRecovery","storyboardRejectedProviderReceipt","adaptiveProviderReceipt","model3dProviderFiles","quote","memoryDocumentJobOrigin"]);
   if(row.kind==="render_document"&&request.artifactKind==="storyboard")for(const key of OUTPUT_STORYBOARD_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(row.output_slot_id&&row.kind==="render_document"&&request.artifactKind==="video")for(const key of OUTPUT_VIDEO_RETAINED_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   if(model3dNativeCheckpoint(request))for(const key of MODEL3D_PRIVATE_CHECKPOINT_KEYS)privateCheckpointKeys.add(key);
   const sanitizedResult=result?Object.fromEntries(Object.entries(result).filter(([key])=>!privateCheckpointKeys.has(key)&&!key.startsWith("outputVideo")&&(key!=="recoverablePresentationCandidate"||request.artifactKind==="slides"&&row.status==="failed"&&parsed.recoverablePresentationCandidate===true))):null;
+  if(sanitizedResult?.imageResultState==='retained') {
+    const journal=parsed.imageResponseJournal as Record<string,unknown>|undefined;
+    sanitizedResult.imageRecoveryAvailable=journal?.version===1&&typeof journal.expiresAt==='string'&&journal.expiresAt>new Date().toISOString()&&row.expires_at>new Date().toISOString();
+  }
+  if(sanitizedResult&&row.kind==='generate'){
+    const call=providerSubmissions(parsed).filter(call=>call.operation==='image').at(-1);
+    const trace=(value:unknown)=>typeof value==='string'&&/^[a-zA-Z0-9_.:-]{1,180}$/.test(value)?value:null;
+    sanitizedResult.imageTrace={clientRequestId:trace(call?.clientRequestId),providerRequestId:trace(call?.httpRequestId??call?.providerRequestId),
+      lastRecordedStage:trace(parsed.generationOutcome&&typeof parsed.generationOutcome==='object'?(parsed.generationOutcome as Record<string,unknown>).pipelineStage:parsed.stage),
+      lastRecordedAt:row.updated_at,originalResult:parsed.imageResultState??'unconfirmed',invocationId:trace((parsed.imageExecution as Record<string,unknown>|undefined)?.invocationId)};
+    if(row.status==='failed'&&!sanitizedResult.imageRecoveryAvailable&&!sanitizedResult.imageResolution)
+      sanitizedResult.imageResolution={state:'operator_required',reason:hasUnsettledProviderSubmission(parsed)?'provider_outcome_unknown':'original_result_unavailable',providerRequestsResubmitted:0};
+  }
   if(sanitizedResult&&row.source_surface==='still'&&typeof request.previousAttemptId==='string')
     Object.assign(sanitizedResult,{previousAttemptId:request.previousAttemptId,previousDocumentRevision:typeof request.previousDocumentRevision==='string'?request.previousDocumentRevision:null});
   const recoveredEventIds=recoveredFalImageEventIds(row,parsed);
@@ -1734,7 +1749,7 @@ function serializeJob(row: DocumentJobRow, recoveryBlocker: DocumentJobRow | nul
     : Object.fromEntries(Object.entries(visibleResult).filter(([key]) => !["generationEvidenceRefs", "plannerInput", "videoInputReceipt", "audioInputReceipt", "model3dInputReceipt", "artifactPlan"].includes(key)));
   return {
     ...(documentJobMemoryMarked(row)?{memoryMode:"recall" as const,noAutomaticRetry:true as const}:{}),
-    ...(outputJobIsDurable(row) ? { executionOwner: "durable" as const } : {}),
+    ...((outputJobIsDurable(row)||ordinaryImageQueueOwned(row)) ? { executionOwner: "durable" as const } : {}),
     jobId: row.job_id, documentId: row.document_id, kind: row.kind, status: row.status, sourceSurface: row.source_surface,
     ...(imageSize?{imageSize}:{}),
     ...(row.kind==="structure_adaptive"&&typeof request.canvasId==="string"&&request.canvasId?{canvasId:request.canvasId}:{}),
@@ -1926,9 +1941,14 @@ async function beginJobCommit(env: WorkerEnv, row: DocumentJobRow, progressMessa
   row.status = "committing";row.updated_at=now;if(checkpoint)row.result_json=JSON.stringify(checkpoint);
 }
 
-async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:PilotUser, operation: (control: { signal: AbortSignal; beginCommit: () => Promise<void>; progress: (stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true}) => Promise<void> }) => Promise<T>,nativePolicy:OutputNativeExecutionPolicy=OUTPUT_NATIVE_EXECUTION_POLICY,withSourceTransition:NonNullable<OutputEventExecution['withSourceTransition']>=async work=>work()) {
+async function runWithHeartbeat<T>(env: WorkerEnv, row: DocumentJobRow,user:PilotUser, operation: (control: { retainImageResult?:(input:OrdinaryImageJournalInput)=>Promise<SavedOrdinaryImage>; signal: AbortSignal; beginCommit: () => Promise<void>; progress: (stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true}) => Promise<void> }) => Promise<T>,nativePolicy:OutputNativeExecutionPolicy=OUTPUT_NATIVE_EXECUTION_POLICY,withSourceTransition:NonNullable<OutputEventExecution['withSourceTransition']>=async work=>work()) {
   const verify=async()=>{if(!row.output_slot_id&&!await activeProjectExecution(env,user,row.document_id,row.job_id))throw new Error("document_job_canceled");};
-  return runOwnedJobHeartbeat(env,row,verify,operation,nativePolicy,withSourceTransition);
+  return runOwnedJobHeartbeat(env,row,verify,control=>operation({...control,...(!row.output_slot_id&&row.kind==="generate"?{retainImageResult:async(input:OrdinaryImageJournalInput)=>{
+    await control.progress("storage","Retaining the original image response.");
+    control.signal.throwIfAborted();
+    const authority=documentJobProjectAuthority(user,row.document_id,row.job_id);
+    return retainOrdinaryImage(env,user,row,input,authority?[authority]:[]);
+  }}:{})}),nativePolicy,withSourceTransition);
 }
 
 type DocumentJobOperationControl={signal:AbortSignal;beginCommit:()=>Promise<void>;progress:(stage:string,message:string,patch?:Record<string,unknown>,options?:{financialReceiptPersisted?:true})=>Promise<void>};
@@ -2052,7 +2072,7 @@ async function failStaleJob(env: WorkerEnv, user: PilotUser, row: DocumentJobRow
 
 /** Observation may reconcile an expired foreground attempt, never dispatch new paid work. */
 async function reconcileStaleForegroundJob(env:WorkerEnv,user:PilotUser,row:DocumentJobRow) {
-  if(!rowIsStale(row)||!requiresForegroundDocumentExecution(row))return;
+  if(ordinaryImageQueueOwned(row)||!rowIsStale(row)||!requiresForegroundDocumentExecution(row))return;
   // A result can be committed before the worker loses its final job-status write.
   if(operationFinished(await readCorrelatedEvents(env,user.streamId,[row.correlation_id]),row)) {
     await runDocumentJob(env,user,row.job_id,row);
@@ -2230,9 +2250,10 @@ async function queueFollowupPreview(env:WorkerEnv,user:PilotUser,parent:Document
   return readJob(env,user.userId,jobId);
 }
 
-export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: string, verifiedRow?:DocumentJobRow, sponsorAuthority?:SponsorExecutionAuthority) {
+export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: string, verifiedRow?:DocumentJobRow, sponsorAuthority?:SponsorExecutionAuthority,ordinaryClaim?:OrdinaryImageClaim) {
   await ensureSchema(env);
   let row=verifiedRow&&verifiedRow.job_id===jobId&&verifiedRow.owner_id===user.userId&&verifiedRow.stream_id===user.streamId?verifiedRow:await readJob(env,user.userId,jobId);if(!row)return row;
+  if(ordinaryImageQueueOwned(row)&&!ordinaryImageClaimValid(ordinaryClaim,env,row.job_id))return row;
   // Generic/background delivery cannot start an explicit recall request.
   if(documentJobMemoryMarked(row))return row;
   await ensureOutputRequirementsSchema(env);
@@ -2405,6 +2426,7 @@ export async function runDocumentJob(env: WorkerEnv, user: PilotUser, jobId: str
     && Boolean(previousCheckpoint.reservationId && previousCheckpoint.costReservationId));
   const now = new Date(); const nowIso = now.toISOString(); const staleBefore = new Date(now.getTime() - DOCUMENT_JOB_STALE_AFTER_MS).toISOString(); const leaseExpiresAt = new Date(now.getTime() + (outputBinding?nativeExecutionPolicy.maximumMilliseconds:DOCUMENT_JOB_LEASE_MS)).toISOString();
   const attemptCorrelationId=settledModel3dRecovery?row.correlation_id:consentedAdaptiveJob(row)?jobId:`${jobId}:attempt:${attempt}`;const foregroundPresentation=isPresentationJob(row);const initialResult={...previousCheckpoint,...(requiresForegroundDocumentExecution(row)?{providerSubmissionProtocol:1}:{}),stage:foregroundPresentation?"compiling":"preparing",progressMessage:foregroundPresentation?attempt>1?"Recovering the interrupted presentation and compiling its authorized document context.":"Compiling the document into the requested presentation.":attempt>1?"Recovering the interrupted operation.":"Preparing the document context."};
+  if(row.kind==='generate'&&!row.output_slot_id)Object.assign(initialResult,{imageExecution:{invocationId:crypto.randomUUID(),startedAt:nowIso,owner:ordinaryImageQueueOwned(row)?'queue':'request',leaseEpoch:attempt}});
   if(row.kind==="generate"||row.kind==="preview")for(const key of ["partialMediaUrl","partialMediaType","partialWidth","partialHeight","partialIndex"])
     delete (initialResult as Record<string,unknown>)[key];
   const claimSql=`UPDATE document_jobs SET status='running',attempt_count=attempt_count+1,correlation_id=?,started_at=COALESCE(started_at,?),lease_expires_at=?,result_json=?,updated_at=? WHERE job_id=? AND owner_id=? AND stream_id=? AND (status='queued' OR (status='running' AND (lease_expires_at<?${outputBinding?'':' OR updated_at<?'}))) AND correlation_id=? AND result_json IS ? AND request_json IS ? AND kind=? AND document_id=? AND source_surface=? AND NOT EXISTS(SELECT 1 FROM document_jobs active WHERE active.stream_id=document_jobs.stream_id AND active.job_id<>document_jobs.job_id AND json_type(active.request_json,'$.memoryMode') IS NULL AND active.kind!='prompt_fan' AND active.status IN('running','committing')
@@ -2824,9 +2846,52 @@ export async function documentJobPrincipal(env:WorkerEnv,row:DocumentJobRow,curr
   return actor;
 }
 
+/** Trusted companion delivery. A redelivery observes/reconciles; it cannot retry a purchase. */
+export async function deliverOrdinaryImage(env:WorkerEnv,initial:DocumentJobRow,claim:OrdinaryImageClaim){
+  if(!ordinaryImageClaimValid(claim,env,initial.job_id)||!ordinaryImageQueueOwned(initial))throw new Error('ordinary_image_claim_required');
+  let row=await readJob(env,initial.owner_id,initial.job_id)??initial;
+  const close=async(reason:string)=>{
+    if(['current_authority_unavailable','original_attempt_expired'].includes(reason)){
+      const now=new Date().toISOString();
+      await env.DB.prepare("UPDATE document_jobs SET status='failed',error_message=?,completed_at=?,lease_expires_at=NULL,updated_at=?,result_json=json_patch(COALESCE(result_json,'{}'),?) WHERE job_id=? AND owner_id=? AND correlation_id=? AND status IN('queued','running','committing') AND (status='queued' OR lease_expires_at<=?)")
+        .bind(reason,now,now,JSON.stringify({stage:'failed',progressMessage:'The original attempt stopped because its authorization is no longer available.',imageResolution:{state:'operator_required',reason,lastCheckAt:now,providerRequestsResubmitted:0}}),row.job_id,row.owner_id,row.correlation_id,now).run();
+      row=await readJob(env,row.owner_id,row.job_id)??row;
+    }
+    // Resolution records describe our saved evidence; they never assert a refund.
+    if(reason==='resolution_required')await env.DB.prepare("UPDATE document_jobs SET result_json=json_patch(COALESCE(result_json,'{}'),?) WHERE job_id=? AND owner_id=? AND correlation_id=? AND status='failed'")
+      .bind(JSON.stringify({imageResolution:{state:'operator_required',reason:'original_result_or_accounting_unavailable',lastCheckAt:new Date().toISOString(),providerRequestsResubmitted:0}}),row.job_id,row.owner_id,row.correlation_id).run();
+    await env.DB.prepare("UPDATE ordinary_image_outbox SET closed_at=?,resolution=? WHERE job_id=? AND closed_at IS NULL")
+      .bind(new Date().toISOString(),reason,row.job_id).run();
+    return {status:row.status,resolution:reason,providerRequestsResubmitted:0};
+  };
+  const user=await documentJobPrincipal(env,row);
+  if(!user){if(['running','committing'].includes(row.status)&&String(row.lease_expires_at??'')>new Date().toISOString())return {status:row.status,providerRequestsResubmitted:0};return close('current_authority_unavailable');}
+  if(row.expires_at<=new Date().toISOString())return close('original_attempt_expired');
+  if(row.status==='queued'&&row.attempt_count===0){row=await runDocumentJob(env,user,row.job_id,row,undefined,claim)??row;}
+  else if(['running','committing'].includes(row.status)){
+    if(!rowIsStale(row))return {status:row.status,providerRequestsResubmitted:0};
+    // Existing completion proof wins. Otherwise stop this original lease;
+    // recovery below may publish retained pixels, but never reenter generation.
+    if(operationFinished(await readCorrelatedEvents(env,user.streamId,[row.correlation_id]),row))row=await runDocumentJob(env,user,row.job_id,row,undefined,claim)??row;
+    else {await failStaleJob(env,user,row,unsafePaidRecovery(row)??undefined);row=await readJob(env,user.userId,row.job_id)??row;}
+  }
+  if(row.status==='failed'&&parseResult(row).imageResultState==='retained'){
+    const checkpoint=await env.DB.prepare('SELECT recovery_checks,closed_at FROM ordinary_image_outbox WHERE job_id=?').bind(row.job_id).first<{recovery_checks:number;closed_at:string|null}>();
+    if(!checkpoint||checkpoint.closed_at||checkpoint.recovery_checks>=3)return close('resolution_required');
+    const acquired=await env.DB.prepare("UPDATE ordinary_image_outbox SET recovery_checks=recovery_checks+1,next_check_at=? WHERE job_id=? AND recovery_checks=? AND closed_at IS NULL AND next_check_at<=?")
+      .bind(new Date(Date.now()+60_000).toISOString(),row.job_id,checkpoint.recovery_checks,new Date().toISOString()).run();
+    if(Number(acquired.meta.changes??0)!==1)return {status:row.status,providerRequestsResubmitted:0};
+    try{const authority=documentJobProjectAuthority(user,row.document_id,row.job_id);row=await recoverOrdinaryImage(env,user,row,authority?[authority]:[]);
+      await refreshGenerationReceipt(env,user,row);if(user.projectExecution)await synchronizeProjectScope(env,user.projectExecution);
+    }catch{if(checkpoint.recovery_checks>=2)return close('resolution_required');return {status:row.status,resolution:'original_recovery_pending',providerRequestsResubmitted:0};}
+  }
+  if(['completed','failed','canceled','partial'].includes(row.status))return close(row.status==='failed'?'resolution_required':row.status);
+  return {status:row.status,providerRequestsResubmitted:0};
+}
+
 async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
   for (let count = 0; count < 50; count += 1) {
-    const running = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
+    const running = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.ordinaryImageExecution') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
     if (running) {
       if (!rowIsStale(running)) return;
       const owner=await documentJobPrincipal(env,running,user);
@@ -2840,7 +2905,7 @@ async function driveDocumentQueue(env: WorkerEnv, user: PilotUser) {
       if (!recovered || recovered.status === "queued" || recovered.status === "running" || recovered.status === "committing") return;
       continue;
     }
-    const next = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status='queued' AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot WHERE output_slot.job_id=document_jobs.job_id AND output_slot.status NOT IN('queued','running')) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
+    const next = await env.DB.prepare("SELECT * FROM document_jobs WHERE stream_id=? AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.ordinaryImageExecution') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status='queued' AND NOT EXISTS(SELECT 1 FROM output_operation_slots output_slot WHERE output_slot.job_id=document_jobs.job_id AND output_slot.status NOT IN('queued','running')) AND NOT (kind='render_document' AND COALESCE(json_extract(request_json,'$.artifactKind'),'')='slides') ORDER BY requested_at ASC,job_id ASC LIMIT 1").bind(user.streamId).first<DocumentJobRow>();
     if (!next) return;
     if(requiresForegroundDocumentExecution(next))return;
     const owner=await documentJobPrincipal(env,next,user);
@@ -3229,6 +3294,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     if(new URL(request.url).searchParams.has("memoryMode"))return documentJobMemoryDenied("memory_job_unavailable",404);
   }
+  if(pathJob&&ordinaryImageQueueOwned(pathJob)&&request.method!=='GET'&&!/^[^/]+\/(?:run|ack|dismiss|cancel|recover)$/.test(path))
+    return Response.json({error:'ordinary_image_independent_owner'},{status:409,headers:{'cache-control':'private, no-store'}});
   if(request.method!=="GET"&&!sceneInspection&&path)await ensureOutputRequirementsSchema(env);
   if(path==='still-reconcile'){
     const headers={'cache-control':'private, no-store'};
@@ -3756,6 +3823,16 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     const jobId=decodeURIComponent(path.slice(0,-8).replace(/\/$/,""));
     const target=await readJob(env,user.userId,jobId);
     if(!target)return Response.json({error:"job_not_found"},{status:404});
+    if(target.kind==="generate"){
+      if(auth.impersonation)return Response.json({error:"image_recovery_owner_required"},{status:403});
+      const authority=documentJobProjectAuthority(user,target.document_id,target.job_id);
+      try{
+        const restored=await recoverOrdinaryImage(env,user,target,authority?[authority]:[]);
+        const recovered=await refreshGenerationReceipt(env,user,restored);
+        if(user.projectExecution)await synchronizeProjectScope(env,user.projectExecution);
+        return Response.json({job:project?safeScopedJob(recovered):serializeJob(recovered),recovered:true},{headers:{"cache-control":"private, no-store"}});
+      }catch(error){return Response.json({error:error instanceof Error&&/^image_recovery_[a-z_]+$/.test(error.message)?error.message:"image_recovery_conflict"},{status:409,headers:{"cache-control":"private, no-store"}});}
+    }
     const recovered=await recoverRetainedPresentation(env,user,target,project?.contextId??"");
     if("error" in recovered)return Response.json({error:recovered.error,...(recovered.reason?{reason:recovered.reason}:{})},{status:recovered.status});
     await synchronizeOutputJobOutcome(env,recovered.job);
@@ -4071,6 +4148,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       context.waitUntil(driveDocumentQueue(env, user));
       return Response.json({ job:project?safeScopedJob(existing):serializeJob(existing), accepted: true }, { status: 202 });
     }
+    if(existing&&ordinaryImageQueueOwned(existing))return Response.json({job:project?safeScopedJob(existing):serializeJob(existing)},{status:202,headers:{"cache-control":"private, no-store"}});
     const job=await runDocumentJob(env,user,jobId,existing);if(!job)return Response.json({error:"job_not_found"},{status:404});
     return Response.json({ job:project?safeScopedJob(job):serializeJob(job) }, { status: documentJobTerminal({ status: job.status }) ? 200 : 202 });
   }
@@ -4100,7 +4178,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     // Failure checkpoints remain durable, but large provider/planner inputs
     // belong to the explicitly requested detail view, not every idle poll.
     const readVisibleJobs = () => env.DB.prepare(`SELECT job_id,owner_id,stream_id,document_id,kind,status,source_surface,correlation_id,requested_sequence,
-      json_type(request_json,'$.outputDurable') IS NOT NULL AS output_durable_owner,
+      (json_type(request_json,'$.outputDurable') IS NOT NULL OR json_type(request_json,'$.ordinaryImageExecution') IS NOT NULL) AS output_durable_owner,
       CASE WHEN json_extract(request_json,'$.documentRevision') IS NULL THEN request_json ELSE json_object(
         'requestedImageSize',json(json_extract(request_json,'$.requestedImageSize')),'documentRevision',json_extract(request_json,'$.documentRevision'),'requestKey',json_extract(request_json,'$.requestKey'),
         'sourcePreviewId',json_extract(request_json,'$.sourcePreviewId'),'promptTechnique',json_extract(request_json,'$.promptTechnique'),
@@ -4117,7 +4195,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       ORDER BY CASE WHEN status IN ('queued','running','committing') THEN 0 ELSE 1 END,requested_at DESC LIMIT 120`).bind(user.userId,user.streamId,now,now,Number(activeOnly),documentScope,documentScope).all<DocumentJobRow>();
     let rows = path ? requestedJob ? [requestedJob] : [] : (await readVisibleJobs()).results;
     let reconciled = false;
-    const repairCandidates = rows.filter((row) => !documentJobMemoryMarked(row) && !outputJobIsDurable(row) && row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));
+    const repairCandidates = rows.filter((row) => !documentJobMemoryMarked(row) && !ordinaryImageQueueOwned(row) && !outputJobIsDurable(row) && row.status === "failed" && /Wrong number of parameter bindings/i.test(row.error_message ?? ""));
     if (repairCandidates.length) {
       const events = await readCorrelatedEvents(env,user.streamId,repairCandidates.map((row)=>row.correlation_id));
       for (const row of repairCandidates) {
@@ -4131,10 +4209,10 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     // A detail poll of a queued job must also reconcile its earlier expired blocker.
     const recoveryRows=[...rows];
     if(path){
-      const blocker=await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1`).bind(user.userId,user.streamId).first<DocumentJobRow>();
+      const blocker=await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.ordinaryImageExecution') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1`).bind(user.userId,user.streamId).first<DocumentJobRow>();
       if(blocker&&!recoveryRows.some(row=>row.job_id===blocker.job_id))recoveryRows.push(blocker);
     }
-    for (const row of recoveryRows) if (!documentJobMemoryMarked(row) && !outputJobIsDurable(row) && rowIsStale(row) && (requiresForegroundDocumentExecution(row)||row.attempt_count >= documentJobMaxAttempts(row.kind))) {
+    for (const row of recoveryRows) if (!documentJobMemoryMarked(row) && !ordinaryImageQueueOwned(row) && !outputJobIsDurable(row) && rowIsStale(row) && (requiresForegroundDocumentExecution(row)||row.attempt_count >= documentJobMaxAttempts(row.kind))) {
       // A compact list row must never replace the retained recovery checkpoint.
       const retained = await readJob(env, user.userId, row.job_id);
       if (retained && rowIsStale(retained)) {
@@ -4149,7 +4227,7 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     }
     const visibleBlocker = [...rows].filter((row)=>!documentJobMemoryMarked(row)&&!outputJobIsDurable(row)&&row.kind!=="prompt_fan"&&["running","committing"].includes(row.status)).sort((left,right)=>left.requested_at.localeCompare(right.requested_at)||left.job_id.localeCompare(right.job_id))[0]??null;
     const activeBlocker = path
-      ? await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1`).bind(user.userId, user.streamId).first<DocumentJobRow>()
+      ? await env.DB.prepare(`SELECT * FROM document_jobs WHERE owner_id=? AND stream_id=? AND NOT (${sponsorExcluded}) AND json_type(request_json,'$.outputDurable') IS NULL AND json_type(request_json,'$.ordinaryImageExecution') IS NULL AND json_type(request_json,'$.memoryMode') IS NULL AND kind!='prompt_fan' AND status IN ('running','committing') ORDER BY requested_at ASC,job_id ASC LIMIT 1`).bind(user.userId, user.streamId).first<DocumentJobRow>()
       : visibleBlocker;
     const recoveryBlocker = activeBlocker && rowIsStale(activeBlocker) ? activeBlocker : null;
     if (recoveryBlocker&&!requiresForegroundDocumentExecution(recoveryBlocker)) context?.waitUntil(driveDocumentQueue(env, user));
@@ -4648,6 +4726,8 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
       }};
     return Response.json({prepared:true},{status:200});
   }
+  const independentImage=kind==='generate'&&sourceSurface==='still'&&!auth.impersonation&&ordinaryImageQueueEnrolls(env,user.userId);
+  if(independentImage)payload.ordinaryImageExecution='queue-v1';
   const sceneGuard=scenePrepared?sceneRequestExclusion(jobId,{sql:"1",bindings:[]}):undefined;
   const inserted=documentJobInsert(env,admissionUser,documentId,"?,?,?,?,?,'queued',?,?,?,?,?,NULL,0,?,NULL,NULL,NULL,NULL,?,?",[jobId,user.userId,user.streamId,documentId,kind,sourceSurface,jobId,requestedSequence,JSON.stringify(payload),initialResult?JSON.stringify(initialResult):null,createdAt,expiresAt,createdAt],kind==="render_document"||kind==="structure_adaptive"?{kind,key:String(payload.idempotencyKey??""),sourceSurface,canvasId:typeof payload.canvasId==="string"?payload.canvasId:"",projectId:documentRecord.projectId}:undefined,stillRequest?await stillGenerationAdmission(user,documentId,stillRequest,sceneGuard):sceneGuard);
   const resource=projectJobResource(env,admissionUser,jobId,documentId,createdAt,Boolean(scenePrepared));
@@ -4668,6 +4748,9 @@ export async function handleDocumentJobs(request: Request, env: WorkerEnv, path 
     created=Array.isArray(results)&&results.length===checks.length+expectedWrites
       &&writes.every(result=>result?.success===true&&typeof result.meta?.changes==="number"&&result.meta.changes===1);
     if(resource&&!created&&Number(writes[0]?.meta?.changes??0)!==0)return Response.json({error:"project_access_revoked"},{status:403});
+  }else if(independentImage){
+    const results=await env.DB.batch([inserted,...(resource?[resource]:[]),ordinaryImageOutboxInsert(env,jobId)]);
+    created=results.every(result=>result.success===true&&Number(result.meta.changes??0)===1);
   }else if(resource){const results=await env.DB.batch([inserted,resource]);created=results.every((result)=>Number(result.meta.changes??0)===1);if(!created&&Number(results[0]?.meta.changes??0)!==0)return Response.json({error:"project_access_revoked"},{status:403});}
   else created=Number((await inserted.run()).meta.changes??0)===1;
   if(!created){
