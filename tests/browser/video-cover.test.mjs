@@ -57,6 +57,15 @@ test('actual MP4 capture saves WebP; Forma and Still preview reloads request no 
       assert.equal(requests.filter(r=>r.method==='POST').length,2);
       assert.equal(await page.locator('video').count(),0);
     });
+    await t.test('historical MP4s without retained checksums backfill through the same browser capture',async()=>{
+      const legacy=await storeGeneratedMedia(h.env,h.owner,'browser-legacy-cover',mp4,'fixture','video/mp4');
+      delete media.rows.get(legacy.key).customMetadata.sha256;
+      requests.length=0;await mount(legacy.url);
+      assert.equal(requests.filter(r=>r.method==='POST').length,1);
+      assert.ok([...media.rows.values()].some(row=>row.customMetadata.sourceKey===legacy.key&&row.contentType==='image/webp'));
+      requests.length=0;await mount(legacy.url);
+      assert.ok(requests.every(r=>r.method==='GET'&&r.url.endsWith('?video-cover=webp')));
+    });
     await t.test('unsupported WebP encoding is rejected instead of saving a mislabeled PNG',async()=>{
       const rejected=await page.evaluate(async source=>{
         const {captureVideoCover}=await import('/src/media/video-cover.ts');

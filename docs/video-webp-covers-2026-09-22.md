@@ -1,6 +1,6 @@
 # Saved WebP video covers
 
-Implemented locally for Forma and Still. Production publication was not requested.
+Implemented for Forma and Still. Initial Production deployment: version 531, September 22, 2026.
 
 ## Behavior
 
@@ -34,3 +34,7 @@ The server validates framing, custody and authorization; it does not independent
 - Existing Still result and retention checks, TypeScript, changed-file lint, localization audit and production build are included in the final check record.
 
 Review screenshot: `/private/tmp/forma-webp-video-covers.png`.
+
+## Legacy Production backfill compatibility
+
+Earlier generated videos did not retain a SHA-256 checksum in R2 metadata. For those sources, cover lookup uses a digest of the original R2 ETag and byte length. On a missing cover, the authorized writer route computes the actual source SHA-256 from a bounded read (32 MB maximum to keep checksum calculation within Worker memory limits); browser capture verifies that digest as usual. The separate WebP retains the original ETag and actual checksum. Subsequent cover reads use only object metadata and the saved WebP, without rereading MP4 bytes. Original video objects are not rewritten. Version replacement selects a different cover, and the same owner, source and version checks apply before and after upload.
