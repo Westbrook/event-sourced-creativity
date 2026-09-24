@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "forma-n6-qualification-matrix-v1",
+  "disposition": "unimplemented-dependency-fallback",
+  "inspectorImplemented": false,
+  "authorityWitnessImplemented": false,
+  "rawSupportedCases": [],
+  "testsCertifyClassifierQuality": false,
+  "testsCertifyHistoricalEvidence": false,
+  "gates": [
+    {
+      "id": "selection-principal",
+      "required": "GET only; one document/preflight; duplicates, extras, caller refs, foreign identity and consent denied",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "hostedIdentity/readNativeRetainedPrincipal; route not added"
+    },
+    {
+      "id": "original-adopted-lifetimes",
+      "required": "Both exact preflight rows and original witness live; missing/replaced original or altered immutable deadline denies. Legitimately later adopter expiry cannot extend origin authority; expired origin denies.",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Existing capture helper does not read original rows"
+    },
+    {
+      "id": "missing-expired-redacted-deleted",
+      "required": "Missing/expired/redacted/deleted body or witness unavailable with metadata only",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Existing custody regression only"
+    },
+    {
+      "id": "cross-owner-stream-document-project-scope",
+      "required": "Every original/adopter/source/body owner, stream, document, project and scope must match",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Resolver counterexamples show current snapshot is not authority"
+    },
+    {
+      "id": "revision-source",
+      "required": "Wrong revision, source hash, source incarnation or complete census denies",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "No N6 census available"
+    },
+    {
+      "id": "identity-substitution",
+      "required": "Swapped origin/adopter/evidence/content/phase/operation identities deny",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Existing capture regression only"
+    },
+    {
+      "id": "digest-substitution",
+      "required": "Exact original envelope and request/response body SHA-256 plus manifest hashes required",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Existing envelope helper does not supply manifest/body proof"
+    },
+    {
+      "id": "incomplete-census-retention",
+      "required": "Overflow, omitted dependency, missing private envelope, unknown lifetime or changed original deadline denies",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Nine dependency counterexamples; not route tests"
+    },
+    {
+      "id": "rights-provenance-exclusions",
+      "required": "Derived, rights-bearing, native, Memory, governed, sponsor, workflow and nonpersonal inputs unavailable",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Existing Memory provenance and rights counterexamples only"
+    },
+    {
+      "id": "principal-database-races",
+      "required": "Principal/consent or DB identity changes during reads discard bytes and stale diagnostics",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Existing read-only session/principal patterns only"
+    },
+    {
+      "id": "source-content-races",
+      "required": "Source membership, scope, rights, lifecycle, rows or content changes during reads deny",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Existing custody recheck regression only"
+    },
+    {
+      "id": "provider-bodies",
+      "required": "Missing/incomplete/oversized bytes unavailable; invalid, duplicate-key or cardinality-mismatched results unknown; no invented identity/categories/scores",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Existing N5 validation regression only"
+    },
+    {
+      "id": "zero-side-effects-success-denial",
+      "required": "No providers, refreshes, initializers, sweeps, writes, jobs, acknowledgements, retries or paid recovery for any GET outcome",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "No N6 route exists, so no N6 success or denial certification"
+    },
+    {
+      "id": "browser-disclosure",
+      "required": "Selected authenticated inspector private/no-store; escaped inert exact bytes; inspection separate from acknowledgement",
+      "status": "not-run-unimplemented",
+      "existingEvidenceLimit": "Unimplemented. Existing N5 summary/acknowledgement synthetic review only"
+    }
+  ]
+}

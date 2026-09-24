@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "forma-n6-synthetic-browser-review-v1",
+  "verifiedAt": "2026-09-24T00:56:35.741505+00:00",
+  "method": "Codex in-app browser via cua_repl, final restarted fixture",
+  "urls": [
+    "http://127.0.0.1:4197/n6-review",
+    "http://127.0.0.1:4197/n6-review?variant=legacy"
+  ],
+  "source": "Real StillApp summary rendering and StillClient request construction with synthetic intercepted API responses",
+  "checks": {
+    "knownItemCategory": "hate only; aggregate violence not attributed to that fact",
+    "emptyCategory": "flagged; category unavailable",
+    "legacyCategory": "individual categories were not recorded",
+    "clearInputs": "not highlighted",
+    "inertText": "markup visible as text; zero injected DOM elements",
+    "inspectionControls": 0,
+    "beforeExplicitAcknowledgement": {
+      "syntheticPOSTs": 1,
+      "acknowledgements": 0,
+      "jobs": 0,
+      "unexpectedFetches": 0
+    },
+    "explicitAcknowledgement": {
+      "syntheticPOSTs": 2,
+      "acknowledgements": 1,
+      "pendingJobs": 0,
+      "requestIdenticalExceptAcknowledgement": true,
+      "repeatControlDisabled": true
+    },
+    "completion": {
+      "syntheticJobs": 1,
+      "clientJobs": 1,
+      "acknowledgements": 1,
+      "unexpectedFetches": 0
+    },
+    "legacyReadOnlyReview": {
+      "syntheticPOSTs": 1,
+      "acknowledgements": 0,
+      "jobs": 0,
+      "unexpectedFetches": 0
+    }
+  },
+  "liveProviderCalls": 0,
+  "inspectorImplemented": false,
+  "limitations": [
+    "No raw inspector success/denial browser path exists.",
+    "Desktop synthetic interaction only; automated browser driver and its narrow viewport assertions were not run.",
+    "Fixture uses a terminal synthetic job and does not certify hosted generation or classifier quality.",
+    "Vite/Lit development warnings: multiple Lit versions and en-toast-region follow-up update."
+  ]
+}
