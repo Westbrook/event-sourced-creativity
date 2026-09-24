@@ -31,7 +31,7 @@ function syncMediaSize(element:HTMLImageElement|HTMLVideoElement) {
   if(dimension(width)&&dimension(height)){
     element.width=width;element.height=height;element.dataset.sizeSource='intrinsic';
     const frame=element.closest<HTMLElement>('.image-frame');
-    if(frame){frame.style.setProperty('--image-ratio',String(width/height));frame.classList.add('known-size');}
+    if(frame){frame.style.setProperty('--image-ratio',String(width/height));frame.style.setProperty('--image-width',`${width}px`);frame.classList.add('known-size');frame.classList.remove('pending-size');}
   }
 }
 export function stillImage(src:string,alt:string,metadata?:unknown,options:{className?:string;loading?:'lazy'|'eager'}={}) {
@@ -48,13 +48,18 @@ export function stillVideoCover(src:string,title:string) {
   return keyed(src,html`<forma-video-cover .source=${src} .label=${title}></forma-video-cover>`);
 }
 
-/** Pending and delivered images share a single frame and responsive geometry. */
+export function stillMediaHeading(label:string,title:string) {
+ return html`<header class="media-heading"><span class="eyebrow">${label}</span><h1>${title}</h1></header>`;
+}
+
+/** Reserve requested geometry, then use decoded pixels without enlarging smaller originals. */
 export function stillImageStage(title:string,metadata:unknown,src?:string,pending=false){
  const size=mediaSize(metadata),known=size.source==='metadata';
- return html`<section class="generation-stage image-stage"><span class="eyebrow">Image</span><h1>${title}</h1>${known?html`<p class="caption">${size.width} × ${size.height}</p>`:nothing}
-   <div class=${`image-frame ${known?'known-size':!src?'pending-size':''}`} style=${known?`--image-ratio:${size.width/size.height}`:nothing} aria-busy=${pending?'true':nothing} aria-label=${pending||!src?'Image generation in progress':nothing}>
+ return html`<section class="generation-stage image-stage">${stillMediaHeading('Image',title)}
+   <div class=${`image-frame ${known?'known-size':!src?'pending-size':''}`} style=${known?`--image-ratio:${size.width/size.height};--image-width:${size.width}px`:nothing} aria-busy=${pending?'true':nothing} aria-label=${pending||!src?'Image generation in progress':nothing}>
      ${src?stillImage(src,pending?`Preview of ${title}`:title,metadata,{loading:'eager'}):html`<en-skeleton shape="rectangle"></en-skeleton>`}
    </div>
+   ${known?html`<p class="caption media-info">${size.width} × ${size.height}</p>`:nothing}
  </section>`;
 }
 

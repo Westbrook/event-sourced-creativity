@@ -52,6 +52,7 @@ test('Still delivers images and videos at full size with intrinsic proportions a
     assert.ok(Math.abs(item.width/item.height-(thumbnail?4/3:item.naturalWidth/item.naturalHeight))<.002,JSON.stringify(item));
     assert.equal(item.fit,thumbnail?'cover':'contain',JSON.stringify(item));assert.ok(item.width<=item.parentWidth+1,JSON.stringify(item));
     if(item.surface==='slide'){assert.equal(item.position,'static');assert.equal(item.opacity,'1');}
+    if(['video','slide'].includes(item.surface))assert.ok(Math.abs(item.width-Math.min(item.naturalWidth,item.parentWidth))<1,'Full media uses available native width: '+JSON.stringify(item));
    }
    const frame=await page.locator('[data-case="stage"] .image-frame').boundingBox(),image=await page.locator('[data-case="stage"] img').boundingBox();
    assert.ok(Math.abs(frame.width-image.width)<1&&Math.abs(frame.height-image.height)<1,JSON.stringify({frame,image}));
