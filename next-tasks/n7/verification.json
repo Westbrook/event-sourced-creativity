@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "n7-verification-v1",
+  "status": "passed",
+  "testsPassed": 413,
+  "n7Qualifications": 74,
+  "build": "pass",
+  "typecheck": "pass",
+  "changedPathLint": "pass",
+  "whitespace": "pass",
+  "frozenBuildFiles": 622,
+  "workerSha256": "49de666d8550eb7887d13f498ff2f89677548667bf3b1ec3cc6b4caf48011660",
+  "newMigrations": 0,
+  "baseline": "Four pre-existing app.ts empty-block findings from N6 release; app.ts is untouched by N7.",
+  "providerCalls": 0,
+  "preflightCalls": 0,
+  "testsUseSyntheticData": true,
+  "liveSelectedRead": "pending publication"
+}

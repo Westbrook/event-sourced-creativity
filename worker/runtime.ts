@@ -930,6 +930,12 @@ export type EventReadProof = Readonly<{
   verify: (results: Array<D1Result<Record<string, unknown>>>) => void;
 }>;
 
+/** Canonical SQL membership shared by the reader, census and metadata projection. */
+export function eventProfilePredicate(profile:EventReadProfile) {
+  const types=profile==='projects'?PROJECT_BOOTSTRAP_EVENT_TYPES:PROFILE_EXCLUDED_EVENT_TYPES[profile];
+  return {sql:`type ${profile==='projects'?'IN':'NOT IN'} (${types.map(()=>'?').join(',')})${profile==='projects'?'':` AND NOT (${PHANTOM_ATTENTION_EVENT_SQL})`}`,bindings:[...types]};
+}
+
 /** Read a route-specific page and its authoritative stream head in one D1 round trip. */
 export async function readProfileEventPage(
   env: WorkerEnv,
@@ -938,19 +944,17 @@ export async function readProfileEventPage(
   afterSequence = 0,
   limit = SCOPED_EVENT_PAGE_SIZE,
   proof?: EventReadProof,
-  custody?: { ownerId:string; observe:(rows:Record<string,unknown>[])=>void; captureProof?:(proof:EventReadProof)=>void },
+  custody?: { ownerId:string; observe:(rows:Record<string,unknown>[])=>void; captureProof?:(proof:EventReadProof)=>void; maxRows?:number },
 ) {
   const pageSize = Math.max(1, Math.min(SCOPED_EVENT_PAGE_SIZE, Math.floor(limit)));
-  const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROFILE_EXCLUDED_EVENT_TYPES[profile];
-  const placeholders = eventTypes.map(() => "?").join(",");
-  const operator = profile === "projects" ? "IN" : "NOT IN";
+  const predicate = eventProfilePredicate(profile);
   const index = profile === "projects" ? " INDEXED BY idx_events_stream_type" : "";
-  const attentionFilter = profile !== "projects" ? ` AND NOT (${PHANTOM_ATTENTION_EVENT_SQL})` : "";
   const checkedProof = proof ? { statements: [...proof.statements], verify: proof.verify } : null;
+  const custodyCapacity = custody?.maxRows===undefined ? '' : ` AND (SELECT count(*) FROM (SELECT 1 FROM events WHERE stream_id=? AND ${predicate.sql} LIMIT ?))<=?`;
   const readStatements = [
     env.DB.prepare(`SELECT events.*,secret.*${custody?`,custody.owner_id AS custody_owner,custody.project_id AS custody_project,custody.document_id AS custody_document,custody.created_at AS custody_created,custody.redacted_at AS custody_redacted,custody.private_event_id AS custody_id,
-        EXISTS(SELECT 1 FROM project_event_scopes s WHERE s.event_id=events.event_id) AS custody_scoped`:""} FROM events${index}${custody?" LEFT JOIN event_private_payloads custody ON custody.private_event_id=events.event_id":""} LEFT JOIN event_private_payloads secret ON secret.private_event_id=events.event_id AND secret.redacted_at IS NULL WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders})${attentionFilter}${custody?" AND length(CAST(events.payload AS BLOB))<=65536 AND length(CAST(COALESCE(secret.private_json,'') AS BLOB))<=65536":""} ORDER BY sequence ASC LIMIT ?`)
-      .bind(streamId, Math.max(0, Math.floor(afterSequence)), ...eventTypes, pageSize),
+        EXISTS(SELECT 1 FROM project_event_scopes s WHERE s.event_id=events.event_id) AS custody_scoped`:""} FROM events${index}${custody?" LEFT JOIN event_private_payloads custody ON custody.private_event_id=events.event_id":""} LEFT JOIN event_private_payloads secret ON secret.private_event_id=events.event_id AND secret.redacted_at IS NULL WHERE stream_id=? AND sequence>? AND ${predicate.sql}${custody?" AND length(CAST(events.payload AS BLOB))<=65536 AND length(CAST(COALESCE(secret.private_json,'') AS BLOB))<=65536":""} ${custodyCapacity} ORDER BY sequence ASC LIMIT ?`)
+      .bind(streamId, Math.max(0, Math.floor(afterSequence)), ...predicate.bindings,...(custody?.maxRows===undefined?[]:[streamId,...predicate.bindings,custody.maxRows+1,custody.maxRows]), pageSize),
     env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId),
     ...(checkedProof?.statements ?? []),
   ];
@@ -979,13 +983,13 @@ export async function readProfileEventPage(
  * Authored sidecars have no time expiry: their lifetime ends at deletion/redaction
  * or any custody/scope change. Consumers must additionally cap their own access. */
 export async function readWorkspaceSourceCensus(env:WorkerEnv,streamId:string,ownerId:string,verifyRows:(rows:Record<string,unknown>[])=>void,proof?:EventReadProof) {
-  const types=PROFILE_EXCLUDED_EVENT_TYPES.workspace, raw:Record<string,unknown>[]=[];
+  const predicate=eventProfilePredicate("workspace"), raw:Record<string,unknown>[]=[];
   let count=-1;let finalProof:EventReadProof|undefined;
   const page=await readProfileEventPage(env,streamId,"workspace",0,129,{
-    statements:[env.DB.prepare(`SELECT count(*) AS total FROM events WHERE stream_id=? AND type NOT IN(${types.map(()=>"?").join(",")}) AND NOT (${PHANTOM_ATTENTION_EVENT_SQL})`).bind(streamId,...types),...(proof?.statements??[])],
+    statements:[env.DB.prepare(`SELECT count(*) AS total FROM events WHERE stream_id=? AND ${predicate.sql}`).bind(streamId,...predicate.bindings),...(proof?.statements??[])],
     verify(results){const result=results[0];if(!result?.success||result.results?.length!==1||!Number.isSafeInteger(result.results[0].total))throw Error("source_census_incomplete");
       count=Number(result.results[0].total);if(count>128)throw Error("source_census_capacity");proof?.verify(results.slice(1));}
-  },{ownerId,captureProof(value){finalProof=value;},observe(rows){if(rows.length!==count)throw Error("source_census_incomplete");verifyRows(rows);raw.push(...rows);}});
+  },{ownerId,maxRows:128,captureProof(value){finalProof=value;},observe(rows){if(rows.length!==count)throw Error("source_census_incomplete");verifyRows(rows);raw.push(...rows);}});
   if(page.hasMore||raw.length!==count)throw Error("source_census_incomplete");
   return {events:page.events,rows:raw,proof:finalProof!};
 }

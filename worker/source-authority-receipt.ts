@@ -18,7 +18,7 @@ const object=(v:unknown):Record<string,unknown>=>v&&typeof v==='object'&&!Array.
  * All workspace-profile rows are dependencies, even unrelated manual history.
  * No event-family reconstruction, source-ref subset, or high-water authorization.
  * There is deliberately no stored historical repair or public raw-source reader. */
-export async function readSourceAuthority(env:WorkerEnv,user:{userId:string;streamId:string},documentId:string) {
+export async function readSourceAuthority(env:WorkerEnv,user:{userId:string;streamId:string},documentId:string,observeSemantics?:(kind:string,eligible:boolean)=>void,captureCensusProof?:(proof:EventReadProof)=>void) {
   const db=env.DB;
   if(user.streamId!=='creative:'+user.userId||env.FORMA_PILOT_COHORT_ID?.trim())fail('source_principal_unsupported');
   const census=await readWorkspaceSourceCensus(env,user.streamId,user.userId,rows=>{
@@ -42,8 +42,9 @@ export async function readSourceAuthority(env:WorkerEnv,user:{userId:string;stre
       totalBytes+=JSON.stringify(row).length;if(totalBytes>512000)fail('source_capacity');
     }
   });
+  captureCensusProof?.(census.proof);
   const steps:AuthoredSourceStep[]=[];
-  const trusted=authoritativeCreativeContext(census.events,{documentId},step=>steps.push(step));
+  const trusted=authoritativeCreativeContext(census.events,{documentId},step=>{observeSemantics?.(String(census.events[steps.length]?.type??''),step.eligible);steps.push(step);});
   if(steps.length!==census.rows.length||steps.some(s=>!s.eligible)||census.events.some(isMemoryAuthoredEvent))fail('source_semantics_unsupported');
   if(!trusted.projection.documents.some(d=>d.id===documentId&&!d.removed)||trusted.projection.documentId!==documentId
     ||!trusted.projection.projects.some(p=>p.id===trusted.projection.projectId&&p.state==='active'))fail('source_document_unavailable');
