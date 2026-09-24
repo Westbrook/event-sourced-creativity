@@ -141,7 +141,7 @@ still-app .progress-return { display: inline-flex; align-items: center; gap: 4px
   still-app .result-word { font-size: 19px; }
 
   still-app .prose { font-size: 19px; }
-  still-app .progress-return { bottom: calc(var(--dock-height, 180px) + 12px); top: auto; left: 12px; right: auto; }
+  still-app .progress-return { bottom: max(12px, env(safe-area-inset-bottom)); top: auto; left: 12px; right: auto; }
 }
 @media (prefers-reduced-motion: reduce) { still-app * { animation: none !important; transition: none !important; } }
 
@@ -334,3 +334,107 @@ still-app .output-number input:focus-visible { outline:2px solid var(--en-color-
 still-app .generation-source { border-top:1px solid var(--en-color-line);padding-top:20px;margin-block:24px; }
 still-app .generation-source > summary { cursor:pointer;color:var(--en-color-text-muted);font-size:14px; }
 @media(max-width:600px) { still-app .output-options { grid-template-columns:minmax(0,1fr);gap:20px; } }
+
+/* Unified creation shares Still's quiet continuous writing surface. */
+still-app .creation-flow { max-width: 820px; padding-bottom: 40px; }
+still-app .creation-flow .creation-helper { margin-bottom: 26px; }
+still-app .creation-flow en-rich-text-editor { display: block; --en-editor-min-size: 12rem; --en-editor-max-size: 55vh; margin: 24px 0; font: 23px/1.65 Georgia, serif; }
+still-app .creation-input-hint, still-app .creation-draft-expiry, still-app .creation-review-note { color: var(--en-color-text-muted); font-size: 12px; line-height: 1.6; margin: 14px 0; }
+still-app .creation-classification { display:flex; flex-wrap:wrap; align-items:baseline; gap:12px; font-size:13px; margin-block:22px; }
+still-app .creation-flow button { border: 1px solid var(--en-color-line); background: transparent; border-radius: 5px; min-height: 44px; padding: 8px 13px; }
+still-app .creation-flow button:disabled { cursor:default; opacity:.45; }
+still-app .creation-classification button { font-size: 12px; border:0; text-decoration:underline; }
+still-app .creation-stages, still-app .creation-outline, still-app .creation-recovery { display:flex; flex-wrap:wrap; gap:8px; margin-block:24px; }
+still-app .creation-stages [aria-current="step"], still-app .creation-outline [aria-current="true"] { border-color:var(--en-color-brand); background:var(--en-color-surface-subtle); }
+still-app .creation-review-summary .eyebrow { margin-bottom:10px; }
+still-app .creation-review-summary p, still-app .creation-review-status { color:var(--en-color-text-muted); font-size:13px; }
+still-app .creation-map { margin-block:20px; border-block:1px solid var(--en-color-line); padding-block:15px; }
+still-app .creation-map summary, still-app .creation-body-edit summary { cursor:pointer; padding:8px 0; }
+still-app .creation-map ul { list-style:none; padding-left:0; }
+still-app .creation-map li { margin:10px 0; }
+still-app .creation-map li>span { font-size:11px; text-transform:uppercase; color:var(--en-color-text-muted); margin-right:10px; }
+still-app .creation-map small { display:block; color:var(--en-color-text-muted); }
+still-app .creation-review-card h1 { font-size:clamp(34px,4vw,50px); }
+still-app .creation-full-content { max-height:58vh; overflow:auto; overscroll-behavior:contain; scrollbar-gutter:stable; padding:8px 16px 18px 0; border-block:1px solid var(--en-color-line); }
+still-app .creation-full-content:focus-visible { outline:2px solid var(--en-color-focus); outline-offset:4px; }
+still-app .creation-review-prose, still-app .creation-included-use>p, still-app .creation-included-use li p { white-space:pre-wrap; overflow-wrap:anywhere; font:22px/1.7 Georgia,serif; }
+still-app .creation-type { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-block:20px; font-size:13px; }
+still-app .creation-type select { font:inherit; color:inherit; background:var(--en-color-canvas); border:1px solid var(--en-color-line); padding:10px; border-radius:4px; }
+still-app .creation-relationships { margin-top:20px; font-size:13px; }
+still-app .creation-included-use { border-top:1px solid var(--en-color-line); padding-block:20px; }
+still-app .creation-included-use:first-child { border-top:0; }
+still-app .creation-included-use h2, still-app .creation-sources h2 { font-size:16px; font-weight:400; margin-bottom:12px; }
+still-app .creation-included-use small { color:var(--en-color-text-muted); font-size:11px; }
+still-app .creation-sources { margin-top:25px; font-size:13px; }
+still-app .creation-sources blockquote { margin:12px 0; padding-left:16px; border-left:2px solid var(--en-color-line); white-space:pre-wrap; }
+still-app .creation-continue { margin-top:20px; }
+still-app .creation-issues { color:var(--en-color-danger-text); font-size:14px; padding-left:20px; }
+@media(max-width:720px) { still-app .creation-flow en-rich-text-editor { font-size:20px; } still-app .creation-full-content { max-height:52vh; } still-app .creation-review-prose, still-app .creation-included-use>p { font-size:20px; } }
+still-app .creation-search { margin-block:32px; border-top:1px solid var(--en-color-line); padding-top:22px; }
+still-app .creation-search h2 { font-size:16px; font-weight:400; }
+still-app .creation-search article { padding-block:14px; }
+still-app .creation-search h3 { font-size:16px; font-weight:400; margin:0 0 8px; }
+still-app .creation-search p { font-size:13px; margin:8px 0; }
+still-app .creation-search button { margin-right:8px; }
+still-app .creation-search-notice { color:var(--en-color-text-muted); }
+still-app .creation-reuse-preview, still-app .creation-split-options { border:1px solid var(--en-color-line); padding:20px; margin-top:20px; }
+still-app .creation-reuse-preview label { display:block; margin-top:16px; }
+still-app .creation-split-insight { padding:18px 0; border-block:1px solid var(--en-color-line); margin-block:20px; }
+still-app .creation-split-insight button { margin:12px 8px 0 0; }
+still-app .creation-format-choices { border:1px solid var(--en-color-line); padding:16px; margin:20px 0; }
+still-app .creation-format-choices label { display:inline-flex; align-items:center; gap:6px; margin:12px 16px 0 0; font-size:13px; }
+still-app .creation-format-choices p { font-size:13px; color:var(--en-color-text-muted); }
+still-app .creation-original { margin-block:24px; }
+still-app .creation-original summary { cursor:pointer; padding-block:12px; }
+still-app .creation-replacement-preview { margin-top:24px; padding:20px; border:1px solid var(--en-color-line); }
+still-app .creation-replacement-preview h4 { font-size:13px; font-weight:500; margin-block:16px 8px; }
+still-app .creation-replacement-preview blockquote { white-space:pre-wrap; margin:12px 0; border-left:2px solid var(--en-color-line); padding-left:12px; }
+still-app .creation-replacement-preview textarea { display:block; width:100%; box-sizing:border-box; padding:12px; margin-block:10px; color:inherit; background:var(--en-color-canvas); border:1px solid var(--en-color-line); font:16px/1.5 Georgia,serif; }
+
+/* The Developer-only return link gets a reserved lane below mobile workflow controls. */
+@media (max-width: 720px) {
+  still-app .still-layout:has(> .progress-return) .dock-stack {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Optional creation guidance stays outside the editor's state and undo history. */
+still-app .creation-introduction { margin-block: 18px 28px; }
+still-app .creation-introduction-line { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 20px; }
+still-app .creation-introduction-line .creation-helper { flex:1 1 28rem; margin:0; font-size:16px; line-height:1.6; }
+still-app .creation-flow .creation-help-trigger { flex:none; border:0; border-radius:0; padding-inline:0; text-decoration:underline; text-underline-offset:4px; font:inherit; font-size:14px; }
+still-app .creation-editor-description { font:13px/1.35 var(--en-font-family-body, sans-serif); color:var(--en-color-text-muted); --en-editor-token-block-padding:0; }
+still-app .creation-editor-description > .creation-help-trigger { margin-inline-start:12px; min-height:0; padding-block:0; font:inherit; }
+still-app .creation-editor-description .creation-classification { margin-block:6px 0; }
+still-app .creation-editor-description .creation-classification button { padding:0; font:inherit; }
+still-app .creation-help-dialog { --en-overlay-max-inline-size:52rem; --en-overlay-max-block-size:calc(100dvh - 32px); --en-overlay-padding:clamp(18px,4vw,32px); }
+still-app .creation-help-dialog::part(surface) { inline-size:52rem; }
+still-app .creation-help-dialog::part(header) { flex-wrap:nowrap; align-items:flex-start; }
+still-app .creation-help-dialog::part(heading) { min-inline-size:0; font:clamp(24px,3vw,32px)/1.2 Georgia,serif; letter-spacing:-.02em; }
+still-app .creation-help-content { font-size:15px; line-height:1.65; overflow-wrap:anywhere; }
+still-app .creation-help-content section + section { margin-block-start:24px; }
+still-app .creation-help-content h3 { font-size:16px; font-weight:500; margin:0 0 8px; }
+still-app .creation-help-content h4 { font-size:12px; font-weight:500; color:var(--en-color-text-muted); margin:0 0 10px; }
+still-app .creation-help-content p { margin:8px 0; }
+still-app .creation-help-example { border-block-start:1px solid var(--en-color-line); padding-block-start:24px; }
+still-app .creation-help-example-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; margin-block:18px; }
+still-app .creation-help-example blockquote { margin:0; padding-inline-start:14px; border-inline-start:2px solid var(--en-color-line); font:18px/1.6 Georgia,serif; }
+still-app .creation-help-trigger:focus-visible, still-app .creation-help-close:focus-visible { outline:2px solid var(--en-color-focus); outline-offset:4px; }
+@media(max-width:600px) {
+  still-app .creation-help-example-grid { grid-template-columns:minmax(0,1fr); gap:18px; }
+  still-app .creation-introduction-line .creation-helper { flex-basis:100%; }
+}
+
+/* Read-only syntax illustrations share the editor token palette and shape. */
+still-app .creation-guidance-token {
+  display:inline-flex; align-items:baseline; vertical-align:baseline;
+  padding:var(--en-editor-token-block-padding,.125em) var(--en-editor-token-inline-padding,.375em);
+  border:var(--en-border-width,1px) solid var(--en-editor-token-border-color,var(--en-color-line));
+  border-radius:var(--en-editor-token-radius,var(--en-radius-control));
+  background:var(--en-editor-token-background,var(--en-color-surface-subtle));
+  color:var(--en-editor-token-color,var(--en-color-text));
+  font:inherit; line-height:1.25; white-space:nowrap;
+}
+@media(forced-colors:active) {
+  still-app .creation-guidance-token { background:Canvas; color:CanvasText; border-color:CanvasText; }
+}

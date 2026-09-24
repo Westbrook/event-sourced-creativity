@@ -1,5 +1,6 @@
 import type { CreativeBlock, CreativeBlockRelation, CreativeProjection, EventInput } from './events.ts';
 import { combinedContextMemberships, normalizeActionBlockReferences } from './combined-context.ts';
+import { ideaBodyReferences } from './idea-body.ts';
 import { isOutputContextBlock } from './output-source-policy.ts';
 
 export const IDEA_MEMBERSHIP_EVENTS = ['BlockDocumentAttached', 'BlockDocumentDetached'] as const;
@@ -18,7 +19,8 @@ export function ideaDependencies(rootIds: string[], blocks: CreativeBlock[], rel
     if(selected.has(id))continue;
     const block=available.get(id);if(!block)continue;
     selected.set(id,block);
-    for(const r of relations)if(!r.removed&&r.fromBlockId===id)pending.push(r.toBlockId);
+    for(const r of relations)if(!r.removed&&r.fromBlockId===id&&isSemanticIdeaRelation(r.kind))pending.push(r.toBlockId);
+    for(const ref of genericIdeaReferences(block.properties))if(ref.projectId===block.projectId)pending.push(ref.blockId);
     for(const ref of normalizeActionBlockReferences(block.properties.block_references))pending.push(ref.block_id);
     if(typeof block.properties.context_set_root_id==='string')pending.push(block.properties.context_set_root_id);
     const groups=new Set(combinedContextMemberships(block.properties).map(m=>m.contextSetId));
@@ -35,6 +37,7 @@ export function attachIdeaEvents(block: CreativeBlock, documentId: string, block
   if(!documentId)throw new Error('Choose a document.');
   const dependencies=ideaDependencies([block.id],blocks,relations);
   const available=new Set(blocks.filter(b=>!b.removed).map(b=>b.id));
+  const issue=validateIdeaDependencyGraph(dependencies,relations);if(issue)throw new Error(issue.message);
   if(dependencies.some(b=>normalizeActionBlockReferences(b.properties.block_references).some(ref=>!available.has(ref.block_id))||typeof b.properties.context_set_root_id==='string'&&b.properties.context_set_root_id&&!available.has(b.properties.context_set_root_id)))throw new Error('A related idea is unavailable. Review the group before using it.');
   if(!dependencies.length||dependencies.some(b=>b.projectId!==block.projectId||!canAttachProjectIdea(b)))throw new Error('This idea has protected dependencies. Use its dedicated editor.');
   // Only the root needs an explicit use. Its authored dependencies follow it.
@@ -50,4 +53,39 @@ export function ideasInDocument(projection: Pick<CreativeProjection,'libraryBloc
     return {...block,documentId,scope:'document' as const,position:use?.position??block.position,
       properties:{...block.properties,...(use?.weight!==undefined?{weight:use.weight}:{})},sourceEvents:[...block.sourceEvents,...(use?.sourceEvents??[])]};
   }).sort((a,b)=>a.position.localeCompare(b.position));
+}
+
+/** Attribution is audit evidence, never an instruction to include another Idea. */
+export const isSemanticIdeaRelation = (kind:string) => !/(?:provenance|source_attribution|copied_from)/u.test(kind);
+export function genericIdeaReferences(properties:Record<string,unknown>) {
+  if(!Object.hasOwn(properties,'rich_text_body'))return [];
+  // Unknown future versions remain readable; mutation and generation gates reject them.
+  try{return ideaBodyReferences(properties.rich_text_body);}catch{return [];}
+}
+export type IdeaDependencyIssue={code:string;message:string;blockId:string};
+export function validateIdeaDependencyGraph(blocks:readonly CreativeBlock[],relations:readonly CreativeBlockRelation[]):IdeaDependencyIssue|null {
+  const available=new Map(blocks.filter(b=>!b.removed).map(b=>[b.id,b]));
+  const edges=new Map<string,Set<string>>();
+  for(const block of available.values()) {
+    if(Object.hasOwn(block.properties,'rich_text_body'))try{ideaBodyReferences(block.properties.rich_text_body);}catch(error){return {code:'idea_body_editor_required',message:error instanceof Error?error.message:'Open this Idea in a compatible Still editor.',blockId:block.id};}
+    const refs=genericIdeaReferences(block.properties), targets=new Set(refs.map(ref=>ref.blockId));
+    for(const ref of refs){const target=available.get(ref.blockId);if(target&&!canAttachProjectIdea(target))return {code:'idea_reference_protected',message:'This reference requires its dedicated editor. Choose an eligible Idea in Still.',blockId:block.id};}
+    for(const ref of refs)if(ref.projectId!==block.projectId)return {code:'idea_reference_scope_denied',message:'Idea references must stay in the same Project. Choose the reference again in Still.',blockId:block.id};
+    for(const ref of normalizeActionBlockReferences(block.properties.block_references))targets.add(ref.block_id);
+    for(const relation of relations)if(!relation.removed&&relation.fromBlockId===block.id&&isSemanticIdeaRelation(relation.kind))targets.add(relation.toBlockId);
+    for(const id of targets){const target=available.get(id);if(!target||target.projectId!==block.projectId)return {code:'idea_reference_unavailable',message:'A referenced Idea is unavailable in this Project. Restore or replace the reference in Still.',blockId:block.id};}
+    edges.set(block.id,targets);
+  }
+  const active=new Set<string>(),done=new Set<string>();
+  const cycle=(id:string):boolean=>{if(active.has(id))return true;if(done.has(id))return false;active.add(id);for(const next of edges.get(id)??[])if(cycle(next))return true;active.delete(id);done.add(id);return false;};
+  for(const id of available.keys())if(cycle(id))return {code:'idea_reference_cycle',message:'An Idea cannot include itself through another reference. Remove the circular reference in Still.',blockId:id};
+  return null;
+}
+
+/** Semantic relationships retain direction without turning mentions into composition groups. */
+export function genericIdeaRelationships(blocks:readonly CreativeBlock[]) {
+  return blocks.flatMap(block=>[...new Set(genericIdeaReferences(block.properties).map(ref=>ref.blockId))].map(target=>({
+    relation_id:`idea-reference:${block.id}:${target}`,from_block_id:block.id,to_block_id:target,
+    kind:'idea_reference',properties:{},source_event_refs:block.sourceEvents,
+  })));
 }

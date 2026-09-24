@@ -1,3 +1,4 @@
+import { ideaDependencies, genericIdeaRelationships, isSemanticIdeaRelation, validateIdeaDependencyGraph } from '../src/model/project-ideas.ts';
 import {isMemoryAuthoredEvent,memoryAuthoredEventIds,memoryAuthoredAttribution} from '../src/model/memory-authorship.ts';
 import {measureRetainedState,combineRetainedStateMeasurements,RETAINED_STATE_LIMITS} from '../src/model/retained-state.ts';
 import { isOutputContextBlock } from "../src/model/output-source-policy.ts";
@@ -198,6 +199,11 @@ function contextFromCompleteProjection(projection:CreativeProjection,request:Con
     blocks=projection.blocks.filter((block)=>selected.has(block.id));
   }
 
+  if(blocks.some(block=>Object.hasOwn(block.properties,'rich_text_body'))){
+    const effective=new Map(projection.libraryBlocks.map(block=>[block.id,block]));for(const block of blocks)effective.set(block.id,block);
+    blocks=ideaDependencies(blocks.map(block=>block.id),[...effective.values()],projection.libraryBlockRelations);
+    const issue=validateIdeaDependencyGraph(blocks,projection.libraryBlockRelations);if(issue)throw new ContextIntegrityError(issue.code,issue.message);
+  }
   const blockIds = new Set(blocks.map((block) => block.id));
   const claimedFacts = Array.isArray(supplied.facts) ? supplied.facts.map(record) : [];
   for (const claimed of claimedFacts) {
@@ -223,7 +229,7 @@ function contextFromCompleteProjection(projection:CreativeProjection,request:Con
     ? { ...fact, canvas_id: canvasId, context_set_id: contextSetId }
     : fact);
   const relations = (canvasSnapshot ? projection.libraryBlockRelations : projection.blockRelations)
-    .filter((relation) => factualBlockIds.has(relation.fromBlockId) && factualBlockIds.has(relation.toBlockId))
+    .filter((relation) => isSemanticIdeaRelation(relation.kind) && factualBlockIds.has(relation.fromBlockId) && factualBlockIds.has(relation.toBlockId))
     .map((relation) => ({
       relation_id: relation.id,
       from_block_id: relation.fromBlockId,
@@ -232,6 +238,7 @@ function contextFromCompleteProjection(projection:CreativeProjection,request:Con
       properties: relation.properties,
       source_event_refs: [...relation.sourceEvents],
     }));
+  relations.push(...genericIdeaRelationships(factualBlocks));
   const approvedOutputIds = new Set(projection.libraryOutputs.map((output) => output.id));
   const requestedPins = Array.isArray(supplied.pins) ? supplied.pins.map(String) : [];
   const pins = canvasSnapshot

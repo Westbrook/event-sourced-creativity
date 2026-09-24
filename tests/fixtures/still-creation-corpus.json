@@ -1,0 +1,2720 @@
+{
+  "schemaVersion": 1,
+  "specificationVersion": "v19",
+  "frozenOn": "2026-09-23",
+  "purpose": "Fixed synthetic source-grounded acceptance corpus. Inputs are authored test data, not generated user content. Static validation and mock ranks do not demonstrate model fidelity or learned recall.",
+  "offsetUnits": "UTF-16 code units",
+  "splitPolicy": "All queries and organization cases have explicit tuning or held-out labels. Retrieval target families are disjoint across splits. Do not tune prompts or ranking using held-out expected outcomes; a changed held-out set requires a new corpus version.",
+  "qualificationTargets": {
+    "minimumOrganizationCases": 30,
+    "minimumRetrievalCases": 50,
+    "recallAt3": 0.9,
+    "noMatchFalsePositiveRate": 0.1,
+    "authorizationLeaks": 0
+  },
+  "accountProfiles": [
+    {
+      "id": "small",
+      "ideaCount": 64
+    },
+    {
+      "id": "medium",
+      "ideaCount": 1000
+    },
+    {
+      "id": "large",
+      "ideaCount": 10000
+    }
+  ],
+  "seedPolicy": {
+    "seed": 190923,
+    "algorithm": "deterministic filler-v1",
+    "description": "Keep every target then fill the requested Idea count with numbered inventory records. Distractors are load fixtures, not evidence of realistic semantic difficulty. Use each query at all account sizes."
+  },
+  "organizationCases": [
+    {
+      "id": "white-album",
+      "split": "tuning",
+      "source": "Recording the White Album. /document Paul and Jon sit with their instruments on either side of a microphone. /image /document Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano. /video",
+      "entry": "project",
+      "tags": [
+        "original",
+        "relationships",
+        "shared-identity",
+        "preferences"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 279,
+            "quote": "Recording the White Album. /document Paul and Jon sit with their instruments on either side of a microphone. /image /document Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano. /video"
+          }
+        ],
+        "mustNotInfer": [
+          "Jon is John",
+          "First-scene instruments are pianos",
+          "Paul sits in the second scene",
+          "Biography or appearance",
+          "Scene-to-participant dependencies reversed"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "title-project",
+      "split": "tuning",
+      "source": "Rain Atlas",
+      "entry": "project",
+      "tags": [
+        "title",
+        "short"
+      ],
+      "expectedMode": "exact-empty-container",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 10,
+            "quote": "Rain Atlas"
+          }
+        ],
+        "mustNotInfer": [
+          "Invented description"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "title-document",
+      "split": "tuning",
+      "source": "Night Ferry",
+      "entry": "document",
+      "tags": [
+        "title",
+        "short"
+      ],
+      "expectedMode": "exact-empty-container",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 11,
+            "quote": "Night Ferry"
+          }
+        ],
+        "mustNotInfer": [
+          "Invented Idea"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "title-idea",
+      "split": "tuning",
+      "source": "Mara",
+      "entry": "idea",
+      "tags": [
+        "title",
+        "incomplete"
+      ],
+      "expectedMode": "missing-body-and-type",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 4,
+            "quote": "Mara"
+          }
+        ],
+        "mustNotInfer": [
+          "Title copied into body to pass completeness"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "short-meaning",
+      "split": "tuning",
+      "source": "Only footsteps.",
+      "entry": "idea",
+      "tags": [
+        "short",
+        "negation"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 15,
+            "quote": "Only footsteps."
+          }
+        ],
+        "mustNotInfer": [
+          "Music or dialogue"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "spanish",
+      "split": "tuning",
+      "source": "Ana cruza el puente sin paraguas. No llueve. /image",
+      "entry": "document",
+      "tags": [
+        "multilingual",
+        "negation",
+        "preferences"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 33,
+            "quote": "Ana cruza el puente sin paraguas."
+          },
+          {
+            "start": 34,
+            "end": 44,
+            "quote": "No llueve."
+          },
+          {
+            "start": 45,
+            "end": 51,
+            "quote": "/image"
+          }
+        ],
+        "mustNotInfer": [
+          "Rain",
+          "Umbrella"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "french",
+      "split": "tuning",
+      "source": "La porte reste fermée, sauf pendant le passage du chat.",
+      "entry": "idea",
+      "tags": [
+        "multilingual",
+        "qualification"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 55,
+            "quote": "La porte reste fermée, sauf pendant le passage du chat."
+          }
+        ],
+        "mustNotInfer": [
+          "Door always open"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "japanese",
+      "split": "held-out",
+      "source": "窓の外に雪。部屋の中には雪を入れない。 /image",
+      "entry": "document",
+      "tags": [
+        "multilingual",
+        "negation"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 6,
+            "quote": "窓の外に雪。"
+          },
+          {
+            "start": 6,
+            "end": 19,
+            "quote": "部屋の中には雪を入れない。"
+          },
+          {
+            "start": 20,
+            "end": 26,
+            "quote": "/image"
+          }
+        ],
+        "mustNotInfer": [
+          "Snow inside room"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "arabic",
+      "split": "held-out",
+      "source": "تجلس ليلى قرب النافذة، لكن لا نرى وجهها.",
+      "entry": "idea",
+      "tags": [
+        "multilingual",
+        "negation",
+        "rtl"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 40,
+            "quote": "تجلس ليلى قرب النافذة، لكن لا نرى وجهها."
+          }
+        ],
+        "mustNotInfer": [
+          "Visible face details"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "chinese",
+      "split": "held-out",
+      "source": "两个人在桥上等船，但船还没有出现。 /video",
+      "entry": "document",
+      "tags": [
+        "multilingual",
+        "negation"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 17,
+            "quote": "两个人在桥上等船，但船还没有出现。"
+          },
+          {
+            "start": 18,
+            "end": 24,
+            "quote": "/video"
+          }
+        ],
+        "mustNotInfer": [
+          "A visible arriving boat"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "hindi",
+      "split": "held-out",
+      "source": "नीली नाव किनारे पर है। उसमें कोई नहीं बैठा है।",
+      "entry": "idea",
+      "tags": [
+        "multilingual",
+        "negation"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 22,
+            "quote": "नीली नाव किनारे पर है।"
+          },
+          {
+            "start": 23,
+            "end": 46,
+            "quote": "उसमें कोई नहीं बैठा है।"
+          }
+        ],
+        "mustNotInfer": [
+          "People in boat"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "german",
+      "split": "held-out",
+      "source": "Ein roter Schal, vielleicht aus Wolle; das Material ist unsicher.",
+      "entry": "idea",
+      "tags": [
+        "multilingual",
+        "uncertainty"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 65,
+            "quote": "Ein roter Schal, vielleicht aus Wolle; das Material ist unsicher."
+          }
+        ],
+        "mustNotInfer": [
+          "Certain wool material"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "code-switch",
+      "split": "held-out",
+      "source": "Mina waits en silencio; no music, sólo viento.",
+      "entry": "idea",
+      "tags": [
+        "multilingual",
+        "negation"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 46,
+            "quote": "Mina waits en silencio; no music, sólo viento."
+          }
+        ],
+        "mustNotInfer": [
+          "Music"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "unicode",
+      "split": "held-out",
+      "source": "Zoë 👩🏽‍🎨 tient un café étroitement cadré.",
+      "entry": "idea",
+      "tags": [
+        "unicode",
+        "graphemes"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 45,
+            "quote": "Zoë 👩🏽‍🎨 tient un café étroitement cadré."
+          }
+        ],
+        "mustNotInfer": [
+          "Different participant identity"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "ambiguous-pronoun",
+      "split": "held-out",
+      "source": "Sam watches Jo near the door. They leave.",
+      "entry": "document",
+      "tags": [
+        "ambiguous",
+        "relationships"
+      ],
+      "expectedMode": "review-with-ambiguity",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 29,
+            "quote": "Sam watches Jo near the door."
+          },
+          {
+            "start": 30,
+            "end": 41,
+            "quote": "They leave."
+          }
+        ],
+        "mustNotInfer": [
+          "Resolve who leaves without review"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "same-name",
+      "split": "held-out",
+      "source": "Alex the baker waits. Alex the pilot leaves. They are different people.",
+      "entry": "document",
+      "tags": [
+        "same-name",
+        "identity"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 21,
+            "quote": "Alex the baker waits."
+          },
+          {
+            "start": 22,
+            "end": 44,
+            "quote": "Alex the pilot leaves."
+          },
+          {
+            "start": 45,
+            "end": 71,
+            "quote": "They are different people."
+          }
+        ],
+        "mustNotInfer": [
+          "Merge the two Alex identities"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "two-scenes",
+      "split": "held-out",
+      "source": "/document Lea lights a lamp. /image /document Lea closes a book. /video",
+      "entry": "project",
+      "tags": [
+        "shared-identity",
+        "relationships",
+        "preferences"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 10,
+            "end": 28,
+            "quote": "Lea lights a lamp."
+          },
+          {
+            "start": 29,
+            "end": 35,
+            "quote": "/image"
+          },
+          {
+            "start": 46,
+            "end": 64,
+            "quote": "Lea closes a book."
+          },
+          {
+            "start": 65,
+            "end": 71,
+            "quote": "/video"
+          }
+        ],
+        "mustNotInfer": [
+          "Lamp appears in second scene",
+          "One preference applied to both scenes"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "multi-preference",
+      "split": "held-out",
+      "source": "A paper crane on a shelf. /image /3D model",
+      "entry": "document",
+      "tags": [
+        "preferences",
+        "multiword-marker"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 25,
+            "quote": "A paper crane on a shelf."
+          },
+          {
+            "start": 26,
+            "end": 32,
+            "quote": "/image"
+          },
+          {
+            "start": 33,
+            "end": 42,
+            "quote": "/3D model"
+          }
+        ],
+        "mustNotInfer": [
+          "Automatic generation",
+          "Exclusive Document output kind"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "negative-preference",
+      "split": "held-out",
+      "source": "Prefer an image, not video. Keep the frame square.",
+      "entry": "document",
+      "tags": [
+        "preferences",
+        "negation",
+        "qualification"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 27,
+            "quote": "Prefer an image, not video."
+          },
+          {
+            "start": 28,
+            "end": 50,
+            "quote": "Keep the frame square."
+          }
+        ],
+        "mustNotInfer": [
+          "Positive video preference",
+          "Remove square constraint"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "marker-trailing",
+      "split": "held-out",
+      "source": "The brass bell hangs alone. /image Then a silent courtyard. /video",
+      "entry": "document",
+      "tags": [
+        "markers",
+        "ambiguous",
+        "preferences"
+      ],
+      "expectedMode": "review-with-ambiguity",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 27,
+            "quote": "The brass bell hangs alone."
+          },
+          {
+            "start": 28,
+            "end": 34,
+            "quote": "/image"
+          },
+          {
+            "start": 35,
+            "end": 59,
+            "quote": "Then a silent courtyard."
+          },
+          {
+            "start": 60,
+            "end": 66,
+            "quote": "/video"
+          }
+        ],
+        "mustNotInfer": [
+          "Attach every preference to every subject"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "unknown-marker",
+      "split": "held-out",
+      "source": "Keep /experimental as written. The folder is /Users/ana/scenes.",
+      "entry": "idea",
+      "tags": [
+        "literal",
+        "unknown-marker"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 30,
+            "quote": "Keep /experimental as written."
+          },
+          {
+            "start": 31,
+            "end": 63,
+            "quote": "The folder is /Users/ana/scenes."
+          }
+        ],
+        "mustNotInfer": [
+          "Execute unknown command",
+          "Parse path as creation marker"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "email-escape",
+      "split": "held-out",
+      "source": "Contact ana@example.test. Keep \\@ghost and \\/image literal.",
+      "entry": "idea",
+      "tags": [
+        "literal",
+        "escaped-sigil"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 8,
+            "end": 24,
+            "quote": "ana@example.test"
+          },
+          {
+            "start": 31,
+            "end": 38,
+            "quote": "\\@ghost"
+          },
+          {
+            "start": 43,
+            "end": 50,
+            "quote": "\\/image"
+          }
+        ],
+        "mustNotInfer": [
+          "Resolve email or escaped sigils as references"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "raw-mention",
+      "split": "held-out",
+      "source": "@Mara walks past the well.",
+      "entry": "idea",
+      "tags": [
+        "unresolved-mention",
+        "identity"
+      ],
+      "expectedMode": "review-with-ambiguity",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 26,
+            "quote": "@Mara walks past the well."
+          }
+        ],
+        "mustNotInfer": [
+          "Bind same-name saved Mara automatically"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "out-of-scope",
+      "split": "held-out",
+      "source": "/project A second home. A lantern hangs in the porch.",
+      "entry": "idea",
+      "tags": [
+        "scope",
+        "marker"
+      ],
+      "expectedMode": "scope-correction",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 23,
+            "quote": "/project A second home."
+          },
+          {
+            "start": 24,
+            "end": 53,
+            "quote": "A lantern hangs in the porch."
+          }
+        ],
+        "mustNotInfer": [
+          "Create Project from New Idea"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "multiple-roots",
+      "split": "held-out",
+      "source": "/project Orchard /document Red apples. /project Harbor /document Blue water.",
+      "entry": "project",
+      "tags": [
+        "scope",
+        "multiple-roots"
+      ],
+      "expectedMode": "scope-correction",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 16,
+            "quote": "/project Orchard"
+          },
+          {
+            "start": 27,
+            "end": 38,
+            "quote": "Red apples."
+          },
+          {
+            "start": 39,
+            "end": 54,
+            "quote": "/project Harbor"
+          },
+          {
+            "start": 65,
+            "end": 76,
+            "quote": "Blue water."
+          }
+        ],
+        "mustNotInfer": [
+          "Create two Projects"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "qualified-color",
+      "split": "held-out",
+      "source": "The coat looks black in shade, but its actual color is unspecified.",
+      "entry": "idea",
+      "tags": [
+        "qualification",
+        "uncertainty"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 67,
+            "quote": "The coat looks black in shade, but its actual color is unspecified."
+          }
+        ],
+        "mustNotInfer": [
+          "Declare actual coat color black"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "two-instruments",
+      "split": "held-out",
+      "source": "Nia and Oren hold their instruments. Later Nia touches a harp.",
+      "entry": "document",
+      "tags": [
+        "relationships",
+        "underspecified"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 36,
+            "quote": "Nia and Oren hold their instruments."
+          },
+          {
+            "start": 37,
+            "end": 62,
+            "quote": "Later Nia touches a harp."
+          }
+        ],
+        "mustNotInfer": [
+          "Earlier instruments are harps"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "conditional",
+      "split": "held-out",
+      "source": "If the light fails, keep the room dark; otherwise use the existing lamp.",
+      "entry": "idea",
+      "tags": [
+        "conditional",
+        "qualification"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 72,
+            "quote": "If the light fails, keep the room dark; otherwise use the existing lamp."
+          }
+        ],
+        "mustNotInfer": [
+          "Always dark",
+          "Always illuminated"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "quantifier",
+      "split": "held-out",
+      "source": "Exactly two cups, neither filled. A third cup must not appear.",
+      "entry": "idea",
+      "tags": [
+        "negation",
+        "quantity"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 33,
+            "quote": "Exactly two cups, neither filled."
+          },
+          {
+            "start": 34,
+            "end": 62,
+            "quote": "A third cup must not appear."
+          }
+        ],
+        "mustNotInfer": [
+          "Filled cup",
+          "Three cups"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "quotation",
+      "split": "held-out",
+      "source": "The sign reads “DO NOT ENTER”. A person stands outside.",
+      "entry": "idea",
+      "tags": [
+        "quoted-text",
+        "negation"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 30,
+            "quote": "The sign reads “DO NOT ENTER”."
+          },
+          {
+            "start": 31,
+            "end": 55,
+            "quote": "A person stands outside."
+          }
+        ],
+        "mustNotInfer": [
+          "Person enters",
+          "Change sign wording"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "coherent",
+      "split": "held-out",
+      "source": "A single slow movement from the floor to the ceiling without a cut.",
+      "entry": "idea",
+      "tags": [
+        "keep-together",
+        "short"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 67,
+            "quote": "A single slow movement from the floor to the ceiling without a cut."
+          }
+        ],
+        "mustNotInfer": [
+          "Force split into separate scenes"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "temporal",
+      "split": "held-out",
+      "source": "Before dawn the ferry is empty; after dawn one cyclist boards.",
+      "entry": "idea",
+      "tags": [
+        "temporal",
+        "qualification"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 62,
+            "quote": "Before dawn the ferry is empty; after dawn one cyclist boards."
+          }
+        ],
+        "mustNotInfer": [
+          "Cyclist already aboard before dawn"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "contradiction",
+      "split": "held-out",
+      "source": "Keep the door open. Keep the same door closed throughout.",
+      "entry": "idea",
+      "tags": [
+        "ambiguous",
+        "contradiction"
+      ],
+      "expectedMode": "review-with-ambiguity",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 19,
+            "quote": "Keep the door open."
+          },
+          {
+            "start": 20,
+            "end": 57,
+            "quote": "Keep the same door closed throughout."
+          }
+        ],
+        "mustNotInfer": [
+          "Silently choose one contradictory instruction"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "minimal-name-role",
+      "split": "held-out",
+      "source": "Rae holds a cup.",
+      "entry": "document",
+      "tags": [
+        "short",
+        "participant",
+        "source-grounded-body"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 16,
+            "quote": "Rae holds a cup."
+          }
+        ],
+        "mustNotInfer": [
+          "Rae biography",
+          "Cup material"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "long-coverage",
+      "split": "held-out",
+      "source": "An archive hallway with twelve labeled drawers. Drawer 1 holds a card labeled “1”; the card stays inside its drawer. Drawer 2 holds a card labeled “2”; the card stays inside its drawer. Drawer 3 holds a card labeled “3”; the card stays inside its drawer. Drawer 4 holds a card labeled “4”; the card stays inside its drawer. Drawer 5 holds a card labeled “5”; the card stays inside its drawer. Drawer 6 holds a card labeled “6”; the card stays inside its drawer. Drawer 7 holds a card labeled “7”; the card stays inside its drawer. Drawer 8 holds a card labeled “8”; the card stays inside its drawer. Drawer 9 holds a card labeled “9”; the card stays inside its drawer. Drawer 10 holds a card labeled “10”; the card stays inside its drawer. Drawer 11 holds a card labeled “11”; the card stays inside its drawer. Drawer 12 holds a card labeled “12”; the card stays inside its drawer. No drawer opens. No cards are removed. The labels remain readable, except drawer 7 whose label is partly obscured.",
+      "entry": "document",
+      "tags": [
+        "long",
+        "negation",
+        "qualification",
+        "coverage"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 0,
+            "end": 996,
+            "quote": "An archive hallway with twelve labeled drawers. Drawer 1 holds a card labeled “1”; the card stays inside its drawer. Drawer 2 holds a card labeled “2”; the card stays inside its drawer. Drawer 3 holds a card labeled “3”; the card stays inside its drawer. Drawer 4 holds a card labeled “4”; the card stays inside its drawer. Drawer 5 holds a card labeled “5”; the card stays inside its drawer. Drawer 6 holds a card labeled “6”; the card stays inside its drawer. Drawer 7 holds a card labeled “7”; the card stays inside its drawer. Drawer 8 holds a card labeled “8”; the card stays inside its drawer. Drawer 9 holds a card labeled “9”; the card stays inside its drawer. Drawer 10 holds a card labeled “10”; the card stays inside its drawer. Drawer 11 holds a card labeled “11”; the card stays inside its drawer. Drawer 12 holds a card labeled “12”; the card stays inside its drawer. No drawer opens. No cards are removed. The labels remain readable, except drawer 7 whose label is partly obscured."
+          }
+        ],
+        "mustNotInfer": [
+          "Open drawer",
+          "Removed card",
+          "Fully readable drawer 7 label"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    },
+    {
+      "id": "list-continuous",
+      "split": "held-out",
+      "source": "Capture these details:\n- wet stones\n- dry gloves\n- no footprints\nKeep their contrast.",
+      "entry": "document",
+      "tags": [
+        "list",
+        "negation",
+        "continuous-input"
+      ],
+      "expectedMode": "review",
+      "sourceConstraints": {
+        "mustPreserve": [
+          {
+            "start": 25,
+            "end": 35,
+            "quote": "wet stones"
+          },
+          {
+            "start": 38,
+            "end": 48,
+            "quote": "dry gloves"
+          },
+          {
+            "start": 51,
+            "end": 64,
+            "quote": "no footprints"
+          },
+          {
+            "start": 65,
+            "end": 85,
+            "quote": "Keep their contrast."
+          }
+        ],
+        "mustNotInfer": [
+          "Wet gloves",
+          "Footprints"
+        ]
+      },
+      "adjudication": "Human review of additions AND omissions is required; exact wording is not required except title-only."
+    }
+  ],
+  "retrievalTargets": [
+    {
+      "id": "t01",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Lantern",
+      "body": "A copper lantern hangs beneath the bridge.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t02",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Window",
+      "body": "A frosted pane hides the garden.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t03",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Footsteps",
+      "body": "Only footsteps echo in the corridor; no music.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t04",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Scarf",
+      "body": "A yellow scarf tied around an empty chair.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t05",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Ferry",
+      "body": "Two cyclists wait to board a ferry.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t06",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Tea",
+      "body": "Unfilled teacups beside a cold kettle.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t07",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Rain",
+      "body": "Rain falls outside; the floor inside stays dry.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t08",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Keys",
+      "body": "A bunch of keys rests on a green table.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t09",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Sleep",
+      "body": "A fox sleeps under a fallen tree.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t10",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Fog",
+      "body": "The lighthouse is barely visible through fog.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t11",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Letter",
+      "body": "A sealed letter remains unopened.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "t12",
+      "split": "tuning",
+      "kind": "idea",
+      "title": "Curtain",
+      "body": "Thin curtains move in a breeze.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h01",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Doorway",
+      "body": "A scarlet bicycle beside an empty doorway.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h02",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Bridge",
+      "body": "An exhausted traveler dozes beneath a stone arch.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h03",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Stillness",
+      "body": "The pond has no ripples even though trees bend in wind.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h04",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Transit",
+      "body": "A driverless tram waits at the terminal at midnight.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h05",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Shadow",
+      "body": "A child sees only the shadow of a kite, never the kite itself.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h06",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Thread",
+      "body": "Silver thread repairs a tear in dark cloth.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h07",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Garden",
+      "body": "A gardener waters seedlings, leaving mature plants untouched.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h08",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Music",
+      "body": "The musician holds a violin but does not play.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h09",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Departure",
+      "body": "The last passenger leaves before the train moves.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h10",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Mirror",
+      "body": "A mirror reflects an empty staircase, with nobody on it.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h11",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Blue",
+      "body": "La barque bleue est vide près du quai.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h12",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "傘",
+      "body": "赤い傘が駅のベンチに置かれている。",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h13",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "الممر",
+      "body": "مصباح واحد يضيء الممر ولا توجد نوافذ.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h14",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Snow",
+      "body": "El tejado tiene nieve, pero la calle está despejada.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h15",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "杯",
+      "body": "白色杯子在窗边，杯中没有水。",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h16",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Hands",
+      "body": "Only hands are visible as they fold a paper bird.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h17",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Bell",
+      "body": "A cracked bell swings without making a sound.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h18",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Track",
+      "body": "A single set of footprints ends at the river.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h19",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Ink",
+      "body": "Ink spreads across damp paper while the writing remains legible.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h20",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Stairs",
+      "body": "The staircase spirals upward but its top is hidden.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h21",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Mara",
+      "body": "Mara the sculptor works with clay, never marble.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h22",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Mara",
+      "body": "Mara the sailor repairs canvas aboard a vessel.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h23",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Violet",
+      "body": "Violet light falls on a white wall.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h24",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Violet",
+      "body": "Violet flowers grow beside a white wall.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h25",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Reflection",
+      "body": "Paul appears in glass playing the piano; no sitting posture is given.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h26",
+      "split": "held-out",
+      "kind": "document",
+      "title": "Composition",
+      "body": "Scene of a rain-covered harbor with an empty boat and a dim beacon.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active",
+      "ideaIds": [
+        "h27"
+      ]
+    },
+    {
+      "id": "h27",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Beacon",
+      "body": "The harbor beacon emits a weak green glow.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h28",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Preference",
+      "body": "Preferred outputs: Image and 3D model.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h29",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Clock",
+      "body": "The clock has no hands, although its pendulum moves.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "h30",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Night",
+      "body": "Stars are visible, but the moon is absent.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 1,
+      "state": "active"
+    },
+    {
+      "id": "private",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Secret submarine",
+      "body": "A classified submarine below an iceberg.",
+      "projectId": "project-secret",
+      "custodyId": "org-secret",
+      "readableBy": [
+        "actor-bob"
+      ],
+      "revision": 2,
+      "state": "active"
+    },
+    {
+      "id": "revoked",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Sundial",
+      "body": "A bronze sundial in a locked courtyard.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [],
+      "revision": 2,
+      "state": "active"
+    },
+    {
+      "id": "deleted",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Dragon",
+      "body": "A dragon-shaped balloon over a stadium.",
+      "projectId": "project-main",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 2,
+      "state": "deleted"
+    },
+    {
+      "id": "cross-project",
+      "split": "held-out",
+      "kind": "idea",
+      "title": "Rocket",
+      "body": "A silver rocket departs from a desert launchpad.",
+      "projectId": "project-other",
+      "custodyId": "personal-alex",
+      "readableBy": [
+        "actor-alex"
+      ],
+      "revision": 2,
+      "state": "active"
+    }
+  ],
+  "retrievalCases": [
+    {
+      "id": "query-t01",
+      "split": "tuning",
+      "query": "light fixture below the crossing",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t01"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t02",
+      "split": "tuning",
+      "query": "obscured yard behind opaque glass",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t02"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t03",
+      "split": "tuning",
+      "query": "hallway walking sounds without a soundtrack",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t03"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t04",
+      "split": "tuning",
+      "query": "vacant seat wearing golden fabric",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t04"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t05",
+      "split": "tuning",
+      "query": "pair of riders awaiting a boat",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t05"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t06",
+      "split": "tuning",
+      "query": "empty drinking vessels next to an unheated pot",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t06"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t07",
+      "split": "tuning",
+      "query": "indoor surface protected from the downpour",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t07"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t08",
+      "split": "tuning",
+      "query": "key ring lying on an emerald desk",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t08"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t09",
+      "split": "tuning",
+      "query": "resting woodland animal beneath a downed trunk",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t09"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t10",
+      "split": "tuning",
+      "query": "beacon obscured by mist",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t10"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t11",
+      "split": "tuning",
+      "query": "envelope whose contents are never revealed",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t11"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-t12",
+      "split": "tuning",
+      "query": "air gently stirs sheer drapes",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "t12"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h01",
+      "split": "held-out",
+      "query": "crimson two-wheeler next to vacant entrance",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h01"
+      ],
+      "tags": [
+        "paraphrase",
+        "zero-token-overlap"
+      ]
+    },
+    {
+      "id": "query-h02",
+      "split": "held-out",
+      "query": "weary wanderer sleeping below masonry curve",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h02"
+      ],
+      "tags": [
+        "paraphrase",
+        "zero-token-overlap"
+      ]
+    },
+    {
+      "id": "query-h03",
+      "split": "held-out",
+      "query": "smooth water despite gusts bending branches",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h03"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h04",
+      "split": "held-out",
+      "query": "unoccupied streetcar stopped at its final station overnight",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h04"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h05",
+      "split": "held-out",
+      "query": "unseen flying toy represented solely by its silhouette",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h05"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h06",
+      "split": "held-out",
+      "query": "metallic stitching mends black fabric",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h06"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h07",
+      "split": "held-out",
+      "query": "young shoots receive irrigation while grown vegetation stays alone",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h07"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h08",
+      "split": "held-out",
+      "query": "silent performer gripping a bowed instrument",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h08"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h09",
+      "split": "held-out",
+      "query": "rail carriage begins moving only after everyone exits",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h09"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h10",
+      "split": "held-out",
+      "query": "reflection of unoccupied steps",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h10"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h11",
+      "split": "held-out",
+      "query": "empty azure boat near the dock",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h11"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h12",
+      "split": "held-out",
+      "query": "red umbrella left on a station bench",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h12"
+      ],
+      "tags": [
+        "paraphrase",
+        "zero-token-overlap"
+      ]
+    },
+    {
+      "id": "query-h13",
+      "split": "held-out",
+      "query": "one lamp illuminating a windowless passage",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h13"
+      ],
+      "tags": [
+        "paraphrase",
+        "zero-token-overlap"
+      ]
+    },
+    {
+      "id": "query-h14",
+      "split": "held-out",
+      "query": "snowy roof above a clear road",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h14"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h15",
+      "split": "held-out",
+      "query": "empty white cup beside the window",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h15"
+      ],
+      "tags": [
+        "paraphrase",
+        "zero-token-overlap"
+      ]
+    },
+    {
+      "id": "query-h16",
+      "split": "held-out",
+      "query": "origami made with the person otherwise outside frame",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h16"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h17",
+      "split": "held-out",
+      "query": "damaged clapper object moving silently",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h17"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h18",
+      "split": "held-out",
+      "query": "solitary trail of steps stopping by flowing water",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h18"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h19",
+      "split": "held-out",
+      "query": "readable handwriting despite bleeding pigment on moist sheet",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h19"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h20",
+      "split": "held-out",
+      "query": "helical ascent with an unseen upper end",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h20"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h21",
+      "split": "held-out",
+      "query": "pottery maker Mara who avoids stone",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h21"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h22",
+      "split": "held-out",
+      "query": "seafarer Mara mending sails",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h22"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h23",
+      "split": "held-out",
+      "query": "purple illumination on pale masonry",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h23"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h24",
+      "split": "held-out",
+      "query": "purple blossoms by pale masonry",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h24"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h25",
+      "split": "held-out",
+      "query": "keyboard performer visible as a reflection",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h25"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h26",
+      "split": "held-out",
+      "query": "entire rainy port composition with vessel and signal light",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h26"
+      ],
+      "tags": [
+        "paraphrase",
+        "whole-document"
+      ]
+    },
+    {
+      "id": "query-h27",
+      "split": "held-out",
+      "query": "faint emerald warning lamp in the port",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h27"
+      ],
+      "tags": [
+        "paraphrase",
+        "specific-part"
+      ]
+    },
+    {
+      "id": "query-h28",
+      "split": "held-out",
+      "query": "soft preference for a picture plus a three dimensional object",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h28"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h29",
+      "split": "held-out",
+      "query": "swinging timepiece without hour or minute indicators",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h29"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h30",
+      "split": "held-out",
+      "query": "night sky without the lunar disc",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h30"
+      ],
+      "tags": [
+        "paraphrase"
+      ]
+    },
+    {
+      "id": "query-h01-alternate",
+      "split": "held-out",
+      "query": "空いている入り口の横に赤い自転車",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h01"
+      ],
+      "tags": [
+        "alternate",
+        "multilingual"
+      ]
+    },
+    {
+      "id": "query-h03-alternate",
+      "split": "held-out",
+      "query": "calm pond in a windstorm",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h03"
+      ],
+      "tags": [
+        "alternate",
+        "qualification"
+      ]
+    },
+    {
+      "id": "query-h08-alternate",
+      "split": "held-out",
+      "query": "violin held without any performance",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h08"
+      ],
+      "tags": [
+        "alternate",
+        "qualification"
+      ]
+    },
+    {
+      "id": "query-h10-alternate",
+      "split": "held-out",
+      "query": "empty stairs in a looking glass",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h10"
+      ],
+      "tags": [
+        "alternate",
+        "qualification"
+      ]
+    },
+    {
+      "id": "query-h19-alternate",
+      "split": "held-out",
+      "query": "wet page but the words can still be read",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h19"
+      ],
+      "tags": [
+        "alternate",
+        "qualification"
+      ]
+    },
+    {
+      "id": "query-h25-alternate",
+      "split": "held-out",
+      "query": "Paul at a piano in the window reflection",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h25"
+      ],
+      "tags": [
+        "alternate",
+        "qualification"
+      ]
+    },
+    {
+      "id": "query-h27-alternate",
+      "split": "held-out",
+      "query": "harbor beacon",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h27"
+      ],
+      "tags": [
+        "alternate",
+        "qualification"
+      ]
+    },
+    {
+      "id": "query-h30-alternate",
+      "split": "held-out",
+      "query": "starry moonless sky",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "unambiguous",
+      "expectedIds": [
+        "h30"
+      ],
+      "tags": [
+        "alternate",
+        "qualification"
+      ]
+    },
+    {
+      "id": "query-ambiguous-mara",
+      "split": "held-out",
+      "query": "Mara",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "ambiguous",
+      "expectedIds": [
+        "h21",
+        "h22"
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "expectation": "Present useful alternatives without silently binding identity; excluded from unambiguous recall denominator."
+    },
+    {
+      "id": "query-ambiguous-violet",
+      "split": "held-out",
+      "query": "Violet by the white wall",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "ambiguous",
+      "expectedIds": [
+        "h23",
+        "h24"
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "expectation": "Present useful alternatives without silently binding identity; excluded from unambiguous recall denominator."
+    },
+    {
+      "id": "query-ambiguous-harbor",
+      "split": "held-out",
+      "query": "harbor",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "ambiguous",
+      "expectedIds": [
+        "h26",
+        "h27"
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "expectation": "Present useful alternatives without silently binding identity; excluded from unambiguous recall denominator."
+    },
+    {
+      "id": "query-ambiguous-empty",
+      "split": "held-out",
+      "query": "empty scene",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "ambiguous",
+      "expectedIds": [
+        "h01",
+        "h10"
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "expectation": "Present useful alternatives without silently binding identity; excluded from unambiguous recall denominator."
+    },
+    {
+      "id": "query-ambiguous-reflection",
+      "split": "held-out",
+      "query": "reflection",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "ambiguous",
+      "expectedIds": [
+        "h10",
+        "h25"
+      ],
+      "tags": [
+        "ambiguous"
+      ],
+      "expectation": "Present useful alternatives without silently binding identity; excluded from unambiguous recall denominator."
+    },
+    {
+      "id": "query-none-01",
+      "split": "held-out",
+      "query": "tropical coral reef",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match"
+      ]
+    },
+    {
+      "id": "query-none-02",
+      "split": "held-out",
+      "query": "snow leopard hunting an ibex",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match"
+      ]
+    },
+    {
+      "id": "query-none-03",
+      "split": "held-out",
+      "query": "steam engine in a volcano",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match"
+      ]
+    },
+    {
+      "id": "query-none-04",
+      "split": "held-out",
+      "query": "astronaut tasting noodles",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match"
+      ]
+    },
+    {
+      "id": "query-none-05",
+      "split": "held-out",
+      "query": "submarine below an iceberg",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match",
+        "authorization"
+      ]
+    },
+    {
+      "id": "query-none-06",
+      "split": "held-out",
+      "query": "bronze sundial in a locked courtyard",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match",
+        "authorization"
+      ]
+    },
+    {
+      "id": "query-none-07",
+      "split": "held-out",
+      "query": "dragon balloon over a stadium",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match",
+        "authorization"
+      ]
+    },
+    {
+      "id": "query-none-08",
+      "split": "held-out",
+      "query": "silver rocket from a desert launchpad",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match",
+        "authorization"
+      ]
+    },
+    {
+      "id": "query-none-09",
+      "split": "held-out",
+      "query": "portrait of a queen wearing emerald earrings",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match"
+      ]
+    },
+    {
+      "id": "query-none-10",
+      "split": "held-out",
+      "query": "地下铁里的紫色章鱼",
+      "entry": "document",
+      "projectId": "project-main",
+      "actorId": "actor-alex",
+      "classification": "no-match",
+      "expectedIds": [],
+      "tags": [
+        "no-match"
+      ]
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { ideasInDocument } from './project-ideas.ts';
 import { copyOutputRequirementBlock } from "./output-requirement-copy.ts";
 import {
   ACTION_PARTICIPANT_RELATION, ACTION_REFERENCE_ROLES, normalizeActionBlockReferences,
@@ -69,6 +70,7 @@ export function buildDocumentDuplicationPlan(input: DocumentDuplicationInput): D
     document.id === input.sourceDocumentId && document.projectId === input.projection.projectId && !document.removed,
   );
   if (!source) throw new Error("That document is no longer available in this project.");
+  if(ideasInDocument(input.projection,source.id).some(block=>Object.hasOwn(block.properties,'rich_text_body')))throw new Error('This Document contains rich Idea bodies. Use its Ideas in another Document in Still; independent duplication requires a compatible reference copy editor. The source has not changed.');
   const title = normalizeDocumentDuplicationTitle(input.title);
   if (!input.sourceStreamId || !Number.isSafeInteger(input.sourceSequence) || input.sourceSequence < 0) {
     throw new Error("document_duplicate_source_invalid");

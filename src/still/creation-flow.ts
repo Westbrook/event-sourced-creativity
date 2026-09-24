@@ -1,0 +1,243 @@
+import {LitElement,html,nothing} from 'lit';
+import {guard} from 'lit/directives/guard.js';
+import './palette-elements.js';
+import {FormaLocaleController} from '../components/design-system/localization.ts';
+import {creationHelpCopy,creationEntryCopy} from './creation-help-copy.ts';
+import {creationHelpMarkers} from './creation-help-markers.ts';
+import {live} from 'lit/directives/live.js';
+import {keyed} from 'lit/directives/keyed.js';
+import './vendor/elements/define/rich-text-editor.js';
+import type {EnRichTextEditor,RichRange} from './vendor/elements/rich-text-editor.js';
+import {richDocumentText,type RichDocument} from './vendor/elements/rich-document.js';
+import {createEditorCommandMatcher} from './vendor/elements/editor-command-matcher.js';
+import type {EditorChoice} from './vendor/elements/editor/extensions.js';
+import {BLOCK_TYPES} from '../model/block-types.ts';
+import type {CreationEntryKind,ProposedNode,ProposedUse,CreationReceipt} from '../model/creation.ts';
+import {OUTPUT_KINDS,OUTPUT_KIND_LABELS,type OutputKind} from '../model/document-output-intent.ts';
+import {decodeIdeaBody,ideaBodyReferences,plainTextIdeaBody} from '../model/idea-body.ts';
+import type {CorrectionSource} from '../model/creation-corrections.ts';
+import type {CreationSearchCandidate} from '../model/creation-search.ts';
+import type {StillClient} from './client.ts';
+import type {WorkflowAction,WorkflowToolbar} from './workflow-toolbar.ts';
+import {isCreationReplacementRangeValid,prepareCreationReplacement,decorateCreationReplacements,acceptCreationReplacements,type CreationReplacementPreview} from './creation-replacement.ts';
+import {CreationController} from './creation-controller.ts';
+import {draftIdeaChoices} from './creation-draft-ideas.ts';
+import {creationTokenImporter} from './creation-token-import.ts';
+import {CreationCorrectionsController,renderCreationCorrections} from './creation-corrections.ts';
+
+/** One capture surface and an explicit, version-bound review of its retained graph. */
+export class StillCreationFlow extends LitElement {
+  static properties={client:{attribute:false},entryKind:{type:String}};
+  declare client:StillClient;
+  entryKind:CreationEntryKind='idea';
+  private flow?:CreationController;
+  private locale=new FormaLocaleController(this);
+  private helpOpen=false;
+  private pickerKind:'reference'|'command'='reference';
+  private setPickerKind(kind:'reference'|'command'){if(this.pickerKind!==kind){this.pickerKind=kind;this.requestUpdate();}}
+  private helpSaveShortcut=(event:KeyboardEvent)=>{
+    if(this.helpOpen&&event.key==='Enter'&&(event.metaKey||event.ctrlKey)){
+      event.preventDefault();event.stopImmediatePropagation();
+    }
+  };
+  private deliveredReceipt='';
+  private correctionController=new CreationCorrectionsController();
+  private composing=false;
+  private candidate?:CreationSearchCandidate;
+  private reuseRange?:RichRange;
+  private reuseData?:Awaited<ReturnType<CreationController['previewReference']>>;
+  private replacement?:CreationReplacementPreview;
+  private remainingText='';
+  private selectedRoots=new Set<string>();
+  private leaveChoice=false;
+  private editorDisposers:Array<()=>void>=[];
+  private registeredEditor?:EnRichTextEditor;
+  private importCreationToken=creationTokenImporter(()=>({draftId:this.flow?.draft.id??'',projectId:this.flow?.draft.scope.projectId??null}));
+  private focusKey='';
+  private fullContentKey='';
+  private contentReached=false;
+  private beforeUnload=(event:BeforeUnloadEvent)=>{if(this.preventsUnload){event.preventDefault();event.returnValue='';}};
+  createRenderRoot(){return this;}
+  get preventsUnload(){return !!this.flow?.busy||this.composing||!!this.flow?.hasUnacknowledgedChanges;}
+  get preventsRouteChange(){return !!this.flow?.busy||this.composing||!!this.flow?.draft&&this.flow.draft.state!=='saved'&&this.flow.draft.state!=='discarded';}
+  connectedCallback(){super.connectedCallback();window.addEventListener('beforeunload',this.beforeUnload);window.addEventListener('keydown',this.helpSaveShortcut,true);}
+  disconnectedCallback(){super.disconnectedCallback();window.removeEventListener('beforeunload',this.beforeUnload);window.removeEventListener('keydown',this.helpSaveShortcut,true);this.flow?.dispose();this.clearEditor();}
+  protected firstUpdated(){
+    const session=this.client.session;if(!session)return;
+    this.flow=new CreationController({entryKind:this.entryKind,scope:{actorUserId:session.user.userId,projectId:this.entryKind==='project'?null:this.client.position.projectId||null,documentId:this.entryKind==='idea'?this.client.position.documentId||null:null,custodyKey:session.projectContext?.organizationId??'personal',permissionEpoch:session.permissionEpoch??''},request:this.client.creationRequest.bind(this.client),onChange:()=>this.requestUpdate()});
+    void this.flow.start();
+  }
+  protected updated(){
+    this.dispatchEvent(new Event('workflow-toolbar-change',{bubbles:true}));this.connectEditor();
+    const flow=this.flow,key=flow?.plan?`${flow.currentStage}:${flow.currentId}`:'input';
+    if(key!==this.focusKey){this.focusKey=key;const heading=this.querySelector<HTMLElement>('h1');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});}}
+    const contentKey=flow?.currentId?`${flow.currentId}:${flow.hashes?.nodeHashes[flow.currentId]??JSON.stringify(flow.currentItem?.uses)}`:'';
+    if(contentKey!==this.fullContentKey){this.fullContentKey=contentKey;this.contentReached=false;this.requestUpdate();}
+    const body=this.querySelector<HTMLElement>('.creation-full-content');
+    if(body&&!this.contentReached&&body.scrollHeight<=body.clientHeight+body.scrollTop+2){this.contentReached=true;this.requestUpdate();}
+    if(flow?.receipt&&flow.receipt.operationId!==this.deliveredReceipt)this.done(flow.receipt);
+  }
+  private clearEditor(){this.editorDisposers.forEach(dispose=>dispose());this.editorDisposers=[];this.registeredEditor=undefined;}
+  private connectEditor(){
+    const editor=this.querySelector<EnRichTextEditor>('#creation-input');if(editor===this.registeredEditor)return;this.clearEditor();if(!editor)return;this.registeredEditor=editor;
+    const commands=[...(this.entryKind==='project'?['project']:[]),...(this.entryKind!=='idea'?['document']:[]),'idea','image','video','3D model','audio','slides','storyboard','short story'];
+    this.editorDisposers.push(editor.registerExtension({id:'creation-commands',trigger:'/',label:'Organize this description',match:createEditorCommandMatcher(commands),provide:({query})=>{this.setPickerKind('command');return commands.filter(command=>command.toLowerCase().includes(query.toLowerCase())).map(command=>({id:command,label:`/${command}`,insert:[{kind:'token',id:crypto.randomUUID(),type:'still-creation-command',text:`/${command}`,label:`/${command}`,data:{schemaVersion:1,kind:'command',command}}]}));}}));
+    this.editorDisposers.push(editor.registerExtension({id:'creation-references',trigger:'@',label:'Use or name an Idea',provide:({query,signal})=>{
+      if(signal.aborted)return [];
+      this.setPickerKind('reference');
+      const copy=creationHelpCopy(this.locale.locale);
+      const local=draftIdeaChoices(editor.document,this.flow?.draft.id??'',query,copy.draftIdeaChoice);
+      const existing:EditorChoice[]=this.entryKind==='project'?[]:this.client.projection.libraryBlocks.filter(block=>!block.removed&&block.projectId===this.flow?.draft?.scope.projectId&&String(block.properties.label??block.handle).toLocaleLowerCase().includes(query.toLocaleLowerCase())).slice(0,20).map(block=>({id:block.id,label:String(block.properties.label??block.handle),description:copy.sharedIdeaChoice,insert:[{kind:'token',id:crypto.randomUUID(),type:'still-idea-reference',text:`@${String(block.properties.label??block.handle)}`,label:String(block.properties.label??block.handle),data:{schemaVersion:1,kind:'idea-reference',projectId:block.projectId,blockId:block.id}}]}));
+      const choices=[...local,...existing].slice(0,20);
+      if(query.trim())choices.push({id:'new-declaration',label:copy.newIdeaChoice.replace('{name}',query.trim()),description:copy.newIdeaChoiceHint,insert:[{kind:'token',id:crypto.randomUUID(),type:'still-creation-declaration',text:`@${query.trim()}`,label:query.trim(),data:{schemaVersion:1,kind:'declaration',draftId:this.flow?.draft?.id??'',targetId:`temporary:${crypto.randomUUID()}`}}]});return choices;
+    }}));
+    for(const [type,extension] of [['still-idea-reference','creation-references'],['still-creation-declaration','creation-references'],['still-creation-command','creation-commands']])this.editorDisposers.push(editor.registerToken(type,token=>document.createTextNode(token.text),{extension,deleteBehavior:'edit',importToken:this.importCreationToken}));
+  }
+  private command(label:string,run:()=>unknown,primary=false,disabled=false):WorkflowAction{return {id:`creation:${label.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`,label,variant:primary?'primary':'ghost',disabled:!this.flow||this.flow.busy||this.composing||this.helpOpen||disabled,run:()=>{if(this.flow&&!this.flow.busy&&!this.composing&&!this.helpOpen&&!disabled)void this.run(run);}};}
+  get toolbar():WorkflowToolbar{
+    const flow=this.flow;if(!flow)return {actions:[],status:'Loading draft…'};
+    if(this.leaveChoice)return {actions:[this.command('Keep draft and leave',()=>this.leave(),true),this.command('Stay',()=>{this.leaveChoice=false;this.requestUpdate();}),this.command('Discard draft',async()=>{await flow.discard();if(!flow.error)this.dispatchEvent(new CustomEvent('creation-back',{bubbles:true}));})],status:flow.status};
+    const back=this.command('Back',()=>{this.leaveChoice=true;this.requestUpdate();});
+    if(!flow.plan)return {actions:[this.command('Save',()=>this.submit(),true,!flow.canRetry),back],status:flow.status};
+    if(flow.noChange||!flow.plan.nodes.some(node=>node.disposition==='retained')&&!flow.plan.uses.some(use=>use.disposition==='retained'))return {actions:[this.command(flow.noChange?.documentId?'Open Document':'Open selected Idea',()=>this.openSelected(),true,!flow.noChange&&!flow.draft.referenceSelections.length),back],status:flow.status};
+    const state=this.reviewCounts(),actions:WorkflowAction[]=[];
+    if(flow.currentStage==='final'){
+      if(state.unseen===0)actions.push(this.command(state.records===0?'Approve selected use':`Approve selected (${state.records})`,async()=>{const receipt=await flow.commit();if(receipt)this.done(receipt);},true,!flow.eligible));
+      actions.push(this.command('Back to Ideas',()=>flow.stage(flow.stages[0])));
+    }else{
+      actions.push(this.command('Approve',()=>flow.approve(),true,!this.itemPresented()||!this.itemComplete()),this.command('Previous',()=>this.move(-1),false,flow.stageItems.length<2),this.command('Next',()=>this.move(1),false,flow.stageItems.length<2));
+      const next=flow.stages[flow.stages.indexOf(flow.currentStage)+1];
+      if(next)actions.push(this.command(`Review ${next==='project'?'Project':next==='documents'?'Documents':'Ideas'}`,()=>flow.stage(next)));
+      if(state.unseen===0)actions.push(this.command('Final review',()=>flow.stage('final')));
+      actions.push(this.command('Approve all',()=>flow.approveAll()));
+      if(state.unseen)actions.push(this.command(`Review next unseen (${state.unseen})`,()=>this.nextUnseen()));else if(state.incomplete)actions.push(this.command(`Complete missing information (${state.incomplete})`,()=>this.nextIncomplete()));
+    }
+    actions.push(back);return {actions,status:flow.status};
+  }
+  private async run(work:()=>unknown){const flow=this.flow;if(!flow||flow.busy||this.composing||this.helpOpen)return;flow.busy=true;flow.error='';this.requestUpdate();try{await work();}catch(error){flow.reportFailure(error);}finally{flow.busy=false;this.requestUpdate();if(flow.error&&!flow.plan){await this.updateComplete;this.querySelector<EnRichTextEditor>('#creation-input')?.focus();}}}
+  private done(receipt:CreationReceipt){if(receipt.operationId===this.deliveredReceipt)return;this.deliveredReceipt=receipt.operationId;this.dispatchEvent(new CustomEvent<CreationReceipt>('creation-done',{bubbles:true,detail:receipt}));}
+  private move(delta:number){const flow=this.flow;if(!flow?.stageItems.length)return;const index=flow.stageItems.findIndex(item=>item.id===flow.currentId);flow.navigate(flow.stageItems[(index+delta+flow.stageItems.length)%flow.stageItems.length].id);}
+  private nextUnseen(){const flow=this.flow;if(!flow)return;for(const stage of flow.stages){flow.stage(stage);const next=flow.stageItems.find(item=>item.node?flow.review.nodes[item.id]?.presentedHash!==flow.hashes.nodeHashes[item.id]:item.uses.some(use=>flow.review.uses[use.id]?.presentedHash!==flow.hashes.useHashes[use.id]));if(next){flow.navigate(next.id);return;}}}
+  private nextIncomplete(){const flow=this.flow;if(!flow)return;for(const stage of flow.stages){flow.stage(stage);const next=flow.stageItems.find(item=>item.node?!flow.review.nodes[item.id]?.complete:item.uses.some(use=>!flow.review.uses[use.id]?.complete));if(next){flow.navigate(next.id);return;}}}
+  private contentAvailable(){const flow=this.flow,item=flow?.currentItem;if(!flow||!item)return false;const available=(id:string)=>flow.plan?.nodes.some(node=>node.id===id&&node.disposition==='retained')||flow.sourceBodies.some(block=>block.id===id&&!block.removed&&typeof block.properties.text==='string');return (!item.node?this.client.projection.documents.some(document=>document.id===item.id):true)&&item.uses.every(use=>available(use.ideaId)&&use.dependencyManifest.every(dependency=>available(dependency.id)));}
+  private async openSelected(){const flow=this.flow;if(flow?.noChange){await flow.back();const target=flow.noChange;this.dispatchEvent(new CustomEvent('creation-open',{bubbles:true,detail:{id:target.documentId??target.blockId??target.projectId,kind:target.documentId?'document':target.blockId?'idea':'project',projectId:target.projectId}}));return;}const id=flow?.draft.referenceSelections[0]?.rootIds[0],block=this.availableBlocks.find(block=>block.id===id);if(!flow||!id)return;await flow.back();this.dispatchEvent(new CustomEvent('creation-open',{bubbles:true,detail:{id,kind:'idea',projectId:flow.draft.scope.projectId,title:block?.handle??'Selected Idea'}}));}
+  private async leave(){await this.flow?.back();if(!this.flow?.error)this.dispatchEvent(new CustomEvent('creation-back',{bubbles:true}));}
+  private async submit(){const receipt=await this.flow?.submit();if(receipt)this.done(receipt);if(this.flow?.error)this.querySelector<EnRichTextEditor>('#creation-input')?.focus();}
+  private keydown(event:KeyboardEvent){if(this.helpOpen)return;if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)&&!event.isComposing&&!this.composing){event.preventDefault();if(!this.flow?.plan&&!this.flow?.busy)void this.run(()=>this.submit());}}
+  private reviewCounts(){
+    const flow=this.flow,nodes=flow?.plan?.nodes.filter(node=>node.disposition==='retained')??[],uses=flow?.plan?.uses.filter(use=>use.disposition==='retained')??[];
+    const versions=[...nodes.map(node=>({hash:flow?.hashes?.nodeHashes[node.id],review:flow?.review?.nodes[node.id]})),...uses.map(use=>({hash:flow?.hashes?.useHashes[use.id],review:flow?.review?.uses[use.id]}))];
+    return {records:nodes.length,newUses:uses.filter(use=>!nodes.some(node=>node.id===use.ideaId)).length,unseen:versions.filter(item=>!item.hash||item.review?.presentedHash!==item.hash).length,unapproved:versions.filter(item=>!item.hash||item.review?.approvedHash!==item.hash).length,incomplete:versions.filter(item=>!item.review?.complete).length};
+  }
+  private itemPresented(){const flow=this.flow,item=flow?.currentItem;if(!flow||!item)return false;return (!item.node||flow.review?.nodes[item.id]?.presentedHash===flow.hashes?.nodeHashes[item.id])&&(item.kind==='idea'||item.uses.every(use=>flow.review?.uses[use.id]?.presentedHash===flow.hashes?.useHashes[use.id]));}
+  private itemComplete(){const flow=this.flow,item=flow?.currentItem;if(!flow||!item)return false;return (!item.node||!!flow.review?.nodes[item.id]?.complete)&&(item.kind==='idea'||item.uses.every(use=>flow.review?.uses[use.id]?.complete));}
+  private jump(id:string){const flow=this.flow;if(!flow)return;const item=flow.stageItems.find(item=>item.id===id);if(!item)return;flow.navigate(id);}
+  private scrollContent(event:Event){const box=event.currentTarget as HTMLElement;if(box.scrollTop+box.clientHeight>=box.scrollHeight-3&&!this.contentReached){this.contentReached=true;this.requestUpdate();}}
+  private edit(node:ProposedNode,patch:Partial<ProposedNode>){void this.flow?.editNode(node.id,patch).catch(error=>this.flow?.setError(error instanceof Error?error.message:'The edit could not be saved.'));}
+  private disclosedDependencies(use:ProposedUse){const plan=this.flow?.plan,ids=new Set(use.dependencyManifest.map(dependency=>dependency.id));const visit=(id:string,seen=new Set<string>())=>{if(seen.has(id))return;seen.add(id);const node=plan?.nodes.find(node=>node.id===id);const targets=[...(plan?.references.filter(reference=>reference.fromId===id).map(reference=>reference.toId)??[]),...(node?.body?ideaBodyReferences(node.body).map(reference=>reference.blockId):[])];for(const target of targets){ids.add(target);visit(target,seen);}};visit(use.ideaId);ids.delete(use.ideaId);return [...ids].map(id=>({id,revision:use.dependencyManifest.find(dependency=>dependency.id===id)?.revision,text:plan?.nodes.find(node=>node.id===id)?.text??String(this.availableBlocks.find(block=>block.id===id)?.properties.text??'')}));}
+  private correctionSources():CorrectionSource[]{const flow=this.flow;if(!flow)return [];const versions=new Map(flow.draft.referenceSelections.flatMap(selection=>selection.sources.map(source=>[source.id,source] as const)));return flow.sourceBodies.flatMap(block=>{const version=versions.get(block.id);if(!version)return [];let body;try{body=block.properties.rich_text_body?decodeIdeaBody(block.properties.rich_text_body):plainTextIdeaBody(String(block.properties.text??''));}catch{return [];}const dependencyIds=[...new Set([...ideaBodyReferences(body).map(reference=>reference.blockId),...this.client.projection.libraryBlockRelations.filter(relation=>!relation.removed&&relation.fromBlockId===block.id&&['idea_reference','context_contains','context_member','references'].includes(relation.kind)).map(relation=>relation.toBlockId)])];return [{node:{id:block.id,projectId:block.projectId,kind:'idea' as const,title:String(block.properties.label??block.handle),body,text:richDocumentText(body.document),type:block.type as ProposedNode['type'],subtype:typeof block.properties.subtype==='string'?block.properties.subtype:undefined,intent:block.properties.intent as ProposedNode['intent'],preferredOutputKinds:Array.isArray(block.properties.preferred_output_kinds)?block.properties.preferred_output_kinds as string[]:undefined,revision:1,disposition:'retained' as const,sourceEvidence:[{kind:'existing' as const,blockId:block.id,projectId:block.projectId,revision:version.revision,hash:version.hash}]},dependencyIds}];});}
+  private changePreference(node:ProposedNode,kind:OutputKind,checked:boolean){const kinds=checked?[...new Set([...(node.preferredOutputKinds??[]),kind])]:(node.preferredOutputKinds??[]).filter(value=>value!==kind);if(!kinds.length){this.flow?.setError('Keep at least one preferred Output, or remove the Format Idea through its reviewed correction.');this.requestUpdate();return;}const editor=this.querySelector<EnRichTextEditor>('#creation-body-editor');if(!editor){this.flow?.setError('Open the Idea body before changing its Output preferences.');return;}const text=richDocumentText(editor.document),header=/^Preferred outputs?:[^\n]*(?:\n|$)/iu.exec(text)?.[0]??'';const replacement=`Preferred outputs: ${kinds.map(value=>OUTPUT_KIND_LABELS[value as OutputKind]).join(' and ')}\n`;const range:RichRange={coordinate:'text',from:0,to:header.length,expectedText:header,revision:editor.revision};if(!isCreationReplacementRangeValid(editor,range)||!editor.replaceRanges([{range,runs:[{kind:'text',text:replacement}]}])){this.flow?.setError('The body changed or its preference line contains a reference. Review that line before changing Output preferences.');return;}this.edit(node,{type:'format',subtype:'Channel',intent:'prefer',preferredOutputKinds:kinds,body:{schemaVersion:1,document:editor.document},text:richDocumentText(editor.document)});}
+  private nodeBody(node:ProposedNode){return node.body?richDocumentText(node.body.document):node.text??'';}
+  private get availableBlocks(){return [...(this.flow?.sourceBodies??[]),...this.client.projection.libraryBlocks.filter(block=>!this.flow?.sourceBodies.some(source=>source.id===block.id))];}
+  private labelFor(id:string){const node=this.flow?.plan?.nodes.find(node=>node.id===id);if(node)return node.title.trim()||`Untitled ${node.kind==='idea'?'Idea':node.kind==='document'?'Document':'Project'}`;return String(this.availableBlocks.find(block=>block.id===id)?.properties.label??this.client.projection.documents.find(document=>document.id===id)?.title??id);}
+  private async openHelp(event:MouseEvent){
+    (event.currentTarget as HTMLElement).focus({preventScroll:true});
+    this.helpOpen=true;this.requestUpdate();
+    await this.updateComplete;
+    await this.querySelector<LitElement>('.creation-help-dialog')?.updateComplete;
+    // Slotted autofocus differs across engines; establish the same reading start
+    // once the established component has entered native modality.
+    if(this.helpOpen)this.querySelector<HTMLElement>('#creation-help-start')?.focus({preventScroll:true});
+  }
+  private renderHelpTrigger(){
+    return html`<button class="creation-help-trigger" type="button" aria-haspopup="dialog" aria-controls="creation-help" @click=${this.openHelp}>${creationHelpCopy(this.locale.locale).trigger}</button>`;
+  }
+  private renderIntroduction(){
+    if(!this.flow?.plan)return nothing;
+    const copy=creationHelpCopy(this.locale.locale);
+    return html`<div class="creation-introduction" lang=${this.locale.locale} dir=${this.locale.direction}>
+      <div class="creation-introduction-line"><p class="creation-helper">${copy.reviewIntro}</p>${this.renderHelpTrigger()}</div>
+    </div>`;
+  }
+  private helpKeydown(event:KeyboardEvent){
+    // Native modality makes the page inert. Explicit boundaries also keep Tab
+    // from moving into browser chrome at the ends of this informational dialog.
+    const close=this.querySelector<HTMLButtonElement>('.creation-help-close');
+    const start=this.querySelector<HTMLElement>('#creation-help-start');
+    if(event.key==='Tab'&&close&&start){
+      const atClose=event.composedPath().includes(close);
+      // There are no interactive controls in the read-only help body. Cycle
+      // its reading start and visible Close explicitly: WebKit can otherwise
+      // skip slotted buttons and move focus into browser chrome.
+      event.preventDefault();(atClose?start:close).focus({preventScroll:true});
+    }
+    event.stopPropagation();
+  }
+  private renderHelp(){
+    const copy=creationHelpCopy(this.locale.locale),entry=(suffix:Parameters<typeof creationEntryCopy>[2])=>creationHelpMarkers(creationEntryCopy(copy,this.entryKind,suffix));
+    return html`<en-dialog id="creation-help" class="creation-help-dialog" lang=${this.locale.locale} dir=${this.locale.direction} .open=${this.helpOpen} .closeLabel=${copy.close} label=${copy.title} closedby="closerequest"
+      @en-change=${(event:CustomEvent<{proposed:boolean}>)=>{if(event.target===event.currentTarget){this.helpOpen=event.detail.proposed;this.requestUpdate();}}}
+      @keydown=${this.helpKeydown}>
+      <div class="creation-help-content">
+        <section><h3>${copy.writeHeading}</h3><p id="creation-help-start" tabindex="-1" autofocus>${creationHelpMarkers(copy.write)}</p></section>
+        <section><h3>${creationHelpMarkers(copy.identityHeading)}</h3><p>${creationHelpMarkers(copy.identity)}</p><p>${entry('Identity')}</p>${this.entryKind==='project'?nothing:html`<p>${copy.reuse}</p>`}</section>
+        <section><h3>${creationHelpMarkers(copy.markersHeading)}</h3><p>${entry('Markers')}</p><p>${creationHelpMarkers(copy.outputs)}</p></section>
+        <section><h3>${copy.saveHeading}</h3><p>${entry('Save')}</p><p>${entry('Review')}</p><p>${copy.draftHint}</p><p>${copy.shortcut}</p></section>
+        <section class="creation-help-example"><h3>${copy.exampleHeading}</h3><div class="creation-help-example-grid">
+          <div><h4>${copy.exampleInput}</h4><blockquote>${entry('Example')}</blockquote></div>
+          <div><h4>${copy.exampleResult}</h4><p>${entry('Result')}</p></div>
+        </div><p>${copy.exampleNote}</p><p>${copy.reuseValue}</p></section>
+      </div>
+      <button slot="footer" class="creation-help-close" type="button" @click=${()=>{this.helpOpen=false;this.requestUpdate();}}>${copy.close}</button>
+    </en-dialog>`;
+  }
+  private renderInput(){const flow=this.flow,draft=flow?.draft;if(!flow||!draft)return html`<p role="status">Loading your draft…</p>`;const text=richDocumentText(draft.workingDocument),copy=creationHelpCopy(this.locale.locale);return html`
+    <en-rich-text-editor id="creation-input" .messages=${guard([this.locale.locale,this.entryKind,this.pickerKind],()=>({suggestions:{empty:this.pickerKind==='command'?copy.commandPickerEmpty:this.entryKind==='project'?copy.referencePickerEmpty:copy.scopedReferencePickerEmpty}}))} label=${creationEntryCopy(copy,this.entryKind,'Label')} lang=${this.locale.locale} dir=${this.locale.direction} .document=${guard([draft.id],()=>draft.workingDocument)} .disabled=${flow.busy} @en-change=${(event:CustomEvent<{proposed:RichDocument}>)=>flow.changeDocument(event.detail.proposed)} @keydown=${this.keydown} @compositionstart=${()=>{this.composing=true;flow.setComposing(true);}} @compositionend=${()=>{this.composing=false;flow.setComposing(false);this.requestUpdate();}}>
+      <div slot="description" class="creation-editor-description">
+        <span class="creation-save-expectation">${text.trim()?flow.classification==='title'&&this.entryKind!=='idea'?copy[this.entryKind==='project'?'projectTitleAction':'documentTitleAction'].replace('{title}',text.trim()):flow.classification==='title'?copy.ideaTitleAction:copy.descriptionAction:creationEntryCopy(copy,this.entryKind,'Hint')}</span>
+        <span class="creation-marker-guidance">${creationHelpMarkers(creationEntryCopy(copy,this.entryKind,'MarkerHint'))}</span>
+        ${this.renderHelpTrigger()}
+        ${text.trim()?html`<div class="creation-classification"><button type="button" @click=${()=>flow.setClassification(flow.classification==='title'?'description':'title')}>${flow.classification==='title'?copy.treatDescription:copy.treatTitle}</button></div>`:nothing}
+      </div>
+    </en-rich-text-editor>
+    ${this.renderSearch()}
+    ${flow.error&&text.trim()?html`<div class="creation-recovery">${flow.canRetry?html`<button type="button" @click=${()=>this.run(()=>this.submit())}>Retry Save</button>`:nothing}${flow.canCompleteManually?html`<button type="button" @click=${()=>this.run(()=>flow.manual())}>Complete one Idea manually</button>`:nothing}<button type="button" @click=${()=>this.copyDraft()}>Copy draft</button></div>`:nothing}`;}
+  private renderSearch(){const flow=this.flow,search=flow?.search;if(!flow||!search)return nothing;const roots=this.candidate?this.client.projection.libraryBlocks.filter(block=>!block.removed&&block.projectId===this.candidate?.projectId&&(this.candidate.kind==='idea'?block.id===this.candidate.id:block.documentUses?.some(use=>use.documentId===this.candidate?.id))):[];return html`<section class="creation-search" aria-label="Related existing work" aria-busy=${flow.searchStale?'true':'false'} @focusin=${()=>{flow.setSearchInteraction('focus',true);}} @focusout=${(event:FocusEvent)=>{if(!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node|null))flow.setSearchInteraction('focus',false);}} @pointerenter=${()=>{flow.setSearchInteraction('pointer',true);}} @pointerleave=${()=>{flow.setSearchInteraction('pointer',false);}}>
+      ${flow.searchStale?html`<p class="creation-search-notice" role="status">${flow.searchFailure||'Updating matches. Review the current results before opening or reusing them.'}</p>`:nothing}${search.candidates.length?html`<h2>You may already have this</h2>${search.candidates.slice(0,3).map(candidate=>html`<article><h3>${candidate.title}</h3><p>${candidate.kind} · ${candidate.locations.map(location=>location.title).join(', ')}</p><p>${candidate.reason}</p><button type="button" ?disabled=${flow.searchStale} @click=${()=>this.run(async()=>{await flow.back();this.dispatchEvent(new CustomEvent('creation-open',{bubbles:true,detail:candidate}));})}>Open</button>${this.entryKind!=='project'&&candidate.action==='open-or-use'&&candidate.projectId===flow.draft.scope.projectId?html`<button type="button" ?disabled=${flow.searchStale} @click=${()=>{this.cancelReplacement();this.reuseRange=this.querySelector<EnRichTextEditor>('#creation-input')?.captureRange();this.candidate=candidate;this.selectedRoots=new Set(candidate.kind==='idea'?[candidate.id]:[]);this.requestUpdate();}}>Use in this draft</button>`:nothing}</article>`)}`:search.definitiveNoMatch?html`<p>No related work found.</p>`:nothing}
+      ${search.notices.map(notice=>html`<p class="creation-search-notice">${notice}</p>`)}
+      ${this.candidate?html`<section class="creation-reuse-preview"><h3>${this.candidate.kind==='document'?'Choose Ideas from':'Use'} ${this.candidate.title}</h3><p>These selected shared Ideas keep their identity. Their bodies and authored dependencies can change through normal authorized edits. Document membership is not subscribed.</p>${roots.length?roots.map(root=>html`<label><input type="checkbox" .checked=${live(this.selectedRoots.has(root.id))} @change=${(event:Event)=>{if((event.target as HTMLInputElement).checked)this.selectedRoots.add(root.id);else this.selectedRoots.delete(root.id);this.requestUpdate();}}>${String(root.properties.label??root.handle)}</label><p class="creation-review-prose">${String(root.properties.text??'')}</p>`):html`<p>The complete source is not loaded. Open its original location, then return to this saved draft to select it.</p>`}<p>Review the exact selected passage, included dependencies and resulting text before applying. Supplied details are kept unless you explicitly edit them.</p><button type="button" ?disabled=${!roots.length||!this.selectedRoots.size||flow.busy||flow.searchStale} @click=${()=>this.run(()=>this.prepareReplacement())}>Preview selected Ideas</button><button type="button" @click=${()=>this.cancelReplacement()}>Cancel</button></section>`:nothing}
+      ${this.renderReplacement()}
+    </section>`;}
+  private async prepareReplacement(){const flow=this.flow,editor=this.querySelector<EnRichTextEditor>('#creation-input');if(!flow||!editor||!this.selectedRoots.size)return;this.reuseRange??=editor.captureRange();if(!this.reuseRange)throw new Error('Select the exact text to replace or place the caret where these references should go.');this.reuseData=await flow.previewReference([...this.selectedRoots]);this.remainingText=this.reuseRange.expectedText;this.updateReplacement();}
+  private updateReplacement(){const flow=this.flow,editor=this.querySelector<EnRichTextEditor>('#creation-input');if(!flow||!editor||!this.reuseData||!this.reuseRange)return;try{this.replacement=prepareCreationReplacement(editor,{draftId:flow.draft.id,draftRevision:flow.draft.revision,projectId:flow.draft.scope.projectId??'',selection:this.reuseData.selection,sourceBodies:this.reuseData.sourceBodies,range:this.reuseRange,remainingText:this.remainingText});if(!decorateCreationReplacements(editor,[this.replacement]))throw new Error('The selected passage changed. Select it and review the replacement again.');this.requestUpdate();}catch(error){flow.setError(error instanceof Error?error.message:'The replacement needs a current passage.');}}
+  private cancelReplacement(){this.querySelector<EnRichTextEditor>('#creation-input')?.clearRangeDecorations();this.replacement=undefined;this.reuseData=undefined;this.reuseRange=undefined;this.candidate=undefined;this.requestUpdate();}
+  private async applyReplacement(){const flow=this.flow,editor=this.querySelector<EnRichTextEditor>('#creation-input'),preview=this.replacement,data=this.reuseData;if(!flow||!editor||!preview||!data)return;if(!editor.validateRange(preview.range))throw new Error('The draft passage changed. Select and review its current text again.');await flow.acceptReferenceSelection(data.selection,data.sourceBodies);editor.disabled=false;try{const decisions=acceptCreationReplacements(editor,[preview],data.selection);flow.recordDecisions(decisions);}finally{editor.disabled=flow.busy;}await flow.flush();this.cancelReplacement();}
+  private renderReplacement(){const preview=this.replacement,flow=this.flow;if(!preview||!flow)return nothing;return html`<section class="creation-replacement-preview" aria-label="Review exact reference replacement"><h3>${preview.passage?'Review this passage':'Insert at your selected position'}</h3><h4>Draft passage</h4><blockquote>${preview.passage||'Insertion point — no supplied text will be removed.'}</blockquote><h4>Included source content and dependencies</h4>${preview.sources.map(source=>html`<article><h4>${source.title}${source.root?'':' · included dependency'}</h4><p class="creation-review-prose">${source.text}</p><small>Source revision ${source.revision}</small></article>`)}<label>Keep these details<textarea .value=${live(this.remainingText)} rows="4" ?disabled=${flow.busy} @input=${(event:Event)=>{this.remainingText=(event.target as HTMLTextAreaElement).value;this.updateReplacement();}}></textarea></label><p>All selected text is kept by default. Remove words only when the disclosed references fully preserve their meaning and qualifications.</p><h4>Resulting passage</h4><p class="creation-review-prose">${preview.resultingText}</p><button type="button" ?disabled=${flow.busy} @click=${()=>this.run(()=>this.applyReplacement())}>Apply reviewed references</button><button type="button" ?disabled=${flow.busy} @click=${()=>this.cancelReplacement()}>Cancel replacement</button></section>`;}
+  private async copyDraft(){try{if(this.flow?.draft)await navigator.clipboard.writeText(richDocumentText(this.flow.draft.workingDocument));}catch{this.flow?.setError('Copy is unavailable. Select the draft text and copy it before leaving.');}}
+  private renderReview(){const flow=this.flow,plan=flow?.plan;if(!flow||!plan)return nothing;if(flow.noChange||!plan.nodes.some(node=>node.disposition==='retained')&&!plan.uses.some(use=>use.disposition==='retained'))return html`<h1>${flow.noChange?.documentId?'Already in this Document':'Already in your Project'}</h1><p>The selected Ideas keep their existing identity. No new records or uses are needed. Open the existing work, or return to your saved draft.</p>`;const counts=this.reviewCounts(),item=flow.currentItem,node=item?.node;return html`
+    <div class="creation-review-summary"><span class="eyebrow">Review your ${this.entryKind}</span><p>${counts.records} new ${counts.records===1?'record':'records'}${counts.newUses?` · ${counts.newUses} new ${counts.newUses===1?'use':'uses'} of existing Ideas`:''}</p></div>
+    <nav class="creation-stages" aria-label="Review stages">${flow.stages.map(stage=>html`<button type="button" aria-current=${flow.currentStage===stage?'step':'false'} ?disabled=${flow.busy} @click=${()=>flow.stage(stage)}>${stage==='ideas'?'Ideas':stage==='documents'?'Documents':'Project'}</button>`)}</nav>
+    <details class="creation-map" open><summary>Plan overview</summary><ul>${plan.nodes.filter(node=>node.disposition==='retained').map(node=>html`<li><span>${node.kind}</span> ${node.title||'Untitled'}${node.kind==='idea'?html`<small>Used in ${plan.uses.filter(use=>use.disposition==='retained'&&use.ideaId===node.id).map(use=>this.labelFor(use.documentId)).join(', ')||'Project library'}</small>`:nothing}</li>`)}</ul></details>
+    ${flow.currentStage==='final'?html`<h1>Ready to save</h1><p>${counts.records?`${counts.records} new records`:'The selected use'} will be saved together${plan.scope.documentId?` in ${this.labelFor(plan.scope.documentId)}`:''}. Documents remain adaptable to any Output.</p><p role="status">${counts.unseen?`${counts.unseen} items still need to be presented.`:counts.incomplete?`${counts.incomplete} items need missing information.`:counts.unapproved?`${counts.unapproved} items await approval.`:'Every retained record and use is complete, presented and approved.'}</p>`:html`
+      <nav class="creation-outline" aria-label="Items in this review stage">${flow.stageItems.map(entry=>html`<button type="button" aria-current=${entry.id===flow.currentId?'true':'false'} ?disabled=${flow.busy} @click=${()=>this.jump(entry.id)}>${entry.node?entry.title||'Untitled':this.labelFor(entry.id)}</button>`)}</nav>
+      ${item?keyed(item.id,html`<article class="creation-review-card"><h1>${node?.kind==='idea'?'Review Idea':node?.kind==='project'?'Review Project':node?'Review Document':'Review attachment'}</h1>
+      ${node?html`<en-text-field label="Title" .value=${live(node.title)} .disabled=${flow.busy} @en-input=${(event:CustomEvent<{value:string;isComposing:boolean}>)=>{this.composing=!!event.detail.isComposing;flow.setComposing(this.composing);this.edit(node,{title:event.detail.value});}}></en-text-field>`:html`<h2>${this.labelFor(item.id)}</h2><p>This existing destination keeps its current title and content.</p>`}
+      ${node?.kind==='idea'&&flow.split?.suggestSplit?html`<aside class="creation-split-insight"><p>This could work as more than one Idea.</p><button type="button" @click=${()=>this.run(()=>flow.prepareSplitOptions())}>See options</button><button type="button" @click=${()=>this.run(()=>flow.keepAsOne())}>Keep as one Idea</button></aside>`:nothing}
+      ${flow.splitOptions?html`<section class="creation-split-options"><h2>Proposed organization</h2>${flow.splitOptions.nodes.filter(option=>option.disposition==='retained').map(option=>html`<h3>${option.title}</h3><p class="creation-review-prose">${this.nodeBody(option)}</p>`)}<button type="button" @click=${()=>this.run(()=>flow.acceptSplitOptions())}>Accept organization</button></section>`:nothing}
+      ${node?.type==='format'?html`<fieldset class="creation-format-choices"><legend>Preferred Outputs</legend><p>These preferences keep every other Output available.</p>${OUTPUT_KINDS.map(kind=>html`<label><input type="checkbox" .checked=${live(!!node.preferredOutputKinds?.includes(kind))} ?disabled=${flow.busy} @change=${(event:Event)=>this.changePreference(node,kind,(event.target as HTMLInputElement).checked)}>${OUTPUT_KIND_LABELS[kind]}</label>`)}</fieldset>`:nothing}
+      ${node?.kind==='idea'?html`<label class="creation-type">Idea type<select .value=${live(node.type??'')} ?disabled=${flow.busy} @change=${(event:Event)=>this.edit(node,{type:(event.target as HTMLSelectElement).value as ProposedNode['type']})}><option value="">Choose the type that fits</option>${BLOCK_TYPES.map(type=>html`<option value=${type.type}>${type.label}</option>`)}</select></label>`:nothing}
+      <div class="creation-full-content" tabindex="0" role="region" aria-label="Full content and included relationships" @scroll=${this.scrollContent}>
+      ${node?.kind==='idea'?html`<div class="creation-review-prose">${this.nodeBody(node)||'A semantic body is required. Complete the Idea below.'}</div><details class="creation-body-edit"><summary>Edit body</summary><en-rich-text-editor id="creation-body-editor" label="Idea body" .document=${guard([node.id],()=>node.body?.document)} .disabled=${flow.busy} @en-change=${(event:CustomEvent<{proposed:RichDocument}>)=>this.edit(node,{body:{schemaVersion:1,document:event.detail.proposed},text:richDocumentText(event.detail.proposed)})}></en-rich-text-editor></details><p class="creation-relationships">Used in ${plan.uses.filter(use=>use.disposition==='retained'&&use.ideaId===node.id).map(use=>this.labelFor(use.documentId)).join(', ')||'Project library'}.</p>${plan.references.filter(reference=>reference.fromId===node.id).map(reference=>html`<p>Includes ${this.labelFor(reference.toId)}.</p>`)}${node.preferredOutputKinds?.length?html`<p>Preferred Outputs: ${node.preferredOutputKinds.join(', ')}. Other Outputs remain available.</p>`:nothing}`:nothing}
+      ${(item.kind==='idea'?[]:item.uses).map(use=>html`<section class="creation-included-use"><h2>${this.labelFor(use.ideaId)}</h2><p>${this.nodeBody(plan.nodes.find(node=>node.id===use.ideaId)??{id:use.ideaId,text:String(this.availableBlocks.find(block=>block.id===use.ideaId)?.properties.text??'')} as ProposedNode)}</p><p>Destination: ${this.labelFor(use.documentId)}</p>${this.disclosedDependencies(use).length?html`<ul aria-label="Included dependencies">${this.disclosedDependencies(use).map(dependency=>html`<li>${this.labelFor(dependency.id)}<p>${dependency.text}</p><small>${dependency.revision?`Reviewed revision ${dependency.revision}`:'Proposed in this draft'}</small></li>`)}</ul>`:nothing}</section>`)}
+      ${node?.kind==='project'?html`<ul>${plan.nodes.filter(child=>child.disposition==='retained'&&child.id!==node.id).map(child=>html`<li>${child.kind}: ${child.title}</li>`)}</ul>`:nothing}
+      ${node?.sourceEvidence.length?html`<section class="creation-sources"><h2>Source detail</h2>${node.sourceEvidence.filter((source,index,all)=>source.kind!=='correction'||all.findIndex(item=>item.kind==='correction')===index).map(source=>html`<blockquote>${source.kind==='span'?source.quote:source.kind==='existing'?source.excerpt??`Selected Idea ${this.labelFor(source.blockId)} at revision ${source.revision}`:'Your explicit correction'}</blockquote>`)}</section>`:nothing}
+      </div><button class="creation-continue" type="button" ?disabled=${!this.contentReached||!this.contentAvailable()||flow.busy} @click=${()=>this.run(()=>flow.markPresented())}>${this.itemPresented()?'Current version reviewed':'Continue review'}</button><p class="creation-review-note">${!this.contentAvailable()?'Included content is unavailable. Refresh its authorized sources before continuing.':this.contentReached?'Continue review records that this version and its included content have been presented. Approve it separately.':'Scroll through the full content, then continue review.'}</p>
+      </article>`):nothing}`}
+    ${counts.unseen||counts.incomplete?html`<p class="creation-review-status" role="status">${counts.unseen?`${counts.unseen} unseen. `:''}${counts.incomplete?`${counts.incomplete} incomplete. `:''}Approve all covers only complete versions already presented.</p>`:nothing}
+    ${flow.draft.referenceSelections.length?html`<button type="button" ?disabled=${flow.busy} @click=${()=>this.run(()=>flow.refreshReferences())}>Refresh selected sources</button>`:nothing}
+    <details class="creation-original"><summary>Original supplied input</summary><p class="creation-review-prose">${richDocumentText(flow.draft.originalDocument)}</p></details>
+    ${plan.issues.length?html`<ul class="creation-issues">${plan.issues.map(issue=>html`<li>${issue.message}</li>`)}</ul>`:nothing}
+    ${flow.draft&&flow.review?html`<div ?inert=${flow.busy}>${renderCreationCorrections({draft:flow.draft,plan,review:flow.review,controller:this.correctionController,requestUpdate:()=>this.requestUpdate(),sources:this.correctionSources(),onChange:(nextPlan,nextReview)=>flow.replacePlan(flow.draft,nextPlan,nextReview),onError:(message)=>flow.setError(message)})}</div>`:nothing}`;}
+  render(){const flow=this.flow;return html`<section class="creation-flow form-page" aria-busy=${flow?.busy?'true':'false'} @compositionstart=${()=>{this.composing=true;flow?.setComposing(true);this.requestUpdate();}} @compositionend=${()=>{this.composing=false;flow?.setComposing(false);this.requestUpdate();}}>${this.entryKind!=='project'?html`<span class="eyebrow">${this.client?.projection.projectName}</span>`:nothing}${!flow?.plan&&!this.leaveChoice?html`<h1 lang=${this.locale.locale} dir=${this.locale.direction}>${creationEntryCopy(creationHelpCopy(this.locale.locale),this.entryKind,'Heading')}</h1>`:nothing}${this.renderIntroduction()}${this.leaveChoice?html`<h1>Keep your draft?</h1><p>Keep draft and leave saves your latest changes before returning. Discard permanently removes this creation draft.</p>`:flow?.plan?this.renderReview():this.renderInput()}${flow?.error?html`<p class="context-error" role="alert">${flow.error}</p>`:nothing}${flow?.plan&&flow.error?html`<div class="creation-recovery">${flow.canRetry?html`<button type="button" @click=${()=>this.run(()=>flow.flush())}>Retry saving draft</button>`:nothing}<button type="button" @click=${()=>this.copyDraft()}>Copy draft</button></div>`:nothing}${flow?.draft.expiresAt?html`<p class="creation-draft-expiry">Draft expires ${new Date(flow.draft.expiresAt).toLocaleDateString()}</p>`:nothing}${this.renderHelp()}</section>`;}
+}
+if(!customElements.get('still-creation-flow'))customElements.define('still-creation-flow',StillCreationFlow);

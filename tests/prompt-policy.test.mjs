@@ -10,6 +10,28 @@ import {
 const differentiationQuote = "The differentiator is not that one brief can make five artifacts; it is that every artifact remains traceable, editable, reviewable, and reusable across devices.";
 const marketResearchQuote = "An asynchronous job without a global, actionable inbox is just work the customer has to remember to check.";
 const productOwnerScreenQuote = "Every extra inch of screen should reveal a useful relationship, not another column of product chrome.";
+
+test('explicit medium preferences are soft while actual framing and contradictory constraints remain visible', () => {
+  const rendered = providerFacingRenderingContext({ selected_output_kind: 'video', facts: [{
+    block_id: 'preference', type: 'format', properties: { subtype: 'Channel', intent: 'prefer',
+      preferred_output_kinds: ['image', 'model3d'], text: 'Preferred outputs: Image and 3D model\n\nLandscape framing; never crop the window.' },
+  }, { block_id: 'constraint', type: 'constraint', properties: { text: 'No moving images.', intent: 'prohibit' } }] });
+  assert.equal(rendered.selected_output_kind, 'video');
+  assert.deepEqual(rendered.facts[0].output_preference, { strength: 'soft', preferred_kinds: ['image', 'model3d'],
+    explicit_request_takes_precedence: true, triggers_generation: false });
+  assert.match(rendered.facts[0].properties.text, /never crop the window/);
+  assert.equal(rendered.facts[1].properties.text, 'No moving images.');
+  assert.match(creativePromptGuardrails(), /explicitly selected Output kind governs/);
+});
+
+test('draft originals, provenance excerpts, removed wording and rich identity payloads never become provider instructions', () => {
+  const rendered = providerFacingCreativeContext({ facts: [{ type: 'subject', properties: {
+    text: 'Retained participant', provenance: { excerpt: 'PRIVATE_PROVENANCE' }, sourceEvidence: ['PRIVATE_EVIDENCE'],
+    originalDocument: { text: 'PRIVATE_ORIGINAL' }, raw_draft: 'PRIVATE_DRAFT', removed_wording: 'PRIVATE_REMOVED',
+    decisionLedger: ['PRIVATE_LEDGER'], rich_text_body: { document: 'PRIVATE_CANONICAL_IDENTITIES' },
+  } }], creationDraft: { original: 'PRIVATE_INPUT' }, reviewState: { detail: 'PRIVATE_REVIEW' } });
+  assert.deepEqual(rendered, { facts: [{ type: 'subject', properties: { text: 'Retained participant' } }] });
+});
 const leadDesignerScreenQuote = "A smaller screen is not a smaller product; it is a stricter argument about what deserves the next square inch.";
 
 test("authored text-only audio direction remains usable while private or opted-out references stay local", () => {

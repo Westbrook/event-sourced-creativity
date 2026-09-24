@@ -1,3 +1,5 @@
+import { validateIdeaBodyEvents } from './idea-body-guards.ts';
+import { readWorkspaceEvents } from './runtime.ts';
 import type { WorkspaceQuickEditReview } from "../src/model/workspace-local-proposal.ts";
 import type { AdaptiveProposalReview } from "../src/model/adaptive-proposal-application.ts";
 import type { ApprovedContextProposal, ContextChange, ContextProposalSelection } from "../src/model/context-proposal-application.ts";
@@ -146,6 +148,7 @@ export async function commitAuthoringPlan(env:WorkerEnv,user:PilotUser,current:C
   if(!plan.events.length||plan.events.length>512||plan.operation!==current.operation||identity(plan.binding)!==identity(current)
     ||plan.binding.actorUserId!==user.userId||plan.binding.sourceHash!==current.sourceHash||plan.binding.permissionEpoch!==current.permissionEpoch
     ||plan.binding.contextSessionId!==current.contextSessionId||plan.expiresAt<=new Date().toISOString()||await consentHash(plan)!==approvalHash)throw new Error("authoring_preview_stale");
+  if(!current.scope){const issue=validateIdeaBodyEvents(await readWorkspaceEvents(env,current.streamId),plan.events);if(issue)throw new Error(issue.message);}
   const approvedPlanJson=JSON.stringify(plan);
   const guard=executionAdmissionGuard(user,current,null),custody=executionContentCustodyGuard(current),now=new Date().toISOString(),streamId=current.streamId,correlation=correlationFor(user.userId,previewId);
   const leaseId=crypto.randomUUID(),leaseExpiresAt=new Date(Date.now()+120_000).toISOString();

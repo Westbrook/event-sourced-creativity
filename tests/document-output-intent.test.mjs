@@ -1,9 +1,61 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { inferDocumentArtifactKind } from "../src/model/document-output-intent.ts";
+import { inferDocumentArtifactKind, preferredDocumentOutputKinds, preferredOutputChoices,
+  documentOutputPreferenceSummary, reconcileFormatOutputPreferences, validateFormatOutputPreferences,
+} from "../src/model/document-output-intent.ts";
 
 const block = (type, text, properties = {}) => ({ type, properties: { text, ...properties } });
+const preference = (kinds, text = `Preferred outputs: ${kinds.map(k => ({ image: 'Image', video: 'Video', model3d: '3D model' })[k] ?? k).join(' and ')}`) =>
+  block('format', text, { subtype: 'Channel', intent: 'prefer', preferred_output_kinds: kinds });
+
+test('explicit preferences include image, deduplicate identities and do not infer from legacy prose', () => {
+  const input = [preference(['image', 'model3d']), preference(['image', 'video']), block('format', 'Produce slides.')];
+  const before = structuredClone(input);
+  assert.deepEqual(preferredDocumentOutputKinds(input), ['image', 'model3d', 'video']);
+  assert.equal(documentOutputPreferenceSummary(input), 'Prefers Image, 3D model, Video');
+  assert.deepEqual(preferredDocumentOutputKinds([block('direction', 'Make a video.')]), []);
+  assert.equal(documentOutputPreferenceSummary([]), '');
+  assert.deepEqual(input, before);
+});
+
+test('disabled, removed, negative and non-Format preferences never drive a chooser', () => {
+  const variants = [
+    p => { p.removed = true; }, p => { p.active = false; }, p => { p.properties.active = false; },
+    p => { p.properties.weight = 0; }, p => { p.properties.intent = 'avoid'; },
+    p => { p.properties.effect = 'prohibit'; }, p => { p.properties.authority = 'excluded'; },
+    p => { p.type = 'output'; }, p => { p.properties.subtype = 'Resolution'; },
+  ];
+  for (const mutate of variants) {
+    const p = preference(['image']); mutate(p);
+    assert.deepEqual(preferredDocumentOutputKinds([p]), []);
+  }
+});
+
+test('stale or malformed preference metadata needs explicit reconciliation', () => {
+  for (const p of [preference(['image'], 'Preferred output: Video'), preference(['image'], 'No images'),
+    preference(['unknown']), preference(['image', 'image']), preference([])]) {
+    assert.equal(validateFormatOutputPreferences(p).valid, false);
+    assert.deepEqual(preferredDocumentOutputKinds([p]), []);
+  }
+  const original = preference(['image']);
+  const reconciled = reconcileFormatOutputPreferences(original, 'Preferred output: Video\n\nKeep the landscape framing.', ['video']);
+  assert.equal(validateFormatOutputPreferences(reconciled).valid, true);
+  assert.equal(reconciled.properties.text, 'Preferred outputs: Video\n\nKeep the landscape framing.');
+  assert.deepEqual(preferredDocumentOutputKinds([original]), ['image']);
+  assert.throws(() => reconcileFormatOutputPreferences(original, 'Keep all wording.', ['unknown']));
+});
+
+test('chooser badges preserve all alternatives and label unavailable preferences without changing them', () => {
+  const blocks = [preference(['image', 'model3d'])];
+  assert.deepEqual(preferredOutputChoices(blocks, ['video', 'image', 'slides']), [
+    { kind: 'image', label: 'Image', preferred: true, available: true },
+    { kind: 'video', label: 'Video', preferred: false, available: true },
+    { kind: 'slides', label: 'Slides', preferred: false, available: true },
+    { kind: 'model3d', label: '3D model · Unavailable', preferred: true, available: false },
+  ]);
+  assert.deepEqual(preferredDocumentOutputKinds(blocks), ['image', 'model3d']);
+});
 
 test("an explicitly authored format outweighs direction, title, and multi-medium message copy", () => {
   const blocks = [

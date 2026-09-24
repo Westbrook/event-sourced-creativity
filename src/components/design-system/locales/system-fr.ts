@@ -1,5 +1,11 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.15lsm06.120": "Cette archive contient des idées au contenu enrichi. L’importation nécessite un éditeur de références compatible dans Still ; aucun élément n’a été enregistré.",
+  "system.auto.x4wgy5.65": "Ouvrez cette idée dans Still pour préserver son contenu enrichi et ses références.",
+  "system.auto.n5udgj.96": "Créer une variante de cette idée au contenu enrichi nécessite un éditeur de références compatible dans Still. L’original reste inchangé.",
+  "system.auto.zfyhgl.92": "Cette idée possède un contenu structuré. Ouvrez-la dans Still pour préserver ses références et sa mise en forme.",
+  "system.auto.1vcjpa9.18": "Ouvrir l’idée dans Still",
+  "system.auto.1eymuv3.127": "Les copies indépendantes d’idées au contenu enrichi nécessitent un éditeur de références compatible. Utilisez cette idée partagée dans Still ; l’original reste inchangé.",
   "system.auto.l50wya.48": "Ouvrez le document pour vérifier ses paramètres de sortie.",
   "system.auto.1g2f6bi.49": "Interface des notifications de résultats liés aux idées partagées.",
   "system.auto.1bpd6ra.145": "Interface de notifications de résultats liés aux idées partagées connectée à l’application. Vérifiez ses attributs, propriétés JavaScript et événements avant de l’intégrer.",

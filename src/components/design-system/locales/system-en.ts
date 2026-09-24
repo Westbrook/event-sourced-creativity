@@ -1,5 +1,11 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.15lsm06.120": "This archive contains rich Idea bodies. Import requires a compatible reference editor in Still; no records were written.",
+  "system.auto.x4wgy5.65": "Open this Idea in Still to preserve its rich body and references.",
+  "system.auto.n5udgj.96": "Forking this rich Idea requires a compatible reference editor in Still. The source is unchanged.",
+  "system.auto.zfyhgl.92": "This Idea has a structured body. Open it in Still to preserve its references and formatting.",
+  "system.auto.1vcjpa9.18": "Open Idea in Still",
+  "system.auto.1eymuv3.127": "Independent copies of rich Ideas require a compatible reference editor. Use this shared Idea in Still; the source is unchanged.",
   "system.auto.l50wya.48": "Open the document to review its output settings.",
   "system.auto.1g2f6bi.49": "Shared idea output notices application interface.",
   "system.auto.1bpd6ra.145": "Application-connected shared idea output notices interface. Inspect its actual attributes, JavaScript properties, and events before composing it.",

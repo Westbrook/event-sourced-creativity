@@ -1,0 +1,19 @@
+{
+  "name": "still-creation-provider",
+  "main": "index.ts",
+  "compatibility_date": "2026-09-23",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "ai": {"binding": "AI"},
+  "vectorize": [{"binding": "VECTORS", "index_name": "REPLACE_WITH_QUALIFIED_1024D_COSINE_INDEX"}],
+  "d1_databases": [{"binding": "STATE", "database_name": "still-creation-provider-state", "database_id": "REPLACE_WITH_PROVISIONED_DATABASE_ID"}],
+  "vars": {
+    "CREATION_PROVIDER_ENABLED": "false",
+    "CREATION_PROVIDER_CUSTODIES": "[]",
+    "CREATION_EMBEDDING_MODEL": "@cf/baai/bge-large-en-v1.5",
+    "CREATION_EMBEDDING_VERSION": "bge-large-en-v1.5-mean-v1",
+    "CREATION_ORGANIZER_MODEL": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+    "CREATION_ORGANIZER_VERSION": "llama-3.3-70b-still-v19-1"
+  }
+}
