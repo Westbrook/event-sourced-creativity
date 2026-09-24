@@ -1,6 +1,6 @@
 import {BLOCK_TYPES} from '../src/model/block-types.ts';
 import {prepareProjectionDeltaStage} from './creation-index-projection-stage.ts';
-import {prepareCreationProjectionRouting,creationProjectionRoutingPredicate} from './creation-index-routing.ts';
+import {prepareCreationProjectionRouting,prepareCreationWithdrawalOverlay,creationProjectionRoutingPredicate} from './creation-index-routing.ts';
 import {genericIdeaReferences} from '../src/model/project-ideas.ts';
 import {normalizeActionBlockReferences,normalizeCombinedContextMembership} from '../src/model/combined-context.ts';
 import {richDocumentFromRuns} from '../src/still/vendor/elements/rich-document.js';
@@ -43,16 +43,23 @@ export async function projectionPage(env:WorkerEnv,l:IndexLease){
  const writeEnv=nativePrivateContentCleanupEnvironment(env);
  const {partition:p,owner,guard:authorityGuard}=await indexAuthority(env,l.partition_key);if(Number(p.indexVersion)!==l.generation)throw new Error('creation_lease_lost');
  const bodyGuard=privateIndexBodyGuard(p);
- const cursor=l.cursor?JSON.parse(l.cursor) as {after:number;head:number;routingAfter?:number;routeComplete?:boolean;phase?:string}:null;
+ const cursor=l.cursor?JSON.parse(l.cursor) as {after:number;head:number;routingAfter?:number;routeComplete?:boolean;ownerHead?:number;withdrawalAfter?:number;withdrawalComplete?:boolean;phase?:string}:null;
  const head=cursor?.head??Number((await env.DB.prepare(p.projectAccessId?'SELECT COALESCE(MAX(project_sequence),0) AS n FROM project_event_scopes WHERE project_access_id=?':'SELECT COALESCE(MAX(sequence),0) AS n FROM events WHERE stream_id=?').bind(p.projectAccessId??owner.streamId).first<{n:number}>())?.n??0);
+ const ownerHead=p.projectAccessId?(cursor?.ownerHead??Number((await env.DB.prepare('SELECT COALESCE(MAX(sequence),0) AS n FROM events WHERE stream_id=?').bind(owner.streamId).first<{n:number}>())?.n??0)):head;
  // Complete a durable metadata-only routing pass before skipping any history.
  if(!cursor?.routeComplete){
   const route=await prepareCreationProjectionRouting(env,l,{head,after:cursor?.routingAfter??0,projectId:p.projectId,streamId:owner.streamId,projectAccessId:p.projectAccessId,ownerId:p.ownerId});
-  await env.DB.batch([indexAuthorityFence(env,authorityGuard),env.DB.prepare(`INSERT INTO creation_index_fences(id) VALUES(CASE WHEN ${leaseGuard} AND EXISTS(SELECT 1 FROM creation_search_partitions WHERE partition_key=? AND index_version=?) THEN 1 ELSE NULL END)`).bind(...leaseBindings(l),l.partition_key,l.generation),...route.statements,checkpointIndexJob(env.DB,l,JSON.stringify({after:cursor?.after??0,head,routingAfter:route.after,routeComplete:route.done})),env.DB.prepare('DELETE FROM creation_index_fences')]);return;
+  await env.DB.batch([indexAuthorityFence(env,authorityGuard),env.DB.prepare(`INSERT INTO creation_index_fences(id) VALUES(CASE WHEN ${leaseGuard} AND EXISTS(SELECT 1 FROM creation_search_partitions WHERE partition_key=? AND index_version=?) THEN 1 ELSE NULL END)`).bind(...leaseBindings(l),l.partition_key,l.generation),...route.statements,checkpointIndexJob(env.DB,l,JSON.stringify({...cursor,after:cursor?.after??0,head,ownerHead,routingAfter:route.after,routeComplete:route.done})),env.DB.prepare('DELETE FROM creation_index_fences')]);return;
  }
  // SQL transport bound applies BEFORE bytes enter the isolate. Source generation guards
  // certify mutations/private withdrawal throughout all pages, not just the terminal read.
  const join=p.projectAccessId?'JOIN project_event_scopes scope ON scope.event_id=e.event_id':'';
+ // A shared scope can omit a later owner removal or move. Owner metadata can
+ // only deny retention; it never grants shared visibility or returns owner prose.
+ if(p.projectAccessId&&!cursor?.withdrawalComplete){
+  const overlay=await prepareCreationWithdrawalOverlay(env,l,{head:ownerHead,after:cursor?.withdrawalAfter??0,streamId:owner.streamId,projectAccessId:p.projectAccessId,projectId:p.projectId});
+  await env.DB.batch([indexAuthorityFence(env,authorityGuard),env.DB.prepare(`INSERT INTO creation_index_fences(id) VALUES(CASE WHEN ${leaseGuard} AND EXISTS(SELECT 1 FROM creation_search_partitions WHERE partition_key=? AND index_version=?) THEN 1 ELSE NULL END)`).bind(...leaseBindings(l),l.partition_key,l.generation),...overlay.statements,checkpointIndexJob(env.DB,l,JSON.stringify({...cursor,after:cursor?.after??0,head,ownerHead,withdrawalAfter:overlay.after,withdrawalComplete:overlay.done})),env.DB.prepare('DELETE FROM creation_index_fences')]);return;
+ }
  const sequence=p.projectAccessId?'scope.project_sequence':'e.sequence';
  const rows=await env.DB.prepare(`WITH page AS MATERIALIZED(SELECT e.*,${sequence} AS source_sequence,COALESCE(secret.private_json,e.payload) AS body FROM events e ${join} LEFT JOIN event_private_payloads secret ON secret.private_event_id=e.event_id AND secret.redacted_at IS NULL WHERE ${p.projectAccessId?'scope.project_access_id=? AND scope.owner_user_id=?':'e.stream_id=?'} AND e.type IN(SELECT value FROM json_each(?)) AND ${creationProjectionRoutingPredicate} AND ${sequence}>? AND ${sequence}<=? ORDER BY ${sequence} LIMIT 32), sized AS(SELECT *,SUM(length(CAST(body AS BLOB))+512) OVER(ORDER BY source_sequence) AS total_bytes FROM page) SELECT *,CASE WHEN length(CAST(body AS BLOB))<=1000000 THEN body END AS private_json FROM sized WHERE total_bytes<=1000000 OR source_sequence=(SELECT MIN(source_sequence) FROM page) ORDER BY source_sequence`).bind(...(p.projectAccessId?[p.projectAccessId,p.ownerId]:[owner.streamId]),JSON.stringify(authoringTypes),l.partition_key,l.generation,cursor?.after??0,head).all<Record<string,unknown>>();
  if(rows.results.some(r=>r.private_json===null))throw new CreationProviderError('index_event_capacity',0,true);
@@ -79,7 +86,7 @@ export async function projectionPage(env:WorkerEnv,l:IndexLease){
  for(const event of events)fold.accept(event);
  const checkpoint=fold.authoringCheckpoint();
  const scope=p.projectAccessId?{organizationId:p.organizationId!,projectAccessId:p.projectAccessId,projectId:p.projectId,ownerUserId:p.ownerId,actorUserId:p.ownerId}:undefined;
- const withdrawn=new Set((await env.DB.prepare('SELECT block_id FROM creation_index_block_routes WHERE partition_key=? AND generation=? AND removed=1 AND block_id IN(SELECT value FROM json_each(?))').bind(l.partition_key,l.generation,JSON.stringify(checkpoint.blocks.map(block=>block.id))).all<{block_id:string}>()).results.map(row=>row.block_id));
+ const withdrawn=new Set((await env.DB.prepare('SELECT block_id FROM creation_index_block_routes WHERE partition_key=? AND generation=? AND (removed=1 OR current_owner_removed=1 OR current_owner_project_id IS NOT NULL AND current_owner_project_id<>?) AND block_id IN(SELECT value FROM json_each(?))').bind(l.partition_key,l.generation,p.projectId,JSON.stringify(checkpoint.blocks.map(block=>block.id))).all<{block_id:string}>()).results.map(row=>row.block_id));
  const changed:Array<{id:string;kind:string;content:string;storage?:'skeleton'}>=[];
  for(const kind of ['projects','documents','blocks','relations'] as const)for(const value of checkpoint[kind]){const skeleton=kind==='blocks'&&withdrawn.has(value.id),id=kind+':'+value.id,content=JSON.stringify(skeleton?withdrawnSkeleton(value as CreativeBlock):value);if(old.get(id)!==content)changed.push({id,kind,content,...(skeleton?{storage:'skeleton' as const}:{})});}
  changed.push({id:'$selection',kind:'selection',content:JSON.stringify({projectId:checkpoint.projectId,documentId:checkpoint.documentId})});
@@ -92,7 +99,7 @@ export async function projectionPage(env:WorkerEnv,l:IndexLease){
  const statements:D1PreparedStatement[]=[indexAuthorityFence(env,authorityGuard),env.DB.prepare(`INSERT INTO creation_index_fences(id) VALUES(CASE WHEN NOT EXISTS(SELECT 1 FROM creation_index_projection e LEFT JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND COALESCE((${bodyGuard.sql}),0)=0) THEN 1 ELSE NULL END)`).bind(l.partition_key,l.generation,...bodyGuard.bindings)];
  for(const item of changed){if(new TextEncoder().encode(item.content).length>1_000_000)throw new CreationProviderError('index_entity_capacity',0,true);if(item.storage==='skeleton'){statements.push(env.DB.prepare('INSERT OR REPLACE INTO creation_index_replay_skeletons(partition_key,generation,entity_id,metadata) VALUES(?,?,?,?)').bind(l.partition_key,l.generation,item.id,item.content),env.DB.prepare('DELETE FROM creation_index_projection WHERE partition_key=? AND generation=? AND entity_id=?').bind(l.partition_key,l.generation,item.id));continue;}if(new TextEncoder().encode(item.content).length>1_000_000)throw new CreationProviderError('index_entity_capacity',0,true);const stored=await preparePrivateContent(writeEnv,p.ownerId,'creation-search-source',item.content,scope,undefined,{sql:leaseGuard,bindings:leaseBindings(l)});statements.push(...stored.statements,env.DB.prepare(`INSERT OR REPLACE INTO creation_index_projection(partition_key,generation,entity_id,kind,content_id) SELECT ?,?,?,?,? WHERE ${leaseGuard}`).bind(l.partition_key,l.generation,item.id,item.kind,stored.contentId,...leaseBindings(l)));}
  if(done)statements.push(env.DB.prepare(`INSERT OR REPLACE INTO creation_index_work(job_key,kind,partition_key,generation,priority) SELECT ?,'materialize',?,?,5 WHERE ${leaseGuard}`).bind('materialize:'+l.partition_key,l.partition_key,l.generation,...leaseBindings(l)));
- statements.push(checkpointIndexJob(env.DB,l,JSON.stringify({after:last,head,routeComplete:true,routingAfter:head}),done),env.DB.prepare('DELETE FROM creation_index_fences'));await assertIndexLease(env.DB,l);await env.DB.batch(statements);
+ statements.push(checkpointIndexJob(env.DB,l,JSON.stringify({...cursor,after:last,head,ownerHead,routeComplete:true,routingAfter:head}),done),env.DB.prepare('DELETE FROM creation_index_fences'));await assertIndexLease(env.DB,l);await env.DB.batch(statements);
 }
 /** Deterministic container representations retain complete eligible descendant prose.
  * The cursor/budget bounds reads; an over-capacity container is held, never truncated. */

@@ -38,7 +38,7 @@ test('bounded bulk cleanup erases 8192 detached derived bodies and sidecars, pre
 
 test('credential-free cleanup erases revoked and superseded routing/skeleton metadata',async t=>{
  const f=await creationIndexFixture(t);await f.ready();const p=f.sqlite.prepare('SELECT partition_key,index_version FROM creation_search_partitions LIMIT 1').get();
- const insert=(generation,suffix)=>{f.sqlite.prepare('INSERT INTO creation_index_block_routes VALUES(?,?,?,?,?,?,?)').run(p.partition_key,generation,'metadata-'+suffix,f.projectId,0,1,1);f.sqlite.prepare('INSERT INTO creation_index_replay_skeletons VALUES(?,?,?,?)').run(p.partition_key,generation,'blocks:metadata-'+suffix,JSON.stringify({id:'metadata-'+suffix,properties:{}}));};
+ const insert=(generation,suffix)=>{f.sqlite.prepare('INSERT INTO creation_index_block_routes(partition_key,generation,block_id,project_id,safe_foreign,created,removed) VALUES(?,?,?,?,?,?,?)').run(p.partition_key,generation,'metadata-'+suffix,f.projectId,0,1,1);f.sqlite.prepare('INSERT INTO creation_index_replay_skeletons VALUES(?,?,?,?)').run(p.partition_key,generation,'blocks:metadata-'+suffix,JSON.stringify({id:'metadata-'+suffix,properties:{}}));};
  insert(p.index_version-1,'old');insert(p.index_version,'current');
  await eraseCreationIndex(f.env);
  for(const table of ['creation_index_block_routes','creation_index_replay_skeletons'])assert.equal(f.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,1);

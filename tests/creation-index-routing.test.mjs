@@ -71,3 +71,79 @@ test('removed numeric legacy identity is routed as removed before replay and nev
  const skeleton=f.sqlite.prepare("SELECT metadata FROM creation_index_replay_skeletons WHERE partition_key=? AND entity_id='blocks:42'").get(key);assert.ok(skeleton);assert.ok(!skeleton.metadata.includes(secret));await f.ready();
  await append(f,'BlockRestored',{project_id:f.projectId,block_id:42});await f.ready();const current=f.sqlite.prepare("SELECT c.content FROM creation_search_records r JOIN private_content c ON c.content_id=r.content_id WHERE r.source_id='42' AND r.tombstone=0").get();assert.equal(JSON.parse(current.content).text,secret);
 });
+
+test('owner overlay is denial-only, bounded, frozen and preserves scoped withdrawal across restoration and moves',async t=>{
+ const {prepareCreationWithdrawalOverlay}=await import('../worker/creation-index-routing.ts');
+ const f=await creationIndexFixture(t);await routes(f);
+ const l={partition_key:'overlay-test',generation:7};
+ for(const id of ['scoped','42'])f.sqlite.prepare('INSERT INTO creation_index_block_routes(partition_key,generation,block_id,project_id,safe_foreign,created,removed) VALUES(?,?,?,?,0,1,1)').run(l.partition_key,l.generation,id,f.projectId);
+ await append(f,'BlockCreated',{project_id:f.projectId,block_id:'scoped',scope:'library',type:'text',properties:{text:'PRIVATE OVERLAY BODY'}});
+ await append(f,'BlockRemoved',{project_id:f.projectId,block_id:'scoped'});
+ for(let i=0;i<270;i++)await append(f,'BlockCreated',{project_id:'foreign',block_id:'unscoped-'+i,scope:'library',type:'text',properties:{text:'PRIVATE FOREIGN BODY'}});
+ await append(f,'BlockRestored',{project_id:f.projectId,block_id:'scoped'});
+ await append(f,'BlockRehomed',{project_id:'foreign',block_id:'scoped',scope:'library'});
+ await append(f,'BlockCreated',{project_id:f.projectId,block_id:42,scope:'library',type:'text'});await append(f,'BlockRemoved',{block_id:42});
+ const head=f.sqlite.prepare('SELECT MAX(sequence) n FROM events WHERE stream_id=?').get(f.streamId).n;
+ await append(f,'BlockRestored',{block_id:42});await append(f,'BlockRehomed',{project_id:f.projectId,block_id:'scoped',scope:'library'});
+ let after=0,pages=0;
+ for(;;){const p=await prepareCreationWithdrawalOverlay(f.env,l,{head,after,streamId:f.streamId});assert.ok(p.rows<=256);for(const statement of p.statements)assert.ok(!JSON.stringify(statement.values).includes('PRIVATE'));if(p.statements.length)await f.env.DB.batch(p.statements);after=p.after;pages++;if(p.done)break;assert.ok(pages<20);}
+ assert.ok(pages>=2);
+ assert.deepEqual(f.sqlite.prepare('SELECT block_id,removed,current_owner_removed,current_owner_project_id FROM creation_index_block_routes WHERE partition_key=? ORDER BY block_id').all(l.partition_key).map(row=>({...row})),[
+  {block_id:'42',removed:1,current_owner_removed:1,current_owner_project_id:f.projectId},
+  {block_id:'scoped',removed:1,current_owner_removed:0,current_owner_project_id:'foreign'},
+ ]);
+ // Missing-scope duplicate creation must clear the previous foreign claim to an
+ // ambiguous denial; it cannot inherit the prior identity's authority.
+ await append(f,'BlockCreated',{block_id:'scoped',type:'text'});
+ const nextHead=f.sqlite.prepare('SELECT MAX(sequence) n FROM events WHERE stream_id=?').get(f.streamId).n;
+ const next=await prepareCreationWithdrawalOverlay(f.env,l,{head:nextHead,after,streamId:f.streamId});await f.env.DB.batch(next.statements);
+ assert.equal(f.sqlite.prepare('SELECT current_owner_project_id FROM creation_index_block_routes WHERE partition_key=? AND block_id=?').get(l.partition_key,'scoped').current_owner_project_id,'');
+});
+
+test('shared scoped replay denies owner removal and moves omitted from its event scope without retaining historical prose',async t=>{
+ const {resumeCreationIndexPartition}=await import('../worker/creation-index-reconcile.ts');
+ const {claimIndexJob}=await import('../worker/creation-index-schema.ts');
+ const {projectionPage}=await import('../worker/creation-index-projection.ts');
+ const f=await creationIndexFixture(t,true);await f.ready();
+ const id='scene-reuse-direction';await append(f,'ProjectCreated',{project_id:'other-a',name:'A'});
+ const moved=await append(f,'BlockRehomed',{project_id:'other-a',block_id:id,scope:'library'});
+ const removed=await append(f,'BlockRemoved',{project_id:'other-a',block_id:id});
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM project_event_scopes WHERE event_id IN(?,?)').get(moved.eventId,removed.eventId).n,0);
+ assert.equal(f.sqlite.prepare("SELECT project_id FROM project_resource_scopes WHERE resource_kind='block' AND resource_id=?").get(id).project_id,f.projectId,'stale resource scope alone cannot prove eligibility');
+ const key=f.sqlite.prepare('SELECT partition_key FROM creation_search_partitions WHERE project_id=?').get(f.projectId).partition_key;
+ await resumeCreationIndexPartition(f.env,key);
+ let pages=0;for(;pages<30;pages++){
+  const lease=await claimIndexJob(f.env.DB,25,['projection']);if(!lease)break;await projectionPage(f.env,lease);
+  const copies=f.sqlite.prepare("SELECT c.content FROM private_content c JOIN creation_index_projection p ON p.content_id=c.content_id WHERE p.partition_key=? AND p.generation=(SELECT index_version FROM creation_search_partitions WHERE partition_key=?) AND p.entity_id=?").all(key,key,'blocks:'+id);
+  assert.ok(copies.every(row=>!row.content.includes('keeper checks')),'withdrawn owner prose must never reappear during scoped replay');
+ }
+ assert.ok(pages>0&&pages<30);
+ const route=f.sqlite.prepare('SELECT current_owner_removed,current_owner_project_id FROM creation_index_block_routes WHERE partition_key=? AND generation=(SELECT index_version FROM creation_search_partitions WHERE partition_key=?) AND block_id=?').get(key,key,id);
+ assert.equal(route.current_owner_removed,1);assert.equal(route.current_owner_project_id,'other-a');
+ await f.ready();
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_sources WHERE partition_key=? AND source_id=? AND published=1').get(key,id).n,0);
+ // Restoration in the foreign Project clears removal, but a move still denies Q.
+ await append(f,'BlockRestored',{project_id:'other-a',block_id:id});await resumeCreationIndexPartition(f.env,key);await f.ready();
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_sources WHERE partition_key=? AND source_id=? AND published=1').get(key,id).n,0);
+ // An explicit canonical return and its normally scoped event permits reuse again.
+ await append(f,'BlockRehomed',{project_id:f.projectId,block_id:id,scope:'library'});await resumeCreationIndexPartition(f.env,key);await f.ready();
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_sources WHERE partition_key=? AND source_id=? AND published=1').get(key,id).n,1);
+});
+
+test('implicit owner creation needs that exact event in the target shared scope before clearing a prior foreign denial',async t=>{
+ const {prepareCreationWithdrawalOverlay}=await import('../worker/creation-index-routing.ts');const f=await creationIndexFixture(t,true);await f.ready();
+ const l={partition_key:'implicit-overlay',generation:1},id='scene-reuse-direction';
+ f.sqlite.prepare('INSERT INTO creation_index_block_routes(partition_key,generation,block_id,project_id,safe_foreign,created,removed,current_owner_project_id) VALUES(?,?,?,?,0,1,0,?)').run(l.partition_key,l.generation,id,f.projectId,'foreign');
+ const event=await append(f,'BlockCreated',{block_id:id,scope:'library',type:'text',properties:{text:'implicit replacement'}});
+ const head=event.sequence;
+ const options={head,after:head-1,streamId:f.streamId,projectAccessId:f.sharing.projectAccessId,projectId:f.projectId};
+ // canonical append cannot infer a project scope from this unknown recreation.
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM project_event_scopes WHERE event_id=?').get(event.eventId).n,0);
+ let p=await prepareCreationWithdrawalOverlay(f.env,l,options);await f.env.DB.batch(p.statements);
+ assert.equal(f.sqlite.prepare('SELECT current_owner_project_id FROM creation_index_block_routes WHERE partition_key=?').get(l.partition_key).current_owner_project_id,'');
+ // The overlay accepts metadata proof only for the very same event and owner.
+ const sequence=f.sqlite.prepare('SELECT COALESCE(MAX(project_sequence),0)+1 n FROM project_event_scopes WHERE project_access_id=?').get(f.sharing.projectAccessId).n;
+ f.sqlite.prepare('INSERT INTO project_event_scopes(event_id,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,source_sequence,project_sequence,actor_user_id,created_at) SELECT ?,project_access_id,organization_id,project_id,owner_user_id,source_stream_id,?,?,actor_user_id,created_at FROM project_event_scopes WHERE project_access_id=? LIMIT 1').run(event.eventId,head,sequence,f.sharing.projectAccessId);
+ p=await prepareCreationWithdrawalOverlay(f.env,l,options);await f.env.DB.batch(p.statements);
+ assert.equal(f.sqlite.prepare('SELECT current_owner_project_id FROM creation_index_block_routes WHERE partition_key=?').get(l.partition_key).current_owner_project_id,f.projectId);
+});

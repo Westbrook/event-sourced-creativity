@@ -10,6 +10,7 @@ export const CREATION_INDEX_SCHEMA=[
 `CREATE TABLE IF NOT EXISTS creation_index_fences(id INTEGER NOT NULL CHECK(id=1))`,
 `CREATE TABLE IF NOT EXISTS creation_index_work(job_key TEXT PRIMARY KEY,kind TEXT NOT NULL,partition_key TEXT NOT NULL,generation INTEGER NOT NULL DEFAULT 0,cursor TEXT NOT NULL DEFAULT '',priority INTEGER NOT NULL DEFAULT 5,due INTEGER NOT NULL DEFAULT 0,attempts INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'ready',error_class TEXT,lease_token TEXT,lease_until INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL DEFAULT(unixepoch()),touched INTEGER NOT NULL DEFAULT 0)`,
 `CREATE INDEX IF NOT EXISTS creation_index_due ON creation_index_work(state,due,priority,touched)`,
+`CREATE INDEX IF NOT EXISTS creation_index_partition_work ON creation_index_work(partition_key,generation,kind,state)`,
 `CREATE TABLE IF NOT EXISTS creation_index_discovery(scope_key TEXT PRIMARY KEY,generation INTEGER NOT NULL DEFAULT 1,cursor TEXT NOT NULL DEFAULT '',touched INTEGER NOT NULL DEFAULT 0)`,
 `CREATE TABLE IF NOT EXISTS creation_index_projection(partition_key TEXT NOT NULL,generation INTEGER NOT NULL,entity_id TEXT NOT NULL,kind TEXT NOT NULL,content_id TEXT NOT NULL,PRIMARY KEY(partition_key,generation,entity_id))`,
 `CREATE INDEX IF NOT EXISTS creation_index_private_kind ON private_content(kind,content_id)`,
@@ -28,6 +29,17 @@ export const CREATION_INDEX_SCHEMA=[
  `CREATE TRIGGER IF NOT EXISTS creation_index_admit_events_${op.toLowerCase()} AFTER ${op} ON events WHEN substr(${side}.stream_id,1,9)='creative:' AND (substr(${side}.type,1,5)='Block' OR substr(${side}.type,1,8)='Document' OR substr(${side}.type,1,7)='Project') AND ${side}.type NOT IN('ProjectOpened','DocumentOpened') BEGIN INSERT INTO creation_index_discovery(scope_key) VALUES(${side}.stream_id) ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END`,
  ...['organization_projects','organization_memberships','project_memberships','project_migration_states','organizations','capability_grants','organization_security_policies','organization_identity_bindings','organization_retention_policies'].map(table=>`CREATE TRIGGER IF NOT EXISTS creation_index_policy_${table}_${op.toLowerCase()} AFTER ${op} ON ${table} BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END`),
  ];}),
+// Rare withdrawal/correction mutations also invalidate unfinished foreign-Project
+// replay: a frozen checkpoint may still carry a relation-linked source's old body.
+// Completed unrelated partitions and ordinary sidecar INSERTs remain targeted.
+...(['INSERT','UPDATE','DELETE'] as const).map(op=>{
+ const sides=op==='UPDATE'?['OLD','NEW']:[op==='DELETE'?'OLD':'NEW'];
+ return `CREATE TRIGGER IF NOT EXISTS creation_index_withdrawal_replay_${op.toLowerCase()} AFTER ${op} ON events BEGIN ${sides.map(side=>`UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=${side}.stream_id AND project_id<>json_extract(${side}.payload,'$.project_id') AND EXISTS(SELECT 1 FROM creation_index_work w WHERE w.partition_key=creation_search_partitions.partition_key AND w.generation=creation_search_partitions.index_version AND w.kind IN('projection','materialize') AND w.state IN('ready','running','held') AND (${side}.type='BlockRemoved' OR ${side}.type='BlockCreated' AND (w.kind='projection' AND COALESCE(json_extract(NULLIF(w.cursor,''),'$.routeComplete'),0)=0 OR COALESCE(json_type(${side}.payload,'$.block_id'),'missing')<>'text' OR EXISTS(SELECT 1 FROM creation_index_block_routes route WHERE route.partition_key=w.partition_key AND route.generation=w.generation AND route.block_id=CASE json_type(${side}.payload,'$.block_id') WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE COALESCE(CAST(json_extract(${side}.payload,'$.block_id') AS TEXT),'undefined') END))));`).join(' ')} END`;
+}),
+...(['UPDATE','DELETE'] as const).map(op=>{
+ const sides=op==='UPDATE'?['OLD','NEW']:['OLD'];
+ return `CREATE TRIGGER IF NOT EXISTS creation_index_private_replay_${op.toLowerCase()} AFTER ${op} ON event_private_payloads BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE owner_id IN(${sides.map(side=>`${side}.owner_id`).join(',')}) AND EXISTS(SELECT 1 FROM creation_index_work w WHERE w.partition_key=creation_search_partitions.partition_key AND w.generation=creation_search_partitions.index_version AND w.kind IN('projection','materialize') AND w.state IN('ready','running','held')); END`;
+}),
 `CREATE TRIGGER IF NOT EXISTS creation_index_owner_changed AFTER UPDATE OF role,email,consent_version,consented_at ON users WHEN NEW.role IS NOT OLD.role OR NEW.email IS NOT OLD.email OR NEW.consent_version IS NOT OLD.consent_version OR NEW.consented_at IS NOT OLD.consented_at BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE owner_id=NEW.user_id; END`,
 `CREATE TRIGGER IF NOT EXISTS creation_index_owner_deleted AFTER DELETE ON users BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE owner_id=OLD.user_id; END`,
 `DROP TRIGGER IF EXISTS creation_index_partition_changed`,
@@ -41,7 +53,10 @@ export type IndexLease={job_key:string;kind:string;partition_key:string;generati
 export const leaseGuard=`EXISTS(SELECT 1 FROM creation_index_work j WHERE j.job_key=? AND j.lease_token=? AND j.generation=? AND j.lease_until>unixepoch() AND j.state='running')`;
 export const leaseBindings=(l:IndexLease)=>[l.job_key,l.lease_token,l.generation];
 export async function claimIndexJob(db:D1Database,seconds=25,kinds?:string[]):Promise<IndexLease|null>{
- const row=await db.prepare("SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=unixepoch()) AND (? IS NULL OR kind IN(SELECT value FROM json_each(?))) ORDER BY touched,priority,created,job_key LIMIT 1").bind(kinds?JSON.stringify(kinds):null,kinds?JSON.stringify(kinds):null).first<{job_key:string}>();if(!row)return null;
+ // Age only time actually ready: retry delay and fresh creation/continuation do not
+ // inherit epoch-zero due/touched values. A claim refreshes touched, sharing turns
+ // with other aged jobs instead of monopolizing the lane across continuation pages.
+ const row=await db.prepare("SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=unixepoch()) AND (? IS NULL OR kind IN(SELECT value FROM json_each(?))) ORDER BY CASE WHEN MAX(due,created,touched)<=unixepoch()-600 THEN 0 ELSE 1 END,CASE WHEN MAX(due,created,touched)<=unixepoch()-600 THEN MAX(due,created,touched) ELSE NULL END,touched,priority,created,job_key LIMIT 1").bind(kinds?JSON.stringify(kinds):null,kinds?JSON.stringify(kinds):null).first<{job_key:string}>();if(!row)return null;
  return db.prepare("UPDATE creation_index_work SET state='running',lease_token=?,lease_until=unixepoch()+?,attempts=attempts+1,touched=unixepoch() WHERE job_key=? AND due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=unixepoch()) RETURNING *").bind(crypto.randomUUID(),seconds,row.job_key).first<IndexLease>();
 }
 export async function assertIndexLease(db:D1Database,l:IndexLease){if(!await db.prepare('SELECT 1 WHERE '+leaseGuard).bind(...leaseBindings(l)).first())throw new Error('creation_lease_lost');}
