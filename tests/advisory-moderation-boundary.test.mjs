@@ -12,3 +12,13 @@ for(const flagged of [false,true])for(const failAt of ['request','response','bot
    for(const key of ['flagged','categories','blockIds','model','probeCount','coverage'])assert.deepEqual(observed[key],baseline[key]);assert.equal(observed.flagged,flagged);
  }finally{globalThis.fetch=old;}
 });
+
+test('N6 input-witness failure preserves original wire, verdict and one dispatch',async()=>{
+ const old=globalThis.fetch,calls=[],errors=[];const snapshot={facts:[{block_id:'b',type:'direction',properties:{text:'Synthetic unchanged'}}]};
+ globalThis.fetch=async(_url,init)=>{calls.push(init.body);return Response.json({results:JSON.parse(init.body).input.map(()=>({flagged:true,categories:{violence:true}}))});};
+ try{
+  const baseline=await moderateGenerationSnapshot({OPENAI_API_KEY:'synthetic'},snapshot);
+  const observed=await moderateGenerationSnapshot({OPENAI_API_KEY:'synthetic'},snapshot,undefined,{onInputs:async()=>{throw Error('witness failure');},onEvidence:()=>{},onCaptureError:()=>errors.push(true)});
+  assert.equal(calls.length,2);assert.equal(calls[0],calls[1]);assert.equal(errors.length,1);assert.deepEqual(observed.sourceVerdicts,baseline.sourceVerdicts);assert.equal(observed.flagged,baseline.flagged);
+ }finally{globalThis.fetch=old;}
+});

@@ -1,3 +1,6 @@
+import { sourceAdvisoryWitness, type SourceAdvisoryWitness } from './source-advisory-witness.ts';
+import type { SourceAuthorityReceipt } from './source-authority-receipt.ts';
+import type { SourceAdvisoryInput } from '../src/model/source-advisory.ts';
 import type { GenerationEvidenceObserver, PrivateGenerationEvidence } from '../src/model/generation-outcome-evidence.ts';
 import type { AdvisoryModerationCapture } from '../src/model/generation-readiness.ts';
 import { evidenceSha256 } from './generation-evidence.ts';
@@ -18,11 +21,12 @@ const unavailable = (reason:string):AdvisoryModerationCapture => ({status:'unava
 
 /** This observer is used only through moderateGenerationSnapshot's error boundary.
  * No raw evidence enters the preflight cache or job's financial checkpoints. */
-export function advisoryModerationCapture(env:WorkerEnv,user:Principal,origin:AdvisoryBinding) {
+export function advisoryModerationCapture(env:WorkerEnv,user:Principal,origin:AdvisoryBinding,source?:{authority:SourceAuthorityReceipt;createdAt:string;expiresAt:string}) {
   const capture:AdvisoryModerationCapture={status:'capture-incomplete',reason:'not-observed',inspection:'unavailable-before-admission',origin,refs:{}};
+  let witness:SourceAdvisoryWitness|undefined;
   const phases=new Set<string>(),operationIds=new Set<string>();
   const observe:GenerationEvidenceObserver=async evidence=>{
-    const content=JSON.stringify({...evidence,advisory:{...origin,ownerId:user.userId,streamId:user.streamId},
+    const content=JSON.stringify({...evidence,...(witness?{sourceWitness:witness}:{}),advisory:{...origin,ownerId:user.userId,streamId:user.streamId},
       operation:{...evidence.operation,entryPath:'still',settings:{...evidence.operation.settings,advisoryOperation:'snapshot'}}});
     if(new TextEncoder().encode(content).length>500_000)throw new Error('advisory_capture_capacity');
     const stored=await storePrivateContent(env,user.userId,'provider-output',content,undefined,advisoryPersonalGuard(user,origin.documentId,origin.projectId));
@@ -30,7 +34,9 @@ export function advisoryModerationCapture(env:WorkerEnv,user:Principal,origin:Ad
     phases.add(evidence.phase);operationIds.add(evidence.evidenceId);
     if(phases.has('request')&&phases.has('response')&&operationIds.size===1&&capture.reason!=='storage-failed'){capture.status='retained';delete capture.reason;}
   };
-  return {capture,observe,onCaptureError:()=>{capture.status='capture-incomplete';capture.reason='storage-failed';}};
+  return {capture,observe,async onInputs(input:string[],mapping:SourceAdvisoryInput[]){
+    if(source){witness=await sourceAdvisoryWitness(source.authority,source.createdAt,source.expiresAt,input,mapping);capture.sourceInspection='prospective-v1';capture.inspection='selected-preflight';}
+  },onCaptureError:()=>{capture.status='capture-incomplete';capture.reason='storage-failed';}};
 }
 
 /** Bounded validation of server-owned cache links, never a source-history proof.

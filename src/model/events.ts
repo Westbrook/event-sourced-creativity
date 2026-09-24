@@ -244,7 +244,16 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
 
 /** Consume complete ordered history without retaining the event array. Selection
  * and membership cleanup run once, after the terminal source page is verified. */
-export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = "") {
+export const plainAuthoredTextProperties = (value:Record<string,unknown>) => Object.entries(value).every(([key,v])=>
+  ["text","instruction","value","label","description","subtype","intent"].includes(key)?typeof v==="string":
+  key==="authority"?v==="authored":key==="weight"?typeof v==="number"&&Number.isFinite(v):false);
+export const plainAuthoredTextType = (type:unknown) => typeof type==="string" &&
+  ["text","direction","audience","message","emotion","subject","environment","action","motion","scale","composition","camera","lighting","style","material","palette","typography","format","brand","exclusion","accessibility"].includes(type);
+export type AuthoredSourceStep = { eventId:string; projectId:string; documentId:string; eligible:boolean };
+// Optional resolver observation. Eligibility is declared where canonical semantics
+// execute, never by a second consumer's event-type allowlist. Other semantics and
+// unknown future events remain in the complete census but cannot certify plain text.
+export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = "", observeSource?: (step:AuthoredSourceStep)=>void) {
   const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount" | "artifactCount" | "recentGenerations" | "recentArtifacts">>();
   const blocks = new Map<string, CreativeBlock>();
   const blockRelations = new Map<string, CreativeBlockRelation>();
@@ -298,23 +307,39 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
     if (finished) throw new Error("creative_fold_already_finished");
     if (ended || event.sequence > asOf) { ended = true; return false; }
     const p = event.payload;
+    let sourceStep:AuthoredSourceStep = {eventId:event.eventId,projectId:"",documentId:"",eligible:false};
+    const plain = (keys:string, valid:boolean, projectId:string, documentId="") => {
+      if(observeSource) sourceStep={eventId:event.eventId,projectId,documentId,eligible:valid
+        && Object.keys(p).every(key=>keys.split(" ").includes(key))
+        && Object.entries(p).every(([key,value])=>key==="properties"||value===null||["string","number","boolean"].includes(typeof value))};
+    };
+    const blockPlain = (keys:string, valid=true) => {
+      const b=blocks.get(String(p.block_id??""));
+      plain("block_id project_id document_id "+keys,Boolean(b)&&valid
+        && (p.project_id===undefined||p.project_id===b?.projectId)
+        && (p.document_id===undefined||p.document_id===b?.documentId),b?.projectId??"",b?.documentId??"");
+    };
     const claimed = claimOrigins.observe(event);
     discardConflictedOutputs();
     switch (event.type) {
       case "ProjectCreated": {
+        plain("project_id name state",typeof p.project_id==="string"&&!!p.project_id&&!projects.has(p.project_id),String(p.project_id??""));
         const id=String(p.project_id??"");const name=String(p.name??"Untitled project");const projectState=String(p.state??"active");
         projects.set(id,{id,name,state:projectState,createdSequence:event.sequence,lastSequence:event.sequence});state.projectId=id;state.projectName=name;state.projectState=projectState;state.latestCompile=null;break;
       }
       case "ProjectOpened": {
+        plain("project_id",projects.has(String(p.project_id)),String(p.project_id??""));
         const project=projects.get(String(p.project_id??""));if(project){state.projectId=project.id;state.projectName=project.name;state.projectState=project.state;state.latestCompile=null;project.lastSequence=event.sequence;const latest=[...documents.values()].filter((document)=>document.projectId===project.id&&!document.removed).sort((a,b)=>b.createdSequence-a.createdSequence)[0];state.documentId=latest?.id??"";state.documentTitle=latest?.title??"No document open";}break;
       }
-      case "ProjectRenamed": { const project=projects.get(String(p.project_id??state.projectId));if(project){project.name=String(p.new_name??project.name);project.lastSequence=event.sequence;if(project.id===state.projectId)state.projectName=project.name;}break; }
-      case "ProjectStateChanged": { const project=projects.get(String(p.project_id??state.projectId));if(project){project.state=String(p.state??project.state);project.lastSequence=event.sequence;if(project.id===state.projectId)state.projectState=project.state;}break; }
+      case "ProjectRenamed": { plain("project_id new_name old_name",projects.has(String(p.project_id??state.projectId)),String(p.project_id??state.projectId)); const project=projects.get(String(p.project_id??state.projectId));if(project){project.name=String(p.new_name??project.name);project.lastSequence=event.sequence;if(project.id===state.projectId)state.projectName=project.name;}break; }
+      case "ProjectStateChanged": { plain("project_id state",projects.has(String(p.project_id??state.projectId)),String(p.project_id??state.projectId)); const project=projects.get(String(p.project_id??state.projectId));if(project){project.state=String(p.state??project.state);project.lastSequence=event.sequence;if(project.id===state.projectId)state.projectState=project.state;}break; }
       case "DocumentCreated": {
+        plain("project_id document_id title handle",typeof p.document_id==="string"&&!!p.document_id&&!documents.has(p.document_id)&&projects.has(String(p.project_id)),String(p.project_id??""),String(p.document_id??""));
         const id=String(p.document_id??"");const title=String(p.title??state.documentTitle);state.documentId=id;state.documentTitle=title;state.latestCompile=null;
         documents.set(id,{id,projectId:String(p.project_id??state.projectId),title,handle:String(p.handle??`document-${id.slice(0,8)}`),removed:false,createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
       }
       case "DocumentRenamed": {
+        {const d=documents.get(String(p.document_id??state.documentId));plain("project_id document_id new_title old_title",!!d&&(p.project_id===undefined||p.project_id===d.projectId),d?.projectId??"",d?.id??"");}
         const id=String(p.document_id??state.documentId);const document=documents.get(id);if(document){document.title=String(p.new_title??document.title);document.sourceEvents.push(event.eventId);}if(id===state.documentId)state.documentTitle=String(p.new_title??state.documentTitle);break;
       }
       case "DocumentForked": {
@@ -322,12 +347,18 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
         documents.set(id,{id,projectId:String(p.project_id??state.projectId),title,handle:String(p.handle??`fork-${id.slice(0,8)}`),removed:false,createdSequence:event.sequence,sourceEvents:[event.eventId]});break;
       }
       case "DocumentOpened": {
+        {const d=documents.get(String(p.document_id??state.documentId));plain("project_id document_id",!!d&&(p.project_id===undefined||p.project_id===d.projectId),d?.projectId??"",d?.id??"");}
         const document=documents.get(String(p.document_id??""));if(document&&!document.removed){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;document.sourceEvents.push(event.eventId);}break;
       }
       case "DocumentRemoved": case "DocumentRestored": {
+        {const d=documents.get(String(p.document_id??state.documentId));plain("project_id document_id preserve_project_ideas was_current",!!d&&(p.project_id===undefined||p.project_id===d.projectId),d?.projectId??"",d?.id??"");}
         const document=documents.get(String(p.document_id??""));if(document){document.removed=event.type==="DocumentRemoved";if(document.removed&&p.preserve_project_ideas===true)for(const block of blocks.values())if(block.projectId===document.projectId&&ideaDocumentUses(block).some(use=>use.documentId===document.id))block.projectOwned=true;document.sourceEvents.push(event.eventId);if(event.type==="DocumentRestored"&&p.was_current){state.documentId=document.id;state.documentTitle=document.title;state.latestCompile=null;}}break;
       }
       case "BlockCreated": {
+        plain("project_id document_id block_id type scope project_owned properties position handle",typeof p.block_id==="string"&&!!p.block_id&&!blocks.has(p.block_id)
+          && projects.has(String(p.project_id))&&documents.get(String(p.document_id))?.projectId===p.project_id
+          && (p.scope===undefined||p.scope==="document")&&(p.project_owned===undefined||typeof p.project_owned==="boolean")&&plainAuthoredTextType(p.type)
+          && !!p.properties&&typeof p.properties==="object"&&!Array.isArray(p.properties)&&plainAuthoredTextProperties(asRecord(p.properties)),String(p.project_id??""),String(p.document_id??""));
         const id = String(p.block_id);
         const scope: CreativeBlock["scope"] = p.canvas_id || p.scope === "canvas" ? "canvas" : p.scope === "library" || p.library_block === true ? "library" : "document";
         const documentId = scope === "document" ? String(p.document_id ?? state.documentId) : "";
@@ -350,8 +381,10 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
         break;
       }
       case "BlockRehomed": { const b=blocks.get(String(p.block_id??""));if(b){const nextScope=String(p.scope??"library") as CreativeBlock["scope"];b.scope=nextScope;b.documentId=nextScope==="document"?String(p.document_id??""):"";b.canvasId=nextScope==="canvas"?String(p.canvas_id??""):"";b.projectId=String(p.project_id??b.projectId);b.documentUses=b.documentId?[{documentId:b.documentId,position:b.position,sourceEvents:[event.eventId]}]:[];b.sourceEvents.push(event.eventId);}break; }
-      case "BlockRenamed": { const b = blocks.get(String(p.block_id)); if (b) { b.handle = String(p.new_handle ?? b.handle); b.sourceEvents.push(event.eventId); } break; }
+      case "BlockRenamed": { blockPlain("new_handle old_handle"); const b = blocks.get(String(p.block_id)); if (b) { b.handle = String(p.new_handle ?? b.handle); b.sourceEvents.push(event.eventId); } break; }
       case "BlockPropertyEdited": {
+        {const path=String(p.property_path??"");const values=[p.new_value,...(Object.hasOwn(p,"old_value")?[p.old_value]:[])];
+        blockPlain("property_path new_value old_value",values.every(v=>v===undefined||plainAuthoredTextProperties({[path]:v})||path==="position"&&typeof v==="string"));}
         const b = blocks.get(String(p.block_id)); const path = String(p.property_path ?? "");
         let use=b&&p.document_id&&p.scope!=="library"?ideaDocumentUses(b).find(use=>use.documentId===p.document_id):undefined;
         if(b&&p.document_id&&p.scope!=="library"&&!use&&["position","weight"].includes(path)&&documents.get(String(p.document_id))?.projectId===b.projectId){use={documentId:String(p.document_id),position:b.position,sourceEvents:[],inherited:true};b.documentUses=[...ideaDocumentUses(b),use];}
@@ -363,9 +396,9 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
         if (b) b.sourceEvents.push(event.eventId);
         break;
       }
-      case "BlockWeightSet": { const b = blocks.get(String(p.block_id)); let use=b&&p.document_id&&p.scope!=="library"?ideaDocumentUses(b).find(use=>use.documentId===p.document_id):undefined; if(b&&p.document_id&&p.scope!=="library"&&!use&&documents.get(String(p.document_id))?.projectId===b.projectId){use={documentId:String(p.document_id),position:b.position,sourceEvents:[],inherited:true};b.documentUses=[...ideaDocumentUses(b),use];} if(use&&b){use.weight=Number(p.weight??.5);b.sourceEvents.push(event.eventId);break;} if (b) { b.properties.weight = Number(p.weight ?? .5); b.sourceEvents.push(event.eventId); } break; }
-      case "BlockLocked": case "BlockUnlocked": { const b = blocks.get(String(p.block_id)); if (b) { b.locked = event.type === "BlockLocked"; b.sourceEvents.push(event.eventId); } break; }
-      case "BlockRemoved": case "BlockRestored": { const b = blocks.get(String(p.block_id)); if (b) { b.removed = event.type === "BlockRemoved"; b.sourceEvents.push(event.eventId); } break; }
+      case "BlockWeightSet": { blockPlain("weight",typeof p.weight==="number"&&Number.isFinite(p.weight)); const b = blocks.get(String(p.block_id)); let use=b&&p.document_id&&p.scope!=="library"?ideaDocumentUses(b).find(use=>use.documentId===p.document_id):undefined; if(b&&p.document_id&&p.scope!=="library"&&!use&&documents.get(String(p.document_id))?.projectId===b.projectId){use={documentId:String(p.document_id),position:b.position,sourceEvents:[],inherited:true};b.documentUses=[...ideaDocumentUses(b),use];} if(use&&b){use.weight=Number(p.weight??.5);b.sourceEvents.push(event.eventId);break;} if (b) { b.properties.weight = Number(p.weight ?? .5); b.sourceEvents.push(event.eventId); } break; }
+      case "BlockLocked": case "BlockUnlocked": { blockPlain(""); const b = blocks.get(String(p.block_id)); if (b) { b.locked = event.type === "BlockLocked"; b.sourceEvents.push(event.eventId); } break; }
+      case "BlockRemoved": case "BlockRestored": { blockPlain(""); const b = blocks.get(String(p.block_id)); if (b) { b.removed = event.type === "BlockRemoved"; b.sourceEvents.push(event.eventId); } break; }
       case "BlockRelationAdded": {
         const id=String(p.relation_id??"");const fromBlockId=String(p.from_block_id??"");const toBlockId=String(p.to_block_id??"");if(!id||!fromBlockId||!toBlockId||fromBlockId===toBlockId)break;
         const from=blocks.get(fromBlockId);const to=blocks.get(toBlockId);const existing=blockRelations.get(id);const documentId=String(p.document_id??(from?.documentId&&from.documentId===to?.documentId?from.documentId:"")??"");const projectId=String(p.project_id??from?.projectId??to?.projectId??state.projectId);
@@ -629,6 +662,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
       case "ConditionSet": conditions.set(String(p.condition_id), { ...p, fired: false }); break;
       case "ConditionFired": { const c = conditions.get(String(p.condition_id)); if (c) c.fired = true; break; }
     }
+    observeSource?.(sourceStep);
     return true;
   };
   const finish = (selection?:{documentId:string;projectId?:string}): CreativeProjection => {

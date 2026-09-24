@@ -929,6 +929,7 @@ export async function readProfileEventPage(
   afterSequence = 0,
   limit = SCOPED_EVENT_PAGE_SIZE,
   proof?: EventReadProof,
+  custody?: { ownerId:string; observe:(rows:Record<string,unknown>[])=>void; captureProof?:(proof:EventReadProof)=>void },
 ) {
   const pageSize = Math.max(1, Math.min(SCOPED_EVENT_PAGE_SIZE, Math.floor(limit)));
   const eventTypes = profile === "projects" ? PROJECT_BOOTSTRAP_EVENT_TYPES : PROFILE_EXCLUDED_EVENT_TYPES[profile];
@@ -937,23 +938,47 @@ export async function readProfileEventPage(
   const index = profile === "projects" ? " INDEXED BY idx_events_stream_type" : "";
   const attentionFilter = profile !== "projects" ? ` AND NOT (${PHANTOM_ATTENTION_EVENT_SQL})` : "";
   const checkedProof = proof ? { statements: [...proof.statements], verify: proof.verify } : null;
-  const [page, current, ...sourceChecks] = await env.DB.batch<Record<string, unknown>>([
-    env.DB.prepare(`SELECT * FROM events${index} LEFT JOIN event_private_payloads secret ON secret.private_event_id=events.event_id AND secret.redacted_at IS NULL WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders})${attentionFilter} ORDER BY sequence ASC LIMIT ?`)
+  const readStatements = [
+    env.DB.prepare(`SELECT events.*,secret.*${custody?`,custody.owner_id AS custody_owner,custody.project_id AS custody_project,custody.document_id AS custody_document,custody.created_at AS custody_created,custody.redacted_at AS custody_redacted,custody.private_event_id AS custody_id,
+        EXISTS(SELECT 1 FROM project_event_scopes s WHERE s.event_id=events.event_id) AS custody_scoped`:""} FROM events${index}${custody?" LEFT JOIN event_private_payloads custody ON custody.private_event_id=events.event_id":""} LEFT JOIN event_private_payloads secret ON secret.private_event_id=events.event_id AND secret.redacted_at IS NULL WHERE stream_id=? AND sequence>? AND type ${operator} (${placeholders})${attentionFilter}${custody?" AND length(CAST(events.payload AS BLOB))<=65536 AND length(CAST(COALESCE(secret.private_json,'') AS BLOB))<=65536":""} ORDER BY sequence ASC LIMIT ?`)
       .bind(streamId, Math.max(0, Math.floor(afterSequence)), ...eventTypes, pageSize),
     env.DB.prepare("SELECT COALESCE(MAX(sequence),0) AS head FROM events WHERE stream_id=?").bind(streamId),
     ...(checkedProof?.statements ?? []),
-  ]);
+  ];
+  const [page, current, ...sourceChecks] = await env.DB.batch<Record<string,unknown>>(readStatements);
   if (checkedProof && (!page || page.success !== true || !Array.isArray(page.results) || page.results.length > pageSize
     || !current || current.success !== true || !Array.isArray(current.results) || current.results.length !== 1
     || typeof current.results[0]?.head !== "number" || !Number.isSafeInteger(current.results[0].head) || current.results[0].head < 0)) {
     throw new Error("output_source_changed_during_read");
   }
   checkedProof?.verify(sourceChecks);
+  custody?.observe(page.results);
+  if(custody?.captureProof){const expected=JSON.stringify([page,...sourceChecks].map(r=>r.results));
+    custody.captureProof({statements:[readStatements[0]!,...readStatements.slice(2)],verify(results){
+      if(results.some(r=>r.success!==true)||JSON.stringify(results.map(r=>r.results))!==expected)throw Error("source_census_changed");}});}
+
   const events = (page?.results ?? []).map(serializeEvent);
   const head = Number(current?.results[0]?.head ?? 0);
   // Excluded telemetry can trail the final useful event; advance past it.
   const nextAfter = events.length < pageSize ? head : Number(events.at(-1)?.sequence ?? afterSequence);
   return { events, head, nextAfter, hasMore: nextAfter < head, profile };
+}
+
+/** Bounded complete workspace receipt before private custody is discarded.
+ * The profile is shared with ordinary source resolution. All its rows are retained
+ * conservatively, including unrelated history that can affect implicit defaults.
+ * Authored sidecars have no time expiry: their lifetime ends at deletion/redaction
+ * or any custody/scope change. Consumers must additionally cap their own access. */
+export async function readWorkspaceSourceCensus(env:WorkerEnv,streamId:string,ownerId:string,verifyRows:(rows:Record<string,unknown>[])=>void,proof?:EventReadProof) {
+  const types=PROFILE_EXCLUDED_EVENT_TYPES.workspace, raw:Record<string,unknown>[]=[];
+  let count=-1;let finalProof:EventReadProof|undefined;
+  const page=await readProfileEventPage(env,streamId,"workspace",0,129,{
+    statements:[env.DB.prepare(`SELECT count(*) AS total FROM events WHERE stream_id=? AND type NOT IN(${types.map(()=>"?").join(",")}) AND NOT (${PHANTOM_ATTENTION_EVENT_SQL})`).bind(streamId,...types),...(proof?.statements??[])],
+    verify(results){const result=results[0];if(!result?.success||result.results?.length!==1||!Number.isSafeInteger(result.results[0].total))throw Error("source_census_incomplete");
+      count=Number(result.results[0].total);if(count>128)throw Error("source_census_capacity");proof?.verify(results.slice(1));}
+  },{ownerId,captureProof(value){finalProof=value;},observe(rows){if(rows.length!==count)throw Error("source_census_incomplete");verifyRows(rows);raw.push(...rows);}});
+  if(page.hasMore||raw.length!==count)throw Error("source_census_incomplete");
+  return {events:page.events,rows:raw,proof:finalProof!};
 }
 
 /** Load every projection-relevant account event without replaying telemetry. */

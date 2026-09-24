@@ -1,3 +1,4 @@
+import './source-advisory-inspector.ts';
 import '../components/video-cover.ts';
 import { renderGenerationOptions } from './generation-options.ts';
 import { validateGenerationOptions } from './generation-settings.ts';
@@ -1066,6 +1067,7 @@ export class StillApp extends LitElement {
       return html`<section class="form-page generation-page">
         <span class="eyebrow">${p.documentTitle} · Step ${g?2:1} of 2</span><h1>${g?`Configure ${FORMATS[g.format].toLowerCase()}`:'Choose output'}</h1>
         ${g?renderGenerationOptions(g,this.busy||!!g.attempted,isComposing=>{if(isComposing!==undefined)this.composing=isComposing;this.generationGate=null;this.changed();}):nothing}
+        ${g?.format==='image'&&this.generationGate?.inspection?keyed(`${this.generationGate.inspection.documentId}/${this.generationGate.inspection.preflightId}`,html`<still-source-advisory-inspector .selection=${this.generationGate.inspection}></still-source-advisory-inspector>`):nothing}
         ${g?.previousAttemptId?html`<p class="cost-note">This is a new paid request linked to attempt ${g.previousAttemptId}. ${g.previousDocumentRevision?(g.previousDocumentRevision===g.sourceRevision?'The recorded document revision is unchanged.':'Your current document differs from the original attempt’s recorded revision.'):'The original document revision is unavailable, so changes cannot be verified.'} This request uses your current document; it does not recreate missing original inputs.</p>`:nothing}
         <details class="generation-source" ?open=${!g||!!issues.length}><summary>Document context</summary><div class="generation-context">${visibleFacts.map(b => { const warnings = issues.filter(i => issueAffectsBlock(i, b)); return html`<section id=${'generation-context-'+b.block_id} class=${warnings.length ? 'generation-fact needs-review' : 'generation-fact'} tabindex="-1">
           <p><span>${text(b.properties.label) || b.handle || b.type}${b.locked ? ' · locked' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' && (!b.properties.media_type||text(b.properties.media_type).startsWith('image/')) ? stillImage(safeMedia(text(b.properties.media_url)),b.handle,b.properties,{className:'context-reference'}) : nothing}${text(b.properties.text) || text(b.properties.description)}</p>

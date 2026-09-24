@@ -31,9 +31,10 @@ export type ProviderHealthSnapshot = {
 
 /** Server-owned observation links. Never safety or admission authority. */
 export type AdvisoryModerationCapture = {
+  sourceInspection?: 'prospective-v1';
   status: 'retained' | 'capture-incomplete' | 'unavailable';
   reason?: string;
-  inspection?: 'unavailable-before-admission' | 'job-receipt';
+  inspection?: 'unavailable-before-admission' | 'job-receipt' | 'selected-preflight';
   origin?: {preflightId:string;requestKey:string;documentId:string;projectId:string;documentRevision:string;sourceSha256:string};
   adoptedBy?: {preflightId:string;requestKey:string};
   refs: Record<string,{ref:string;expiresAt:string;pipelineStage:'app_moderation';sha256:string}>;

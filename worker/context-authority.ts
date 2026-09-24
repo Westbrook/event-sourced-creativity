@@ -6,7 +6,7 @@ import { blockEffectFor, blockIntentFor } from "../src/model/block-types.ts";
 import { combinedContextGroups, isContextCompositionRelation } from "../src/model/combined-context.ts";
 import { isCharacterContext } from "../src/model/character-context.ts";
 import { documentGenerationRevision } from "../src/model/document-jobs.ts";
-import { createCreativeEventFold, foldEvents, type CreativeBlock, type CreativeEvent, type CreativeProjection } from "../src/model/events.ts";
+import { createCreativeEventFold, type CreativeBlock, type CreativeEvent, type CreativeProjection, type AuthoredSourceStep } from "../src/model/events.ts";
 import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
 import { assessCreativeContextFromRights, createContextRightsFold, type ContextRightsReceipts } from "../src/model/context-health.ts";
 
@@ -56,8 +56,10 @@ const factFor = (block: CreativeBlock, memoryAuthored:ReadonlySet<string>) => ({
  * Browser snapshots are selectors only; their text, rights, intent, relations,
  * and source versions can never override the durable project projection.
  */
-export function authoritativeCreativeContext(events: CreativeEvent[], request: ContextRequest) {
-  const projection = foldEvents(events, Number.POSITIVE_INFINITY, request.documentId, request.projectId ?? "");
+export function authoritativeCreativeContext(events: CreativeEvent[], request: ContextRequest, observeSource?:(step:AuthoredSourceStep)=>void) {
+  const fold=createCreativeEventFold(Infinity,request.documentId,request.projectId??"",observeSource);
+  for(const event of events)fold.accept(event);
+  const projection=fold.finish();
   const rights=createContextRightsFold();for(const event of events)rights.accept(event);
   return contextFromCompleteProjection(projection,request,rights.finish(),(projectId,canvasId)=>foldCanvasEvents(events,projectId,canvasId),memoryAuthoredEventIds(events));
 }

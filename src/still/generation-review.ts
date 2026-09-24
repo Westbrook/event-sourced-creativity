@@ -1,6 +1,7 @@
 import type { GenerationReadinessProbe } from '../model/generation-readiness.ts';
 
 export type GenerationReview = {
+  inspection?:{documentId:string;preflightId:string};
   key: 'budgetAcknowledged' | 'preflightAcknowledged' | null;
   message: string;
   issues: GenerationReadinessProbe[];
@@ -13,10 +14,11 @@ export function generationReview(status: number, body: Record<string, unknown>):
   }
   const blocked = status === 409 && body.error === 'generation_preflight_blocked';
   if (!blocked && !(status === 428 && body.error === 'generation_preflight_review_required')) return null;
-  const readiness = body.readiness as { probes?: GenerationReadinessProbe[] } | undefined;
+  const readiness = body.readiness as { probes?: GenerationReadinessProbe[];documentId?:string;preflightId?:string } | undefined;
   const issues = (Array.isArray(readiness?.probes) ? readiness.probes : []).filter(probe =>
     probe && ['warning', 'unknown', 'fail'].includes(probe.status) && typeof probe.summary === 'string');
   return {
+    ...(typeof readiness?.documentId==='string'&&typeof readiness.preflightId==='string'?{inspection:{documentId:readiness.documentId,preflightId:readiness.preflightId}}:{}),
     key: blocked ? null : 'preflightAcknowledged',
     message: blocked ? 'Generation blocked' : 'Review before generating',
     issues: issues.length ? issues : [{ id: 'review', label: 'Generation review', status: blocked ? 'fail' : 'unknown', severity: blocked ? 'blocking' : 'warning', summary: 'Review details are unavailable. Go back and retry.' }],

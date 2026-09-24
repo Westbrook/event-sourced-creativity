@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {chromium, expect} from '@playwright/test';
 import {createN6ReviewServer} from '../helpers/n6-source-advisory-review-fixture.mjs';
 
-test('N6 unavailable-inspector boundary preserves N5 item attribution and explicit acknowledgement', async () => {
+test('N6 selected inspector preserves inert disclosure, attribution and explicit acknowledgement', async () => {
   const {server, url} = await createN6ReviewServer();
   let browser;
   try {
@@ -21,7 +21,7 @@ test('N6 unavailable-inspector boundary preserves N5 item attribution and explic
     const dock = page.locator('.action-dock');
     const button = name => dock.getByRole('button', {name, exact: true});
     await expect(button('Generate')).toBeVisible();
-    assert.deepEqual(await page.evaluate(() => window.n6Trace), {requests: [], unexpectedFetches: [], acknowledgedRequests: 0, createdJobs: 0});
+    assert.deepEqual(await page.evaluate(() => window.n6Trace), {requests: [], unexpectedFetches: [], acknowledgedRequests: 0, createdJobs: 0, inspections: 0});
     assert.equal(await page.evaluate(() => window.n6App.client.jobs.length), 0);
 
     await button('Generate').click();
@@ -35,9 +35,13 @@ test('N6 unavailable-inspector boundary preserves N5 item attribution and explic
     await expect(page.locator('#generation-context-empty')).toContainText('<img data-n6-injected="true"');
     await expect(page.locator('[data-n6-injected]')).toHaveCount(0);
     assert.equal(await page.evaluate(() => window.n6MarkupExecuted), undefined);
-    await expect(page.locator('n6-review-fixture').getByRole('button', {name: /inspect|raw|evidence/i})).toHaveCount(0);
-    await expect(page.locator('n6-review-fixture a[href*="inspection"], n6-review-fixture a[href*="advisory"]')).toHaveCount(0);
-    assert.equal(await page.evaluate(() => window.n6Readiness.advisoryCapture.inspection), 'unavailable-before-admission');
+    await page.getByRole('button',{name:'Inspect source advisory',exact:true}).click();
+    await expect(page.getByText('Returned model',{exact:true})).toBeVisible();
+    await page.getByText('Exact request body',{exact:true}).click();
+    await expect(page.locator('still-source-advisory-inspector pre').first()).toContainText('<img data-n6-injected=');
+    await expect(page.locator('[data-n6-injected]')).toHaveCount(0);
+    assert.equal(await page.evaluate(()=>window.n6Trace.inspections),1);
+    assert.equal(await page.evaluate(()=>window.n6Trace.acknowledgedRequests),0);
 
     // Reading/reflowing the warning has no acknowledgement or job side effect.
     await page.setViewportSize({width: 390, height: 844});
@@ -75,6 +79,9 @@ test('N6 unavailable-inspector boundary preserves N5 item attribution and explic
     await page.goto(`${url}?variant=legacy`);
     await button('Generate').click();
     await expect(button('Acknowledge & send')).toBeVisible();
+    await page.getByRole('button',{name:'Inspect source advisory',exact:true}).click();
+    await expect(page.getByText(/Source advisory details are unavailable/)).toBeVisible();
+    await expect(page.locator('still-source-advisory-inspector pre')).toHaveCount(0);
     const legacy = page.locator('#generation-context-legacy .context-review-reason');
     await expect(legacy).toContainText('individual categories were not recorded');
     await expect(legacy).not.toContainText('violence');

@@ -1,4 +1,4 @@
-import { sourceAdvisoryInputs, type SourceAdvisoryVerdict } from '../src/model/source-advisory.ts';
+import { sourceAdvisoryInputs, type SourceAdvisoryVerdict, type SourceAdvisoryInput } from '../src/model/source-advisory.ts';
 import { validModerationResults } from "./moderation-response-validation.ts";
 import type { GenerationEvidenceObserver } from "../src/model/generation-outcome-evidence.ts";
 import { checkpointGenerationEvidence, evidenceSha256, operationEvidence, generationDispatchFailure } from "./generation-evidence.ts";
@@ -75,9 +75,10 @@ const summarize = (results: ModerationResult[]) => {
   return { flagged: results.some((result) => Boolean(result.flagged)), categories: [...categories].sort(), scores };
 };
 
-export async function moderateGenerationSnapshot(env: WorkerEnv, snapshot: Record<string, unknown>, signal?: AbortSignal, advisory?: {onEvidence:GenerationEvidenceObserver;onCaptureError:()=>void}): Promise<GenerationModerationReceipt> {
+export async function moderateGenerationSnapshot(env: WorkerEnv, snapshot: Record<string, unknown>, signal?: AbortSignal, advisory?: {onEvidence:GenerationEvidenceObserver;onCaptureError:()=>void;onInputs?:(input:string[],mapping:SourceAdvisoryInput[])=>Promise<void>}): Promise<GenerationModerationReceipt> {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
   const {input:inputs,mapping}=sourceAdvisoryInputs(snapshot);
+  try{await advisory?.onInputs?.(inputs,mapping);}catch{try{advisory?.onCaptureError();}catch{/* observational */}}
   // Advisory observation cannot suppress dispatch or erase a valid verdict.
   // Exact-prompt moderation retains its existing strict checkpoint behavior.
   const observe:GenerationEvidenceObserver|undefined=advisory?async evidence=>{

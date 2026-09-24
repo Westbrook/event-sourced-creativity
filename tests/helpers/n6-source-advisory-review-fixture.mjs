@@ -13,7 +13,7 @@ async function mountReviewFixture() {
   style.textContent = (await import('/src/still/style.css?raw')).default.replaceAll('still-app', 'n6-review-fixture');
   document.head.append(style);
 
-  const trace = window.n6Trace = {requests: [], unexpectedFetches: [], acknowledgedRequests: 0, createdJobs: 0};
+  const trace = window.n6Trace = {requests: [], unexpectedFetches: [], acknowledgedRequests: 0, createdJobs: 0, inspections: 0};
   const injectedText = '<img data-n6-injected="true" src="https://invalid.example/pixel" onerror="window.n6MarkupExecuted=true">';
   const raw = [
     ['ProjectCreated', {project_id: 'n6-project', name: 'Synthetic source review'}],
@@ -47,8 +47,8 @@ async function mountReviewFixture() {
   const legacy = new URL(location.href).searchParams.get('variant') === 'legacy';
   if (legacy) { delete issue.sourceVerdicts; issue.blockIds = ['legacy']; }
   const gate = {error: 'generation_preflight_review_required', readiness: {
-    preflightId: 'n6-synthetic-original-preflight', probes: [issue],
-    advisoryCapture: {status: 'unavailable', reason: 'not-observed', inspection: 'unavailable-before-admission', refs: {}},
+    preflightId: 'n6-synthetic-original-preflight', documentId:'n6-document', probes: [issue],
+    advisoryCapture: {status: legacy?'unavailable':'retained', inspection: legacy?'unavailable-before-admission':'selected-preflight', refs: {}},
   }};
   window.n6Readiness = gate.readiness;
   let releaseAcknowledgement;
@@ -68,6 +68,15 @@ async function mountReviewFixture() {
   // escape to a server; CSP separately blocks non-local subresources.
   window.fetch = async (input, init = {}) => {
     const url = new URL(typeof input === 'string' ? input : input.url, location.origin);
+    if(url.origin===location.origin&&url.pathname==='/api/source-advisory'&&(init.method??'GET')==='GET'){
+      trace.inspections++;state();
+      if(url.searchParams.get('documentId')!=='n6-document'||url.searchParams.get('preflightId')!=='n6-synthetic-original-preflight')throw Error('Wrong inspection selection');
+      if(legacy)return Response.json({status:'unavailable',reason:'witness_unavailable',rawAvailable:false},{status:409});
+      return Response.json({status:'available',validity:'valid',adopted:false,expiresAt:new Date(Date.now()+600000).toISOString(),
+       identity:{requestedModel:'omni-moderation-latest',returnedModel:'synthetic-returned-model',requestId:'synthetic-request',responseId:null},
+       inputs:issue.sourceVerdicts.map(item=>({...item,utf16Length:128,utf8Length:128})),
+       raw:{requestBody:JSON.stringify({model:'omni-moderation-latest',input:[injectedText]}),responseBody:JSON.stringify({model:'synthetic-returned-model',results:[{flagged:true,categories:{hate:true},category_scores:{hate:.8}}]})}});
+    }
     if (url.origin !== location.origin || url.pathname !== '/api/document-jobs' || init.method !== 'POST') {
       trace.unexpectedFetches.push({url: url.href, method: init.method ?? 'GET'});
       state();
@@ -144,7 +153,7 @@ export async function createN6ReviewServer({port = 0} = {}) {
           'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
           'content-security-policy': "default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'",
         });
-        response.end(`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>N6 synthetic boundary review</title><style>body{margin:0}#n6-fixture-disclosure{font:14px system-ui;padding:12px 20px;background:#fff6d9;color:#362e18}#n6-fixture-disclosure p{margin:4px 0}#n6-fixture-state{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}#n6-product{position:relative;min-height:700px}</style></head><body><aside id="n6-fixture-disclosure"><strong>N6 synthetic browser fixture</strong><p>Raw pre-admission inspection is unavailable. This fixture reviews the existing N5 summary and explicit acknowledgement flow only. It certifies neither classifier quality nor historical evidence.</p><details><summary>Fixture counters and retained request</summary><pre id="n6-fixture-state"></pre><button id="n6-release" type="button">Finish synthetic acknowledgement</button></details></aside><div id="n6-product"></div><script type="module">(${mountReviewFixture.toString()})().catch(error=>{document.querySelector('#n6-fixture-state').textContent=error.stack;throw error;});</script></body></html>`);
+        response.end(`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>N6 synthetic boundary review</title><style>body{margin:0}#n6-fixture-disclosure{font:14px system-ui;padding:12px 20px;background:#fff6d9;color:#362e18}#n6-fixture-disclosure p{margin:4px 0}#n6-fixture-state{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}#n6-product{position:relative;min-height:700px}</style></head><body><aside id="n6-fixture-disclosure"><strong>N6 synthetic browser fixture</strong><p>This fixture reviews the actual N6 disclosure with synthetic retained bodies and the ordinary explicit acknowledgement flow. It certifies neither classifier quality nor historical evidence.</p><details><summary>Fixture counters and retained request</summary><pre id="n6-fixture-state"></pre><button id="n6-release" type="button">Finish synthetic acknowledgement</button></details></aside><div id="n6-product"></div><script type="module">(${mountReviewFixture.toString()})().catch(error=>{document.querySelector('#n6-fixture-state').textContent=error.stack;throw error;});</script></body></html>`);
       });
     }}],
   });
