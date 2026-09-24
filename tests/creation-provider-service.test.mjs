@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { handleCreationProvider,creationVectorNamespace,creationEmbeddingChunks } from '../worker/creation-provider-service.ts';
+import { handleCreationProvider,sweepCreationProvider,creationVectorNamespace,creationEmbeddingChunks } from '../worker/creation-provider-service.ts';
 import { richDocumentFromRuns } from '../src/still/vendor/elements/rich-document.js';
 const token='fixture-only-private-service-token';
 const p={projectId:'p',custody:'personal:a',permissionEpoch:'1',contentVersion:'v1',indexVersion:'1',providerPolicy:'allowed'};
@@ -43,3 +43,5 @@ test('organizer transport retains distinct declaration targets and repeated occu
  const result=await handleCreationProvider(request('/interpret',{schemaVersion:1,modelVersion:'organizer-v1',operationIdentity:'operation',draft,selectedSources:[]}),f.env);
  assert.equal(result.status,200);assert.deepEqual((await result.json()).plan.nodes.map(node=>node.id),['temporary:one','temporary:two']);
 });
+
+test('native expiry sweep removes external vectors and permits exact source renewal with a new lease identity',async t=>{const f=fixture(t);await handleCreationProvider(request('/upsert',upsert()),f.env);const old=[...f.vectors.keys()][0];f.sqlite.exec("UPDATE creation_provider_vectors SET expires_at='2000-01-01'");await sweepCreationProvider(f.env);assert.equal(f.vectors.size,0);assert.equal((await handleCreationProvider(request('/upsert',upsert()),f.env)).status,200);assert.equal(f.vectors.size,1);assert.notEqual([...f.vectors.keys()][0],old);});

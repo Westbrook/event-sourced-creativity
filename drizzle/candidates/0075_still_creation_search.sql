@@ -1,3 +1,11 @@
+CREATE TABLE IF NOT EXISTS creation_search_builds(partition_key TEXT NOT NULL,index_version INTEGER NOT NULL,page_end TEXT NOT NULL,content_id TEXT NOT NULL,PRIMARY KEY(partition_key,index_version,page_end));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS creation_search_build_members(partition_key TEXT NOT NULL,index_version INTEGER NOT NULL,source_id TEXT NOT NULL,content_id TEXT NOT NULL,PRIMARY KEY(partition_key,index_version,source_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS creation_search_build_ready(partition_key TEXT PRIMARY KEY,index_version INTEGER NOT NULL,expected INTEGER NOT NULL);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS creation_search_jobs(partition_key TEXT PRIMARY KEY,actor_user_id TEXT NOT NULL,permission_epoch TEXT NOT NULL,next_run TEXT NOT NULL,lease_until TEXT,attempts INTEGER NOT NULL DEFAULT 0,last_error TEXT);
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS creation_search_partitions(partition_key TEXT PRIMARY KEY,custody TEXT NOT NULL,project_id TEXT NOT NULL,owner_id TEXT NOT NULL,project_access_id TEXT,content_version TEXT NOT NULL DEFAULT '',index_version INTEGER NOT NULL DEFAULT 0,expected INTEGER,backfill_cursor TEXT NOT NULL DEFAULT '',backfill_complete INTEGER NOT NULL DEFAULT 0,invalidated INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL);
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS creation_search_partition_owner ON creation_search_partitions(owner_id,project_id);
@@ -10,26 +18,50 @@ CREATE INDEX IF NOT EXISTS creation_search_source_version ON creation_search_rec
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS creation_search_terms(partition_key TEXT NOT NULL,term_hash TEXT NOT NULL,source_id TEXT NOT NULL,PRIMARY KEY(partition_key,term_hash,source_id));
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_search_events_insert AFTER INSERT ON events BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=NEW.stream_id; END;
+DROP TRIGGER IF EXISTS creation_search_events_insert;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_search_secrets_insert AFTER INSERT ON event_private_payloads BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id IN(SELECT stream_id FROM events WHERE event_id=NEW.private_event_id); END;
+DROP TRIGGER IF EXISTS creation_search_secrets_insert;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_search_resources_insert;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_search_project_events_insert;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_search_events_insert AFTER INSERT ON events BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=NEW.stream_id AND (substr(NEW.type,1,5)='Block' OR substr(NEW.type,1,8)='Document' OR substr(NEW.type,1,7)='Project') AND NEW.type NOT IN('ProjectOpened','DocumentOpened') AND (json_extract(NEW.payload,'$.project_id') IS NULL OR project_id=json_extract(NEW.payload,'$.project_id')); END;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_search_secrets_insert AFTER INSERT ON event_private_payloads BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id IN(SELECT stream_id FROM events WHERE event_id=NEW.private_event_id AND (substr(type,1,5)='Block' OR substr(type,1,8)='Document' OR substr(type,1,7)='Project') AND type NOT IN('ProjectOpened','DocumentOpened')) OR project_access_id IN(SELECT project_access_id FROM project_event_scopes WHERE event_id=NEW.private_event_id AND EXISTS(SELECT 1 FROM events WHERE event_id=NEW.private_event_id AND (substr(type,1,5)='Block' OR substr(type,1,8)='Document' OR substr(type,1,7)='Project') AND type NOT IN('ProjectOpened','DocumentOpened'))); END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_search_resources_insert AFTER INSERT ON project_resource_scopes BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=NEW.project_access_id AND NEW.resource_kind<>'content'; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_search_project_events_insert AFTER INSERT ON project_event_scopes BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=NEW.project_access_id; END;
+CREATE TRIGGER IF NOT EXISTS creation_search_project_events_insert AFTER INSERT ON project_event_scopes BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=NEW.project_access_id AND EXISTS(SELECT 1 FROM events WHERE event_id=NEW.event_id AND substr(type,1,9)<>'Attention'); END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_search_events_update AFTER UPDATE ON events BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=OLD.stream_id; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=NEW.stream_id; END;
+DROP TRIGGER IF EXISTS creation_search_events_update;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_search_secrets_update AFTER UPDATE ON event_private_payloads BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id IN(SELECT stream_id FROM events WHERE event_id=OLD.private_event_id); UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id IN(SELECT stream_id FROM events WHERE event_id=NEW.private_event_id); END;
+DROP TRIGGER IF EXISTS creation_search_secrets_update;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_search_resources_update;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_search_project_events_update;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_search_events_update AFTER UPDATE ON events BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=OLD.stream_id AND (substr(OLD.type,1,5)='Block' OR substr(OLD.type,1,8)='Document' OR substr(OLD.type,1,7)='Project') AND OLD.type NOT IN('ProjectOpened','DocumentOpened') AND (json_extract(OLD.payload,'$.project_id') IS NULL OR project_id=json_extract(OLD.payload,'$.project_id')); UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=NEW.stream_id AND (substr(NEW.type,1,5)='Block' OR substr(NEW.type,1,8)='Document' OR substr(NEW.type,1,7)='Project') AND NEW.type NOT IN('ProjectOpened','DocumentOpened') AND (json_extract(NEW.payload,'$.project_id') IS NULL OR project_id=json_extract(NEW.payload,'$.project_id')); END;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_search_secrets_update AFTER UPDATE ON event_private_payloads BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id IN(SELECT stream_id FROM events WHERE event_id=OLD.private_event_id AND (substr(type,1,5)='Block' OR substr(type,1,8)='Document' OR substr(type,1,7)='Project') AND type NOT IN('ProjectOpened','DocumentOpened')) OR project_access_id IN(SELECT project_access_id FROM project_event_scopes WHERE event_id=OLD.private_event_id AND EXISTS(SELECT 1 FROM events WHERE event_id=OLD.private_event_id AND (substr(type,1,5)='Block' OR substr(type,1,8)='Document' OR substr(type,1,7)='Project') AND type NOT IN('ProjectOpened','DocumentOpened'))); UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id IN(SELECT stream_id FROM events WHERE event_id=NEW.private_event_id AND (substr(type,1,5)='Block' OR substr(type,1,8)='Document' OR substr(type,1,7)='Project') AND type NOT IN('ProjectOpened','DocumentOpened')) OR project_access_id IN(SELECT project_access_id FROM project_event_scopes WHERE event_id=NEW.private_event_id AND EXISTS(SELECT 1 FROM events WHERE event_id=NEW.private_event_id AND (substr(type,1,5)='Block' OR substr(type,1,8)='Document' OR substr(type,1,7)='Project') AND type NOT IN('ProjectOpened','DocumentOpened'))); END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_search_resources_update AFTER UPDATE ON project_resource_scopes BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=OLD.project_access_id AND OLD.resource_kind<>'content'; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=NEW.project_access_id AND NEW.resource_kind<>'content'; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_search_project_events_update AFTER UPDATE ON project_event_scopes BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=OLD.project_access_id; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=NEW.project_access_id; END;
+CREATE TRIGGER IF NOT EXISTS creation_search_project_events_update AFTER UPDATE ON project_event_scopes BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=OLD.project_access_id AND EXISTS(SELECT 1 FROM events WHERE event_id=OLD.event_id AND substr(type,1,9)<>'Attention'); UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=NEW.project_access_id AND EXISTS(SELECT 1 FROM events WHERE event_id=NEW.event_id AND substr(type,1,9)<>'Attention'); END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_search_events_delete AFTER DELETE ON events BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=OLD.stream_id; END;
+DROP TRIGGER IF EXISTS creation_search_events_delete;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_search_secrets_delete AFTER DELETE ON event_private_payloads BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id IN(SELECT stream_id FROM events WHERE event_id=OLD.private_event_id); END;
+DROP TRIGGER IF EXISTS creation_search_secrets_delete;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_search_resources_delete;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_search_project_events_delete;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_search_events_delete AFTER DELETE ON events BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=OLD.stream_id AND (substr(OLD.type,1,5)='Block' OR substr(OLD.type,1,8)='Document' OR substr(OLD.type,1,7)='Project') AND OLD.type NOT IN('ProjectOpened','DocumentOpened') AND (json_extract(OLD.payload,'$.project_id') IS NULL OR project_id=json_extract(OLD.payload,'$.project_id')); END;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_search_secrets_delete AFTER DELETE ON event_private_payloads BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id IN(SELECT stream_id FROM events WHERE event_id=OLD.private_event_id AND (substr(type,1,5)='Block' OR substr(type,1,8)='Document' OR substr(type,1,7)='Project') AND type NOT IN('ProjectOpened','DocumentOpened')) OR project_access_id IN(SELECT project_access_id FROM project_event_scopes WHERE event_id=OLD.private_event_id AND EXISTS(SELECT 1 FROM events WHERE event_id=OLD.private_event_id AND (substr(type,1,5)='Block' OR substr(type,1,8)='Document' OR substr(type,1,7)='Project') AND type NOT IN('ProjectOpened','DocumentOpened'))); END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_search_resources_delete AFTER DELETE ON project_resource_scopes BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=OLD.project_access_id AND OLD.resource_kind<>'content'; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_search_project_events_delete AFTER DELETE ON project_event_scopes BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=OLD.project_access_id; END;
+CREATE TRIGGER IF NOT EXISTS creation_search_project_events_delete AFTER DELETE ON project_event_scopes BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE project_access_id=OLD.project_access_id AND EXISTS(SELECT 1 FROM events WHERE event_id=OLD.event_id AND substr(type,1,9)<>'Attention'); END;

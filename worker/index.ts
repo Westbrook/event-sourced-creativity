@@ -1,3 +1,4 @@
+import {maintainCreationSearchJobs} from './creation-search-api.ts';
 import { handleSourceEligibilityRead, SOURCE_ELIGIBILITY_PATH } from './source-eligibility-read.ts';
 import { handleSourceAdvisoryRead, SOURCE_ADVISORY_PATH } from './source-advisory-read.ts';
 import { handleCurrentSourceRead, CURRENT_SOURCE_PATH } from './generation-current-source-read.ts';
@@ -448,6 +449,7 @@ export default {
       if(cleanupFailed)throw cleanupError;
       // Native worker event only: the runner separately requires literal scheduling
       // admission, actor rollout and each existing background-purpose enrollment.
+      await maintainCreationSearchJobs(env);
       await runLiveMemoryScheduled(env);
       await runNativeDerivationScheduled(env);
       await runScopeProfileScheduled(env);

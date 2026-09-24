@@ -26,14 +26,14 @@ A passing helper does not close a workflow. Earlier evidence remains historical;
 | Document removal approvals | Implemented; local workflow verification (browser qualification pending) | Real approval hashes remain valid for unchanged Ideas |
 | Focused split/provenance | Implemented; local workflow verification (browser qualification pending) | Unrelated content/approvals retained through commit |
 | Container-title removal mentions | Implemented; local workflow verification (browser qualification pending) | Impact review and explicit repair |
-| Withdrawn/private-redacted source eligibility | Open | Authenticated Worker refresh → search; before dispatch and hydration denials |
+| Withdrawn/private-redacted source eligibility | Implemented; authenticated Worker lifecycle tests pass | Authenticated Worker refresh → search; before dispatch and hydration denials |
 | @Document constituents | Open | Exact selected roots, no adoption of later members |
 | Reviewed-Idea @ and / tools | Open | Browser input/review/ref authorization and undo |
 | Initial partial reuse | Open | Partial/whole choice, independent provenance, source unchanged |
 | Confirmed passage replacement | Open | Exact range/highlight, explicit acceptance, undo, stale rejection |
-| Account relevance/coverage | Open | 21+ Project permutations, no false definitive no-match |
-| Targeted invalidation | Open | Attention-only events do not invalidate; relevant mutations do |
-| Autonomous indexing/expiry/cleanup | Open | Durable continuation, expiry renewal, deletion/orphan lifecycle |
+| Account relevance/coverage | Implemented; multi-partition regression passes | 21+ Project permutations, no false definitive no-match |
+| Targeted invalidation | Implemented; actual SQLite triggers verified | Attention-only events do not invalidate; relevant mutations do |
+| Autonomous indexing/expiry/cleanup | Implemented; local scheduled and provider lifecycle tests pass | Durable continuation, expiry renewal, deletion/orphan lifecycle |
 | Normal navigation capability | Open | Authoritative feature capability; rollback retains old routes |
 | Operational metrics | Open | Coverage/queue age/failure/recovery without creative text |
 | Candidate migration/release package | Open | Current release sequence, preservation and rollback checks |
@@ -53,3 +53,11 @@ The controller/Worker workflow suite now completes eight delivery regressions th
 Current validation derives incomplete-content errors from the edited graph. Exact selected identities are checked independently of organizer instructions at interpretation and review/commit. Clearing the active plan preserves the last server-acknowledged correction baseline. Removal checks include Project/Document titles with explicit repair controls. Correction event bounds are recomputed; overlapping merged uses have disposition proof; unchanged Idea approval hashes exclude unrelated Document uses. Split proposals operate on the edited Idea only, retain its identity as a composition, preserve unrelated approval and add provenance to extracted children. Full rescue JSON includes source, graph, decisions and review state.
 
 These are injected-provider/local SQLite results. Semantic removal detection beyond exact identities/spans and human evaluation of split usefulness remain fidelity qualification, not automated proof of model behavior.
+
+## Retrieval and lifecycle repair
+
+All authorized partition pools are merged before the global 24-candidate hydration budget; relevance and deterministic identity ordering prevent early Projects from monopolizing it. Full pools and unindexed partitions disclose partial coverage. An equally ranked individual Idea wins over its incidental container. Canonical resource visibility and live private-payload checks exclude withdrawn/redacted/expired source content before indexing and hydration. Relevant event triggers are replaced on schema repair; attention-only events and derived snapshot insertion do not invalidate them.
+
+Durable jobs resume staged 32-record pages without additional typing or history reconstruction per page. Scheduled work rehydrates current principal, consent, permission epoch and custody; identity policies requiring an observed authentication context fail closed. Renewal replaces expiring protected bodies and resets semantic acknowledgement. Cleanup removes superseded/expired local bodies and calls the provider deletion endpoint for tombstones. Provider expiry sweeps delete lease-specific vector IDs without damaging renewed records.
+
+Evidence: `creation-search-delivery.test.mjs`, `creation-search-index.test.mjs`, `creation-provider-service.test.mjs`, `creation-corpus-search.test.mjs` and `creation-search-performance.test.mjs`; focused search/candidate qualification passed 43 tests. These use real local Worker/SQLite and injected learned providers. First-build history cost, deployed scheduled execution, async vector physical deletion and crash-created remote orphan cleanup still require deployed qualification.

@@ -2,7 +2,7 @@ import { CREATION_SEARCH_BUDGETS as B, type CreationIndexCoverage, type Creation
 import { decisionHash } from './still-decision-store.ts';
 
 export interface IndexedCreationIdentity { id: string; projectId: string; custody: string; kind: CreationSearchKind; revision: string; contentHash: string; }
-export interface CreationSearchHit extends IndexedCreationIdentity { rank: number; }
+export interface CreationSearchHit extends IndexedCreationIdentity { rank: number; relevance?:number; }
 export interface HydratedCreationCandidate extends IndexedCreationIdentity { title: string; text: string; locations: CreationSearchCandidate['locations']; }
 export interface CreationSearchIndex {
   lexical(partition: CreationSearchPartition, query: string, limit: number, signal: AbortSignal): Promise<CreationSearchHit[]>;
@@ -42,11 +42,6 @@ export interface CreationSearchInput {
 }
 const identity = (v: IndexedCreationIdentity) => JSON.stringify([v.custody, v.projectId, v.kind, v.id]);
 const same = (a: IndexedCreationIdentity, b: IndexedCreationIdentity) => identity(a) === identity(b) && a.revision === b.revision && a.contentHash === b.contentHash;
-function interleave<T>(groups: T[][], limit: number): T[] {
-  const out: T[] = [];
-  for (let i = 0; out.length < limit && groups.some(g => i < g.length); i++) for (const group of groups) if (group[i] && out.length < limit) out.push(group[i]);
-  return out;
-}
 /** All cache dimensions are explicit. Cache consumers must STILL freshly authorize returned IDs. */
 export function creationSearchCacheKey(input: CreationSearchInput) {
   return decisionHash({ principal: input.principal, scope: input.entryKind === 'project' ? 'account' : input.projectId, partitions: input.partitions, draft: input.request.draftId, draftRevision: input.request.draftRevision, queryRevision: input.request.queryRevision, query: input.request.query, semantic: input.learned?.modelVersion ?? null, rerank: input.reranker?.modelVersion ?? null, version: 'creation-search-v19-1' });
@@ -61,7 +56,7 @@ export async function searchCreationContent(input: CreationSearchInput): Promise
   const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(B.timeoutMs)]) : AbortSignal.timeout(B.timeoutMs);
   const partitions: CreationSearchPartition[] = [];
   const seenPartitions = new Set<string>();
-  for (const p of input.partitions.slice(0, B.partitions)) {
+  for (const p of [...input.partitions].sort((a,b)=>JSON.stringify([a.custody,a.projectId]).localeCompare(JSON.stringify([b.custody,b.projectId]))).slice(0, B.partitions)) {
     const key = JSON.stringify([p.custody,p.projectId]);
     if (seenPartitions.has(key)) continue;
     seenPartitions.add(key);
@@ -87,12 +82,13 @@ export async function searchCreationContent(input: CreationSearchInput): Promise
     return { p, lexical: scoped(lexical), semantic: scoped(semantic) };
   }));
   const union = new Map<string, { hit: CreationSearchHit; score: number; partition: CreationSearchPartition }>();
-  for (const pool of [interleave(groups.map(g => g.lexical), B.lexical), interleave(groups.map(g => g.semantic), B.semantic)]) pool.forEach((hit, rank) => {
-    const key = identity(hit), existing = union.get(key);
-    if (existing) existing.score += 1 / (61 + rank);
-    else union.set(key, { hit, score: 1 / (61 + rank), partition: groups.find(g => g.p.projectId === hit.projectId && g.p.custody === hit.custody)!.p });
-  });
-  const shortlisted = [...union.values()].sort((a,b) => b.score - a.score || identity(a.hit).localeCompare(identity(b.hit))).slice(0, B.hydrate);
+  for(const group of groups)for(const pool of [group.lexical,group.semantic])for(const hit of pool){
+    const key=identity(hit),existing=union.get(key),score=1/(61+Math.max(0,hit.rank));
+    if(existing)existing.score+=score;else union.set(key,{hit,score,partition:group.p});
+  }
+  const relevance=(hit:CreationSearchHit)=>Number.isFinite(hit.relevance)?hit.relevance!:0;
+  const shortlisted=[...union.values()].sort((a,b)=>relevance(b.hit)-relevance(a.hit)||b.score-a.score||identity(a.hit).localeCompare(identity(b.hit))).slice(0,B.hydrate);
+  if(union.size>B.hydrate||groups.some(g=>g.lexical.length===B.lexical||g.semantic.length===B.semantic)){partial=true;notices.add('Candidate coverage is limited; a more specific description can reveal other matches.');}
   const hydrated = await Promise.all(partitions.map(async p => {
     if (!await authority.authorize(input.principal, p)) { partial = true; return { p, candidates: [] }; }
     const requested = shortlisted.filter(v => v.partition === p).map(v => v.hit);
@@ -125,7 +121,7 @@ export async function searchCreationContent(input: CreationSearchInput): Promise
     return candidates.filter(c => lexicalKeys.has(identity(c))).map((candidate,rank) => ({candidate,p,rank,reason:candidate.text.slice(0,240)}));
   }));
   const accepted = new Set<string>();
-  for (const value of interleave(ranked.map(g => g.sort((a,b) => a.rank-b.rank)), B.hydrate)) {
+  for (const value of ranked.flat().sort((a,b)=>a.rank-b.rank||Number(b.candidate.kind==='idea')-Number(a.candidate.kind==='idea')||(union.get(identity(b.candidate))?.score??0)-(union.get(identity(a.candidate))?.score??0)||identity(a.candidate).localeCompare(identity(b.candidate)))) {
     if (response.candidates.length >= B.results) break;
     const {candidate,p,reason} = value, key = identity(candidate);
     if (accepted.has(key)) continue;
@@ -138,7 +134,7 @@ export async function searchCreationContent(input: CreationSearchInput): Promise
   }
   response.mode = semanticHealthy && lexicalHealthy ? 'hybrid' : lexicalHealthy ? 'lexical-only' : 'unavailable';
   response.partial = partial;
-  response.definitiveNoMatch = !response.candidates.length && !partial && semanticHealthy && lexicalHealthy && rankHealthy;
+  response.definitiveNoMatch = partitions.length>0 && !response.candidates.length && !partial && semanticHealthy && lexicalHealthy && rankHealthy;
   if (!input.partitionsComplete || input.partitions.length > B.partitions) notices.add('Account coverage is partial; some Project partitions were not searched.');
   response.notices = [...notices];
   return response;

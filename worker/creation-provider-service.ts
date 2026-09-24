@@ -68,7 +68,7 @@ async function search(request:Request,env:CreationProviderEnv,body:Record<string
     if(typeof body.query!=='string'||!body.query.trim()||bytes(body.query)>12000)return json({error:'query_invalid'},400);
     const vector=await embed(env,body.query,request.signal),result=await env.VECTORS.query(vector,{namespace,topK:20,returnMetadata:'all'});
     const current=await env.STATE.prepare("SELECT vector_id,source_id,revision,content_hash FROM creation_provider_vectors WHERE namespace=? AND model_version=? AND state='ready' AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND vector_id IN(SELECT value FROM json_each(?))").bind(namespace,model,JSON.stringify(result.matches.slice(0,20).map(v=>v.id))).all<{vector_id:string;source_id:string;revision:string;content_hash:string}>();
-    const hits=result.matches.slice(0,20).flatMap((match,rank)=>{const m=match.metadata,row=current.results.find(r=>r.vector_id===match.id);if(!row||!m||m.projectId!==p.projectId||m.custody!==p.custody||m.modelVersion!==model||m.sourceId!==row.source_id||m.revision!==row.revision||m.contentHash!==row.content_hash||!['project','document','idea'].includes(m.kind))return [];return [{id:row.source_id,projectId:p.projectId,custody:p.custody,kind:m.kind,revision:row.revision,contentHash:row.content_hash,rank}];});
+    const hits=result.matches.slice(0,20).flatMap((match,rank)=>{const m=match.metadata,row=current.results.find(r=>r.vector_id===match.id);if(!row||!m||m.projectId!==p.projectId||m.custody!==p.custody||m.modelVersion!==model||m.sourceId!==row.source_id||m.revision!==row.revision||m.contentHash!==row.content_hash||!['project','document','idea'].includes(m.kind))return [];return [{id:row.source_id,projectId:p.projectId,custody:p.custody,kind:m.kind,revision:row.revision,contentHash:row.content_hash,rank,relevance:Math.max(0,Math.min(1,match.score))}];});
     return json({representation:'learned-semantic',modelVersion:model,hits});
   }
   if(path==='/delete'){
@@ -94,6 +94,7 @@ async function search(request:Request,env:CreationProviderEnv,body:Record<string
   }
   id=await vectorIdentity(namespace,source.id,source.revision,source.contentHash,epoch);expected={id,namespace,source,model};
   const now=new Date().toISOString(),lease=crypto.randomUUID(),stale=new Date(Date.now()-120000).toISOString();
+  id=await hash([id,lease]);expected={id,namespace,source,model};
   const claim=await env.STATE.prepare("INSERT INTO creation_provider_vectors(vector_id,namespace,source_id,revision,content_hash,model_version,state,expires_at,updated_at,authority_version,lease_id) VALUES(?,?,?,?,?,?,'preparing',?,?,?,?) ON CONFLICT(namespace,source_id) DO UPDATE SET vector_id=excluded.vector_id,revision=excluded.revision,content_hash=excluded.content_hash,model_version=excluded.model_version,state='preparing',mutation_id=NULL,expires_at=excluded.expires_at,updated_at=excluded.updated_at,authority_version=excluded.authority_version,lease_id=excluded.lease_id WHERE excluded.authority_version>creation_provider_vectors.authority_version OR (excluded.authority_version=creation_provider_vectors.authority_version AND excluded.revision=creation_provider_vectors.revision AND excluded.content_hash=creation_provider_vectors.content_hash AND (creation_provider_vectors.state IN('ready','failed') OR (creation_provider_vectors.state IN('preparing','submitted') AND creation_provider_vectors.updated_at<?)))").bind(id,namespace,source.id,source.revision,source.contentHash,model,expiresAt,now,epoch,lease,stale).run();
   if(Number(claim.meta?.changes)!==1)return json({status:'indexing'},202);
   try{
@@ -138,4 +139,12 @@ export async function handleCreationProvider(request:Request,env:CreationProvide
   const path=new URL(request.url).pathname;if(!['/query','/upsert','/delete','/interpret'].includes(path))return json({error:'not_found'},404);
   try{const raw=await readBoundedRequest(request);request.signal.throwIfAborted();const body=object(JSON.parse(raw));if(body.schemaVersion!==1)return json({error:'schema_invalid'},400);return await(path==='/interpret'?organize(request,env,body):search(request,env,body,path));}catch(error){return error instanceof Error&&error.message==='payload_too_large'?json({error:'payload_too_large'},413):json({error:'provider_unavailable'},503);}
 }
-export default {fetch:handleCreationProvider};
+/** Expired vectors are denied immediately by query; native cleanup removes their external rows. */
+export async function sweepCreationProvider(env:CreationProviderEnv){
+ await env.STATE.prepare(CREATION_PROVIDER_SCHEMA).run();
+ const rows=await env.STATE.prepare("UPDATE creation_provider_vectors SET state='failed',updated_at=? WHERE vector_id IN(SELECT vector_id FROM creation_provider_vectors WHERE expires_at<=? AND state<>'deleted' LIMIT 64) RETURNING vector_id,lease_id").bind(new Date().toISOString(),new Date().toISOString()).all<{vector_id:string;lease_id:string}>();
+ if(rows.results.length)await env.VECTORS.deleteByIds(rows.results.map(r=>r.vector_id));
+ // Keep explicit tombstones so a delayed same-epoch upsert cannot recreate withdrawn data.
+ console.info(JSON.stringify({event:'creation-provider-expiry',removed:rows.results.length}));
+}
+export default {fetch:handleCreationProvider,scheduled:(_controller:unknown,env:CreationProviderEnv)=>sweepCreationProvider(env)};

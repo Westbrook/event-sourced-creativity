@@ -43,3 +43,9 @@ export function configuredCreationReranker(env:WorkerEnv):CreationIdentityRerank
     return selected.map((c,rank)=>{const answer=value.answers!['candidate_'+rank];if(answer?.type!=='noul'||!Number.isFinite(answer.noul)||answer.noul!<0||answer.noul!>1)throw new Error('creation_rerank_invalid');return {id:c.id,relevant:answer.noul!>=0.7,rank:1-answer.noul!,evidence:c.text.slice(0,240)};});
   }};
 }
+
+/** Deletion contains identities only; never model inference. The provider retains an epoch tombstone. */
+export async function deleteCreationLearnedSources(env:WorkerEnv,partition:CreationSearchPartition,ids:string[]){
+ if(!ids.length||!env.STILL_CREATION_SEARCH||!env.STILL_CREATION_SEARCH_MODEL||!creationProviderPermitted(env,partition))return false;
+ await boundedJSON(await env.STILL_CREATION_SEARCH.fetch(new Request('https://creation-search.internal/delete',{method:'POST',headers:{'content-type':'application/json',...(env.STILL_CREATION_PROVIDER_TOKEN?{'x-still-creation-provider-token':env.STILL_CREATION_PROVIDER_TOKEN}:{})},body:JSON.stringify({schemaVersion:1,representation:'learned-semantic',modelVersion:env.STILL_CREATION_SEARCH_MODEL,partition,ids:ids.slice(0,64)}),signal:AbortSignal.timeout(2500)})));return true;
+}
