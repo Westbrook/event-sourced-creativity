@@ -16,13 +16,14 @@ export async function prepareIncrementalProjection(env:WorkerEnv,l:IndexLease,a:
  const base=await env.DB.prepare('SELECT generation,head,owner_head FROM creation_index_snapshot_heads WHERE partition_key=?').bind(l.partition_key).first<{generation:number;head:number;owner_head:number}>();
  if(!base||base.generation>=l.generation||base.head>=head||base.owner_head>=ownerHead)return null;
  // Metadata only: values themselves remain in the normal bounded replay transport.
- // Even an unrelated structural owner event forces the established full replay.
+ // Named foreign removals have no membership side effects; other structural
+ // owner events still force the established full replay.
  const boundedField=(name:string)=>`CASE WHEN length(CAST(json_extract(COALESCE(secret.private_json,e.payload),'$.${name}') AS BLOB))<=4096 THEN json_extract(COALESCE(secret.private_json,e.payload),'$.${name}') END`;
  const delta=await env.DB.prepare(`SELECT e.event_id,e.type,e.sequence,json_type(COALESCE(secret.private_json,e.payload),'$.block_id') AS id_type,${boundedField('block_id')} AS id,${boundedField('project_id')} AS project_id,${boundedField('property_path')} AS path,json_type(COALESCE(secret.private_json,e.payload),'$.new_value') AS value_type,CASE WHEN ? IS NULL THEN 1 ELSE EXISTS(SELECT 1 FROM project_event_scopes s WHERE s.event_id=e.event_id AND s.project_access_id=? AND s.owner_user_id=?) END AS scoped FROM events e LEFT JOIN event_private_payloads secret ON secret.private_event_id=e.event_id AND secret.redacted_at IS NULL WHERE e.stream_id=? AND e.sequence>? AND e.sequence<=? AND ${authoring} ORDER BY e.sequence LIMIT 33`).bind(p.projectAccessId??null,p.projectAccessId??null,p.ownerId,a.owner.streamId,base.owner_head,ownerHead).all<{event_id:string;type:string;sequence:number;id_type:string;id:string;project_id:string;path:string;value_type:string;scoped:number}>();
- if(!delta.results.length||delta.results.length>32||delta.results.some(row=>row.type!=='BlockPropertyEdited'||row.id_type!=='text'||!row.id||typeof row.project_id!=='string'||!row.project_id||row.path!=='text'||row.value_type!=='text'))return null;
+ if(!delta.results.length||delta.results.length>32||delta.results.some(row=>row.id_type!=='text'||!row.id||typeof row.project_id!=='string'||!row.project_id||!(row.type==='BlockPropertyEdited'&&row.path==='text'&&row.value_type==='text'||row.type==='BlockRemoved'&&row.project_id!==p.projectId)))return null;
  const relevant=delta.results.filter(row=>row.project_id===p.projectId),foreignIds=[...new Set(delta.results.filter(row=>row.project_id!==p.projectId).map(row=>row.id))];
  if(!relevant.length||relevant.some(row=>!row.scoped))return null;
- // Explicit foreign text cannot alter membership, but Project claims are not
+ // Explicit foreign text/removal cannot alter other membership, but Project claims are not
  // identity authority: any overlap with this Project's known sources is unsafe.
  if(foreignIds.length&&await env.DB.prepare(`SELECT 1 WHERE EXISTS(SELECT 1 FROM creation_index_snapshots WHERE partition_key=? AND entity_id IN(SELECT 'blocks:'||value FROM json_each(?))) OR EXISTS(SELECT 1 FROM creation_search_records WHERE partition_key=? AND source_id IN(SELECT value FROM json_each(?)))`).bind(l.partition_key,JSON.stringify(foreignIds),l.partition_key,JSON.stringify(foreignIds)).first())return null;
  const ids=[...new Set(relevant.map(row=>row.id))],baseVersion=await decisionHash({partition:l.partition_key,indexVersion:base.generation});

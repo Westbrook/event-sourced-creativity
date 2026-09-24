@@ -28,6 +28,22 @@ function withdrawBlockRecords(side:string){
 /** Snapshots retain only currently eligible canonical entities. They are a guarded
  * optimization, never an authority source; history rewrites detach them immediately. */
 const snapshotPurge=(predicate:string)=>`DELETE FROM creation_index_snapshots WHERE partition_key IN(SELECT partition_key FROM creation_search_partitions WHERE ${predicate}); DELETE FROM creation_index_snapshot_heads WHERE partition_key IN(SELECT partition_key FROM creation_search_partitions WHERE ${predicate});`;
+/** A foreign removal changes only the exact named Block. Explicit routing is
+ * insufficient: former/current source identities and canonical snapshot IDs win. */
+function snapshotRemovalAffects(body:string){
+  const id=`json_extract(${body},'$.block_id')`;
+  return `(json_type(${body},'$.block_id') IS NOT 'text' OR ${id}='' OR json_type(${body},'$.project_id') IS NOT 'text' OR json_extract(${body},'$.project_id')='' OR project_id=json_extract(${body},'$.project_id') OR EXISTS(SELECT 1 FROM creation_search_records r WHERE r.partition_key=creation_search_partitions.partition_key AND r.source_id=${id}) OR EXISTS(SELECT 1 FROM creation_index_snapshots snapshot WHERE snapshot.partition_key=creation_search_partitions.partition_key AND snapshot.entity_id='blocks:'||${id}))`;
+}
+function snapshotSecretPredicate(side:string,op:string){
+  const body=`CASE WHEN json_valid(${side}.private_json) THEN ${side}.private_json ELSE '{}' END`,publicBody="CASE WHEN json_valid(e.payload) THEN e.payload ELSE '{}' END";
+  const owner=`(owner_id=${side}.owner_id OR 'creative:'||owner_id IN(SELECT stream_id FROM events WHERE event_id=${side}.private_event_id))`;
+  if(op!=='INSERT')return owner;
+  // New private removal evidence must agree completely with public identity and
+  // custody before unrelated anchors survive. Ambiguous/conflicting claims poison
+  // both claimed owners; updates/deletions above remain conservative.
+  const exact=`json_type(${body},'$.block_id')='text' AND json_extract(${body},'$.block_id')<>'' AND json_type(${body},'$.project_id')='text' AND json_extract(${body},'$.project_id')<>'' AND json_extract(${body},'$.block_id') IS json_extract(${publicBody},'$.block_id') AND json_extract(${body},'$.project_id') IS json_extract(${publicBody},'$.project_id') AND (${side}.project_id IS NULL OR ${side}.project_id=json_extract(${body},'$.project_id')) AND e.stream_id='creative:'||${side}.owner_id`;
+  return `${owner} AND EXISTS(SELECT 1 FROM events e WHERE e.event_id=${side}.private_event_id AND (EXISTS(SELECT 1 FROM creation_index_snapshot_heads h WHERE h.partition_key=creation_search_partitions.partition_key AND e.sequence<=h.owner_head) OR e.type='BlockRemoved' AND (COALESCE((${exact}),0)=0 OR ${snapshotRemovalAffects(body)})))`;
+}
 export const CREATION_SEARCH_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS creation_index_snapshots(partition_key TEXT NOT NULL,entity_id TEXT NOT NULL,kind TEXT NOT NULL,content_id TEXT NOT NULL,PRIMARY KEY(partition_key,entity_id))`,
   `CREATE INDEX IF NOT EXISTS creation_index_snapshot_content ON creation_index_snapshots(content_id)`,
@@ -48,8 +64,8 @@ export const CREATION_SEARCH_SCHEMA = [
       ...['events','secrets','resources','project_events'].map(kind=>`DROP TRIGGER IF EXISTS creation_search_${kind}_${op.toLowerCase()}`),
       ...['events','secrets','resources','project_events'].flatMap(kind=>[
         `DROP TRIGGER IF EXISTS creation_snapshot_${kind}_${op.toLowerCase()}`,
-        kind==='events'?`CREATE TRIGGER creation_snapshot_events_${op.toLowerCase()} AFTER ${op} ON events BEGIN ${sides.map(side=>snapshotPurge(`'creative:'||owner_id=${side}.stream_id AND (${op==='INSERT'?`${side}.type IN('BlockCreated','BlockRemoved','BlockRehomed','DocumentRemoved','ProjectStateChanged')`:'1'})`)).join(' ')} END`:
-        kind==='secrets'?`CREATE TRIGGER creation_snapshot_secrets_${op.toLowerCase()} AFTER ${op} ON event_private_payloads BEGIN ${sides.map(side=>snapshotPurge(`owner_id=${side}.owner_id AND (${op==='INSERT'?`EXISTS(SELECT 1 FROM events e JOIN creation_index_snapshot_heads h ON h.partition_key=creation_search_partitions.partition_key WHERE e.event_id=${side}.private_event_id AND e.sequence<=h.owner_head)`:'1'})`)).join(' ')} END`:
+        kind==='events'?`CREATE TRIGGER creation_snapshot_events_${op.toLowerCase()} AFTER ${op} ON events BEGIN ${sides.map(side=>snapshotPurge(`'creative:'||owner_id=${side}.stream_id AND (${op==='INSERT'?`${side}.type IN('BlockCreated','BlockRemoved','BlockRehomed','DocumentRemoved','ProjectStateChanged') AND (${side}.type<>'BlockRemoved' OR ${snapshotRemovalAffects(side+'.payload')})`:'1'})`)).join(' ')} END`:
+        kind==='secrets'?`CREATE TRIGGER creation_snapshot_secrets_${op.toLowerCase()} AFTER ${op} ON event_private_payloads BEGIN ${sides.map(side=>snapshotPurge(snapshotSecretPredicate(side,op))).join(' ')} END`:
         kind==='resources'?`CREATE TRIGGER creation_snapshot_resources_${op.toLowerCase()} AFTER ${op} ON project_resource_scopes BEGIN ${sides.map(side=>snapshotPurge(`project_access_id=${side}.project_access_id AND ${side}.resource_kind<>'content'`)).join(' ')} END`:
         `CREATE TRIGGER creation_snapshot_project_events_${op.toLowerCase()} AFTER ${op} ON project_event_scopes BEGIN ${sides.map(side=>snapshotPurge(`project_access_id=${side}.project_access_id AND (${op==='INSERT'?`EXISTS(SELECT 1 FROM events e JOIN creation_index_snapshot_heads h ON h.partition_key=creation_search_partitions.partition_key WHERE e.event_id=${side}.event_id AND (e.sequence<=h.owner_head OR ${side}.project_sequence<=h.head OR e.type<>'BlockPropertyEdited' OR json_extract(e.payload,'$.property_path') IS NOT 'text'))`:'1'})`)).join(' ')} END`,
       ]),

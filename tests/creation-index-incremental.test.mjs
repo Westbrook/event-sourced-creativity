@@ -47,3 +47,24 @@ test('an unrelated owner text delta does not force whole-Project replay, while a
  await author(f,'BlockPropertyEdited',{project_id:'foreign-project',block_id:'scene-reuse-direction',property_path:'text',new_value:'Exact identity follows canonical semantics.'});await drain(f,'projection',projectionPage);
  cursor=JSON.parse(f.sqlite.prepare('SELECT cursor FROM creation_index_work WHERE job_key=?').get('projection:'+p.partition_key).cursor);assert.equal(cursor.incremental,undefined);await drain(f,'materialize',materializePage);assert.equal(JSON.parse(records(f).find(row=>row.source_id==='scene-reuse-direction').content).text,'Exact identity follows canonical semantics.');
 });
+
+test('a 500-Idea Project stays incremental after unrelated withdrawal and publishes its next edit within five maintenance wakes',async t=>{
+ const f=await creationIndexFixture(t);await author(f,'ProjectCreated',{name:'Harbor'});
+ for(let i=0;i<500;i++)await author(f,'BlockCreated',{block_id:'large-'+i,scope:'library',type:'text',properties:{text:'Complete original source '+i}});
+ await author(f,'ProjectCreated',{project_id:'foreign',name:'Other'});await author(f,'BlockCreated',{project_id:'foreign',block_id:'foreign-withdrawn',scope:'library',type:'text',properties:{text:'Unique removed foreign prose: heliotrope estuary.'}});await f.ready();
+ const p=getPartition(f),before=f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_snapshots WHERE partition_key=?').get(p.partition_key).n;
+ await author(f,'BlockRemoved',{project_id:'foreign',block_id:'foreign-withdrawn'});assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_snapshots WHERE partition_key=?').get(p.partition_key).n,before,'unrelated completed anchor survives withdrawal');await f.ready();
+ await author(f,'BlockPropertyEdited',{block_id:'large-0',property_path:'text',new_value:'Supplied edit after another Project withdrew an Idea.'});
+ let wakes=0;for(;wakes<5;){await f.tick();wakes++;if(f.sqlite.prepare("SELECT 1 FROM creation_search_records r JOIN creation_index_sources s USING(partition_key,source_id) JOIN creation_search_partitions p USING(partition_key) JOIN private_content c ON c.content_id=r.content_id WHERE r.source_id='large-0' AND s.published=1 AND s.revision=r.revision AND s.generation=p.index_version AND p.invalidated=0 AND c.content LIKE '%Supplied edit after another Project%'").get())break;}
+ assert.ok(f.sqlite.prepare("SELECT 1 FROM creation_search_records r JOIN creation_index_sources s USING(partition_key,source_id) JOIN private_content c ON c.content_id=r.content_id WHERE r.source_id='large-0' AND s.published=1 AND s.revision=r.revision AND c.content LIKE '%Supplied edit after another Project%'").get(),'current edited Idea publishes within five bounded runner wakes');
+ const cursor=JSON.parse(f.sqlite.prepare('SELECT cursor FROM creation_index_work WHERE job_key=?').get('projection:'+p.partition_key).cursor);assert.deepEqual(cursor.incremental.ideaIds,['large-0']);t.diagnostic(JSON.stringify({ideas:500,wakes,retainedUnrelatedSnapshots:before}));
+ await f.ready();for(let i=0;i<5;i++)await f.tick();assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM private_content WHERE kind='creation-search-source' AND content LIKE '%Unique removed foreign prose%'").get().n,0,'preserved unrelated snapshots never retain the withdrawn foreign prose');
+ const incremental=records(f);f.sqlite.prepare('DELETE FROM creation_index_snapshot_heads WHERE partition_key=?').run(p.partition_key);await resumeCreationIndexPartition(f.env,p.partition_key);await drain(f,'projection',projectionPage);await drain(f,'materialize',materializePage);assert.deepEqual(records(f),incremental,'complete canonical replay agrees after unrelated withdrawal');
+});
+
+for(const claim of ['unknown','conflicting'])test(`a ${claim} withdrawal claim never preserves an unsafe incremental anchor`,async t=>{
+ const f=await creationIndexFixture(t);await author(f,'ProjectCreated',{name:'Harbor'});await f.ready();
+ await appendAuditEvent(f.env,f.streamId,'user','BlockRemoved',{...(claim==='conflicting'?{project_id:'foreign'}:{}),block_id:'scene-reuse-direction'});
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_snapshot_heads WHERE partition_key=?').get(getPartition(f).partition_key).n,0);await author(f,'BlockPropertyEdited',{block_id:'scene-reuse-direction',property_path:'text',new_value:'A correction cannot restore removed content.'});await drain(f,'projection',projectionPage);
+ const p=getPartition(f),cursor=JSON.parse(f.sqlite.prepare('SELECT cursor FROM creation_index_work WHERE job_key=?').get('projection:'+p.partition_key).cursor);assert.equal(cursor.incremental,undefined);await drain(f,'materialize',materializePage);assert.equal(f.sqlite.prepare("SELECT tombstone FROM creation_search_records WHERE source_id='scene-reuse-direction'").get().tombstone,1);
+});
