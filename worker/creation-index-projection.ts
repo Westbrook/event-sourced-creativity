@@ -1,3 +1,5 @@
+import {carryIncrementalVectors} from './creation-index-incremental-vectors.ts';
+import {prepareIncrementalProjection,incrementalMaterialization,captureCreationSnapshots,type CreationProjectionCursor} from './creation-index-incremental.ts';
 import {BLOCK_TYPES} from '../src/model/block-types.ts';
 import {prepareProjectionDeltaStage} from './creation-index-projection-stage.ts';
 import {prepareCreationProjectionRouting,prepareCreationWithdrawalOverlay,creationProjectionRoutingPredicate} from './creation-index-routing.ts';
@@ -41,11 +43,15 @@ function withdrawnSkeleton(block:CreativeBlock):CreativeBlock {
 }
 export async function projectionPage(env:WorkerEnv,l:IndexLease){
  const writeEnv=nativePrivateContentCleanupEnvironment(env);
- const {partition:p,owner,guard:authorityGuard}=await indexAuthority(env,l.partition_key);if(Number(p.indexVersion)!==l.generation)throw new Error('creation_lease_lost');
+ const authority=await indexAuthority(env,l.partition_key),{partition:p,owner,guard:authorityGuard}=authority;if(Number(p.indexVersion)!==l.generation)throw new Error('creation_lease_lost');
  const bodyGuard=privateIndexBodyGuard(p);
- const cursor=l.cursor?JSON.parse(l.cursor) as {after:number;head:number;routingAfter?:number;routeComplete?:boolean;ownerHead?:number;withdrawalAfter?:number;withdrawalComplete?:boolean;phase?:string}:null;
+ let cursor=l.cursor?JSON.parse(l.cursor) as CreationProjectionCursor:null;
  const head=cursor?.head??Number((await env.DB.prepare(p.projectAccessId?'SELECT COALESCE(MAX(project_sequence),0) AS n FROM project_event_scopes WHERE project_access_id=?':'SELECT COALESCE(MAX(sequence),0) AS n FROM events WHERE stream_id=?').bind(p.projectAccessId??owner.streamId).first<{n:number}>())?.n??0);
  const ownerHead=p.projectAccessId?(cursor?.ownerHead??Number((await env.DB.prepare('SELECT COALESCE(MAX(sequence),0) AS n FROM events WHERE stream_id=?').bind(owner.streamId).first<{n:number}>())?.n??0)):head;
+ if(!cursor){
+  cursor=await prepareIncrementalProjection(env,l,authority,head,ownerHead);
+  if(!cursor)await env.DB.batch([indexAuthorityFence(env,authorityGuard),env.DB.prepare(`UPDATE creation_index_objects SET state='retired',erase_due=COALESCE(erase_due,unixepoch()+300) WHERE partition_key=? AND state='suspended' AND ${leaseGuard} AND EXISTS(SELECT 1 FROM creation_search_partitions WHERE partition_key=? AND index_version=?)`).bind(l.partition_key,...leaseBindings(l),l.partition_key,l.generation),env.DB.prepare('DELETE FROM creation_index_fences')]);
+ }
  // Complete a durable metadata-only routing pass before skipping any history.
  if(!cursor?.routeComplete){
   const route=await prepareCreationProjectionRouting(env,l,{head,after:cursor?.routingAfter??0,projectId:p.projectId,streamId:owner.streamId,projectAccessId:p.projectAccessId,ownerId:p.ownerId});
@@ -124,8 +130,14 @@ export async function materializePage(env:WorkerEnv,l:IndexLease){
  const {partition:p,guard:authorityGuard}=await indexAuthority(env,l.partition_key);if(Number(p.indexVersion)!==l.generation)throw new Error('creation_lease_lost');
  const bodyGuard=privateIndexBodyGuard(p);
  const valid=await env.DB.prepare(`SELECT 1 FROM creation_index_projection e LEFT JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND COALESCE((${bodyGuard.sql}),0)=0 LIMIT 1`).bind(l.partition_key,l.generation,...bodyGuard.bindings).first();if(valid)throw new CreationProviderError('index_checkpoint_expired',0,true);
- const page=await env.DB.prepare(`SELECT e.entity_id,e.kind,c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id AND c.redacted_at IS NULL AND c.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE e.partition_key=? AND e.generation=? AND e.entity_id>? AND e.kind IN('projects','documents','blocks') AND CASE WHEN e.kind='projects' THEN json_extract(c.content,'$.id') ELSE json_extract(c.content,'$.projectId') END=? AND ${bodyGuard.sql} ORDER BY e.entity_id LIMIT 16`).bind(l.partition_key,l.generation,l.cursor,p.projectId,...bodyGuard.bindings).all<{entity_id:string;kind:string;content:string}>();
+ const incremental=await incrementalMaterialization(env,l);
+ const page=await env.DB.prepare(`SELECT e.entity_id,e.kind,c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id AND c.redacted_at IS NULL AND c.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE e.partition_key=? AND e.generation=? AND e.entity_id>? AND e.kind IN('projects','documents','blocks') AND (? IS NULL OR e.entity_id IN(SELECT value FROM json_each(?))) AND CASE WHEN e.kind='projects' THEN json_extract(c.content,'$.id') ELSE json_extract(c.content,'$.projectId') END=? AND ${bodyGuard.sql} ORDER BY e.entity_id LIMIT 16`).bind(l.partition_key,l.generation,l.cursor,incremental?JSON.stringify(incremental.materializeIds):null,incremental?JSON.stringify(incremental.materializeIds):null,p.projectId,...bodyGuard.bindings).all<{entity_id:string;kind:string;content:string}>();
  const version=await decisionHash({partition:l.partition_key,indexVersion:l.generation}),index=new D1CreationSearchIndex(env.DB),statements:D1PreparedStatement[]=[indexAuthorityFence(env,authorityGuard),env.DB.prepare(`INSERT INTO creation_index_fences(id) VALUES(CASE WHEN NOT EXISTS(SELECT 1 FROM creation_index_projection e LEFT JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND COALESCE((${bodyGuard.sql}),0)=0) THEN 1 ELSE NULL END)`).bind(l.partition_key,l.generation,...bodyGuard.bindings)];
+ if(incremental){
+  statements.push(env.DB.prepare(`INSERT INTO creation_index_fences(id) VALUES(CASE WHEN EXISTS(SELECT 1 FROM creation_index_snapshot_heads WHERE partition_key=? AND generation=? AND head=? AND owner_head=?) THEN 1 ELSE NULL END)`).bind(l.partition_key,incremental.baseGeneration,incremental.baseHead,incremental.baseOwnerHead));
+  // Unchanged records retain their exact body and original retention deadline.
+  statements.push(env.DB.prepare(`INSERT INTO creation_index_fences(id) VALUES(CASE WHEN NOT EXISTS(SELECT 1 FROM creation_search_records r LEFT JOIN private_content c ON c.content_id=r.content_id WHERE r.partition_key=? AND r.tombstone=0 AND COALESCE((${bodyGuard.sql}),0)=0) THEN 1 ELSE NULL END)`).bind(l.partition_key,...bodyGuard.bindings),env.DB.prepare('UPDATE creation_search_records SET source_version=? WHERE partition_key=? AND tombstone=0 AND source_version=?').bind(version,l.partition_key,incremental.baseVersion));
+ }
  const scope=p.projectAccessId?{organizationId:p.organizationId!,projectAccessId:p.projectAccessId,projectId:p.projectId,ownerUserId:p.ownerId,actorUserId:p.ownerId}:undefined;
  for(const item of page.results){const v=JSON.parse(item.content);if((item.kind==='projects'?v.id:v.projectId)!==p.projectId||v.removed)continue;
   const kind=item.kind==='blocks'?'idea':item.kind==='documents'?'document':'project';
@@ -151,6 +163,12 @@ export async function materializePage(env:WorkerEnv,l:IndexLease){
  }
  const done=page.results.length<16;
  if(done){
+  const projection=await env.DB.prepare("SELECT cursor FROM creation_index_work WHERE job_key=? AND generation=? AND state='done'").bind('projection:'+l.partition_key,l.generation).first<{cursor:string}>();
+  const completed=projection?.cursor?JSON.parse(projection.cursor) as CreationProjectionCursor:null;
+  if(!completed)throw new CreationProviderError('index_checkpoint_missing',0,true);
+  if(incremental)statements.push(...carryIncrementalVectors(env,l,p,version));
+  statements.push(...captureCreationSnapshots(env,l,p.projectId,version,completed.head,completed.ownerHead??completed.head));
+  if(incremental)for(const id of incremental.ideaIds)statements.push(env.DB.prepare(`INSERT OR REPLACE INTO creation_index_work(job_key,kind,partition_key,generation,cursor,priority) SELECT ?,'embedding',?,?,?,1 WHERE ${leaseGuard}`).bind('embedding-target:'+l.partition_key+':'+id,l.partition_key,l.generation,id,...leaseBindings(l)));
   // Checkpoints are private replay scratch, not a retained copy of withdrawn prose.
   // All source/container reads for this generation have finished. Future edits,
   // restores and renewal start a fresh generation from canonical authoring history.

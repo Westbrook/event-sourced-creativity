@@ -4,11 +4,17 @@ CREATE TABLE IF NOT EXISTS creation_index_replay_skeletons(partition_key TEXT NO
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS creation_index_enrollments(custody TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,policy_epoch TEXT NOT NULL,expires INTEGER NOT NULL,daily_token_limit INTEGER NOT NULL CHECK(daily_token_limit>0));
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_enrollment_inserted AFTER INSERT ON creation_index_enrollments BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE custody=NEW.custody; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_enrollment_inserted;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_enrollment_changed AFTER UPDATE ON creation_index_enrollments BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE custody=NEW.custody OR custody=OLD.custody; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_enrollment_inserted AFTER INSERT ON creation_index_enrollments BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE custody=NEW.custody; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_enrollment_deleted AFTER DELETE ON creation_index_enrollments BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE custody=OLD.custody; END;
+DROP TRIGGER IF EXISTS creation_index_enrollment_changed;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_enrollment_changed AFTER UPDATE ON creation_index_enrollments BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE custody=NEW.custody OR custody=OLD.custody; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_enrollment_deleted;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_enrollment_deleted AFTER DELETE ON creation_index_enrollments BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE custody=OLD.custody; END;
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS creation_index_fences(id INTEGER NOT NULL CHECK(id=1));
 --> statement-breakpoint
@@ -46,63 +52,117 @@ CREATE TABLE IF NOT EXISTS creation_index_attempts(attempt_id TEXT PRIMARY KEY,j
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_index_admit_events_insert AFTER INSERT ON events WHEN substr(NEW.stream_id,1,9)='creative:' AND (substr(NEW.type,1,5)='Block' OR substr(NEW.type,1,8)='Document' OR substr(NEW.type,1,7)='Project') AND NEW.type NOT IN('ProjectOpened','DocumentOpened') BEGIN INSERT INTO creation_index_discovery(scope_key) VALUES(NEW.stream_id) ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_projects_insert AFTER INSERT ON organization_projects BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_organization_projects_insert;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_memberships_insert AFTER INSERT ON organization_memberships BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_projects_insert AFTER INSERT ON organization_projects BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_memberships_insert AFTER INSERT ON project_memberships BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_organization_memberships_insert;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_migration_states_insert AFTER INSERT ON project_migration_states BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_memberships_insert AFTER INSERT ON organization_memberships BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organizations_insert AFTER INSERT ON organizations BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_project_memberships_insert;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_capability_grants_insert AFTER INSERT ON capability_grants BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_memberships_insert AFTER INSERT ON project_memberships BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_security_policies_insert AFTER INSERT ON organization_security_policies BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_project_migration_states_insert;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_identity_bindings_insert AFTER INSERT ON organization_identity_bindings BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_migration_states_insert AFTER INSERT ON project_migration_states BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_retention_policies_insert AFTER INSERT ON organization_retention_policies BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_organizations_insert;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organizations_insert AFTER INSERT ON organizations BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_capability_grants_insert;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_capability_grants_insert AFTER INSERT ON capability_grants BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_organization_security_policies_insert;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_security_policies_insert AFTER INSERT ON organization_security_policies BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_organization_identity_bindings_insert;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_identity_bindings_insert AFTER INSERT ON organization_identity_bindings BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_organization_retention_policies_insert;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_retention_policies_insert AFTER INSERT ON organization_retention_policies BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_index_admit_events_update AFTER UPDATE ON events WHEN substr(NEW.stream_id,1,9)='creative:' AND (substr(NEW.type,1,5)='Block' OR substr(NEW.type,1,8)='Document' OR substr(NEW.type,1,7)='Project') AND NEW.type NOT IN('ProjectOpened','DocumentOpened') BEGIN INSERT INTO creation_index_discovery(scope_key) VALUES(NEW.stream_id) ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_projects_update AFTER UPDATE ON organization_projects BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_organization_projects_update;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_memberships_update AFTER UPDATE ON organization_memberships BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_projects_update AFTER UPDATE ON organization_projects BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_memberships_update AFTER UPDATE ON project_memberships BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_organization_memberships_update;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_migration_states_update AFTER UPDATE ON project_migration_states BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_memberships_update AFTER UPDATE ON organization_memberships BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organizations_update AFTER UPDATE ON organizations BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_project_memberships_update;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_capability_grants_update AFTER UPDATE ON capability_grants BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_memberships_update AFTER UPDATE ON project_memberships BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_security_policies_update AFTER UPDATE ON organization_security_policies BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_project_migration_states_update;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_identity_bindings_update AFTER UPDATE ON organization_identity_bindings BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_migration_states_update AFTER UPDATE ON project_migration_states WHEN NOT(NEW.project_access_id IS OLD.project_access_id AND NEW.organization_id IS OLD.organization_id AND NEW.owner_user_id IS OLD.owner_user_id AND NEW.status='active' AND OLD.status='active' AND typeof(NEW.last_owner_sequence)='integer' AND typeof(OLD.last_owner_sequence)='integer' AND OLD.last_owner_sequence>=0 AND NEW.last_owner_sequence>=OLD.last_owner_sequence) BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_retention_policies_update AFTER UPDATE ON organization_retention_policies BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_organizations_update;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organizations_update AFTER UPDATE ON organizations BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_capability_grants_update;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_capability_grants_update AFTER UPDATE ON capability_grants BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_organization_security_policies_update;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_security_policies_update AFTER UPDATE ON organization_security_policies BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_organization_identity_bindings_update;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_identity_bindings_update AFTER UPDATE ON organization_identity_bindings BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_organization_retention_policies_update;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_retention_policies_update AFTER UPDATE ON organization_retention_policies BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_index_admit_events_delete AFTER DELETE ON events WHEN substr(OLD.stream_id,1,9)='creative:' AND (substr(OLD.type,1,5)='Block' OR substr(OLD.type,1,8)='Document' OR substr(OLD.type,1,7)='Project') AND OLD.type NOT IN('ProjectOpened','DocumentOpened') BEGIN INSERT INTO creation_index_discovery(scope_key) VALUES(OLD.stream_id) ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_projects_delete AFTER DELETE ON organization_projects BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_organization_projects_delete;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_memberships_delete AFTER DELETE ON organization_memberships BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_projects_delete AFTER DELETE ON organization_projects BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_memberships_delete AFTER DELETE ON project_memberships BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_organization_memberships_delete;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_migration_states_delete AFTER DELETE ON project_migration_states BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_memberships_delete AFTER DELETE ON organization_memberships BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organizations_delete AFTER DELETE ON organizations BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_project_memberships_delete;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_capability_grants_delete AFTER DELETE ON capability_grants BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_memberships_delete AFTER DELETE ON project_memberships BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_security_policies_delete AFTER DELETE ON organization_security_policies BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_project_migration_states_delete;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_identity_bindings_delete AFTER DELETE ON organization_identity_bindings BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_project_migration_states_delete AFTER DELETE ON project_migration_states BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_retention_policies_delete AFTER DELETE ON organization_retention_policies BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+DROP TRIGGER IF EXISTS creation_index_policy_organizations_delete;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organizations_delete AFTER DELETE ON organizations BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_capability_grants_delete;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_capability_grants_delete AFTER DELETE ON capability_grants BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_organization_security_policies_delete;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_security_policies_delete AFTER DELETE ON organization_security_policies BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_organization_identity_bindings_delete;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_identity_bindings_delete AFTER DELETE ON organization_identity_bindings BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_policy_organization_retention_policies_delete;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_policy_organization_retention_policies_delete AFTER DELETE ON organization_retention_policies BEGIN DELETE FROM creation_index_snapshots; DELETE FROM creation_index_snapshot_heads; UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_index_withdrawal_replay_insert AFTER INSERT ON events BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE 'creative:'||owner_id=NEW.stream_id AND project_id<>json_extract(NEW.payload,'$.project_id') AND EXISTS(SELECT 1 FROM creation_index_work w WHERE w.partition_key=creation_search_partitions.partition_key AND w.generation=creation_search_partitions.index_version AND w.kind IN('projection','materialize') AND w.state IN('ready','running','held') AND (NEW.type='BlockRemoved' OR NEW.type='BlockCreated' AND (w.kind='projection' AND COALESCE(json_extract(NULLIF(w.cursor,''),'$.routeComplete'),0)=0 OR COALESCE(json_type(NEW.payload,'$.block_id'),'missing')<>'text' OR EXISTS(SELECT 1 FROM creation_index_block_routes route WHERE route.partition_key=w.partition_key AND route.generation=w.generation AND route.block_id=CASE json_type(NEW.payload,'$.block_id') WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE COALESCE(CAST(json_extract(NEW.payload,'$.block_id') AS TEXT),'undefined') END)))); END;
 --> statement-breakpoint
@@ -114,12 +174,16 @@ CREATE TRIGGER IF NOT EXISTS creation_index_private_replay_update AFTER UPDATE O
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_index_private_replay_delete AFTER DELETE ON event_private_payloads BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE owner_id IN(OLD.owner_id) AND EXISTS(SELECT 1 FROM creation_index_work w WHERE w.partition_key=creation_search_partitions.partition_key AND w.generation=creation_search_partitions.index_version AND w.kind IN('projection','materialize') AND w.state IN('ready','running','held')); END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_owner_changed AFTER UPDATE OF role,email,consent_version,consented_at ON users WHEN NEW.role IS NOT OLD.role OR NEW.email IS NOT OLD.email OR NEW.consent_version IS NOT OLD.consent_version OR NEW.consented_at IS NOT OLD.consented_at BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE owner_id=NEW.user_id; END;
+DROP TRIGGER IF EXISTS creation_index_owner_changed;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_owner_deleted AFTER DELETE ON users BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE owner_id=OLD.user_id; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_owner_changed AFTER UPDATE OF role,email,consent_version,consented_at ON users WHEN NEW.role IS NOT OLD.role OR NEW.email IS NOT OLD.email OR NEW.consent_version IS NOT OLD.consent_version OR NEW.consented_at IS NOT OLD.consented_at BEGIN DELETE FROM creation_index_snapshots WHERE partition_key IN(SELECT partition_key FROM creation_search_partitions WHERE owner_id=OLD.user_id); DELETE FROM creation_index_snapshot_heads WHERE partition_key IN(SELECT partition_key FROM creation_search_partitions WHERE owner_id=OLD.user_id); UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE owner_id=NEW.user_id; END;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS creation_index_owner_deleted;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_owner_deleted AFTER DELETE ON users BEGIN DELETE FROM creation_index_snapshots WHERE partition_key IN(SELECT partition_key FROM creation_search_partitions WHERE owner_id=OLD.user_id); DELETE FROM creation_index_snapshot_heads WHERE partition_key IN(SELECT partition_key FROM creation_search_partitions WHERE owner_id=OLD.user_id); UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE owner_id=OLD.user_id; END;
 --> statement-breakpoint
 DROP TRIGGER IF EXISTS creation_index_partition_changed;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_partition_changed AFTER UPDATE OF index_version ON creation_search_partitions WHEN NEW.index_version<>OLD.index_version BEGIN INSERT INTO creation_index_work(job_key,kind,partition_key,generation,priority) VALUES('projection:'||NEW.partition_key,'projection',NEW.partition_key,NEW.index_version,5) ON CONFLICT(job_key) DO UPDATE SET generation=excluded.generation,cursor='',state='ready',due=0,attempts=0,error_class=NULL,lease_token=NULL,lease_until=0; UPDATE creation_index_objects SET state='retired',erase_due=MIN(COALESCE(erase_due,unixepoch()+900),unixepoch()+900) WHERE partition_key=NEW.partition_key AND state<>'erased'; UPDATE creation_index_sources SET published=0 WHERE partition_key=NEW.partition_key; UPDATE creation_index_work SET state='done',lease_token=NULL,lease_until=0,error_class='generation_superseded' WHERE partition_key=NEW.partition_key AND generation<>NEW.index_version; END;
+CREATE TRIGGER IF NOT EXISTS creation_index_partition_changed AFTER UPDATE OF index_version ON creation_search_partitions WHEN NEW.index_version<>OLD.index_version BEGIN INSERT INTO creation_index_work(job_key,kind,partition_key,generation,priority) VALUES('projection:'||NEW.partition_key,'projection',NEW.partition_key,NEW.index_version,5) ON CONFLICT(job_key) DO UPDATE SET generation=excluded.generation,cursor='',state='ready',due=0,attempts=0,error_class=NULL,lease_token=NULL,lease_until=0; UPDATE creation_index_objects SET state=CASE WHEN state IN('active','suspended') AND EXISTS(SELECT 1 FROM creation_index_snapshot_heads h WHERE h.partition_key=NEW.partition_key) THEN 'suspended' ELSE 'retired' END,erase_due=MIN(COALESCE(erase_due,unixepoch()+300),unixepoch()+300) WHERE partition_key=NEW.partition_key AND state<>'erased'; UPDATE creation_index_sources SET published=0 WHERE partition_key=NEW.partition_key; UPDATE creation_index_work SET state='done',lease_token=NULL,lease_until=0,error_class='generation_superseded' WHERE partition_key=NEW.partition_key AND generation<>NEW.index_version; END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_index_partition_insert AFTER INSERT ON creation_search_partitions BEGIN INSERT OR IGNORE INTO creation_index_work(job_key,kind,partition_key,generation,priority) VALUES('projection:'||NEW.partition_key,'projection',NEW.partition_key,NEW.index_version,5); END;

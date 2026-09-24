@@ -4,10 +4,19 @@ import {readFileSync, writeFileSync} from 'node:fs';
 import {createSceneCostFixture} from './helpers/scene-cost-fixture.mjs';
 import {creationSchemaManifest, authoredSnapshot, schemaSnapshot, sha256, rehearseCandidateStatements} from '../scripts/still-qualification-schema.mjs';
 import {releaseMigrationPolicy} from '../build/release-migrations.ts';
+import {CREATION_SEARCH_SCHEMA} from '../worker/creation-search-index.ts';
+import {CREATION_INDEX_SCHEMA} from '../worker/creation-index-schema.ts';
 
 const manifest = await creationSchemaManifest();
 const artifact = {kind:'local-synthetic-SQLite-rehearsal', startedAt:new Date().toISOString(), nodeVersion:process.version, hosted:false, productionSchemaEquivalent:false, manifestSha256:manifest.manifestSha256, command:'STILL_SCHEMA_REHEARSAL_OUTPUT=<receipt.json> node --import tsx --test tests/creation-hosted-schema.test.mjs', cases:[]};
 test.after(() => {artifact.endedAt=new Date().toISOString(); if (process.env.STILL_SCHEMA_REHEARSAL_OUTPUT) writeFileSync(process.env.STILL_SCHEMA_REHEARSAL_OUTPUT, JSON.stringify(artifact, null, 2)+'\n');});
+
+test('generated search and semantic candidates equal their current runtime schemas', () => {
+  for(const [path,schema] of [['0075_still_creation_search.sql',CREATION_SEARCH_SCHEMA],['still_semantic_index.sql',CREATION_INDEX_SCHEMA]]){
+    const sql=readFileSync(new URL('../drizzle/candidates/'+path,import.meta.url),'utf8');
+    assert.equal(sha256(sql.replace(/^--[^\n]*\n/gm,'').trim()),sha256(schema.map(s=>s+';').join('\n').trim()),path);
+  }
+});
 
 test('hashed additive manifest repeats exactly and preserves authored rows, constraints and ordinary routes', async t => {
   const f = await createSceneCostFixture(3, 'visual', {shared:true}); t.after(() => f.close());
@@ -83,7 +92,7 @@ test('repeat installation upgrades the existing invalidation trigger without ext
   const f = await createSceneCostFixture(1); t.after(() => f.close());
   rehearseCandidateStatements(f.sqlite,manifest);
   const repaired = f.sqlite.prepare("SELECT sql FROM sqlite_master WHERE name='creation_index_partition_changed'").get().sql;
-  const old = repaired.replace('MIN(COALESCE(erase_due,unixepoch()+900),unixepoch()+900)','unixepoch()+900');
+  const old = repaired.replace('MIN(COALESCE(erase_due,unixepoch()+300),unixepoch()+300)','unixepoch()+900');
   assert.notEqual(old,repaired);
   f.sqlite.exec('DROP TRIGGER creation_index_partition_changed');
   f.sqlite.exec(old);
@@ -94,5 +103,35 @@ test('repeat installation upgrades the existing invalidation trigger without ext
   const deadline=f.sqlite.prepare("SELECT erase_due FROM creation_index_objects WHERE object_key='synthetic-object'").get().erase_due;
   for(let i=0;i<3;i++)f.sqlite.exec("UPDATE creation_search_partitions SET index_version=index_version+1 WHERE partition_key='deadline'");
   assert.equal(f.sqlite.prepare("SELECT erase_due FROM creation_index_objects WHERE object_key='synthetic-object'").get().erase_due,deadline);
-  artifact.triggerUpgrade={existingTriggerReplaced:true,repeatedInvalidationCount:3,originalErasureDeadline:deadline,observedErasureDeadline:deadline};
+  f.sqlite.exec("INSERT INTO creation_index_snapshot_heads VALUES('deadline',3,1,1)");
+  f.sqlite.exec("INSERT INTO creation_index_objects(object_key,partition_key,generation,source_id,revision,representation,checksum,byte_count,passages_json,state,lease_token,write_until,expires) VALUES('suspended-object','deadline',3,'s2','r','synthetic','checksum',0,'[]','active','lease',0,unixepoch()+1000)");
+  f.sqlite.exec("UPDATE creation_search_partitions SET index_version=index_version+1 WHERE partition_key='deadline'");
+  const suspended=f.sqlite.prepare("SELECT state,erase_due,unixepoch() now FROM creation_index_objects WHERE object_key='suspended-object'").get();
+  assert.equal(suspended.state,'suspended');assert.ok(suspended.erase_due<=suspended.now+300);
+  f.sqlite.exec("DELETE FROM creation_index_snapshot_heads WHERE partition_key='deadline'");
+  f.sqlite.exec("UPDATE creation_search_partitions SET index_version=index_version+1 WHERE partition_key='deadline'");
+  const retired=f.sqlite.prepare("SELECT state,erase_due FROM creation_index_objects WHERE object_key='suspended-object'").get();
+  assert.equal(retired.state,'retired');assert.equal(retired.erase_due,suspended.erase_due);
+  artifact.triggerUpgrade={existingTriggerReplaced:true,repeatedInvalidationCount:3,originalErasureDeadline:deadline,observedErasureDeadline:deadline,snapshotObjectState:suspended.state,snapshotDeadlineSeconds:300,afterSnapshotPurgeState:retired.state,deadlinePreserved:true};
+});
+
+test('repeat installation replaces pre-snapshot authority triggers and revocation purges retained snapshots', async t => {
+  const f=await createSceneCostFixture(1);t.after(()=>f.close());
+  rehearseCandidateStatements(f.sqlite,manifest);
+  const names=['creation_index_enrollment_inserted','creation_index_enrollment_changed','creation_index_enrollment_deleted','creation_index_policy_organization_retention_policies_update','creation_index_owner_changed','creation_index_owner_deleted'];
+  const expected=names.map(name=>({name,sql:f.sqlite.prepare('SELECT sql FROM sqlite_master WHERE name=?').get(name).sql}));
+  for(const {name,sql} of expected){
+    const old=sql.replace(/DELETE FROM creation_index_snapshot(?:s|_heads)[^;]*;\s*/g,'');
+    assert.notEqual(old,sql);f.sqlite.exec('DROP TRIGGER '+name);f.sqlite.exec(old);
+  }
+  rehearseCandidateStatements(f.sqlite,manifest);
+  for(const {name,sql} of expected) assert.equal(f.sqlite.prepare('SELECT sql FROM sqlite_master WHERE name=?').get(name).sql,sql,name);
+  f.sqlite.exec("INSERT INTO creation_search_partitions(partition_key,custody,project_id,owner_id,updated_at) VALUES('snapshot-revocation','snapshot-custody','p','u','2026-09-24')");
+  f.sqlite.exec("INSERT INTO creation_index_enrollments VALUES('snapshot-custody',1,'p',9999999999,1000)");
+  f.sqlite.exec("INSERT INTO creation_index_snapshot_heads VALUES('snapshot-revocation',0,1,1)");
+  f.sqlite.exec("INSERT INTO creation_index_snapshots VALUES('snapshot-revocation','b','idea','synthetic-pointer')");
+  f.sqlite.exec("UPDATE creation_index_enrollments SET enabled=0 WHERE custody='snapshot-custody'");
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM creation_index_snapshot_heads WHERE partition_key='snapshot-revocation'").get().n,0);
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM creation_index_snapshots WHERE partition_key='snapshot-revocation'").get().n,0);
+  artifact.authorityTriggerUpgrade={replaced:names,revokedSnapshotHeads:0,revokedSnapshotPointers:0};
 });
