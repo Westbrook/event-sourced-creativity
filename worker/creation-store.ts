@@ -9,7 +9,7 @@ export type CreationDestination = { entryKind: 'project' | 'document' | 'idea'; 
 /** This guard is resolved by the server caller, never accepted from a request body. */
 export type CreationStoreAuthority = { actorUserId: string; scopeKey: string; destination: CreationDestination; projectScope?: ProjectExecutionScope; guard: BudgetReservationGuard };
 export type StoredCreationDraft<T = Record<string, unknown>> = {
-  draftId: string; revision: number; state: 'active' | 'discarded' | 'applied'; scopeKey: string;
+  contentId: string; draftId: string; revision: number; state: 'active' | 'discarded' | 'applied'; scopeKey: string;
   destination: CreationDestination; expiresAt: string; operationId: string | null; receiptId: string | null; payload: T;
 };
 export class CreationStoreError extends Error {
@@ -65,12 +65,12 @@ function destinationKey(authority: CreationStoreAuthority) {
     throw new CreationStoreError('creation_scope_invalid');
   return JSON.stringify({ entryKind: d.entryKind, ...(d.projectId ? { projectId: d.projectId } : {}), ...(d.documentId ? { documentId: d.documentId } : {}) });
 }
-function draftGuard(authority: CreationStoreAuthority, draftId: string, revision?: number): BudgetReservationGuard {
+export function creationDraftGuard(authority: CreationStoreAuthority, draftId: string, revision?: number, contentId?: string): BudgetReservationGuard {
   const custody = executionContentCustodyGuard({ actorUserId: authority.actorUserId, scope: authority.projectScope ?? null }, 'content');
-  return { sql: `(${authority.guard.sql}) AND EXISTS(SELECT 1 FROM creation_drafts d JOIN private_content content ON content.content_id=d.content_id AND content.owner_id=d.actor_user_id WHERE d.draft_id=? AND d.actor_user_id=? AND d.scope_key=? AND d.destination_json=? AND d.state='active' AND content.kind='creation-draft' AND content.redacted_at IS NULL AND (${custody.sql}) AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND d.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')${revision === undefined ? '' : ' AND d.revision=?'})`,
-    bindings: [...authority.guard.bindings, draftId, authority.actorUserId, authority.scopeKey, destinationKey(authority), ...custody.bindings, ...(revision === undefined ? [] : [revision])] };
+  return { sql: `(${authority.guard.sql}) AND EXISTS(SELECT 1 FROM creation_drafts d JOIN private_content content ON content.content_id=d.content_id AND content.owner_id=d.actor_user_id WHERE d.draft_id=? AND d.actor_user_id=? AND d.scope_key=? AND d.destination_json=? AND d.state='active' AND content.kind='creation-draft' AND content.redacted_at IS NULL AND (${custody.sql}) AND content.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND d.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')${revision === undefined ? '' : ' AND d.revision=?'}${contentId === undefined ? '' : ' AND d.content_id=?'})`,
+    bindings: [...authority.guard.bindings, draftId, authority.actorUserId, authority.scopeKey, destinationKey(authority), ...custody.bindings, ...(revision === undefined ? [] : [revision]), ...(contentId === undefined ? [] : [contentId])] };
 }
-type DraftRow = { draft_id: string; revision: number; state: StoredCreationDraft['state']; scope_key: string; destination_json: string; expires_at: string; operation_id: string | null; receipt_id: string | null; content: string };
+type DraftRow = { content_id:string; draft_id: string; revision: number; state: StoredCreationDraft['state']; scope_key: string; destination_json: string; expires_at: string; operation_id: string | null; receipt_id: string | null; content: string };
 export async function readCreationDraft<T = Record<string, unknown>>(env: WorkerEnv, authority: CreationStoreAuthority, draftId: string): Promise<StoredCreationDraft<T>> {
   const destination = destinationKey(authority), custody = executionContentCustodyGuard({ actorUserId: authority.actorUserId, scope: authority.projectScope ?? null }, 'content');
   const row = await env.DB.prepare(`SELECT d.*,content.content FROM creation_drafts d JOIN private_content content ON content.content_id=d.content_id AND content.owner_id=d.actor_user_id
@@ -81,7 +81,7 @@ export async function readCreationDraft<T = Record<string, unknown>>(env: Worker
   if (!row) throw new CreationStoreError('creation_draft_unavailable');
   let payload: T;
   try { payload = JSON.parse(row.content) as T; } catch { throw new CreationStoreError('creation_draft_unavailable'); }
-  return { draftId: row.draft_id, revision: row.revision, state: row.state, scopeKey: row.scope_key, destination: JSON.parse(row.destination_json), expiresAt: row.expires_at, operationId: row.operation_id, receiptId: row.receipt_id, payload };
+  return { contentId: row.content_id, draftId: row.draft_id, revision: row.revision, state: row.state, scopeKey: row.scope_key, destination: JSON.parse(row.destination_json), expiresAt: row.expires_at, operationId: row.operation_id, receiptId: row.receipt_id, payload };
 }
 
 export async function createCreationDraft<T extends Record<string, unknown>>(env: WorkerEnv, authority: CreationStoreAuthority, payload: T): Promise<StoredCreationDraft<T>> {
@@ -106,14 +106,14 @@ export async function createCreationDraft<T extends Record<string, unknown>>(env
     if (await env.DB.prepare('SELECT 1 AS present FROM creation_drafts WHERE draft_id=?').bind(draftId).first()) return replay();
     throw error;
   }
-  return { draftId, revision: 1, state: 'active', scopeKey: authority.scopeKey, destination: JSON.parse(destination), expiresAt: prepared.expiresAt, operationId: null, receiptId: null, payload: JSON.parse(serialized) as T };
+  return { contentId: prepared.contentId, draftId, revision: 1, state: 'active', scopeKey: authority.scopeKey, destination: JSON.parse(destination), expiresAt: prepared.expiresAt, operationId: null, receiptId: null, payload: JSON.parse(serialized) as T };
 }
 
 export async function updateCreationDraft<T extends Record<string, unknown>>(env: WorkerEnv, authority: CreationStoreAuthority, draftId: string, expectedRevision: number, payload: T): Promise<StoredCreationDraft<T>> {
   const serialized = serializeCreationPayload(payload);
   const current = await readCreationDraft(env, authority, draftId);
   if (!Number.isSafeInteger(expectedRevision) || current.revision !== expectedRevision) throw new CreationStoreError('creation_revision_conflict', current.revision);
-  const guard = draftGuard(authority, draftId, expectedRevision);
+  const guard = creationDraftGuard(authority, draftId, expectedRevision);
   const prepared = await preparePrivateContent(env, authority.actorUserId, 'creation-draft', serialized, authority.projectScope, undefined, guard, { contentId: 'creation-draft-' + uuidV7() }, current.expiresAt);
   const proof = creationWriteAssertion(env, guard);
   try {
@@ -128,18 +128,19 @@ export async function updateCreationDraft<T extends Record<string, unknown>>(env
     if (latest.revision !== expectedRevision) throw new CreationStoreError('creation_revision_conflict', latest.revision);
     throw error;
   }
-  return { ...current, revision: expectedRevision + 1, expiresAt: prepared.expiresAt, operationId: null, receiptId: null, payload: JSON.parse(serialized) as T };
+  return { ...current, contentId: prepared.contentId, revision: expectedRevision + 1, expiresAt: prepared.expiresAt, operationId: null, receiptId: null, payload: JSON.parse(serialized) as T };
 }
 
 export async function discardCreationDraft(env: WorkerEnv, authority: CreationStoreAuthority, draftId: string, expectedRevision: number) {
   const current = await readCreationDraft(env, authority, draftId);
   if (!Number.isSafeInteger(expectedRevision) || current.revision !== expectedRevision) throw new CreationStoreError('creation_revision_conflict', current.revision);
-  const proof = creationWriteAssertion(env, draftGuard(authority, draftId, expectedRevision)), now = new Date().toISOString();
+  const proof = creationWriteAssertion(env, creationDraftGuard(authority, draftId, expectedRevision)), now = new Date().toISOString();
   const custody = executionContentCustodyGuard({ actorUserId: authority.actorUserId, scope: authority.projectScope ?? null });
   try {
     await env.DB.batch([proof.assert,
       env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE (content_id IN(SELECT content_id FROM creation_draft_content_versions WHERE draft_id=? AND actor_user_id=?) OR content_id IN(SELECT content_id FROM creation_operations WHERE draft_id=? AND actor_user_id=? AND scope_key=?)) AND owner_id=? AND kind='creation-draft' AND (${custody.sql})`)
         .bind(now, draftId, authority.actorUserId, draftId, authority.actorUserId, authority.scopeKey, authority.actorUserId, ...custody.bindings),
+      env.DB.prepare(`UPDATE creation_operations SET state='failed',error_code='creation_draft_discarded',content_id=NULL,updated_at=? WHERE draft_id=? AND actor_user_id=? AND state<>'applied'`).bind(now,draftId,authority.actorUserId),
       env.DB.prepare(`UPDATE creation_drafts SET state='discarded',content_id=NULL,revision=revision+1,updated_at=? WHERE draft_id=? AND actor_user_id=? AND scope_key=? AND revision=?`)
         .bind(now, draftId, authority.actorUserId, authority.scopeKey, expectedRevision), proof.cleanup]);
   } catch (error) {

@@ -211,3 +211,7 @@ The user subsequently authorized committing this progress to `main` and publishi
 Fresh checks against current main: TypeScript and production build pass; 184 focused creation, identity, preference, provider-fixture and rich-editor tests pass; the Chromium creation/help integration suites pass all 13 subtests plus two parents (15 TAP records). Earlier three-engine evidence remains above. Production environment revision 16 has no `STILL_UNIFIED_CREATION_ENABLED` value, and the existing workspace audience is preserved. The release packager verifies the held 41-migration baseline and excludes candidate creation SQL. No private provider deployment or paid qualification is included.
 
 The existing Progress Report records the final commit, saved Site version and deployment receipt after publication. Publishing this code is distinct from activating the unified creation workflow; its recorded provider/index/fidelity/performance/screen-reader/migration gates remain open.
+
+## September 24 delivery-audit completion pass
+
+The [completion ledger](still-unified-creation-completion-2026-09-24.md) supersedes earlier completeness/security claims where the delivery audit reproduced failures. Current source and production were independently rechecked at e5639057/v546 before edits; production remains disabled. Each finding retains its required workflow evidence and open deployed/human gates.

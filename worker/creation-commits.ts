@@ -1,6 +1,7 @@
 /** Creation uses retained actor-private previews and one canonical event/sidecar/receipt transaction. */
 import type { CreationDraft, CreationPlan, CreationReceipt, CompiledCreation } from '../src/model/creation.ts';
 import { consentHash, executionAdmissionGuard, executionContentCustodyGuard, type ConsequentialBinding } from './consequential-consent.ts';
+import { creationWriteAssertion } from './creation-store.ts';
 import { preparePrivateContent } from './private-content-storage.ts';
 import type { BudgetReservationGuard, PilotUser } from './pilot-policy.ts';
 import { appendProjectEvents, type ProjectRequestContext } from './project-access.ts';
@@ -8,7 +9,7 @@ import { prepareAuthoringEventBatch } from './authoring-event-batches.ts';
 import { makeEvent, type EventRow, type WorkerEnv } from './runtime.ts';
 
 export type RetainedCreationPreview = {draft:CreationDraft; plan:CreationPlan; compiled:CompiledCreation; binding:ConsequentialBinding; sourceHash:string};
-export type CreationOperation = {operation_id:string;draft_id:string;actor_user_id:string;scope_key:string;draft_revision:number;kind:'interpretation'|'commit';state:'prepared'|'executing'|'review'|'applied'|'failed';request_hash:string;content_id:string|null;approval_hash:string|null;receipt_json:string|null;error_code:string|null;expires_at:string};
+export type CreationOperation = {operation_id:string;draft_id:string;actor_user_id:string;scope_key:string;draft_revision:number;kind:'interpretation'|'commit';state:'prepared'|'executing'|'review'|'applied'|'failed';request_hash:string;content_id:string|null;approval_hash:string|null;receipt_json:string|null;error_code:string|null;expires_at:string;updated_at:string};
 export function validCreationOperationId(id:unknown):id is string{return typeof id==='string'&&/^[a-zA-Z0-9_-]{12,120}$/u.test(id);}
 export async function readCreationOperation(env:WorkerEnv,user:PilotUser,id:string,draftId:string,scopeKey:string,guard:BudgetReservationGuard){
  return env.DB.prepare(`SELECT * FROM creation_operations WHERE operation_id=? AND actor_user_id=? AND draft_id=? AND scope_key=? AND (${guard.sql})`).bind(id,user.userId,draftId,scopeKey,...guard.bindings).first<CreationOperation>();
@@ -19,7 +20,7 @@ export async function readCreationOperationPayload<T>(env:WorkerEnv,user:PilotUs
  const row=await env.DB.prepare(`SELECT content FROM private_content WHERE content_id=? AND owner_id=? AND kind='creation-draft' AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND (${guard.sql}) AND (${custody.sql})`).bind(operation.content_id,user.userId,...guard.bindings,...custody.bindings).first<{content:string}>();
  return row?JSON.parse(row.content) as T:null;
 }
-export async function storeCreationPreview(env:WorkerEnv,user:PilotUser,id:string,scopeKey:string,value:RetainedCreationPreview,guard:BudgetReservationGuard){
+export async function storeCreationPreview(env:WorkerEnv,user:PilotUser,id:string,scopeKey:string,value:RetainedCreationPreview,guard:BudgetReservationGuard,publicationGuard:BudgetReservationGuard){
  if(!validCreationOperationId(id))throw new Error('creation_operation_id_invalid');
  const requestHash=await consentHash({draft:value.draft.id,revision:value.draft.revision,plan:value.plan,review:value.draft.review}),approvalHash=value.compiled.approvalHash;
  const previous=await readCreationOperation(env,user,id,value.draft.id,scopeKey,guard);
@@ -29,7 +30,8 @@ export async function storeCreationPreview(env:WorkerEnv,user:PilotUser,id:strin
  const publication=env.DB.prepare(`INSERT INTO creation_operations(operation_id,draft_id,actor_user_id,scope_key,draft_revision,kind,state,request_hash,content_id,approval_hash,expires_at,created_at,updated_at,verified)
   SELECT ?,?,?,?,?, 'commit','review',?,?,?,?,?,?,CASE WHEN EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='creation-draft' AND redacted_at IS NULL AND (${custody.sql})) AND (${guard.sql}) THEN 1 ELSE 0 END`)
  .bind(id,value.draft.id,user.userId,scopeKey,value.draft.revision,requestHash,prepared.contentId,approvalHash,prepared.expiresAt,now,now,prepared.contentId,user.userId,...custody.bindings,...guard.bindings);
- try{await env.DB.batch([...prepared.statements,publication]);}catch(error){const raced=await readCreationOperation(env,user,id,value.draft.id,scopeKey,guard);if(raced&&raced.request_hash===requestHash)return raced;throw error;}
+ const proof=creationWriteAssertion(env,publicationGuard);
+ try{await env.DB.batch([proof.assert,...prepared.statements,publication,proof.cleanup]);}catch(error){const raced=await readCreationOperation(env,user,id,value.draft.id,scopeKey,guard);if(raced&&raced.request_hash===requestHash)return raced;throw error;}
  return (await readCreationOperation(env,user,id,value.draft.id,scopeKey,guard))!;
 }
 

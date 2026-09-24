@@ -79,3 +79,14 @@ test('changed query invalidates staged search response while visible ordering st
 test('temporary search failure preserves focused ordering as unavailable; denied authority withdraws it immediately',async()=>{
  const h=harness();h.controller.changeDocument(creationDocument('Current query'));await h.controller.flush();clearTimeout(h.controller.searchTimer);h.controller.search=searchResponse(h.controller,['visible']);h.controller.setSearchInteraction('focus',true);h.controller.options.request=async()=>{throw Error('temporary outage');};await h.controller.runSearch(h.controller.queryRevision);assert.deepEqual(h.controller.search.candidates.map(c=>c.id),['visible']);assert.equal(h.controller.searchStale,true);assert.match(h.controller.searchFailure,/unavailable/);h.controller.options.request=async()=>{const error=Error('denied');error.status=403;throw error;};await h.controller.runSearch(h.controller.queryRevision);assert.equal(h.controller.search,undefined);assert.equal(h.controller.searchFrozen,false);h.controller.dispose();
 });
+
+test('recovered receipt clears all journals and the subsequent New starts a fresh draft',async()=>{
+ const h=harness();h.values.set(h.controller.key,'applied-draft');h.values.set(h.controller.key+':operation',JSON.stringify({draftId:'applied-draft',operationId:'same-operation',approvalHash:'hash'}));h.values.set(h.controller.key+':interpretation',JSON.stringify({draftId:'applied-draft',revision:1,operationId:'interpret-old'}));
+ let requests=0;h.controller.options.request=async()=>{requests++;return {receipt:{operationId:'same-operation',status:'committed',created:[],uses:[],projectId:'project',primaryDocumentId:'document'}};};await h.controller.start();assert.equal(h.values.size,0);h.controller.dispose();
+ const next=new CreationController(h.controller.options);await next.start();assert.equal(requests,1);assert.equal(next.receipt,undefined);assert.equal(next.draft.state,'editing');assert.notEqual(next.draft.id,'applied-draft');next.dispose();
+});
+test('pending interpretation reload retains the exact operation identity until its result is recovered',async()=>{
+ const h=harness('idea'),base=h.controller.options.request;const ids=[];h.controller.options.request=async(path,body,method)=>{if(path.endsWith('/interpret')){ids.push(body.operationId);return {status:'executing'};}if(body===undefined)return {draft:structuredClone(h.saved)};return base(path,body,method);};
+ h.controller.changeDocument(creationDocument('The keeper opens the gate.'));await h.controller.submit();assert.match(h.controller.status,/running/);const journal=JSON.parse(h.values.get(h.controller.key+':interpretation'));assert.deepEqual(Object.keys(journal).sort(),['draftId','operationId','revision']);h.controller.dispose();
+ const next=new CreationController(h.controller.options);await next.start();await next.submit();assert.equal(ids.length,2);assert.equal(ids[0],ids[1]);next.dispose();
+});
