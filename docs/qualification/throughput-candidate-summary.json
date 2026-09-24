@@ -1,0 +1,689 @@
+{
+  "kind": "offline-injected-unseeded-lifecycle-summary",
+  "decision": "NO-GO: healthy edit scale, 10k renewal budget and 1-day 10k renewal deadline fail; hosted/live qualification remains separate",
+  "runtimeSourceHashSetSha256": "ac389aaf567c3f3c26fa8606adcf7e492f18d7dd70886f966300e9fd1e1f85b1",
+  "hashEncoding": "sha256(UTF-8 JSON.stringify(sourceHashes with keys sorted lexicographically; no whitespace))",
+  "measurements": [
+    {
+      "receipt": "throughput-candidate-1k.json",
+      "receiptSha256": "919de03eb455bc3e755238aa97f3f128f2cde5887354661ec1627789716fa020",
+      "sourceHashSetSha256": "ac389aaf567c3f3c26fa8606adcf7e492f18d7dd70886f966300e9fd1e1f85b1",
+      "sourceChangedDuringRun": [],
+      "ideas": 1000,
+      "projects": 21,
+      "retentionDays": 30,
+      "fullBackfillMinutes": 90,
+      "healthyEditMinutes": 6,
+      "renewal": {
+        "status": "completed",
+        "leadSeconds": 86400,
+        "actualRenewalWindowSeconds": 86400,
+        "ticks": 109,
+        "within12Hours": true,
+        "withinActualRenewalWindow": true,
+        "coverage": {
+          "total": 1042,
+          "published": 1041
+        },
+        "providerCalls": 92,
+        "withdrawalImmediateDenied": true
+      },
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": false,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": true,
+        "renewalWithinActualWindow": true
+      },
+      "provider": {
+        "calls": 92,
+        "inputs": 2428,
+        "inputBytes": 1066818,
+        "tokens": 266734,
+        "maxInputs": 32,
+        "maxPayloadBytes": 22403
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 90,
+          "operations": 29049,
+          "calls": 44,
+          "inputBytes": 506946,
+          "tokens": 126750,
+          "put": 54,
+          "get": 22,
+          "head": 142,
+          "delete": 22,
+          "list": 9
+        },
+        "healthy-edit": {
+          "ticks": 6,
+          "operations": 1502,
+          "calls": 1,
+          "inputBytes": 13494,
+          "tokens": 3374,
+          "put": 4,
+          "get": 7,
+          "head": 37,
+          "delete": 6,
+          "list": 1
+        },
+        "withdrawal": {
+          "ticks": 15,
+          "operations": 3039,
+          "calls": 3,
+          "inputBytes": 39876,
+          "tokens": 9971,
+          "put": 11,
+          "get": 17,
+          "head": 73,
+          "delete": 20,
+          "list": 2
+        },
+        "restore-coverage": {
+          "ticks": 1,
+          "operations": 156,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 1,
+          "get": 2,
+          "head": 0,
+          "delete": 0,
+          "list": 0
+        },
+        "renewal": {
+          "ticks": 109,
+          "operations": 32857,
+          "calls": 44,
+          "inputBytes": 506502,
+          "tokens": 126639,
+          "put": 62,
+          "get": 34,
+          "head": 252,
+          "delete": 56,
+          "list": 11
+        },
+        "shutdown": {
+          "ticks": 2,
+          "operations": 507,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 35,
+          "delete": 35,
+          "list": 1
+        }
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0
+        },
+        "preShutdown": {
+          "objects": 33,
+          "published": 1041
+        },
+        "ticks": 2,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      }
+    },
+    {
+      "receipt": "throughput-candidate-10k.json",
+      "receiptSha256": "fd004ee1afa5bf4104bc6f2f1cfd39b02f715c998764918d22d511a8017899ae",
+      "sourceHashSetSha256": "ac389aaf567c3f3c26fa8606adcf7e492f18d7dd70886f966300e9fd1e1f85b1",
+      "sourceChangedDuringRun": [],
+      "ideas": 10000,
+      "projects": 21,
+      "retentionDays": 30,
+      "fullBackfillMinutes": 651,
+      "healthyEditMinutes": 38,
+      "renewal": {
+        "status": "completed",
+        "leadSeconds": 86400,
+        "actualRenewalWindowSeconds": 86400,
+        "ticks": 794,
+        "within12Hours": false,
+        "withinActualRenewalWindow": true,
+        "coverage": {
+          "total": 10042,
+          "published": 10041
+        },
+        "providerCalls": 1150,
+        "withdrawalImmediateDenied": true
+      },
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": false,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": false,
+        "renewalWithinActualWindow": true
+      },
+      "provider": {
+        "calls": 1150,
+        "inputs": 26800,
+        "inputBytes": 12124545,
+        "tokens": 3031325,
+        "maxInputs": 32,
+        "maxPayloadBytes": 22418
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 651,
+          "operations": 239212,
+          "calls": 513,
+          "inputBytes": 5447548,
+          "tokens": 1361971,
+          "put": 547,
+          "get": 473,
+          "head": 5315,
+          "delete": 477,
+          "list": 187
+        },
+        "healthy-edit": {
+          "ticks": 38,
+          "operations": 10016,
+          "calls": 7,
+          "inputBytes": 106765,
+          "tokens": 26693,
+          "put": 14,
+          "get": 34,
+          "head": 211,
+          "delete": 36,
+          "list": 10
+        },
+        "withdrawal": {
+          "ticks": 15,
+          "operations": 2738,
+          "calls": 10,
+          "inputBytes": 49267,
+          "tokens": 12317,
+          "put": 11,
+          "get": 2,
+          "head": 110,
+          "delete": 4,
+          "list": 2
+        },
+        "restore-coverage": {
+          "ticks": 58,
+          "operations": 14018,
+          "calls": 35,
+          "inputBytes": 378802,
+          "tokens": 94707,
+          "put": 37,
+          "get": 26,
+          "head": 378,
+          "delete": 26,
+          "list": 12
+        },
+        "renewal": {
+          "ticks": 794,
+          "operations": 272107,
+          "calls": 585,
+          "inputBytes": 6142163,
+          "tokens": 1535637,
+          "put": 631,
+          "get": 581,
+          "head": 6386,
+          "delete": 660,
+          "list": 219
+        },
+        "shutdown": {
+          "ticks": 3,
+          "operations": 766,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 67,
+          "delete": 67,
+          "list": 0
+        }
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0
+        },
+        "preShutdown": {
+          "objects": 67,
+          "published": 10041
+        },
+        "ticks": 3,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      }
+    },
+    {
+      "receipt": "throughput-candidate-short-retention-1k.json",
+      "receiptSha256": "170819c1b85520af7e9b1963e42c201592a41d609140489b2939177de8fa93ac",
+      "sourceHashSetSha256": "ac389aaf567c3f3c26fa8606adcf7e492f18d7dd70886f966300e9fd1e1f85b1",
+      "sourceChangedDuringRun": [],
+      "ideas": 1000,
+      "projects": 21,
+      "retentionDays": 1,
+      "fullBackfillMinutes": 90,
+      "healthyEditMinutes": 6,
+      "renewal": {
+        "status": "completed",
+        "leadSeconds": 8640,
+        "actualRenewalWindowSeconds": 8640,
+        "ticks": 109,
+        "within12Hours": true,
+        "withinActualRenewalWindow": true,
+        "coverage": {
+          "total": 1042,
+          "published": 1041
+        },
+        "providerCalls": 92,
+        "withdrawalImmediateDenied": true
+      },
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": false,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": true,
+        "renewalWithinActualWindow": true
+      },
+      "provider": {
+        "calls": 92,
+        "inputs": 2428,
+        "inputBytes": 1066818,
+        "tokens": 266734,
+        "maxInputs": 32,
+        "maxPayloadBytes": 22403
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 90,
+          "operations": 29049,
+          "calls": 44,
+          "inputBytes": 506946,
+          "tokens": 126750,
+          "put": 54,
+          "get": 22,
+          "head": 142,
+          "delete": 22,
+          "list": 9
+        },
+        "healthy-edit": {
+          "ticks": 6,
+          "operations": 1502,
+          "calls": 1,
+          "inputBytes": 13494,
+          "tokens": 3374,
+          "put": 4,
+          "get": 7,
+          "head": 37,
+          "delete": 6,
+          "list": 1
+        },
+        "withdrawal": {
+          "ticks": 15,
+          "operations": 3039,
+          "calls": 3,
+          "inputBytes": 39876,
+          "tokens": 9971,
+          "put": 11,
+          "get": 17,
+          "head": 73,
+          "delete": 20,
+          "list": 2
+        },
+        "restore-coverage": {
+          "ticks": 1,
+          "operations": 156,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 1,
+          "get": 2,
+          "head": 0,
+          "delete": 0,
+          "list": 0
+        },
+        "renewal": {
+          "ticks": 109,
+          "operations": 32857,
+          "calls": 44,
+          "inputBytes": 506502,
+          "tokens": 126639,
+          "put": 62,
+          "get": 34,
+          "head": 252,
+          "delete": 56,
+          "list": 11
+        },
+        "short-retention-stability": {
+          "ticks": 120,
+          "operations": 17654,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 14,
+          "get": 27,
+          "head": 296,
+          "delete": 30,
+          "list": 13
+        },
+        "shutdown": {
+          "ticks": 1,
+          "operations": 254,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 21,
+          "delete": 21,
+          "list": 0
+        }
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0
+        },
+        "preShutdown": {
+          "objects": 21,
+          "published": 1041
+        },
+        "ticks": 1,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      }
+    },
+    {
+      "receipt": "throughput-candidate-short-retention-10k.json",
+      "receiptSha256": "124caf5b9a49bfd153c6210181e2074dc0835b0c2c5343ee886da6d6b2e92833",
+      "sourceHashSetSha256": "ac389aaf567c3f3c26fa8606adcf7e492f18d7dd70886f966300e9fd1e1f85b1",
+      "sourceChangedDuringRun": [],
+      "ideas": 10000,
+      "projects": 21,
+      "retentionDays": 1,
+      "fullBackfillMinutes": 651,
+      "healthyEditMinutes": 38,
+      "renewal": {
+        "status": "incomplete",
+        "stop": "actual-renewal-deadline",
+        "leadSeconds": 8640,
+        "actualRenewalWindowSeconds": 8640,
+        "ticks": 144,
+        "within12Hours": false,
+        "withinActualRenewalWindow": false,
+        "coverage": {
+          "total": 10042,
+          "published": 0
+        },
+        "withdrawalImmediateDenied": true
+      },
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": false,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": false,
+        "renewalWithinActualWindow": false
+      },
+      "provider": {
+        "calls": 565,
+        "inputs": 13139,
+        "inputBytes": 5982382,
+        "tokens": 1495688,
+        "maxInputs": 32,
+        "maxPayloadBytes": 22418
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 651,
+          "operations": 239211,
+          "calls": 513,
+          "inputBytes": 5447548,
+          "tokens": 1361971,
+          "put": 547,
+          "get": 473,
+          "head": 5315,
+          "delete": 477,
+          "list": 187
+        },
+        "healthy-edit": {
+          "ticks": 38,
+          "operations": 10016,
+          "calls": 7,
+          "inputBytes": 106765,
+          "tokens": 26693,
+          "put": 14,
+          "get": 34,
+          "head": 211,
+          "delete": 36,
+          "list": 10
+        },
+        "withdrawal": {
+          "ticks": 15,
+          "operations": 2738,
+          "calls": 10,
+          "inputBytes": 49267,
+          "tokens": 12317,
+          "put": 11,
+          "get": 2,
+          "head": 110,
+          "delete": 4,
+          "list": 2
+        },
+        "restore-coverage": {
+          "ticks": 58,
+          "operations": 14018,
+          "calls": 35,
+          "inputBytes": 378802,
+          "tokens": 94707,
+          "put": 37,
+          "get": 26,
+          "head": 378,
+          "delete": 26,
+          "list": 12
+        },
+        "renewal": {
+          "ticks": 144,
+          "operations": 31723,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 2,
+          "get": 26,
+          "head": 215,
+          "delete": 72,
+          "list": 19
+        },
+        "shutdown": {
+          "ticks": 2,
+          "operations": 466,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 0,
+          "delete": 0,
+          "list": 0
+        }
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0
+        },
+        "preShutdown": {
+          "objects": 0,
+          "published": 0
+        },
+        "ticks": 2,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      }
+    },
+    {
+      "receipt": "throughput-candidate-short-retention.json",
+      "receiptSha256": "6ed83a566d2f3dc22351fcd67ef92f52f79b34568679794602e2947cbadc8ebc",
+      "sourceHashSetSha256": "ac389aaf567c3f3c26fa8606adcf7e492f18d7dd70886f966300e9fd1e1f85b1",
+      "sourceChangedDuringRun": [],
+      "ideas": 10,
+      "projects": 2,
+      "retentionDays": 1,
+      "fullBackfillMinutes": 6,
+      "healthyEditMinutes": 2,
+      "renewal": {
+        "status": "completed",
+        "leadSeconds": 8640,
+        "actualRenewalWindowSeconds": 8640,
+        "ticks": 4,
+        "within12Hours": true,
+        "withinActualRenewalWindow": true,
+        "coverage": {
+          "total": 14,
+          "published": 13
+        },
+        "providerCalls": 5,
+        "withdrawalImmediateDenied": true
+      },
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": true,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": true,
+        "renewalWithinActualWindow": true
+      },
+      "provider": {
+        "calls": 5,
+        "inputs": 30,
+        "inputBytes": 25856,
+        "tokens": 6466,
+        "maxInputs": 15,
+        "maxPayloadBytes": 19871
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 6,
+          "operations": 796,
+          "calls": 3,
+          "inputBytes": 23336,
+          "tokens": 5835,
+          "put": 3,
+          "get": 1,
+          "head": 3,
+          "delete": 0,
+          "list": 1
+        },
+        "healthy-edit": {
+          "ticks": 2,
+          "operations": 276,
+          "calls": 1,
+          "inputBytes": 1403,
+          "tokens": 351,
+          "put": 1,
+          "get": 2,
+          "head": 1,
+          "delete": 0,
+          "list": 0
+        },
+        "withdrawal": {
+          "ticks": 15,
+          "operations": 869,
+          "calls": 1,
+          "inputBytes": 1117,
+          "tokens": 280,
+          "put": 1,
+          "get": 1,
+          "head": 9,
+          "delete": 4,
+          "list": 2
+        },
+        "restore-coverage": {
+          "ticks": 1,
+          "operations": 40,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 0,
+          "delete": 0,
+          "list": 0
+        },
+        "renewal": {
+          "ticks": 4,
+          "operations": 536,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 2,
+          "get": 2,
+          "head": 4,
+          "delete": 0,
+          "list": 1
+        },
+        "short-retention-stability": {
+          "ticks": 120,
+          "operations": 5642,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 2,
+          "get": 3,
+          "head": 30,
+          "delete": 4,
+          "list": 12
+        },
+        "shutdown": {
+          "ticks": 1,
+          "operations": 45,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 2,
+          "delete": 2,
+          "list": 0
+        }
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0
+        },
+        "preShutdown": {
+          "objects": 2,
+          "published": 13
+        },
+        "ticks": 1,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      }
+    }
+  ],
+  "excludedQualifications": [
+    "hosted scheduled wake durability",
+    "live semantic relevance",
+    "real Worker CPU/memory and D1 latency",
+    "real provider tokens/cost/latency",
+    "deployed retention and cleanup timing"
+  ]
+}

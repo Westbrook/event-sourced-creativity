@@ -1,0 +1,110 @@
+{
+  "observedAt": "2026-09-24T19:54:53.513Z",
+  "kind": "read-only-native-Sites-metadata",
+  "site": {
+    "id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "latestVersion": 550,
+    "accessMode": "workspace_all",
+    "liveUrl": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "scheduleMetadataPresent": false,
+    "scheduleRequestIdPresent": false
+  },
+  "version": {
+    "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8",
+    "number": 550,
+    "source": {
+      "commit_sha": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf"
+    },
+    "archive": {
+      "contentHash": "sha256:a629abf35cdb357f0affa0c309ebfc0591cfe235249404c97b7ce19ee813be7f",
+      "bytes": 44523520,
+      "fileCount": 622
+    }
+  },
+  "deployment": {
+    "id": "appgdep_6ab573499a108191a2691a137672b93e",
+    "status": "succeeded",
+    "versionId": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8",
+    "environmentRevision": 16,
+    "updatedAt": "2026-09-24T19:01:44.694245+00:00"
+  },
+  "schemaOverview": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "bindings": [
+      "DB"
+    ],
+    "selected_binding_name": "DB",
+    "tables": [
+      "__forma_event_save_repair_receipts",
+      "__forma_memory_schema_repair_receipts",
+      "artifact_revisions",
+      "assistant_action_commits",
+      "assistant_action_proposals",
+      "assistant_billing_reconciliations",
+      "assistant_specialist_tasks",
+      "assistant_turns",
+      "authoring_commits",
+      "budget_counters",
+      "budget_hold_dispositions",
+      "budget_reservations",
+      "budget_scope_policies",
+      "canvas_governance_requirements",
+      "capability_grants",
+      "consequential_execution_steps",
+      "consequential_executions",
+      "cost_budget_counters",
+      "cost_budget_reservations",
+      "delivery_decisions",
+      "document_jobs",
+      "event_client_receipts",
+      "event_private_payloads",
+      "event_write_stage",
+      "events",
+      "external_content",
+      "generation_preflights",
+      "impersonation_sessions",
+      "managed_video_reconciliations",
+      "memory_authored_image_receipts",
+      "memory_derivation_asset_edges",
+      "memory_derivation_completion_cursors",
+      "memory_derivation_completions",
+      "memory_derivation_consumer_contents",
+      "memory_derivation_consumer_parents",
+      "memory_derivation_consumer_sources",
+      "memory_derivation_consumers",
+      "memory_derivation_contexts",
+      "memory_derivation_cursors",
+      "memory_derivation_finance",
+      "memory_derivation_grants",
+      "memory_derivation_index_intents",
+      "memory_derivation_job_finance",
+      "memory_derivation_job_sources",
+      "memory_derivation_jobs",
+      "memory_derivation_month_caps",
+      "memory_derivation_no_dispatch",
+      "memory_derivation_observation_controls",
+      "memory_derivation_producer_cursors",
+      "memory_derivation_producer_jobs"
+    ],
+    "model_projection": {
+      "truncated": false,
+      "omitted_project_id": false,
+      "omitted_selected_binding": false,
+      "omitted_bindings": 0,
+      "omitted_tables": 0
+    }
+  },
+  "authoritativeAppliedHistoryAvailable": false,
+  "fullSchemaDefinitionAvailable": false,
+  "authoredRowsRead": 0,
+  "capabilityInventory": {
+    "scheduleTools": [],
+    "schemaOrMigrationExportTools": [],
+    "inspectedReadTools": [
+      "sites_get_site",
+      "sites_list_site_versions",
+      "sites_get_deployment_status",
+      "sites_read_database_overview"
+    ]
+  }
+}

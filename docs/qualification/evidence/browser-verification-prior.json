@@ -1,0 +1,34 @@
+{
+  "kind": "local-browser-workflow-evidence",
+  "sourceBase": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "uiChanged": false,
+  "productionActivated": false,
+  "hosted": false,
+  "liveProviders": false,
+  "receipts": [
+    {
+      "kind": "browser-chromium",
+      "pass": 18,
+      "fail": 0,
+      "sha256": "50146096c0bf1b26693c1c97e1f80333f647f2e11e654973bf66defed39cfce5",
+      "scope": "local browser workflow; injected providers; not human or hosted qualification",
+      "log": "evidence/browser-chromium.log"
+    },
+    {
+      "kind": "browser-firefox",
+      "pass": 18,
+      "fail": 0,
+      "sha256": "cf758c43bd6daaf61efd2c4a97d5560c182a2fa4761a11156c7d28534a076d09",
+      "scope": "local browser workflow; injected providers; not human or hosted qualification",
+      "log": "evidence/browser-firefox.log"
+    },
+    {
+      "kind": "browser-webkit",
+      "pass": 18,
+      "fail": 0,
+      "sha256": "175ea6a45d6666991f6369a70f1905b0a0cfac509589f9a9dc8af8249b47c3a7",
+      "scope": "local browser workflow; injected providers; not human or hosted qualification",
+      "log": "evidence/browser-webkit.log"
+    }
+  ]
+}

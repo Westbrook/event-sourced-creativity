@@ -1,0 +1,810 @@
+{
+  "kind": "local-synthetic-SQLite-rehearsal",
+  "startedAt": "2026-09-24T20:49:26.060Z",
+  "nodeVersion": "v24.16.0",
+  "hosted": false,
+  "productionSchemaEquivalent": false,
+  "manifestSha256": "fbc89dffdc95b4f039db733a465941499093b7dc35c985f89b5b935561aa5743",
+  "command": "STILL_SCHEMA_REHEARSAL_OUTPUT=<receipt.json> node --import tsx --test tests/creation-hosted-schema.test.mjs",
+  "cases": [
+    {
+      "name": "install-and-repeat",
+      "applied": 107,
+      "schemaSha256": "429f54f98869f51719c75d858f3b51282621acadbeb79b45f005b657d95d19ea",
+      "baselineSchemaSha256": "3355b62684bdf5401333a0ac43cae7d115f80936907ad8e43ddc8da0144ab82b",
+      "before": {
+        "events": {
+          "count": 30,
+          "sha256": "8102a5d6b2c0ab4d343ba67a8a6b0d838a42dedded9e0b21971fae1140d73c48"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "7921f7796f811bbc4c6fce59a42f034b2454aaeff800c19a9c1596002e30602b"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "2c7b482f55ac98cbe59421b4ae459e5e89a635ed73a80f4a952e2f04ff84e40e"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "f313e227f7182332fed50b1359d54a33d5981324aa0f3a82f6518d1c82abe50f"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "1c989c8f30f8013f80521fedcea2254ab035110075a8ba426655a60fddda5478"
+        }
+      },
+      "after": {
+        "events": {
+          "count": 30,
+          "sha256": "8102a5d6b2c0ab4d343ba67a8a6b0d838a42dedded9e0b21971fae1140d73c48"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "7921f7796f811bbc4c6fce59a42f034b2454aaeff800c19a9c1596002e30602b"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "2c7b482f55ac98cbe59421b4ae459e5e89a635ed73a80f4a952e2f04ff84e40e"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "f313e227f7182332fed50b1359d54a33d5981324aa0f3a82f6518d1c82abe50f"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "1c989c8f30f8013f80521fedcea2254ab035110075a8ba426655a60fddda5478"
+        }
+      },
+      "schemaObjectsAdded": [
+        {
+          "type": "index",
+          "name": "creation_drafts_actor_scope"
+        },
+        {
+          "type": "index",
+          "name": "creation_index_due"
+        },
+        {
+          "type": "index",
+          "name": "creation_index_members_source"
+        },
+        {
+          "type": "index",
+          "name": "creation_index_objects_erasure"
+        },
+        {
+          "type": "index",
+          "name": "creation_index_objects_partition"
+        },
+        {
+          "type": "index",
+          "name": "creation_index_partition_work"
+        },
+        {
+          "type": "index",
+          "name": "creation_index_private_kind"
+        },
+        {
+          "type": "index",
+          "name": "creation_index_projection_content"
+        },
+        {
+          "type": "index",
+          "name": "creation_index_record_content"
+        },
+        {
+          "type": "index",
+          "name": "creation_operations_draft"
+        },
+        {
+          "type": "index",
+          "name": "creation_search_partition_access"
+        },
+        {
+          "type": "index",
+          "name": "creation_search_partition_owner"
+        },
+        {
+          "type": "index",
+          "name": "creation_search_source_version"
+        },
+        {
+          "type": "table",
+          "name": "creation_draft_content_versions"
+        },
+        {
+          "type": "table",
+          "name": "creation_drafts"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_attempts"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_block_routes"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_discovery"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_enrollments"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_fences"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_members"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_objects"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_projection"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_replay_skeletons"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_runs"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_sources"
+        },
+        {
+          "type": "table",
+          "name": "creation_index_work"
+        },
+        {
+          "type": "table",
+          "name": "creation_operations"
+        },
+        {
+          "type": "table",
+          "name": "creation_qualification_attempts"
+        },
+        {
+          "type": "table",
+          "name": "creation_qualification_limits"
+        },
+        {
+          "type": "table",
+          "name": "creation_qualification_runs"
+        },
+        {
+          "type": "table",
+          "name": "creation_search_build_members"
+        },
+        {
+          "type": "table",
+          "name": "creation_search_build_ready"
+        },
+        {
+          "type": "table",
+          "name": "creation_search_builds"
+        },
+        {
+          "type": "table",
+          "name": "creation_search_jobs"
+        },
+        {
+          "type": "table",
+          "name": "creation_search_partitions"
+        },
+        {
+          "type": "table",
+          "name": "creation_search_records"
+        },
+        {
+          "type": "table",
+          "name": "creation_search_terms"
+        },
+        {
+          "type": "table",
+          "name": "creation_write_assertions"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_admit_events_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_admit_events_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_admit_events_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_enrollment_changed"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_enrollment_deleted"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_enrollment_inserted"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_owner_changed"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_owner_deleted"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_partition_changed"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_partition_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_capability_grants_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_capability_grants_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_capability_grants_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_identity_bindings_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_identity_bindings_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_identity_bindings_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_memberships_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_memberships_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_memberships_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_projects_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_projects_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_projects_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_retention_policies_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_retention_policies_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_retention_policies_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_security_policies_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_security_policies_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organization_security_policies_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organizations_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organizations_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_organizations_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_project_memberships_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_project_memberships_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_project_memberships_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_project_migration_states_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_project_migration_states_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_policy_project_migration_states_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_private_replay_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_private_replay_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_withdrawal_replay_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_withdrawal_replay_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_index_withdrawal_replay_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_qualification_consume"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_events_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_events_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_events_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_project_events_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_project_events_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_project_events_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_resources_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_resources_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_resources_update"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_secrets_delete"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_secrets_insert"
+        },
+        {
+          "type": "trigger",
+          "name": "creation_search_secrets_update"
+        }
+      ],
+      "constraints": "pass",
+      "ordinaryRoutes": "pass"
+    },
+    {
+      "name": "partial-recovery",
+      "failAfter": 1,
+      "partialSchemaSha256": "de812fea519f380c9954faaff5f23d86d9e86cc06707018e51f4d503b5a6ddad",
+      "applied": 107,
+      "schemaSha256": "429f54f98869f51719c75d858f3b51282621acadbeb79b45f005b657d95d19ea",
+      "before": {
+        "events": {
+          "count": 30,
+          "sha256": "ba663c944a85ed12f2eb8c105fac3553bba5d0b609e9bb0674d324a6c5d1fca4"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "33914e859a4893cd1e474d35c61033b6f1f300dacbd232dbcb999d4bd67b1f33"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "c8500778429c8ff74e79a2386f1734236ec7d54df0c737252613885d8cfa576d"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "c6c853b289dfed931c9f4e311156ff4b362aafc5a4c20e7338ed515a8bb2d732"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "308bfdf70842de266eb836a96803054654f097d4e3a8b20871740a42852b7aa0"
+        }
+      },
+      "after": {
+        "events": {
+          "count": 30,
+          "sha256": "ba663c944a85ed12f2eb8c105fac3553bba5d0b609e9bb0674d324a6c5d1fca4"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "33914e859a4893cd1e474d35c61033b6f1f300dacbd232dbcb999d4bd67b1f33"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "c8500778429c8ff74e79a2386f1734236ec7d54df0c737252613885d8cfa576d"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "c6c853b289dfed931c9f4e311156ff4b362aafc5a4c20e7338ed515a8bb2d732"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "308bfdf70842de266eb836a96803054654f097d4e3a8b20871740a42852b7aa0"
+        }
+      }
+    },
+    {
+      "name": "partial-recovery",
+      "failAfter": 6,
+      "partialSchemaSha256": "82a5ec057ff47ce7261375481246554c1801a9984b7598412dc68bdba25019c2",
+      "applied": 107,
+      "schemaSha256": "429f54f98869f51719c75d858f3b51282621acadbeb79b45f005b657d95d19ea",
+      "before": {
+        "events": {
+          "count": 30,
+          "sha256": "a1ba37b0aef5680df061f771c20ef0817663e0127418ff9956603ee174970cf1"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "9726ebcb865aa356a8cd9babc8720bd5da05a56fdf3c8859c78ec7c1a9c076f3"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "53d886cf1c4f2cbcdfbd148f7fcfe68e9a6a6908be2867b64387046760cb826e"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "48e5c1637b9ba3a6290b80dcd602faa0360eef31c7deb342a8e327ac82803162"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "3a39af60b431a8ad6f65d7c2a6ad2ae2fef41d53089f8dc8385f05ad44122595"
+        }
+      },
+      "after": {
+        "events": {
+          "count": 30,
+          "sha256": "a1ba37b0aef5680df061f771c20ef0817663e0127418ff9956603ee174970cf1"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "9726ebcb865aa356a8cd9babc8720bd5da05a56fdf3c8859c78ec7c1a9c076f3"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "53d886cf1c4f2cbcdfbd148f7fcfe68e9a6a6908be2867b64387046760cb826e"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "48e5c1637b9ba3a6290b80dcd602faa0360eef31c7deb342a8e327ac82803162"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "3a39af60b431a8ad6f65d7c2a6ad2ae2fef41d53089f8dc8385f05ad44122595"
+        }
+      }
+    },
+    {
+      "name": "partial-recovery",
+      "failAfter": 17,
+      "partialSchemaSha256": "6a481487ca5eed78bcf0395f26b156555eb1ad22eefbd01b361ce1d50da35756",
+      "applied": 107,
+      "schemaSha256": "429f54f98869f51719c75d858f3b51282621acadbeb79b45f005b657d95d19ea",
+      "before": {
+        "events": {
+          "count": 30,
+          "sha256": "1f83b61a58fd511eb915b602f3ac616971417f63cc161b24a361310d2837e6bb"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "52e84579008482a6b384ce3a74bdac49c410e252962a2d5930ef7c6c137172f0"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "5971e231e04de35411b10c5ecbc04a7379bc4c978bebf5c79208918cd16ab794"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "ad49e3cff464a6924a04f68eebdc1ce215e5f691ff5e1e7fe8921d8ec0ce7de9"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "0fac83e4e5523701bbbc4e264b14815868befdd291ca46af2ac6b5e3fb903b91"
+        }
+      },
+      "after": {
+        "events": {
+          "count": 30,
+          "sha256": "1f83b61a58fd511eb915b602f3ac616971417f63cc161b24a361310d2837e6bb"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "52e84579008482a6b384ce3a74bdac49c410e252962a2d5930ef7c6c137172f0"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "5971e231e04de35411b10c5ecbc04a7379bc4c978bebf5c79208918cd16ab794"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "ad49e3cff464a6924a04f68eebdc1ce215e5f691ff5e1e7fe8921d8ec0ce7de9"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "0fac83e4e5523701bbbc4e264b14815868befdd291ca46af2ac6b5e3fb903b91"
+        }
+      }
+    },
+    {
+      "name": "partial-recovery",
+      "failAfter": 44,
+      "partialSchemaSha256": "77cbff860e9b17f22f39cf328b4a97d602e2faa845aeec9a00210c170dbfad84",
+      "applied": 107,
+      "schemaSha256": "429f54f98869f51719c75d858f3b51282621acadbeb79b45f005b657d95d19ea",
+      "before": {
+        "events": {
+          "count": 30,
+          "sha256": "7815ddb637ce54033d58819018928b912fd1eeefce5aaf97c24fffdc4222caa9"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "be1a265741e9cdb5526931885dd6f8f1e42eb626f9532214943fec64d077c347"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "76642a0d5add61cf2338532b979d31cdd181a5fcf84f6348f0db3896a1735122"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "7e69f1badc095ea2e3bd6c30b02963fbac72e4ffca09dd70c0431f22c7ab341e"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "c3023e3f8efd4cc14b78a983fc27a4cfefd9d918f23d83e0764cc383da0dcf76"
+        }
+      },
+      "after": {
+        "events": {
+          "count": 30,
+          "sha256": "7815ddb637ce54033d58819018928b912fd1eeefce5aaf97c24fffdc4222caa9"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "be1a265741e9cdb5526931885dd6f8f1e42eb626f9532214943fec64d077c347"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "76642a0d5add61cf2338532b979d31cdd181a5fcf84f6348f0db3896a1735122"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "7e69f1badc095ea2e3bd6c30b02963fbac72e4ffca09dd70c0431f22c7ab341e"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "c3023e3f8efd4cc14b78a983fc27a4cfefd9d918f23d83e0764cc383da0dcf76"
+        }
+      }
+    },
+    {
+      "name": "partial-recovery",
+      "failAfter": 102,
+      "partialSchemaSha256": "f50378bc0c4e379253a83d4a516976bf628bc4b7f477d3dd824cebca5cdfb5fa",
+      "applied": 107,
+      "schemaSha256": "429f54f98869f51719c75d858f3b51282621acadbeb79b45f005b657d95d19ea",
+      "before": {
+        "events": {
+          "count": 30,
+          "sha256": "427586f1a8cb0c4eb236ff2a1861f57a48669f5db0f7c9d794ddb38652d01da0"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "1886dfa59ef922c528ba9f53c6fb6e3b5c850cded47c83e9323fcad998fda05d"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "9bbc6e86c03a96dd83e84082717e0117333214659253050351e658572bb51994"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "1c4601f7f72dc00c92e1ba396cd0a77427dc903f1c130207e51953b72afa5b7d"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "cd4fba1766148e6ce6934af9b0129d7b41134c150465edf7939b8677db15c400"
+        }
+      },
+      "after": {
+        "events": {
+          "count": 30,
+          "sha256": "427586f1a8cb0c4eb236ff2a1861f57a48669f5db0f7c9d794ddb38652d01da0"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "1886dfa59ef922c528ba9f53c6fb6e3b5c850cded47c83e9323fcad998fda05d"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "9bbc6e86c03a96dd83e84082717e0117333214659253050351e658572bb51994"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "1c4601f7f72dc00c92e1ba396cd0a77427dc903f1c130207e51953b72afa5b7d"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "cd4fba1766148e6ce6934af9b0129d7b41134c150465edf7939b8677db15c400"
+        }
+      }
+    },
+    {
+      "name": "partial-recovery",
+      "failAfter": 106,
+      "partialSchemaSha256": "1c1b70c86a6dba8d080bfc4093cf5fd3158838c394a8f24232a5db9a75d1dfa4",
+      "applied": 107,
+      "schemaSha256": "429f54f98869f51719c75d858f3b51282621acadbeb79b45f005b657d95d19ea",
+      "before": {
+        "events": {
+          "count": 30,
+          "sha256": "f75c973c4c71c6540d96a690f2acb58898232eb178022e0e1cf640d7ae074157"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "763dd1c0615ac40d1b33c80155577cfec9e8d9eef8a24f2ad5fee1089a61c80e"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "7dc79d5c70d96ea5b800c7fa90fcdcadb389bb9808bbbb34dd12f9166d46a7a8"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "845433d20b1ad5195212c013a022776216a4f00f925fa149804f0a6570282306"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "ff870d1f1dce54d12dc1b60e01abbf95b14095b27cf655077e51be3ab22420c6"
+        }
+      },
+      "after": {
+        "events": {
+          "count": 30,
+          "sha256": "f75c973c4c71c6540d96a690f2acb58898232eb178022e0e1cf640d7ae074157"
+        },
+        "event_private_payloads": {
+          "count": 30,
+          "sha256": "763dd1c0615ac40d1b33c80155577cfec9e8d9eef8a24f2ad5fee1089a61c80e"
+        },
+        "private_content": {
+          "count": 1,
+          "sha256": "7dc79d5c70d96ea5b800c7fa90fcdcadb389bb9808bbbb34dd12f9166d46a7a8"
+        },
+        "event_client_receipts": {
+          "count": 0,
+          "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        "project_event_scopes": {
+          "count": 21,
+          "sha256": "845433d20b1ad5195212c013a022776216a4f00f925fa149804f0a6570282306"
+        },
+        "project_resource_scopes": {
+          "count": 16,
+          "sha256": "ff870d1f1dce54d12dc1b60e01abbf95b14095b27cf655077e51be3ab22420c6"
+        }
+      }
+    }
+  ],
+  "triggerUpgrade": {
+    "existingTriggerReplaced": true,
+    "repeatedInvalidationCount": 3,
+    "originalErasureDeadline": 1790282996,
+    "observedErasureDeadline": 1790282996
+  },
+  "endedAt": "2026-09-24T20:49:26.577Z"
+}

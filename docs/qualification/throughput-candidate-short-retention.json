@@ -1,0 +1,552 @@
+{
+  "schema": 1,
+  "phaseTotals": {
+    "backfill": {
+      "ticks": 6,
+      "operations": 796,
+      "calls": 3,
+      "inputBytes": 23336,
+      "tokens": 5835,
+      "put": 3,
+      "get": 1,
+      "head": 3,
+      "delete": 0,
+      "list": 1
+    },
+    "healthy-edit": {
+      "ticks": 2,
+      "operations": 276,
+      "calls": 1,
+      "inputBytes": 1403,
+      "tokens": 351,
+      "put": 1,
+      "get": 2,
+      "head": 1,
+      "delete": 0,
+      "list": 0
+    },
+    "withdrawal": {
+      "ticks": 15,
+      "operations": 869,
+      "calls": 1,
+      "inputBytes": 1117,
+      "tokens": 280,
+      "put": 1,
+      "get": 1,
+      "head": 9,
+      "delete": 4,
+      "list": 2
+    },
+    "restore-coverage": {
+      "ticks": 1,
+      "operations": 40,
+      "calls": 0,
+      "inputBytes": 0,
+      "tokens": 0,
+      "put": 0,
+      "get": 0,
+      "head": 0,
+      "delete": 0,
+      "list": 0
+    },
+    "renewal": {
+      "ticks": 4,
+      "operations": 536,
+      "calls": 0,
+      "inputBytes": 0,
+      "tokens": 0,
+      "put": 2,
+      "get": 2,
+      "head": 4,
+      "delete": 0,
+      "list": 1
+    },
+    "short-retention-stability": {
+      "ticks": 120,
+      "operations": 5642,
+      "calls": 0,
+      "inputBytes": 0,
+      "tokens": 0,
+      "put": 2,
+      "get": 3,
+      "head": 30,
+      "delete": 4,
+      "list": 12
+    },
+    "shutdown": {
+      "ticks": 1,
+      "operations": 45,
+      "calls": 0,
+      "inputBytes": 0,
+      "tokens": 0,
+      "put": 0,
+      "get": 0,
+      "head": 2,
+      "delete": 2,
+      "list": 0
+    }
+  },
+  "readiness": {
+    "initialBackfillWithin24Hours": true,
+    "healthyEditWithin5Minutes": true,
+    "withdrawnObjectsWithin15Minutes": true,
+    "withdrawnPrivateProseWithin15Minutes": true,
+    "renewalWithin12Hours": true,
+    "renewalWithinActualWindow": true
+  },
+  "fixtureGeneratorHash": "5e4efec940c7f63ae046bc6b4d51e42fb2534ba713a5fb87f8ba697694733e79",
+  "sourceHashes": {
+    "src/model/events.ts": "673e5cc5fc63dbf532e53108304c520804b11d569e014858e29bd26c85dcefe2",
+    "worker/creation-api.ts": "f9b30e5638f43279839c83c8fc1ffa75c68737e07f584e23d8b55e3f64997aab",
+    "worker/creation-authority.ts": "2ed295b0e6322f175920bffb2a21827a617313f35ee91dd24af969dacf7c7141",
+    "worker/creation-commits.ts": "e9a58ae5735e845ce9be526fa541b7c18839d2d13cdb4d98df8786b2d95009d6",
+    "worker/creation-index-authority.ts": "38ec255a7e3716628544b2d6888266bd80b58db294ad7abce0222899ee7cc2b9",
+    "worker/creation-index-budget.ts": "6d7c34b3ac51865f0201410db6244be41f9d96f0f642dcfd396d059ae3cc561b",
+    "worker/creation-index-compaction.ts": "e370dc0a732eb011e2398e47c5718b63c100d1b37328c2f12f1ab2122487d9d7",
+    "worker/creation-index-maintenance.ts": "2a28ef553368397e8b0a516a522ad44b22a5eb8f37d4d4db20c2188780ce5f9f",
+    "worker/creation-index-private.ts": "5099310f1a490c66f1ee2cd04a5ab5bdc5a6959688d121535abd608d96b2a375",
+    "worker/creation-index-projection-stage.ts": "075544961f7c5fccd8fab3c50b7878d7019792df2cb4e59074cc42397f692e82",
+    "worker/creation-index-projection.ts": "c4c21d9b80b14600dd2812e32179f99fd9db3923feb15c56802fc06c1dec3762",
+    "worker/creation-index-reconcile.ts": "8edd389b53505b0b31e13d45cf7eb7e4fb87b072506559ab207cb6e2d180f34e",
+    "worker/creation-index-routing.ts": "86bfaf0543acad9806d4b1f0a21860f9cb27045cca0b839b0ca8908f7da5f14f",
+    "worker/creation-index-schema.ts": "95fc2eb7d81ceaeb680db9badeae093aebbd041eccee0c3b4d2fadb345f163bf",
+    "worker/creation-index-search.ts": "e1c099ef8da9d24a36ca1551425ddf1827ef359b2f5030c868416a3636220348",
+    "worker/creation-interpret.ts": "412ae830680da0b84c3eb2a8e781803bcb8bd92610c937706c8071f39fce56cf",
+    "worker/creation-organization-contract.ts": "3c440c9f511e211df31b19d942fb7783714a9511b6d335d6c9962579e708382e",
+    "worker/creation-provider-http.ts": "c51ac3b16370250b375fbf8fbfb8b0ab91640fa8b4f6ebddcd51abf72f73c02d",
+    "worker/creation-provider-service.ts": "3d809961476a7dcb46e2bb42ca6cb49542ede9a1fdb24e44f568b2a52ff6f83f",
+    "worker/creation-qualification-budget.ts": "2d7d1c2d883d965c7208e99c782d26bd54a7f68f8913379717e49aa5faf258e6",
+    "worker/creation-search-api.ts": "7ee04c0d1d30c9283e5f0d77410799d6a3389084e2a714191dec899c7e8b867d",
+    "worker/creation-search-index.ts": "8f227f626f2606895a50ae17d4f2814391da0ef3d60a47c64a4e68e162ab981a",
+    "worker/creation-search-providers.ts": "b6aa996d24f1118d647419348c67bbeba9f77943a2b87d92fbcacbe69ecc9154",
+    "worker/creation-search.ts": "753ed14e9d974b0f6014c346d3cb614f1d881cf54dcedb8b17c7acf12c62644d",
+    "worker/creation-store.ts": "545e38d0c0290e4617459c63f4c2d980417fdbb3c7b3c5740c1aeeee26903a42",
+    "worker/creation-vectors.ts": "020fbc0f32a9ae626978b8412dd44868025c4b83cd53a60b09e836751b70c892",
+    "worker/memory-native-boundary.ts": "a6fa7878a94fe425c51bc61511d736aceb286a3cae9c2ff3f471f4cbd92ee7e8",
+    "worker/private-content-storage.ts": "ca836551432ab3c76c162a09fe37d82eaa4d920aeffa652934194670a74e2bc9"
+  },
+  "endingSourceHashes": {
+    "src/model/events.ts": "673e5cc5fc63dbf532e53108304c520804b11d569e014858e29bd26c85dcefe2",
+    "worker/creation-api.ts": "f9b30e5638f43279839c83c8fc1ffa75c68737e07f584e23d8b55e3f64997aab",
+    "worker/creation-authority.ts": "2ed295b0e6322f175920bffb2a21827a617313f35ee91dd24af969dacf7c7141",
+    "worker/creation-commits.ts": "e9a58ae5735e845ce9be526fa541b7c18839d2d13cdb4d98df8786b2d95009d6",
+    "worker/creation-index-authority.ts": "38ec255a7e3716628544b2d6888266bd80b58db294ad7abce0222899ee7cc2b9",
+    "worker/creation-index-budget.ts": "6d7c34b3ac51865f0201410db6244be41f9d96f0f642dcfd396d059ae3cc561b",
+    "worker/creation-index-compaction.ts": "e370dc0a732eb011e2398e47c5718b63c100d1b37328c2f12f1ab2122487d9d7",
+    "worker/creation-index-maintenance.ts": "2a28ef553368397e8b0a516a522ad44b22a5eb8f37d4d4db20c2188780ce5f9f",
+    "worker/creation-index-private.ts": "5099310f1a490c66f1ee2cd04a5ab5bdc5a6959688d121535abd608d96b2a375",
+    "worker/creation-index-projection-stage.ts": "075544961f7c5fccd8fab3c50b7878d7019792df2cb4e59074cc42397f692e82",
+    "worker/creation-index-projection.ts": "c4c21d9b80b14600dd2812e32179f99fd9db3923feb15c56802fc06c1dec3762",
+    "worker/creation-index-reconcile.ts": "8edd389b53505b0b31e13d45cf7eb7e4fb87b072506559ab207cb6e2d180f34e",
+    "worker/creation-index-routing.ts": "86bfaf0543acad9806d4b1f0a21860f9cb27045cca0b839b0ca8908f7da5f14f",
+    "worker/creation-index-schema.ts": "95fc2eb7d81ceaeb680db9badeae093aebbd041eccee0c3b4d2fadb345f163bf",
+    "worker/creation-index-search.ts": "e1c099ef8da9d24a36ca1551425ddf1827ef359b2f5030c868416a3636220348",
+    "worker/creation-interpret.ts": "412ae830680da0b84c3eb2a8e781803bcb8bd92610c937706c8071f39fce56cf",
+    "worker/creation-organization-contract.ts": "3c440c9f511e211df31b19d942fb7783714a9511b6d335d6c9962579e708382e",
+    "worker/creation-provider-http.ts": "c51ac3b16370250b375fbf8fbfb8b0ab91640fa8b4f6ebddcd51abf72f73c02d",
+    "worker/creation-provider-service.ts": "3d809961476a7dcb46e2bb42ca6cb49542ede9a1fdb24e44f568b2a52ff6f83f",
+    "worker/creation-qualification-budget.ts": "2d7d1c2d883d965c7208e99c782d26bd54a7f68f8913379717e49aa5faf258e6",
+    "worker/creation-search-api.ts": "7ee04c0d1d30c9283e5f0d77410799d6a3389084e2a714191dec899c7e8b867d",
+    "worker/creation-search-index.ts": "8f227f626f2606895a50ae17d4f2814391da0ef3d60a47c64a4e68e162ab981a",
+    "worker/creation-search-providers.ts": "b6aa996d24f1118d647419348c67bbeba9f77943a2b87d92fbcacbe69ecc9154",
+    "worker/creation-search.ts": "753ed14e9d974b0f6014c346d3cb614f1d881cf54dcedb8b17c7acf12c62644d",
+    "worker/creation-store.ts": "545e38d0c0290e4617459c63f4c2d980417fdbb3c7b3c5740c1aeeee26903a42",
+    "worker/creation-vectors.ts": "020fbc0f32a9ae626978b8412dd44868025c4b83cd53a60b09e836751b70c892",
+    "worker/memory-native-boundary.ts": "a6fa7878a94fe425c51bc61511d736aceb286a3cae9c2ff3f471f4cbd92ee7e8",
+    "worker/private-content-storage.ts": "ca836551432ab3c76c162a09fe37d82eaa4d920aeffa652934194670a74e2bc9"
+  },
+  "sourceChangedDuringRun": [],
+  "pendingWork": [
+    {
+      "kind": "deletion",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "discovery",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "manifest-reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 4,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 6,
+      "cursor": "",
+      "count": 1
+    }
+  ],
+  "shutdown": {
+    "metadataRows": {
+      "creation_index_block_routes": 0,
+      "creation_index_replay_skeletons": 0
+    },
+    "preShutdown": {
+      "objects": 2,
+      "published": 13
+    },
+    "ticks": 1,
+    "objectsRemaining": 0,
+    "privateBodiesRemaining": 0,
+    "checkpointRows": 0,
+    "providerCalls": 0
+  },
+  "attempts": {
+    "count": 5,
+    "reserved": 25856,
+    "tokens": 6466
+  },
+  "shortRetentionWindow": {
+    "ticks": 120,
+    "minPublished": 0,
+    "completeTicks": 117,
+    "generationIncrements": 2,
+    "providerCalls": 0
+  },
+  "kind": "offline-injected-provider-unseeded-lifecycle",
+  "sourceCommit": "3786dc53379567dd6c9f16e6d0bf9ea0cacf9794",
+  "sourceRoot": "/private/tmp/still-hosted-qualification",
+  "ideas": 10,
+  "projects": 2,
+  "custodies": 2,
+  "canonicalEvents": 17,
+  "initialIndexRows": 0,
+  "expectedSources": 14,
+  "retentionDays": 1,
+  "tickSeconds": 60,
+  "maxTicks": 160,
+  "ticks": 149,
+  "partialTick": 3,
+  "fullTick": 6,
+  "backfillCoverage": {
+    "total": 14,
+    "published": 14
+  },
+  "healthyEdit": {
+    "atTick": 6,
+    "visibleTick": 8,
+    "delayMinutes": 2,
+    "pass": true,
+    "trace": [
+      {
+        "tick": 7,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 8,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 14336,
+          "tokens": 351,
+          "providerAttempts": 1
+        },
+        "work": [
+          {
+            "kind": "embedding",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      }
+    ]
+  },
+  "edit": {
+    "atTick": 3,
+    "visibleTick": 6,
+    "delayMinutes": 3,
+    "pass": true
+  },
+  "withdrawal": {
+    "atTick": 8,
+    "erasedTick": 23,
+    "delayMinutes": 15,
+    "pass": true,
+    "objects": 1,
+    "privateBodiesBefore": 3,
+    "privateBodiesAt15Minutes": 0,
+    "privateBodyErasedTick": 9,
+    "privateBodyDelayMinutes": 1,
+    "privateBodyReappeared": false,
+    "privateBodyPass": true
+  },
+  "renewal": {
+    "status": "completed",
+    "leadSeconds": 8640,
+    "actualRenewalWindowSeconds": 8640,
+    "ticks": 4,
+    "within12Hours": true,
+    "withinActualRenewalWindow": true,
+    "coverage": {
+      "total": 14,
+      "published": 13
+    },
+    "providerCalls": 5,
+    "withdrawalImmediateDenied": true
+  },
+  "provider": {
+    "calls": 5,
+    "inputs": 30,
+    "inputBytes": 25856,
+    "tokens": 6466,
+    "maxInputs": 15,
+    "maxPayloadBytes": 19871
+  },
+  "d1": {
+    "operations": 8210,
+    "maxTickOperations": 171,
+    "slowReads": [
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_row.scope_type, 'organizationId', grant_r",
+        {
+          "calls": 405,
+          "totalMs": 191.23795399999995,
+          "maxMs": 1.265875000000051
+        }
+      ],
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=unixepoch()) AND (? IS NULL OR kind IN(SEL",
+        {
+          "calls": 922,
+          "totalMs": 29.653442000004475,
+          "maxMs": 0.17058399999996254
+        }
+      ],
+      [
+        "UPDATE creation_index_work SET state='running',lease_token=?,lease_until=unixepoch()+?,attempts=attempts+1,touched=unixepoch() WHERE job_key=? AND due<=unixepoc",
+        {
+          "calls": 410,
+          "totalMs": 14.21733700000027,
+          "maxMs": 0.14437500000008185
+        }
+      ],
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=p.project_access_id WHERE p.partition_ke",
+        {
+          "calls": 405,
+          "totalMs": 10.439255000000003,
+          "maxMs": 0.12858400000004622
+        }
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        {
+          "calls": 405,
+          "totalMs": 8.350548999999319,
+          "maxMs": 0.11050000000000182
+        }
+      ],
+      [
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='creation_index_work'",
+        {
+          "calls": 149,
+          "totalMs": 5.84108900000183,
+          "maxMs": 0.20437500000002728
+        }
+      ],
+      [
+        "SELECT 1 FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        {
+          "calls": 293,
+          "totalMs": 4.109379000001809,
+          "maxMs": 0.05387499999983447
+        }
+      ],
+      [
+        "SELECT r.content_id FROM creation_search_records r JOIN private_content c ON c.content_id=r.content_id WHERE r.partition_key=? AND r.source_id=? AND r.revision=",
+        {
+          "calls": 60,
+          "totalMs": 3.9008810000011636,
+          "maxMs": 0.13858400000003712
+        }
+      ],
+      [
+        "SELECT e.entity_id,c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND",
+        {
+          "calls": 18,
+          "totalMs": 3.6626690000005055,
+          "maxMs": 0.3723339999999098
+        }
+      ],
+      [
+        "SELECT object_key,write_until FROM creation_index_objects WHERE state='retired' AND (erase_due<=unixepoch() OR expires<=unixepoch()) ORDER BY erase_due,object_k",
+        {
+          "calls": 149,
+          "totalMs": 3.075029000001109,
+          "maxMs": 0.09887499999990723
+        }
+      ]
+    ],
+    "topOperations": [
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=un",
+        922
+      ],
+      [
+        "INSERT OR IGNORE INTO creation_index_work(job_key,kind,partition_key,priority) VALUES(?,?,'',0)",
+        447
+      ],
+      [
+        "UPDATE creation_index_work SET state='running',lease_token=?,lease_until=unixepoch()+?,attempts=attempts+1,touched=unixe",
+        410
+      ],
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=",
+        405
+      ],
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_r",
+        405
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        405
+      ],
+      [
+        "SELECT 1 FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        293
+      ],
+      [
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='creation_index_work'",
+        149
+      ],
+      [
+        "INSERT INTO creation_index_runs(run_id,trigger_kind,deployment,started,outcome) VALUES(?,?,?,unixepoch(),'running')",
+        149
+      ],
+      [
+        "SELECT partition_key FROM creation_search_partitions WHERE partition_key>? ORDER BY partition_key LIMIT 32",
+        149
+      ],
+      [
+        "UPDATE creation_index_objects SET state='retired',erase_due=COALESCE(erase_due,unixepoch()) WHERE state<>'erased' AND (e",
+        149
+      ],
+      [
+        "SELECT object_key,write_until FROM creation_index_objects WHERE state='retired' AND (erase_due<=unixepoch() OR expires<=",
+        149
+      ],
+      [
+        "DELETE FROM creation_index_sources WHERE expires<=unixepoch() OR NOT EXISTS(SELECT 1 FROM creation_search_records r WHER",
+        149
+      ],
+      [
+        "DELETE FROM creation_index_projection WHERE NOT EXISTS(SELECT 1 FROM creation_search_partitions p WHERE p.partition_key=",
+        149
+      ],
+      [
+        "DELETE FROM creation_index_block_routes WHERE NOT EXISTS(SELECT 1 FROM creation_search_partitions p WHERE p.partition_ke",
+        149
+      ],
+      [
+        "DELETE FROM creation_index_replay_skeletons WHERE NOT EXISTS(SELECT 1 FROM creation_search_partitions p WHERE p.partitio",
+        149
+      ],
+      [
+        "DELETE FROM creation_search_terms WHERE EXISTS(SELECT 1 FROM creation_search_records r WHERE r.partition_key=creation_se",
+        149
+      ],
+      [
+        "SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS now",
+        149
+      ],
+      [
+        "DELETE FROM project_resource_scopes WHERE resource_kind='content' AND resource_id IN(SELECT c.content_id FROM private_co",
+        149
+      ],
+      [
+        "DELETE FROM private_content_retention_scopes WHERE content_id IN(SELECT c.content_id FROM private_content c WHERE c.kind",
+        149
+      ]
+    ],
+    "allocatedFixtureBytes": 1847296
+  },
+  "r2": {
+    "put": 9,
+    "get": 9,
+    "head": 49,
+    "delete": 10,
+    "list": 16,
+    "uploadedBytes": 139264,
+    "readBytes": 157696,
+    "peakBytes": 86016,
+    "peakObjects": 5
+  },
+  "nodeFixture": {
+    "elapsedMs": 624.4388749999999,
+    "peakHeapBytes": 157812096,
+    "peakRssBytes": 381140992
+  },
+  "oldestQueueAgeSeconds": 85260,
+  "oldestQueueAgeBeforeRenewalJump": 120,
+  "clockJumpSeconds": 76439.491,
+  "failedWork": [],
+  "trajectory": [
+    {
+      "tick": 6,
+      "published": 14,
+      "records": 14,
+      "providerCalls": 3,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 14336,
+        "tokens": 361,
+        "providerAttempts": 1
+      }
+    }
+  ],
+  "qualification": "NOT hosted, NOT live relevance, simulated provider token usage, Node heap is not hosted resource evidence"
+}

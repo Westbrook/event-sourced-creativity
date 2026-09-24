@@ -1,0 +1,12 @@
+{"tick":100,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":200,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":300,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":400,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":500,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":600,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":700,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":800,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":900,"published":0,"records":2064,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":1000,"published":0,"records":7410,"providerCalls":15,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":22528,"tokens":5533,"providerAttempts":1}}
+{"tick":1100,"published":2446,"records":9636,"providerCalls":132,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":88064,"tokens":6635,"providerAttempts":2}}
+{"tick":1200,"published":6013,"records":9998,"providerCalls":305,"receipt":{"status":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":65536,"tokens":2525,"providerAttempts":1}}

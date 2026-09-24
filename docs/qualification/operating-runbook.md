@@ -1,0 +1,59 @@
+# Still qualification operator runbook
+
+This is a procedure for a future authorized isolated run. It is not evidence of hosted execution. Production creation/indexing remain disabled. The current published reference is v550 / `c28af5fea0fc3ec2b37b878a544ec59c52a64daf`; exact fresh metadata are in [hosting-baseline-receipt.json](hosting-baseline-receipt.json). The release owner records final local commit/test/archive receipts in [release-decision.md](release-decision.md).
+
+## Current hold
+
+The frozen runtime `3786dc53` is locally no-go: healthy edits take6m/38m at1k/10k (limit5m), default10k renewal takes794m (limit720m), and one-day10k renewal loses all current coverage at its144m deadline. Full backfill90m/651m passes24h. Repair incremental update/renewal work and rerun the same gates before paid scale qualification. See [measured throughput](throughput-2026-09-24.md) and [release decision](release-decision.md). The archive is disabled and unpublished; its held41 migrations do not install the107 candidate statements.
+
+## Before any hosted mutation
+
+1. Obtain the missing platform response in [hosting-capability-decision.md](hosting-capability-decision.md). Confirm actual independent Site, DB, bucket, secrets and schedule identities against [environment proposal](hosting-environment-proposal.json). A public/preview URL or separate deployment ID does not prove separate storage. Keep the production audience unchanged.
+2. Reconcile the authoritative complete schema and applied ledger. Run [schema reconciliation/recovery](schema-reconciliation-and-recovery.md) on a schema-equivalent disposable database with synthetic authored rows, then obtain approval for the exact target-bound additive migration and supported backup/restore. Preserve the held 41 archive policy; never deploy v547 or blindly journal source candidate numbers.
+3. Bind exact candidate source, Worker bytes, archive, schema, deployment/environment, pinned representation/model, frozen corpus and independent-label hashes into the run manifest. Inspect the actual tar rather than only source/build configuration. A disabled held-policy archive is not a schema-enabled qualification archive.
+4. Record explicit authorization, test custody IDs, credential reuse/create decision, named operator/billing/cleanup owner, expiry, approved provider and host allowances, and supported private execution identity. The request and proposed costs are in [authorization-request.md](authorization-request.md) and [cost-estimate.json](cost-estimate.json). Do not start when the all-in quote/reservation path is unknown. Admission must reserve every provider attempt and retain uncertain reservations after errors/restarts.
+5. Freeze the initial-backfill/renewal workload budget from completed unseeded measurements and actual retention before hosted tests. The existing fixed criteria are healthy update visibility within 5 minutes and verified durable deletion within 15 minutes. Do not adjust these after a failing result. If measured capacity cannot meet retention or queues cannot drain, stop scale qualification and repair the implementation.
+
+## Authorized installation and canary
+
+Initially keep all feature flags off and enrollments disabled. Capture schema/backup identities and install the reviewed manifest through the supported host operation. Verify ordinary routes and disabled capability response before creating canonical synthetic content. Confirm there are no production DB/R2 references. Use exact two-custody allowlists, expiring D1 enrollments and bounded daily token allocations; no wildcard. Set `STILL_CREATION_DEPLOYMENT_ID` to the observed deployment. Enable only the isolated target's required flags after approval.
+
+Use the separate development packet for a small canary. The search capture script requires a non-held-out manifest for canary, an approved private transport adapter hash, verified isolation/capability/approval receipts and durable allowances. The adapter does not exist until supported ingress is known; do not invent a route, reuse browser cookies or weaken workspace access. Verify provider model/account identities, reservation accounting, permission denial, complete/partial coverage reporting and actual cleanup. Run no full cohort until the canary receipt passes. A failed/uncertain call stops further dispatch; do not retry automatically or assume no billing.
+
+Record the actual invocation kind. A manually invoked internal runner demonstrates only that path; it does not demonstrate persistent scheduling.
+
+## Measurements and evidence
+
+| Gate | Required run and fixed criterion |
+| --- | --- |
+| Autonomous delivery | Record supported schedule/configuration identity and deployment persistence. Observe at least 10 consecutive real wakes with all app tabs closed, then repeat after deployment. Exercise overlap, missed wake/backlog and the authorized external health alert. Native handler export/local workerd/manual calls are insufficient |
+| Search relevance | Frozen60 unique queries, >=40 positives and >=20 no-match negatives. Intended top3 >=90% positives; negative false positives <=10%; semantic recall@20 within each intended partition >=95%; zero forbidden disclosure. Preserve failed/timeouts in denominators; incomplete coverage cannot establish no-match |
+| Hosted performance | 1k and 10k canonical Ideas, >=30 cold, >=30 warm and >=30 concurrent observations per size; p95<=2s after debounce, typing response<=100ms. Record actual runtime metrics and instance/cold/concurrency provenance. If initial p95 is 1,800–2,000 ms, obtain a separately bounded repeat to reach at least 60 observations; the 2,000 ms bar does not change. No automatic extra calls or allowance increase. Cache-busting is not cold-start proof |
+| Lifecycle | Unseeded discovery→projection→embedding→publication, complete Idea/Document/Project coverage, edits during backfill, withdrawal, retention renewal, missing credentials/flags-off cleanup, interrupted uploads, stale leases and orphan reconciliation. Healthy updates<=5min; physical deletion<=15min; compare queue age/drain to actual retention |
+| Authority/storage | Fresh canonical permission/revision checks across deployments; private index prefix denied through ordinary media routes; zero cross-custody provider payloads; no false complete coverage; D1/R2 physical erasure and late reappearance receipts |
+| Organization | At least 30 held-out cases reviewed by a named human for invention, omissions and changed constraints, including exact references, correction/approval preservation, splits/merges/removal and rescue. Agent-authored labels are not a human fidelity verdict |
+| Accessibility/recovery | Named human screen-reader/tool/platform journeys through creation/review/recovery; hosted lost-response/restart/two-tab/discard/flag-change cases; partial schema recovery and cleanup-preserving rollback |
+
+The capture/scorer contract is documented in [capture-contract.md](capture-contract.md). Retain source/version identities, raw content-free observations, failed runs and exact commands. Runtime usage receipts must come from the actual host; Node heap and injected provider timing do not qualify hosted resources. Public artifacts must contain only synthetic fixture content or content-free IDs/counts, never private creative bodies, request payloads or credentials. Human review may use the approved private qualification environment.
+
+## Monitoring, holds and recovery
+
+Inspect `creation_index_runs`, `creation_index_work`, `creation_index_attempts` and `creationMaintenanceStatus` through supported authorized administration. Record successful/partial/failed ticks, oldest due work, queue trend, provider attempts/reservations, expiry, coverage, D1 operations and R2 bytes. A proposed external monitor alerts the named operator after5 minutes without a successful wake while work is due. Destination and message authorization are required; none has been configured by this work.
+
+Stop new inference on any authority/retention breach, missing accounting, unexpected environment/model/schema, exhausted allowance, expiry, unresolved permanent job hold or inability to satisfy the agreed queue budget. Source-capacity and incomplete-coverage holds are actionable failures, never permission to truncate content or mark it indexed. Diagnose held codes and correct their cause before `resumeCreationIndexPartition` in the supported administrative context; no public resume endpoint is supplied. A daily reset is not permission to exceed the combined run cap. An uncertain upload/provider attempt remains potentially completed until independently reconciled.
+
+For schema interruption inspect actual host ledger and CREATE definitions. Apply only the reviewed prefix recovery/forward repair; conflicting objects require a new reviewed additive migration. Do not rewrite applied history or deploy the whole source journal to catch up. Use the host's recorded restore/checkpoint operation only if its data-loss implications are approved.
+
+## Stop, rollback and cleanup
+
+The rollback owner first disables/revokes the affected **D1 enrollment**, providing cross-deployment admission denial; then disables UI/index inference/Jev and removes the affected environment admission. Environment flags alone are not canonical revocation. Verify session capability is false and ordinary navigation uses the existing creation flows. Keep authored canonical events and approvals intact.
+
+Retain a cleanup-capable Worker, D1 index/intent/receipt schema and private R2 binding. Do not blindly roll back to a pre-index Worker or delete the Site. Record retired/staged/active-object state, allow outstanding `write_until` windows to elapse, run supported credential-free cleanup, verify each delete with head absence, and reconcile both R2-listed orphans and D1-referenced missing objects. Repeat after restart and a simulated late object arrival in the isolated environment. Close cleanup only after derived private bodies and R2 keys are physically gone and remaining content-free receipts prevent resurrection. Local deletion tests are not a hosted retention certificate.
+
+Stop qualification inference within 48 hours of first approved dispatch (earlier on exhaustion/failure). Review resources within 7 days. Cancel the schedule only when the cleanup owner has established an equivalent supported cleanup path or deletion is complete. Delete isolated resources/temporary secrets using approved host operations after cleanup receipts are archived; revoke temporary service identity and billing allowance. Preserve only the approved content-free evidence and immutable synthetic fixture hashes. Record every resource/secret/schedule outcome and any residual item explicitly. No hosted resource was created in preparation, so there is currently no hosted cleanup proof to claim.
+
+## Proposed later pilot — not activated or scheduled
+
+After every required gate passes, the user may separately approve one exact test/pilot custody and deployment. Name a pilot owner and rollback owner, retain the existing audience, enroll only that custody, and observe for 24 hours. This is a proposal, not a promise to run later or a created automation. No broad rollout follows automatically.
+
+Stop and revert on any unauthorized identity/payload, stale-source publication, invention that violates the accepted organizer contract, unexplained accounting, retention miss, update delay>5min, deletion delay>15min, scheduled gap>5min with due work, held queue that cannot clear within the frozen retention budget, or search cohort p95>2s. Keep cleanup running through rollback. At 24 hours the owner reviews coverage, latency, queue/retention, fidelity/accessibility incidents and actual spend against the preapproved manifest, then asks for any broader activation separately.

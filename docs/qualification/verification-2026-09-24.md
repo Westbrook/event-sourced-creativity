@@ -1,0 +1,26 @@
+# Final local qualification ledger — September 24, 2026
+
+**Production activation: NO-GO.** The exact runtime checkpoint is `3786dc53379567dd6c9f16e6d0bf9ea0cacf9794`, based on published v550 / `c28af5fe`. This branch has not been merged, pushed, saved in Sites or deployed. Runtime changes preserve the existing creation UI and product contract. Qualification tools are committed as `6c600508`; the test synchronization repair is committed as `2094797f`. These and subsequent evidence commits do not change the packaged runtime.
+
+| Check | Observed result | Scope |
+| --- | --- | --- |
+| Creation/index/Still/streamed-fold workflow regressions | 317/317 PASS | Canonical persistence, recovery, review/correction, identity, batching, leases, withdrawal, projection, search and qualification admission; local deterministic/injected providers |
+| Schema and lifecycle tooling | 13/13 PASS (subset of317) | 10 schema checks, 3 unseeded lifecycle harness checks; synthetic local data |
+| Clean build, typecheck and changed-path lint | PASS | Build retains existing large-chunk warnings |
+| Native local workerd/D1/R2 | 2/2 PASS | Compiled scheduled cleanup and shared admission concurrency; no actual hosted schedule/provider dispatch |
+| Browser workflow suites | 18/18 per engine PASS; [browser receipt](browser-verification.json) | Real UI/controller/Worker with disposable SQLite, providers unconfigured; no human accessibility verdict |
+| Source-frozen unseeded scale | FAIL required gates | 1k/10k edit6m/38m;10k default renewal794m; one-day10k zero current coverage at144m deadline |
+| Disabled archive inspection | PASS | Clean runtime checkpoint build; exactly41 held migrations, no candidate SQL/qualification entry; not published |
+| Hosted/live/human release qualification | UNAVAILABLE | Named environment, target schema, supported trigger/ingress, billing/authorization and reviewers absent |
+
+[Machine-readable receipt](verification-2026-09-24.json) binds the exact command/log checksums. [Finding-to-fix ledger](finding-fix-workflow-ledger.md) maps workflow repairs. The [throughput report](throughput-2026-09-24.md) and [hashed final receipt manifest](throughput-candidate-summary.json) retain all five source-frozen cohorts and earlier failures. Their controlled minute clock measures bounded-run progress, not elapsed hosted performance or billable provider usage. The production inference environment remains limited to512 D1 operations; reported whole-tick fixture totals also include independent cleanup and can exceed512 without raising that bound.
+
+The initial clean-checkout Chromium run recorded16 passes and2 failures: one child assertion plus its parent. It sampled `partialIdeas` while the reviewed-reference authorization request was still pending; generic “Draft saved” described prior input. The browser repair deterministically holds that request to reproduce the old synchronization error, then waits for reviewed-passage dismissal and exact retained state before checking undo, redo and reload. The Document constituent reuse test exposed the same stale acknowledgment and now waits for replacement dismissal too. Runtime UI code is unchanged. Preserve the original failed log alongside the final cross-engine results; this is a test synchronization repair, not an ignored flaky assertion.
+
+The native cleanup test intentionally omits an unrelated panel table. The aggregate scheduled handler reports an exception while creation cleanup runs twice and removes both an orphan and its late reappearance. That is cleanup isolation evidence, not a healthy whole-application scheduled wake. The separate budget test bundles the real admission helper into a test-only Worker:12 concurrent requests admit2, all full/canary aggregate/provider counters are consumed even after simulated503 responses, and missing/no-op triggers, expiry, revocation and exhaustion deny dispatch.
+
+The schema rehearsal applies107 additive statements creating94 objects, repeats the install, and recovers six committed prefixes without changing canonical/private authored rows. Its manifest digest is `fbc89dffdc95b4f039db733a465941499093b7dc35c985f89b5b935561aa5743`; final schema digest `429f54f98869f51719c75d858f3b51282621acadbeb79b45f005b657d95d19ea`. Actual hosted applied history is unknown; candidate filenames are not journal assignments.
+
+The [archive receipt](disabled-archive-receipt.json) binds raw tar SHA-256 `7cbb34c7ab99f584b6e59b5cc85a675b869b20951e949a2222fab51c450d248b`, Worker SHA-256 `afbf3c0a5a0b5d08bb69d005a04abfad8790c56a42a478bf09718d15095ba5be`,45,351,936 bytes and622 files. Its held41-migration policy deliberately excludes the unqualified candidate schema. Never deploy v547.
+
+No live provider call, hosted resource, migration, schedule, production activation or provider spending occurred. The proposed$25 total/$5 canary allowances remain unapproved and omit an unknown hosting quote. The next engineering action is incremental edit/renewal processing; the parallel platform action is the exact [capability request](hosting-capability-decision.md), then a target-bound [authorization manifest](authorization-request.md). Passing helper or browser checks does not close either gate.

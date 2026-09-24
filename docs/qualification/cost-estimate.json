@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "status": "proposed-unapproved-not-a-billing-guarantee",
+  "currency": "USD",
+  "pricesCheckedOn": "2026-09-24",
+  "authorizedSpend": 0,
+  "proposedTotalCeiling": 25,
+  "proposedCanarySubCeiling": 5,
+  "baseline": {
+    "source": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+    "site": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version": 550
+  },
+  "prices": [
+    {
+      "provider": "OpenAI",
+      "model": "text-embedding-3-small",
+      "inputPerMillionTokens": 0.02,
+      "source": "https://developers.openai.com/api/docs/models/text-embedding-3-small"
+    },
+    {
+      "provider": "OpenAI",
+      "model": "gpt-4.1-mini-2025-04-14",
+      "inputPerMillionTokens": 0.4,
+      "outputPerMillionTokens": 1.6,
+      "cachedDiscountAssumed": false,
+      "source": "https://developers.openai.com/api/docs/models/gpt-4.1-mini"
+    },
+    {
+      "provider": "TypeSafe",
+      "model": "jev-latest",
+      "publicInputPerMillionTokens": 0.042,
+      "publicOutputPerMillionTokens": 0,
+      "actualAccountRateVerified": false,
+      "source": "https://typesafe.ai/blog/introducing-system-one-models-and-jev",
+      "accountTermsSource": "https://typesafe.ai/legal/mca"
+    },
+    {
+      "provider": "Google Cloud Scheduler",
+      "optionalFallbackOnly": true,
+      "oneJobPer31Days": 0.1,
+      "freeAllocationAssumed": false,
+      "source": "https://cloud.google.com/scheduler/pricing"
+    },
+    {
+      "provider": "Sites hosting including Worker/D1/R2/logs/native scheduler",
+      "price": null,
+      "reason": "No applicable account tariff, allocation, enforceable monetary ceiling or physical-resource meter was exposed."
+    }
+  ],
+  "allowancesAreNotMeasuredWorkload": true,
+  "fullRunIncludingCanaryAndRetries": [
+    {
+      "purpose": "maintenance embeddings including build/edits/renewal/retries",
+      "maxCalls": 3000,
+      "maxInputBytesPerCall": 24000,
+      "reservedInputTokenUnits": 72000000,
+      "priceBasedAllowance": 1.44
+    },
+    {
+      "purpose": "query embeddings across two custodies",
+      "maxCalls": 600,
+      "maxInputBytesPerCall": 4000,
+      "reservedInputTokenUnits": 2400000,
+      "priceBasedAllowance": 0.048
+    },
+    {
+      "purpose": "32 organizer cases plus at most one retry each",
+      "maxCalls": 64,
+      "maxSerializedInputBytesPerCall": 24000,
+      "maxOutputTokensPerCall": 16384,
+      "reservedInputTokenUnits": 1536000,
+      "reservedOutputTokens": 1048576,
+      "priceBasedAllowance": 2.2921216
+    },
+    {
+      "purpose": "Jev rerank/split including retries",
+      "maxCalls": 600,
+      "maxSerializedInputBytesPerCall": 180000,
+      "reservedInputTokenUnits": 108000000,
+      "priceBasedAllowanceAtPublicRate": 4.536
+    }
+  ],
+  "pricedProviderAllowancesTotal": 8.3161216,
+  "optionalSchedulerAllowance": 0.1,
+  "maximumUnallocatedWithin25": 16.5838784,
+  "allInEstimate": null,
+  "allInEstimateReason": "Hosted usage/rate, actual Jev account tariff/tokenization and measured backfill/renewal requirements are unresolved. Unallocated amount is not a hosting estimate or a claim that full qualification fits.",
+  "canarySubset": {
+    "maintenanceEmbeddingCalls": 100,
+    "queryEmbeddingCalls": 20,
+    "organizerCalls": 4,
+    "jevCalls": 20,
+    "samePerCallBounds": true,
+    "pricedProviderAllowanceAtPublicRates": 0.3440576,
+    "hostingSchedulerAllowance": null,
+    "separateDevelopmentInputsOnly": true
+  },
+  "enforcement": {
+    "searchCapture": "scripts/still-qualification-capture.mjs reserves integer cents/calls/input/output before dispatch and stops on insufficient or uncertain allowance; a reviewed adapter must enforce the actual provider fan-out bounds.",
+    "maintenance": "Implemented optional STILL_CREATION_QUALIFICATION_RUN_ID guard shares fixed lifetime/full/canary D1 reservations with every same-Worker creation provider dispatch. Existing custody daily reservation is an additional bound; it cannot reset qualification totals. Eight local workflow tests pass; actual hosted D1 and account-unit/rate verification remain gates.",
+    "organizerAndJev": "Implemented atomic aggregate and per-provider reservations before organizer, Jev rerank and split HTTP; exact model, serialized input/output and nano-USD limits, no refunds, max48h fixed expiry. Missing/mismatched counter trigger fails closed. Legacy unmetered inference is denied in qualification. See provider-budget-operations.md.",
+    "wholeRun": "Use one qualification run ID across capture, maintenance and organizer, with full provider allocation lower than the $25 total after independent host/scheduler allocations. Canary remains part of full consumption. The capture ledger is an additional guard, not another spend pool. Every reservation remains consumed after uncertainty; actual invoices and hosted enforcement remain unverified.",
+    "bytesVsTokens": "Serialized UTF-8 bytes are conservative local reservation units for OpenAI byte-token input, including prompt/schema. Jev tokenizer and account billing units require confirmation; the public-price arithmetic is an allowance scenario, not a guaranteed upper bound.",
+    "retries": "All calls, retries, updates and renewal must fit listed totals. Exhaustion holds work; it never raises caps, truncates content or buys credits automatically."
+  },
+  "openBeforeAuthorization": [
+    "exact isolated resource IDs and supported execution identity",
+    "final candidate source/archive/configuration hashes",
+    "authoritative target schema and backup procedure",
+    "actual Jev account tariff/model revision and accounting units",
+    "Sites/D1/R2/log and scheduler quote/finite resource bounds",
+    "measured unseeded throughput/retention compatibility",
+    "hosted D1 verification of the locally tested all-provider reservation guard and conservative billable-unit bounds",
+    "named billing/cleanup/operator owners and credential reuse choice"
+  ],
+  "actualThisPreparation": {
+    "paidProviderCalls": 0,
+    "newHostedResources": 0,
+    "newSchedules": 0,
+    "knownIncrementalProviderSpend": 0,
+    "hostedRetentionVerified": false
+  }
+}

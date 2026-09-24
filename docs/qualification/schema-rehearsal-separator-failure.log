@@ -1,0 +1,52 @@
+✔ hashed additive manifest repeats exactly and preserves authored rows, constraints and ordinary routes (66.264708ms)
+✔ failure after 1 committed statements resumes exact schema and preserves authored data (27.276958ms)
+✔ failure after 6 committed statements resumes exact schema and preserves authored data (25.682542ms)
+✔ failure after 17 committed statements resumes exact schema and preserves authored data (26.29225ms)
+✖ failure after 44 committed statements resumes exact schema and preserves authored data (23.549458ms)
+✔ failure after 40 committed statements resumes exact schema and preserves authored data (31.293833ms)
+✔ statement tampering fails before writes and held production archive policy remains exactly 41 migrations (20.915916ms)
+✖ every partial-application recovery converges to the clean installation schema (0.3615ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 6
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1011.246
+
+✖ failing tests:
+
+test at tests/creation-hosted-schema.test.mjs:42:37
+✖ failure after 44 committed statements resumes exact schema and preserves authored data (23.549458ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///private/tmp/still-hosted-qualification/tests/creation-hosted-schema.test.mjs:45:10)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at tests/creation-hosted-schema.test.mjs:71:1
+✖ every partial-application recovery converges to the clean installation schema (0.3615ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  5 !== 6
+  
+      at TestContext.<anonymous> (file:///private/tmp/still-hosted-qualification/tests/creation-hosted-schema.test.mjs:72:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1306:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+      at Test.postRun (node:internal/test_runner/test:1447:19)
+      at Test.run (node:internal/test_runner/test:1372:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 5,
+    expected: 6,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,439 @@
+{
+  "schema": 1,
+  "fixtureGeneratorHash": "1e61322e282c139c0cafeea2fe060a930a58b154fc7dd70b4afbb9c78b8e9244",
+  "sourceHashes": {
+    "worker/creation-index-maintenance.ts": "40384b467c3ed4a2d9a1300509a5c11127f40cdeddf9bd0b0fcc3e84d7e6eaed",
+    "worker/creation-index-projection.ts": "5c5c97218bae5f3da77b74512de12532972a00e82e11f46146756c0682784cff",
+    "worker/creation-index-schema.ts": "75e2fc0933aaff500eb8c436d19fdf6265dbe9c86bc049b2e3457c6a328a6f05"
+  },
+  "pendingWork": [
+    {
+      "kind": "compaction",
+      "state": "ready",
+      "error_class": null,
+      "generation": 2,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "compaction",
+      "state": "ready",
+      "error_class": null,
+      "generation": 3,
+      "cursor": "",
+      "count": 2
+    },
+    {
+      "kind": "compaction",
+      "state": "ready",
+      "error_class": null,
+      "generation": 4,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "deletion",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "discovery",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "embedding",
+      "state": "ready",
+      "error_class": null,
+      "generation": 2,
+      "cursor": "throughput-project-5",
+      "count": 1
+    },
+    {
+      "kind": "embedding",
+      "state": "ready",
+      "error_class": null,
+      "generation": 2,
+      "cursor": "throughput-project-7",
+      "count": 1
+    },
+    {
+      "kind": "embedding",
+      "state": "ready",
+      "error_class": null,
+      "generation": 2,
+      "cursor": "throughput-project-9",
+      "count": 1
+    },
+    {
+      "kind": "embedding",
+      "state": "ready",
+      "error_class": null,
+      "generation": 3,
+      "cursor": "throughput-project-6",
+      "count": 1
+    },
+    {
+      "kind": "embedding",
+      "state": "ready",
+      "error_class": null,
+      "generation": 3,
+      "cursor": "throughput-project-8",
+      "count": 1
+    },
+    {
+      "kind": "manifest-reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 2,
+      "cursor": "",
+      "count": 6
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 3,
+      "cursor": "",
+      "count": 8
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 4,
+      "cursor": "",
+      "count": 2
+    }
+  ],
+  "shutdown": {
+    "preShutdown": {
+      "objects": 26,
+      "published": 1041
+    },
+    "ticks": 1,
+    "objectsRemaining": 0,
+    "checkpointRows": 0,
+    "providerCalls": 0
+  },
+  "attempts": {
+    "count": 133,
+    "reserved": 1541896,
+    "tokens": 385515
+  },
+  "kind": "offline-injected-provider-unseeded-lifecycle",
+  "sourceCommit": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "sourceRoot": "/private/tmp/still-hosted-qualification",
+  "ideas": 1000,
+  "projects": 21,
+  "custodies": 2,
+  "canonicalEvents": 1045,
+  "initialIndexRows": 0,
+  "expectedSources": 1042,
+  "retentionDays": 30,
+  "tickSeconds": 60,
+  "maxTicks": 3000,
+  "ticks": 607,
+  "partialTick": 109,
+  "fullTick": 242,
+  "backfillCoverage": {
+    "total": 1042,
+    "published": 1042
+  },
+  "healthyEdit": {
+    "atTick": 242,
+    "visibleTick": 334,
+    "delayMinutes": 92,
+    "pass": false
+  },
+  "edit": {
+    "atTick": 109,
+    "visibleTick": 211,
+    "delayMinutes": 102,
+    "pass": false
+  },
+  "withdrawal": {
+    "atTick": 334,
+    "erasedTick": 349,
+    "delayMinutes": 15,
+    "pass": true,
+    "objects": 1
+  },
+  "renewal": {
+    "status": "completed",
+    "ticks": 161,
+    "coverage": {
+      "total": 1042,
+      "published": 1041
+    },
+    "providerCalls": 133,
+    "withdrawalImmediateDenied": true
+  },
+  "provider": {
+    "calls": 133,
+    "inputs": 3629,
+    "inputBytes": 1541896,
+    "tokens": 385515,
+    "maxInputs": 32,
+    "maxPayloadBytes": 22403
+  },
+  "d1": {
+    "operations": 331574,
+    "maxTickOperations": 808,
+    "slowReads": [
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_row.scope_type, 'organizationId', grant_r",
+        {
+          "calls": 15434,
+          "totalMs": 6230.475728000147,
+          "maxMs": 3.9807500000006257
+        }
+      ],
+      [
+        "SELECT e.entity_id,c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND",
+        {
+          "calls": 264,
+          "totalMs": 5988.774252999978,
+          "maxMs": 49.21858400000019
+        }
+      ],
+      [
+        "SELECT c.content_id FROM private_content c WHERE c.kind='creation-search-source' AND (c.redacted_at IS NOT NULL OR c.expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','",
+        {
+          "calls": 607,
+          "totalMs": 1479.5425350000237,
+          "maxMs": 8.480457999999999
+        }
+      ],
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=p.project_access_id WHERE p.partition_ke",
+        {
+          "calls": 15434,
+          "totalMs": 346.6970040002186,
+          "maxMs": 0.49341699999968114
+        }
+      ],
+      [
+        "WITH page AS MATERIALIZED(SELECT e.*,e.sequence AS source_sequence,COALESCE(secret.private_json,e.payload) AS body FROM events e LEFT JOIN event_private_payload",
+        {
+          "calls": 1272,
+          "totalMs": 345.6033680000444,
+          "maxMs": 1.031500000000051
+        }
+      ],
+      [
+        "SELECT e.entity_id,e.kind,c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id AND c.redacted_at IS NULL AND c.expires",
+        {
+          "calls": 1554,
+          "totalMs": 252.30996300009133,
+          "maxMs": 0.4937079999999696
+        }
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        {
+          "calls": 15434,
+          "totalMs": 244.3691960002975,
+          "maxMs": 2.1672499999999673
+        }
+      ],
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=unixepoch()) AND (? IS NULL OR kind IN(SEL",
+        {
+          "calls": 3698,
+          "totalMs": 171.90465300007304,
+          "maxMs": 1.2315840000001117
+        }
+      ],
+      [
+        "SELECT r.content_id FROM creation_search_records r JOIN private_content c ON c.content_id=r.content_id WHERE r.partition_key=? AND r.source_id=? AND r.revision=",
+        {
+          "calls": 3590,
+          "totalMs": 151.94857500012859,
+          "maxMs": 0.3262090000007447
+        }
+      ],
+      [
+        "SELECT 1 FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        {
+          "calls": 12675,
+          "totalMs": 149.19104800003765,
+          "maxMs": 0.21387500000037107
+        }
+      ]
+    ],
+    "topOperations": [
+      [
+        "INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) SELECT ?,?,?,?,?,?,NULL",
+        42342
+      ],
+      [
+        "UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind NOT IN('document-a",
+        42342
+      ],
+      [
+        "INSERT OR REPLACE INTO creation_index_projection(partition_key,generation,entity_id,kind,content_id) SELECT ?,?,?,?,? WH",
+        40251
+      ],
+      [
+        "DELETE FROM project_resource_scopes WHERE resource_kind='content' AND resource_id=?",
+        28221
+      ],
+      [
+        "DELETE FROM private_content_retention_scopes WHERE content_id=?",
+        28221
+      ],
+      [
+        "DELETE FROM private_content WHERE content_id=?",
+        28221
+      ],
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=",
+        15434
+      ],
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_r",
+        15434
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        15434
+      ],
+      [
+        "SELECT 1 FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        12675
+      ],
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=un",
+        3698
+      ],
+      [
+        "SELECT r.content_id FROM creation_search_records r JOIN private_content c ON c.content_id=r.content_id WHERE r.partition",
+        3590
+      ],
+      [
+        "SELECT c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id AND c.redacted_at ",
+        3458
+      ],
+      [
+        "UPDATE creation_index_work SET state='running',lease_token=?,lease_until=unixepoch()+?,attempts=attempts+1,touched=unixe",
+        3150
+      ],
+      [
+        "SELECT (SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql',sql)) FROM(SELECT type,nam",
+        2890
+      ],
+      [
+        "SELECT policy_epoch,expires FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        2430
+      ],
+      [
+        "DELETE FROM creation_index_fences",
+        2367
+      ],
+      [
+        "INSERT INTO creation_index_fences(id) VALUES(CASE WHEN EXISTS(SELECT 1 FROM( SELECT principal.*, COALESCE((SELECT json_g",
+        2254
+      ],
+      [
+        "INSERT INTO creation_search_records(partition_key,source_id,kind,revision,content_hash,content_id,source_version,tombsto",
+        2091
+      ],
+      [
+        "DELETE FROM creation_search_terms WHERE partition_key=? AND source_id=?",
+        2091
+      ]
+    ],
+    "allocatedFixtureBytes": 32890880
+  },
+  "r2": {
+    "put": 189,
+    "get": 118,
+    "head": 897,
+    "delete": 216,
+    "list": 63,
+    "uploadedBytes": 13998080,
+    "readBytes": 6565888,
+    "peakBytes": 2701312,
+    "peakObjects": 35
+  },
+  "nodeFixture": {
+    "elapsedMs": 32527.413042,
+    "peakHeapBytes": 207997152
+  },
+  "oldestQueueAgeSeconds": 2563620,
+  "failedWork": [],
+  "trajectory": [
+    {
+      "tick": 100,
+      "published": 0,
+      "records": 368,
+      "providerCalls": 0,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 0,
+        "tokens": 0,
+        "providerAttempts": 0
+      }
+    },
+    {
+      "tick": 200,
+      "published": 496,
+      "records": 962,
+      "providerCalls": 23,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 0,
+        "tokens": 0,
+        "providerAttempts": 0
+      }
+    },
+    {
+      "tick": 242,
+      "published": 1042,
+      "records": 1042,
+      "providerCalls": 45,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 0,
+        "tokens": 0,
+        "providerAttempts": 0
+      }
+    }
+  ],
+  "qualification": "NOT hosted, NOT live relevance, simulated provider token usage, Node heap is not hosted resource evidence"
+}

@@ -1,0 +1,21 @@
+✔ hashed additive manifest repeats exactly and preserves authored rows, constraints and ordinary routes (66.44625ms)
+✔ failure after 1 committed statements resumes exact schema and preserves authored data (28.9815ms)
+✔ failure after 6 committed statements resumes exact schema and preserves authored data (27.18175ms)
+✔ failure after 17 committed statements resumes exact schema and preserves authored data (26.855625ms)
+✔ failure after 44 committed statements resumes exact schema and preserves authored data (28.367ms)
+✔ failure after 102 committed statements resumes exact schema and preserves authored data (28.407083ms)
+✔ failure after 106 committed statements resumes exact schema and preserves authored data (30.045209ms)
+✔ statement tampering fails before writes and held production archive policy remains exactly 41 migrations (19.478666ms)
+✔ every partial-application recovery converges to the clean installation schema (0.084833ms)
+✔ repeat installation upgrades the existing invalidation trigger without extending pending erasure (16.472709ms)
+✔ canonical corpus reaches published coverage, records actual edits and physically erases withdrawn vectors and derived prose (828.546375ms)
+✔ a bounded run preserves incomplete coverage as unavailable, never fabricates completed backfill (28.186584ms)
+✔ one-day policy renews inside its actual shorter window and remains observable afterward (504.814541ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1511.818375

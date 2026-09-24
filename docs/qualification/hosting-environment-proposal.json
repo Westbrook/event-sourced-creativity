@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "status": "proposed-not-authorized-not-provisioned",
+  "productionSiteId": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "productionAudience": "workspace_all",
+  "resourceChoice": "Existing supported isolated environment first; otherwise one new owner-private Sites test Site",
+  "proposedName": "Still creation qualification 2026-09-24",
+  "actualIds": {"site": null, "deployment": null, "database": null, "bucket": null, "schedule": null},
+  "logicalBindings": {"d1": "DB", "r2": "MEDIA"},
+  "workerCount": 1,
+  "additionalComputeWorkers": 0,
+  "data": {"kind": "synthetic-only", "copyProductionRows": false, "copyProductionSchemaOnlyAfterInventoryReview": true},
+  "custodies": [
+    {"label": "qualification-personal", "actualPrincipalUserId": null, "actualCustody": null},
+    {"label": "qualification-shared", "actualProjectAccessId": null, "actualCustody": null}
+  ],
+  "fixtureAssignment": "Only authoritative test-user and test-Project IDs returned in the isolated environment may populate the exact allowlist; no wildcard or assumed dev-local identity.",
+  "environment": {
+    "initial": {"STILL_UNIFIED_CREATION_ENABLED": "false", "STILL_CREATION_INDEX_ENABLED": "false", "STILL_CREATION_JEV_ENABLED": "false"},
+    "qualificationOnlyAfterApproval": ["STILL_UNIFIED_CREATION_ENABLED", "STILL_CREATION_INDEX_ENABLED", "STILL_CREATION_JEV_ENABLED", "STILL_CREATION_PROVIDER_CUSTODIES", "STILL_CREATION_ORGANIZER_MODEL", "STILL_CREATION_DEPLOYMENT_ID"],
+    "secrets": {"OPENAI_API_KEY": "reuse choice requires exact user approval; never copied from production by this proposal", "JEV_API_KEY": "reuse choice requires exact user approval; never copied from production by this proposal"}
+  },
+  "enrollment": {"enabledInitially": false, "policyEpoch": "qualification-v1", "expires": "48 hours after authorized first canary dispatch", "dailyTokenLimit": null, "dailyTokenLimitGate": "Fill from measured and approved itemized token/call reservations before inserting enabled enrollment"},
+  "scheduler": {"preferred": "Sites native persistent Worker trigger", "fallback": "Google Cloud Scheduler dedicated service-account OIDC only if Sites documents acceptance", "cadenceSeconds": 60, "configuration": null, "serviceIdentity": null, "creativePayload": false, "deploymentPersistenceRequired": true},
+  "isolationProofBeforeMutation": ["Site ID differs from production", "physical D1 and R2 identifiers differ from production", "secrets and schedules independently scoped", "audience owner-private or explicitly approved qualification reviewers", "production bindings not reachable from qualification Worker", "platform schema/backup read path confirmed"],
+  "spending": {"authorizedUsd": 0, "proposedTotalCapUsd": 25, "proposedCanarySubCapUsd": 5, "hostingAndSchedulerQuoteRequired": true, "providerItemizationRequired": true, "sharedDollarCapAvailable": false},
+  "monitoring": {"operator": "qualification owner to be named before live runs", "alertDestination": null, "alertAuthorization": false, "threshold": "five minutes without successful wake while work is due"},
+  "expiry": {"inferenceStop": "48 hours after authorized first dispatch, or earlier on allowance exhaustion/failure", "resourceReview": "within 7 days of provision", "resourceDeletion": "only after enrollment revocation, physical D1/R2 erasure and late-write/orphan reconciliation receipts are verified"},
+  "rollback": "Disable enrollment and UI/inference, retain cleanup Worker/D1/R2; do not restore v547 or drop cleanup metadata. Restore/forward repair only with platform-supported reviewed procedure.",
+  "executionGate": "All null actual identity, cost, schedule and authorization fields must be resolved and reviewed before their dependent hosted action. This JSON is a request artifact, not a Sites manifest or runnable provisioning configuration."
+}

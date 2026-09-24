@@ -1,0 +1,17 @@
+{"tick":100,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":200,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":300,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":400,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":500,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":600,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":700,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":800,"published":0,"records":0,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":900,"published":0,"records":2064,"providerCalls":0,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":1000,"published":0,"records":7410,"providerCalls":17,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":22528,"tokens":5557,"providerAttempts":1}}
+{"tick":1100,"published":164,"records":9326,"providerCalls":75,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":65536,"tokens":2487,"providerAttempts":1}}
+{"tick":1200,"published":4062,"records":9326,"providerCalls":201,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":131072,"tokens":2176,"providerAttempts":2}}
+{"tick":1300,"published":4782,"records":9326,"providerCalls":272,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":1400,"published":4782,"records":9326,"providerCalls":272,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":1500,"published":4782,"records":9326,"providerCalls":272,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":1600,"published":4782,"records":9326,"providerCalls":272,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}
+{"tick":1700,"published":4782,"records":9326,"providerCalls":272,"receipt":{"status":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0}}

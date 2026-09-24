@@ -1,0 +1,76 @@
+{
+  "kind": "local-browser-workflow-evidence",
+  "verifiedAt": "2026-09-24T20:55:33.299Z",
+  "runtimeSource": "3786dc53379567dd6c9f16e6d0bf9ea0cacf9794",
+  "testCommit": "2094797fb633f17dba2120ce56e18d6404499e00",
+  "testFiles": {
+    "tests/browser/still-unified-creation.test.mjs": "eb4455e7e428c74390ca7ef8e3450f2390cb74b2e7fcdb886e8e9e3256921390",
+    "tests/browser/still-creation-help.test.mjs": "ad6764ef394619fae9f87fa00f7b8ea6719cd04d276dcd942d0f0e4071d32366"
+  },
+  "cwd": "/private/tmp/still-hosted-qualification",
+  "uiChanged": false,
+  "runtimeChanged": false,
+  "productionActivated": false,
+  "hosted": false,
+  "liveProviders": false,
+  "deterministicRegression": "Hold /use with an explicit gate; prove Draft saved acknowledges prior input while partialIdeas remains empty and passage review remains visible; release request and await passage review dismissal after applyReplacement completes authorization, editor replacement and flush. Assert partial reuse, undo, redo and reload retain exact expected counts.",
+  "documentRepair": "Await .creation-replacement-preview dismissal after applying selected Document constituents before asserting exact source roots and reload.",
+  "synchronization": "Concrete workflow state waits only; no sleeps and no relaxed state assertions.",
+  "preservedFailures": [
+    {
+      "log": "evidence/browser-3786-partial-save-race.log",
+      "sha256": "34beb8eabf6721374844daa29a6606c018c615120723a8c411b3adbafe475216",
+      "issue": "Initial partial reuse asserted one retained Idea while fresh /use authorization was still pending; prior Draft saved status was stale for that action.",
+      "status": "repaired test synchronization; runtime unchanged"
+    },
+    {
+      "log": "evidence/browser-3786-document-save-race.log",
+      "sha256": "fdd2f2f2dcb4248b4e222c26240cfa8e6436b1cb4b51b19bd7dd5564d5a48bff",
+      "issue": "After fixing partial reuse synchronization, Chromium reproduced the same stale acknowledgment in @Document constituent reuse: roots were read before /use and replacement completed.",
+      "status": "repaired test synchronization; runtime unchanged"
+    }
+  ],
+  "previousReceipt": "evidence/browser-verification-prior.json",
+  "receipts": [
+    {
+      "kind": "browser-chromium",
+      "pass": 18,
+      "fail": 0,
+      "sha256": "62fac8e9727818e4f31ea526d8dfbfc6bd54b6d588258da77762f18b9f9edce0",
+      "log": "evidence/browser-3786-sync-chromium.log",
+      "command": "CREATION_TEST_BROWSER=chromium CREATION_PLAYWRIGHT_MODULE=file:///Users/westbrook/Documents/repos/design-system/node_modules/@playwright/test/index.mjs node --import tsx --test tests/browser/still-unified-creation.test.mjs tests/browser/still-creation-help.test.mjs",
+      "scope": "Local real UI/controller/Worker with disposable SQLite and providers disabled; not human, live-model or hosted qualification"
+    },
+    {
+      "kind": "browser-firefox",
+      "pass": 18,
+      "fail": 0,
+      "sha256": "1fa82888fa1d97705e152a8c092d9cd5490cb300076c98e49dce9ba0b650be69",
+      "log": "evidence/browser-3786-sync-firefox.log",
+      "command": "CREATION_TEST_BROWSER=firefox CREATION_PLAYWRIGHT_MODULE=file:///Users/westbrook/Documents/repos/design-system/node_modules/@playwright/test/index.mjs node --import tsx --test tests/browser/still-unified-creation.test.mjs tests/browser/still-creation-help.test.mjs",
+      "scope": "Local real UI/controller/Worker with disposable SQLite and providers disabled; not human, live-model or hosted qualification"
+    },
+    {
+      "kind": "browser-webkit",
+      "pass": 18,
+      "fail": 0,
+      "sha256": "c0102fd00c2d42a47d917e26c9da4aa1bb94c2f537446d5f8881d2ea342ec544",
+      "log": "evidence/browser-3786-sync-webkit.log",
+      "command": "CREATION_TEST_BROWSER=webkit CREATION_PLAYWRIGHT_MODULE=file:///Users/westbrook/Documents/repos/design-system/node_modules/@playwright/test/index.mjs node --import tsx --test tests/browser/still-unified-creation.test.mjs tests/browser/still-creation-help.test.mjs",
+      "scope": "Local real UI/controller/Worker with disposable SQLite and providers disabled; not human, live-model or hosted qualification"
+    }
+  ],
+  "committedRecheck": {
+    "kind": "browser-chromium",
+    "sourceCommit": "2094797fb633f17dba2120ce56e18d6404499e00",
+    "runtimeSource": "3786dc53379567dd6c9f16e6d0bf9ea0cacf9794",
+    "verifiedAt": "2026-09-24T20:56:32.503Z",
+    "pass": 18,
+    "fail": 0,
+    "sha256": "3425184383bdff2a51316432d207d80904a3a01f6926b0b038c16ea27edfa9f2",
+    "log": "evidence/browser-2094797f-chromium.log",
+    "command": "CREATION_TEST_BROWSER=chromium CREATION_PLAYWRIGHT_MODULE=file:///Users/westbrook/Documents/repos/design-system/node_modules/@playwright/test/index.mjs node --import tsx --test tests/browser/still-unified-creation.test.mjs tests/browser/still-creation-help.test.mjs",
+    "testHashesMatchAllThreeEngineRuns": true,
+    "scope": "Committed-source local workflow recheck; providers disabled; not hosted, live-model or human qualification"
+  }
+}

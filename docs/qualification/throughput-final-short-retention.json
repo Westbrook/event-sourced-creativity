@@ -1,0 +1,346 @@
+{
+  "schema": 1,
+  "fixtureGeneratorHash": "99fbb57753389e0a2d755287031789250edcc57f633f2ac91dca89a52160f7aa",
+  "sourceHashes": {
+    "worker/creation-index-maintenance.ts": "95a8126a28b57efaaace28b67ab9e383ccb748263c344071e94beebd32b8da4f",
+    "worker/creation-index-projection.ts": "acf9d0dfe62e5a983df671fda38751ed896ee23c377eb318754ea1001bcf1755",
+    "worker/creation-index-schema.ts": "f010d4116a6813e68588e5d04e14bb0bcc0c06a6d5f92c9e933280dc2df8637e",
+    "worker/creation-search-index.ts": "9d491ea644dcbd0b21a757727ea19a36d21fa88e8b26b4643796838246aa2e71",
+    "worker/private-content-storage.ts": "ca836551432ab3c76c162a09fe37d82eaa4d920aeffa652934194670a74e2bc9",
+    "worker/memory-native-boundary.ts": "a6fa7878a94fe425c51bc61511d736aceb286a3cae9c2ff3f471f4cbd92ee7e8"
+  },
+  "pendingWork": [
+    {
+      "kind": "deletion",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "discovery",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "manifest-reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 4,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 6,
+      "cursor": "",
+      "count": 1
+    }
+  ],
+  "shutdown": {
+    "preShutdown": {
+      "objects": 6,
+      "published": 13
+    },
+    "ticks": 1,
+    "objectsRemaining": 0,
+    "privateBodiesRemaining": 0,
+    "checkpointRows": 0,
+    "providerCalls": 0
+  },
+  "attempts": {
+    "count": 5,
+    "reserved": 25856,
+    "tokens": 6466
+  },
+  "kind": "offline-injected-provider-unseeded-lifecycle",
+  "sourceCommit": "3c71eee3d8393df2db4104edb14e35d407964417",
+  "sourceRoot": "/private/tmp/still-hosted-qualification",
+  "ideas": 10,
+  "projects": 2,
+  "custodies": 2,
+  "canonicalEvents": 17,
+  "initialIndexRows": 0,
+  "expectedSources": 14,
+  "retentionDays": 1,
+  "tickSeconds": 60,
+  "maxTicks": 120,
+  "ticks": 32,
+  "partialTick": 3,
+  "fullTick": 5,
+  "backfillCoverage": {
+    "total": 14,
+    "published": 14
+  },
+  "healthyEdit": {
+    "atTick": 5,
+    "visibleTick": 7,
+    "delayMinutes": 2,
+    "pass": true
+  },
+  "edit": {
+    "atTick": 3,
+    "visibleTick": 5,
+    "delayMinutes": 2,
+    "pass": true
+  },
+  "withdrawal": {
+    "atTick": 7,
+    "erasedTick": 22,
+    "delayMinutes": 15,
+    "pass": true,
+    "objects": 1,
+    "privateBodiesBefore": 3,
+    "privateBodiesAt15Minutes": 0,
+    "privateBodyErasedTick": 9,
+    "privateBodyDelayMinutes": 2,
+    "privateBodyPass": true
+  },
+  "renewal": {
+    "status": "completed",
+    "leadSeconds": 86400,
+    "ticks": 8,
+    "within12Hours": true,
+    "coverage": {
+      "total": 14,
+      "published": 13
+    },
+    "providerCalls": 5,
+    "withdrawalImmediateDenied": true
+  },
+  "provider": {
+    "calls": 5,
+    "inputs": 30,
+    "inputBytes": 25856,
+    "tokens": 6466,
+    "maxInputs": 15,
+    "maxPayloadBytes": 19871
+  },
+  "d1": {
+    "operations": 2911,
+    "maxTickOperations": 204,
+    "slowReads": [
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_row.scope_type, 'organizationId', grant_r",
+        {
+          "calls": 140,
+          "totalMs": 85.71666400000163,
+          "maxMs": 1.1189170000000104
+        }
+      ],
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=unixepoch()) AND (? IS NULL OR kind IN(SEL",
+        {
+          "calls": 162,
+          "totalMs": 8.532338999998728,
+          "maxMs": 0.16087500000003274
+        }
+      ],
+      [
+        "UPDATE creation_index_work SET state='running',lease_token=?,lease_until=unixepoch()+?,attempts=attempts+1,touched=unixepoch() WHERE job_key=? AND due<=unixepoc",
+        {
+          "calls": 118,
+          "totalMs": 6.1227080000022625,
+          "maxMs": 0.155208000000016
+        }
+      ],
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=p.project_access_id WHERE p.partition_ke",
+        {
+          "calls": 140,
+          "totalMs": 4.841254999999023,
+          "maxMs": 0.1462500000000091
+        }
+      ],
+      [
+        "SELECT e.entity_id,c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND",
+        {
+          "calls": 18,
+          "totalMs": 4.283165000000054,
+          "maxMs": 0.3781249999999545
+        }
+      ],
+      [
+        "SELECT r.content_id FROM creation_search_records r JOIN private_content c ON c.content_id=r.content_id WHERE r.partition_key=? AND r.source_id=? AND r.revision=",
+        {
+          "calls": 60,
+          "totalMs": 3.9748289999994313,
+          "maxMs": 0.19833299999982046
+        }
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        {
+          "calls": 140,
+          "totalMs": 3.2512490000008256,
+          "maxMs": 0.11179199999992306
+        }
+      ],
+      [
+        "SELECT c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id AND c.redacted_at IS NULL WHERE e.partition_key=? AND e.ge",
+        {
+          "calls": 42,
+          "totalMs": 2.9887060000002066,
+          "maxMs": 0.16929199999981392
+        }
+      ],
+      [
+        "WITH candidates AS MATERIALIZED(SELECT r.source_id,r.revision,r.content_id,c.content,c.expires_at,s.cursor,s.completed FROM creation_search_records r JOIN priva",
+        {
+          "calls": 16,
+          "totalMs": 2.8950019999999768,
+          "maxMs": 0.296291999999994
+        }
+      ],
+      [
+        "WITH page AS MATERIALIZED(SELECT e.*,e.sequence AS source_sequence,COALESCE(secret.private_json,e.payload) AS body FROM events e LEFT JOIN event_private_payload",
+        {
+          "calls": 9,
+          "totalMs": 2.223457999999823,
+          "maxMs": 0.3615420000000995
+        }
+      ]
+    ],
+    "topOperations": [
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=un",
+        162
+      ],
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=",
+        140
+      ],
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_r",
+        140
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        140
+      ],
+      [
+        "INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) SELECT ?,?,?,?,?,?,NULL",
+        132
+      ],
+      [
+        "UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind NOT IN('document-a",
+        132
+      ],
+      [
+        "UPDATE creation_index_work SET state='running',lease_token=?,lease_until=unixepoch()+?,attempts=attempts+1,touched=unixe",
+        118
+      ],
+      [
+        "INSERT OR IGNORE INTO creation_index_work(job_key,kind,partition_key,priority) VALUES(?,?,'',0)",
+        96
+      ],
+      [
+        "SELECT policy_epoch,expires FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        77
+      ],
+      [
+        "INSERT OR REPLACE INTO creation_index_projection(partition_key,generation,entity_id,kind,content_id) SELECT ?,?,?,?,? WH",
+        72
+      ],
+      [
+        "DELETE FROM creation_index_fences",
+        69
+      ],
+      [
+        "INSERT INTO creation_index_fences(id) VALUES(CASE WHEN EXISTS(SELECT 1 FROM creation_index_work j WHERE j.job_key=? AND ",
+        60
+      ],
+      [
+        "SELECT r.content_id FROM creation_search_records r JOIN private_content c ON c.content_id=r.content_id WHERE r.partition",
+        60
+      ],
+      [
+        "INSERT INTO creation_search_records(partition_key,source_id,kind,revision,content_hash,content_id,source_version,tombsto",
+        60
+      ],
+      [
+        "DELETE FROM creation_search_terms WHERE partition_key=? AND source_id=?",
+        60
+      ],
+      [
+        "INSERT INTO creation_search_terms(partition_key,term_hash,source_id) SELECT ?,value,? FROM json_each(?)",
+        60
+      ],
+      [
+        "SELECT 1 FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        59
+      ],
+      [
+        "INSERT INTO creation_index_fences(id) VALUES(CASE WHEN EXISTS(SELECT 1 FROM( SELECT principal.*, COALESCE((SELECT json_g",
+        57
+      ],
+      [
+        "UPDATE creation_index_work SET cursor=?,state=?,lease_token=NULL,lease_until=0,error_class=NULL,attempts=0 WHERE job_key",
+        50
+      ],
+      [
+        "SELECT c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id AND c.redacted_at ",
+        42
+      ]
+    ],
+    "allocatedFixtureBytes": 1810432
+  },
+  "r2": {
+    "put": 9,
+    "get": 13,
+    "head": 23,
+    "delete": 9,
+    "list": 4,
+    "uploadedBytes": 139264,
+    "readBytes": 229376,
+    "peakBytes": 100352,
+    "peakObjects": 6
+  },
+  "nodeFixture": {
+    "elapsedMs": 388.00758399999995,
+    "peakHeapBytes": 154536272
+  },
+  "oldestQueueAgeSeconds": 1800,
+  "failedWork": [],
+  "trajectory": [
+    {
+      "tick": 5,
+      "published": 14,
+      "records": 14,
+      "providerCalls": 3,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 14336,
+        "tokens": 361,
+        "providerAttempts": 1
+      }
+    }
+  ],
+  "qualification": "NOT hosted, NOT live relevance, simulated provider token usage, Node heap is not hosted resource evidence"
+}

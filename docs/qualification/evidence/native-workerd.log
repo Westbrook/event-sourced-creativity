@@ -1,0 +1,15 @@
+{"event":"creation-index-maintenance","run":"209ac9a8-6eb8-44c1-b621-fdb9e2e5dcc8","outcome":"completed","claimed":3,"completed":3,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+compiled-schedule-error Error: D1_ERROR: no such table: still_panel_commands: SQLITE_ERROR
+{"event":"creation-index-maintenance","run":"36648660-e33e-4b6c-aa3c-3ca85346c032","outcome":"completed","claimed":3,"completed":3,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+compiled-schedule-error Error: D1_ERROR: no such table: still_panel_commands: SQLITE_ERROR
+✔ compiled Worker erases scheduled orphans in native local D1/R2 despite unrelated cleanup failure (3103.530958ms)
+{"evidence":"local-workerd-native-D1-only","concurrentRequests":12,"admitted":2,"attemptRows":2,"allFourLimitsConsumed":true,"exhaustionDenied":true,"revocationDenied":true,"expiryDenied":true,"missingAndReplacedTriggerDenied":true,"externalProviderCalls":0,"hostedBillingQualified":false}
+✔ native local D1 atomically caps concurrent qualification calls and denies partial schema (874.186041ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6816.903708

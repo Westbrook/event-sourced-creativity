@@ -1,10 +1,12 @@
 # Still semantic index — operations and qualification
 
-Status: local implementation under verification. Production remains disabled. No live model call, new service, scheduler, production schema change or activation is authorized by this runbook.
+Current qualification checkpoint: runtime `3786dc53` on `codex/still-hosted-qualification`, unpublished; production/main remains v550 / `c28af5fe`, flags disabled. **NO-GO:** final local healthy edits at 1k/10k take 6m/38m (limit 5m), default 10k renewal takes 794m (limit 720m), and one-day 10k has zero current coverage at its 144m deadline. Batching, routing, authority, retention and scheduling repairs are implemented; bounded incremental edit/renewal work remains. See [current release decision](qualification/release-decision.md), [verification ledger](qualification/verification-2026-09-24.md), [measured lifecycle evidence](qualification/throughput-2026-09-24.md) and [operator runbook](qualification/operating-runbook.md). Hosted scheduling/schema/isolation, live quality/performance/retention and human fidelity/accessibility remain unqualified. Earlier counts below describe their dated checkpoints.
+
+Status: published disabled implementation v550 / `c28af5fea0fc3ec2b37b878a544ec59c52a64daf`; local qualification checkpoint complete with failed engineering gates and unavailable hosted evidence. Production remains disabled. No live model call, new service, scheduler, production schema change or activation is authorized by this runbook. Current gate decisions and exact local candidate receipts are maintained in [release decision](qualification/release-decision.md).
 
 ## Deployment-compatible configuration
 
-Reuse the existing Site `appgprj_6a7a020e334881919ed8aea0363cb98f`, Worker, D1 `DB`, and private R2 `MEDIA`. Existing OpenAI and Jev credentials were observed by presence only; they were not read into logs or used for this implementation's tests.
+The production reference is Site `appgprj_6a7a020e334881919ed8aea0363cb98f`, its Worker, D1 `DB`, and private R2 `MEDIA`. Hosted qualification requires independently isolated physical resources, secrets and schedules; production storage must not be reused for fixtures. Existing OpenAI and Jev credential presence was recorded in the prior implementation without logging or live use; reuse for a new target still requires the exact credential decision.
 
 | Control | Meaning | Production during this task |
 | --- | --- | --- |
@@ -13,7 +15,7 @@ Reuse the existing Site `appgprj_6a7a020e334881919ed8aea0363cb98f`, Worker, D1 `
 | `STILL_CREATION_PROVIDER_CUSTODIES` | Exact JSON custody allowlist; no wildcard | not changed |
 | `creation_index_enrollments` | Authoritative per-custody enabled flag, policy epoch, expiry, daily token limit | candidate schema; not installed |
 | `OPENAI_API_KEY`, optional `OPENAI_PROJECT` | Embedding/organizer HTTP credentials | existing; no live use |
-| `STILL_CREATION_ORGANIZER_MODEL` | Explicit qualified Responses model | not selected/activated |
+| `STILL_CREATION_ORGANIZER_MODEL` | Explicit qualified Responses model | `gpt-4.1-mini-2025-04-14` proposed for qualification only; not activated |
 | `JEV_API_KEY`, `STILL_CREATION_JEV_ENABLED=true` | Grounded identity assessment | not activated |
 | `STILL_CREATION_DEPLOYMENT_ID` | Content-free run receipt identity | qualification must set exact deployment |
 
@@ -25,7 +27,7 @@ The installed Sites tools/docs and fresh site metadata did not establish a calla
 
 Required platform primitive: either a supported Sites persistent trigger for this existing Worker, or documented machine-authenticated ingress through the Site's workspace access layer, usable by a named managed scheduler. No such fallback ingress was established. Do not invent manifest fields, create a public maintenance route, use browser credentials/shared-token bypass, loosen audience, create another compute Worker, or substitute a desktop heartbeat.
 
-Once the supported mechanism and authorization exist: configure once per minute; record schedule, deployment and environment identities; close app tabs; witness multiple durable runs; redeploy and witness again; inject overlap, missed wakes and backlog; verify machine authentication/replay rejection if ingress is used. A supported external monitor must alert after five minutes without a successful wake while work is due. Alert destination and authorization remain to be supplied; no message or monitor was created here.
+Once the supported mechanism and authorization exist: configure once per minute; record schedule, deployment and environment identities; close app tabs; witness at least ten consecutive actual durable wakes; redeploy and witness again; inject overlap, missed wakes and backlog; verify machine authentication/replay rejection if ingress is used. A supported external monitor must alert after five minutes without a successful wake while work is due. Alert destination and authorization remain to be supplied; no message or monitor was created here.
 
 ## Operator procedures
 
@@ -40,9 +42,9 @@ Once the supported mechanism and authorization exist: configure once per minute;
 
 ## Proposed qualification authorization package
 
-Before any paid or hosted mutation, resolve the actual scheduling primitive and exact qualification environment. Then approve a bounded run using only synthetic/explicitly consented test content, existing named credentials, an explicit maximum provider allowance and exact additive schema manifest. No provisioning or production migration is implied. The embedding arithmetic at the currently documented $0.02/million tokens makes five million input tokens approximately $0.10 for embeddings alone; this excludes queries, edits, Jev, organizer, D1/R2 and retries. Confirm current prices and a concrete total cap before live execution. [OpenAI model pricing](https://developers.openai.com/api/docs/models/text-embedding-3-small)
+The concrete request is [authorization-request.md](qualification/authorization-request.md), with exact resource/isolation fields, source-only schema hashes, fixture provenance, credential choice, model proposal, costs, expiry, ownership and cleanup gates. Proposed US$25 total / US$5 canary are unapproved maxima. The [itemized estimate](qualification/cost-estimate.json) does not claim a known all-in price or an implemented shared monetary cap. Obtain exact target/schema/provider authorization and accounting before live work. A supported manual hosted canary may proceed independently of unresolved scheduling only when its own dependencies are authorized; it never closes the autonomous-delivery gate.
 
-Evidence required before activation: hosted trigger/redeploy/tab-closed receipts; primary consistency and mutation races; private R2 generic-route denial; verified physical retention and orphan recovery; measured cold/warm/concurrent 1k/10k search <=2s p95 after debounce; actual resource/cost/queue throughput; independent 50-query relevance labels and results; 30-case organization fidelity; browser/accessibility/human checks; exact schema rehearsal, archive and rollback; explicit activation authorization.
+Use the [current operational runbook](qualification/operating-runbook.md) for installation, canary/full evaluation, monitoring, recovery, cleanup and the unapproved 24-hour single-custody pilot proposal. The [release ledger](qualification/release-decision.md) retains all hosted/human gates. No alerts, messages or future automation have been created.
 
 ## Reproduction and held-out evidence format
 
@@ -60,12 +62,8 @@ node --experimental-strip-types scripts/package-disabled-memory-release.mjs /abs
 
 Repeat browser checks for Firefox/WebKit using their installed matching Playwright package. This machine used `CREATION_PLAYWRIGHT_MODULE=file:///Users/westbrook/Documents/repos/design-system/node_modules/@playwright/test/index.mjs` for those engines. Local workerd deliberately omits an unrelated panel table to exercise failure isolation; its aggregate scheduled `exception` is expected, while two creation cleanup receipts and erasures must pass. No network provider credentials are supplied to workerd.
 
-The offline scorer `scripts/score-still-search-qualification.mjs` accepts one JSON file. It never calls providers and never authorizes activation. Before live evaluation, an independent reviewer must freeze >=50 held-out labels, including positive and no-match cases, with opaque exact custody/Project/kind/source identities. Include zero-overlap paraphrases, specific parts/containers, duplicate names, long/multilingual text, later Projects, and permission boundaries. Do not derive labels from the model's answers.
+The current offline scorer and capture harness use a hash-bound frozen packet with at least 60 unique queries: at least 40 positives and 20 no-match negatives. Separate producer/reviewer receipts bind corpus, query, label and per-query adjudication bytes. Independently authored agent labels are preparation evidence; they do not replace human organizer fidelity review. The packet must be frozen before models run and replaced if consumed for tuning. A separate development manifest supplies canary inputs.
 
-Run-level fields: `kind` (`live-hosted` only for actual hosted/live execution), `deployment`, `representation`, `independentLabeler`, `labelsFrozenAt`, `runStartedAt`, and `cases`. Each case requires `id`, `classification` (`positive` or `no-match`), `intended` identities (empty for negatives), complete `allowed` identity allowlist for the test custody, `semanticTop20`, `finalTop3`, measured `elapsedAfterDebounceMs`, and named `cohort` (corpus size/cold/warm/concurrency). Capture candidates before Jev as well as final results. Keep labels/data in the approved qualification custody, not public logs.
+Capture each permitted partition's semantic top 20, one global pre-hydration shortlist of at most 24, final three, coverage, failures/timeouts, custody disclosures, exact source/model/deployment versions, stage timings and actual runtime/usage receipts. An empty partial or timed-out result cannot qualify as no-match. Failed requests remain in relevance denominators. Repeated latency samples are separate from the unique relevance cases; require at least 30 cold/warm/concurrent observations for each 1k/10k corpus and real cold-start/runtime provenance.
 
-```sh
-node scripts/score-still-search-qualification.mjs /absolute/frozen-labels-and-observed-run.json
-```
-
-It reports positive/negative denominators separately, top-three accuracy, pre-rerank recall, no-match false positives, authorization leaks, and cohort p50/p95. Missing independent/live evidence cannot pass its relevance gate even with perfect injected metrics. The scorer does not establish labeler independence by itself, complete capacity cohorts, provider retention, backend resource accounting, the organizer gate, or activation authorization; reviewers must inspect that evidence separately. **No independently labeled or live run was performed in this implementation.**
+The capture CLI requires explicit approved target/isolation/capability/adapter hashes, expiry and durable per-request reservations. It supplies no public route or host transport adapter. Use the optional [shared lifetime/canary provider guard](qualification/provider-budget-operations.md) across capture, maintenance, organizer and Jev. It is locally tested and fails closed on incomplete installation; actual hosted D1/account billing qualification and separate hosting allocations remain required. Use the current capture contract and CLI usage alongside [frozen fixture provenance](qualification/fixtures-frozen-2026-09-24.md). Scoring never authorizes activation. Live relevance, hosted performance/retention and human review remain open.

@@ -41,3 +41,11 @@ Local regression command:
 ```sh
 node --import tsx --test tests/creation-qualification-budget.test.mjs tests/creation-interpret.test.mjs tests/creation-search.test.mjs
 ```
+
+Native local runtime verification also passes:
+
+```sh
+node --test tests/browser/still-qualification-budget-workerd.test.mjs
+```
+
+The standalone test bundles the real guard into a test-only workerd Worker, uses native D1, and creates no application route or external provider dispatch. Twelve overlapping admissions with a two-call shared allowance yield exactly two attempt rows and two consumed calls in each of the four full/canary aggregate/provider limits. Both admitted simulated dispatches fail; a retry remains denied. Revocation, expiry, missing-trigger partial installation and same-name no-op trigger replacement all deny admission. Local loopback permission was necessary; the sandbox startup stalled and was stopped. The permitted run completed in approximately 0.65 seconds. This establishes local workerd/native D1 execution, not hosted scheduling, account billing or hosted deployment behavior.

@@ -1,0 +1,131 @@
+Port 5173 is in use, trying another one...
+Port 5174 is in use, trying another one...
+4:09:18 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:18 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:18 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":0,"lexical":0,"semantic":0}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+4:09:20 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:20 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+▶ contextual creation help preserves writing and review across every entry
+  ✔ project: optional scope guidance, keyboard modality, editor tokens/selection/undo and mobile scrolling (3920.61025ms)
+4:09:21 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:21 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:21 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+{"event":"creation-interpretation","status":"failed"}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+  ✔ project: help remains available during review without granting presentation or changing approvals (3776.286041ms)
+4:09:24 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:24 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:24 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+4:09:27 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:27 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+  ✔ document: optional scope guidance, keyboard modality, editor tokens/selection/undo and mobile scrolling (3429.680292ms)
+4:09:28 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:28 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:28 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+{"event":"creation-interpretation","status":"failed"}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+  ✔ document: help remains available during review without granting presentation or changing approvals (3776.970458ms)
+4:09:32 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:32 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:32 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+4:09:33 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:33 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+  ✔ idea: optional scope guidance, keyboard modality, editor tokens/selection/undo and mobile scrolling (2243.485625ms)
+4:09:34 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:34 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:34 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+{"event":"creation-interpretation","status":"failed"}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+  ✔ idea: help remains available during review without granting presentation or changing approvals (3380.103917ms)
+4:09:37 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:37 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:37 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+  ✔ help responds to locale changes, including RTL, without changing authored input (1597.561292ms)
+✔ contextual creation help preserves writing and review across every entry (25823.33675ms)
+Port 5173 is in use, trying another one...
+Port 5174 is in use, trying another one...
+Port 5175 is in use, trying another one...
+4:09:17 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:17 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:17 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":0,"lexical":0,"semantic":0}
+4:09:19 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:19 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+▶ unified creation keyboard, current-version review, long content and mobile report return
+  ✔ project: @ teaches naming and reuses retained draft Ideas through undo and recovery (3689.2815ms)
+4:09:20 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:20 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:20 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+4:09:22 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:22 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+  ✔ document: @ teaches naming and reuses retained draft Ideas through undo and recovery (2962.052958ms)
+4:09:23 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:23 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:23 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+4:09:24 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:24 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+  ✔ idea: @ teaches naming and reuses retained draft Ideas through undo and recovery (2587.839625ms)
+4:09:26 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:26 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:26 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+  ✔ empty error is singular, plain Enter/IME do not submit, explicit save shortcut enters title-only Idea review (2414.182875ms)
+4:09:28 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:28 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:28 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-interpretation","status":"failed"}
+  ✔ paste remaps foreign-draft declarations and refuses cross-Project canonical identity in one undo step (1050.444583ms)
+4:09:29 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:29 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:29 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:29 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:29 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:30 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:30 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:30 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+  ✔ normal navigation supports @Document constituent selection without a query flag (1858.703875ms)
+4:09:31 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:31 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:31 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+4:09:32 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:32 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:32 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+  ✔ reviewed Idea editor supports declarations and nonexclusive Format commands through reload (2149.348125ms)
+4:09:33 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:33 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:33 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+4:09:36 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:36 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+  ✔ initial partial reuse is independent and undoable, with exact passage review (3605.561584ms)
+4:09:37 PM [vite] (client) [console.warn] Lit is in dev mode. Not recommended for production! See https://lit.dev/msg/dev-mode for more information.
+4:09:37 PM [vite] (client) [console.warn] Element en-toast-region scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+4:09:37 PM [vite] (client) [console.warn] Element still-creation-flow scheduled an update (generally because a property was set) after an update completed, causing a new update to be scheduled. This is inefficient and should be avoided unless the next update can only be scheduled as a side effect of the previous update. See https://lit.dev/msg/change-in-update for more information.
+{"event":"creation-interpretation","status":"failed"}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+{"event":"creation-search","mode":"lexical-only","partial":true,"partitions":1,"expected":7,"lexical":7,"semantic":0}
+  ✔ long content must be available before Continue, edits invalidate approval, mobile controls remain reachable (2971.169958ms)
+✔ unified creation keyboard, current-version review, long content and mobile report return (25779.302834ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 26919.711333

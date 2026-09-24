@@ -1,0 +1,23 @@
+{
+  "kind": "read-only-lineage-recheck",
+  "checkedAt": "2026-09-24T20:38:49.961991+00:00",
+  "localMain": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "configuredGitRemotes": [],
+  "remoteRefChecked": false,
+  "remoteRefReason": "No Git remote is configured; git ls-remote origin failed without changing repository state. Sites native saved-version provenance is recorded separately.",
+  "siteLatestVersion": 550,
+  "savedVersionSource": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "savedVersionId": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8",
+  "deploymentId": "appgdep_6ab573499a108191a2691a137672b93e",
+  "deploymentStatus": "succeeded",
+  "environmentRevision": 16,
+  "audience": "workspace_all",
+  "unrelatedUntrackedPreserved": [
+    "docs/forma-experience-runtime-proposal-2026-09-02.md",
+    "docs/forma-mini-app-proposal-2026-09-02.md",
+    "docs/idea-project-ownership-feasibility-2026-09-20.md"
+  ],
+  "sourcePushes": 0,
+  "siteMutations": 0,
+  "productionActivated": false
+}

@@ -1,0 +1,101 @@
+{
+  "kind": "local-qualification-verification",
+  "recordedAt": "2026-09-24T20:54:36.989815+00:00",
+  "runtimeCommit": "3786dc53379567dd6c9f16e6d0bf9ea0cacf9794",
+  "branch": "codex/still-hosted-qualification",
+  "publishedVersion": 550,
+  "publishedSource": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "productionActivated": false,
+  "hostedMutations": 0,
+  "externalProviderCalls": 0,
+  "knownIncrementalProviderSpendUsd": 0,
+  "checks": [
+    {
+      "check": "workflow-regressions",
+      "command": "node --import tsx --test tests/creation-*.test.mjs tests/still-creation*.test.mjs tests/streamed-event-folds.test.mjs",
+      "passed": 317,
+      "failed": 0,
+      "log": "evidence/workflow-regressions.log",
+      "sha256": "cdc3ca8eabe8c9fcf4d59986818646e5d4bf8ed7475e1476d4fb459dfed64667"
+    },
+    {
+      "check": "native-workerd",
+      "command": "node --test tests/browser/still-index-workerd.test.mjs tests/browser/still-qualification-budget-workerd.test.mjs",
+      "passed": 2,
+      "failed": 0,
+      "log": "evidence/native-workerd.log",
+      "sha256": "b15e5287cfcef61cffd41d1f21734e38baed0703c93cbe52352e546edcd71f37"
+    },
+    {
+      "check": "schema-throughput-tools",
+      "command": "node --import tsx --test tests/creation-hosted-schema.test.mjs tests/creation-index-throughput.test.mjs",
+      "passed": 13,
+      "failed": 0,
+      "log": "evidence/schema-throughput-tools.log",
+      "sha256": "590b398d0a1025f76d2df5f5a80ec9f5ccf96d18dcd4c5fcd983bcafce0f675e"
+    },
+    {
+      "check": "build",
+      "command": "npm run build",
+      "passed": null,
+      "failed": 0,
+      "log": "evidence/build.log",
+      "sha256": "84bc1fa9933f535b551d19eb05610148a49bd34bdce2f205b896ff0ac9b4ddf1"
+    },
+    {
+      "check": "typecheck",
+      "command": "npm run typecheck",
+      "passed": null,
+      "failed": 0,
+      "log": "evidence/typecheck.log",
+      "sha256": "9e957926002934292f1cb961988e7bed489fdfeeb261b0967f2b43723fbb2ef6"
+    },
+    {
+      "check": "runtime-lint",
+      "command": "ESLint on changed runtime TypeScript files",
+      "passed": null,
+      "failed": 0,
+      "log": "evidence/runtime-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "tooling-lint",
+      "command": "ESLint on schema/throughput tools and new test files",
+      "passed": null,
+      "failed": 0,
+      "log": "evidence/tooling-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "browser-first-clean-failure",
+      "command": "Chromium unified creation/help browser suites; one failed child plus failed parent",
+      "passed": 16,
+      "failed": 2,
+      "log": "evidence/browser-first-clean-failure.log",
+      "sha256": "34beb8eabf6721374844daa29a6606c018c615120723a8c411b3adbafe475216"
+    },
+    {
+      "check": "workflow-regressions-after-tooling-commit",
+      "command": "node --import tsx --test tests/creation-*.test.mjs tests/still-creation*.test.mjs tests/streamed-event-folds.test.mjs",
+      "passed": 317,
+      "failed": 0,
+      "sourceCommitAtStart": "6c600508",
+      "log": "evidence/workflow-regressions-committed.log",
+      "sha256": "a5074f8d598814a625a8f79ce14fcb0add8932f8d3bd1400edd5d67fe93b8bb0",
+      "scope": "Runtime source unchanged; test-only browser commit2094797f occurred during run and is outside this suite."
+    }
+  ],
+  "browserFinalReceipt": "browser-verification.json",
+  "scaleReceipt": "throughput-candidate-summary.json",
+  "archiveReceipt": "disabled-archive-receipt.json",
+  "schemaReceipt": "schema-synthetic-rehearsal.json",
+  "releaseDecision": "NO-GO",
+  "limits": [
+    "Injected synthetic lifecycle and local native runtime only",
+    "No hosted scheduler, full target schema, live model relevance/fidelity, actual runtime resources/costs or deployed retention qualification",
+    "No human screen-reader/fidelity adjudication",
+    "Local edit/renewal gates fail; see throughput receipts"
+  ],
+  "toolingCommit": "6c600508",
+  "browserTestCommit": "2094797f"
+}

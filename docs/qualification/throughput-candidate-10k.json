@@ -1,0 +1,1373 @@
+{
+  "schema": 1,
+  "phaseTotals": {
+    "backfill": {
+      "ticks": 651,
+      "operations": 239212,
+      "calls": 513,
+      "inputBytes": 5447548,
+      "tokens": 1361971,
+      "put": 547,
+      "get": 473,
+      "head": 5315,
+      "delete": 477,
+      "list": 187
+    },
+    "healthy-edit": {
+      "ticks": 38,
+      "operations": 10016,
+      "calls": 7,
+      "inputBytes": 106765,
+      "tokens": 26693,
+      "put": 14,
+      "get": 34,
+      "head": 211,
+      "delete": 36,
+      "list": 10
+    },
+    "withdrawal": {
+      "ticks": 15,
+      "operations": 2738,
+      "calls": 10,
+      "inputBytes": 49267,
+      "tokens": 12317,
+      "put": 11,
+      "get": 2,
+      "head": 110,
+      "delete": 4,
+      "list": 2
+    },
+    "restore-coverage": {
+      "ticks": 58,
+      "operations": 14018,
+      "calls": 35,
+      "inputBytes": 378802,
+      "tokens": 94707,
+      "put": 37,
+      "get": 26,
+      "head": 378,
+      "delete": 26,
+      "list": 12
+    },
+    "renewal": {
+      "ticks": 794,
+      "operations": 272107,
+      "calls": 585,
+      "inputBytes": 6142163,
+      "tokens": 1535637,
+      "put": 631,
+      "get": 581,
+      "head": 6386,
+      "delete": 660,
+      "list": 219
+    },
+    "shutdown": {
+      "ticks": 3,
+      "operations": 766,
+      "calls": 0,
+      "inputBytes": 0,
+      "tokens": 0,
+      "put": 0,
+      "get": 0,
+      "head": 67,
+      "delete": 67,
+      "list": 0
+    }
+  },
+  "readiness": {
+    "initialBackfillWithin24Hours": true,
+    "healthyEditWithin5Minutes": false,
+    "withdrawnObjectsWithin15Minutes": true,
+    "withdrawnPrivateProseWithin15Minutes": true,
+    "renewalWithin12Hours": false,
+    "renewalWithinActualWindow": true
+  },
+  "fixtureGeneratorHash": "5e4efec940c7f63ae046bc6b4d51e42fb2534ba713a5fb87f8ba697694733e79",
+  "sourceHashes": {
+    "src/model/events.ts": "673e5cc5fc63dbf532e53108304c520804b11d569e014858e29bd26c85dcefe2",
+    "worker/creation-api.ts": "f9b30e5638f43279839c83c8fc1ffa75c68737e07f584e23d8b55e3f64997aab",
+    "worker/creation-authority.ts": "2ed295b0e6322f175920bffb2a21827a617313f35ee91dd24af969dacf7c7141",
+    "worker/creation-commits.ts": "e9a58ae5735e845ce9be526fa541b7c18839d2d13cdb4d98df8786b2d95009d6",
+    "worker/creation-index-authority.ts": "38ec255a7e3716628544b2d6888266bd80b58db294ad7abce0222899ee7cc2b9",
+    "worker/creation-index-budget.ts": "6d7c34b3ac51865f0201410db6244be41f9d96f0f642dcfd396d059ae3cc561b",
+    "worker/creation-index-compaction.ts": "e370dc0a732eb011e2398e47c5718b63c100d1b37328c2f12f1ab2122487d9d7",
+    "worker/creation-index-maintenance.ts": "2a28ef553368397e8b0a516a522ad44b22a5eb8f37d4d4db20c2188780ce5f9f",
+    "worker/creation-index-private.ts": "5099310f1a490c66f1ee2cd04a5ab5bdc5a6959688d121535abd608d96b2a375",
+    "worker/creation-index-projection-stage.ts": "075544961f7c5fccd8fab3c50b7878d7019792df2cb4e59074cc42397f692e82",
+    "worker/creation-index-projection.ts": "c4c21d9b80b14600dd2812e32179f99fd9db3923feb15c56802fc06c1dec3762",
+    "worker/creation-index-reconcile.ts": "8edd389b53505b0b31e13d45cf7eb7e4fb87b072506559ab207cb6e2d180f34e",
+    "worker/creation-index-routing.ts": "86bfaf0543acad9806d4b1f0a21860f9cb27045cca0b839b0ca8908f7da5f14f",
+    "worker/creation-index-schema.ts": "95fc2eb7d81ceaeb680db9badeae093aebbd041eccee0c3b4d2fadb345f163bf",
+    "worker/creation-index-search.ts": "e1c099ef8da9d24a36ca1551425ddf1827ef359b2f5030c868416a3636220348",
+    "worker/creation-interpret.ts": "412ae830680da0b84c3eb2a8e781803bcb8bd92610c937706c8071f39fce56cf",
+    "worker/creation-organization-contract.ts": "3c440c9f511e211df31b19d942fb7783714a9511b6d335d6c9962579e708382e",
+    "worker/creation-provider-http.ts": "c51ac3b16370250b375fbf8fbfb8b0ab91640fa8b4f6ebddcd51abf72f73c02d",
+    "worker/creation-provider-service.ts": "3d809961476a7dcb46e2bb42ca6cb49542ede9a1fdb24e44f568b2a52ff6f83f",
+    "worker/creation-qualification-budget.ts": "2d7d1c2d883d965c7208e99c782d26bd54a7f68f8913379717e49aa5faf258e6",
+    "worker/creation-search-api.ts": "7ee04c0d1d30c9283e5f0d77410799d6a3389084e2a714191dec899c7e8b867d",
+    "worker/creation-search-index.ts": "8f227f626f2606895a50ae17d4f2814391da0ef3d60a47c64a4e68e162ab981a",
+    "worker/creation-search-providers.ts": "b6aa996d24f1118d647419348c67bbeba9f77943a2b87d92fbcacbe69ecc9154",
+    "worker/creation-search.ts": "753ed14e9d974b0f6014c346d3cb614f1d881cf54dcedb8b17c7acf12c62644d",
+    "worker/creation-store.ts": "545e38d0c0290e4617459c63f4c2d980417fdbb3c7b3c5740c1aeeee26903a42",
+    "worker/creation-vectors.ts": "020fbc0f32a9ae626978b8412dd44868025c4b83cd53a60b09e836751b70c892",
+    "worker/memory-native-boundary.ts": "a6fa7878a94fe425c51bc61511d736aceb286a3cae9c2ff3f471f4cbd92ee7e8",
+    "worker/private-content-storage.ts": "ca836551432ab3c76c162a09fe37d82eaa4d920aeffa652934194670a74e2bc9"
+  },
+  "endingSourceHashes": {
+    "src/model/events.ts": "673e5cc5fc63dbf532e53108304c520804b11d569e014858e29bd26c85dcefe2",
+    "worker/creation-api.ts": "f9b30e5638f43279839c83c8fc1ffa75c68737e07f584e23d8b55e3f64997aab",
+    "worker/creation-authority.ts": "2ed295b0e6322f175920bffb2a21827a617313f35ee91dd24af969dacf7c7141",
+    "worker/creation-commits.ts": "e9a58ae5735e845ce9be526fa541b7c18839d2d13cdb4d98df8786b2d95009d6",
+    "worker/creation-index-authority.ts": "38ec255a7e3716628544b2d6888266bd80b58db294ad7abce0222899ee7cc2b9",
+    "worker/creation-index-budget.ts": "6d7c34b3ac51865f0201410db6244be41f9d96f0f642dcfd396d059ae3cc561b",
+    "worker/creation-index-compaction.ts": "e370dc0a732eb011e2398e47c5718b63c100d1b37328c2f12f1ab2122487d9d7",
+    "worker/creation-index-maintenance.ts": "2a28ef553368397e8b0a516a522ad44b22a5eb8f37d4d4db20c2188780ce5f9f",
+    "worker/creation-index-private.ts": "5099310f1a490c66f1ee2cd04a5ab5bdc5a6959688d121535abd608d96b2a375",
+    "worker/creation-index-projection-stage.ts": "075544961f7c5fccd8fab3c50b7878d7019792df2cb4e59074cc42397f692e82",
+    "worker/creation-index-projection.ts": "c4c21d9b80b14600dd2812e32179f99fd9db3923feb15c56802fc06c1dec3762",
+    "worker/creation-index-reconcile.ts": "8edd389b53505b0b31e13d45cf7eb7e4fb87b072506559ab207cb6e2d180f34e",
+    "worker/creation-index-routing.ts": "86bfaf0543acad9806d4b1f0a21860f9cb27045cca0b839b0ca8908f7da5f14f",
+    "worker/creation-index-schema.ts": "95fc2eb7d81ceaeb680db9badeae093aebbd041eccee0c3b4d2fadb345f163bf",
+    "worker/creation-index-search.ts": "e1c099ef8da9d24a36ca1551425ddf1827ef359b2f5030c868416a3636220348",
+    "worker/creation-interpret.ts": "412ae830680da0b84c3eb2a8e781803bcb8bd92610c937706c8071f39fce56cf",
+    "worker/creation-organization-contract.ts": "3c440c9f511e211df31b19d942fb7783714a9511b6d335d6c9962579e708382e",
+    "worker/creation-provider-http.ts": "c51ac3b16370250b375fbf8fbfb8b0ab91640fa8b4f6ebddcd51abf72f73c02d",
+    "worker/creation-provider-service.ts": "3d809961476a7dcb46e2bb42ca6cb49542ede9a1fdb24e44f568b2a52ff6f83f",
+    "worker/creation-qualification-budget.ts": "2d7d1c2d883d965c7208e99c782d26bd54a7f68f8913379717e49aa5faf258e6",
+    "worker/creation-search-api.ts": "7ee04c0d1d30c9283e5f0d77410799d6a3389084e2a714191dec899c7e8b867d",
+    "worker/creation-search-index.ts": "8f227f626f2606895a50ae17d4f2814391da0ef3d60a47c64a4e68e162ab981a",
+    "worker/creation-search-providers.ts": "b6aa996d24f1118d647419348c67bbeba9f77943a2b87d92fbcacbe69ecc9154",
+    "worker/creation-search.ts": "753ed14e9d974b0f6014c346d3cb614f1d881cf54dcedb8b17c7acf12c62644d",
+    "worker/creation-store.ts": "545e38d0c0290e4617459c63f4c2d980417fdbb3c7b3c5740c1aeeee26903a42",
+    "worker/creation-vectors.ts": "020fbc0f32a9ae626978b8412dd44868025c4b83cd53a60b09e836751b70c892",
+    "worker/memory-native-boundary.ts": "a6fa7878a94fe425c51bc61511d736aceb286a3cae9c2ff3f471f4cbd92ee7e8",
+    "worker/private-content-storage.ts": "ca836551432ab3c76c162a09fe37d82eaa4d920aeffa652934194670a74e2bc9"
+  },
+  "sourceChangedDuringRun": [],
+  "pendingWork": [
+    {
+      "kind": "compaction",
+      "state": "ready",
+      "error_class": null,
+      "generation": 4,
+      "cursor": "",
+      "count": 2
+    },
+    {
+      "kind": "deletion",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "discovery",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "manifest-reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 1,
+      "cursor": "",
+      "count": 18
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 4,
+      "cursor": "",
+      "count": 3
+    }
+  ],
+  "shutdown": {
+    "metadataRows": {
+      "creation_index_block_routes": 0,
+      "creation_index_replay_skeletons": 0
+    },
+    "preShutdown": {
+      "objects": 67,
+      "published": 10041
+    },
+    "ticks": 3,
+    "objectsRemaining": 0,
+    "privateBodiesRemaining": 0,
+    "checkpointRows": 0,
+    "providerCalls": 0
+  },
+  "attempts": {
+    "count": 1150,
+    "reserved": 12124545,
+    "tokens": 3031325
+  },
+  "shortRetentionWindow": null,
+  "kind": "offline-injected-provider-unseeded-lifecycle",
+  "sourceCommit": "bd57baaf258f5b6bd5931016e84cc530ac042462",
+  "sourceRoot": "/private/tmp/still-hosted-qualification",
+  "ideas": 10000,
+  "projects": 21,
+  "custodies": 2,
+  "canonicalEvents": 10045,
+  "initialIndexRows": 0,
+  "expectedSources": 10042,
+  "retentionDays": 30,
+  "tickSeconds": 60,
+  "maxTicks": 6000,
+  "ticks": 1559,
+  "partialTick": 357,
+  "fullTick": 651,
+  "backfillCoverage": {
+    "total": 10042,
+    "published": 10042
+  },
+  "healthyEdit": {
+    "atTick": 651,
+    "visibleTick": 689,
+    "delayMinutes": 38,
+    "pass": false,
+    "trace": [
+      {
+        "tick": 652,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 653,
+        "receipt": {
+          "status": "completed",
+          "claimed": 7,
+          "completed": 7,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 654,
+        "receipt": {
+          "status": "completed",
+          "claimed": 6,
+          "completed": 6,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 655,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 656,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 657,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 658,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 659,
+        "receipt": {
+          "status": "completed",
+          "claimed": 7,
+          "completed": 7,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 660,
+        "receipt": {
+          "status": "completed",
+          "claimed": 6,
+          "completed": 6,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 661,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 662,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 663,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 664,
+        "receipt": {
+          "status": "completed",
+          "claimed": 7,
+          "completed": 7,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 665,
+        "receipt": {
+          "status": "completed",
+          "claimed": 6,
+          "completed": 6,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 666,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 667,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 668,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 669,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "projection",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 670,
+        "receipt": {
+          "status": "completed",
+          "claimed": 7,
+          "completed": 7,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 671,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 672,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 673,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 674,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 675,
+        "receipt": {
+          "status": "completed",
+          "claimed": 7,
+          "completed": 7,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 676,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 677,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 678,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 679,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 680,
+        "receipt": {
+          "status": "completed",
+          "claimed": 7,
+          "completed": 7,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 681,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 682,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 683,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 684,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 0,
+          "tokens": 0,
+          "providerAttempts": 0
+        },
+        "work": [
+          {
+            "kind": "materialize",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 685,
+        "receipt": {
+          "status": "completed",
+          "claimed": 7,
+          "completed": 7,
+          "retried": 0,
+          "held": 0,
+          "bytes": 22528,
+          "tokens": 5563,
+          "providerAttempts": 1
+        },
+        "work": [
+          {
+            "kind": "embedding",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 686,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 45056,
+          "tokens": 11120,
+          "providerAttempts": 2
+        },
+        "work": [
+          {
+            "kind": "embedding",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 687,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 26624,
+          "tokens": 6449,
+          "providerAttempts": 2
+        },
+        "work": [
+          {
+            "kind": "embedding",
+            "state": "ready",
+            "count": 1
+          },
+          {
+            "kind": "publication",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 688,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 65536,
+          "tokens": 1064,
+          "providerAttempts": 1
+        },
+        "work": [
+          {
+            "kind": "embedding",
+            "state": "ready",
+            "count": 1
+          },
+          {
+            "kind": "publication",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 689,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 65536,
+          "tokens": 2497,
+          "providerAttempts": 1
+        },
+        "work": [
+          {
+            "kind": "embedding",
+            "state": "ready",
+            "count": 1
+          },
+          {
+            "kind": "publication",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      }
+    ]
+  },
+  "edit": {
+    "atTick": 357,
+    "visibleTick": 633,
+    "delayMinutes": 276,
+    "pass": false
+  },
+  "withdrawal": {
+    "atTick": 689,
+    "erasedTick": 704,
+    "delayMinutes": 15,
+    "pass": true,
+    "objects": 1,
+    "privateBodiesBefore": 3,
+    "privateBodiesAt15Minutes": 0,
+    "privateBodyErasedTick": 690,
+    "privateBodyDelayMinutes": 1,
+    "privateBodyReappeared": false,
+    "privateBodyPass": true
+  },
+  "renewal": {
+    "status": "completed",
+    "leadSeconds": 86400,
+    "actualRenewalWindowSeconds": 86400,
+    "ticks": 794,
+    "within12Hours": false,
+    "withinActualRenewalWindow": true,
+    "coverage": {
+      "total": 10042,
+      "published": 10041
+    },
+    "providerCalls": 1150,
+    "withdrawalImmediateDenied": true
+  },
+  "provider": {
+    "calls": 1150,
+    "inputs": 26800,
+    "inputBytes": 12124545,
+    "tokens": 3031325,
+    "maxInputs": 32,
+    "maxPayloadBytes": 22418
+  },
+  "d1": {
+    "operations": 538863,
+    "maxTickOperations": 632,
+    "slowReads": [
+      [
+        "SELECT e.entity_id,c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND",
+        {
+          "calls": 1440,
+          "totalMs": 43925.58177399997,
+          "maxMs": 127.59100000000035
+        }
+      ],
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_row.scope_type, 'organizationId', grant_r",
+        {
+          "calls": 41573,
+          "totalMs": 16682.511758997793,
+          "maxMs": 18.996291999996174
+        }
+      ],
+      [
+        "SELECT r.content_id FROM creation_search_records r JOIN private_content c ON c.content_id=r.content_id WHERE r.partition_key=? AND r.source_id=? AND r.revision=",
+        {
+          "calls": 22955,
+          "totalMs": 1041.5085180005954,
+          "maxMs": 20.623082999998587
+        }
+      ],
+      [
+        "WITH page AS MATERIALIZED(SELECT e.type,e.payload,e.sequence AS source_sequence,COALESCE(secret.private_json,e.payload) AS body FROM events e LEFT JOIN event_pr",
+        {
+          "calls": 964,
+          "totalMs": 920.9071899999215,
+          "maxMs": 2.7389169999951264
+        }
+      ],
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=p.project_access_id WHERE p.partition_ke",
+        {
+          "calls": 41573,
+          "totalMs": 907.8756959995796,
+          "maxMs": 13.235583000001498
+        }
+      ],
+      [
+        "SELECT c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id AND c.redacted_at IS NULL WHERE e.partition_key=? AND e.ge",
+        {
+          "calls": 22859,
+          "totalMs": 834.4053720018437,
+          "maxMs": 6.213292000000365
+        }
+      ],
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=unixepoch()) AND (? IS NULL OR kind IN(SEL",
+        {
+          "calls": 10892,
+          "totalMs": 738.3990160009671,
+          "maxMs": 7.848750000004657
+        }
+      ],
+      [
+        "SELECT 1 FROM creation_index_projection e LEFT JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND COALESCE((c.ow",
+        {
+          "calls": 1440,
+          "totalMs": 665.0630390003935,
+          "maxMs": 4.555749999999534
+        }
+      ],
+      [
+        "WITH page AS MATERIALIZED(SELECT e.*,e.sequence AS source_sequence,COALESCE(secret.private_json,e.payload) AS body FROM events e LEFT JOIN event_private_payload",
+        {
+          "calls": 768,
+          "totalMs": 661.133626999831,
+          "maxMs": 1.9624590000021271
+        }
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        {
+          "calls": 41573,
+          "totalMs": 601.4382639995208,
+          "maxMs": 2.2870000000039
+        }
+      ]
+    ],
+    "topOperations": [
+      [
+        "INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) SELECT ?,?,?,?,?,?,NULL",
+        44736
+      ],
+      [
+        "UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind NOT IN('document-a",
+        44736
+      ],
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=",
+        41573
+      ],
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_r",
+        41573
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        41573
+      ],
+      [
+        "SELECT 1 FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        32667
+      ],
+      [
+        "INSERT OR REPLACE INTO creation_index_projection(partition_key,generation,entity_id,kind,content_id) SELECT ?,?,?,?,? WH",
+        24645
+      ],
+      [
+        "SELECT r.content_id FROM creation_search_records r JOIN private_content c ON c.content_id=r.content_id WHERE r.partition",
+        22955
+      ],
+      [
+        "SELECT c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id AND c.redacted_at ",
+        22859
+      ],
+      [
+        "INSERT INTO creation_search_terms(partition_key,term_hash,source_id) SELECT ?,value,? FROM json_each(?)",
+        20473
+      ],
+      [
+        "INSERT INTO creation_search_records(partition_key,source_id,kind,revision,content_hash,content_id,source_version,tombsto",
+        20091
+      ],
+      [
+        "DELETE FROM creation_search_terms WHERE partition_key=? AND source_id=?",
+        20091
+      ],
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=un",
+        10892
+      ],
+      [
+        "SELECT state,write_until,erase_due,unixepoch() AS now FROM creation_index_objects WHERE object_key=?",
+        10473
+      ],
+      [
+        "UPDATE creation_index_work SET state='running',lease_token=?,lease_until=unixepoch()+?,attempts=attempts+1,touched=unixe",
+        8627
+      ],
+      [
+        "SELECT policy_epoch,expires FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        8548
+      ],
+      [
+        "DELETE FROM creation_index_fences",
+        7985
+      ],
+      [
+        "INSERT INTO creation_index_fences(id) VALUES(CASE WHEN EXISTS(SELECT 1 FROM( SELECT principal.*, COALESCE((SELECT json_g",
+        7677
+      ],
+      [
+        "INSERT INTO creation_index_fences(id) VALUES(CASE WHEN EXISTS(SELECT 1 FROM creation_index_work j WHERE j.job_key=? AND ",
+        7217
+      ],
+      [
+        "UPDATE creation_index_work SET cursor=?,state=?,lease_token=NULL,lease_until=0,error_class=NULL,attempts=0 WHERE job_key",
+        5330
+      ]
+    ],
+    "allocatedFixtureBytes": 147357696
+  },
+  "r2": {
+    "put": 1240,
+    "get": 1116,
+    "head": 12467,
+    "delete": 1270,
+    "list": 430,
+    "uploadedBytes": 108244992,
+    "readBytes": 53358592,
+    "peakBytes": 25507840,
+    "peakObjects": 385
+  },
+  "nodeFixture": {
+    "elapsedMs": 238591.77083400002,
+    "peakHeapBytes": 287924872,
+    "peakRssBytes": 1235763200
+  },
+  "oldestQueueAgeSeconds": 2564220,
+  "oldestQueueAgeBeforeRenewalJump": 43140,
+  "clockJumpSeconds": 2470799.975,
+  "failedWork": [],
+  "trajectory": [
+    {
+      "tick": 100,
+      "published": 0,
+      "records": 0,
+      "providerCalls": 0,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 0,
+        "tokens": 0,
+        "providerAttempts": 0
+      }
+    },
+    {
+      "tick": 200,
+      "published": 0,
+      "records": 416,
+      "providerCalls": 0,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 0,
+        "tokens": 0,
+        "providerAttempts": 0
+      }
+    },
+    {
+      "tick": 300,
+      "published": 0,
+      "records": 6080,
+      "providerCalls": 0,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 0,
+        "tokens": 0,
+        "providerAttempts": 0
+      }
+    },
+    {
+      "tick": 400,
+      "published": 1022,
+      "records": 10028,
+      "providerCalls": 87,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 88064,
+        "tokens": 6616,
+        "providerAttempts": 2
+      }
+    },
+    {
+      "tick": 500,
+      "published": 5811,
+      "records": 10042,
+      "providerCalls": 287,
+      "receipt": {
+        "status": "completed",
+        "claimed": 7,
+        "completed": 7,
+        "retried": 0,
+        "held": 0,
+        "bytes": 131072,
+        "tokens": 2176,
+        "providerAttempts": 2
+      }
+    },
+    {
+      "tick": 600,
+      "published": 9552,
+      "records": 10042,
+      "providerCalls": 467,
+      "receipt": {
+        "status": "completed",
+        "claimed": 7,
+        "completed": 7,
+        "retried": 0,
+        "held": 0,
+        "bytes": 43008,
+        "tokens": 10422,
+        "providerAttempts": 2
+      }
+    },
+    {
+      "tick": 651,
+      "published": 10042,
+      "records": 10042,
+      "providerCalls": 513,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 0,
+        "tokens": 0,
+        "providerAttempts": 0
+      }
+    }
+  ],
+  "qualification": "NOT hosted, NOT live relevance, simulated provider token usage, Node heap is not hosted resource evidence"
+}
