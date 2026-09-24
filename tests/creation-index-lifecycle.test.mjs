@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSceneCostFixture} from './helpers/scene-cost-fixture.mjs';
-import {ensureCreationSearchSchema} from '../worker/creation-search-index.ts';
-import {installCreationIndexSchema,claimIndexJob} from '../worker/creation-index-schema.ts';
+import {claimIndexJob} from '../worker/creation-index-schema.ts';
 import {runCreationMaintenance,eraseCreationIndex,publishIndexSource} from '../worker/creation-index-maintenance.ts';
 import {sameWorkerCreationSearch} from '../worker/creation-index-search.ts';
 import {sourcePassages,CREATION_REPRESENTATION as R,CREATION_VECTOR_PREFIX} from '../worker/creation-vectors.ts';
@@ -46,11 +44,15 @@ test('corrupt shard bytes cause durable repair, then reindex and query recover',
 });
 test('renewal starts a fresh generation from canonical content before source expiry',async t=>{
  const f=await fixture(t);await appendAuditEvent(f.env,f.streamId,'user','ProjectCreated',{project_id:f.projectId,name:'Harbor'});await f.ready();const generation=f.sqlite.prepare('SELECT index_version n FROM creation_search_partitions').get().n;
- f.sqlite.exec("UPDATE private_content SET expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+12 hours') WHERE content_id IN(SELECT content_id FROM creation_search_records); UPDATE creation_index_work SET due=0,touched=0 WHERE kind='renewal'");await f.tick();assert.ok(f.sqlite.prepare('SELECT index_version n FROM creation_search_partitions').get().n>generation);await f.ready();assert.ok(f.sqlite.prepare("SELECT 1 FROM creation_index_sources WHERE published=1 AND expires>unixepoch()+86400").get());
+ f.sqlite.exec("UPDATE private_content SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','-29 days'),expires_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+12 hours') WHERE content_id IN(SELECT content_id FROM creation_search_records); UPDATE creation_index_work SET due=0,touched=0 WHERE kind='renewal'");await f.tick();assert.ok(f.sqlite.prepare('SELECT index_version n FROM creation_search_partitions').get().n>generation);await f.ready();assert.ok(f.sqlite.prepare("SELECT 1 FROM creation_index_sources WHERE published=1 AND expires>unixepoch()+86400").get());
 });
 test('retiring inference before first upload erases private projection checkpoints too',async t=>{
  const f=await fixture(t);await appendAuditEvent(f.env,f.streamId,'user','ProjectCreated',{project_id:f.projectId,name:'Harbor'});
- for(let i=0;i<4&&!f.sqlite.prepare('SELECT 1 FROM creation_index_projection').get();i++)await f.tick();assert.ok(f.sqlite.prepare('SELECT 1 FROM creation_index_projection').get());f.sqlite.exec('UPDATE creation_index_enrollments SET enabled=0');f.env.STILL_CREATION_INDEX_ENABLED='false';await f.tick();assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_projection').get().n,0);
+ // Admit the canonical partition first, then stop the real continuation after
+ // projection. Completed materialization intentionally discards this scratch.
+ await f.ready();await appendAuditEvent(f.env,f.streamId,'user','ProjectRenamed',{project_id:f.projectId,new_name:'Harbor changed'});
+ const {projectionPage}=await import('../worker/creation-index-projection.ts');for(let i=0;i<10&&!f.sqlite.prepare('SELECT 1 FROM creation_index_projection').get();i++){const lease=await claimIndexJob(f.env.DB,25,['projection']);assert.ok(lease);await projectionPage(f.env,lease);}
+ assert.ok(f.sqlite.prepare('SELECT 1 FROM creation_index_projection').get());f.sqlite.exec('UPDATE creation_index_enrollments SET enabled=0');f.env.STILL_CREATION_INDEX_ENABLED='false';await f.tick();assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_projection').get().n,0);
 });
 test('native scheduled cleanup erases vectors even when unrelated maintenance fails',async t=>{
  const f=await fixture(t);await appendAuditEvent(f.env,f.streamId,'user','ProjectCreated',{project_id:f.projectId,name:'Harbor'});await f.ready();f.sqlite.exec('UPDATE creation_index_enrollments SET enabled=0; UPDATE creation_index_work SET due=0');f.env.STILL_CREATION_INDEX_ENABLED='false';delete f.env.OPENAI_API_KEY;

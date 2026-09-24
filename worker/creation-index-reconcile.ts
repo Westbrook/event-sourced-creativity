@@ -5,8 +5,8 @@ import {leaseGuard,leaseBindings,type IndexLease} from './creation-index-schema.
  * receipt. Receipts do not assert a remote heap wipe or model-provider deletion. */
 export async function reconcileIndexObjects(env:WorkerEnv,l:IndexLease){
  const page=await env.MEDIA.list({prefix:CREATION_VECTOR_PREFIX,limit:32,...(l.cursor?{cursor:l.cursor}:{})});
- for(const object of page.objects){const known=await env.DB.prepare("SELECT state,write_until FROM creation_index_objects WHERE object_key=?").bind(object.key).first<{state:string;write_until:number}>();
-  if(!known||known.state==='erased'||known.state==='retired'){await env.MEDIA.delete(object.key);if(await env.MEDIA.head(object.key))throw new Error('creation_orphan_erasure_unverified');}
+ for(const object of page.objects){const known=await env.DB.prepare("SELECT state,write_until,erase_due,unixepoch() AS now FROM creation_index_objects WHERE object_key=?").bind(object.key).first<{state:string;write_until:number;erase_due:number;now:number}>();
+  if(!known||known.state==='erased'||known.state==='retired'&&known.erase_due<=known.now){await env.MEDIA.delete(object.key);if(await env.MEDIA.head(object.key))throw new Error('creation_orphan_erasure_unverified');}
  }
  await env.DB.prepare(`UPDATE creation_index_work SET cursor=?,state='ready',due=unixepoch()+?,lease_token=NULL,lease_until=0,error_class=NULL,attempts=0 WHERE job_key=? AND ${leaseGuard}`).bind(page.truncated?page.cursor:'',page.truncated?0:600,l.job_key,...leaseBindings(l)).run();
 }

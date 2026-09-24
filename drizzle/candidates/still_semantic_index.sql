@@ -1,4 +1,7 @@
--- UNJOURNALED CANDIDATE. Requires reconciled creation search schema and explicit deployment approval.
+CREATE TABLE IF NOT EXISTS creation_index_block_routes(partition_key TEXT NOT NULL,generation INTEGER NOT NULL,block_id TEXT NOT NULL,project_id TEXT NOT NULL,safe_foreign INTEGER NOT NULL,created INTEGER NOT NULL,removed INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(partition_key,generation,block_id));
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS creation_index_replay_skeletons(partition_key TEXT NOT NULL,generation INTEGER NOT NULL,entity_id TEXT NOT NULL,metadata TEXT NOT NULL,PRIMARY KEY(partition_key,generation,entity_id));
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS creation_index_enrollments(custody TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,policy_epoch TEXT NOT NULL,expires INTEGER NOT NULL,daily_token_limit INTEGER NOT NULL CHECK(daily_token_limit>0));
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_index_enrollment_inserted AFTER INSERT ON creation_index_enrollments BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE custody=NEW.custody; INSERT INTO creation_index_discovery(scope_key) VALUES('*') ON CONFLICT(scope_key) DO UPDATE SET generation=generation+1,cursor='',touched=0; END;
@@ -16,6 +19,12 @@ CREATE INDEX IF NOT EXISTS creation_index_due ON creation_index_work(state,due,p
 CREATE TABLE IF NOT EXISTS creation_index_discovery(scope_key TEXT PRIMARY KEY,generation INTEGER NOT NULL DEFAULT 1,cursor TEXT NOT NULL DEFAULT '',touched INTEGER NOT NULL DEFAULT 0);
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS creation_index_projection(partition_key TEXT NOT NULL,generation INTEGER NOT NULL,entity_id TEXT NOT NULL,kind TEXT NOT NULL,content_id TEXT NOT NULL,PRIMARY KEY(partition_key,generation,entity_id));
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS creation_index_private_kind ON private_content(kind,content_id);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS creation_index_projection_content ON creation_index_projection(content_id);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS creation_index_record_content ON creation_search_records(content_id,tombstone);
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS creation_index_sources(partition_key TEXT NOT NULL,source_id TEXT NOT NULL,generation INTEGER NOT NULL,revision TEXT NOT NULL,representation TEXT NOT NULL,expected INTEGER,completed INTEGER NOT NULL DEFAULT 0,cursor INTEGER NOT NULL DEFAULT 0,published INTEGER NOT NULL DEFAULT 0,expires INTEGER NOT NULL,PRIMARY KEY(partition_key,source_id,representation));
 --> statement-breakpoint
@@ -97,6 +106,8 @@ CREATE TRIGGER IF NOT EXISTS creation_index_owner_changed AFTER UPDATE OF role,e
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_index_owner_deleted AFTER DELETE ON users BEGIN UPDATE creation_search_partitions SET invalidated=1,index_version=index_version+1 WHERE owner_id=OLD.user_id; END;
 --> statement-breakpoint
-CREATE TRIGGER IF NOT EXISTS creation_index_partition_changed AFTER UPDATE OF index_version ON creation_search_partitions WHEN NEW.index_version<>OLD.index_version BEGIN INSERT INTO creation_index_work(job_key,kind,partition_key,generation,priority) VALUES('projection:'||NEW.partition_key,'projection',NEW.partition_key,NEW.index_version,5) ON CONFLICT(job_key) DO UPDATE SET generation=excluded.generation,cursor='',state='ready',due=0,lease_token=NULL,lease_until=0; UPDATE creation_index_objects SET state='retired',erase_due=unixepoch()+900 WHERE partition_key=NEW.partition_key AND state<>'erased'; UPDATE creation_index_sources SET published=0 WHERE partition_key=NEW.partition_key; END;
+DROP TRIGGER IF EXISTS creation_index_partition_changed;
+--> statement-breakpoint
+CREATE TRIGGER IF NOT EXISTS creation_index_partition_changed AFTER UPDATE OF index_version ON creation_search_partitions WHEN NEW.index_version<>OLD.index_version BEGIN INSERT INTO creation_index_work(job_key,kind,partition_key,generation,priority) VALUES('projection:'||NEW.partition_key,'projection',NEW.partition_key,NEW.index_version,5) ON CONFLICT(job_key) DO UPDATE SET generation=excluded.generation,cursor='',state='ready',due=0,attempts=0,error_class=NULL,lease_token=NULL,lease_until=0; UPDATE creation_index_objects SET state='retired',erase_due=MIN(COALESCE(erase_due,unixepoch()+900),unixepoch()+900) WHERE partition_key=NEW.partition_key AND state<>'erased'; UPDATE creation_index_sources SET published=0 WHERE partition_key=NEW.partition_key; UPDATE creation_index_work SET state='done',lease_token=NULL,lease_until=0,error_class='generation_superseded' WHERE partition_key=NEW.partition_key AND generation<>NEW.index_version; END;
 --> statement-breakpoint
 CREATE TRIGGER IF NOT EXISTS creation_index_partition_insert AFTER INSERT ON creation_search_partitions BEGIN INSERT OR IGNORE INTO creation_index_work(job_key,kind,partition_key,generation,priority) VALUES('projection:'||NEW.partition_key,'projection',NEW.partition_key,NEW.index_version,5); END;
