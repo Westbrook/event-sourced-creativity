@@ -1,0 +1,1206 @@
+{
+  "schemaVersion": 2,
+  "fixtureId": "still-hosted-qualification-synthetic-v1-tuning",
+  "queries": [
+    {
+      "id": "tuning-001",
+      "query": "Locate the rain-barrel rooftop herbs.",
+      "scope": {
+        "entryKind": "project",
+        "principalId": "qual-search-principal"
+      },
+      "permittedPartitions": [
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-01\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-01"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-02\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-02"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-03\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-03"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-04\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-04"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-05\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-05"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-06\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-06"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-07\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-07"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-08\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-08"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-09\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-09"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-10\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-10"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-11\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-11"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-12\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-12"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-13\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-13"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-14\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-14"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-15\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-15"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-16\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-16"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-17\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-17"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-18\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-18"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-19\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-19"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-20\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-20"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-21\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-21"
+        }
+      ],
+      "allowedIds": [
+        "qual-project-01",
+        "qual-project-02",
+        "qual-project-03",
+        "qual-project-04",
+        "qual-project-05",
+        "qual-project-06",
+        "qual-project-07",
+        "qual-project-08",
+        "qual-project-09",
+        "qual-project-10",
+        "qual-project-11",
+        "qual-project-12",
+        "qual-project-13",
+        "qual-project-14",
+        "qual-project-15",
+        "qual-project-16",
+        "qual-project-17",
+        "qual-project-18",
+        "qual-project-19",
+        "qual-project-20",
+        "qual-project-21",
+        "qual-document-01",
+        "qual-document-02",
+        "qual-document-03",
+        "qual-document-04",
+        "qual-document-05",
+        "qual-document-06",
+        "qual-document-07",
+        "qual-document-08",
+        "qual-document-09",
+        "qual-document-10",
+        "qual-document-11",
+        "qual-document-12",
+        "qual-document-13",
+        "qual-document-14",
+        "qual-document-15",
+        "qual-document-16",
+        "qual-document-17",
+        "qual-document-18",
+        "qual-document-19",
+        "qual-document-20",
+        "qual-document-21",
+        "qual-idea-001",
+        "qual-idea-002",
+        "qual-idea-003",
+        "qual-idea-004",
+        "qual-idea-005",
+        "qual-idea-006",
+        "qual-idea-007",
+        "qual-idea-008",
+        "qual-idea-009",
+        "qual-idea-010",
+        "qual-idea-011",
+        "qual-idea-012",
+        "qual-idea-013",
+        "qual-idea-014",
+        "qual-idea-015",
+        "qual-idea-016",
+        "qual-idea-017",
+        "qual-idea-018",
+        "qual-idea-019",
+        "qual-idea-020",
+        "qual-idea-021",
+        "qual-idea-022",
+        "qual-idea-023",
+        "qual-idea-024",
+        "qual-idea-025",
+        "qual-idea-026",
+        "qual-idea-027",
+        "qual-idea-028",
+        "qual-idea-029",
+        "qual-idea-030",
+        "qual-idea-031",
+        "qual-idea-032",
+        "qual-idea-033",
+        "qual-idea-034",
+        "qual-idea-035",
+        "qual-idea-036",
+        "qual-idea-037",
+        "qual-idea-038"
+      ],
+      "cohorts": [
+        "development-only"
+      ]
+    },
+    {
+      "id": "tuning-002",
+      "query": "Find the full Multilingual gatherings collection.",
+      "scope": {
+        "entryKind": "project",
+        "principalId": "qual-search-principal"
+      },
+      "permittedPartitions": [
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-01\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-01"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-02\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-02"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-03\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-03"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-04\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-04"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-05\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-05"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-06\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-06"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-07\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-07"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-08\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-08"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-09\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-09"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-10\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-10"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-11\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-11"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-12\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-12"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-13\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-13"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-14\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-14"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-15\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-15"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-16\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-16"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-17\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-17"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-18\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-18"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-19\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-19"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-20\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-20"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-21\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-21"
+        }
+      ],
+      "allowedIds": [
+        "qual-project-01",
+        "qual-project-02",
+        "qual-project-03",
+        "qual-project-04",
+        "qual-project-05",
+        "qual-project-06",
+        "qual-project-07",
+        "qual-project-08",
+        "qual-project-09",
+        "qual-project-10",
+        "qual-project-11",
+        "qual-project-12",
+        "qual-project-13",
+        "qual-project-14",
+        "qual-project-15",
+        "qual-project-16",
+        "qual-project-17",
+        "qual-project-18",
+        "qual-project-19",
+        "qual-project-20",
+        "qual-project-21",
+        "qual-document-01",
+        "qual-document-02",
+        "qual-document-03",
+        "qual-document-04",
+        "qual-document-05",
+        "qual-document-06",
+        "qual-document-07",
+        "qual-document-08",
+        "qual-document-09",
+        "qual-document-10",
+        "qual-document-11",
+        "qual-document-12",
+        "qual-document-13",
+        "qual-document-14",
+        "qual-document-15",
+        "qual-document-16",
+        "qual-document-17",
+        "qual-document-18",
+        "qual-document-19",
+        "qual-document-20",
+        "qual-document-21",
+        "qual-idea-001",
+        "qual-idea-002",
+        "qual-idea-003",
+        "qual-idea-004",
+        "qual-idea-005",
+        "qual-idea-006",
+        "qual-idea-007",
+        "qual-idea-008",
+        "qual-idea-009",
+        "qual-idea-010",
+        "qual-idea-011",
+        "qual-idea-012",
+        "qual-idea-013",
+        "qual-idea-014",
+        "qual-idea-015",
+        "qual-idea-016",
+        "qual-idea-017",
+        "qual-idea-018",
+        "qual-idea-019",
+        "qual-idea-020",
+        "qual-idea-021",
+        "qual-idea-022",
+        "qual-idea-023",
+        "qual-idea-024",
+        "qual-idea-025",
+        "qual-idea-026",
+        "qual-idea-027",
+        "qual-idea-028",
+        "qual-idea-029",
+        "qual-idea-030",
+        "qual-idea-031",
+        "qual-idea-032",
+        "qual-idea-033",
+        "qual-idea-034",
+        "qual-idea-035",
+        "qual-idea-036",
+        "qual-idea-037",
+        "qual-idea-038"
+      ],
+      "cohorts": [
+        "development-only"
+      ]
+    },
+    {
+      "id": "tuning-003",
+      "query": "Find the hand clicker used to count bats.",
+      "scope": {
+        "entryKind": "project",
+        "principalId": "qual-search-principal"
+      },
+      "permittedPartitions": [
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-01\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-01"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-02\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-02"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-03\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-03"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-04\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-04"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-05\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-05"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-06\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-06"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-07\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-07"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-08\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-08"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-09\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-09"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-10\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-10"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-11\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-11"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-12\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-12"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-13\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-13"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-14\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-14"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-15\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-15"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-16\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-16"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-17\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-17"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-18\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-18"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-19\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-19"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-20\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-20"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-21\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-21"
+        }
+      ],
+      "allowedIds": [
+        "qual-project-01",
+        "qual-project-02",
+        "qual-project-03",
+        "qual-project-04",
+        "qual-project-05",
+        "qual-project-06",
+        "qual-project-07",
+        "qual-project-08",
+        "qual-project-09",
+        "qual-project-10",
+        "qual-project-11",
+        "qual-project-12",
+        "qual-project-13",
+        "qual-project-14",
+        "qual-project-15",
+        "qual-project-16",
+        "qual-project-17",
+        "qual-project-18",
+        "qual-project-19",
+        "qual-project-20",
+        "qual-project-21",
+        "qual-document-01",
+        "qual-document-02",
+        "qual-document-03",
+        "qual-document-04",
+        "qual-document-05",
+        "qual-document-06",
+        "qual-document-07",
+        "qual-document-08",
+        "qual-document-09",
+        "qual-document-10",
+        "qual-document-11",
+        "qual-document-12",
+        "qual-document-13",
+        "qual-document-14",
+        "qual-document-15",
+        "qual-document-16",
+        "qual-document-17",
+        "qual-document-18",
+        "qual-document-19",
+        "qual-document-20",
+        "qual-document-21",
+        "qual-idea-001",
+        "qual-idea-002",
+        "qual-idea-003",
+        "qual-idea-004",
+        "qual-idea-005",
+        "qual-idea-006",
+        "qual-idea-007",
+        "qual-idea-008",
+        "qual-idea-009",
+        "qual-idea-010",
+        "qual-idea-011",
+        "qual-idea-012",
+        "qual-idea-013",
+        "qual-idea-014",
+        "qual-idea-015",
+        "qual-idea-016",
+        "qual-idea-017",
+        "qual-idea-018",
+        "qual-idea-019",
+        "qual-idea-020",
+        "qual-idea-021",
+        "qual-idea-022",
+        "qual-idea-023",
+        "qual-idea-024",
+        "qual-idea-025",
+        "qual-idea-026",
+        "qual-idea-027",
+        "qual-idea-028",
+        "qual-idea-029",
+        "qual-idea-030",
+        "qual-idea-031",
+        "qual-idea-032",
+        "qual-idea-033",
+        "qual-idea-034",
+        "qual-idea-035",
+        "qual-idea-036",
+        "qual-idea-037",
+        "qual-idea-038"
+      ],
+      "cohorts": [
+        "development-only"
+      ]
+    },
+    {
+      "id": "tuning-004",
+      "query": "Where is a recipe for diamond soup?",
+      "scope": {
+        "entryKind": "project",
+        "principalId": "qual-search-principal"
+      },
+      "permittedPartitions": [
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-01\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-01"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-02\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-02"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-03\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-03"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-04\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-04"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-05\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-05"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-06\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-06"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-07\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-07"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-08\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-08"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-09\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-09"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-10\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-10"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-11\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-11"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-12\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-12"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-13\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-13"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-14\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-14"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-15\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-15"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-16\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-16"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-17\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-17"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-18\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-18"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-19\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-19"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-20\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-20"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-21\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-21"
+        }
+      ],
+      "allowedIds": [
+        "qual-project-01",
+        "qual-project-02",
+        "qual-project-03",
+        "qual-project-04",
+        "qual-project-05",
+        "qual-project-06",
+        "qual-project-07",
+        "qual-project-08",
+        "qual-project-09",
+        "qual-project-10",
+        "qual-project-11",
+        "qual-project-12",
+        "qual-project-13",
+        "qual-project-14",
+        "qual-project-15",
+        "qual-project-16",
+        "qual-project-17",
+        "qual-project-18",
+        "qual-project-19",
+        "qual-project-20",
+        "qual-project-21",
+        "qual-document-01",
+        "qual-document-02",
+        "qual-document-03",
+        "qual-document-04",
+        "qual-document-05",
+        "qual-document-06",
+        "qual-document-07",
+        "qual-document-08",
+        "qual-document-09",
+        "qual-document-10",
+        "qual-document-11",
+        "qual-document-12",
+        "qual-document-13",
+        "qual-document-14",
+        "qual-document-15",
+        "qual-document-16",
+        "qual-document-17",
+        "qual-document-18",
+        "qual-document-19",
+        "qual-document-20",
+        "qual-document-21",
+        "qual-idea-001",
+        "qual-idea-002",
+        "qual-idea-003",
+        "qual-idea-004",
+        "qual-idea-005",
+        "qual-idea-006",
+        "qual-idea-007",
+        "qual-idea-008",
+        "qual-idea-009",
+        "qual-idea-010",
+        "qual-idea-011",
+        "qual-idea-012",
+        "qual-idea-013",
+        "qual-idea-014",
+        "qual-idea-015",
+        "qual-idea-016",
+        "qual-idea-017",
+        "qual-idea-018",
+        "qual-idea-019",
+        "qual-idea-020",
+        "qual-idea-021",
+        "qual-idea-022",
+        "qual-idea-023",
+        "qual-idea-024",
+        "qual-idea-025",
+        "qual-idea-026",
+        "qual-idea-027",
+        "qual-idea-028",
+        "qual-idea-029",
+        "qual-idea-030",
+        "qual-idea-031",
+        "qual-idea-032",
+        "qual-idea-033",
+        "qual-idea-034",
+        "qual-idea-035",
+        "qual-idea-036",
+        "qual-idea-037",
+        "qual-idea-038"
+      ],
+      "cohorts": [
+        "development-only"
+      ]
+    },
+    {
+      "id": "tuning-005",
+      "query": "Find a plan for interstellar bicycle tourism.",
+      "scope": {
+        "entryKind": "project",
+        "principalId": "qual-search-principal"
+      },
+      "permittedPartitions": [
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-01\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-01"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-02\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-02"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-03\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-03"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-04\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-04"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-05\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-05"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-06\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-06"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-07\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-07"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-08\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-08"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-09\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-09"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-10\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-10"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-11\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-11"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-12\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-12"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-13\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-13"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-14\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-14"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-15\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-15"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-16\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-16"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-17\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-17"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-18\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-18"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-19\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-19"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-20\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-20"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-21\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-21"
+        }
+      ],
+      "allowedIds": [
+        "qual-project-01",
+        "qual-project-02",
+        "qual-project-03",
+        "qual-project-04",
+        "qual-project-05",
+        "qual-project-06",
+        "qual-project-07",
+        "qual-project-08",
+        "qual-project-09",
+        "qual-project-10",
+        "qual-project-11",
+        "qual-project-12",
+        "qual-project-13",
+        "qual-project-14",
+        "qual-project-15",
+        "qual-project-16",
+        "qual-project-17",
+        "qual-project-18",
+        "qual-project-19",
+        "qual-project-20",
+        "qual-project-21",
+        "qual-document-01",
+        "qual-document-02",
+        "qual-document-03",
+        "qual-document-04",
+        "qual-document-05",
+        "qual-document-06",
+        "qual-document-07",
+        "qual-document-08",
+        "qual-document-09",
+        "qual-document-10",
+        "qual-document-11",
+        "qual-document-12",
+        "qual-document-13",
+        "qual-document-14",
+        "qual-document-15",
+        "qual-document-16",
+        "qual-document-17",
+        "qual-document-18",
+        "qual-document-19",
+        "qual-document-20",
+        "qual-document-21",
+        "qual-idea-001",
+        "qual-idea-002",
+        "qual-idea-003",
+        "qual-idea-004",
+        "qual-idea-005",
+        "qual-idea-006",
+        "qual-idea-007",
+        "qual-idea-008",
+        "qual-idea-009",
+        "qual-idea-010",
+        "qual-idea-011",
+        "qual-idea-012",
+        "qual-idea-013",
+        "qual-idea-014",
+        "qual-idea-015",
+        "qual-idea-016",
+        "qual-idea-017",
+        "qual-idea-018",
+        "qual-idea-019",
+        "qual-idea-020",
+        "qual-idea-021",
+        "qual-idea-022",
+        "qual-idea-023",
+        "qual-idea-024",
+        "qual-idea-025",
+        "qual-idea-026",
+        "qual-idea-027",
+        "qual-idea-028",
+        "qual-idea-029",
+        "qual-idea-030",
+        "qual-idea-031",
+        "qual-idea-032",
+        "qual-idea-033",
+        "qual-idea-034",
+        "qual-idea-035",
+        "qual-idea-036",
+        "qual-idea-037",
+        "qual-idea-038"
+      ],
+      "cohorts": [
+        "development-only"
+      ]
+    },
+    {
+      "id": "tuning-006",
+      "query": "Find the numbered wooden waiting-room tokens.",
+      "scope": {
+        "entryKind": "project",
+        "principalId": "qual-search-principal"
+      },
+      "permittedPartitions": [
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-01\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-01"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-02\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-02"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-03\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-03"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-04\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-04"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-05\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-05"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-06\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-06"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-07\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-07"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-08\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-08"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-09\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-09"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-10\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-10"
+        },
+        {
+          "id": "[\"personal:qual-owner-a\",\"qual-project-11\"]",
+          "custodyId": "personal:qual-owner-a",
+          "projectId": "qual-project-11"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-12\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-12"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-13\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-13"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-14\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-14"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-15\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-15"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-16\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-16"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-17\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-17"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-18\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-18"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-19\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-19"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-20\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-20"
+        },
+        {
+          "id": "[\"project:qual-org-b:qual-access-b\",\"qual-project-21\"]",
+          "custodyId": "project:qual-org-b:qual-access-b",
+          "projectId": "qual-project-21"
+        }
+      ],
+      "allowedIds": [
+        "qual-project-01",
+        "qual-project-02",
+        "qual-project-03",
+        "qual-project-04",
+        "qual-project-05",
+        "qual-project-06",
+        "qual-project-07",
+        "qual-project-08",
+        "qual-project-09",
+        "qual-project-10",
+        "qual-project-11",
+        "qual-project-12",
+        "qual-project-13",
+        "qual-project-14",
+        "qual-project-15",
+        "qual-project-16",
+        "qual-project-17",
+        "qual-project-18",
+        "qual-project-19",
+        "qual-project-20",
+        "qual-project-21",
+        "qual-document-01",
+        "qual-document-02",
+        "qual-document-03",
+        "qual-document-04",
+        "qual-document-05",
+        "qual-document-06",
+        "qual-document-07",
+        "qual-document-08",
+        "qual-document-09",
+        "qual-document-10",
+        "qual-document-11",
+        "qual-document-12",
+        "qual-document-13",
+        "qual-document-14",
+        "qual-document-15",
+        "qual-document-16",
+        "qual-document-17",
+        "qual-document-18",
+        "qual-document-19",
+        "qual-document-20",
+        "qual-document-21",
+        "qual-idea-001",
+        "qual-idea-002",
+        "qual-idea-003",
+        "qual-idea-004",
+        "qual-idea-005",
+        "qual-idea-006",
+        "qual-idea-007",
+        "qual-idea-008",
+        "qual-idea-009",
+        "qual-idea-010",
+        "qual-idea-011",
+        "qual-idea-012",
+        "qual-idea-013",
+        "qual-idea-014",
+        "qual-idea-015",
+        "qual-idea-016",
+        "qual-idea-017",
+        "qual-idea-018",
+        "qual-idea-019",
+        "qual-idea-020",
+        "qual-idea-021",
+        "qual-idea-022",
+        "qual-idea-023",
+        "qual-idea-024",
+        "qual-idea-025",
+        "qual-idea-026",
+        "qual-idea-027",
+        "qual-idea-028",
+        "qual-idea-029",
+        "qual-idea-030",
+        "qual-idea-031",
+        "qual-idea-032",
+        "qual-idea-033",
+        "qual-idea-034",
+        "qual-idea-035",
+        "qual-idea-036",
+        "qual-idea-037",
+        "qual-idea-038"
+      ],
+      "cohorts": [
+        "development-only"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "fixtureId": "still-hosted-qualification-synthetic-v1",
+  "observedAt": "2026-09-24T19:57:26.792Z",
+  "kind": "annotation-erratum-not-input-mutation",
+  "inputHashes": {
+    "corpus.json": "5fa63d6747aa92092291038ead5c419e4eae7acce2d4f67f4ab4814c99795f9f",
+    "heldout-inputs.json": "7eff6ad8bab1db8574e73b6016be935b889ddfe9a663ab83ce307849330e3f47",
+    "tuning-inputs.json": "a7c3fd24ebbe3cf0bc8fd6fa1521b7899857b425d0e1a5e5213ce51ed1323454",
+    "organizer-inputs.json": "e245f08f981b2c0ec9fe97f182c378ba0151776c2a6c78e5d87f3caf27ae3445"
+  },
+  "method": "Exact current worker lexical tokenizer over source title/body versus query; not retrieval or a live model run.",
+  "results": [
+    {
+      "queryId": "heldout-020",
+      "sourceId": "qual-idea-020",
+      "overlap": [
+        "the",
+        "and"
+      ],
+      "tokenizer": "worker/creation-search-index.ts creationLexicalTerms"
+    },
+    {
+      "queryId": "heldout-021",
+      "sourceId": "qual-idea-021",
+      "overlap": [],
+      "tokenizer": "worker/creation-search-index.ts creationLexicalTerms"
+    }
+  ],
+  "correction": "heldout-020 remains long-source and multilingual, but its zero-lexical-overlap tag is invalid because of English filler. heldout-021 verifies the zero-overlap requirement. Preserve frozen inputs and include this correction in reviewer adjudication."
+}

@@ -28,7 +28,17 @@ export interface CreationSearchAuthority {
   hydrate(principal: string, partition: CreationSearchPartition, hit: IndexedCreationIdentity): Promise<HydratedCreationCandidate | undefined>;
   permitsProvider(partition: CreationSearchPartition, modelVersion: string): boolean;
 }
+/** Content-free, library-only qualification trace. Never serialized by the public search route. */
+export type CreationSearchQualificationTrace =
+ | {type:'partition'; partitionId:string; custody:string; semanticTop20:string[]; coverage:CreationIndexCoverage|null; failures:string[]}
+ | {type:'shortlist'; identities:string[]; candidateBounded:boolean}
+ | {type:'provider-disclosure'; custody:string; partitionIds:string[]; sourceIdentities:string[]; model:string}
+ | {type:'result'; finalTop3:string[]; partial:boolean; definitiveNoMatch:boolean; elapsedMs:number}
+ | {type:'timeout'; elapsedMs:number}
+ | {type:'stage'; stage:'authority'|'semantic'|'lexical'|'hydration'|'rerank'; elapsedMs:number};
 export interface CreationSearchInput {
+  /** Trusted administrative harness only; ordinary API callers cannot supply this callback. */
+  onQualificationTrace?: (event:CreationSearchQualificationTrace)=>void;
   principal: string;
   request: CreationSearchRequest;
   entryKind: 'project' | 'document' | 'idea';
@@ -42,15 +52,27 @@ export interface CreationSearchInput {
   reranker?: CreationIdentityReranker;
   signal?: AbortSignal;
 }
+const trace=(input:CreationSearchInput,event:CreationSearchQualificationTrace)=>{try{input.onQualificationTrace?.(event);}catch{/* Diagnostic collection never changes product behavior. */}};
 const identity = (v: IndexedCreationIdentity) => JSON.stringify([v.custody, v.projectId, v.kind, v.id]);
 const same = (a: IndexedCreationIdentity, b: IndexedCreationIdentity) => identity(a) === identity(b) && a.revision === b.revision && a.contentHash === b.contentHash;
 /** All cache dimensions are explicit. Cache consumers must STILL freshly authorize returned IDs. */
 export function creationSearchCacheKey(input: CreationSearchInput) {
   return decisionHash({ principal: input.principal, scope: input.entryKind === 'project' ? 'account' : input.projectId, partitions: input.partitions, draft: input.request.draftId, draftRevision: input.request.draftRevision, queryRevision: input.request.queryRevision, query: input.request.query, semantic: input.learned?.modelVersion ?? null, rerank: input.reranker?.modelVersion ?? null, version: 'creation-search-v19-1' });
 }
+function instrumentQualification(input:CreationSearchInput):CreationSearchInput {
+ if(!input.onQualificationTrace)return input;
+ const timed=async<T>(stage:'authority'|'semantic'|'lexical'|'hydration'|'rerank',run:()=>Promise<T>):Promise<T>=>{const at=performance.now();try{return await run();}finally{trace(input,{type:'stage',stage,elapsedMs:performance.now()-at});}};
+ return {...input,
+  authority:{authorize:(...args)=>timed('authority',()=>input.authority.authorize(...args)),hydrate:(...args)=>timed('hydration',()=>input.authority.hydrate(...args)),permitsProvider:(...args)=>input.authority.permitsProvider(...args)},
+  index:{lexical:(...args)=>timed('lexical',()=>input.index.lexical(...args)),current:(...args)=>input.index.current(...args),coverage:(...args)=>input.index.coverage(...args)},
+  learned:input.learned?{modelVersion:input.learned.modelVersion,query:(...args)=>timed('semantic',()=>input.learned!.query(...args))}:undefined,
+  reranker:input.reranker?{modelVersion:input.reranker.modelVersion,custodyBatch:input.reranker.custodyBatch,rank:(...args)=>timed('rerank',()=>input.reranker!.rank(...args))}:undefined};
+}
 export async function searchCreationContent(input: CreationSearchInput): Promise<CreationSearchResponse> {
+ input=instrumentQualification(input);
+ const started=performance.now();
  const signal=input.signal?AbortSignal.any([input.signal,AbortSignal.timeout(B.timeoutMs)]):AbortSignal.timeout(B.timeoutMs);
- try{return await withinSignal(searchWithinDeadline({...input,signal}),signal);}catch(error){if(!signal.aborted)throw error;return {schemaVersion:1,draftId:input.request.draftId,draftRevision:input.request.draftRevision,queryRevision:input.request.queryRevision,scope:input.entryKind==='project'?'account':'project',...(input.entryKind==='project'?{}:{projectId:input.projectId}),candidates:[],coverage:[],mode:'unavailable',partial:true,definitiveNoMatch:false,notices:['Search reached its time limit. Try a more specific description.']};}
+ try{const result=await withinSignal(searchWithinDeadline({...input,signal}),signal);trace(input,{type:'result',finalTop3:result.candidates.map(c=>c.id),partial:result.partial,definitiveNoMatch:result.definitiveNoMatch,elapsedMs:performance.now()-started});return result;}catch(error){if(!signal.aborted)throw error;trace(input,{type:'timeout',elapsedMs:performance.now()-started});return {schemaVersion:1,draftId:input.request.draftId,draftRevision:input.request.draftRevision,queryRevision:input.request.queryRevision,scope:input.entryKind==='project'?'account':'project',...(input.entryKind==='project'?{}:{projectId:input.projectId}),candidates:[],coverage:[],mode:'unavailable',partial:true,definitiveNoMatch:false,notices:['Search reached its time limit. Try a more specific description.']};}
 }
 async function searchWithinDeadline(input: CreationSearchInput): Promise<CreationSearchResponse> {
   const { request, authority, index } = input;
@@ -84,6 +106,7 @@ async function searchWithinDeadline(input: CreationSearchInput): Promise<Creatio
       response.coverage.push(cov.value);
       if (!cov.value.backfillComplete || cov.value.expected === null || cov.value.lexical < cov.value.expected || cov.value.semantic < cov.value.expected) { partial = true; notices.add('Search indexing is incomplete.'); }
     } else { partial = true; notices.add('Search index coverage is unavailable.'); }
+    trace(input,{type:'partition',partitionId:JSON.stringify([p.custody,p.projectId]),custody:p.custody,semanticTop20:semantic.map(h=>h.id),coverage:cov.status==='fulfilled'?cov.value:null,failures:[...(lex.status==='rejected'?['lexical']:[]),...(sem.status==='rejected'?['semantic']:[]),...(cov.status==='rejected'?['coverage']:[])]});
     // Treat index/provider IDs as untrusted. No other custody or Project enters hydration.
     const scoped = (hits: CreationSearchHit[]) => hits.filter(h => h.projectId === p.projectId && h.custody === p.custody && (input.entryKind === 'project' || h.kind !== 'project') && (input.entryKind !== 'idea' || h.kind === 'idea'));
     return { p, lexical: scoped(lexical), semantic: scoped(semantic) };
@@ -95,7 +118,9 @@ async function searchWithinDeadline(input: CreationSearchInput): Promise<Creatio
   }
   const relevance=(hit:CreationSearchHit)=>Number.isFinite(hit.relevance)?hit.relevance!:0;
   const shortlisted=[...union.values()].sort((a,b)=>relevance(b.hit)-relevance(a.hit)||b.score-a.score||identity(a.hit).localeCompare(identity(b.hit))).slice(0,B.hydrate);
-  if(union.size>B.hydrate||groups.some(g=>g.lexical.length===B.lexical||g.semantic.length===B.semantic)){partial=true;notices.add('Candidate coverage is limited; a more specific description can reveal other matches.');}
+  // The contracted top-20 retrieval and global top-24 hydration are bounded rankings,
+  // not missing index coverage. Provider/authority/partition failures still set partial.
+  trace(input,{type:'shortlist',identities:shortlisted.map(v=>v.hit.id),candidateBounded:union.size>B.hydrate||groups.some(g=>g.lexical.length===B.lexical||g.semantic.length===B.semantic)});
   const hydrated = await Promise.all(partitions.map(async p => {
     if (!await authority.authorize(input.principal, p)) { partial = true; return { p, candidates: [] }; }
     const requested = shortlisted.filter(v => v.partition === p).map(v => v.hit);
@@ -120,6 +145,7 @@ async function searchWithinDeadline(input: CreationSearchInput): Promise<Creatio
     for(const candidate of candidates){const current=await authority.hydrate(input.principal,partitionFor(candidate),candidate);if(!current||!same(current,candidate)){partial=true;return [];}}
     if (input.reranker && authority.permitsProvider(p,input.reranker.modelVersion)) {
       try {
+        trace(input,{type:'provider-disclosure',custody:p.custody,partitionIds:[...new Set(candidates.map(c=>JSON.stringify([c.custody,c.projectId])))],sourceIdentities:candidates.map(c=>c.id),model:input.reranker.modelVersion});
         const ranks = await input.reranker.rank(p,request.query,candidates,signal);
         if(!Array.isArray(ranks)||ranks.some(r=>!r||typeof r.relevant!=='boolean'||!Number.isFinite(r.rank)||!candidates.some(c=>c.id===r.id&&(!r.projectId||c.projectId===r.projectId))||r.relevant&&(typeof r.evidence!=='string'||!r.evidence.trim()||!candidates.find(c=>c.id===r.id&&(!r.projectId||c.projectId===r.projectId))!.text.includes(r.evidence))))throw new Error('creation_rerank_evidence_invalid');
         return ranks.filter(r => r.relevant && Number.isFinite(r.rank)).flatMap(r => {

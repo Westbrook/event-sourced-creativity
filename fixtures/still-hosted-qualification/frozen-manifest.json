@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 2,
+  "packetId": "still-hosted-qualification-synthetic-v2",
+  "frozenAt": "2026-09-24T20:03:09.662Z",
+  "heldOut": true,
+  "tuningConsumed": false,
+  "humanReview": false,
+  "supersedes": "history/v1/frozen-manifest.json",
+  "files": {
+    "corpus": {
+      "path": "corpus.json",
+      "sha256": "03499f77f4fec632c39adc7a13112ed357c6ec33dbd002b6ba5dcc0a5747e231"
+    },
+    "heldoutInputs": {
+      "path": "heldout-inputs.json",
+      "sha256": "efa1a425d4918d91572438ccee9e5a76aed4ac42951d9d25c0c285d9e59f7544"
+    },
+    "labels": {
+      "path": "labels.json",
+      "sha256": "50b2dae7e1a84dffaf473f33a15965876981a48f9db32a794c23cae2403d5069"
+    },
+    "provenance": {
+      "path": "label-review.json",
+      "sha256": "2de3ee8b70a39f03e852d0d93dcf39bd465cb348133e494fd1b209dd679a8b3f"
+    },
+    "producerFreeze": {
+      "path": "producer-freeze.json",
+      "sha256": "3d02476272e4acf236780a67bef39b7b23733caa26ef3f73eda9642bb3a86418"
+    }
+  }
+}

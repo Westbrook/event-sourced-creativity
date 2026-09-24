@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 2,
+  "fixtureId": "still-hosted-qualification-synthetic-v2",
+  "frozenAt": "2026-09-24T20:00:34.137Z",
+  "producer": {
+    "identity": "Codex fixture author",
+    "task": "/root/qualification_fixtures"
+  },
+  "sourceCommit": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "files": {
+    "corpus.json": "03499f77f4fec632c39adc7a13112ed357c6ec33dbd002b6ba5dcc0a5747e231",
+    "heldout-inputs.json": "efa1a425d4918d91572438ccee9e5a76aed4ac42951d9d25c0c285d9e59f7544",
+    "tuning-inputs.json": "27427351f02fc7430d4d690489b0e58d865483e8b127c118a12a80916e567a9b",
+    "organizer-inputs.json": "0c11e5cf7fc1ccfa4439f2201e43fed60ab772118c5ed87c1132652b03e3fc68"
+  },
+  "method": "Deterministic synthetic authorship; v2 removes six unsupported query details found during independent pre-run input adjudication and corrects one cohort tag. No production data, provider/model calls, model outputs, search runs or relevance tuning occurred. v1 preserved byte-for-byte under history/v1; fresh independent labels required.",
+  "liveProviderCalls": 0,
+  "heldOut": true,
+  "tuningConsumed": false,
+  "labels": null,
+  "humanOrganizerAdjudication": null,
+  "previousVersion": {
+    "fixtureId": "still-hosted-qualification-synthetic-v1",
+    "freezePath": "history/v1/producer-freeze.json",
+    "freezeSha256": "d0dd27fa64553e8ac4e8bd01df761920435d6f1139f6ef9da5124fe797c4bba1"
+  },
+  "changedQueries": [
+    "heldout-001",
+    "heldout-012",
+    "heldout-013",
+    "heldout-021",
+    "heldout-023",
+    "heldout-024"
+  ],
+  "annotationCorrections": [
+    "heldout-020 no longer claims zero lexical overlap"
+  ],
+  "corpusChanges": "fixtureId metadata only; all source identities, title/body content, relationships and eligibility unchanged",
+  "organizerChanges": "fixtureId metadata only; all 32 cases unchanged"
+}

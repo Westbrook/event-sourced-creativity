@@ -1,0 +1,1131 @@
+{
+  "schemaVersion": 2,
+  "fixtureId": "still-hosted-qualification-synthetic-v1-organizer",
+  "heldOut": true,
+  "humanFidelityAdjudication": null,
+  "cases": [
+    {
+      "id": "organizer-001",
+      "scenario": "missing-body",
+      "input": {
+        "text": "A note called Morning light. I have not written its content yet.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-002",
+      "scenario": "missing-body",
+      "input": {
+        "text": "Create a scene Idea titled Arrival. Leave the scene body unspecified; do not infer a location or character.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-003",
+      "scenario": "missing-type",
+      "input": {
+        "text": "The guard closes the west gate at dusk and leaves the east gate open. I have not decided whether this is a scene or a note.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-004",
+      "scenario": "missing-type",
+      "input": {
+        "text": "Idea title: Broken clock. Content: Its hands remain at 06:15. Ask me for the type before approval.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-005",
+      "scenario": "exact-reference",
+      "input": {
+        "text": "Use @qual-idea-001 exactly as an existing Idea in its current Project. The visible label must not substitute a different source.",
+        "formatPreferences": [],
+        "exactReferences": [
+          {
+            "id": "qual-idea-001"
+          }
+        ]
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-006",
+      "scenario": "exact-reference",
+      "input": {
+        "text": "The title Quiet repairs occurs twice. Use @qual-idea-037 from the northern observatory, not the southern theater.",
+        "formatPreferences": [],
+        "exactReferences": [
+          {
+            "id": "qual-idea-037"
+          }
+        ]
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-007",
+      "scenario": "document-constituent",
+      "input": {
+        "text": "From @qual-document-02 select only @qual-idea-002. Do not select the other constituent or the whole Document.",
+        "formatPreferences": [],
+        "exactReferences": [
+          {
+            "id": "qual-document-02"
+          },
+          {
+            "id": "qual-idea-002"
+          }
+        ]
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-008",
+      "scenario": "unavailable-reference",
+      "input": {
+        "text": "I entered @qual-idea-999 by mistake. Keep my other text: The door opens inward. Do not invent the missing source.",
+        "formatPreferences": [],
+        "exactReferences": [
+          {
+            "id": "qual-idea-999"
+          }
+        ]
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-009",
+      "scenario": "faithful-rewording",
+      "input": {
+        "text": "Tidy this note without altering the rule: no guest may enter the glass room till the keeper checks every lock.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-010",
+      "scenario": "faithful-rewording",
+      "input": {
+        "text": "Rewrite faithfully: Maybe the rehearsal could happen Tuesday, if the school approves. Preserve both uncertainty and the condition.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-011",
+      "scenario": "faithful-extraction",
+      "input": {
+        "text": "Organize these supplied notes: A blue envelope arrives at noon. Mina refuses to open it. At sunset she passes it to Oren.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-012",
+      "scenario": "faithful-extraction",
+      "input": {
+        "text": "Extract separate Ideas from: The first bell marks entry. The second bell marks departure. Neither bell sounds on Sunday. Retain the shared exception.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-013",
+      "scenario": "split",
+      "input": {
+        "text": "Split reviewed Idea reviewed-a into the two supplied actions, retaining the same actor and order: The porter unlocks the shed. The porter carries the crate inside.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The porter unlocks the shed. The porter carries the crate inside.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-014",
+      "scenario": "split",
+      "input": {
+        "text": "Split reviewed-a at the paragraph boundary. Keep the warning attached to the second paragraph: Paint the sign.\n\nHang it only after the paint dries.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "Paint the sign.\n\nHang it only after the paint dries.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-015",
+      "scenario": "merge",
+      "input": {
+        "text": "Merge reviewed-a and reviewed-b: one states the gate closes at dusk; the other states the gate stays closed until dawn. Do not lose either boundary.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate closes at dusk.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-016",
+      "scenario": "merge",
+      "input": {
+        "text": "Merge the two notes about repair materials. One permits cotton thread, the other forbids plastic fasteners. Preserve both rules.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "Use cotton thread for the repair.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "Plastic fasteners are forbidden.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-017",
+      "scenario": "removal",
+      "input": {
+        "text": "Remove reviewed-b from this draft and keep its removal after reorganization. Leave reviewed-a approved.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-018",
+      "scenario": "removal",
+      "input": {
+        "text": "I withdrew @qual-idea-040. Do not reintroduce it when the remaining supplied content is reorganized.",
+        "formatPreferences": [],
+        "exactReferences": [
+          {
+            "id": "qual-idea-040"
+          }
+        ]
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-019",
+      "scenario": "correction",
+      "input": {
+        "text": "Change reviewed-a’s time from noon to 14:30. My correction is authoritative; do not restore noon from the original draft.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens at noon.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-020",
+      "scenario": "correction",
+      "input": {
+        "text": "Replace “may enter” with “must wait outside” in reviewed-a. Preserve reviewed-b and its approval.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "Visitors may enter the yard.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-021",
+      "scenario": "approval-preservation",
+      "input": {
+        "text": "Edit only reviewed-a’s title to North gate. Its body is unchanged. Keep unrelated reviewed-b approved.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-022",
+      "scenario": "approval-preservation",
+      "input": {
+        "text": "Add a third note: The queue begins at the oak tree. Preserve approvals on reviewed-a and reviewed-b.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-023",
+      "scenario": "passage-replacement",
+      "input": {
+        "text": "I selected only “before sunrise” within reviewed-a and confirmed replacement with “after sunset”. Preserve all surrounding text.",
+        "formatPreferences": [],
+        "exactReferences": [],
+        "confirmedReplacement": {
+          "ideaId": "reviewed-a",
+          "start": 15,
+          "end": 29,
+          "original": "before sunrise",
+          "replacement": "after sunset"
+        }
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-024",
+      "scenario": "passage-replacement",
+      "input": {
+        "text": "The draft contains “blue” twice. Replace only the selected second occurrence with “green” after confirmation.",
+        "formatPreferences": [],
+        "exactReferences": [],
+        "confirmedReplacement": {
+          "ideaId": "reviewed-a",
+          "start": 74,
+          "end": 78,
+          "original": "blue",
+          "replacement": "green"
+        }
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-025",
+      "scenario": "nonexclusive-formats",
+      "input": {
+        "text": "Keep this supplied material suitable for both a letter and a short stage scene. Format preferences do not authorize added dialogue or events.",
+        "formatPreferences": [
+          "letter",
+          "scene"
+        ],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-026",
+      "scenario": "continuous-text",
+      "input": {
+        "text": "Keep this sentence in continuous free text: Open the gate /scene only when @qual-idea-001 confirms the harbor is clear. Interpret chosen tools only through their exact structured selections.",
+        "formatPreferences": [],
+        "exactReferences": [
+          {
+            "id": "qual-idea-001"
+          }
+        ]
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-027",
+      "scenario": "same-project-adoption",
+      "input": {
+        "text": "Reuse @qual-idea-001 in a new Document in qual-project-01. Keep the existing source identity and contents.",
+        "formatPreferences": [],
+        "exactReferences": [
+          {
+            "id": "qual-idea-001"
+          }
+        ]
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-028",
+      "scenario": "cross-project-scope",
+      "input": {
+        "text": "In qual-project-01, I typed the title Quiet repairs from a different Project. Do not silently reuse it as a same-Project reference.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-029",
+      "scenario": "multilingual-fidelity",
+      "input": {
+        "text": "Organiza sin añadir hechos: Si llueve, se cancela la visita. La entrada es gratuita, pero se requiere inscripción.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-030",
+      "scenario": "multilingual-fidelity",
+      "input": {
+        "text": "整理してください。会議は金曜日に開く。ただし、責任者が不在なら延期する。新しい日時は未定。",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-031",
+      "scenario": "recovery-discard",
+      "input": {
+        "text": "I discarded the prior organization request, then wrote: The tram stops at the old market. A late result for the discarded request must not overwrite this input.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 8,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [],
+        "documents": [],
+        "projectApproved": false,
+        "discardedOperationId": "organization-old",
+        "activeOperationId": null
+      },
+      "humanAdjudicationRequired": true
+    },
+    {
+      "id": "organizer-032",
+      "scenario": "review-order",
+      "input": {
+        "text": "Review the supplied Ideas first, then their Document, then the Project. Supplied content: The shop opens at nine. The back door remains locked all day.",
+        "formatPreferences": [],
+        "exactReferences": []
+      },
+      "state": {
+        "draftId": "organizer-draft",
+        "revision": 7,
+        "projectId": "qual-project-01",
+        "entryKind": "document",
+        "ideas": [
+          {
+            "id": "reviewed-a",
+            "title": "Gate access",
+            "ideaType": "note",
+            "body": "The gate opens before sunrise. The porter waits beside a blue crate and a blue sign.",
+            "approved": true
+          },
+          {
+            "id": "reviewed-b",
+            "title": "Night closure",
+            "ideaType": "note",
+            "body": "The gate stays closed until dawn.",
+            "approved": true
+          }
+        ],
+        "documents": [],
+        "projectApproved": false
+      },
+      "humanAdjudicationRequired": true
+    }
+  ]
+}

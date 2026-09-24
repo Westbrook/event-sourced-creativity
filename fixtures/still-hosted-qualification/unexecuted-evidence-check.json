@@ -1,0 +1,557 @@
+{
+  "kind": "scorer-negative-control",
+  "description": "No hosted run supplied; missing observations remain in all denominators.",
+  "queries": 60,
+  "partitionRecall": {
+    "[\"personal:qual-owner-a\",\"qual-project-01\"]": {
+      "positiveDenominator": 3,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-02\"]": {
+      "positiveDenominator": 3,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-03\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-04\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-05\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-06\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-07\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-08\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-09\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-10\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"personal:qual-owner-a\",\"qual-project-11\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-12\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-13\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-14\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-15\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-16\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-17\"]": {
+      "positiveDenominator": 2,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-18\"]": {
+      "positiveDenominator": 1,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-19\"]": {
+      "positiveDenominator": 1,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-20\"]": {
+      "positiveDenominator": 1,
+      "hits": 0,
+      "recall20": 0
+    },
+    "[\"project:qual-org-b:qual-access-b\",\"qual-project-21\"]": {
+      "positiveDenominator": 1,
+      "hits": 0,
+      "recall20": 0
+    }
+  },
+  "unambiguousPositives": 40,
+  "positiveDenominator": 40,
+  "negativeDenominator": 20,
+  "topThreeHits": 0,
+  "topThreeRate": 0,
+  "semanticHits": 0,
+  "semanticRecall20": 0,
+  "falsePositives": 0,
+  "falsePositiveRate": 0,
+  "failedNegatives": 20,
+  "incomplete": 60,
+  "authorizationLeaks": 0,
+  "timing": {
+    "1000-cold": {
+      "n": 0,
+      "repeatRequired": false,
+      "quantileMethod": "nearest-rank",
+      "samplingUncertainty": "Thirty observations provide sparse tail evidence; 1800–2000 ms p95 requires at least thirty additional observations before accepting the cohort.",
+      "failures": 0,
+      "p50Ms": null,
+      "p95Ms": null,
+      "pass": false
+    },
+    "1000-warm": {
+      "n": 0,
+      "repeatRequired": false,
+      "quantileMethod": "nearest-rank",
+      "samplingUncertainty": "Thirty observations provide sparse tail evidence; 1800–2000 ms p95 requires at least thirty additional observations before accepting the cohort.",
+      "failures": 0,
+      "p50Ms": null,
+      "p95Ms": null,
+      "pass": false
+    },
+    "1000-concurrent": {
+      "n": 0,
+      "repeatRequired": false,
+      "quantileMethod": "nearest-rank",
+      "samplingUncertainty": "Thirty observations provide sparse tail evidence; 1800–2000 ms p95 requires at least thirty additional observations before accepting the cohort.",
+      "failures": 0,
+      "p50Ms": null,
+      "p95Ms": null,
+      "pass": false
+    },
+    "10000-cold": {
+      "n": 0,
+      "repeatRequired": false,
+      "quantileMethod": "nearest-rank",
+      "samplingUncertainty": "Thirty observations provide sparse tail evidence; 1800–2000 ms p95 requires at least thirty additional observations before accepting the cohort.",
+      "failures": 0,
+      "p50Ms": null,
+      "p95Ms": null,
+      "pass": false
+    },
+    "10000-warm": {
+      "n": 0,
+      "repeatRequired": false,
+      "quantileMethod": "nearest-rank",
+      "samplingUncertainty": "Thirty observations provide sparse tail evidence; 1800–2000 ms p95 requires at least thirty additional observations before accepting the cohort.",
+      "failures": 0,
+      "p50Ms": null,
+      "p95Ms": null,
+      "pass": false
+    },
+    "10000-concurrent": {
+      "n": 0,
+      "repeatRequired": false,
+      "quantileMethod": "nearest-rank",
+      "samplingUncertainty": "Thirty observations provide sparse tail evidence; 1800–2000 ms p95 requires at least thirty additional observations before accepting the cohort.",
+      "failures": 0,
+      "p50Ms": null,
+      "p95Ms": null,
+      "pass": false
+    }
+  },
+  "failures": [
+    {
+      "queryId": "heldout-001",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-002",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-003",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-004",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-005",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-006",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-007",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-008",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-009",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-010",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-011",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-012",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-013",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-014",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-015",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-016",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-017",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-018",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-019",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-020",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-021",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-022",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-023",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-024",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-025",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-026",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-027",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-028",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-029",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-030",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-031",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-032",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-033",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-034",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-035",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-036",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-037",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-038",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-039",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-040",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-041",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-042",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-043",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-044",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-045",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-046",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-047",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-048",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-049",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-050",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-051",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-052",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-053",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-054",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-055",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-056",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-057",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-058",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-059",
+      "errors": [
+        "missing_observation"
+      ]
+    },
+    {
+      "queryId": "heldout-060",
+      "errors": [
+        "missing_observation"
+      ]
+    }
+  ],
+  "latencyFailures": [],
+  "metricsPass": false,
+  "provenancePass": true,
+  "authorizationPass": false,
+  "evidenceComplete": false,
+  "relevanceGatePass": false,
+  "responsivenessGatePass": false,
+  "qualificationPass": false,
+  "activationAuthorized": false
+}

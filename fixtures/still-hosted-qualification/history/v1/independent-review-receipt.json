@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "packetId": "still-hosted-qualification-synthetic-v1",
+  "producerTask": "/root/qualification_fixtures",
+  "reviewerTask": "/root/independent_labels",
+  "labelsSha256": "a366b0b6fbe7147e8e5d1b60553f020e0f0896d5c212dc5a140610e28f3e2fbd",
+  "recordedBy": "/root",
+  "recordedAt": "2026-09-24T19:59:12.509Z",
+  "reviewKind": "independent-agent",
+  "humanReview": false,
+  "workflow": "Producer froze input corpus and query files before a separately spawned reviewer received only corpus.json, heldout-inputs.json, producer-freeze.json. Reviewer returned sixty per-query adjudications and matching labels hash. No live model outputs existed.",
+  "limitations": [
+    "This receipt attests task separation observed by the parent, not a human identity or human fidelity verdict.",
+    "Fixture case020 zero lexical overlap annotation is superseded by annotation-errata.json."
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "kind": "independent-review-receipt",
+  "schemaVersion": 1,
+  "packetId": "still-hosted-qualification-synthetic-v2",
+  "producerTask": "/root/qualification_fixtures",
+  "reviewerTask": "/root/independent_labels",
+  "labelsSha256": "50b2dae7e1a84dffaf473f33a15965876981a48f9db32a794c23cae2403d5069",
+  "recordedBy": "/root",
+  "recordedAt": "2026-09-24T20:02:50.202Z",
+  "reviewKind": "independent-agent",
+  "humanReview": false,
+  "workflow": "Producer revised six unsupported query descriptors before any model run and froze v2. Separately spawned reviewer inspected final corpus.json, heldout-inputs.json, producer-freeze.json, independently adjudicated all60queries, and returned matchinghash with40unambiguouspositive/20negative. Version1 artifact history is preserved. No provider/model outputs existed.",
+  "limitations": [
+    "Task separation observed by parent; not authenticated human review or live fidelity evidence."
+  ]
+}

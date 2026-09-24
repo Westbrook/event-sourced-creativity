@@ -1,0 +1,668 @@
+{
+  "schemaVersion": 2,
+  "packetId": "still-hosted-qualification-synthetic-v2",
+  "producer": {
+    "identity": "Codex fixture author",
+    "task": "/root/qualification_fixtures"
+  },
+  "reviewer": {
+    "identity": "Codex independent agent label reviewer (not human)",
+    "task": "/root/independent_labels"
+  },
+  "completedAt": "2026-09-24T20:01:42.261Z",
+  "reviewedCorpusSha256": "03499f77f4fec632c39adc7a13112ed357c6ec33dbd002b6ba5dcc0a5747e231",
+  "reviewedInputsSha256": "efa1a425d4918d91572438ccee9e5a76aed4ac42951d9d25c0c285d9e59f7544",
+  "reviewedProducerFreezeSha256": "3d02476272e4acf236780a67bef39b7b23733caa26ef3f73eda9642bb3a86418",
+  "labelsSha256": "50b2dae7e1a84dffaf473f33a15965876981a48f9db32a794c23cae2403d5069",
+  "sourceAccess": [
+    "corpus.json",
+    "heldout-inputs.json",
+    "producer-freeze.json"
+  ],
+  "excludedAccess": [
+    "generator",
+    "tuning inputs",
+    "producer private grouping",
+    "model outputs",
+    "other labels"
+  ],
+  "humanReview": false,
+  "modelOutputsSeen": false,
+  "balance": {
+    "positive": 40,
+    "noMatch": 20,
+    "unambiguousPositive": 40,
+    "unresolvedAmbiguities": 0
+  },
+  "limitations": [
+    "Independent agent review, not human fidelity adjudication.",
+    "No unresolved intended-identity ambiguity remains after reviewing the frozen v2 inputs; this does not authenticate human judgment.",
+    "No live search output or performance result was consumed."
+  ],
+  "decisions": [
+    {
+      "id": "heldout-001",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-001"
+      ],
+      "ambiguity": false,
+      "resolution": "The harbor keeper uses three short lantern flashes to signal a closed eastern channel. The final query refers to those repeated lantern signals without specifying an unrecorded color. This uniquely identifies Idea 001."
+    },
+    {
+      "id": "heldout-002",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-002"
+      ],
+      "ambiguity": false,
+      "resolution": "The violin maker explicitly selects hide glue because the joint must remain reversible. This is the instrument restoration and undoable bond requested."
+    },
+    {
+      "id": "heldout-003",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-003"
+      ],
+      "ambiguity": false,
+      "resolution": "The rooftop basil uses collected rain in blue barrels during a hose restriction. This meets the elevated herb garden and restricted water-supply relationship."
+    },
+    {
+      "id": "heldout-004",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-004"
+      ],
+      "ambiguity": false,
+      "resolution": "The bicycle courier shelters a birthday parcel beneath a railway arch during hail. The transport, gift, shelter, and weather jointly identify this Idea."
+    },
+    {
+      "id": "heldout-005",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-005"
+      ],
+      "ambiguity": false,
+      "resolution": "The archivist lifts waterlogged glass negatives with mesh and forbids rubbing their emulsion. The matching content is at the end of a long source, not in its repeated working-log prefix."
+    },
+    {
+      "id": "heldout-006",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-006"
+      ],
+      "ambiguity": false,
+      "resolution": "The drummer follows red floor lights into the pit without a spoken cue. Only Project 06 is permitted for this Document-entry query; every other Project and its sources are forbidden even if semantically related."
+    },
+    {
+      "id": "heldout-007",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-007"
+      ],
+      "ambiguity": false,
+      "resolution": "The astronomer aligns with two bright stars after damage to the finder scope and records position instead of photographs."
+    },
+    {
+      "id": "heldout-008",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-008"
+      ],
+      "ambiguity": false,
+      "resolution": "The greenhouse key is inside a clay frog at the west gate and volunteers can use it only from sunrise to noon. Access token is a paraphrase for this physical key."
+    },
+    {
+      "id": "heldout-009",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-009"
+      ],
+      "ambiguity": false,
+      "resolution": "The coat pocket is reinforced with striped cotton and the visible repair deliberately demonstrates reuse."
+    },
+    {
+      "id": "heldout-010",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-010"
+      ],
+      "ambiguity": false,
+      "resolution": "The ecologist counts bats at dusk with a hand clicker instead of a lit phone to avoid disturbance."
+    },
+    {
+      "id": "heldout-011",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-011"
+      ],
+      "ambiguity": false,
+      "resolution": "The cafe provides a blue chair for a delayed-bus passenger without requiring purchase and disallows advance booking."
+    },
+    {
+      "id": "heldout-012",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-012"
+      ],
+      "ambiguity": false,
+      "resolution": "The last lavender honey jar is a gift for the retired gardener and excluded from the market. The retired gardener is a designated personal recipient, exactly as the revised query requests."
+    },
+    {
+      "id": "heldout-013",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-013"
+      ],
+      "ambiguity": false,
+      "resolution": "The swimming teacher demonstrates a river crossing on dry ground and children rehearse knots before approaching water. The final query asks for this land-based practice and makes no additional claim about a later in-water exercise."
+    },
+    {
+      "id": "heldout-014",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-014"
+      ],
+      "ambiguity": false,
+      "resolution": "The clockmaker reduces chime volume using felt on the hammer while keeping timing and hourly schedule unchanged."
+    },
+    {
+      "id": "heldout-015",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-015"
+      ],
+      "ambiguity": false,
+      "resolution": "The bookseller accepts anonymous walking maps in a shelf gap while prohibiting routes on private paths."
+    },
+    {
+      "id": "heldout-016",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-016"
+      ],
+      "ambiguity": false,
+      "resolution": "The cheesemaker uses a cellar during power failure, logs temperature hourly, and withholds sales pending safety inspection."
+    },
+    {
+      "id": "heldout-017",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-017"
+      ],
+      "ambiguity": false,
+      "resolution": "The paper-span experiment varies only fold pattern while paper size, identical copper weights, and load spacing are controlled."
+    },
+    {
+      "id": "heldout-018",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-018"
+      ],
+      "ambiguity": false,
+      "resolution": "The potter lowers the shelf for children to view unfinished bowls but retains glass and forbids touch."
+    },
+    {
+      "id": "heldout-019",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-019"
+      ],
+      "ambiguity": false,
+      "resolution": "The French text describes French and Arabic invitations for a neighborhood celebration, with free entry and no preregistration. This independently matches the English query."
+    },
+    {
+      "id": "heldout-020",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-020"
+      ],
+      "ambiguity": false,
+      "resolution": "The Japanese paragraph describes stargazing on a library rooftop, cancellation in rain, and two telescopes shared in turns. The paragraph is at the end of the long source."
+    },
+    {
+      "id": "heldout-021",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-021"
+      ],
+      "ambiguity": false,
+      "resolution": "The Spanish text describes a school garden, rainwater buckets, Tuesday watering turns, and no chemical fertilizer. The English query explicitly asks for chemical fertilizer, matching the stated prohibition."
+    },
+    {
+      "id": "heldout-022",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-022"
+      ],
+      "ambiguity": false,
+      "resolution": "The station volunteer supplies paper timetables when the display fails and stamps each copy with its update time."
+    },
+    {
+      "id": "heldout-023",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-023"
+      ],
+      "ambiguity": false,
+      "resolution": "The wheelchair-accessible park loop avoids a steep cobbled lane, adds ten minutes, and keeps entrances step-free. All three conditions in the final query are expressly present in the source."
+    },
+    {
+      "id": "heldout-024",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-024"
+      ],
+      "ambiguity": false,
+      "resolution": "The costume designer hides red thread inside borrowed sleeves to distinguish loans without permanent labels. The final query asks for the borrowed-sleeve marker without adding an unrecorded seam location."
+    },
+    {
+      "id": "heldout-025",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-025"
+      ],
+      "ambiguity": false,
+      "resolution": "The sound artist records an empty laundromat before opening and excludes customer conversations or recognizable voices."
+    },
+    {
+      "id": "heldout-026",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-026"
+      ],
+      "ambiguity": false,
+      "resolution": "The ranger marks the damaged footbridge and delays repair until the river falls below the stone gauge."
+    },
+    {
+      "id": "heldout-027",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-027"
+      ],
+      "ambiguity": false,
+      "resolution": "The school portrait session permits exposure adjustment but prohibits face retouching and skin-texture changes."
+    },
+    {
+      "id": "heldout-028",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-028"
+      ],
+      "ambiguity": false,
+      "resolution": "The clinic uses numbered wooden tokens for arrival order and displays no patient names or medical conditions."
+    },
+    {
+      "id": "heldout-029",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-029"
+      ],
+      "ambiguity": false,
+      "resolution": "The repair cafe notebook records donated component names and quantities while omitting donor addresses. The matching paragraph follows a long repeated prefix."
+    },
+    {
+      "id": "heldout-030",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-030"
+      ],
+      "ambiguity": false,
+      "resolution": "The cook dries sea salt on ceramic trays and pauses harvesting when the neighboring footpath floods."
+    },
+    {
+      "id": "heldout-031",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-031"
+      ],
+      "ambiguity": false,
+      "resolution": "The museum guard redirects visitors to the east doorway during floor drying while keeping artworks accessible."
+    },
+    {
+      "id": "heldout-032",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-032"
+      ],
+      "ambiguity": false,
+      "resolution": "The dance rehearsal omits music to avoid disturbing a neighboring examination and uses a raised hand to start."
+    },
+    {
+      "id": "heldout-033",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-033"
+      ],
+      "ambiguity": false,
+      "resolution": "The rescue boat requires both charged radios to pass checks before departure and also carries a first-aid pouch."
+    },
+    {
+      "id": "heldout-034",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-034"
+      ],
+      "ambiguity": false,
+      "resolution": "The seed-envelope return at the library records variety and harvest month and explicitly makes no certified-purity claim."
+    },
+    {
+      "id": "heldout-035",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-035"
+      ],
+      "ambiguity": false,
+      "resolution": "The movable reed shade screen uses tied joints so it can be dismantled without cutting reeds."
+    },
+    {
+      "id": "heldout-036",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-036"
+      ],
+      "ambiguity": false,
+      "resolution": "The island walking leaflet gives final ferry time and trails close forty minutes earlier. The relevant paragraph occurs after a long repeated prefix."
+    },
+    {
+      "id": "heldout-037",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-037"
+      ],
+      "ambiguity": false,
+      "resolution": "The northern observatory ramp is inspected after every freeze and loose boards replaced before evening visitors. Same-title theater Idea 038 does not satisfy this query."
+    },
+    {
+      "id": "heldout-038",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-038"
+      ],
+      "ambiguity": false,
+      "resolution": "The southern theater brushes velvet cushions on Fridays and prohibits solvent cleaning during rehearsal weeks. Same-title observatory Idea 037 does not satisfy this query."
+    },
+    {
+      "id": "heldout-039",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-document-01"
+      ],
+      "ambiguity": false,
+      "resolution": "The query explicitly requests the complete Harbor field collection Document. Only Document 01 is intended; returning a constituent Idea or the whole Project does not fulfill that identity request."
+    },
+    {
+      "id": "heldout-040",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "positive",
+      "intended": [
+        "qual-idea-002"
+      ],
+      "ambiguity": false,
+      "resolution": "The query explicitly requests only the violin-glue Idea inside Reversible workshop collection. Idea 002 is intended; Document 02 and Project 02 are permitted but are not intended matches."
+    },
+    {
+      "id": "heldout-041",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source describes avalanche-rescue training or its equipment. Rescue-boat checks and snowmelt bridge repair share words but not the requested activity."
+    },
+    {
+      "id": "heldout-042",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source supplies a solar-installation permit application. Rooftop basil and rooftop stargazing do not supply solar installation or permits."
+    },
+    {
+      "id": "heldout-043",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source describes pool filtration replacement or its budget. River-crossing instruction is a different activity."
+    },
+    {
+      "id": "heldout-044",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source states museum evacuation drills or their frequency. A temporary wet-floor detour is not an evacuation drill."
+    },
+    {
+      "id": "heldout-045",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source supplies a cake recipe or gluten/nut requirements. Other food-related notes do not fulfill this request."
+    },
+    {
+      "id": "heldout-046",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source provides taxi-lift operating instructions. A step-free park loop and observatory ramp are not taxi equipment instructions."
+    },
+    {
+      "id": "heldout-047",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source plans a mobile dental clinic or rural deployment. The waiting-room token note covers queue privacy only."
+    },
+    {
+      "id": "heldout-048",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source describes payroll or overnight-shift compensation. Night observations are not staffing policy."
+    },
+    {
+      "id": "heldout-049",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible Document contains an electric-cargo-van maintenance schedule. Courier and ferry notes do not meet vehicle or schedule requirements."
+    },
+    {
+      "id": "heldout-050",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source gives an agreement to install canal drinking fountains. Rainwater garden and river-crossing notes are unrelated to that agreement."
+    },
+    {
+      "id": "heldout-051",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source supplies a playground soil chemical analysis. School garden fertilizer restrictions contain neither sampling nor analysis results."
+    },
+    {
+      "id": "heldout-052",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source plans medicine storage in a heat wave. Cheese storage after an outage concerns different goods and circumstances."
+    },
+    {
+      "id": "heldout-053",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible Idea describes a restaurant apprenticeship or employment program for teenagers. Cafe seating, salt harvesting, and school exercises do not meet this request."
+    },
+    {
+      "id": "heldout-054",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source gives oral-history translation licenses. A bilingual neighborhood invitation provides no licensing terms or oral-history collection."
+    },
+    {
+      "id": "heldout-055",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source records sailing-team regatta results. Rescue-boat and ferry safety notes are not competitive results."
+    },
+    {
+      "id": "heldout-056",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "No eligible source designs a pedestrian tunnel under a highway. Footbridge and accessible park-route notes do not describe that structure."
+    },
+    {
+      "id": "heldout-057",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "The matching safe phrase exists only in Idea 039 in closed Project 22, outside the principal and query permission set. No permitted source fulfills the request; the source and its restricted containers are forbidden."
+    },
+    {
+      "id": "heldout-058",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "The tide-clock content exists only in withdrawn, ineligible Idea 040. The permitted harbor Idea and containers do not make withdrawn content eligible; no eligible source fulfills the request."
+    },
+    {
+      "id": "heldout-059",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "The nearest library rooftop source explicitly cancels in rain and shares two telescopes in turns. It contradicts both required conditions. Under fulfillment of all stated constraints, there is no match."
+    },
+    {
+      "id": "heldout-060",
+      "reviewerTask": "/root/independent_labels",
+      "reviewedAt": "2026-09-24T20:01:42.261Z",
+      "classification": "no-match",
+      "intended": [],
+      "ambiguity": false,
+      "resolution": "The nearest school-garden source uses rainwater, Tuesday turns, and forbids chemical fertilizer. It contradicts chemical fertilizer, daily watering, and tap water. Under fulfillment of all stated constraints, there is no match."
+    }
+  ],
+  "reviewEvidence": {
+    "path": "independent-review-receipt.json",
+    "sha256": "fabd06e29b97240e5ff9bd02623b5574366e637217348e0b0be42d9dc0356b61"
+  }
+}

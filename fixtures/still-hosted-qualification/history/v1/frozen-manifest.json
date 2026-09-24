@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 2,
+  "packetId": "still-hosted-qualification-synthetic-v1",
+  "frozenAt": "2026-09-24T20:00:19.850Z",
+  "heldOut": true,
+  "tuningConsumed": false,
+  "humanReview": false,
+  "files": {
+    "corpus": {
+      "path": "corpus.json",
+      "sha256": "5fa63d6747aa92092291038ead5c419e4eae7acce2d4f67f4ab4814c99795f9f"
+    },
+    "heldoutInputs": {
+      "path": "heldout-inputs.json",
+      "sha256": "7eff6ad8bab1db8574e73b6016be935b889ddfe9a663ab83ce307849330e3f47"
+    },
+    "labels": {
+      "path": "labels.json",
+      "sha256": "a366b0b6fbe7147e8e5d1b60553f020e0f0896d5c212dc5a140610e28f3e2fbd"
+    },
+    "provenance": {
+      "path": "label-review.json",
+      "sha256": "b7ce7b614ef87662fce102d429a933422429d5362d613600176100b0b3154cf3"
+    },
+    "producerFreeze": {
+      "path": "producer-freeze.json",
+      "sha256": "d0dd27fa64553e8ac4e8bd01df761920435d6f1139f6ef9da5124fe797c4bba1"
+    },
+    "annotationErratum": {
+      "path": "cohort-annotation-erratum.json",
+      "sha256": "95eb3dc9246419f06e397778e1c53da7788fa319b2ea16129ace470f9257ecba"
+    }
+  }
+}

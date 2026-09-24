@@ -1,0 +1,9 @@
+{
+  "fixtureId": "still-hosted-qualification-synthetic-v2",
+  "hashes": {
+    "corpus.json": "03499f77f4fec632c39adc7a13112ed357c6ec33dbd002b6ba5dcc0a5747e231",
+    "heldout-inputs.json": "efa1a425d4918d91572438ccee9e5a76aed4ac42951d9d25c0c285d9e59f7544",
+    "tuning-inputs.json": "27427351f02fc7430d4d690489b0e58d865483e8b127c118a12a80916e567a9b",
+    "organizer-inputs.json": "0c11e5cf7fc1ccfa4439f2201e43fed60ab772118c5ed87c1132652b03e3fc68"
+  }
+}
