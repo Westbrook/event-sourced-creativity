@@ -46,8 +46,8 @@ import { menuItemTemplate } from './template.js';
  * @csspart shortcut - Shortcut slot.
  * @csspart checkmark - Stable decorative checked indicator position.
  * @csspart submenu-indicator - Decorative library chevron for a bound submenu.
- * @fires en-change - Cancelable tentative checked state: {previous, proposed, reason: "checked"}; radio peers are staged coherently.
- * @fires en-action - Cancelable command intent: {action, data: undefined}. No command is executed by the component.
+ * @fires {import('../events.js').MenuItemChangeEvent} en-change - Cancelable tentative checked state: {previous, proposed, reason: "checked"}; radio peers are staged coherently.
+ * @fires {import('../events.js').CommandActionEvent} en-action - Cancelable command intent: {action, data: undefined}. No command is executed by the component.
  */
 export class EnMenuItem extends EnElement {
     static properties = {

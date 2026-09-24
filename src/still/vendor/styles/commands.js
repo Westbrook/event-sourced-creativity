@@ -1,3 +1,4 @@
+import { controlTargetSize } from './internal/target-size.js';
 import { css } from 'lit';
 import { nativeSurfaceMotion, surfaceTransitions } from './internal/surface-motion.js';
 import { sizedStyles } from './internal/sizing.js';
@@ -19,7 +20,7 @@ function rowGeometry(selector, radius = rowRadius) {
       gap: ${t('--en-space-icon-label')};
       box-sizing: border-box;
       min-inline-size: ${t('--en-size-target-min')};
-      min-block-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-min')});
+      min-block-size: ${controlTargetSize()};
       max-inline-size: 100%;
       inline-size: 100%;
       margin: 0;
@@ -33,7 +34,7 @@ function rowGeometry(selector, radius = rowRadius) {
       cursor: pointer;
     }
     @media (any-pointer: coarse) {
-      ${selector} { min-block-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-touch')}); }
+      ${selector} { min-block-size: ${controlTargetSize(true)}; }
     }
   `;
 }

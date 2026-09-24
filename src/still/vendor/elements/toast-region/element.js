@@ -1,5 +1,8 @@
+import { connectionDocument } from '../internal/element-registry.js';
 import { html } from 'lit';
 import { EnElement } from '../internal/en-element.js';
+import { createOwnedElement } from '../internal/create-owned-element.js';
+import { ChildUpgrades } from '../internal/child-upgrades.js';
 import { foundationStyles, blockHostStyles } from '../../styles/foundations.js';
 import { normalizeToastMax, toastWindow, toastQueuedAttribute, toastCountAttribute, presentToast, releaseToast } from '../../primitives/interactions/toast-stack.js';
 import { toastStyles } from '../../styles/toast.js';
@@ -7,7 +10,7 @@ import { toastStyles } from '../../styles/toast.js';
  * A slotted notification collection. Initial messages are readable; newly opened messages announce without moving focus.
  * @tagname en-toast-region
  * @slot - en-toast children; forwarding through slots is supported.
- * @csspart region - Named, focusable collection and scroll surface.
+ * @csspart base - Named, focusable collection and scroll surface.
  * @csspart stack-summary - Localized description of waiting messages.
  * @csspart history - Optional waiting/recent disclosure.
  * @csspart history-summary - Named disclosure toggle.
@@ -44,17 +47,18 @@ export class EnToastRegion extends EnElement {
     known = new Map();
     observer;
     ready = false;
+    upgrades = new ChildUpgrades(this, () => this.sync());
     epoch = 0;
     queue = [];
     timer;
     polite = '';
     urgent = '';
     constructor() { super(); this.label = 'Notifications'; this.placement = 'inline'; this.stackLabel = 'Additional notifications are waiting.'; this.history = false; this.historyLimit = 20; this.historyLabel = 'Notification history'; this.waitingLabel = 'Waiting'; this.recentLabel = 'Recently closed'; this.clearHistoryLabel = 'Clear recent history'; }
-    get toasts() { const slot = this.renderRoot?.querySelector('slot'); return (slot?.assignedElements({ flatten: true }) ?? []).filter((el) => el.localName === 'en-toast'); }
+    get toasts() { const slot = this.renderRoot?.querySelector('slot'); const children = slot?.assignedElements({ flatten: true }) ?? []; this.upgrades.watch(children); return children.filter((el) => el.localName === 'en-toast' && el.matches(':defined') && typeof el.dismiss === 'function'); }
     /** Add a plain-text message: prepend interruptions, append ordinary notifications. For rich content/actions, slot an authored en-toast instead. Returns the element immediately; insertion waits for the initial render. Pending additions participate in dismissAll; disconnect cancels insertion. */
     notify(options) {
         const epoch = this.epoch;
-        const toast = this.ownerDocument.createElement('en-toast');
+        const toast = createOwnedElement(this, 'en-toast');
         toast.textContent = options.message;
         toast.variant = options.variant ?? 'info';
         toast.duration = options.duration ?? 0;
@@ -78,7 +82,7 @@ export class EnToastRegion extends EnElement {
     dismissAll() { for (const toast of new Set([...this.toasts, ...this.additions]))
         if (toast.open)
             toast.dismiss(); }
-    focus(options) { this.renderRoot.querySelector('[part="region"]')?.focus(options); }
+    focus(options) { this.renderRoot.querySelector('[part="base"]')?.focus(options); }
     sync = () => {
         const toasts = this.toasts;
         if (this.observer) {
@@ -175,6 +179,6 @@ export class EnToastRegion extends EnElement {
     firstUpdated() { this.sync(); this.ready = true; this.observe(); }
     disconnectedCallback() { ++this.epoch; this.additions.clear(); this.observer?.disconnect(); if (this.timer !== undefined)
         clearTimeout(this.timer); this.timer = undefined; this.queue = []; this.known.clear(); this.pending.clear(); this.announced.clear(); for (const toast of this.managed)
-        releaseToast(toast, this); this.managed.clear(); this.waiting = undefined; this.ready = false; this.removeEventListener('en-change', this.changed); this.removeEventListener('focusout', this.changed); this.removeEventListener('en-internal-toast-focus-return', this.recover); this.ownerDocument.removeEventListener('visibilitychange', this.visibility); this.ownerDocument.defaultView?.visualViewport?.removeEventListener('resize', this.viewport); this.ownerDocument.defaultView?.visualViewport?.removeEventListener('scroll', this.viewport); super.disconnectedCallback(); }
-    render() { return html `<section class="en-toast-region" part="region" role="region" aria-label=${this.label} tabindex="-1"><slot @slotchange=${this.sync}></slot><span class="en-toast-region__summary" part="stack-summary" ?hidden=${!this.queuedCount}>${this.stackLabel}</span>${this.history ? html `<details class="en-toast-region__history" part="history"><summary part="history-summary">${this.historyLabel}</summary>${this.waitingMessages.length ? html `<h3>${this.waitingLabel} (${this.waitingMessages.length})</h3><ol part="history-list">${this.waitingMessages.map(message => html `<li>${message}</li>`)}</ol>` : null}<h3>${this.recentLabel} (${this.recent.length})</h3><ol part="history-list">${this.recent.map(item => html `<li>${item.message}</li>`)}</ol><en-button variant="secondary" @click=${() => this.clearHistory()}>${this.clearHistoryLabel}</en-button></details>` : null}</section><div class="en-toast__sr" part="announcements" role="status" aria-atomic="true">${this.polite}</div><div class="en-toast__sr" part="urgent" role="alert" aria-atomic="true">${this.urgent}</div>`; }
+        releaseToast(toast, this); this.managed.clear(); this.waiting = undefined; this.ready = false; this.removeEventListener('en-change', this.changed); this.removeEventListener('focusout', this.changed); this.removeEventListener('en-internal-toast-focus-return', this.recover); connectionDocument(this).removeEventListener('visibilitychange', this.visibility); connectionDocument(this).defaultView?.visualViewport?.removeEventListener('resize', this.viewport); connectionDocument(this).defaultView?.visualViewport?.removeEventListener('scroll', this.viewport); super.disconnectedCallback(); }
+    render() { return html `<section class="en-toast-region" part="base" role="region" aria-label=${this.label} tabindex="-1"><slot @slotchange=${this.sync}></slot><span class="en-toast-region__summary" part="stack-summary" ?hidden=${!this.queuedCount}>${this.stackLabel}</span>${this.history ? html `<details class="en-toast-region__history" part="history"><summary part="history-summary">${this.historyLabel}</summary>${this.waitingMessages.length ? html `<h3>${this.waitingLabel} (${this.waitingMessages.length})</h3><ol part="history-list">${this.waitingMessages.map(message => html `<li>${message}</li>`)}</ol>` : null}<h3>${this.recentLabel} (${this.recent.length})</h3><ol part="history-list">${this.recent.map(item => html `<li>${item.message}</li>`)}</ol><en-button variant="secondary" @click=${() => this.clearHistory()}>${this.clearHistoryLabel}</en-button></details>` : null}</section><div class="en-toast__sr" part="announcements" role="status" aria-atomic="true">${this.polite}</div><div class="en-toast__sr" part="urgent" role="alert" aria-atomic="true">${this.urgent}</div>`; }
 }

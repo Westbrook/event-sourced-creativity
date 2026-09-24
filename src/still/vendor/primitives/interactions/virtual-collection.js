@@ -16,6 +16,10 @@ export class VirtualCollectionController {
     #scrollTarget = null;
     #anchorActive = false;
     #observer;
+    #layoutObserver;
+    #layoutMutation;
+    #focusTarget;
+    #addedTabIndex = false;
     #stop;
     #frame = 0;
     #rows = new Map();
@@ -150,6 +154,11 @@ export class VirtualCollectionController {
         this.#window = viewport.ownerDocument.defaultView;
         this.#anchorStyle = { value: viewport.style.getPropertyValue('overflow-anchor'), priority: viewport.style.getPropertyPriority('overflow-anchor') };
         viewport.style.setProperty('overflow-anchor', 'none');
+        this.#focusTarget = this.#options.focusTarget?.() ?? (this.#documentViewport ? content : viewport);
+        if (this.#documentViewport && !this.#focusTarget.hasAttribute('tabindex')) {
+            this.#focusTarget.setAttribute('tabindex', '-1');
+            this.#addedTabIndex = true;
+        }
         this.#scrollTarget = this.#documentViewport ? viewport.ownerDocument : viewport;
         this.#scrollTarget.addEventListener('scroll', this.#scroll, { passive: true });
         viewport.addEventListener('wheel', this.#cancelReveal, { passive: true });
@@ -176,6 +185,25 @@ export class VirtualCollectionController {
             });
             this.#observer.observe(viewport);
             this.#observer.observe(content);
+            if (this.#documentViewport) {
+                this.#layoutObserver = new Observer(() => this.#schedule());
+                const observeLayout = () => {
+                    this.#layoutObserver?.disconnect();
+                    this.#layoutMutation?.disconnect();
+                    let element = content;
+                    while (element) {
+                        this.#layoutObserver?.observe(element);
+                        for (let sibling = element.previousElementSibling; sibling; sibling = sibling.previousElementSibling)
+                            this.#layoutObserver?.observe(sibling);
+                        const parent = element.parentElement ?? element.getRootNode().host;
+                        if (parent)
+                            this.#layoutMutation?.observe(parent, { childList: true });
+                        element = parent ?? null;
+                    }
+                };
+                this.#layoutMutation = new MutationObserver(() => { observeLayout(); this.#schedule(); });
+                observeLayout();
+            }
         }
         this.#lastAnchor = undefined;
         this.#lastOrigin = undefined;
@@ -187,6 +215,15 @@ export class VirtualCollectionController {
         this.#frame = 0;
         this.#observer?.disconnect();
         this.#observer = undefined;
+        this.#layoutObserver?.disconnect();
+        this.#layoutObserver = undefined;
+        this.#layoutMutation?.disconnect();
+        this.#layoutMutation = undefined;
+        if (this.#addedTabIndex && this.#focusTarget?.getAttribute('tabindex') === '-1')
+            this.#focusTarget.removeAttribute('tabindex');
+        this.#focusTarget = undefined;
+        this.#addedTabIndex = false;
+        this.#anchorActive = false;
         this.#scrollTarget?.removeEventListener('scroll', this.#scroll);
         this.#scrollTarget = null;
         this.#viewport?.removeEventListener('wheel', this.#cancelReveal);
@@ -250,8 +287,12 @@ export class VirtualCollectionController {
         if (this.#focusedKey !== undefined && this.model.indexOf(this.#focusedKey) < 0) {
             const removed = this.#focusedKey;
             this.#setFocusedKey(undefined);
-            if (this.#viewport)
-                this.#options.onFocusedItemRemoved?.(removed, this.#viewport);
+            if (this.#focusTarget) {
+                if (this.#options.onFocusedItemRemoved)
+                    this.#options.onFocusedItemRemoved(removed, this.#focusTarget);
+                else if (this.#documentViewport)
+                    this.#focusTarget.focus({ preventScroll: true });
+            }
         }
         this.#syncFocus();
     }
@@ -290,6 +331,8 @@ export class VirtualCollectionController {
             // Follow the native animation's real position. Changing scrollTop or
             // measured prefix geometry here would interrupt its captured target.
             this.#userScrolled = false;
+            const offset = this.#scrollOffset - origin + inset;
+            this.#anchorActive = offset >= 0 && offset < this.model.totalSize;
             this.model.setViewport(Math.max(0, this.#scrollOffset - origin + inset), height);
             this.#lastAnchor = this.model.anchorOffset;
             this.#lastOrigin = visibleOrigin;
@@ -364,7 +407,7 @@ export class VirtualCollectionController {
         const index = this.model.indexOf(request.key);
         if (index < 0)
             return;
-        const span = this.#viewport?.clientHeight || 384;
+        const span = this.#viewportHeight || 384;
         const retain = (position) => {
             const key = this.model.keyAt(position);
             if (key === undefined || request.pins.has(key))
@@ -471,7 +514,20 @@ export class VirtualCollectionController {
         };
         // A no-op or instant native scroll need not emit a new scroll event.
         // The fallback is reset by actual progress and never drives an idle RAF.
-        defer(120);
+        if (request.options.behavior === 'instant') {
+            const inset = Math.max(0, this.#options.occludedBlockStart?.() ?? 0);
+            const origin = this.#content.getBoundingClientRect().top - this.#viewportBounds().top - this.#viewportBorder + this.#scrollOffset;
+            const offset = this.#scrollOffset - origin + inset;
+            this.model.setViewport(Math.max(0, offset), Math.max(0, this.#viewportHeight - inset - Math.max(0, this.#options.occludedBlockEnd?.() ?? 0)));
+            this.#anchorActive = offset >= 0 && offset < this.model.totalSize;
+            this.#lastAnchor = this.model.anchorOffset;
+            this.#lastOrigin = origin - inset;
+            this.#expectedScrollTop = this.#scrollOffset;
+            this.#userScrolled = false;
+            complete();
+        }
+        else
+            defer(120);
     }
     #finishReveal(stop, restorePosition = true, captureAnchor = true) {
         const request = this.#scrollRequest;

@@ -8,6 +8,14 @@ import { registerFocusParticipant } from '../internal/focus-participant.js';
  * An action button with native keyboard and disabled behavior.
  * This initial button is type="button"; form submission belongs to its consumer.
  * @tagname en-button
+ * @cssprop --en-button-press-duration - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-button-pressed-offset - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-button-popup-pressed-scale - Held popup-trigger scale; inherits ordinary button motion unless refined.
+ * @cssprop --en-button-popup-pressed-offset - Held popup-trigger translation; inherits ordinary button motion unless refined.
+ * @cssprop --en-button-pressed-scale - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-button-pressed-shadow - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-button-release-duration - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-button-shadow - Optional theme presentation; see the customization registry for state, fallback and reachability.
  * @cssprop --en-button-focus-width - Immediate primary focus contour width.
  * @cssprop --en-button-focus-color - Immediate primary focus contour color.
  * @cssprop --en-button-focus-offset - Signed primary focus contour offset.
@@ -35,6 +43,7 @@ import { registerFocusParticipant } from '../internal/focus-participant.js';
  * @slot label - Full accessible action label. Icon-only mode visually hides it without removing its name; keep it present while loading.
  * @slot prefix - Decorative content before the label.
  * @slot suffix - Decorative content after the label.
+ * @attr {string} aria-pressed - Controlled persistent toggle semantics forwarded to the native button; does not enable automatic toggling.
  * @attr {string} aria-haspopup - Popup semantics forwarded to the native button.
  * @attr {string} aria-expanded - Expanded state forwarded to the native button.
  * @attr {string} aria-disabled - True prevents activation while retaining keyboard focusability; forwarded to the native button.
@@ -50,6 +59,7 @@ export class EnButton extends EnElement {
         loading: { type: Boolean, reflect: true },
         iconOnly: { type: Boolean, attribute: 'icon-only', reflect: true },
         popupRole: { attribute: 'aria-haspopup' },
+        pressedSemantics: { attribute: 'aria-pressed' },
         popupExpanded: { attribute: 'aria-expanded' },
         disabledSemantics: { attribute: 'aria-disabled' },
         descriptionIds: { attribute: 'aria-describedby', hasChanged: () => true },
@@ -63,6 +73,7 @@ export class EnButton extends EnElement {
         this.loading = false;
         this.iconOnly = false;
         this.popupRole = null;
+        this.pressedSemantics = null;
         this.popupExpanded = null;
         this.disabledSemantics = null;
         this.addEventListener('click', event => {
@@ -91,6 +102,8 @@ export class EnButton extends EnElement {
     focus(options) {
         this.renderRoot.querySelector('button')?.focus(options);
     }
+    /** Controlled pressed semantics; subclasses can own a persistent toggle value. */
+    get buttonPressed() { return ['true', 'false', 'mixed'].includes(this.pressedSemantics ?? '') ? this.pressedSemantics : null; }
     render() {
         return buttonTemplate({
             variant: this.variant,
@@ -102,6 +115,7 @@ export class EnButton extends EnElement {
             popupExpanded: this.popupExpanded,
             ariaDisabled: this.disabledSemantics,
             tabIndex: this.tabStop,
+            pressed: this.buttonPressed,
         });
     }
     updated() {
@@ -111,7 +125,7 @@ export class EnButton extends EnElement {
         // A menu can attach popup semantics before this button hydrates. Hydration
         // may treat that new property as committed while retaining the SSR attribute.
         // Reconcile the native control without replacing it or dispatching a change.
-        for (const [attribute, value] of [['aria-haspopup', this.popupRole], ['aria-expanded', this.popupExpanded], ['aria-disabled', this.disabledSemantics]]) {
+        for (const [attribute, value] of [['aria-pressed', this.buttonPressed], ['aria-haspopup', this.popupRole], ['aria-expanded', this.popupExpanded], ['aria-disabled', this.disabledSemantics]]) {
             if (value === null) {
                 if (control.hasAttribute(attribute))
                     control.removeAttribute(attribute);

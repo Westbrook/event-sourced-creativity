@@ -19,7 +19,7 @@ export class MenuInteractionController {
     keyDown = (event) => {
         if (event.defaultPrevented || event.isComposing || !this.options.open())
             return;
-        if (event.composedPath().find(node => node.localName === 'en-menu') !== this.host)
+        if (event.composedPath().find(node => ['en-menu', 'en-context-menu'].includes(node.localName)) !== this.host)
             return;
         if (event.key === 'Tab') {
             this.options.closeForTab(event);

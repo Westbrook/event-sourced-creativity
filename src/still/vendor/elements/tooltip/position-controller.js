@@ -1,3 +1,4 @@
+import { arrowExtent, positionOverlayArrow } from '../internal/overlay-arrow.js';
 const anchors = new WeakMap();
 let nextAnchor = 0;
 let nextSurface = 0;
@@ -139,7 +140,7 @@ export class TooltipPositionController {
         const anchor = trigger.getBoundingClientRect();
         const bounds = surface.getBoundingClientRect();
         const triggerStyle = view.getComputedStyle(trigger);
-        const gap = parseFloat(view.getComputedStyle(surface).rowGap) || 0;
+        const gap = (parseFloat(view.getComputedStyle(surface).rowGap) || 0) + arrowExtent(surface);
         let i = axis(inline, 'center');
         let b = axis(block, 'end');
         if (!i && !b)
@@ -171,5 +172,6 @@ export class TooltipPositionController {
             surface.style.left = `${x.point}px`;
             surface.style.top = `${y.point}px`;
         }
+        positionOverlayArrow(surface, trigger);
     }
 }

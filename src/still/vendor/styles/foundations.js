@@ -20,6 +20,8 @@ export const foundationStyles = sizedStyles(css `
     box-sizing: border-box;
     color: ${t('--en-color-text')};
     font-family: ${t('--en-font-ui-family')};
+    font-style: ${t('--en-font-ui-style')};
+    letter-spacing: ${t('--en-font-ui-tracking')};
     font-size: ${t('--en-font-ui-size')};
     font-weight: ${t('--en-font-ui-weight')};
     line-height: ${t('--en-font-ui-line-height')};

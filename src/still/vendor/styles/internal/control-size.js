@@ -1,3 +1,4 @@
+import { pointerTargetSize } from './target-size.js';
 import { css } from 'lit';
 import { token as t, override as o } from './values.js';
 /** Padding inside the segmented border, independent of the shared layout reserve. */
@@ -10,7 +11,7 @@ export const controlFrameInset = css `calc(${segmentedFramePadding} + ${t('--en-
  * complete option target inside the segmented frame. Wrapped content can grow.
  */
 export function textControlBlockSize(coarse = false, segmented = false) {
-    const target = t(coarse ? '--en-size-target-touch' : '--en-size-target-min');
+    const target = pointerTargetSize(coarse);
     const padding = t('--en-space-control-block');
     const border = t('--en-border-width');
     // Keep default alignment, but only segmented controls reserve their authored

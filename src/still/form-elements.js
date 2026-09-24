@@ -1,7 +1,5 @@
 // Direct En Reve controls; behavior and styling stay in the design system.
-import { EnIcon } from './vendor/elements/icon.js';
-import { registerDefinition } from './vendor/primitives/interactions/registration.js';
-registerDefinition(customElements, { tagName: 'en-icon', elementClass: EnIcon });
+import './vendor/elements/define/icon.js';
 import './vendor/elements/define/select.js';
 import './vendor/elements/define/checkbox.js';
 import './vendor/elements/define/search-input.js';

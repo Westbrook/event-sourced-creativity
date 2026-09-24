@@ -31,6 +31,7 @@ export class DefaultState {
         // Lit SSR's attribute-to-property adapter does not run browser callbacks.
         this.attributeChanged();
     }
+    get isDirty() { return this.dirty; }
     markDirty() { if (!this.applying)
         this.dirty = true; }
     attributeChanged() {

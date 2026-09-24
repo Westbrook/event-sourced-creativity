@@ -54,4 +54,14 @@ export const rangeStyles = css `
     }
   }
   .en-range:disabled { cursor: default; }
+   .en-range::-webkit-slider-thumb { transition: scale clamp(0ms, var(--en-slider-thumb-release-duration, 80ms), 200ms) ${t('--en-ease-standard')}; }
+   .en-range:not(:disabled):active::-webkit-slider-thumb { scale: clamp(.9, var(--en-slider-thumb-pressed-scale, 1), 1.25); transition-duration: clamp(0ms, var(--en-slider-thumb-press-duration, 80ms), 200ms); }
+  @media (prefers-reduced-motion: reduce) {  .en-range::-webkit-slider-thumb { scale: none !important; transition: none !important; } }
+  :host([data-press=none])  .en-range::-webkit-slider-thumb { scale: none !important; }
+
+   .en-range::-moz-range-thumb { transition: scale clamp(0ms, var(--en-slider-thumb-release-duration, 80ms), 200ms) ${t('--en-ease-standard')}; }
+   .en-range:not(:disabled):active::-moz-range-thumb { scale: clamp(.9, var(--en-slider-thumb-pressed-scale, 1), 1.25); transition-duration: clamp(0ms, var(--en-slider-thumb-press-duration, 80ms), 200ms); }
+  @media (prefers-reduced-motion: reduce) {  .en-range::-moz-range-thumb { scale: none !important; transition: none !important; } }
+  :host([data-press=none])  .en-range::-moz-range-thumb { scale: none !important; }
+
 `;

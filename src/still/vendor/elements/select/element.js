@@ -9,6 +9,13 @@ import { FormFieldElement } from '../forms-private/form-field.js';
  * A labeled native single select. Direct en-select-option descriptors take precedence over items.
  * The parent renders private native options; descriptor nodes are metadata, not native options.
  * Cancel en-change to reject a provisional selection; author value writes remain authoritative.
+ * @cssprop --en-select-pressed-scale - select held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-select-pressed-offset - select held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-select-press-duration - select held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-select-release-duration - select held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-select-pressed-shadow - select held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-select-pressed-background - select held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-select-pressed-color - select held-state refinement; geometry is bounded and reduced motion wins.
  * @tagname en-select
  * @slot - Direct en-select-option descriptors; their content supplies plain option labels.
  * @csspart focus-frame - Noninteractive field frame supporting the supplemental focus accent.
@@ -20,6 +27,12 @@ import { FormFieldElement } from '../forms-private/form-field.js';
  * @csspart option - Native option; picker styling depends on browser support.
  * @csspart description - Supporting text.
  * @csspart error - Validation feedback.
+ * @cssprop --en-input-border-color - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-border-width - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-hover-border-color - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-invalid-border-color - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-invalid-border-width - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-radius - Optional theme presentation; see the customization registry for state, fallback and reachability.
  * @cssprop --en-input-focus-width - Width of the immediate input-family focus contour.
  * @cssprop --en-input-focus-color - Color of the immediate input-family focus contour.
  * @cssprop --en-input-focus-offset - Offset of the immediate input-family focus contour.
@@ -72,8 +85,8 @@ import { FormFieldElement } from '../forms-private/form-field.js';
  * @cssprop --en-overlay-radius - Shared overlay corner fallback for the option list.
  * @cssprop --en-overlay-padding - Shared overlay inset fallback for the option list.
  * @cssprop --en-overlay-max-block-size - Shared overlay height ceiling fallback for the option list.
- * @fires en-input - Current native selected draft.
- * @fires en-change - Cancelable selection change; provisional value and form data are available during dispatch.
+ * @fires {import('../events.js').DraftInputEvent} en-input - Current native selected draft.
+ * @fires {import('../events.js').FieldChangeEvent} en-change - Cancelable selection change; provisional value and form data are available during dispatch.
  */
 export class EnSelect extends FormFieldElement {
     static styles = [...FormFieldElement.styles, selectEnhancementStyles];

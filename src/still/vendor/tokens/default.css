@@ -1,4 +1,32 @@
 /* En Rêve public custom property registrations. Load one policy per document. */
+@property --en-accordion-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-accordion-pressed-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-accordion-pressed-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-accordion-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-accordion-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-accordion-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-accordion-release-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-activity-background {
   syntax: "*";
   inherits: true;
@@ -107,6 +135,18 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-button-popup-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-button-popup-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-button-press-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-button-pressed-background {
   syntax: "*";
   inherits: true;
@@ -115,7 +155,23 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-button-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-button-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-button-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-button-radius {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-button-release-duration {
   syntax: "*";
   inherits: true;
 }
@@ -124,6 +180,10 @@
   inherits: true;
 }
 @property --en-button-rest-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-button-shadow {
   syntax: "*";
   inherits: true;
 }
@@ -147,7 +207,23 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-calendar-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-calendar-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-calendar-pressed-opacity {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-calendar-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-calendar-pressed-shadow {
   syntax: "*";
   inherits: true;
 }
@@ -163,7 +239,15 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-calendar-release-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-card-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-card-shadow {
   syntax: "*";
   inherits: true;
 }
@@ -212,6 +296,34 @@
   inherits: true;
 }
 @property --en-chat-radius {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-checkbox-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-checkbox-pressed-border-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-checkbox-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-checkbox-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-checkbox-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-checkbox-release-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-choice-size {
   syntax: "*";
   inherits: true;
 }
@@ -307,6 +419,18 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-color-plane-thumb-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-color-plane-thumb-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-color-plane-thumb-release-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-color-plane-thumb-size {
   syntax: "*";
   inherits: true;
@@ -383,6 +507,34 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-combobox-trigger-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-combobox-trigger-pressed-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-combobox-trigger-pressed-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-combobox-trigger-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-combobox-trigger-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-combobox-trigger-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-combobox-trigger-release-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-control-background {
   syntax: "*";
   inherits: true;
@@ -419,6 +571,22 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-dialog-enter-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-dialog-enter-ease {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-dialog-exit-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-dialog-exit-ease {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-divider-color {
   syntax: "*";
   inherits: true;
@@ -447,7 +615,15 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-duration-press {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-duration-regular {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-duration-release {
   syntax: "*";
   inherits: true;
 }
@@ -487,6 +663,10 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-editor-token-block-padding {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-editor-token-border-color {
   syntax: "*";
   inherits: true;
@@ -503,15 +683,15 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-editor-token-inline-padding {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-editor-token-min-size {
   syntax: "*";
   inherits: true;
 }
-@property --en-editor-token-padding-block {
-  syntax: "*";
-  inherits: true;
-}
-@property --en-editor-token-padding-inline {
+@property --en-editor-token-press-duration {
   syntax: "*";
   inherits: true;
 }
@@ -519,7 +699,31 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-editor-token-pressed-border-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-editor-token-pressed-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-editor-token-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-editor-token-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-editor-token-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-editor-token-radius {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-editor-token-release-duration {
   syntax: "*";
   inherits: true;
 }
@@ -603,6 +807,14 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-font-body-style {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-body-tracking {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-font-body-weight {
   syntax: "*";
   inherits: true;
@@ -635,6 +847,14 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-font-data-style {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-data-tracking {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-font-data-weight {
   syntax: "*";
   inherits: true;
@@ -660,6 +880,14 @@
   inherits: true;
 }
 @property --en-font-heading-large-size-small {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-heading-large-style {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-heading-large-tracking {
   syntax: "*";
   inherits: true;
 }
@@ -691,6 +919,14 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-font-heading-medium-style {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-heading-medium-tracking {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-font-heading-medium-weight {
   syntax: "*";
   inherits: true;
@@ -716,6 +952,14 @@
   inherits: true;
 }
 @property --en-font-heading-small-size-small {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-heading-small-style {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-heading-small-tracking {
   syntax: "*";
   inherits: true;
 }
@@ -747,6 +991,14 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-font-input-style {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-input-tracking {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-font-input-weight {
   syntax: "*";
   inherits: true;
@@ -760,6 +1012,14 @@
   inherits: true;
 }
 @property --en-font-label-strong-size {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-label-strong-style {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-label-strong-tracking {
   syntax: "*";
   inherits: true;
 }
@@ -791,6 +1051,14 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-font-metadata-style {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-metadata-tracking {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-font-metadata-weight {
   syntax: "*";
   inherits: true;
@@ -819,6 +1087,14 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-font-ui-style {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-font-ui-tracking {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-font-ui-weight {
   syntax: "*";
   inherits: true;
@@ -836,6 +1112,14 @@
   inherits: true;
 }
 @property --en-input-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-input-border-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-input-border-width {
   syntax: "*";
   inherits: true;
 }
@@ -871,7 +1155,23 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-input-hover-border-color {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-input-inline-padding {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-input-invalid-border-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-input-invalid-border-width {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-input-radius {
   syntax: "*";
   inherits: true;
 }
@@ -939,6 +1239,14 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-motion-press-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-motion-press-scale {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-motion-surface-offset {
   syntax: "*";
   inherits: true;
@@ -967,11 +1275,35 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-navigation-current-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-current-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-current-indicator-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-current-indicator-width {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-navigation-gap {
   syntax: "*";
   inherits: true;
 }
 @property --en-navigation-height {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-hover-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-hover-color {
   syntax: "*";
   inherits: true;
 }
@@ -991,7 +1323,59 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-navigation-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-pressed-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-pressed-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-navigation-release-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-navigation-z-index {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-number-step-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-number-step-pressed-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-number-step-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-number-step-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-number-step-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-number-step-release-duration {
   syntax: "*";
   inherits: true;
 }
@@ -1091,6 +1475,10 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-option-press-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-option-pressed-background {
   syntax: "*";
   inherits: true;
@@ -1099,7 +1487,23 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-option-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-option-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-option-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-option-radius {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-option-release-duration {
   syntax: "*";
   inherits: true;
 }
@@ -1120,6 +1524,10 @@
   inherits: true;
 }
 @property --en-option-selected-font-weight {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-overlay-arrow-size {
   syntax: "*";
   inherits: true;
 }
@@ -1263,6 +1671,22 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-popup-enter-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-popup-enter-ease {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-popup-exit-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-popup-exit-ease {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-presence-background {
   syntax: "*";
   inherits: true;
@@ -1324,6 +1748,30 @@
   inherits: true;
 }
 @property --en-prose-max-inline-size {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-radio-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-radio-pressed-border-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-radio-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-radio-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-radio-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-radio-release-duration {
   syntax: "*";
   inherits: true;
 }
@@ -1399,6 +1847,34 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-rating-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-rating-pressed-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-rating-pressed-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-rating-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-rating-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-rating-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-rating-release-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-rating-star-radius {
   syntax: "*";
   inherits: true;
@@ -1411,11 +1887,75 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-segmented-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-segmented-pressed-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-segmented-pressed-border-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-segmented-pressed-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-segmented-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-segmented-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-segmented-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-segmented-release-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-select-appearance {
   syntax: "*";
   inherits: true;
 }
+@property --en-select-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-select-pressed-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-select-pressed-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-select-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-select-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-select-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-select-release-duration {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-shadow-dialog {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-shadow-none {
   syntax: "*";
   inherits: true;
 }
@@ -1524,6 +2064,10 @@
   inherits: true;
 }
 @property --en-size-icon-stroke {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-size-navigation-indicator {
   syntax: "*";
   inherits: true;
 }
@@ -1728,6 +2272,18 @@
   inherits: true;
 }
 @property --en-slider-length {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-slider-thumb-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-slider-thumb-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-slider-thumb-release-duration {
   syntax: "*";
   inherits: true;
 }
@@ -2019,7 +2575,51 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-surface-shadow {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-swatch-size {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-block-size {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-inline-size {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-pressed-border-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-release-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-thumb-pressed-size {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-switch-thumb-size {
   syntax: "*";
   inherits: true;
 }
@@ -2031,6 +2631,54 @@
   syntax: "*";
   inherits: true;
 }
+@property --en-tab-hover-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-hover-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-indicator-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-press-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-pressed-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-pressed-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-pressed-offset {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-pressed-scale {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-pressed-shadow {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-release-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-selected-background {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-tab-selected-color {
+  syntax: "*";
+  inherits: true;
+}
 @property --en-table-background {
   syntax: "*";
   inherits: true;
@@ -2039,11 +2687,11 @@
   syntax: "*";
   inherits: true;
 }
-@property --en-table-cell-padding-block {
+@property --en-table-cell-block-padding {
   syntax: "*";
   inherits: true;
 }
-@property --en-table-cell-padding-inline {
+@property --en-table-cell-inline-padding {
   syntax: "*";
   inherits: true;
 }
@@ -2112,6 +2760,22 @@
   inherits: true;
 }
 @property --en-toast-danger-icon-color {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-toast-enter-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-toast-enter-ease {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-toast-exit-duration {
+  syntax: "*";
+  inherits: true;
+}
+@property --en-toast-exit-ease {
   syntax: "*";
   inherits: true;
 }
@@ -2211,10 +2875,17 @@
   syntax: "*";
   inherits: true;
 }
-/* @en-reve/tokens 0.1.0; sha256:153104b9c3e5f6d631d3da5c7cc40d42e34085bd444d3fbe379d3f2a92c3d846; paired full */
+/* @en-reve/tokens 0.1.0; sha256:640e95fa15cca72caedad6a8c221a9f967f4b33c80d3c70361a3b44dcd91ba8a; paired full */
 @layer en.tokens {
   :where(:root) {
     color-scheme: light dark;
+    --en-accordion-press-duration: initial;
+    --en-accordion-pressed-background: initial;
+    --en-accordion-pressed-color: initial;
+    --en-accordion-pressed-offset: initial;
+    --en-accordion-pressed-scale: initial;
+    --en-accordion-pressed-shadow: initial;
+    --en-accordion-release-duration: initial;
     --en-activity-background: initial;
     --en-activity-border-color: initial;
     --en-activity-gap: initial;
@@ -2241,21 +2912,35 @@
     --en-button-hover-background: initial;
     --en-button-hover-color: initial;
     --en-button-inline-padding: initial;
+    --en-button-popup-pressed-offset: initial;
+    --en-button-popup-pressed-scale: initial;
+    --en-button-press-duration: initial;
     --en-button-pressed-background: initial;
     --en-button-pressed-color: initial;
+    --en-button-pressed-offset: initial;
+    --en-button-pressed-scale: initial;
+    --en-button-pressed-shadow: initial;
     --en-button-radius: initial;
+    --en-button-release-duration: initial;
     --en-button-rest-background: initial;
     --en-button-rest-color: initial;
+    --en-button-shadow: initial;
     --en-calendar-day-radius: initial;
     --en-calendar-day-size: initial;
     --en-calendar-gap: initial;
     --en-calendar-hover-opacity: 0.1;
     --en-calendar-inline-size: initial;
+    --en-calendar-press-duration: initial;
+    --en-calendar-pressed-offset: initial;
     --en-calendar-pressed-opacity: 0.16;
+    --en-calendar-pressed-scale: initial;
+    --en-calendar-pressed-shadow: initial;
     --en-calendar-range-background: initial;
     --en-calendar-range-endpoint-background: initial;
     --en-calendar-range-preview-background: initial;
+    --en-calendar-release-duration: initial;
     --en-card-background: initial;
+    --en-card-shadow: initial;
     --en-carousel-background: initial;
     --en-carousel-border-color: initial;
     --en-carousel-gap: initial;
@@ -2267,6 +2952,13 @@
     --en-chat-outgoing-background: initial;
     --en-chat-padding: initial;
     --en-chat-radius: initial;
+    --en-checkbox-press-duration: initial;
+    --en-checkbox-pressed-border-color: initial;
+    --en-checkbox-pressed-offset: initial;
+    --en-checkbox-pressed-scale: initial;
+    --en-checkbox-pressed-shadow: initial;
+    --en-checkbox-release-duration: initial;
+    --en-choice-size: initial;
     --en-cluster-gap: initial;
     --en-color-accent-border: rgb(181.65277272 203.4391786 246.40882708 / 1);
     --en-color-accent-subtle: rgb(227.10943415 235.68356672 252.33563096 / 1);
@@ -2290,6 +2982,9 @@
     --en-color-picker-preview-size: initial;
     --en-color-plane-block-size: initial;
     --en-color-plane-radius: initial;
+    --en-color-plane-thumb-press-duration: initial;
+    --en-color-plane-thumb-pressed-scale: initial;
+    --en-color-plane-thumb-release-duration: initial;
     --en-color-plane-thumb-size: initial;
     --en-color-scrim: rgb(0 0 0 / 0.45);
     --en-color-selected: var(--en-palette-selected);
@@ -2309,6 +3004,13 @@
     --en-color-wheel-size: initial;
     --en-color-wheel-thumb-size: initial;
     --en-color-wheel-track-size: initial;
+    --en-combobox-trigger-press-duration: initial;
+    --en-combobox-trigger-pressed-background: initial;
+    --en-combobox-trigger-pressed-color: initial;
+    --en-combobox-trigger-pressed-offset: initial;
+    --en-combobox-trigger-pressed-scale: initial;
+    --en-combobox-trigger-pressed-shadow: initial;
+    --en-combobox-trigger-release-duration: initial;
     --en-control-background: initial;
     --en-control-border-color: initial;
     --en-control-color: initial;
@@ -2316,6 +3018,10 @@
     --en-control-min-size: initial;
     --en-control-radius: initial;
     --en-data-table-selection-width: initial;
+    --en-dialog-enter-duration: initial;
+    --en-dialog-enter-ease: initial;
+    --en-dialog-exit-duration: initial;
+    --en-dialog-exit-ease: initial;
     --en-divider-color: initial;
     --en-duration-enter: var(--en-duration-immediate);
     --en-duration-exit: var(--en-duration-immediate);
@@ -2323,7 +3029,9 @@
     --en-duration-focus-enter: var(--en-duration-immediate);
     --en-duration-focus-exit: var(--en-duration-immediate);
     --en-duration-immediate: 0ms;
+    --en-duration-press: 80ms;
     --en-duration-regular: 180ms;
+    --en-duration-release: 80ms;
     --en-duration-slow: 240ms;
     --en-duration-spin: 800ms;
     --en-ease-enter: var(--en-ease-standard);
@@ -2332,15 +3040,22 @@
     --en-ease-focus-exit: var(--en-ease-standard);
     --en-ease-standard: cubic-bezier(0.2, 0, 0, 1);
     --en-editor-token-background: initial;
+    --en-editor-token-block-padding: initial;
     --en-editor-token-border-color: initial;
     --en-editor-token-color: initial;
     --en-editor-token-gap: initial;
     --en-editor-token-hover-background: initial;
+    --en-editor-token-inline-padding: initial;
     --en-editor-token-min-size: initial;
-    --en-editor-token-padding-block: initial;
-    --en-editor-token-padding-inline: initial;
+    --en-editor-token-press-duration: initial;
     --en-editor-token-pressed-background: initial;
+    --en-editor-token-pressed-border-color: initial;
+    --en-editor-token-pressed-color: initial;
+    --en-editor-token-pressed-offset: initial;
+    --en-editor-token-pressed-scale: initial;
+    --en-editor-token-pressed-shadow: initial;
     --en-editor-token-radius: initial;
+    --en-editor-token-release-duration: initial;
     --en-editor-toolbar-background: initial;
     --en-editor-toolbar-gap: initial;
     --en-field-gap: initial;
@@ -2361,6 +3076,8 @@
     --en-font-body-size-large: calc(var(--en-font-body-size) * var(--en-size-type-scale-large));
     --en-font-body-size-medium: calc(var(--en-font-body-size) * var(--en-size-type-scale-medium));
     --en-font-body-size-small: calc(var(--en-font-body-size) * var(--en-size-type-scale-small));
+    --en-font-body-style: normal;
+    --en-font-body-tracking: 0px;
     --en-font-body-weight: 400;
     --en-font-code-family: ui-monospace, monospace;
     --en-font-data-family: system-ui, sans-serif;
@@ -2369,6 +3086,8 @@
     --en-font-data-size-large: calc(var(--en-font-data-size) * var(--en-size-type-scale-large));
     --en-font-data-size-medium: calc(var(--en-font-data-size) * var(--en-size-type-scale-medium));
     --en-font-data-size-small: calc(var(--en-font-data-size) * var(--en-size-type-scale-small));
+    --en-font-data-style: normal;
+    --en-font-data-tracking: 0px;
     --en-font-data-weight: 400;
     --en-font-heading-large-family: system-ui, sans-serif;
     --en-font-heading-large-line-height: 1.2;
@@ -2376,6 +3095,8 @@
     --en-font-heading-large-size-large: calc(var(--en-font-heading-large-size) * var(--en-size-type-scale-large));
     --en-font-heading-large-size-medium: calc(var(--en-font-heading-large-size) * var(--en-size-type-scale-medium));
     --en-font-heading-large-size-small: calc(var(--en-font-heading-large-size) * var(--en-size-type-scale-small));
+    --en-font-heading-large-style: normal;
+    --en-font-heading-large-tracking: 0px;
     --en-font-heading-large-weight: 600;
     --en-font-heading-medium-family: system-ui, sans-serif;
     --en-font-heading-medium-line-height: 1.3;
@@ -2383,6 +3104,8 @@
     --en-font-heading-medium-size-large: calc(var(--en-font-heading-medium-size) * var(--en-size-type-scale-large));
     --en-font-heading-medium-size-medium: calc(var(--en-font-heading-medium-size) * var(--en-size-type-scale-medium));
     --en-font-heading-medium-size-small: calc(var(--en-font-heading-medium-size) * var(--en-size-type-scale-small));
+    --en-font-heading-medium-style: normal;
+    --en-font-heading-medium-tracking: 0px;
     --en-font-heading-medium-weight: 600;
     --en-font-heading-small-family: system-ui, sans-serif;
     --en-font-heading-small-line-height: 1.4;
@@ -2390,6 +3113,8 @@
     --en-font-heading-small-size-large: calc(var(--en-font-heading-small-size) * var(--en-size-type-scale-large));
     --en-font-heading-small-size-medium: calc(var(--en-font-heading-small-size) * var(--en-size-type-scale-medium));
     --en-font-heading-small-size-small: calc(var(--en-font-heading-small-size) * var(--en-size-type-scale-small));
+    --en-font-heading-small-style: normal;
+    --en-font-heading-small-tracking: 0px;
     --en-font-heading-small-weight: 600;
     --en-font-input-family: var(--en-font-ui-family);
     --en-font-input-line-height: var(--en-font-ui-line-height);
@@ -2397,10 +3122,14 @@
     --en-font-input-size-large: calc(var(--en-font-input-size) * max(1, var(--en-size-type-scale-large)));
     --en-font-input-size-medium: calc(var(--en-font-input-size) * max(1, var(--en-size-type-scale-medium)));
     --en-font-input-size-small: calc(var(--en-font-input-size) * max(1, var(--en-size-type-scale-small)));
+    --en-font-input-style: var(--en-font-ui-style);
+    --en-font-input-tracking: var(--en-font-ui-tracking);
     --en-font-input-weight: 400;
     --en-font-label-strong-family: var(--en-font-ui-family);
     --en-font-label-strong-line-height: var(--en-font-ui-line-height);
     --en-font-label-strong-size: var(--en-font-ui-size);
+    --en-font-label-strong-style: var(--en-font-ui-style);
+    --en-font-label-strong-tracking: var(--en-font-ui-tracking);
     --en-font-label-strong-weight: 600;
     --en-font-metadata-family: system-ui, sans-serif;
     --en-font-metadata-line-height: 1.5;
@@ -2408,6 +3137,8 @@
     --en-font-metadata-size-large: calc(var(--en-font-metadata-size) * max(1, var(--en-size-type-scale-large)));
     --en-font-metadata-size-medium: calc(var(--en-font-metadata-size) * max(1, var(--en-size-type-scale-medium)));
     --en-font-metadata-size-small: calc(var(--en-font-metadata-size) * max(1, var(--en-size-type-scale-small)));
+    --en-font-metadata-style: normal;
+    --en-font-metadata-tracking: 0px;
     --en-font-metadata-weight: 400;
     --en-font-ui-family: system-ui, sans-serif;
     --en-font-ui-line-height: 1.5;
@@ -2415,11 +3146,15 @@
     --en-font-ui-size-large: calc(var(--en-font-ui-size) * max(1, var(--en-size-type-scale-large)));
     --en-font-ui-size-medium: calc(var(--en-font-ui-size) * max(1, var(--en-size-type-scale-medium)));
     --en-font-ui-size-small: calc(var(--en-font-ui-size) * max(1, var(--en-size-type-scale-small)));
+    --en-font-ui-style: normal;
+    --en-font-ui-tracking: 0px;
     --en-font-ui-weight: 400;
     --en-grid-gap: initial;
     --en-grid-item-min: initial;
     --en-icon-size: initial;
     --en-input-background: initial;
+    --en-input-border-color: initial;
+    --en-input-border-width: initial;
     --en-input-color: initial;
     --en-input-focus-accent-color: initial;
     --en-input-focus-accent-width: initial;
@@ -2428,7 +3163,11 @@
     --en-input-focus-halo-width: initial;
     --en-input-focus-offset: initial;
     --en-input-focus-width: initial;
+    --en-input-hover-border-color: initial;
     --en-input-inline-padding: initial;
+    --en-input-invalid-border-color: initial;
+    --en-input-invalid-border-width: initial;
+    --en-input-radius: initial;
     --en-inset-child-radius: initial;
     --en-inset-distance: initial;
     --en-inset-outer-radius: initial;
@@ -2445,6 +3184,8 @@
     --en-layout-prose-max: 66ch;
     --en-media-aspect-ratio: initial;
     --en-media-radius: initial;
+    --en-motion-press-offset: 0px;
+    --en-motion-press-scale: 1;
     --en-motion-surface-offset: 0px;
     --en-motion-surface-scale: 1;
     --en-navigation-active-background: initial;
@@ -2452,9 +3193,28 @@
     --en-navigation-background: initial;
     --en-navigation-border-color: initial;
     --en-navigation-color: initial;
+    --en-navigation-current-background: initial;
+    --en-navigation-current-color: initial;
+    --en-navigation-current-indicator-color: initial;
+    --en-navigation-current-indicator-width: initial;
     --en-navigation-gap: initial;
+    --en-navigation-hover-background: initial;
+    --en-navigation-hover-color: initial;
     --en-navigation-indent: initial;
     --en-navigation-link-radius: initial;
+    --en-navigation-press-duration: initial;
+    --en-navigation-pressed-background: initial;
+    --en-navigation-pressed-color: initial;
+    --en-navigation-pressed-offset: initial;
+    --en-navigation-pressed-scale: initial;
+    --en-navigation-pressed-shadow: initial;
+    --en-navigation-release-duration: initial;
+    --en-number-step-press-duration: initial;
+    --en-number-step-pressed-background: initial;
+    --en-number-step-pressed-offset: initial;
+    --en-number-step-pressed-scale: initial;
+    --en-number-step-pressed-shadow: initial;
+    --en-number-step-release-duration: initial;
     --en-option-active-background: initial;
     --en-option-active-color: initial;
     --en-option-background: initial;
@@ -2479,14 +3239,20 @@
     --en-option-list-padding: initial;
     --en-option-list-radius: initial;
     --en-option-list-shadow: initial;
+    --en-option-press-duration: initial;
     --en-option-pressed-background: initial;
     --en-option-pressed-color: initial;
+    --en-option-pressed-offset: initial;
+    --en-option-pressed-scale: initial;
+    --en-option-pressed-shadow: initial;
     --en-option-radius: initial;
+    --en-option-release-duration: initial;
     --en-option-rest-background: initial;
     --en-option-rest-color: initial;
     --en-option-selected-background: initial;
     --en-option-selected-color: initial;
     --en-option-selected-font-weight: initial;
+    --en-overlay-arrow-size: initial;
     --en-overlay-background: initial;
     --en-overlay-border-color: initial;
     --en-overlay-color: initial;
@@ -2521,6 +3287,10 @@
     --en-palette-text: rgb(27 31 36 / 1);
     --en-palette-text-muted: rgb(86 97 113 / 1);
     --en-palette-warning-text: rgb(138 75 5 / 1);
+    --en-popup-enter-duration: initial;
+    --en-popup-enter-ease: initial;
+    --en-popup-exit-duration: initial;
+    --en-popup-exit-ease: initial;
     --en-presence-background: initial;
     --en-presence-border-color: initial;
     --en-presence-busy-color: initial;
@@ -2536,6 +3306,12 @@
     --en-progress-steps-gap: initial;
     --en-progress-track-color: initial;
     --en-prose-max-inline-size: initial;
+    --en-radio-press-duration: initial;
+    --en-radio-pressed-border-color: initial;
+    --en-radio-pressed-offset: initial;
+    --en-radio-pressed-scale: initial;
+    --en-radio-pressed-shadow: initial;
+    --en-radio-release-duration: initial;
     --en-radio-selected-color: initial;
     --en-radius-choice: 2px;
     --en-radius-choice-large: calc(var(--en-radius-choice) * var(--en-size-scale-large));
@@ -2554,11 +3330,34 @@
     --en-radius-dialog-medium: calc(var(--en-radius-dialog) * var(--en-size-scale-medium));
     --en-radius-dialog-small: calc(var(--en-radius-dialog) * var(--en-size-scale-small));
     --en-radius-pill: 9999px;
+    --en-rating-press-duration: initial;
+    --en-rating-pressed-background: initial;
+    --en-rating-pressed-color: initial;
+    --en-rating-pressed-offset: initial;
+    --en-rating-pressed-scale: initial;
+    --en-rating-pressed-shadow: initial;
+    --en-rating-release-duration: initial;
     --en-rating-star-radius: initial;
     --en-rhythm-base: 0.25rem;
     --en-segmented-control-frame-inset: initial;
+    --en-segmented-press-duration: initial;
+    --en-segmented-pressed-background: initial;
+    --en-segmented-pressed-border-color: initial;
+    --en-segmented-pressed-color: initial;
+    --en-segmented-pressed-offset: initial;
+    --en-segmented-pressed-scale: initial;
+    --en-segmented-pressed-shadow: initial;
+    --en-segmented-release-duration: initial;
     --en-select-appearance: initial;
+    --en-select-press-duration: initial;
+    --en-select-pressed-background: initial;
+    --en-select-pressed-color: initial;
+    --en-select-pressed-offset: initial;
+    --en-select-pressed-scale: initial;
+    --en-select-pressed-shadow: initial;
+    --en-select-release-duration: initial;
     --en-shadow-dialog: 0px 12px 40px 0px rgb(0 0 0 / 0.18);
+    --en-shadow-none: 0px 0px 0px 0px rgb(0 0 0 / 0);
     --en-shadow-overlay: 0px 4px 16px 0px rgb(0 0 0 / 0.18);
     --en-size-avatar: 2.5rem;
     --en-size-avatar-large: calc(var(--en-size-avatar) * var(--en-size-scale-large));
@@ -2586,6 +3385,7 @@
     --en-size-icon-medium: calc(var(--en-size-icon) * var(--en-size-scale-medium));
     --en-size-icon-small: calc(var(--en-size-icon) * var(--en-size-scale-small));
     --en-size-icon-stroke: 1.5px;
+    --en-size-navigation-indicator: 0px;
     --en-size-progress: 0.5rem;
     --en-size-progress-large: calc(var(--en-size-progress) * var(--en-size-scale-large));
     --en-size-progress-medium: calc(var(--en-size-progress) * var(--en-size-scale-medium));
@@ -2637,6 +3437,9 @@
     --en-skeleton-color: initial;
     --en-skeleton-size: initial;
     --en-slider-length: initial;
+    --en-slider-thumb-press-duration: initial;
+    --en-slider-thumb-pressed-scale: initial;
+    --en-slider-thumb-release-duration: initial;
     --en-space-0: calc(var(--en-rhythm-base) * 0);
     --en-space-0-5: calc(var(--en-rhythm-base) * 0.5);
     --en-space-1: calc(var(--en-rhythm-base) * 1);
@@ -2708,13 +3511,36 @@
     --en-surface-color: initial;
     --en-surface-padding: initial;
     --en-surface-radius: initial;
+    --en-surface-shadow: initial;
     --en-swatch-size: initial;
+    --en-switch-block-size: initial;
+    --en-switch-inline-size: initial;
+    --en-switch-press-duration: initial;
+    --en-switch-pressed-border-color: initial;
+    --en-switch-pressed-offset: initial;
+    --en-switch-pressed-scale: initial;
+    --en-switch-pressed-shadow: initial;
+    --en-switch-release-duration: initial;
+    --en-switch-thumb-pressed-size: initial;
+    --en-switch-thumb-size: initial;
     --en-tab-background: initial;
     --en-tab-color: initial;
+    --en-tab-hover-background: initial;
+    --en-tab-hover-color: initial;
+    --en-tab-indicator-color: initial;
+    --en-tab-press-duration: initial;
+    --en-tab-pressed-background: initial;
+    --en-tab-pressed-color: initial;
+    --en-tab-pressed-offset: initial;
+    --en-tab-pressed-scale: initial;
+    --en-tab-pressed-shadow: initial;
+    --en-tab-release-duration: initial;
+    --en-tab-selected-background: initial;
+    --en-tab-selected-color: initial;
     --en-table-background: initial;
     --en-table-border-color: initial;
-    --en-table-cell-padding-block: initial;
-    --en-table-cell-padding-inline: initial;
+    --en-table-cell-block-padding: initial;
+    --en-table-cell-inline-padding: initial;
     --en-table-color: initial;
     --en-table-footer-background: initial;
     --en-table-footer-color: initial;
@@ -2732,6 +3558,10 @@
     --en-toast-danger-border-color: initial;
     --en-toast-danger-color: initial;
     --en-toast-danger-icon-color: initial;
+    --en-toast-enter-duration: initial;
+    --en-toast-enter-ease: initial;
+    --en-toast-exit-duration: initial;
+    --en-toast-exit-ease: initial;
     --en-toast-icon-color: initial;
     --en-toast-info-background: initial;
     --en-toast-info-border-color: initial;

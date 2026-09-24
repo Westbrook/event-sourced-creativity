@@ -50,6 +50,18 @@ export class StaticStylesController {
         if (this.#attempted)
             return;
         this.#attempted = true;
+        // Fresh client roots lose adopted sheets on a cross-document move too.
+        // Remember the source styles without allocating another sheet or DOM node.
+        const root = this.#host.renderRoot;
+        if (!this.#candidate && root && 'adoptedStyleSheets' in root && root.adoptedStyleSheets.length) {
+            const styles = resultsFor(this.#host);
+            if (styles) {
+                this.#root = root;
+                this.#document = this.#host.ownerDocument;
+                this.#styles = styles;
+                this.#ownedSheets = styles.map(style => style.styleSheet).filter((sheet) => !!sheet);
+            }
+        }
         // Controller callbacks precede firstUpdated/updated. Let those callbacks
         // finish before deciding whether another sheet requires the SSR ordering.
         void this.#host.updateComplete.then(() => this.#adopt(), () => { this.#candidate = undefined; });
@@ -100,7 +112,7 @@ export class StaticStylesController {
     #restoreAfterDocumentMove() {
         const root = this.#root;
         const styles = this.#styles;
-        if (!root || root !== this.#host.shadowRoot || !styles)
+        if (!root || root !== this.#host.renderRoot || !styles)
             return;
         // Cross-document adoption can clear the browser's sheet list. Recreate only
         // our static fallback before the next paint, preserving content and focus.

@@ -17,6 +17,10 @@ let nextTooltipId = 0;
  * @tag en-tooltip
  * @tagname en-tooltip
  * @slot content - One phrasing element containing supplemental text; no controls.
+ * @csspart arrow - Decorative pointer; size with --en-overlay-arrow-size.
+ * @csspart arrow-shape - SVG path styling; use arrow-path for portable shape customization.
+ * @csspart content - Scrollable content inside the arrow surface.
+ * @cssprop --en-overlay-arrow-size - Pointer projection length; base is twice this size.
  * @csspart surface - Hoverable tooltip surface in the native top layer.
  * @fires {import('../dialog/types.js').OverlayChangeEvent} en-change - Cancelable tentative open state: {previous, proposed, reason}.
  * @cssprop --en-overlay-background - Tooltip background.
@@ -31,6 +35,8 @@ let nextTooltipId = 0;
 export class EnTooltip extends FloatingSurface {
     static properties = {
         ...FloatingSurface.properties,
+        arrow: { type: Boolean, reflect: true },
+        arrowPath: { type: String, attribute: 'arrow-path' },
         warmupGroup: { type: String, attribute: 'warmup-group' },
         showDelay: { type: Number, attribute: 'show-delay' },
         hideDelay: { type: Number, attribute: 'hide-delay' },
@@ -76,6 +82,8 @@ export class EnTooltip extends FloatingSurface {
     #lastSurfacePoint = null;
     constructor() {
         super();
+        this.arrow = false;
+        this.arrowPath = 'M0 0 L8 8 L16 0';
         this.warmupGroup = '';
         this.showDelay = 300;
         this.hideDelay = 150;
@@ -604,7 +612,7 @@ export class EnTooltip extends FloatingSurface {
         }, Math.max(0, this.hideDelay));
     };
     render() {
-        return tooltipTemplate({ contentSlotChange: this.readContent, nativeToggle: this.nativeToggle,
+        return tooltipTemplate({ arrow: this.arrow, arrowPath: this.arrowPath, contentSlotChange: this.readContent, nativeToggle: this.nativeToggle,
             pointerEnter: this.#surfaceEnter, pointerLeave: this.#surfaceLeave, pointerMove: this.#trackSurface });
     }
 }

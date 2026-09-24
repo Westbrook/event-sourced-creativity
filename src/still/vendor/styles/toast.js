@@ -4,7 +4,9 @@ import { token as t } from './internal/values.js';
 import { focusVisibleStylesFor } from './internal/focus.js';
 export const toastStyles = sizedStyles(css `
  .en-toast { --_toast-background:var(--en-toast-background, ${t('--en-color-surface')});--_toast-color:var(--en-toast-color, ${t('--en-color-text')});--_toast-icon-color:var(--en-toast-icon-color,currentColor);display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;column-gap:${t('--en-space-3')};padding:var(--en-toast-padding, ${t('--en-space-panel')});border:${t('--en-border-width')} solid var(--en-toast-border-color, ${t('--en-color-line')});border-radius:var(--en-toast-radius, ${t('--en-radius-container')});background:var(--_toast-background);color:var(--_toast-color);box-shadow:var(--en-toast-shadow,none);min-inline-size:0; }
- .en-toast[hidden] { display:none; }
+ .en-toast { transition: opacity clamp(0ms,var(--en-toast-exit-duration,${t('--en-duration-exit')}),500ms) var(--en-toast-exit-ease,${t('--en-ease-exit')}), display clamp(0ms,var(--en-toast-exit-duration,${t('--en-duration-exit')}),500ms) allow-discrete; }
+ .en-toast[hidden] { display:none; opacity:0; pointer-events:none; }
+ @media (prefers-reduced-motion:reduce) { .en-toast { transition:none; animation:none; } }
  ${['info', 'success', 'warning', 'danger'].map(variant => css `
    .en-toast[data-variant=${unsafeCSS(variant)}] {
     --_toast-background:var(${unsafeCSS(`--en-toast-${variant}-background`)},var(--en-toast-background,${t('--en-color-surface')}));
@@ -44,6 +46,6 @@ export const toastStyles = sizedStyles(css `
  .en-toast-region__summary[hidden] { display:none; }
  .en-toast__sr { position:absolute;inline-size:1px;block-size:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0; }
  ${focusVisibleStylesFor(css `.en-toast-region:focus-visible,.en-toast-region__history summary:focus-visible`)}
- @media (prefers-reduced-motion:no-preference) { .en-toast { animation:en-toast-in ${t('--en-duration-enter')} ${t('--en-ease-enter')}; } @keyframes en-toast-in { from {opacity:0;translate:0 ${t('--en-motion-surface-offset')};} to {opacity:1;translate:0 0;} } }
+ @media (prefers-reduced-motion:no-preference) { .en-toast { animation:en-toast-in clamp(0ms,var(--en-toast-enter-duration,${t('--en-duration-enter')}),500ms) var(--en-toast-enter-ease,${t('--en-ease-enter')}); } @keyframes en-toast-in { from {opacity:0;translate:0 ${t('--en-motion-surface-offset')};} to {opacity:1;translate:0 0;} } }
  @media (forced-colors:active) { .en-toast[data-variant] { background:Canvas;color:CanvasText;border-color:CanvasText; } }
 `);

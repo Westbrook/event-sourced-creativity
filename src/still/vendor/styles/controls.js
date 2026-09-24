@@ -1,4 +1,11 @@
+import { insetButtonStyles, insetActionContext } from './internal/inset-action.js';
+import { pressStyles } from './internal/press.js';
+import { pressRecipes } from './internal/press-recipes.js';
+import { fieldPresentation, fieldBorderWidth, fieldInvalidWidth, fieldRadius } from './internal/field-presentation.js';
+import { selectChevron } from './internal/select-chevron.js';
+import { controlTargetSize, pointerTargetSize } from './internal/target-size.js';
 import { css } from 'lit';
+import { descriptionStyles } from './internal/description.js';
 import { nativeSurfaceMotion } from './internal/surface-motion.js';
 import { radioRules } from './internal/radio-rules.js';
 import { sizedStyles } from './internal/sizing.js';
@@ -10,16 +17,18 @@ import { buttonAppearanceStyles, buttonForcedHoverStyles } from './internal/butt
 import { linkAppearanceStyles, linkDisabledStyles, linkForcedColorStyles } from './internal/link-rules.js';
 import { controlBlockSizeStyles, controlSurfaceStyles, controlEnvelopeStyles, controlDisabledStyles, controlTouchBlockStyles, controlTouchInlineStyles, controlReducedMotionStyles, controlForcedColorStyles, controlForcedDisabledStyles } from './internal/control-shared.js';
 const inputInlinePadding = o('--en-input-inline-padding', o('--en-control-inline-padding', t('--en-space-control-inline')));
-const numberGroupRadius = o('--en-control-radius', t('--en-radius-control'));
-const numberStepRadius = css `max(0px, ${numberGroupRadius} - ${t('--en-border-width')})`;
+const numberGroupRadius = fieldRadius;
+const numberStepRadius = css `max(0px, ${numberGroupRadius} - ${fieldBorderWidth})`;
 // The single-line editor centers its line within the shared target envelope.
 // Give multiline editors that same first-line inset, including rows=1 and coarse
 // targets, without fixing their height or changing native rows/resize behavior.
 const inputBlockPadding = css `max(
   ${t('--en-space-control-block')},
-  calc((var(--_en-text-control-block-size) - ${t('--en-font-input-size')} * ${t('--en-font-input-line-height')}) / 2 - ${t('--en-border-width')})
+  calc((var(--_en-text-control-block-size) - ${t('--en-font-input-size')} * ${t('--en-font-input-line-height')}) / 2 - ${fieldBorderWidth})
 )`;
 /** Native controls and action surfaces. Behavior, names, and form association belong to the host. */
+// Number-step selectors must outrank the shared inset icon-button fallback so
+// the compound frame includes its border within the shared block-size minimum.
 export const controlStyles = sizedStyles(css `
   /* Compute on each consumer so local token/part overrides retain their scope. */
   ${controlBlockSizeStyles(css `.en-button:not(.en-icon-button), .en-button[data-icon-only], .en-input, .en-textarea, .en-select, .en-number-input, .en-number-step, .en-color-control`)}
@@ -38,7 +47,7 @@ export const controlStyles = sizedStyles(css `
   ${linkDisabledStyles}
   .en-input, .en-textarea, .en-select {
     inline-size: 100%;
-    font: ${t('--en-font-input-weight')} ${t('--en-font-input-size')} / ${t('--en-font-input-line-height')} ${t('--en-font-input-family')};
+    font: ${t('--en-font-input-weight')} ${t('--en-font-input-size')} / ${t('--en-font-input-line-height')} ${t('--en-font-input-family')}; font-style: ${t('--en-font-input-style')}; letter-spacing: ${t('--en-font-input-tracking')};
   }
   /* Apply after the font shorthand so editable numeric content retains equal
      digit widths. Input modes also cover text-based numeric editors. */
@@ -72,26 +81,27 @@ export const controlStyles = sizedStyles(css `
   /* The text-field marker keeps stronger invalid geometry out of other native controls.
      Preserve border + padding on each edge, including scoped padding/base-border tokens. */
   .en-text-input:is([aria-invalid='true'], :user-invalid) {
-    border-width: ${t('--en-border-invalid-width')};
-    padding-block: max(0px, calc(${inputBlockPadding} + ${t('--en-border-width')} - ${t('--en-border-invalid-width')}));
-    padding-inline: max(0px, calc(${inputInlinePadding} + ${t('--en-border-width')} - ${t('--en-border-invalid-width')}));
+    border-width: ${fieldInvalidWidth};
+    padding-block: max(0px, calc(${inputBlockPadding} + ${fieldBorderWidth} - ${fieldInvalidWidth}));
+    padding-inline: max(0px, calc(${inputInlinePadding} + ${fieldBorderWidth} - ${fieldInvalidWidth}));
   }
+  ${fieldPresentation(css `:is(.en-input, .en-textarea, .en-select, .en-number-group)`, css `:is(.en-input, .en-textarea, .en-select)[aria-invalid='true'], :is(.en-input, .en-textarea, .en-select):user-invalid, .en-number-group[data-invalid]`)}
   .en-input-group { display: flex; align-items: stretch; gap: ${t('--en-space-1')}; min-inline-size: 0; }
   .en-input-group > .en-input { flex: 1 1 auto; inline-size: 0; min-inline-size: 0; }
   .en-number-group {
     gap: 0;
     padding: 0;
-    border: ${t('--en-border-width')} solid ${o('--en-control-border-color', t('--en-color-boundary'))};
+    border: ${fieldBorderWidth} solid ${o('--en-input-border-color', o('--en-control-border-color', t('--en-color-boundary')))};
     border-radius: ${numberGroupRadius};
     background: ${o('--en-input-background', o('--en-control-background', t('--en-color-surface')))};
   }
-  .en-number-group[data-invalid] { border-color: ${t('--en-color-danger-text')}; }
-  .en-number-group > :is(.en-number-input, .en-number-step) { min-block-size: max(calc(var(--_en-text-control-block-size) - 2 * ${t('--en-border-width')}), ${t('--en-size-target-min')}); }
+  .en-number-group[data-invalid] { border-color: ${o('--en-input-invalid-border-color', t('--en-color-danger-text'))}; }
+  .en-number-group > :is(.en-number-input, .en-number-step, button.en-button.en-number-step) { min-block-size: max(calc(var(--_en-text-control-block-size) - 2 * ${fieldBorderWidth}), ${t('--en-size-target-min')}); }
   .en-number-group > .en-number-input { border: 0; border-radius: 0; background: none; appearance: textfield; }
   .en-number-input::-webkit-inner-spin-button, .en-number-input::-webkit-outer-spin-button { appearance: none; margin: 0; }
   .en-number-step {
     flex: none;
-    min-inline-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-min')});
+    min-inline-size: ${controlTargetSize()};
     padding-inline: ${t('--en-space-control-block')};
     border: 0;
     border-inline-start: ${t('--en-border-width')} solid ${t('--en-color-line')};
@@ -101,6 +111,7 @@ export const controlStyles = sizedStyles(css `
   }
   /* Match the frame's override as well as its token. Keep overflow visible so
      consumer-defined outward focus contours remain intact. */
+  .en-number-step:not(:disabled):not([aria-disabled='true']):active { background: var(--en-button-pressed-background, ${t('--en-color-accent-subtle')}); }
   .en-number-step:last-child { border-start-end-radius: ${numberStepRadius}; border-end-end-radius: ${numberStepRadius}; }
   .en-number-step:first-child { border-inline-start: 0; border-inline-end: ${t('--en-border-width')} solid ${t('--en-color-line')}; border-start-start-radius: ${numberStepRadius}; border-end-start-radius: ${numberStepRadius}; }
 
@@ -111,8 +122,8 @@ export const controlStyles = sizedStyles(css `
   ${radioRules}
   .en-checkbox, .en-switch {
     flex: none;
-    inline-size: ${t('--en-size-icon')};
-    block-size: ${t('--en-size-icon')};
+    inline-size: ${o('--en-choice-size', t('--en-size-icon'))};
+    block-size: ${o('--en-choice-size', t('--en-size-icon'))};
     margin: 0;
     accent-color: ${t('--en-color-action')};
   }
@@ -144,8 +155,8 @@ export const controlStyles = sizedStyles(css `
     position: relative;
     appearance: none;
     box-sizing: border-box;
-    inline-size: ${t('--en-size-switch-inline')};
-    block-size: ${t('--en-size-switch-block')};
+    inline-size: ${o('--en-switch-inline-size', t('--en-size-switch-inline'))};
+    block-size: ${o('--en-switch-block-size', t('--en-size-switch-block'))};
     border: ${t('--en-border-width')} solid ${t('--en-color-boundary')};
     border-radius: ${t('--en-radius-pill')};
     background: ${t('--en-color-surface-subtle')};
@@ -153,20 +164,26 @@ export const controlStyles = sizedStyles(css `
   }
   .en-switch::before {
     content: '';
+    pointer-events: none;
     position: absolute;
     inset-block-start: ${t('--en-space-switch-inset')};
     inset-inline-start: ${t('--en-space-switch-inset')};
-    inline-size: ${t('--en-size-switch-thumb')};
-    block-size: ${t('--en-size-switch-thumb')};
+    --_en-switch-thumb-inline: ${o('--en-switch-thumb-size', t('--en-size-switch-thumb'))};
+    inline-size: var(--_en-switch-thumb-inline);
+    block-size: ${o('--en-switch-thumb-size', t('--en-size-switch-thumb'))};
     border-radius: ${t('--en-radius-pill')};
     background: ${t('--en-color-text-muted')};
-    transition: inset-inline-start ${t('--en-duration-fast')} ${t('--en-ease-standard')};
+    transition: inset-inline-start var(--_en-press-duration, ${t('--en-duration-fast')}) ${t('--en-ease-standard')}, inline-size var(--_en-press-duration, ${t('--en-duration-fast')}) ${t('--en-ease-standard')};
   }
   .en-switch:checked { background: ${t('--en-color-action')}; border-color: ${t('--en-color-action')}; }
-  .en-switch:checked::before { inset-inline-start: calc(100% - ${t('--en-size-switch-thumb')} - ${t('--en-space-switch-inset')}); background: ${t('--en-color-on-action')}; }
+  .en-switch:checked::before { inset-inline-start: calc(100% - var(--_en-switch-thumb-inline) - ${t('--en-space-switch-inset')}); background: ${t('--en-color-on-action')}; }
+  .en-switch:not(:disabled):is(:active, .en-choice:active > .en-switch)::before { --_en-switch-thumb-inline: clamp(0px, var(--en-switch-thumb-pressed-size, var(--en-switch-thumb-size, ${t('--en-size-switch-thumb')})), calc(100% - 2 * ${t('--en-space-switch-inset')})); }
+  @media (prefers-reduced-motion: reduce) { .en-switch:is(:active, .en-choice:active > .en-switch)::before { --_en-switch-thumb-inline: var(--en-switch-thumb-size, ${t('--en-size-switch-thumb')}); transition: none; } }
+  :host([data-press=none]) .en-switch:is(:active, .en-choice:active > .en-switch)::before { --_en-switch-thumb-inline: var(--en-switch-thumb-size, ${t('--en-size-switch-thumb')}); }
   .en-switch:disabled { cursor: default; border-color: ${t('--en-color-boundary')}; background: ${t('--en-color-surface-subtle')}; }
+  :is(.en-checkbox, .en-switch):not(:disabled):active { border-color: ${t('--en-color-action-pressed')}; }
   .en-switch:disabled::before { background: ${t('--en-color-text-muted')}; }
-  .en-range { inline-size: 100%; min-inline-size: ${t('--en-size-target-min')}; min-block-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-min')}); margin: 0; accent-color: ${t('--en-color-action')}; }
+  .en-range { inline-size: 100%; min-inline-size: ${t('--en-size-target-min')}; min-block-size: ${controlTargetSize()}; margin: 0; accent-color: ${t('--en-color-action')}; }
   .en-range-row { display: flex; align-items: center; gap: ${t('--en-space-3')}; min-inline-size: 0; }
   .en-range-row > .en-range { flex: 1 1 auto; inline-size: 0; }
   .en-range-row[data-editable] { flex-wrap: wrap; }
@@ -184,8 +201,8 @@ export const controlStyles = sizedStyles(css `
     direction: rtl;
     flex: none;
     inline-size: ${o('--en-slider-length', t('--en-size-range-length'))};
-    min-inline-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-min')});
-    block-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-min')});
+    min-inline-size: ${controlTargetSize()};
+    block-size: ${controlTargetSize()};
   }
   .en-range-row[data-orientation='vertical'] > .en-range-editor {
     flex: none;
@@ -193,6 +210,10 @@ export const controlStyles = sizedStyles(css `
   }
   .en-range-error[data-pending] { visibility: hidden; }
   .en-range-row > output { flex: none; font-variant-numeric: tabular-nums; color: ${t('--en-color-text')}; }
+  ${pressStyles(css `.en-checkbox`, css `.en-checkbox:not(:disabled):not([data-press='none']):is(:active, .en-choice:active > .en-checkbox)`, pressRecipes['checkbox'])}
+  ${pressStyles(css `.en-switch`, css `.en-switch:not(:disabled):not([data-press='none']):is(:active, .en-choice:active > .en-switch)`, pressRecipes['switch'])}
+  ${pressStyles(css `.en-select`, css `.en-select:not(:disabled):not([data-press='none']):active`, pressRecipes['select'])}
+  ${pressStyles(css `.en-number-step`, css `.en-number-step:not(:disabled):not([aria-disabled='true']):not([data-press='none']):active`, pressRecipes['number-step'])}
   ${focusStyles}
   ${fieldFocusStyles}
   ${focusStylesFor(css `.en-number-group > .en-number-input`, { family: 'input', inset: true, halo: false })}
@@ -201,11 +222,11 @@ export const controlStyles = sizedStyles(css `
   @media (any-pointer: coarse) {
     ${controlBlockSizeStyles(css `.en-button:not(.en-icon-button), .en-button[data-icon-only], .en-input, .en-textarea, .en-select, .en-number-input, .en-number-step, .en-color-control`, true)}
     ${controlTouchBlockStyles(css `.en-button, .en-control, .en-input, .en-textarea, .en-select, .en-range`)}
-    .en-range-row[data-orientation='vertical'] > .en-range { min-inline-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-touch')}); }
+    .en-range-row[data-orientation='vertical'] > .en-range { min-inline-size: ${controlTargetSize(true)}; }
     ${controlEnvelopeStyles(css `.en-button:not(.en-icon-button), .en-input, .en-textarea, .en-select`)}
     .en-color-control { block-size: var(--_en-text-control-block-size); }
     ${controlTouchInlineStyles(css `.en-icon-button, .en-number-step`)}
-    .en-number-group > :is(.en-number-input, .en-number-step) { min-block-size: max(calc(var(--_en-text-control-block-size) - 2 * ${t('--en-border-width')}), ${t('--en-size-target-touch')}); }
+    .en-number-group > :is(.en-number-input, .en-number-step, button.en-button.en-number-step) { min-block-size: max(calc(var(--_en-text-control-block-size) - 2 * ${fieldBorderWidth}), ${pointerTargetSize(true)}); }
   }
   @media (prefers-reduced-motion: reduce) { ${controlReducedMotionStyles(css `.en-button, .en-switch::before`)} }
   @media (forced-colors: active) {
@@ -224,14 +245,14 @@ export const controlStyles = sizedStyles(css `
     .en-switch::before { background: ButtonText; }
     .en-switch:checked { background: Highlight; border-color: Highlight; }
     .en-switch:checked::before { background: HighlightText; }
-    .en-switch:disabled { background: Canvas; border-color: GrayText; }
-    .en-switch:disabled::before { background: GrayText; }
+  .en-switch:disabled { background: Canvas; border-color: GrayText; }
+    :is(.en-checkbox, .en-switch):not(:disabled):active { border-color: Highlight; box-shadow: none; }
+  .en-switch:disabled::before { background: GrayText; }
   }
+  ${insetButtonStyles}
 `);
 const optionListRadius = o('--en-option-list-radius', o('--en-overlay-radius', t('--en-radius-container')));
 const optionListPadding = css `max(${o('--en-option-list-padding', o('--en-overlay-padding', t('--en-space-1')))}, ${focusExtent({ family: 'option', inset: true })})`;
-// Match the combobox's 24px chevron: 1.5px stroke, rounded caps and join.
-const selectChevron = css `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`;
 /** Progressive enhancement of the native select; auto restores the OS picker. */
 export const selectEnhancementStyles = sizedStyles(css `
   .en-select { min-inline-size: 0; max-inline-size: 100%; white-space: nowrap; text-overflow: ellipsis; }
@@ -287,7 +308,7 @@ export const selectEnhancementStyles = sizedStyles(css `
     .en-select option {
       white-space: normal; overflow-wrap: anywhere;
       position: relative;
-      min-block-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-min')});
+      min-block-size: ${controlTargetSize()};
       padding: ${o('--en-option-block-padding', t('--en-space-control-block'))} ${o('--en-option-inline-padding', t('--en-space-control-inline'))};
       border-radius: ${o('--en-option-radius', css `max(0px, ${optionListRadius} - ${optionListPadding} - ${t('--en-border-width')})`)};
     }
@@ -314,7 +335,7 @@ export const selectEnhancementStyles = sizedStyles(css `
       background-color: currentColor;
       mask: ${selectChevron} center / contain no-repeat;
     }
-    @media (any-pointer: coarse) { .en-select option { min-block-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-touch')}); } }
+    @media (any-pointer: coarse) { .en-select option { min-block-size: ${controlTargetSize(true)}; } }
     @media (forced-colors: active) {
       .en-select::picker(select) { background: Canvas; color: CanvasText; border-color: ButtonText; box-shadow: none; }
       .en-select option { background: Canvas; color: CanvasText; }
@@ -335,15 +356,10 @@ export const formStyles = sizedStyles(css `
   /* A fieldset legend already separates its first content through its margin. */
   .en-field > .en-legend + :not(.en-description) { margin-block-start: 0; }
   .en-label { display: block; color: ${t('--en-color-text')}; font-weight: ${t('--en-font-label-strong-weight')}; overflow-wrap: break-word; }
-  .en-description, .en-error { margin: 0; font-size: ${t('--en-font-ui-size')}; line-height: ${t('--en-font-body-line-height')}; overflow-wrap: break-word; }
-  /* No box or gap is created by the empty fallback. An assigned root remains
-     present even when its light DOM is empty: it may render its own shadow. */
-  .en-description { display: flow-root; color: ${t('--en-color-text-muted')}; }
-  .en-description-fallback,
-  .en-description > slot::slotted(:not([hidden])) { display: block; margin-block-start: var(--_en-field-gap); }
-  .en-description-fallback:empty { display: none; }
+  ${descriptionStyles}
+  .en-error { margin: 0; font-size: ${t('--en-font-ui-size')}; line-height: ${t('--en-font-body-line-height')}; overflow-wrap: break-word; }
   .en-error { color: ${t('--en-color-danger-text')}; }
-  .en-choice { display: flex; align-items: center; gap: ${t('--en-space-icon-label')}; min-block-size: max(${t('--en-size-control-min')}, ${t('--en-size-target-min')}); min-inline-size: ${t('--en-size-target-min')}; cursor: pointer; }
+  .en-choice { display: flex; align-items: center; gap: ${t('--en-space-icon-label')}; min-block-size: ${controlTargetSize()}; min-inline-size: ${t('--en-size-target-min')}; cursor: pointer; }
   .en-choice > :where(.en-label, .en-choice-content) { min-inline-size: 0; }
   .en-choice-content { --_en-field-gap: ${o('--en-field-gap', t('--en-space-control-description'))}; display: flex; flex-direction: column; gap: 0; }
   .en-fieldset { margin: 0; padding: 0; min-inline-size: 0; border: 0; }
@@ -351,6 +367,17 @@ export const formStyles = sizedStyles(css `
   .en-form-stack { display: flex; flex-direction: column; gap: ${t('--en-space-fields')}; }
   .en-validation-summary { padding: ${t('--en-space-panel')}; border: ${t('--en-border-width')} solid ${t('--en-color-danger-text')}; border-radius: ${t('--en-radius-container')}; }
   .en-validation-summary :where(ul, ol) { padding-inline-start: ${t('--en-space-6')}; }
-  @media (any-pointer: coarse) { .en-choice { min-block-size: ${t('--en-size-target-touch')}; } }
-  @media (forced-colors: active) { .en-label, .en-description, .en-error { color: CanvasText; } .en-validation-summary { border-color: CanvasText; } }
+  @media (any-pointer: coarse) { .en-choice { min-block-size: ${controlTargetSize(true)}; min-inline-size: ${pointerTargetSize(true)}; } }
+  @media (forced-colors: active) { .en-label, .en-error { color: CanvasText; } .en-validation-summary { border-color: CanvasText; } }
+`);
+/** Adorned single-line fields share a frame; slotted actions retain their own
+ * keyboard focus and receive compact geometry without changing their size API. */
+export const adornedFieldStyles = sizedStyles(css `
+  .en-adorned { display:flex !important; align-items:center; border:${fieldBorderWidth} solid ${o('--en-input-border-color', t('--en-color-boundary'))}; border-radius:${fieldRadius}; background:${o('--en-input-background', t('--en-color-surface'))}; }
+  .en-adorned > input { flex:1; min-inline-size:0; border:0; background:transparent; }
+  .en-adorned:has(:focus-visible) { outline:var(--en-input-focus-width, ${t('--en-focus-width')}) solid var(--en-input-focus-color, ${t('--en-color-focus')}); outline-offset:var(--en-input-focus-offset, ${t('--en-focus-offset')}); }
+  .en-adorned > input:focus-visible { outline:none; box-shadow:none; }
+  .en-adorned[data-invalid] { border-color:var(--en-input-invalid-border-color, ${t('--en-color-danger-text')}); }
+  .en-adorned slot::slotted(*) { margin-inline:${t('--en-space-2')}; }
+  ${insetActionContext(css `.en-adorned`, css `.en-adorned slot[name='help-action']::slotted(*)`, fieldRadius, fieldBorderWidth)}
 `);

@@ -1,0 +1,109 @@
+import { EnDialog } from '../dialog/dialog.js';
+/**
+ * Modal edge panel. Shares the dialog's focus, state, dismissal, and slot contract.
+ * Start and end follow inherited direction; left/right/top/bottom are fixed edges.
+ * Native focus is immediate while optional paint uses the dialog's travel distance toward the attached edge.
+ * Opt into presentation="responsive" to use bottom placement below responsive-query,
+ * retaining the authored placement for wider views and the same modal/control state.
+ *
+ * @cssprop --en-dialog-enter-duration - Optional family presentation; see the customization registry.
+ * @cssprop --en-dialog-enter-ease - Optional family presentation; see the customization registry.
+ * @cssprop --en-dialog-exit-duration - Optional family presentation; see the customization registry.
+ * @cssprop --en-dialog-exit-ease - Optional family presentation; see the customization registry.
+ * @cssprop --en-duration-enter - Optional native surface entry paint duration (0–500ms).
+ * @cssprop --en-duration-exit - Optional native surface exit paint duration (0–500ms); never delays state or focus.
+ * @cssprop --en-ease-enter - Native surface entry easing.
+ * @cssprop --en-ease-exit - Native surface exit easing.
+ * @cssprop --en-motion-surface-offset - Shared dialog/drawer travel (0–8px); attachment sets direction, and zero disables translation.
+ * @tag en-drawer
+ * @tagname en-drawer
+ * @cssprop --en-overlay-focus-width - Immediate primary focus contour width.
+ * @cssprop --en-overlay-focus-color - Immediate primary focus contour color.
+ * @cssprop --en-overlay-focus-offset - Signed primary focus contour offset.
+ * @cssprop --en-overlay-focus-halo-width - Supplemental outer focus halo width.
+ * @cssprop --en-overlay-focus-halo-color - Supplemental focus halo color; alpha is supported.
+ * @cssprop --en-duration-focus-enter - Supplemental halo and field-accent entry duration.
+ * @cssprop --en-duration-focus-exit - Supplemental halo and field-accent exit duration.
+ * @cssprop --en-ease-focus-enter - Supplemental focus entry timing function.
+ * @cssprop --en-ease-focus-exit - Supplemental focus exit timing function.
+ * @slot - Drawer body; flow content and controls.
+ * @slot label - Noninteractive title phrasing; falls back to the label attribute.
+ * @slot footer - Optional actions after the body.
+ * @csspart surface - Native modal drawer surface.
+ * @csspart header - Heading and dismiss action.
+ * @csspart heading - Visible drawer heading.
+ * @csspart close - Native control of the internal icon-only en-button, forwarded through exportparts.
+ * @csspart body - Content container.
+ * @csspart footer - Footer container.
+ * @fires {import('../dialog/types.js').OverlayChangeEvent} en-change - Cancelable tentative open state: {previous, proposed, reason}.
+ */
+export declare class EnDrawer<Events extends {
+    [K in keyof Events]: Event;
+} = import('../dialog/types.js').OverlayEventMap> extends EnDialog<Events> {
+    #private;
+    static properties: {
+        for: {
+            type: StringConstructor;
+            reflect: boolean;
+        };
+        kind: {
+            reflect: boolean;
+        };
+        description: {};
+        initialFocus: {
+            attribute: string;
+        };
+        open: {
+            type: BooleanConstructor;
+            reflect: boolean;
+            noAccessor: boolean;
+        };
+        label: {
+            type: StringConstructor;
+            useDefault: boolean;
+        };
+        closeLabel: {
+            type: StringConstructor;
+            attribute: string;
+            useDefault: boolean;
+        };
+        closedBy: {
+            type: StringConstructor;
+            attribute: string;
+            reflect: boolean;
+            noAccessor: boolean;
+        };
+        dismissible: {
+            type: BooleanConstructor;
+        };
+        backdropDismiss: {
+            type: BooleanConstructor;
+            attribute: string;
+            noAccessor: boolean;
+        };
+        presentation: {
+            type: StringConstructor;
+            reflect: boolean;
+        };
+        responsiveQuery: {
+            type: StringConstructor;
+            attribute: string;
+        };
+        placement: {
+            type: StringConstructor;
+            reflect: boolean;
+            noAccessor: boolean;
+        };
+    };
+    /** Viewport edge. Start/end follow direction; left/right do not swap in RTL.
+     * With presentation="responsive", the compact view uses bottom without changing this value.
+     */
+    get placement(): 'start' | 'end' | 'left' | 'right' | 'top' | 'bottom';
+    set placement(value: 'start' | 'end' | 'left' | 'right' | 'top' | 'bottom');
+    protected get surfaceClass(): string;
+}
+declare global {
+    interface HTMLElementTagNameMap {
+        'en-drawer': EnDrawer;
+    }
+}

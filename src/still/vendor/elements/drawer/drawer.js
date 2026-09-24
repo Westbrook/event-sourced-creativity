@@ -6,6 +6,10 @@ import { EnDialog } from '../dialog/dialog.js';
  * Opt into presentation="responsive" to use bottom placement below responsive-query,
  * retaining the authored placement for wider views and the same modal/control state.
  *
+ * @cssprop --en-dialog-enter-duration - Optional family presentation; see the customization registry.
+ * @cssprop --en-dialog-enter-ease - Optional family presentation; see the customization registry.
+ * @cssprop --en-dialog-exit-duration - Optional family presentation; see the customization registry.
+ * @cssprop --en-dialog-exit-ease - Optional family presentation; see the customization registry.
  * @cssprop --en-duration-enter - Optional native surface entry paint duration (0–500ms).
  * @cssprop --en-duration-exit - Optional native surface exit paint duration (0–500ms); never delays state or focus.
  * @cssprop --en-ease-enter - Native surface entry easing.

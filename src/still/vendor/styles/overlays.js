@@ -31,6 +31,12 @@ export const overlayStyles = sizedStyles(css `
   dialog.en-dialog[open], dialog.en-drawer[open] { display: flex; }
   dialog.en-dialog:not([open]), dialog.en-drawer:not([open]) { display: none; }
   .en-dialog::backdrop, .en-drawer::backdrop { background: ${t('--en-color-scrim')}; }
+  /* Optional guidance contributes flex items only when native slot content exists.
+     The stable description target adds no flex gap of its own. */
+  .en-overlay-description, .en-overlay-description > slot { display: contents; }
+  .en-overlay-description-fallback,
+  .en-overlay-description > slot::slotted(:not([hidden])) { display: block; margin: 0; overflow-wrap: break-word; }
+  .en-overlay-description-fallback:empty { display: none; }
   .en-overlay-header, .en-overlay-footer { display: flex; align-items: center; flex-wrap: wrap; gap: ${t('--en-space-3')}; min-inline-size: 0; }
   .en-overlay-header { justify-content: space-between; }
   .en-overlay-footer { justify-content: flex-end; gap: ${t('--en-space-actions')}; }
@@ -49,6 +55,22 @@ export const overlayStyles = sizedStyles(css `
   .en-popover { position: fixed; display: flex; flex-direction: column; margin: 0; row-gap: ${t('--en-space-4')}; border-radius: ${o('--en-overlay-radius', t('--en-radius-container'))}; }
   [popover].en-popover:not(:popover-open), [popover].en-tooltip:not(:popover-open) { display: none; }
   .en-tooltip { position: fixed; inline-size: max-content; margin: 0; row-gap: ${t('--en-space-2')}; padding: ${o('--en-overlay-padding', t('--en-space-2'))}; border-radius: ${o('--en-overlay-radius', t('--en-radius-control'))}; overflow-wrap: break-word; }
+  .en-overlay-content { display:contents; }
+  [data-arrow].en-popover, [data-arrow].en-tooltip { overflow:visible; padding:0; }
+  [data-arrow] > .en-overlay-content {
+    display:flex; flex-direction:column; gap:inherit; min-block-size:0; min-inline-size:0;
+    max-block-size:inherit; box-sizing:border-box; overflow:auto; border-radius:inherit;
+    padding:${o('--en-overlay-padding', t('--en-space-panel'))};
+  }
+  .en-tooltip[data-arrow] > .en-overlay-content { display:block; padding:${o('--en-overlay-padding', t('--en-space-2'))}; }
+  .en-overlay-arrow {
+    position:absolute; width:calc(2 * ${o('--en-overlay-arrow-size', t('--en-space-2'))});
+    height:${o('--en-overlay-arrow-size', t('--en-space-2'))};
+    overflow:visible; pointer-events:none; visibility:hidden; transform-origin:50% 0;
+    fill:${o('--en-overlay-background', t('--en-color-surface-raised'))};
+    stroke:${o('--en-overlay-border-color', t('--en-color-boundary'))}; stroke-width:${t('--en-border-width')};
+  }
+  @media (forced-colors:active) { .en-overlay-arrow { fill:Canvas; stroke:CanvasText; } }
   /* An outside separator is clipped at viewport-flush edges, even for a drawer
      that fills the whole viewport. Keep it separate from the immediate focus cue. */
   :where(.en-drawer) { outline: ${t('--en-border-width')} solid ${o('--en-overlay-border-color', t('--en-color-boundary'))}; outline-offset: 0; }

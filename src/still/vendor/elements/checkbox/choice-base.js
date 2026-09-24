@@ -118,9 +118,11 @@ export class ChoiceBase extends EnElement {
         }
         this.checkedDefaults.markDirty();
         const proposed = this.nativeControl?.checked ?? !this.checked;
+        const connected = this.isConnected;
         dispatchChange(this, {
             previous: this.checked, proposed, reason: 'toggle',
             getRevision: () => this.authorRevision,
+            canCommit: () => !this.effectiveDisabled && (!connected || this.isConnected),
             stage: (next) => { this.setChecked(next); this.syncControl(); },
             rollback: (previous) => { this.setChecked(previous); this.syncControl(); },
             commit: () => { this.didCommit(); this.syncForm(); },
