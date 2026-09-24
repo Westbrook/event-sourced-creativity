@@ -1,3 +1,4 @@
+import { sourceAdvisoryInputs, type SourceAdvisoryVerdict } from '../src/model/source-advisory.ts';
 import { validModerationResults } from "./moderation-response-validation.ts";
 import type { GenerationEvidenceObserver } from "../src/model/generation-outcome-evidence.ts";
 import { checkpointGenerationEvidence, evidenceSha256, operationEvidence, generationDispatchFailure } from "./generation-evidence.ts";
@@ -12,6 +13,7 @@ import { ProviderRequestError, providerErrorFromResponse } from "./provider-erro
 type ModerationResult = { flagged?: boolean; categories?: Record<string, boolean>; category_scores?: Record<string, number> };
 type ModerationResponse = { id?: string; model?: string; results?: ModerationResult[]; error?: { message?: string; code?: string; type?: string } };
 export type GenerationModerationReceipt = {
+  sourceVerdicts?: SourceAdvisoryVerdict[];
   available: boolean;
   flagged: boolean;
   categories: string[];
@@ -33,12 +35,6 @@ const headers = (env: WorkerEnv) => ({
   "content-type": "application/json",
   ...(env.OPENAI_PROJECT ? { "OpenAI-Project": env.OPENAI_PROJECT } : {}),
 });
-
-const factText = (fact: unknown) => {
-  if (!fact || typeof fact !== "object") return "";
-  const record = fact as Record<string, unknown>; const properties = record.properties && typeof record.properties === "object" ? record.properties as Record<string, unknown> : {};
-  return [record.type, record.role, record.intent, record.effect, record.handle, properties.text, properties.instruction, properties.value, properties.label, properties.description].filter(Boolean).join(" · ").slice(0, 6_000);
-};
 
 async function requestModeration(env: WorkerEnv, input: unknown, signal?: AbortSignal,strict=false, onEvidence?: GenerationEvidenceObserver, expectedResults=1) {
   const started = Date.now();
@@ -81,16 +77,16 @@ const summarize = (results: ModerationResult[]) => {
 
 export async function moderateGenerationSnapshot(env: WorkerEnv, snapshot: Record<string, unknown>, signal?: AbortSignal, advisory?: {onEvidence:GenerationEvidenceObserver;onCaptureError:()=>void}): Promise<GenerationModerationReceipt> {
   if (!env.OPENAI_API_KEY) throw new Error("provider_not_configured");
-  const facts = Array.isArray(snapshot.facts) ? snapshot.facts : []; const mapped = facts.map((fact) => ({ id: String((fact as Record<string, unknown>)?.block_id ?? ""), text: factText(fact) })).filter((item) => item.text);
-  const canonical = JSON.stringify(snapshot).slice(0, 28_000); const inputs = [canonical, ...mapped.slice(0, 24).map((item) => item.text)];
+  const {input:inputs,mapping}=sourceAdvisoryInputs(snapshot);
   // Advisory observation cannot suppress dispatch or erase a valid verdict.
   // Exact-prompt moderation retains its existing strict checkpoint behavior.
   const observe:GenerationEvidenceObserver|undefined=advisory?async evidence=>{
     try{await advisory.onEvidence(evidence);}catch{try{advisory.onCaptureError();}catch{/* Capture reporting is observational too. */}}
   }:undefined;
   const { body, requestId, latencyMs } = await requestModeration(env, inputs, signal,false,observe,inputs.length); const results = body.results ?? []; const summary = summarize(results);
-  const blockIds = mapped.slice(0, 24).filter((_, index) => Boolean(results[index + 1]?.flagged)).map((item) => item.id).filter(Boolean);
-  return { available: true, ...summary, blockIds, referenceIds: [], model: body.model ?? OPENAI_IMAGE_MODERATION_CONTRACT.model, requestId, requestIds: requestId ? [requestId] : [], probeCount: 1, latencyMs, coverage: "text" };
+  const sourceVerdicts=mapping.map((item,index)=>({...item,flagged:Boolean(results[index]!.flagged),categories:Object.entries(results[index]!.categories??{}).filter(([,flag])=>flag).map(([name])=>name).sort(),scores:results[index]!.category_scores??null}));
+  const blockIds=sourceVerdicts.filter(item=>item.kind==='fact'&&item.flagged&&item.blockId).map(item=>item.blockId!);
+  return { available: true, ...summary, sourceVerdicts, blockIds, referenceIds: [], model: body.model ?? OPENAI_IMAGE_MODERATION_CONTRACT.model, requestId, requestIds: requestId ? [requestId] : [], probeCount: 1, latencyMs, coverage: "text" };
 }
 
 function bytesToBase64(bytes: Uint8Array) {

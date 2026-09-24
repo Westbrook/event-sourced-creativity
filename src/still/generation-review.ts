@@ -26,3 +26,12 @@ export function generationReview(status: number, body: Record<string, unknown>):
 export function issueAffectsBlock(issue: GenerationReadinessProbe, block: { block_id: string; properties: Record<string, unknown> }) {
   return issue.blockIds?.includes(block.block_id) || (typeof block.properties.reference_id === 'string' && issue.referenceIds?.includes(block.properties.reference_id)) || false;
 }
+
+/** Never attach the aggregate category union to an individual highlighted idea. */
+export function issueBlockSummary(issue:GenerationReadinessProbe,blockId:string) {
+  if(issue.id!=='context-safety')return issue.summary;
+  const items=issue.sourceVerdicts?.filter(v=>v.kind==='fact'&&v.blockId===blockId&&v.flagged);
+  if(!items?.length)return 'This idea was highlighted by the source advisory. Its individual categories were not recorded; the overall categories may come from other inputs.';
+  const categories=[...new Set(items.flatMap(v=>v.categories))].sort();
+  return `This idea’s isolated input was flagged${categories.length?`: ${categories.join(', ')}`:'; category unavailable'}. This does not identify a causal phrase or establish an image-provider refusal.`;
+}

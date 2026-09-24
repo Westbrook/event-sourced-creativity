@@ -1,3 +1,4 @@
+import type { SourceAdvisoryVerdict } from './source-advisory.ts';
 import type { PromptTechnique } from "./prompt-structures.ts";
 
 export const GENERATION_PREFLIGHT_VERSION = "generation-readiness-v1";
@@ -15,6 +16,7 @@ export type GenerationReadinessProbe = {
   blockIds?: string[];
   referenceIds?: string[];
   categories?: string[];
+  sourceVerdicts?: SourceAdvisoryVerdict[];
 };
 
 export type ProviderHealthSnapshot = {

@@ -59,7 +59,7 @@ import { decisionDiagnostics, responseDisposition, type DecisionDiagnostics, typ
 import { ACTIONS, POLICY_VERSION, eligibleActions, evaluateActions, rankAllFormats, selectActions, type Action, type Position } from './decisions.ts';
 import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { documentSnapshot } from './context.ts';
-import { generationReview, issueAffectsBlock, type GenerationReview } from './generation-review.ts';
+import { generationReview, issueAffectsBlock, issueBlockSummary, type GenerationReview } from './generation-review.ts';
 import { api, ApiError, StillClient, type GenerationDraft } from './client.ts';
 import { documentArtifactRevision, model3dArtifactMediaFile, parseDocumentArtifactContent, type DocumentArtifact } from '../model/document-artifacts.ts';
 import { estimateModel3dCostMicrousd } from '../model/model3d.ts';
@@ -1069,7 +1069,7 @@ export class StillApp extends LitElement {
         ${g?.previousAttemptId?html`<p class="cost-note">This is a new paid request linked to attempt ${g.previousAttemptId}. ${g.previousDocumentRevision?(g.previousDocumentRevision===g.sourceRevision?'The recorded document revision is unchanged.':'Your current document differs from the original attempt’s recorded revision.'):'The original document revision is unavailable, so changes cannot be verified.'} This request uses your current document; it does not recreate missing original inputs.</p>`:nothing}
         <details class="generation-source" ?open=${!g||!!issues.length}><summary>Document context</summary><div class="generation-context">${visibleFacts.map(b => { const warnings = issues.filter(i => issueAffectsBlock(i, b)); return html`<section id=${'generation-context-'+b.block_id} class=${warnings.length ? 'generation-fact needs-review' : 'generation-fact'} tabindex="-1">
           <p><span>${text(b.properties.label) || b.handle || b.type}${b.locked ? ' · locked' : ''}</span>${safeMedia(text(b.properties.media_url)) && b.type === 'reference' && (!b.properties.media_type||text(b.properties.media_type).startsWith('image/')) ? stillImage(safeMedia(text(b.properties.media_url)),b.handle,b.properties,{className:'context-reference'}) : nothing}${text(b.properties.text) || text(b.properties.description)}</p>
-          ${warnings.map(i => html`<div class="context-review-reason"><strong>${i.label}</strong> · ${i.summary}</div>`)}
+          ${warnings.map(i => html`<div class="context-review-reason"><strong>${i.label}</strong> · ${issueBlockSummary(i,b.block_id)}</div>`)}
           ${warnings.length ? html`<a class="review-context-link" href=${this.viewURL('document',{blockId:b.block_id})} @click=${(e:MouseEvent)=>this.follow(e,'document',{blockId:b.block_id})}>Open idea</a>` : nothing}
         </section>`; })}</div>
         </details>
