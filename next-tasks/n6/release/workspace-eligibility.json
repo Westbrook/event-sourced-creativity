@@ -1,0 +1,22 @@
+{
+ "schemaVersion":"n6-workspace-eligibility-v1",
+ "status":"unknown",
+ "qualified":false,
+ "metadataOnly":true,
+ "databaseOverviewRead":true,
+ "liveRowsRead":0,
+ "liveSourcePayloadsRead":0,
+ "expiredEvidenceRead":false,
+ "completeCensusCount":null,
+ "eventKindActorHistogram":null,
+ "actualExclusionCodes":null,
+ "reason":"metadata_projection_unavailable",
+ "detail":"Available Sites database tools expose schema names or whole bounded table rows, with no selected-column, owner filter or aggregate interface. The ordinary events API initializes/seeds and returns private event payloads; the separate administrator diagnostic can disclose current source. Neither is a metadata-only eligibility probe. No such reads were attempted.",
+ "intendedWorkspace":"Existing personal workspace used by the prior N4 cases; no reset, clone or source edit.",
+ "bounds":{"dependenciesMaximum":128,"snapshotUtf16StrictlyLessThan":28000,"aggregateRowJsonMaximum":512000,"cellUtf8Maximum":65536},
+ "capacityDecision":"Keep128. There is no fresh complete authorized count or resource measurement establishing a safe larger supported bound. Historical full-stream sequence numbers are not the canonical workspace census. No truncation or event-only exception.",
+ "minimumFollowup":"Obtain an owner-scoped, read-only aggregate over the exact canonical workspace profile: total count, payload byte footprint and grouped type/actor counts, with current custody/scope exclusion counts. Then, only if in bound, qualify canonical source semantics and snapshot without providers. A new endpoint or broader authority is not part of this release.",
+ "providerOperations":0,
+ "preflightRefreshes":0,
+ "sourceWrites":0
+}

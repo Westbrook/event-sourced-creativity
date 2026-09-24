@@ -10,7 +10,9 @@ const nullish=(v:unknown)=>v===undefined||v===null;
 const keys=(p:Record<string,unknown>,allowed:string,arrays:string[]=[],objects:string[]=[])=>Object.entries(p).every(([k,v])=>allowed.split(' ').includes(k)
  && (arrays.includes(k)?strings(v):objects.includes(k)?typeof v==='object'&&v!==null: v===null||['string','number','boolean'].includes(typeof v)));
 const common='generation_id project_id document_id canvas_id context_set_id model_id planner_model_id quality purpose source_surface prompt_technique prompt_fan_id promotion_id reference_preview_event_id reference_input_count reference_inputs used_uploaded_reference_pixels used_ideation_preview_pixels image_format_block_id target_aspect_ratio target_width target_height target_unit provider_render_size size production_mode';
-const plainRoute=(p:Record<string,unknown>)=>['canvas_id','context_set_id','prompt_fan_id','promotion_id','reference_preview_event_id'].every(k=>nullish(p[k]))
+const plainRoute=(p:Record<string,unknown>)=>typeof p.generation_id==='string'&&!!p.generation_id
+ && ['project_id','document_id'].every(k=>p[k]===undefined||typeof p[k]==='string'&&!!p[k])
+ && ['canvas_id','context_set_id','prompt_fan_id','promotion_id','reference_preview_event_id'].every(k=>nullish(p[k]))
  && (p.production_mode===undefined||p.production_mode==='manual')&&(p.quality===undefined||p.quality==='high')&&(p.purpose===undefined||p.purpose==='final')
  && p.source_surface==='still'&&(p.reference_input_count===undefined||p.reference_input_count===0)&&empty(p.reference_inputs)
  && (p.used_uploaded_reference_pixels===undefined||p.used_uploaded_reference_pixels===false)&&(p.used_ideation_preview_pixels===undefined||p.used_ideation_preview_pixels===false);
@@ -51,6 +53,7 @@ export function createOrdinaryImageSourceHistory(){
    const allowed=e.type==='BudgetReserved'?'generation_id reservation_id cost_reservation_id reserved_tokens reserved_microusd period operation'
     :'generation_id document_id reservation_id cost_reservation_id input_tokens output_tokens total_tokens planner_tokens image_tokens planner_input_tokens planner_output_tokens image_text_input_tokens image_input_tokens image_output_tokens reserved_tokens reserved_microusd model_ids operation quality promotion_id image_cost_precision cost_microusd cost_precision cost_basis pricing_version image_pricing_version cost_breakdown_microusd';
    const valid=!!o&&!!parent&&e.actor==='worker:policy'&&same(e,parent)&&keys(p,allowed,['model_ids'],['cost_breakdown_microusd'])&&p.operation==='image-generation'
+    && typeof p.generation_id==='string'&&typeof p.reservation_id==='string'&&!!p.reservation_id&&typeof p.cost_reservation_id==='string'&&!!p.cost_reservation_id
     && (p.document_id===undefined||p.document_id===o.documentId)&&nullish(p.promotion_id)
     && (p.cost_breakdown_microusd===undefined||keys(record(p.cost_breakdown_microusd),'text_input_microusd text_output_microusd image_text_input_microusd image_input_microusd image_output_microusd')&&Object.values(record(p.cost_breakdown_microusd)).every(v=>typeof v==='number'&&Number.isFinite(v)&&v>=0))
     && (e.type==='BudgetReserved'?!o.budget:o.terminal?.type==='GenerationCompleted'&&!!o.budget&&p.reservation_id===o.budget.payload.reservation_id&&p.cost_reservation_id===o.budget.payload.cost_reservation_id);
