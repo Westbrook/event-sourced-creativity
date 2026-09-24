@@ -1,3 +1,4 @@
+import {reserveCreationQualificationAttempt} from './creation-qualification-budget.ts';
 import type { WorkerEnv } from './runtime.ts';
 import { creationHTTP, CreationProviderError } from './creation-provider-http.ts';
 /** Changing any field creates a new model space; old generations cannot be scanned with it. */
@@ -27,7 +28,10 @@ export function normalizeVector(value:unknown):Float32Array{
 export async function embedCreationTexts(env:WorkerEnv,texts:string[],signal:AbortSignal):Promise<{vectors:Float32Array[];tokens:number}>{
   if(!env.OPENAI_API_KEY)throw new CreationProviderError('embedding_credentials_missing',0,true);
   if(!texts.length||texts.length>32||texts.some(t=>!t.trim()||new TextEncoder().encode(t).length>8191)||texts.reduce((n,t)=>n+new TextEncoder().encode(t).length,0)>24000)throw new CreationProviderError('embedding_input_budget',0,true);
-  const value=await creationHTTP(env.OPENAI_API_KEY,env.OPENAI_PROJECT,'embeddings',{model:CREATION_REPRESENTATION.model,dimensions:512,encoding_format:'float',input:texts},signal,700_000) as {model?:string;data?:Array<{index:number;embedding:unknown}>;usage?:{total_tokens?:number}};
+  const body={model:CREATION_REPRESENTATION.model,dimensions:512,encoding_format:'float',input:texts};
+  await reserveCreationQualificationAttempt(env,'openai:embeddings',CREATION_REPRESENTATION.model,JSON.stringify(body));
+  signal.throwIfAborted();
+  const value=await creationHTTP(env.OPENAI_API_KEY,env.OPENAI_PROJECT,'embeddings',body,signal,700_000) as {model?:string;data?:Array<{index:number;embedding:unknown}>;usage?:{total_tokens?:number}};
   if(value.model!==CREATION_REPRESENTATION.model||!Array.isArray(value.data)||value.data.length!==texts.length||value.data.some((d,i)=>d.index!==i))throw new CreationProviderError('embedding_envelope',0,true);
   return {vectors:value.data.map(d=>normalizeVector(d.embedding)),tokens:Number(value.usage?.total_tokens??0)};
 }

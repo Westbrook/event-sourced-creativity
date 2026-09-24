@@ -51,6 +51,8 @@ export interface WorkerEnv {
   /** Independent inference admission; cleanup remains active while off. */
   STILL_CREATION_INDEX_ENABLED?: string;
   STILL_CREATION_DEPLOYMENT_ID?: string;
+  /** Isolated qualification only; missing admission rows fail before provider dispatch. */
+  STILL_CREATION_QUALIFICATION_RUN_ID?: string;
   STILL_CREATION_SEARCH?: Fetcher;
   STILL_CREATION_SEARCH_MODEL?: string;
   STILL_CREATION_ORGANIZER?: Fetcher;
