@@ -70,7 +70,7 @@ test('mocked service runs the fixed corpus at 64/1000/10000 Ideas without mistak
     assert.ok(hydrated.size <= 24);
     maxHydrated = Math.max(maxHydrated, hydrated.size);
     assert.equal(response.mode, 'hybrid');
-    assert.equal(response.partial, lexical.length===20||new Set([...lexical,...semantic]).size>24);
+    assert.equal(response.partial, false, 'ordinary candidate caps preserve complete coverage');
     assert.ok(response.candidates.length <= 3);
     if (semantic.length && !semantic.some((id) => lexical.includes(id))) {
       assert.ok(response.candidates.some((item) => semantic.includes(item.id)));
