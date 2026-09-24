@@ -1,3 +1,4 @@
+import { assistantIdeaMutationIssue } from './assistant-idea-guard.ts';
 import {publishMemoryAuthoredImage} from './memory-authored-image.ts';
 import { createMemoryElapsed } from '../src/model/memory-lifetime.ts';
 import { prepareBackgroundMemoryField } from './memory-background-field.ts';
@@ -1299,6 +1300,8 @@ async function assistantAuthoritativeProjection(env: WorkerEnv, actor: Authorize
 
 function authoritativeAssistantEvents(action: AssistantContextAction, context: AssistantContext,
   projection: Awaited<ReturnType<typeof assistantAuthoritativeProjection>>, turnId: string) {
+  const ideaIssue = assistantIdeaMutationIssue(action, projection);
+  if (ideaIssue) return { events: [], error: ideaIssue };
   let events = assistantActionEvents(action, context, { blockId: uuidV7(), relationId: uuidV7(), turnId });
   if (events.length !== 1) return { events: [], error: "assistant_proposal_invalid" };
   if (action.kind === "context.edit" || action.kind === "context.remove") {
@@ -1376,7 +1379,7 @@ export async function handleAssistantProposal(request: Request, env: WorkerEnv, 
   const projection = await assistantAuthoritativeProjection(env, actor);
   if (await streamHead(env, streamId) !== head) return json({ error: "assistant_proposal_stale" }, 409);
   const checked = authoritativeAssistantEvents(action, current.context, projection, proposal.turn_id);
-  if (checked.events.length !== 1) return json({ error: checked.error ?? "assistant_proposal_invalid" }, 409);
+  if (checked.events.length !== 1) return json({ error: checked.error ?? "assistant_proposal_invalid", ...(checked.error === "idea_body_editor_required" ? { message: "Open this Idea in Still to edit its complete body, references and Output preferences together." } : {}) }, 409);
   const changes = checked.events;
   try {
     if (actor.project) {
@@ -1703,7 +1706,7 @@ async function publishMemoryAuthoredField(env:WorkerEnv,actor:AuthorizedAssistan
   const {replacement,requestId,context,sourceHead,preconditions,origin,creation}=input;
   const projection=await assistantAuthoritativeProjection(env,actor),checked=authoritativeAssistantEvents(
     creation?.action??{kind:'context.edit',targetBlockId:input.blockId,text:replacement},context,projection,origin.kind==='specialist'?origin.turnId:'');
-  if(checked.events.length!==1)return json({error:'assistant_memory_edit_invalid'},409);
+  if(checked.events.length!==1)return json({error:checked.error??'assistant_memory_edit_invalid',...(checked.error==='idea_body_editor_required'?{message:'Open this Idea in Still to edit its complete body, references and Output preferences together.'}:{})},409);
   const stream=actor.project?'creative:'+actor.project.ownerUserId:actor.principal.streamId;
   const mutation=checked.events[0]!,blockId=String(mutation.payload.block_id??'');
   if(!blockId||mutation.type!==(creation?'BlockCreated':'BlockPropertyEdited'))return json({error:'assistant_memory_edit_invalid'},409);

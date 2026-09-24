@@ -1,7 +1,15 @@
 import { isOutputContextBlock } from "./output-source-policy.ts";
+import { preferredDocumentOutputKinds } from "./document-output-intent.ts";
 
 /** Durable platform terminology must never become model-facing creative copy. */
 const INTERNAL_CREATIVE_KEYS = new Set([
+  "provenance", "source_provenance", "sourceProvenance", "source_evidence", "sourceEvidence",
+  "source_excerpt", "sourceExcerpt", "creation_draft", "creationDraft", "original_document", "originalDocument",
+  "original_text", "originalText", "raw_draft", "rawDraft", "removed_wording", "removedWording",
+  "decision_ledger", "decisionLedger", "coverage_ledger", "coverageLedger", "review_state", "reviewState",
+  "audit", "audit_log", "auditLog", "rich_text_body", "richTextBody",
+  "sourceSpans", "source_spans", "coverage", "originalSource", "original_source", "workingSource", "working_source",
+  "workingDocument", "working_document", "creation_provenance", "creationProvenance", "creation_source_evidence", "creationSourceEvidence",
   "source_chat_turn_id", "sourceChatTurnId", "memory_authored_version", "memoryAuthoredVersion",
   "combined_context",
   "combined_context_memberships",
@@ -247,7 +255,7 @@ export function providerFacingCreativeContext(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(providerFacingCreativeContext);
   if (!isRecord(value)) return value;
 
-  return Object.fromEntries(
+  const result = Object.fromEntries(
     Object.entries(value)
       .filter(([key]) => !INTERNAL_CREATIVE_KEYS.has(key))
       .map(([key, item]) => [
@@ -259,6 +267,18 @@ export function providerFacingCreativeContext(value: unknown): unknown {
           : providerFacingCreativeContext(item),
       ]),
   );
+  // Explicit medium preferences are soft guidance. Keep the full authored body so
+  // unrelated dimensions, framing, and genuine contradictory constraints survive.
+  if (typeof value.type === "string" && isRecord(value.properties)) {
+    const kinds = preferredDocumentOutputKinds([{ type: value.type, properties: value.properties,
+      ...(typeof value.subtype === "string" ? { subtype: value.subtype } : {}),
+      removed: value.removed === true, active: value.active !== false }]);
+    if (kinds.length) result.output_preference = {
+      strength: "soft", preferred_kinds: kinds, explicit_request_takes_precedence: true,
+      triggers_generation: false,
+    };
+  }
+  return result;
 }
 
 const factDescription = (value: unknown) => {
@@ -460,6 +480,7 @@ export const CREATIVE_PROMPT_GUARDRAILS = [
   "Preserve complete authored numbered slide outlines, their original order and section boundaries, and every protected stakeholder quotation with its exact wording, speaker, and role.",
   "Retain every labeled numerical fact without changing precision or confusing exact values with rounded display values; preserve authored destinations, work modes, device postures, roadmap durations, and requested terminology.",
   "Ground attributed claims only in explicitly supplied request-local source aliases; never invent, expose, or infer a durable source identifier.",
+  "Format Ideas with explicit output_preference are soft medium preferences, never exclusive Document types or instructions to start generation. The user's explicitly selected Output kind governs this request even when it differs from those preferences. Preserve unrelated framing and content constraints; surface genuine incompatibilities instead of erasing them. Recommendations may use preferences as context but must not treat them as current generation requests.",
 ] as const;
 
 export const creativePromptGuardrails = () => CREATIVE_PROMPT_GUARDRAILS.join(" ");

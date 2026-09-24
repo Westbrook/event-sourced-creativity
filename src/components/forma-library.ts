@@ -568,6 +568,7 @@ export class FormaLibrary extends FormaElement {
     const imported=this.#imported;
     if(!owner?.current()||owner.pending||owner.original||!this.#canAuthor()||!imported)return;
     const projection=foldEvents(imported.events);
+    if(projection.libraryBlocks.some(block=>Object.hasOwn(block.properties,'rich_text_body'))){this.store.toast('This archive contains rich Idea bodies. Import requires a compatible reference editor in Still; no records were written.');return;}
     const restricted=projection.blocks.filter((block)=>["reference","audio","model3d"].includes(block.type)
       ||Object.entries(block.properties).some(([key,value])=>Boolean(value)&&(key.startsWith("organization_context_")
         ||["media_url","reference_id","model_url","model_reference_id","model_content_hash","source_ref","source_evidence_hash","source_artifact_id","source_output_id","source_block_id"].includes(key))));

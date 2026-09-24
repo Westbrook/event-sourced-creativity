@@ -5353,6 +5353,7 @@ export class FormaStore {
       this.patchUi({focusBlockId:root.id});this.toast("Idea used in the open document. Edits are shared wherever it is used.");
       return {rootBlockId:root.id,blockCount:ideaDependencies([root.id],projection.libraryBlocks,projection.libraryBlockRelations).length,relationCount:0};
     }
+    if(ideaDependencies([root.id],projection.libraryBlocks,projection.libraryBlockRelations).some(block=>Object.hasOwn(block.properties,'rich_text_body'))){this.toast('Independent copies of rich Ideas require a compatible reference editor. Use this shared Idea in Still; the source is unchanged.');return null;}
     const connected=new Set([root.id]);let changed=true;while(changed){changed=false;for(const relation of projection.libraryBlockRelations){if(connected.has(relation.fromBlockId)&&available.has(relation.toBlockId)&&!connected.has(relation.toBlockId)){connected.add(relation.toBlockId);changed=true;}}}
     if([...connected].some((id)=>Boolean(available.get(id)?.properties.organization_context_package_binding_id))){this.toast("Organization context must be adopted through its approved package.");return null;}
     const blocks=[...connected].map((id)=>available.get(id)!).sort((left,right)=>left.id===root.id?-1:right.id===root.id?1:left.position.localeCompare(right.position));const ids=new Map(blocks.map((block)=>[block.id,crypto.randomUUID()]));const contextSetId=crypto.randomUUID();const base=this.head.get()+1;

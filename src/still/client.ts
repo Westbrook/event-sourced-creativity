@@ -31,11 +31,11 @@ export class ApiError extends Error {
   constructor(status: number, body: Record<string, unknown>) { super(String(body.message ?? body.error ?? 'The request could not be completed.').replaceAll('_', ' ')); this.status = status; this.body = body; }
 }
 const scope = (s: Session | null) => s ? [s.user.userId, s.projectContext?.projectAccessId ?? 'personal', s.permissionEpoch ?? '', JSON.stringify(s.impersonation ?? null)].join(':') : '';
-export async function api<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST', timeoutMs?:number): Promise<T> {
+export async function api<T>(path: string, body?: unknown, method = body === undefined ? 'GET' : 'POST', timeoutMs?:number,signal?:AbortSignal): Promise<T> {
   const controller = method === 'GET' || timeoutMs ? new AbortController() : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const read = async () => {
-    const response = await fetch(path, { method, credentials: 'same-origin', ...(controller ? {signal:controller.signal} : {}), headers: body === undefined ? {} : { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const response = await fetch(path, { method, credentials: 'same-origin', ...(signal?{signal:controller?AbortSignal.any([signal,controller.signal]):signal}:controller ? {signal:controller.signal} : {}), headers: body === undefined ? {} : { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     let data: Record<string, unknown>;
     try { data = await response.json(); } catch { throw new Error(method === 'GET' ? 'The response was interrupted. Try again.' : 'Response interrupted. Refresh to check the save before retrying.'); }
     if (!response.ok) throw new ApiError(response.status, data);
@@ -336,6 +336,8 @@ export class StillClient {
     this.applyReceipt(result);
     if(replacementId)this.position={...this.position,blockId:replacementId};
   }
+  /** Creation requests share the workspace fence; the controller journals only opaque IDs. */
+  async creationRequest<T>(path:string,body?:unknown,method?:string,signal?:AbortSignal):Promise<T>{const check=this.fence();const result=await api<T>(path,body,method,undefined,signal);check();return result;}
   async createProject(name: string) {
     const signature = JSON.stringify(['project', name]);
     if (!this.creation || this.creation.signature !== signature) { if(this.hasUnconfirmedWrite) { await this.refresh(); await this.recoverPendingWrite(); throw new Error(this.hasUnconfirmedWrite ? 'Check the earlier save before starting another project.' : 'Project saved. Open it in Projects.'); } this.creation = { signature, projectId: crypto.randomUUID(), documentId: '' }; }

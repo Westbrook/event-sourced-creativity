@@ -46,6 +46,15 @@ export interface WorkerEnv {
   FORMA_MEMORY_BENCHMARK_SOURCE_SHA256?: string;
   ASSETS: Fetcher;
   JEV_API_KEY?: string;
+  /** Creation providers are opt-in service bindings; absent bindings stay degraded. */
+  STILL_UNIFIED_CREATION_ENABLED?: string;
+  STILL_CREATION_SEARCH?: Fetcher;
+  STILL_CREATION_SEARCH_MODEL?: string;
+  STILL_CREATION_ORGANIZER?: Fetcher;
+  STILL_CREATION_ORGANIZER_MODEL?: string;
+  STILL_CREATION_PROVIDER_CUSTODIES?: string;
+  STILL_CREATION_PROVIDER_TOKEN?: string;
+  STILL_CREATION_JEV_ENABLED?: string;
   DB: D1Database;
   MEDIA: R2Bucket;
   OPENAI_API_KEY?: string;

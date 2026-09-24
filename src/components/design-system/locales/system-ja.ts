@@ -1,5 +1,11 @@
 /** Audited Forma-owned interface, metadata, and component-documentation copy. */
 const messages: Record<string, string> = {
+  "system.auto.15lsm06.120": "このアーカイブにはリッチテキストのアイデア本文が含まれています。インポートにはStillの互換参照エディターが必要です。レコードは保存されていません。",
+  "system.auto.x4wgy5.65": "本文の書式と参照を保持するには、このアイデアをStillで開いてください。",
+  "system.auto.n5udgj.96": "このリッチテキストのアイデアから独立したコピーを作成するには、Stillの互換参照エディターが必要です。元のアイデアは変更されていません。",
+  "system.auto.zfyhgl.92": "このアイデアには構造化された本文があります。参照と書式を保持するには、Stillで開いてください。",
+  "system.auto.1vcjpa9.18": "アイデアをStillで開く",
+  "system.auto.1eymuv3.127": "リッチテキストのアイデアの独立したコピーには、互換参照エディターが必要です。Stillでこの共有アイデアを使用してください。元のアイデアは変更されていません。",
   "system.auto.l50wya.48": "ドキュメントを開いて出力設定を確認してください。",
   "system.auto.1g2f6bi.49": "共有アイデアの出力通知インターフェース。",
   "system.auto.1bpd6ra.145": "アプリに接続された共有アイデアの出力通知インターフェース。組み込む前に属性、JavaScriptプロパティ、イベントを確認してください。",

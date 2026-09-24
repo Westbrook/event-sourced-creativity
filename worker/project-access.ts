@@ -1,3 +1,4 @@
+import { validateIdeaBodyEvents } from './idea-body-guards.ts';
 import { ideaDocumentUses } from "../src/model/project-ideas.ts";
 import { validateIdeaMembershipEvents, projectOwnedIdeaInput } from "./idea-membership-guards.ts";
 import { isIdeaMembershipEvent } from "../src/model/project-ideas.ts";
@@ -390,7 +391,7 @@ export async function synchronizeProjectScope(env:WorkerEnv,input:{organizationI
     FROM project_resource_scopes resource LEFT JOIN private_content retained ON resource.resource_kind='content'
       AND retained.content_id=resource.resource_id AND retained.owner_id=resource.actor_user_id
       AND(retained.kind IN('provider-response','assistant-action')
-        OR retained.kind IN('chat-user','chat-assistant','chat-assistant-memory') AND resource.visibility='actor_private' AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        OR retained.kind IN('chat-user','chat-assistant','chat-assistant-memory','creation-draft','creation-search-source') AND resource.visibility='actor_private' AND retained.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')
           AND EXISTS(SELECT 1 FROM private_content_retention_scopes conversation
             JOIN organization_projects current_project ON current_project.project_access_id=conversation.project_access_id
               AND current_project.organization_id=conversation.organization_id AND current_project.project_id=conversation.project_id
@@ -1290,7 +1291,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   guardBindings?:Array<string|number|null>;
   expectedOwnerHead?:number;
   preserveGovernance?:true;
-  authoringOperation?:"memory-image-adopt"|"memory-output-create"|"memory-create"|"memory-edit"|"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
+  authoringOperation?:"creation-plan"|"memory-image-adopt"|"memory-output-create"|"memory-create"|"memory-edit"|"context-proposal"|"document-duplicate"|"canvas-arrangement"|"adaptive-proposal"|"workspace-quick-edit";
   assistantAcceptance?:{proposalId:string;turnId:string;actorUserId:string;scopeKey:string;organizationId:string;projectAccessId:string;projectId:string;documentId:string};
 }){
   const action=String(body.action??"append");
@@ -1299,7 +1300,7 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   if(atomicSidecars?.authoringOperation&&(!atomicSidecars.preserveGovernance||!atomicSidecars.guardSql||!atomicSidecars.buildStatements||!Number.isSafeInteger(atomicSidecars.expectedOwnerHead)
     ||(atomicSidecars.authoringOperation==="canvas-arrangement"
       ? action!=="batch"||validateAtomicCanvasArrangementEvents(original,principal.userId)!==null
-      : (atomicSidecars.authoringOperation==="workspace-quick-edit"?!validWorkspaceQuickEditEvents(original):original.some((event)=>!(atomicSidecars.authoringOperation==="memory-image-adopt"?["GenerationCompleted"]:atomicSidecars.authoringOperation==="adaptive-proposal"?["BlockCreated","BlockPropertyEdited","CanvasItemPlaced"]:["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"]).includes(String(event.type)))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
+      : (atomicSidecars.authoringOperation==="workspace-quick-edit"?!validWorkspaceQuickEditEvents(original):original.some((event)=>!(atomicSidecars.authoringOperation==="creation-plan"?["DocumentCreated","BlockCreated","BlockDocumentAttached","BlockRelationAdded"]:atomicSidecars.authoringOperation==="memory-image-adopt"?["GenerationCompleted"]:atomicSidecars.authoringOperation==="adaptive-proposal"?["BlockCreated","BlockPropertyEdited","CanvasItemPlaced"]:["DocumentCreated","BlockCreated","BlockPropertyEdited","BlockLocked","BlockRelationAdded","CollectionItemAdded"]).includes(String(event.type)))))))return Response.json({error:"invalid_authoring_operation"},{status:403});
   if(['memory-edit','memory-create','memory-output-create','memory-image-adopt'].includes(atomicSidecars?.authoringOperation??'')&&!atomicSidecars?.preconditions?.length)return Response.json({error:'invalid_authoring_operation'},{status:403});
   if(atomicSidecars?.preconditions?.length&&(!atomicSidecars.preserveGovernance||!['memory-edit','memory-create','memory-output-create','memory-image-adopt'].includes(atomicSidecars.authoringOperation??'')
     ||atomicSidecars.preconditions.length>128||original.length!==1||original[0]?.payload?.memory_authored_version!==1
@@ -1564,7 +1565,9 @@ export async function appendProjectEvents(env:WorkerEnv,context:ProjectRequestCo
   }
   const needsReviewValidation=incoming.some((event)=>ARTIFACT_REVIEW_EVENT_TYPES.has(String(event.type??"")));
   const needsMembershipValidation=incoming.some(event=>(isIdeaMembershipEvent(String(event.type))||event.type==='BlockRehomed'));
-  const validatedOwnerHead=needsReviewValidation||needsMembershipValidation?await streamHead(env,ownerStream):null;
+  const needsBodyValidation=incoming.some(event=>/^(?:Block|Chip)/u.test(String(event.type??'')));
+  const validatedOwnerHead=needsReviewValidation||needsMembershipValidation||needsBodyValidation?await streamHead(env,ownerStream):null;
+  if(needsBodyValidation){const issue=validateIdeaBodyEvents(await readProjectSourceEvents(env,context),incoming);if(issue)return Response.json(issue,{status:409});}
   if(needsMembershipValidation){
     const issue=validateIdeaMembershipEvents(await readProjectSourceEvents(env,context),incoming);
     if(issue)return Response.json(issue,{status:409});
