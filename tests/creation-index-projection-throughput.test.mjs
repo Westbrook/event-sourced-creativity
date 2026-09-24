@@ -114,3 +114,25 @@ test('withdrawn prose never enters replay scratch, while structural reference at
  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_replay_skeletons').get().n,0);assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM creation_index_block_routes').get().n,0);
  await appendAuditEvent(f.env,f.streamId,'user','BlockRestored',{project_id:f.projectId,block_id:'withdrawn-parent'});await f.ready();assert.equal(JSON.parse(source(f,'withdrawn-parent').content).text,privateText);
 });
+
+test('a fully transported final filtered page completes without an empty replay continuation',async t=>{
+ const f=await creationIndexFixture(t);await f.ready();
+ await appendAuditEvent(f.env,f.streamId,'user','BlockPropertyEdited',{project_id:f.projectId,block_id:'scene-reuse-direction',property_path:'text',new_value:'The keeper closes the shutters.'});
+ for(let i=0;i<12;i++)await appendAuditEvent(f.env,f.streamId,'user','BlockCreated',{project_id:'foreign-tail',block_id:'foreign-tail-'+i,scope:'library',type:'text',properties:{text:'Foreign tail '+i}});
+ const transported=[];f.controls.afterRead=(statement,value)=>{if(statement.sql.startsWith('WITH page AS MATERIALIZED(SELECT e.*,'))transported.push(value.results.length);};
+ await drain(f,'projection',projectionPage);assert.equal(transported.length,1,JSON.stringify(transported));assert.ok(transported[0]>0);await drain(f,'materialize',materializePage);
+ assert.equal(JSON.parse(source(f,'scene-reuse-direction').content).text,'The keeper closes the shutters.');
+});
+
+test('a byte-truncated filtered page stays unfinished until every canonical edit is transported',async t=>{
+ const f=await creationIndexFixture(t);await f.ready();const first='a'.repeat(600000),last='z'.repeat(600000);
+ await appendAuditEvent(f.env,f.streamId,'user','BlockPropertyEdited',{project_id:f.projectId,block_id:'scene-reuse-direction',property_path:'text',new_value:first});
+ await appendAuditEvent(f.env,f.streamId,'user','BlockPropertyEdited',{project_id:f.projectId,block_id:'scene-reuse-direction',property_path:'text',new_value:last});
+ await appendAuditEvent(f.env,f.streamId,'user','BlockCreated',{project_id:'foreign-tail',block_id:'foreign-byte-tail',scope:'library',type:'text',properties:{text:'Unrelated'}});
+ const route=await claimIndexJob(f.env.DB,25,['projection']);await projectionPage(f.env,route);
+ const partial=await claimIndexJob(f.env.DB,25,['projection']);await projectionPage(f.env,partial);
+ assert.equal(f.sqlite.prepare('SELECT state FROM creation_index_work WHERE job_key=?').get(partial.job_key).state,'ready');assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM creation_index_work WHERE kind='materialize' AND generation=? AND state<>'done'").get(partial.generation).n,0);
+ const final=await claimIndexJob(f.env.DB,25,['projection']);await projectionPage(f.env,final);
+ assert.equal(f.sqlite.prepare('SELECT state FROM creation_index_work WHERE job_key=?').get(final.job_key).state,'done');
+ const stored=f.sqlite.prepare("SELECT c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND entity_id='blocks:scene-reuse-direction'").get(final.partition_key,final.generation);assert.equal(JSON.parse(stored.content).properties.text,last);
+});
