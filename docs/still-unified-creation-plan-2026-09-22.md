@@ -351,3 +351,8 @@ The architecture audit baseline is 68b5f0ab; these anchors describe that audit, 
 The audit companion, docs/still-unified-creation-readiness-audit-2026-09-23.md, records original-request/decision coverage, each corrected gap and the chosen defaults. The fixture, docs/still-unified-creation-fixtures-2026-09-23.json, is a reviewable implementation test input, not the only allowed interpretation. Historical proposals and the rejected sectioned-input mock remain historical evidence, not competing specifications.
 
 **Ready to implement.** The v19 product, architecture and editor/retrieval audit remains the foundation; v20 adds the approved contextual-help requirement. Final-save eligibility remains the explicit specification default in §8. The unchanged v19 fixture passed 63 static assertions during planning; its 29 scenarios and subsequent implementation evidence are tracked separately in the implementation verification ledger. For work already underway, apply the v20 help addition to Package C and its acceptance coverage without restarting completed packages. Help implementation/verification is additional work, not implied complete by earlier editor checks. The Progress Report records this v20 handoff and preserves existing implementation release gates.
+
+
+## September 24 completion evidence
+
+The product contract above is unchanged. Delivery-audit repairs and agreed interactions are tracked in `still-unified-creation-completion-2026-09-24.md`; the verification ledger records local evidence and existing baseline failures. `still-unified-creation-release-2026-09-24.md` prepares the disabled candidate and lists each required qualification/authorization gate. Implementation evidence does not authorize activation or establish live-provider fidelity.
