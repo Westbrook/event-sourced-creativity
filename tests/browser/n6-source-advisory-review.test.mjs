@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {mkdir} from 'node:fs/promises';
 import {chromium, expect} from '@playwright/test';
 import {createN6ReviewServer} from '../helpers/n6-source-advisory-review-fixture.mjs';
 
@@ -57,7 +58,8 @@ test('N6 selected inspector preserves inert disclosure, attribution and explicit
 
     await button('Acknowledge & send').click();
     await expect.poll(() => page.evaluate(() => window.n6Trace.acknowledgedRequests)).toBe(1);
-    await expect(button('Check request')).toBeDisabled();
+    await expect(page.getByRole('status').filter({hasText:'Working…'})).toBeVisible();
+    await expect(button('Acknowledge & send')).toHaveCount(0);
     const during = await page.evaluate(() => window.n6Trace);
     assert.equal(during.requests.length, 2);
     assert.equal(during.createdJobs, 0);
@@ -95,4 +97,41 @@ test('N6 selected inspector preserves inert disclosure, attribution and explicit
     await browser?.close();
     await server.close();
   }
+});
+
+for(const width of [1280,390])test(`N6 actual disclosure ${width}px adopted, selection change and expiry`,async()=>{
+ const {server,url}=await createN6ReviewServer();let browser;
+ try{
+  browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width,height:950}});
+  const errors=[],external=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.route('**/*',route=>{if(new URL(route.request().url()).origin===new URL(url).origin)return route.continue();external.push(route.request().url());return route.abort();});
+  await page.goto(url+'?variant=adopted');
+  await page.locator('.action-dock').getByRole('button',{name:'Generate',exact:true}).click();
+  await page.getByRole('button',{name:'Inspect source advisory',exact:true}).click();
+  await expect(page.getByText(/Reused original preflight/)).toBeVisible();
+  await page.getByText('Exact request body',{exact:true}).click();
+  await expect(page.locator('still-source-advisory-inspector pre').first()).toContainText('<img');
+  await expect(page.locator('[data-n6-injected]')).toHaveCount(0);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+  await mkdir('/private/tmp/n6-release-browser',{recursive:true});
+  await page.screenshot({path:`/private/tmp/n6-release-browser/adopted-${width}.png`,fullPage:true});
+  await page.evaluate(()=>{window.n6PreviousInspector=document.querySelector('still-source-advisory-inspector');window.n6Select('n6-document-2','n6-selected-2');});
+  await expect(page.locator('still-source-advisory-inspector pre')).toHaveCount(0);
+  assert.equal(await page.evaluate(()=>window.n6PreviousInspector.value),null);
+  assert.equal(await page.evaluate(()=>window.n6Trace.inspections),1);
+  await page.clock.install();
+  await page.evaluate(()=>{window.n6ExpiresIn=5000;});
+  await page.getByRole('button',{name:'Inspect source advisory',exact:true}).click();
+  await expect(page.getByText('Returned model',{exact:true})).toBeVisible();
+  await page.clock.fastForward(6000);
+  await expect(page.getByText(/Source advisory details are unavailable/)).toBeVisible();
+  await expect(page.locator('still-source-advisory-inspector pre')).toHaveCount(0);
+  const trace=await page.evaluate(()=>window.n6Trace);assert.equal(trace.inspections,2);assert.equal(trace.acknowledgedRequests,0);assert.equal(trace.createdJobs,0);assert.deepEqual(trace.unexpectedFetches,[]);
+  await page.screenshot({path:`/private/tmp/n6-release-browser/expired-${width}.png`,fullPage:true});
+  await page.goto(url+'?variant=legacy');
+  await page.locator('.action-dock').getByRole('button',{name:'Generate',exact:true}).click();
+  await page.getByRole('button',{name:'Inspect source advisory',exact:true}).click();
+  await expect(page.getByText(/Source advisory details are unavailable/)).toBeVisible();
+  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+ }finally{await browser?.close();await server.close();}
 });

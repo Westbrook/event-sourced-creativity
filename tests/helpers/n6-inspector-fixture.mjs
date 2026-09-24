@@ -33,9 +33,9 @@ export async function fixture(t,runtime='source'){
  const owner=session.user.userId,user={userId:owner,streamId:'creative:'+owner};
  sqlite.prepare("UPDATE users SET role='creator',consent_version='pilot-2026-08-10'").run();
  const headers={'oai-authenticated-user-id':owner,'oai-authenticated-user-email':session.user.email};
- const append=async(type,payload,actor='user:'+owner)=>{
+ const append=async(type,payload,actor='user',options={})=>{
   const head=sqlite.prepare('SELECT coalesce(max(sequence),0) AS n FROM events WHERE stream_id=?').get(user.streamId).n;
-  const event=makeEvent(user.streamId,head+1,actor,'web:editor','n6-synthetic',type,payload);
+  const event=makeEvent(user.streamId,head+1,actor,'web:editor',options.correlationId??'n6-synthetic',type,payload,options);
   const values=eventWriteBindings(event);await db.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) VALUES(${values.map(()=>'?')})`).bind(...values).run();return event;
  };
  // Real origin and custody writers. Workspace profile must ignore ordinary worker

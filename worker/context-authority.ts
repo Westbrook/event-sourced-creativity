@@ -57,8 +57,22 @@ const factFor = (block: CreativeBlock, memoryAuthored:ReadonlySet<string>) => ({
  * and source versions can never override the durable project projection.
  */
 export function authoritativeCreativeContext(events: CreativeEvent[], request: ContextRequest, observeSource?:(step:AuthoredSourceStep)=>void) {
-  const fold=createCreativeEventFold(Infinity,request.documentId,request.projectId??"",observeSource);
-  for(const event of events)fold.accept(event);
+  const prefix:CreativeEvent[]=[];
+  const fold=createCreativeEventFold(Infinity,request.documentId,request.projectId??"",observeSource?step=>{
+    const event=events[prefix.length];
+    if(step.eligible&&event.type==='ContextCompiled'){
+      // Reuse this exact canonical resolver over the already bounded prefix.
+      // Compiled history is not an alternate source or an opaque ignored body.
+      try{
+        const original=authoritativeCreativeContext(prefix,{documentId:step.documentId,projectId:step.projectId});
+        const expected={...original.snapshot,document:{id:step.documentId,title:original.projection.documentTitle},standing_constraints:[],reference_inputs:[]};
+        const stable=(value:unknown):string=>JSON.stringify(value,(_key,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
+        step={...step,eligible:stable(event.payload.compiled_snapshot)===stable(expected)&&stable(event.payload.source_block_versions)===stable(original.sourceBlockVersions)};
+      }catch{step={...step,eligible:false};}
+    }
+    observeSource(step);
+  }:undefined);
+  for(const event of events){fold.accept(event);if(observeSource)prefix.push(event);}
   const projection=fold.finish();
   const rights=createContextRightsFold();for(const event of events)rights.accept(event);
   return contextFromCompleteProjection(projection,request,rights.finish(),(projectId,canvasId)=>foldCanvasEvents(events,projectId,canvasId),memoryAuthoredEventIds(events));

@@ -1,3 +1,4 @@
+import {createOrdinaryImageSourceHistory,personalSourceActor} from './ordinary-image-source-history.ts';
 import { ideaDependencies, ideaDocumentUses, ideasInDocument, type IdeaDocumentUse } from "./project-ideas.ts";
 import { createGuestImageResultOriginIndex, type GuestImageResultClaimEventOrigin } from "./guest-image-result-presentation.ts";
 import {measureRetainedState,RETAINED_STATE_LIMITS} from './retained-state.ts';
@@ -254,6 +255,7 @@ export type AuthoredSourceStep = { eventId:string; projectId:string; documentId:
 // execute, never by a second consumer's event-type allowlist. Other semantics and
 // unknown future events remain in the complete census but cannot certify plain text.
 export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = "", observeSource?: (step:AuthoredSourceStep)=>void) {
+  const ordinarySource=observeSource?createOrdinaryImageSourceHistory():null;
   const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount" | "artifactCount" | "recentGenerations" | "recentArtifacts">>();
   const blocks = new Map<string, CreativeBlock>();
   const blockRelations = new Map<string, CreativeBlockRelation>();
@@ -309,7 +311,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
     const p = event.payload;
     let sourceStep:AuthoredSourceStep = {eventId:event.eventId,projectId:"",documentId:"",eligible:false};
     const plain = (keys:string, valid:boolean, projectId:string, documentId="") => {
-      if(observeSource) sourceStep={eventId:event.eventId,projectId,documentId,eligible:valid
+      if(observeSource) sourceStep={eventId:event.eventId,projectId,documentId,eligible:valid && personalSourceActor(event) && !event.causationId
         && Object.keys(p).every(key=>keys.split(" ").includes(key))
         && Object.entries(p).every(([key,value])=>key==="properties"||value===null||["string","number","boolean"].includes(typeof value))};
     };
@@ -318,6 +320,12 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
       plain("block_id project_id document_id "+keys,Boolean(b)&&valid
         && (p.project_id===undefined||p.project_id===b?.projectId)
         && (p.document_id===undefined||p.document_id===b?.documentId),b?.projectId??"",b?.documentId??"");
+    };
+    const generationScope = (documentId:string) => {
+      const d=documents.get(documentId);return {documentId,projectId:d?.projectId??'',valid:!!d&&!d.removed&&(p.project_id===undefined||p.project_id===d.projectId)};
+    };
+    const ordinaryStep = (scope:{projectId:string;documentId:string;valid:boolean},eligible:boolean) => {
+      sourceStep={eventId:event.eventId,projectId:scope.projectId,documentId:scope.documentId,eligible:scope.valid&&eligible};
     };
     const claimed = claimOrigins.observe(event);
     discardConflictedOutputs();
@@ -428,7 +436,19 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
       case "CollectionItemAdded": { const id = itemId(p.item_ref); if (id) membership[id] = { collectionId: String(p.collection_id), position: String(p.position ?? "a0") }; break; }
       case "CollectionItemRemoved": delete membership[itemId(p.item_ref)]; break;
       case "CollectionItemMoved": { const id = itemId(p.item_ref); if (id) membership[id] = { collectionId: String(p.to_collection_id), position: String(p.position ?? "a0") }; break; }
-      case "ContextCompiled": {const snapshot=asRecord(p.compiled_snapshot);const snapshotDocument=asRecord(snapshot.document);const documentId=String(p.document_id??snapshotDocument.id??state.documentId??"");if(documentId)documentCompiles.set(documentId,p);if(!documentId||documentId===state.documentId)state.latestCompile=p;const canvas=asRecord(snapshot.canvas);const generationId=String(p.generation_id??"");if(generationId&&canvas.canvas_id)generationCanvas.set(generationId,{canvasId:String(canvas.canvas_id),contextSetId:String(canvas.context_set_id??"")});break;}
+      case "GenerationRequested": {
+        if(ordinarySource){const scope=generationScope(String(p.document_id??state.documentId));ordinaryStep(scope,ordinarySource.request(event,scope.projectId,scope.documentId));}break;
+      }
+      case "GenerationFailed": {
+        if(ordinarySource){const scope=generationScope(String(p.document_id??state.documentId));ordinaryStep(scope,ordinarySource.terminal(event,scope.projectId,scope.documentId));}break;
+      }
+      case "BudgetReserved": case "GenerationUsageRecorded": {
+        if(ordinarySource)sourceStep={eventId:event.eventId,...ordinarySource.accounting(event)};break;
+      }
+      case "ModelRegistered": case "AdapterVersioned": case "CapabilityDeclared": {
+        if(ordinarySource)sourceStep={eventId:event.eventId,projectId:'',documentId:'',eligible:ordinarySource.registry(event)};break;
+      }
+      case "ContextCompiled": {const snapshot=asRecord(p.compiled_snapshot);const snapshotDocument=asRecord(snapshot.document);const documentId=String(p.document_id??snapshotDocument.id??state.documentId??"");if(ordinarySource){const scope=generationScope(documentId);ordinaryStep(scope,ordinarySource.compile(event,scope.projectId,scope.documentId));}if(documentId)documentCompiles.set(documentId,p);if(!documentId||documentId===state.documentId)state.latestCompile=p;const canvas=asRecord(snapshot.canvas);const generationId=String(p.generation_id??"");if(generationId&&canvas.canvas_id)generationCanvas.set(generationId,{canvasId:String(canvas.canvas_id),contextSetId:String(canvas.context_set_id??"")});break;}
       case "GuestImageResultClaimed": {
         if (!claimed) break;
         const p = claimed.payload, document = documents.get(p.document_id);
@@ -458,6 +478,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
         break;
       }
       case "GenerationCompleted": {
+        if(ordinarySource){const scope=generationScope(String(p.document_id??state.documentId));ordinaryStep(scope,ordinarySource.terminal(event,scope.projectId,scope.documentId)&&Array.isArray(p.object_ids)&&p.object_ids.every(id=>!outputs.has(String(id))));}
         if (p.report_space === "scout") break;
         const ids = Array.isArray(p.object_ids) ? p.object_ids : [];
         ids.forEach((value) => { const id = String(value); claimOrigins.observeNativeOutput(id, String(p.generation_id ?? "")); discardConflictedOutputs(); if (!claimOrigins.isUnambiguous(id, String(p.generation_id ?? ""))) return; const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null;const receipt=generationCanvas.get(String(p.generation_id??""));const generatedTitle=String(p.title??asRecord(p.output_brief).title??"").trim(); outputs.set(id, { id, ...(p.memory_authored_version===1?{memoryAssisted:true as const}:{}), documentId: String(p.document_id ?? state.documentId),...(generatedTitle?{title:generatedTitle,titleSource:"generated" as const}:{}),createdAt:event.occurredAt, canvasId:p.canvas_id?String(p.canvas_id):receipt?.canvasId??null,contextSetId:p.context_set_id?String(p.context_set_id):receipt?.contextSetId??null,generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence,...(p.production_mode==="managed"?{productionMode:"managed" as const,productionTeam:p.production_team?String(p.production_team):null}:{}) }); });
@@ -623,9 +644,9 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
         break;
       }
       case "ObjectPinned": case "ObjectUnpinned": { const o = outputs.get(String(p.object_id)); if (o) o.pinned = event.type === "ObjectPinned"; break; }
-      case "ObjectSaved": { const o = outputs.get(String(p.object_id)); if (o) o.saved = true; break; }
+      case "ObjectSaved": { const o = outputs.get(String(p.object_id)); if(o){const scope=generationScope(o.documentId);plain("object_id project_id document_id",scope.valid&&(p.document_id===undefined||p.document_id===o.documentId),scope.projectId,scope.documentId);} if (o) o.saved = true; break; }
       case "PromptFanOutputPromoted": { const o = outputs.get(String(p.object_id)); if (o && o.promptFanId === String(p.prompt_fan_id ?? o.promptFanId)) { o.standalone = true; o.standaloneSequence = event.sequence; } break; }
-      case "ObjectDiscarded": { const o = outputs.get(String(p.object_id)); if (o) o.discarded = true; break; }
+      case "ObjectDiscarded": { const o = outputs.get(String(p.object_id)); if(o){const scope=generationScope(o.documentId);plain("object_id project_id document_id",scope.valid&&(p.document_id===undefined||p.document_id===o.documentId),scope.projectId,scope.documentId);} if (o) o.discarded = true; break; }
       case "AddedToLibrary": case "RemovedFromLibrary": { const id=String(p.object_id??p.item_id),kept=event.type==="AddedToLibrary",output=outputs.get(id),artifact=artifacts.get(id);if(output)output.library=kept;if(artifact)artifact.library=kept;break; }
       case "BriefComposed": state.brief = p; state.presentedBriefItems.clear(); break;
       case "BriefItemPresented": state.presentedBriefItems.add(String(p.item_id)); break;

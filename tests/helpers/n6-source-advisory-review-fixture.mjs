@@ -44,10 +44,12 @@ async function mountReviewFixture() {
       {index: 4, sourceIndex: 3, blockId: 'clear', kind: 'fact', truncated: false, flagged: false, categories: [], scores: null},
     ],
   };
-  const legacy = new URL(location.href).searchParams.get('variant') === 'legacy';
+  const variant = new URL(location.href).searchParams.get('variant');
+  const legacy = variant === 'legacy';
+  const adopted = variant === 'adopted';
   if (legacy) { delete issue.sourceVerdicts; issue.blockIds = ['legacy']; }
   const gate = {error: 'generation_preflight_review_required', readiness: {
-    preflightId: 'n6-synthetic-original-preflight', documentId:'n6-document', probes: [issue],
+    preflightId: adopted?'n6-synthetic-adopted-preflight':'n6-synthetic-original-preflight', documentId:'n6-document', probes: [issue],
     advisoryCapture: {status: legacy?'unavailable':'retained', inspection: legacy?'unavailable-before-admission':'selected-preflight', refs: {}},
   }};
   window.n6Readiness = gate.readiness;
@@ -70,9 +72,9 @@ async function mountReviewFixture() {
     const url = new URL(typeof input === 'string' ? input : input.url, location.origin);
     if(url.origin===location.origin&&url.pathname==='/api/source-advisory'&&(init.method??'GET')==='GET'){
       trace.inspections++;state();
-      if(url.searchParams.get('documentId')!=='n6-document'||url.searchParams.get('preflightId')!=='n6-synthetic-original-preflight')throw Error('Wrong inspection selection');
+      if(url.searchParams.get('documentId')!==gate.readiness.documentId||url.searchParams.get('preflightId')!==gate.readiness.preflightId)throw Error('Wrong inspection selection');
       if(legacy)return Response.json({status:'unavailable',reason:'witness_unavailable',rawAvailable:false},{status:409});
-      return Response.json({status:'available',validity:'valid',adopted:false,expiresAt:new Date(Date.now()+600000).toISOString(),
+      return Response.json({status:'available',validity:'valid',adopted,originPreflightId:'n6-synthetic-original-preflight',expiresAt:new Date(Date.now()+(window.n6ExpiresIn??600000)).toISOString(),
        identity:{requestedModel:'omni-moderation-latest',returnedModel:'synthetic-returned-model',requestId:'synthetic-request',responseId:null},
        inputs:issue.sourceVerdicts.map(item=>({...item,utf16Length:128,utf8Length:128})),
        raw:{requestBody:JSON.stringify({model:'omni-moderation-latest',input:[injectedText]}),responseBody:JSON.stringify({model:'synthetic-returned-model',results:[{flagged:true,categories:{hate:true},category_scores:{hate:.8}}]})}});
@@ -131,6 +133,10 @@ async function mountReviewFixture() {
   app.client = client;
   app.generation = client.prepareGeneration('image');
   app.generation.requestId = 'n6-retained-synthetic-request';
+  window.n6Select = (documentId,preflightId) => {
+    gate.readiness.documentId=documentId;gate.readiness.preflightId=preflightId;
+    app.generationGate={...app.generationGate,inspection:{documentId,preflightId}};app.changed();
+  };
   client.onChange = () => app.changed();
   document.querySelector('#n6-product').append(app);
   await app.updateComplete;

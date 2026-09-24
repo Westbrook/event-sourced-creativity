@@ -7,7 +7,7 @@ import type { AuthoredSourceStep } from '../src/model/events.ts';
 import { memoryDerivationJsonUniqueKeys } from './memory-derivation-result.ts';
 import { isMemoryAuthoredEvent } from '../src/model/memory-authorship.ts';
 
-export const SOURCE_AUTHORITY_VERSION='personal-authored-workspace-v1';
+export const SOURCE_AUTHORITY_VERSION='personal-authored-workspace-v2';
 export type SourceAuthorityReceipt={version:typeof SOURCE_AUTHORITY_VERSION;ownerId:string;streamId:string;projectId:string;documentId:string;
   documentRevision:string;sourceSha256:string;dependencies:Array<{eventId:string;sequence:number;sha256:string;projectId:string;documentId:string;custodyCreatedAt:string|null;lifetime:'erasable-authored-until-deleted-redacted-or-changed'}>};
 const same=(a:unknown,b:unknown)=>canonicalConsent(a)===canonicalConsent(b);
@@ -24,7 +24,7 @@ export async function readSourceAuthority(env:WorkerEnv,user:{userId:string;stre
   const census=await readWorkspaceSourceCensus(env,user.streamId,user.userId,rows=>{
     let previous=0,totalBytes=0;
     for(const row of rows){
-      if(row.stream_id!==user.streamId||row.actor!=='user:'+user.userId||row.schema_version!==1||row.compensates_event_id||row.causation_id
+      if(row.stream_id!==user.streamId||row.schema_version!==1||row.compensates_event_id
         ||!Number.isSafeInteger(row.sequence)||Number(row.sequence)<=previous||row.custody_scoped!==0)fail('source_identity_unsupported');
       previous=Number(row.sequence);
       if(typeof row.payload!=='string'||row.payload.length>65536)fail('source_capacity');
@@ -47,8 +47,9 @@ export async function readSourceAuthority(env:WorkerEnv,user:{userId:string;stre
   if(steps.length!==census.rows.length||steps.some(s=>!s.eligible)||census.events.some(isMemoryAuthoredEvent))fail('source_semantics_unsupported');
   if(!trusted.projection.documents.some(d=>d.id===documentId&&!d.removed)||trusted.projection.documentId!==documentId
     ||!trusted.projection.projects.some(p=>p.id===trusted.projection.projectId&&p.state==='active'))fail('source_document_unavailable');
+  if(trusted.snapshot.pins.length)fail('source_pins_unsupported');
   const source=JSON.stringify(trusted.snapshot);if(source.length>=28000)fail('source_snapshot_capacity');
-  const projects=[...new Set(steps.map(s=>s.projectId))],resources=[...new Set([...projects,...steps.map(s=>s.documentId),...census.events.flatMap(e=>[e.eventId,String(e.payload.block_id??'')])].filter(Boolean))];
+  const projects=[...new Set(steps.map(s=>s.projectId))],resources=[...new Set([...projects,...steps.map(s=>s.documentId),...census.events.flatMap(e=>[e.eventId,String(e.payload.block_id??''),String(e.payload.generation_id??''),String(e.payload.object_id??''),...(Array.isArray(e.payload.object_ids)?e.payload.object_ids.map(String):[])])].filter(Boolean))];
   // Complete census includes scope/exclusion dependencies for every folded source,
   // not only the currently visible document. No organization/pilot custody admitted.
   const scope=db.prepare(`SELECT 1 AS allowed WHERE
