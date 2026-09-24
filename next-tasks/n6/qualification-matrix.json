@@ -1,95 +1,167 @@
 {
-  "schemaVersion": "forma-n6-qualification-matrix-v1",
-  "disposition": "unimplemented-dependency-fallback",
-  "inspectorImplemented": false,
-  "authorityWitnessImplemented": false,
-  "rawSupportedCases": [],
-  "testsCertifyClassifierQuality": false,
-  "testsCertifyHistoricalEvidence": false,
+  "schemaVersion": "forma-n6-qualification-matrix-v2",
+  "disposition": "implemented-and-qualified-local",
+  "implementationCommit": "c511f0c45e6b5beed63cadac7586cf267a2b2997",
+  "inspectorImplemented": true,
+  "authorityWitnessImplemented": true,
+  "rawSupportedCases": [
+    "Original qualified personal Still manual text-only image preflight with complete current canonical workspace census and original private body pair",
+    "Genuine adopted preflight retaining original source/body identity and minimum immutable lifetime",
+    "Structurally invalid/cardinality-mismatched complete retained response with unknown classification values"
+  ],
+  "bounds": {
+    "sourceDependenciesMaximum": 128,
+    "fullSnapshotUtf16StrictlyLessThan": 28000,
+    "requestSelectors": [
+      "documentId",
+      "preflightId"
+    ],
+    "maximumServerOwnedBodyRefs": 2
+  },
   "gates": [
     {
       "id": "selection-principal",
       "required": "GET only; one document/preflight; duplicates, extras, caller refs, foreign identity and consent denied",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "hostedIdentity/readNativeRetainedPrincipal; route not added"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "original-adopted-lifetimes",
       "required": "Both exact preflight rows and original witness live; missing/replaced original or altered immutable deadline denies. Legitimately later adopter expiry cannot extend origin authority; expired origin denies.",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Existing capture helper does not read original rows"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "missing-expired-redacted-deleted",
       "required": "Missing/expired/redacted/deleted body or witness unavailable with metadata only",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Existing custody regression only"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "cross-owner-stream-document-project-scope",
       "required": "Every original/adopter/source/body owner, stream, document, project and scope must match",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Resolver counterexamples show current snapshot is not authority"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "revision-source",
       "required": "Wrong revision, source hash, source incarnation or complete census denies",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "No N6 census available"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "identity-substitution",
       "required": "Swapped origin/adopter/evidence/content/phase/operation identities deny",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Existing capture regression only"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "digest-substitution",
       "required": "Exact original envelope and request/response body SHA-256 plus manifest hashes required",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Existing envelope helper does not supply manifest/body proof"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "incomplete-census-retention",
       "required": "Overflow, omitted dependency, missing private envelope, unknown lifetime or changed original deadline denies",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Nine dependency counterexamples; not route tests"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "rights-provenance-exclusions",
       "required": "Derived, rights-bearing, native, Memory, governed, sponsor, workflow and nonpersonal inputs unavailable",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Existing Memory provenance and rights counterexamples only"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "principal-database-races",
       "required": "Principal/consent or DB identity changes during reads discard bytes and stale diagnostics",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Existing read-only session/principal patterns only"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "source-content-races",
       "required": "Source membership, scope, rights, lifecycle, rows or content changes during reads deny",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Existing custody recheck regression only"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "provider-bodies",
       "required": "Missing/incomplete/oversized bytes unavailable; invalid, duplicate-key or cardinality-mismatched results unknown; no invented identity/categories/scores",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Existing N5 validation regression only"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "zero-side-effects-success-denial",
       "required": "No providers, refreshes, initializers, sweeps, writes, jobs, acknowledgements, retries or paid recovery for any GET outcome",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "No N6 route exists, so no N6 success or denial certification"
+      "status": "pass",
+      "evidence": [
+        "tests/n6-source-advisory.test.mjs",
+        "tests/n6-source-authority.test.mjs"
+      ]
     },
     {
       "id": "browser-disclosure",
       "required": "Selected authenticated inspector private/no-store; escaped inert exact bytes; inspection separate from acknowledgement",
-      "status": "not-run-unimplemented",
-      "existingEvidenceLimit": "Unimplemented. Existing N5 summary/acknowledgement synthetic review only"
+      "status": "pass",
+      "evidence": [
+        "browser-review.json"
+      ]
     }
+  ],
+  "positiveGate": "Real private event writer, canonical reader/reducer/resolver, ordinary preflight HTTP route and selected GET; telemetry and unrelated manual history included. Both source and rebuilt Worker original/adopted positive reads pass.",
+  "zeroEffects": "All GET checks count provider attempts, background/retention attempts, mutation/initializer SQL attempts and total database changes, including caught failures.",
+  "additionalChecks": [
+    "Exact128 dependencies passes;129 unavailable",
+    "27999 UTF16 source passes;28000 unavailable",
+    "Unsupported narrowed adopter cannot borrow original eligibility",
+    "Captured witness failure preserves one original moderation dispatch and original verdict",
+    "Both envelopes changed consistently still fail complete census / exact manifest / positional input validation",
+    "Registered Memory body origins excluded",
+    "Wall-clock expiry during final batch denies"
+  ],
+  "testsCertifyClassifierQuality": false,
+  "testsCertifyHistoricalEvidence": false,
+  "limitations": [
+    "Complete conservative workspace census; unrelated unsupported history also makes inspection unavailable",
+    "Closed reducer-owned plain authored schema; relationships/attachments/rehome/library/collections/preferences and unknown or causal/compensated history unavailable",
+    "Provider results are positional; no echoed per-input identity or causal-span guarantee",
+    "No live deployment/runtime or classifier-quality observation"
   ]
 }

@@ -1,11 +1,11 @@
-# N6 — existing reusable contracts and remaining route gap
+# N6 — actual contract consumers and route gaps
 
-N6 adds no cross-media runtime contract or inspection route. The bounded audit confirms that these existing pieces are reusable within their current scopes:
+| Reusable contract | Actual N6 consumer | Route-specific limit |
+| --- | --- | --- |
+| Canonical workspace profile and `EventReadProof` | Prospective personal source receipt and selected GET | Complete conservative workspace census ≤128; richer histories/other media need their own resolver-owned semantics, not a selected-event subset. |
+| Canonical creative reducer/context resolver | Same projection for ordinary readiness and optional authored receipt | V1 certifies only the explicit plain authored schema and lifecycle. No native, Memory, rights-bearing, reference, workflow or governed authority transfers. |
+| `sourceAdvisoryInputs` positional construction | Existing Image moderation; prospective witness; selected input/result validation; Still review | Exact source snapshot and first24 isolated inputs; positional provider association cannot identify a causal phrase or detect an unlabelled semantic result permutation. |
+| Private moderation capture and native Memory exclusion | Original/adopted selected preflight body reads | Capture custody alone is insufficient; N6 additionally requires complete source receipt, both original/selected preflights and immutable deadlines. |
+| Hosted read-only principal qualification | N6 selected GET | Personal hosted creator/admin only; no account initialization or delegated/sponsored authority. |
 
-- `sourceAdvisoryInputs` supplies exact positional Image advisory input construction; Image readiness/comparison and Still's N5 presenter share its input/result meaning. Association remains positional; this does not certify classifier quality.
-- Hosted read-only principal qualification and `qualifyAdvisoryCapture` supply authentication and bounded private receipt custody patterns. Neither attests complete source authority or original preflight lifetime.
-- Existing source/rebuilt Worker and synthetic browser fixtures preserve N5 reporting/admission/acknowledgement behavior. They do not certify a new raw reader.
-
-The concrete Still pre-admission gap is the missing resolver-owned complete prospective dependency/lifetime/exclusion census and requalification contract. No weaker selected-event predicate is accepted. The dependency design retains the manual personal text-only bounds and does not generalize to Story/Scene/Slides, Speech/Music, Video/Storyboard or 3D. N2's route-specific source, child-operation, audio, 3D and lifecycle gaps remain unchanged. S1a remains unresolved and S2 no-go; no historical repair is attempted.
-
-N5 was independently published as Production542 at1091e3ef. N6 is local and not release ready. Any later live observation needs a separate exact proposal.
+These are local implemented consumers, not proof of cross-media rollout. Story/Scene/Slides, Speech/Music, Video/Storyboard and 3D still require route-specific membership, source lifetime, input-manifest, output and private-custody qualification. Existing N2/S1a/S2 limits remain unchanged. No classifier, fidelity, financial-quality or historical-evidence claim transfers.

@@ -1,0 +1,1108 @@
+From 4db8cca534b47ae11028e41d0696ae04cc16cd8d Mon Sep 17 00:00:00 2001
+From: Westbrook Johnson <westbrook.johnson@gmail.com>
+Date: Wed, 23 Sep 2026 20:57:35 -0400
+Subject: [PATCH] Document N6 authority dependency with synthetic boundary
+ checks
+
+---
+ next-tasks/n6/browser-review.json             |  51 +++++
+ next-tasks/n6/dependency-design.md            |  50 +++++
+ next-tasks/n6/index.html                      |  15 ++
+ next-tasks/n6/ledger-addendum.md              |  11 ++
+ next-tasks/n6/qualification-matrix.json       |  95 ++++++++++
+ next-tasks/n6/result.md                       |  27 +++
+ next-tasks/n6/source-audit.md                 | 103 ++++++++++
+ next-tasks/n6/test-manifest.json              | 178 ++++++++++++++++++
+ next-tasks/n6/verification.json               |  95 ++++++++++
+ .../n6-source-advisory-review.test.mjs        |  91 +++++++++
+ .../n6-source-advisory-review-fixture.mjs     | 158 ++++++++++++++++
+ tests/n6-source-authority-dependency.test.mjs | 126 +++++++++++++
+ 12 files changed, 1000 insertions(+)
+ create mode 100644 next-tasks/n6/browser-review.json
+ create mode 100644 next-tasks/n6/dependency-design.md
+ create mode 100644 next-tasks/n6/index.html
+ create mode 100644 next-tasks/n6/ledger-addendum.md
+ create mode 100644 next-tasks/n6/qualification-matrix.json
+ create mode 100644 next-tasks/n6/result.md
+ create mode 100644 next-tasks/n6/source-audit.md
+ create mode 100644 next-tasks/n6/test-manifest.json
+ create mode 100644 next-tasks/n6/verification.json
+ create mode 100644 tests/browser/n6-source-advisory-review.test.mjs
+ create mode 100644 tests/helpers/n6-source-advisory-review-fixture.mjs
+ create mode 100644 tests/n6-source-authority-dependency.test.mjs
+
+diff --git a/next-tasks/n6/browser-review.json b/next-tasks/n6/browser-review.json
+new file mode 100644
+index 00000000..acb34f67
+--- /dev/null
++++ b/next-tasks/n6/browser-review.json
+@@ -0,0 +1,51 @@
++{
++  "schemaVersion": "forma-n6-synthetic-browser-review-v1",
++  "verifiedAt": "2026-09-24T00:56:35.741505+00:00",
++  "method": "Codex in-app browser via cua_repl, final restarted fixture",
++  "urls": [
++    "http://127.0.0.1:4197/n6-review",
++    "http://127.0.0.1:4197/n6-review?variant=legacy"
++  ],
++  "source": "Real StillApp summary rendering and StillClient request construction with synthetic intercepted API responses",
++  "checks": {
++    "knownItemCategory": "hate only; aggregate violence not attributed to that fact",
++    "emptyCategory": "flagged; category unavailable",
++    "legacyCategory": "individual categories were not recorded",
++    "clearInputs": "not highlighted",
++    "inertText": "markup visible as text; zero injected DOM elements",
++    "inspectionControls": 0,
++    "beforeExplicitAcknowledgement": {
++      "syntheticPOSTs": 1,
++      "acknowledgements": 0,
++      "jobs": 0,
++      "unexpectedFetches": 0
++    },
++    "explicitAcknowledgement": {
++      "syntheticPOSTs": 2,
++      "acknowledgements": 1,
++      "pendingJobs": 0,
++      "requestIdenticalExceptAcknowledgement": true,
++      "repeatControlDisabled": true
++    },
++    "completion": {
++      "syntheticJobs": 1,
++      "clientJobs": 1,
++      "acknowledgements": 1,
++      "unexpectedFetches": 0
++    },
++    "legacyReadOnlyReview": {
++      "syntheticPOSTs": 1,
++      "acknowledgements": 0,
++      "jobs": 0,
++      "unexpectedFetches": 0
++    }
++  },
++  "liveProviderCalls": 0,
++  "inspectorImplemented": false,
++  "limitations": [
++    "No raw inspector success/denial browser path exists.",
++    "Desktop synthetic interaction only; automated browser driver and its narrow viewport assertions were not run.",
++    "Fixture uses a terminal synthetic job and does not certify hosted generation or classifier quality.",
++    "Vite/Lit development warnings: multiple Lit versions and en-toast-region follow-up update."
++  ]
++}
+diff --git a/next-tasks/n6/dependency-design.md b/next-tasks/n6/dependency-design.md
+new file mode 100644
+index 00000000..afa4ae07
+--- /dev/null
++++ b/next-tasks/n6/dependency-design.md
+@@ -0,0 +1,50 @@
++# N6 — missing prospective source authority contract
++
++This is a bounded design, **not an implemented inspector or witness schema**. The N5 contract was reviewed before coding. Its bounds and prohibitions remain in force. N6 follows the user's explicit fallback when existing resolver contracts cannot supply complete authority.
++
++## Exact missing dependency
++
++The ordinary preflight source resolver must produce and later requalify a **complete, versioned authority census for the exact source sent by that preflight**. `authoritativeCreativeContext` currently derives a snapshot, projection, source block versions and document revision from caller-supplied events. It does not return custody, exhaustive dependency membership, immutable source lifetimes, execution exclusions, or a requalification capability. Its streaming sibling explicitly disclaims establishing authority or freshness.
++
++`readWorkspaceEvents` reads projection-relevant events. A successfully folded snapshot does not prove that every relevant private envelope remains present, authorized and retained. `source_event_refs`, current block versions and the preflight context-mutation high-water mark are not this missing contract. Neither snapshot equality nor a hash supplies rights or custody.
++
++The existing complete-stream current-source diagnostic is not an alternative authority producer. It requires the original user's actor on every event and its incarnation proof rejects unknown transitions. Ordinary `GenerationPreflightRequested` and `GenerationPreflightCompleted` worker events fall outside that contract. Filtering out events to make the diagnostic pass would weaken the complete census. The existing admitted-job reader additionally requires a real terminal job and original `GenerationRequested` binding. Neither reader changes in N6.
++
++## Smallest bounded extension
++
++Extend the existing ordinary source-resolution boundary; do not add a generic evidence platform or an independent hand-maintained event reader. The producer must own membership and completeness, including the absence of excluded inputs. One candidate interface is `resolvePersonalStillAdvisoryAuthority` returning either `{status: 'unavailable', reason}` or `{status: 'qualified', witness, requalify}`. These names describe a future interface and are not exported by this candidate.
++
++The resolver must consume original custody-qualified envelopes while it builds the same source projection. For each relevant document, project, fact, relationship, constraint, attachment and accepted-input dependency, it must record original identity/hash, owner/stream/scope binding, current lifecycle and all original retention/rights deadlines. It must account for removed or superseded inputs whose text remains in the submitted source. Unknown effects, missing envelopes, unknown lifetimes or incomplete dependency coverage yield unavailable. A caller cannot supply a list and assert it is complete. Exclusion checks must come from the resolver's complete source and execution authority, not the absence of a few property names.
++
++Keep the initial support exactly bounded:
++
++- Personal Still `generate`, manual text-only Image, original principal paying for itself, with a complete untruncated snapshot of strictly under 28,000 JavaScript UTF-16 code units and at most 128 complete source dependencies.
++- No references or 3D, derived or rights-bearing input, accepted Memory source, governed or sponsored/billing-delegated context, workflow, native Output/durable slot, Canvas or narrowed character context.
++- The 128 limit covers dependencies, not merely 128 currently visible blocks. Overflow is unavailable; never inspect a prefix. Larger or otherwise unsupported jobs retain their ordinary moderation/admission behavior.
++- No legacy backfill, source reconstruction, historical repair or change to existing reader predicates. If this complete qualification cannot be established for any selected source, no raw inspector is enabled for it.
++
++The witness needs an immutable original preflight/request identity, original owner/stream/project/document/revision/full-source SHA-256, resolver version, complete dependency count and digest, explicit completeness and exclusion outcomes, source lifetimes, and original capture deadline. Bind the database identity in the live read session; do not accept a serialized database label as identity proof.
++
++At existing input construction (`sourceAdvisoryInputs`), derive a versioned positional manifest: index, snapshot/fact kind, original fact index, block ID, truncation, exact input hash and UTF-16/UTF-8 lengths. The actual submitted array remains byte-for-byte unchanged: snapshot then first 24 nonempty fact projections, with existing 28,000/6,000 code-unit slicing. Capture from that array, not a second reconstruction. Position is the provider association contract; a valid reordered response cannot be independently detected without echoed identities.
++
++Persist the witness observationally through the existing authorized preflight capture, bound to its original private evidence envelopes and original preflight row. Keep server-only witness detail out of ordinary readiness responses. Capture/serialization/storage/qualification failure records unavailable metadata at most, without changing moderation dispatch count, wire, model, verdict, admission or acknowledgement. Never invoke another source preflight or provider call to repair it.
++
++## Reader after the dependency is qualified
++
++One GET path may accept exactly one document ID and one selected original/adopter preflight ID. Reject duplicate/extra selectors and arbitrary content IDs. Use hosted identity and `readNativeRetainedPrincipal` before any normal initialization. Route before mutating handlers **and** exclude the route from `worker/index.ts` post-response retention scheduling.
++
++Require the selected and original preflight rows, matching original/request/adopter/owner/stream/project/document/revision/source binding. Reuse the qualified original witness and at most two server-owned moderation references. An adopter never becomes a new origin. An upsert that replaces the original preflight identity makes access unavailable even while the bodies remain retained.
++
++Reuse `qualifyAdvisoryCapture` for its actual bounded custody checks, then independently validate exact original envelope digests and exact operation request/response body digests, same evidence ID and one of each phase, manifest hash and exact input/cardinality association. Preserve raw strings exactly; never parse and reserialize them as originals. Unique-key bounded JSON validation and existing result validation are reusable. Missing or incomplete bodies are unavailable. Invalid/cardinality-mismatched result bodies have unknown classifications, never clear. Distinguish requested model, returned model, request header ID, response body ID, flag, categories and scores; absent values stay unknown. Scores are provider values, not calibrated probabilities.
++
++The effective deadline is the minimum of original and selected preflight expiry, original witness/source-rights lifetimes and both original private-record deadlines. Extension of a stored deadline must not extend this minimum. Body retention cannot revive expired preflight access. Legacy/missing/expired witnesses yield metadata only.
++
++Before returning, requalify canonical principal/consent, database identity, both exact preflight rows, complete current source membership/rights/provenance/exclusions, exact content bytes and original deadline bindings. Apply deadlines immediately before response serialization/return. Any invalidation discards partially qualified bytes and stale sensitive diagnostics.
++
++Return private/no-store with identity-sensitive Vary headers. Render exact bytes as escaped inert text in a compact disclosure selected from that review. Opening/collapsing inspection cannot acknowledge, refresh, generate or retry. The existing explicit acknowledgement control remains the only acknowledgement action. The Progress Report return link uses trusted configuration when `?progress-report` is present.
++
++## Remaining qualification
++
++`qualification-matrix.json` records the entire requested route matrix as **unimplemented/not run for N6**. Existing custody and N5 tests are regression evidence only. They do not qualify this proposed route. The dependency counterexamples establish why the current contracts are insufficient; they are not a classifier evaluation or historical evidence.
++
++The next bounded implementation is the resolver-owned census/requalification producer and its tests. Only after that contract is established can the observational witness, selected reader and actual disclosure be implemented and qualified. No release or live observation follows from this design. A later live observation requires a separate exact proposal.
+diff --git a/next-tasks/n6/index.html b/next-tasks/n6/index.html
+new file mode 100644
+index 00000000..7fa9d490
+--- /dev/null
++++ b/next-tasks/n6/index.html
+@@ -0,0 +1,15 @@
++<!doctype html>
++<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
++<title>N6 · Prospective authority dependency</title>
++<style>body{font:17px/1.65 system-ui;background:#f5f3ec;color:#302f28;max-width:850px;margin:4rem auto;padding:0 1.5rem}h1{font-size:2.5rem;line-height:1.1}a{color:#526441}.note{border-left:3px solid #87946d;padding-left:1rem}code{overflow-wrap:anywhere}li{margin:.6rem 0}details{margin:1.5rem 0}summary{cursor:pointer}small{color:#625f54}</style>
++<p>FORMA / STILL · N6 · LOCAL DEPENDENCY CANDIDATE</p>
++<h1>Complete authority comes first.</h1>
++<p class="note"><strong>Inspector unavailable. Not release ready.</strong> The existing source resolver has no complete prospective authority census or requalification contract. This delivery uses the requested dependency fallback; it adds no raw reader, witness or product disclosure.</p>
++<p>N6 is based on <code>1091e3ef</code>, confirmed by the release task's fresh remote-main check and Production542 receipt. N5 publication was independent. All 167 initially dirty original-checkout files remain unchanged.</p>
++<p><strong>151 automated checks pass.</strong> Nine dependency counterexamples establish the missing contract; 142 existing N5/source/Worker regressions preserve their own boundaries. A local synthetic browser review verifies item attribution, inert text and the existing explicit acknowledgement flow. These checks do not qualify an N6 raw-inspection route.</p>
++<p><a href="result.md">Read the result</a> · <a href="dependency-design.md">Exact dependency and bounded design</a> · <a href="source-audit.md">Source audit</a></p>
++<details><summary>What remains unimplemented</summary><p>Resolver-owned complete dependencies and lifetimes, observational witness capture, one selected GET reader, compact raw disclosure and the full success/denial/race qualification matrix. All raw cases remain unavailable. A valid body pair or longer raw retention cannot restore expired preflight authority.</p><p><a href="qualification-matrix.json">Required route qualification matrix</a></p></details>
++<details><summary>Verification and local review</summary><p><a href="verification.json">Verification</a> · <a href="test-manifest.json">Named automated checks</a> · <a href="browser-review.json">Synthetic browser observations</a> · <a href="candidate.json">Committed candidate receipt</a> · <a href="n6-dependency.patch">Portable patch</a></p><p>The browser driver is provided but was not run; CUA reviewed the final fixture at the normal desktop viewport. No live provider call, paid trial, publication or historical reconstruction occurred.</p></details>
++<p><a href="ledger-addendum.md">Cross-media contract limits</a> · <a href="../n5/">Published N5 result</a> · <a href="http://127.0.0.1:4187/">Progress Report</a></p>
++<small>Next: qualify the bounded source resolver contract before implementing the inspector. A later live observation needs a separate exact proposal.</small>
++</html>
+diff --git a/next-tasks/n6/ledger-addendum.md b/next-tasks/n6/ledger-addendum.md
+new file mode 100644
+index 00000000..cdcbda5d
+--- /dev/null
++++ b/next-tasks/n6/ledger-addendum.md
+@@ -0,0 +1,11 @@
++# N6 — existing reusable contracts and remaining route gap
++
++N6 adds no cross-media runtime contract or inspection route. The bounded audit confirms that these existing pieces are reusable within their current scopes:
++
++- `sourceAdvisoryInputs` supplies exact positional Image advisory input construction; Image readiness/comparison and Still's N5 presenter share its input/result meaning. Association remains positional; this does not certify classifier quality.
++- Hosted read-only principal qualification and `qualifyAdvisoryCapture` supply authentication and bounded private receipt custody patterns. Neither attests complete source authority or original preflight lifetime.
++- Existing source/rebuilt Worker and synthetic browser fixtures preserve N5 reporting/admission/acknowledgement behavior. They do not certify a new raw reader.
++
++The concrete Still pre-admission gap is the missing resolver-owned complete prospective dependency/lifetime/exclusion census and requalification contract. No weaker selected-event predicate is accepted. The dependency design retains the manual personal text-only bounds and does not generalize to Story/Scene/Slides, Speech/Music, Video/Storyboard or 3D. N2's route-specific source, child-operation, audio, 3D and lifecycle gaps remain unchanged. S1a remains unresolved and S2 no-go; no historical repair is attempted.
++
++N5 was independently published as Production542 at1091e3ef. N6 is local and not release ready. Any later live observation needs a separate exact proposal.
+diff --git a/next-tasks/n6/qualification-matrix.json b/next-tasks/n6/qualification-matrix.json
+new file mode 100644
+index 00000000..3c64fd30
+--- /dev/null
++++ b/next-tasks/n6/qualification-matrix.json
+@@ -0,0 +1,95 @@
++{
++  "schemaVersion": "forma-n6-qualification-matrix-v1",
++  "disposition": "unimplemented-dependency-fallback",
++  "inspectorImplemented": false,
++  "authorityWitnessImplemented": false,
++  "rawSupportedCases": [],
++  "testsCertifyClassifierQuality": false,
++  "testsCertifyHistoricalEvidence": false,
++  "gates": [
++    {
++      "id": "selection-principal",
++      "required": "GET only; one document/preflight; duplicates, extras, caller refs, foreign identity and consent denied",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "hostedIdentity/readNativeRetainedPrincipal; route not added"
++    },
++    {
++      "id": "original-adopted-lifetimes",
++      "required": "Both exact preflight rows and original witness live; missing/replaced original or altered immutable deadline denies. Legitimately later adopter expiry cannot extend origin authority; expired origin denies.",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Existing capture helper does not read original rows"
++    },
++    {
++      "id": "missing-expired-redacted-deleted",
++      "required": "Missing/expired/redacted/deleted body or witness unavailable with metadata only",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Existing custody regression only"
++    },
++    {
++      "id": "cross-owner-stream-document-project-scope",
++      "required": "Every original/adopter/source/body owner, stream, document, project and scope must match",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Resolver counterexamples show current snapshot is not authority"
++    },
++    {
++      "id": "revision-source",
++      "required": "Wrong revision, source hash, source incarnation or complete census denies",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "No N6 census available"
++    },
++    {
++      "id": "identity-substitution",
++      "required": "Swapped origin/adopter/evidence/content/phase/operation identities deny",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Existing capture regression only"
++    },
++    {
++      "id": "digest-substitution",
++      "required": "Exact original envelope and request/response body SHA-256 plus manifest hashes required",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Existing envelope helper does not supply manifest/body proof"
++    },
++    {
++      "id": "incomplete-census-retention",
++      "required": "Overflow, omitted dependency, missing private envelope, unknown lifetime or changed original deadline denies",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Nine dependency counterexamples; not route tests"
++    },
++    {
++      "id": "rights-provenance-exclusions",
++      "required": "Derived, rights-bearing, native, Memory, governed, sponsor, workflow and nonpersonal inputs unavailable",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Existing Memory provenance and rights counterexamples only"
++    },
++    {
++      "id": "principal-database-races",
++      "required": "Principal/consent or DB identity changes during reads discard bytes and stale diagnostics",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Existing read-only session/principal patterns only"
++    },
++    {
++      "id": "source-content-races",
++      "required": "Source membership, scope, rights, lifecycle, rows or content changes during reads deny",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Existing custody recheck regression only"
++    },
++    {
++      "id": "provider-bodies",
++      "required": "Missing/incomplete/oversized bytes unavailable; invalid, duplicate-key or cardinality-mismatched results unknown; no invented identity/categories/scores",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Existing N5 validation regression only"
++    },
++    {
++      "id": "zero-side-effects-success-denial",
++      "required": "No providers, refreshes, initializers, sweeps, writes, jobs, acknowledgements, retries or paid recovery for any GET outcome",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "No N6 route exists, so no N6 success or denial certification"
++    },
++    {
++      "id": "browser-disclosure",
++      "required": "Selected authenticated inspector private/no-store; escaped inert exact bytes; inspection separate from acknowledgement",
++      "status": "not-run-unimplemented",
++      "existingEvidenceLimit": "Unimplemented. Existing N5 summary/acknowledgement synthetic review only"
++    }
++  ]
++}
+diff --git a/next-tasks/n6/result.md b/next-tasks/n6/result.md
+new file mode 100644
+index 00000000..10285220
+--- /dev/null
++++ b/next-tasks/n6/result.md
+@@ -0,0 +1,27 @@
++# N6 — prospective inspector dependency result
++
++**N6 is not release ready. No raw inspector, authority witness or product disclosure is implemented.** Existing source resolver contracts cannot supply the complete authority census required by the N5 prospective contract. This candidate uses the user's explicit missing-dependency fallback; it does not weaken inspection to a selected subset of events.
++
++The deliverable is a local committed dependency/test candidate: a source-backed audit, executable synthetic counterexamples, the smallest bounded resolver design, an explicit unimplemented route matrix and verification of the existing N5 behavior. It creates no new endpoint or permission. Ordinary Generate, moderation, acknowledgement and the admitted-job reader remain unchanged.
++
++The missing dependency is a resolver-owned, versioned complete census and requalification contract spanning source membership, original custody, owner/stream/project/document/revision binding, rights/lifetimes and excluded provenance. Snapshot equality, `source_event_refs`, cache high-water marks and the existing two-body custody helper do not provide it. The separate full-stream current-source diagnostic refuses ordinary worker preflight telemetry; filtering that history would violate its completeness boundary.
++
++N6 started in `/private/tmp/forma-n6-inspector`, branch `codex/forma-n6-inspector`, from exact N5 candidate `1091e3ef5dadc5854dcfa0382117180c9e73d2d5`. The release task's fresh authenticated remote-main check and its Production **542** receipt now confirm that same source commit; no rebase was needed. Direct N6 Git access returned HTTP403, so the source observation is attributed to that release task. Remote main must be reconciled again before any later release. N6 did not publish, and all 167 initially dirty original-checkout files retained their hashes.
++
++## Verification delivered
++
++**151 automated checks pass:** nine new executable dependency counterexamples, 72 existing focused regressions and 70 source/rebuilt Worker regressions. The build, TypeScript and changed-test lint pass. The browser review used the actual Still presenter and client with intercepted synthetic API responses: known item categories, unknown/legacy categories, inert markup and an unchanged request with explicit acknowledgement all behaved as expected. No acknowledgement or fixture job occurred merely from reading the warning. The final fixture created one synthetic job only after the explicit action.
++
++The automated browser driver is supplied but was not executed; the recorded browser review was performed through CUA at the normal desktop viewport. No N6 raw-inspection path exists to qualify. Every required N6 guard remains explicitly marked unimplemented/not run in the route matrix. The existing Worker tests and browser summary review must not be presented as N6 route certification.
++
++## Supported and unavailable
++
++N6 adds no supported raw inspection case. Even a small manual personal text-only preflight is unavailable until a complete prospective witness exists. Original/adopted, legacy, missing, expired, deleted/redacted, incomplete or out-of-scope source/body cases cannot gain access from this candidate. Longer raw retention never restores an expired preflight. No N4 source/body reconstruction, fabricated job or invented `GenerationRequested` sequence is attempted.
++
++Existing N5 summaries still report aggregate and per-item advisory results where recorded, with missing item categories unknown. They remain summaries, not verified body inspection. Existing explicit acknowledgement remains separate from reading the review.
++
++See [dependency and bounded design](dependency-design.md), [source audit](source-audit.md), [qualification matrix](qualification-matrix.json), [verification](verification.json) and [test manifest](test-manifest.json). Synthetic tests and browser review do not certify classifier quality, live custody, historical attribution or paid generation.
++
++**Next implementation dependency:** qualify the bounded census/requalification producer at the existing authoritative source resolver, then implement and run the full source/rebuilt Worker route and browser matrix. No provider call, paid trial, publication, policy/input/model/threshold change or N3/D2/I/J/L experiment is part of N6. Any live observation needs a separate exact proposal.
++
++[Progress Report](http://127.0.0.1:4187/) · [N5 contract](../n5/prospective-contract.md)
+diff --git a/next-tasks/n6/source-audit.md b/next-tasks/n6/source-audit.md
+new file mode 100644
+index 00000000..d77fa95b
+--- /dev/null
++++ b/next-tasks/n6/source-audit.md
+@@ -0,0 +1,103 @@
++# N6 authoritative source dependency audit
++
++Audited the exact N5 candidate `1091e3ef` in `/private/tmp/forma-n6-inspector` and the N5 prospective contract. No live provider, production read, expired N4 reconstruction, publication, policy change, or original-checkout mutation was performed by this audit.
++
++## Decision
++
++The existing authoritative source resolver cannot supply the proposed complete prospective authority/input witness. Its projection is authoritative for generation input construction; it is not an independently requalifiable disclosure authority. Implementing a successful raw inspector by hashing selected `source_event_refs`, checking only current fields, or combining those with the preflight mutation high-water mark would weaken N5's minimum contract.
++
++Exact missing dependency: **a resolver-owned, bounded personal Still source-authority receipt and its read-only requalification contract**, emitted during the existing authorized preflight and bound to the exact complete snapshot. It must carry a complete semantic dependency census, original event/envelope/private-body identities, scope/provenance exclusions, and lifetimes. That contract is absent. A truthful implementation can report `source-authority-contract-unimplemented`; it cannot claim a successful body inspection yet.
++
++## Existing contracts and their limits
++
++| Existing contract | Reusable guarantee | N6 gap |
++| --- | --- | --- |
++| `worker/generation-readiness.ts:298`, `imageReadinessSource` at line 190 | Ordinary preflight uses existing authorized events and `authoritativeCreativeContext`; generated snapshot/revision are not replaced by browser text. | No complete authority receipt is requested or returned. Cache return can precede this resolver using only selected mutation-head equality (lines 288–294). |
++| `worker/context-authority.ts:59`, `createAuthoritativeCreativeContextFold` at line 69 | Canonical generation folds, source versions, selected document/project and snapshot. Fold explicitly states it does not establish authority or freshness (lines 65–68). | Return value (lines 270–275) contains projection, snapshot, versions, revision only. No custody receipt, dependency completeness proof, original project/document incarnation proof, or read requalification capability. |
++| `worker/runtime.ts:940`, `readWorkspaceEvents` at line 960 | Paged projection-relevant workspace history; optional server-owned `EventReadProof` can check assertions with each hydrated page. | Ordinary preflight does not supply a proof. A hydrated event array cannot prove raw private ownership/scope, complete retained custody, stable source identity across page reads, or missing bodies. |
++| `worker/event-read-primitives.ts:8` | Serializes durable event fields and uses Memory routing behavior. | Drops private sidecar custody metadata; when private body is unavailable, falls back to the public operational envelope. A successfully folded snapshot therefore does not itself certify complete original private source. |
++| `src/model/events.ts:247` and `worker/context-authority.ts:98` | Canonical semantics for project/document membership, attachments, relationships, copied/extracted facts, excluded Output blocks and snapshots. | Current `sourceEvents` arrays are projection provenance, not an attestation that all scope-defining and negative dependencies have been included. Project origin is a concrete missing dependency in a selected-ref collection. |
++| `src/model/context-health.ts:112`; `worker/output-disclosure-proof.ts:88` | Existing generation rights and active-source deadlines. | They deliberately inspect active facts. Whole-snapshot moderation also serializes inactive facts. Current properties can omit a prior lifetime after an edit. No complete original/current disclosure lifecycle receipt results. |
++| `src/model/taste.ts:54` | Canonical standing-constraints reducer. | Separate from `authoritativeCreativeContext`. Ordinary Still source-advisory currently sends the resolver snapshot unchanged; prompt-technique comparison explicitly appends constraints. Do not invent a standing-constraints transmission claim; the complete receipt must certify the selected route's actual census and exclusions. |
++| `src/model/memory-authorship.ts` | Accepted Memory assistance is negatively attributed and survives later edits and deliberately authored copies. | Marker absence on an arbitrary selected event is insufficient to attest complete exclusions. N6 must consume the canonical complete provenance/custody result. |
++| `worker/advisory-moderation-evidence.ts:36` | Bounded private body references, exact original envelope digest, personal document/project and native Memory body exclusion. | It explicitly says it is never a source-history proof. It cannot fill the resolver gap. |
++| `worker/generation-current-source-read.ts`; `worker/generation-current-source-proof.ts:19` | Existing diagnostic conservatively checks complete stream custody, current incarnation and retained producer evidence. | It is a standalone administrator observation, not an ordinary preflight receipt. Its full-stream allowlist rejects `GenerationPreflightRequested` and `GenerationPreflightCompleted`; it also rejects preferences and unsupported lifecycle transitions. Dropping those events to make it pass would be a new hand-selected evidence filter. |
++
++These are scope differences, not claims that the existing generation resolver or admitted-job reader violates its own contract.
++
++## Executable counterexamples
++
++`tests/n6-source-authority-dependency.test.mjs` uses actual source functions with synthetic inputs, not source-text matching. Nine passing tests establish:
++
++1. Changed private sidecar owner, scope and binding metadata disappear before resolver identity is computed.
++2. Changed event stream/actor can produce the same source snapshot/revision; digest is not authorization.
++3. Missing/redacted sidecar fallback can still produce a snapshot and source reference with private text absent.
++4. Removing the project origin leaves identical snapshot/revision while the separate incarnation checker refuses; selected refs omit that origin.
++5. Standing constraints change in their separate reducer without changing this resolver's snapshot/revision.
++6. An inactive expired fact remains serialized in the snapshot although active generation-rights validation rejects the same active fact.
++7. Clearing a rights deadline removes it from current properties while the history and original source refs remain.
++8. Accepted Memory assistance remains attributed through later edits and copied authored work.
++9. The diagnostic full-stream lifecycle proof refuses ordinary preflight telemetry that does not change the canonical generation snapshot.
++
++Command: `node --experimental-transform-types --test tests/n6-source-authority-dependency.test.mjs` — 9 passed. Strip-only Node mode fails on an existing imported TypeScript parameter property; transform mode is required without the repository's usual `tsx` runner. These tests demonstrate the missing dependency. They do not qualify a new route, classifier, historical observation, or a successful raw disclosure.
++
++## Smallest bounded design
++
++1. Extend the **existing canonical reader/resolver boundary**, prospectively and optionally, with one versioned Still-only receipt. Keep current generation return values, moderation input/wire and authorization behavior unchanged. Its observational result is `complete` or an explicit unavailable reason; failure cannot propagate into moderation/admission.
++2. The canonical reader must preserve custody/identity evidence before `serializeEvent` discards it, using the existing per-page proof mechanism and a final read-only proof. The canonical folds must identify the complete dependencies they actually consume for selected project/document membership, facts, relationships, attachment/inheritance state, route-relevant constraints and exclusions. This needs owned reducer semantics, not a parallel event-type allowlist in the inspector. Any unknown effect, missing source, unsupported provenance or incomplete census refuses.
++3. Initial receipt supports only personal manual Still `generate`, no preview source, character/Canvas scope, references/3D, rights-bearing/derived/Memory inputs, governed/sponsor/workflow/native/durable-slot context. Require the entire exact snapshot under 28,000 JS code units and at most 128 complete dependencies; unsupported source or capacity remains unavailable. The bound applies to the proven census, never a truncated list.
++4. The receipt binds owner/stream/project/document/revision/source digest, original preflight/request, original source events and exact public/private hashes, original lifecycle deadlines, and a versioned exact positional input manifest produced during the existing moderation input construction. It must attest the absence of excluded context through the authoritative contracts; checking for a few absent snapshot fields is insufficient.
++5. Persist only a complete prospective receipt during the authorized operation. Adopted cache rows point to the original receipt and original request/response pair; adoption cannot extend deadlines or mint authority. No backfill. Missing/expired legacy receipt is metadata-only unavailable.
++6. After that contract exists, the separate GET can derive at most the two owned moderation refs and reuse `qualifyAdvisoryCapture` plus private-custody guards. Final qualification must prove principal/database/census/scope/rights/exclusions/original rows/exact body bytes unchanged and enforce the minimum original+selected preflight, source/witness and both immutable private deadlines. Invalid provider bodies retain raw bytes only after authority passes and association is unknown; never infer categories.
++
++Do not create a generic evidence framework, expand the admitted-job reader, add a fake GenerationRequested/job sequence, or repair historical events to bridge this gap. A subsequent implementation should qualify this one receipt contract first, then the source/rebuilt Worker GET matrices and synthetic browser disclosure/acknowledgement flow.
++
++
++---
++
++# N6 independent custody audit
++
++Audited checkout: `/private/tmp/forma-n6-inspector`, N5 candidate `1091e3ef`.
++Read N5 prospective contract. This audit performs no provider calls or historical data reads.
++
++## Decision
++
++Agree with a committed dependency/test/documentation candidate. Do not enable an inspector route or label a synthetic unavailable page as implementation. Existing contracts do not furnish N6's resolver-owned, complete prospective source authority census. The user explicitly permits identifying this missing dependency and its smallest bounded design. The inspector, witness capture, disclosure UI, route success cases, and their qualification matrix must remain marked **unimplemented**.
++
++## Why the gate is unmet
++
++- `worker/context-authority.ts:59` derives the authoritative snapshot from events supplied by its caller. It returns snapshot/source versions/document revision, not a proof that retained source history, rights, scope and lifecycles are completely enumerated. The streaming fold explicitly says it does not establish authority or freshness (`:65–68`).
++- Ordinary preflight uses `readWorkspaceEvents` and `imageReadinessSource` (`worker/generation-readiness.ts:190–191,298`). `readWorkspaceEvents` loads the workspace event profile (`worker/runtime.ts:960–962`); this is not a prospective private-custody census or persisted authority witness. Its context mutation high-water mark only supports cache validity.
++- `continueOutputTrustedContext` adds useful current scope/source guards (`worker/output-trusted-context.ts:137–162`), but `captureOutputPrivateSources` derives selected identifiers from current projection sourceEvents and pinned outputs (`worker/output-disclosure-proof.ts:26–31`). It does not attest that those references are a complete census of all source-affecting events/lifecycles, and has no origin/adopter preflight witness.
++- `generation-current-source-read.ts` is a separately bounded current administrator diagnostic with a complete-stream census. Its `proveCurrentIncarnation` intentionally rejects every unknown event type (`worker/generation-current-source-proof.ts:12–25`), and its reader requires every event actor be the user (`generation-current-source-read.ts:107`). The normal `GenerationPreflightRequested`/`Completed` worker events are outside that contract. Reusing it after filtering those or other events away would weaken its complete-stream claim; broadening it is separate resolver design, not an existing complete witness.
++- `qualifyAdvisoryCapture` documents itself as “never a source-history proof” (`worker/advisory-moderation-evidence.ts:36`). Retained capture hashes do not close this gap.
++
++## Actually reusable contracts
++
++| Contract | Existing source | Reuse and remaining route gap |
++|---|---|---|
++| Hosted personal identity | `worker/native-retained-text-custody.ts:27` | Rejects project-context and impersonation cookies. No localhost account provisioning. |
++| Read-only canonical principal/consent | `worker/native-retained-text-custody.ts:212` | Creator/admin, current policy consent, identity policy validation, bounded `auth_json`. Must capture and requalify exact principal and DB for N6. |
++| Personal raw capture | `worker/advisory-moderation-evidence.ts:21` | Observes original request/response envelopes, max 500,000 UTF-8 bytes each, owner/stream/origin bindings, original envelope digest and storage expiry. No complete source witness. |
++| Capture link qualification | `worker/advisory-moderation-evidence.ts:38` | At most two server-owned refs; hashes, owner, private retention, redaction, personal scope, native Memory exclusion; rereads bytes and checks DB identity. Does not read or keep origin/selected preflight rows live; does not validate operation-body hash or input/result association. |
++| Observational failure isolation | `worker/openai-moderation.ts:82` | `moderateGenerationSnapshot` isolates observer errors from original dispatch/verdict; N6 capture must preserve this and exact request bytes/call count. |
++| Exact input construction | `src/model/source-advisory.ts:20` | Snapshot input plus first 24 nonempty fact projections, 28,000/6,000 UTF-16 bounds, exact index/sourceIndex/blockId/truncation. Add prospective per-input digest through this existing construction, without reimplementing its wire. |
++| Result validation | `worker/moderation-response-validation.ts:3` and unique-key parser in `worker/openai-moderation.ts:47` | Exact cardinality and boolean categories/valid scores. Missing identity fields stay unknown. Malformed results never become clear. Association remains positional and cannot detect a valid reordered provider response. |
++| Read-only router precedent | `worker/index.ts:134–136,399` | A new path must route before mutating/auth-initializing handlers **and** skip post-response retention scheduling. Merely placing it before `handleGenerationReadiness` is insufficient. |
++| Synthetic read-only tests | `tests/generation-current-source.test.mjs` | Source/rebuilt Worker fixtures, strict provider/media/background sentinels, SQLite total_changes and injected principal/DB/content races. Existing tests qualify only their named contracts. |
++
++## Origin/adopter and disclosure hazards
++
++- `generation_preflights` is upserted by `(owner_id,request_key)` (`generation-readiness.ts:377`): replacement can delete the original preflight identity even while private bodies remain. That must make N6 unavailable, never mint origin authority from an adopted row.
++- Full-cache and previous-safety reuse preserve the prior capture; `adoptedBy` changes only to the selected preflight (`generation-readiness.ts:277–284,355–362`). Original envelope binding must remain the original, and original + selected row deadlines must both be checked.
++- `qualifyAdvisoryCapture` can currently qualify live private records for an expired original preflight because it is a link/custody helper; an N6 reader must not treat its retained result as access authorization.
++- Envelope digest is distinct from `operation.requestSha256`/`responseSha256`. A reader must qualify both exact envelopes and exact raw body strings, same evidence ID, phase and identity association, and the prospective input manifest.
++- Requested model, returned model, header request ID and body response ID are separate observations. Current validation does not require nonempty response identity; do not fill missing values from the request.
++- Invalid/cardinality-mismatched provider bodies may remain privately retained under valid capture; their classified results must be unknown. Missing/incomplete bodies must be unavailable. Neither case authorizes replacement calls.
++- No served report should receive private raw source, body, project or document values. Review fixtures must be unmistakably synthetic and cannot certify historical evidence or classifier quality.
++
++## Smallest bounded dependency
++
++Extend the *existing ordinary Still authoritative source resolution* to return a versioned complete witness for the exact manual text-only subset, authored during its authorized preflight and requalifiable later. It must enumerate all relevant document/project/fact/constraint/attachment/accepted-input dependencies and lifecycle/scope/rights, identify unsupported or unknown effects, and carry exact origin owner/stream/project/document/revision/source bindings and immutable effective deadlines. Bound complete snapshot to 28,000 UTF-16 characters and dependencies to 128; references/3D, derived/rights-bearing/Memory/governed/sponsor/workflow/native context remain unavailable. The resolver must itself establish completeness, not accept a caller's list or rely on current sourceEvent references. No historical repair/backfill.
++
++Only after that dependency is implemented and qualified should observational persistence, strict GET selection, two-body read/verification, race checks and compact inert disclosure be implemented. N5 reporting release remains independent. Current N6 disposition: **not release ready; complete resolver-owned prospective authority witness absent**.
+diff --git a/next-tasks/n6/test-manifest.json b/next-tasks/n6/test-manifest.json
+new file mode 100644
+index 00000000..ae84468c
+--- /dev/null
++++ b/next-tasks/n6/test-manifest.json
+@@ -0,0 +1,178 @@
++{
++  "schemaVersion": "forma-n6-tests-v1",
++  "fixtureOnly": true,
++  "automatedChecksPassed": 151,
++  "tests": {
++    "focused": [
++      "advisory clear survives request capture failure",
++      "advisory clear survives response capture failure",
++      "advisory clear survives both capture failure",
++      "advisory flagged survives request capture failure",
++      "advisory flagged survives response capture failure",
++      "advisory flagged survives both capture failure",
++      "error with results moderation result never passes or dispatches media",
++      "missing moderation result never passes or dispatches media",
++      "null moderation result never passes or dispatches media",
++      "empty moderation result never passes or dispatches media",
++      "missing flag moderation result never passes or dispatches media",
++      "string flag moderation result never passes or dispatches media",
++      "missing categories moderation result never passes or dispatches media",
++      "array categories moderation result never passes or dispatches media",
++      "bad category moderation result never passes or dispatches media",
++      "inconsistent flag moderation result never passes or dispatches media",
++      "out-of-range score moderation result never passes or dispatches media",
++      "string score moderation result never passes or dispatches media",
++      "excess results moderation result never passes or dispatches media",
++      "malformed, duplicate-key or oversized moderation does not pass",
++      "malformed, duplicate-key or oversized moderation does not pass",
++      "malformed, duplicate-key or oversized moderation does not pass",
++      "single checks allow absent scores as unknown, with a complete explicit flag/categories result",
++      "snapshot batch validates every expected diagnostic result",
++      "technique batch cardinality is not a single-result contract",
++      "Memory strict branch preserves mandatory signal, unique keys and single-result shape",
++      "Memory private image checkpoints finance before bounded receipt and rejects absent usage",
++      "oversized moderation has unknown full response hash, never an invented empty-body hash",
++      "E2: Memory finance is observable while private custody is suspended",
++      "N5 attribution: snapshot clear/item flagged",
++      "N5 attribution: snapshot flagged/items clear",
++      "N5 attribution: different categories",
++      "N5 attribution: omitted facts keep original indices; metadata-only and disabled facts remain submitted",
++      "N5 attribution: UTF-16 truncation, 24 nonempty facts and excluded projection fields preserve exact wire",
++      "N5 attribution: absent scores and empty flagged category map stay unknown",
++      "N5 attribution: legacy per-item categories are explicitly unknown; non-advisory issue unchanged",
++      "N5 attribution rejects missing verdicts",
++      "N5 attribution rejects too few verdicts",
++      "N5 attribution rejects too many verdicts",
++      "N5 attribution rejects bad item verdicts",
++      "every format opens configuration without estimating, reserving or generating",
++      "back to types and reselect preserve settings while attempts remain locked",
++      "a separate submission generates once and preserves required reviews",
++      "Still exposes the real admission warning without inventing highlighted blocks",
++      "Only implicated context is marked; reference IDs also map to their blocks",
++      "Budget and unrelated failures retain their distinct handling; missing details remain visible",
++      "status refresh reads only, confirms no new generation, and does not repeat provider error",
++      "failed or stale refresh never claims a successful check",
++      "only explicit inline reviews use a deterministic primary generation control",
++      "accepted generation keeps only useful navigation and one toolbar progress status",
++      "preparation stays inline and acceptance navigates once directly to the new job",
++      "budget review stays inline, requires explicit consent, and retains the same request",
++      "blocked and uncertain requests remain on the old page without buying another attempt",
++      "a late accepted request does not redirect after the user leaves the original page",
++      "fresh action rechecks selected job, capability, uncertain requests and busy state",
++      "creation storage failure offers a read-only service check and preserves the document",
++      "generation status renders terminal errors only once and replaces stale progress",
++      "safety failures lead to context review; only acknowledgeable admission warnings offer Continue",
++      "dismissing a failed generation persists across reload without changing the attempt",
++      "dismissing a partial generation persists across reload without changing the attempt",
++      "dismissing a completed generation persists across reload without changing the attempt",
++      "dismissing a canceled generation persists across reload without changing the attempt",
++      "Review generation opens the original job even without generation permission and never starts a fresh request",
++      "suggested drafts are queued only after their document-specific preflight succeeds",
++      "suggested refinements preserve the exact approved draft through preflight and generation",
++      "suggested paid work fails closed when blocked, checking, unknown, or unavailable",
++      "a review-required suggestion cannot spend until its exact request has been acknowledged",
++      "a failed preflight never starts paid work and explains the connection problem",
++      "next-step recommendations only open exact saved work or free configuration",
++      "compact document controls defer hidden fan checks without skipping their safety gates",
++      "optimistic primary actions remain available without hiding known provider or safety failures",
++      "compact primary controls skip passive checks while paid and fan safety remain mandatory"
++    ],
++    "worker": [
++      "source: isolated schema delivers complete through one mocked Still generation",
++      "source: isolated schema delivers scope observation through one mocked Still generation",
++      "production bundle: isolated schema delivers complete through one mocked Still generation",
++      "production bundle: isolated schema delivers scope observation through one mocked Still generation",
++      "source: advisory custody fresh",
++      "source: advisory custody full-cache",
++      "source: advisory custody previous-safety",
++      "source: advisory custody legacy",
++      "source: advisory custody missing",
++      "source: advisory custody expired",
++      "source: advisory custody foreign",
++      "source: advisory custody changed-binding",
++      "source: advisory custody request-storage",
++      "source: advisory custody response-storage",
++      "source: advisory custody early-no-job",
++      "source: advisory custody revoked-read",
++      "source: advisory custody binding-read",
++      "source: advisory custody extended-expiry",
++      "source: advisory custody expiry-race",
++      "source: advisory custody changed-revision",
++      "source: advisory custody canceled",
++      "source: advisory custody early-blocked",
++      "source: advisory custody redacted",
++      "source: advisory custody digest",
++      "source: advisory custody substituted-content",
++      "source: advisory custody substituted-evidence",
++      "source: advisory custody wrong-document",
++      "source: advisory custody wrong-project",
++      "source: advisory custody wrong-revision",
++      "source: advisory custody content-scope",
++      "source: advisory custody body-race",
++      "production bundle: advisory custody fresh",
++      "production bundle: advisory custody full-cache",
++      "production bundle: advisory custody previous-safety",
++      "production bundle: advisory custody legacy",
++      "production bundle: advisory custody missing",
++      "production bundle: advisory custody expired",
++      "production bundle: advisory custody foreign",
++      "production bundle: advisory custody changed-binding",
++      "production bundle: advisory custody request-storage",
++      "production bundle: advisory custody response-storage",
++      "production bundle: advisory custody early-no-job",
++      "production bundle: advisory custody revoked-read",
++      "production bundle: advisory custody binding-read",
++      "production bundle: advisory custody extended-expiry",
++      "production bundle: advisory custody expiry-race",
++      "production bundle: advisory custody changed-revision",
++      "production bundle: advisory custody canceled",
++      "production bundle: advisory custody early-blocked",
++      "production bundle: advisory custody redacted",
++      "production bundle: advisory custody digest",
++      "production bundle: advisory custody substituted-content",
++      "production bundle: advisory custody substituted-evidence",
++      "production bundle: advisory custody wrong-document",
++      "production bundle: advisory custody wrong-project",
++      "production bundle: advisory custody wrong-revision",
++      "production bundle: advisory custody content-scope",
++      "production bundle: advisory custody body-race",
++      "source: N5 advisory attribution item-only",
++      "source: N5 advisory attribution snapshot-only",
++      "source: N5 advisory attribution different-categories",
++      "source: N5 advisory attribution malformed",
++      "source: N5 advisory attribution full-cache",
++      "source: N5 advisory attribution origin-adoption",
++      "production bundle: N5 advisory attribution item-only",
++      "production bundle: N5 advisory attribution snapshot-only",
++      "production bundle: N5 advisory attribution different-categories",
++      "production bundle: N5 advisory attribution malformed",
++      "production bundle: N5 advisory attribution full-cache",
++      "production bundle: N5 advisory attribution origin-adoption"
++    ],
++    "dependency": [
++      "N6 dependency: authorized projection identity does not certify private sidecar custody",
++      "N6 dependency: source digest/revision alone does not bind event owner or stream",
++      "N6 dependency: an unavailable private event can still produce a resolver snapshot",
++      "N6 dependency: selected source refs do not establish the project origin census",
++      "N6 dependency: standing constraints are a separate source consumer",
++      "N6 dependency: generation rights validation does not qualify every serialized fact lifetime",
++      "N6 dependency: current properties cannot certify a retained historical source lifetime",
++      "N6 dependency: accepted Memory authorship survives later edits and copied authored work",
++      "N6 dependency: standalone current-source lifecycle proof rejects ordinary preflight telemetry"
++    ]
++  },
++  "commands": {
++    "build": "npm run build",
++    "typecheck": "npm run typecheck",
++    "focused": "node --import tsx --test tests/source-advisory-attribution.test.mjs tests/advisory-moderation-boundary.test.mjs tests/moderation-response-validation.test.mjs tests/still-generation-review.test.mjs tests/still-direct-create.test.mjs tests/still-generation-toolbar.test.mjs tests/still-notifications.test.mjs tests/workspace-generation-readiness.test.mjs",
++    "worker": "node --import tsx --test --test-name-pattern='N5|advisory custody|isolated schema delivers complete|isolated schema delivers scope observation' tests/event-save-repair.test.mjs",
++    "dependency": "node --import tsx --test tests/n6-source-authority-dependency.test.mjs",
++    "lint": "node node_modules/eslint/bin/eslint.js tests/n6-source-authority-dependency.test.mjs tests/helpers/n6-source-advisory-review-fixture.mjs tests/browser/n6-source-advisory-review.test.mjs",
++    "browserServer": "N6_REVIEW_PORT=4197 node tests/helpers/n6-source-advisory-review-fixture.mjs",
++    "browserDriverNotRun": "node --import tsx --test tests/browser/n6-source-advisory-review.test.mjs"
++  },
++  "browserDriverExecuted": false,
++  "browserExecution": "CUA manual interaction with final local fixture; results in browser-review.json",
++  "routeMatrix": "qualification-matrix.json",
++  "qualificationLimit": "Dependency counterexamples and existing N5/custody regressions; no N6 inspector route qualification."
++}
+diff --git a/next-tasks/n6/verification.json b/next-tasks/n6/verification.json
+new file mode 100644
+index 00000000..3d316fda
+--- /dev/null
++++ b/next-tasks/n6/verification.json
+@@ -0,0 +1,95 @@
++{
++  "schemaVersion": "forma-n6-safe-verification-v1",
++  "verifiedAt": "2026-09-24T00:56:35.741505+00:00",
++  "status": "dependency-fallback-verified-inspector-blocked",
++  "candidate": {
++    "version": "n6-dependency-v1",
++    "baseCommit": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
++    "branch": "codex/forma-n6-inspector",
++    "workspace": "/private/tmp/forma-n6-inspector",
++    "commitReceipt": "candidate.json in served review artifact; local candidate committed after these checks"
++  },
++  "freshness": {
++    "remoteMain": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
++    "productionVersion": 542,
++    "productionCommit": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
++    "deploymentId": "appgdep_6ab473767cfc819188292ffa0d69b1b2",
++    "evidence": "Fresh authenticated ls-remote output in existing Run N4 ordinary observation task and N5 publication.json, read during N6 after user freshness request.",
++    "directN6RemoteAttempt": "HTTP403 without release credential; no credential recovery attempted",
++    "reconcileBeforeRelease": true
++  },
++  "inspectorImplemented": false,
++  "authorityWitnessImplemented": false,
++  "productDisclosureImplemented": false,
++  "applicationFilesChanged": false,
++  "rawSupportedCases": [],
++  "releaseReady": false,
++  "blocker": "Resolver-owned complete prospective source custody/dependency/lifetime/exclusion census and read-only requalification contract absent.",
++  "checks": {
++    "automatedPassed": 151,
++    "automatedFailed": 0,
++    "dependencyCounterexamples": 9,
++    "focusedRegression": 72,
++    "sourceAndRebuiltWorkerRegression": 70,
++    "build": "pass; existing chunk-size warning",
++    "typecheck": "pass",
++    "changedFileLint": "pass",
++    "newBrowserFilesSyntax": "pass",
++    "syntheticBrowser": "final fixture manually passed in CUA; browser-review.json",
++    "fullN6RouteMatrix": "not run: route unimplemented",
++    "diffCheck": "pass"
++  },
++  "originalDirtyCheckout": {
++    "checkedFiles": 167,
++    "unchanged": true,
++    "N6Writes": 0
++  },
++  "privacy": {
++    "historicalN4BodiesRead": false,
++    "historicalSourceReconstructed": false,
++    "privateDataInReport": false
++  },
++  "effects": {
++    "liveProviderCalls": 0,
++    "paidTrials": 0,
++    "productionJobs": 0,
++    "productionAcknowledgements": 0,
++    "publication": false,
++    "push": false,
++    "policyInputModelThresholdChanges": false,
++    "productionSourceWrites": 0
++  },
++  "logs": {
++    "focused": {
++      "localPath": "/private/tmp/n6-baseline-unit.log",
++      "sha256": "640fc31663e11bb03808d6a38f809516468315807751254508808854acd60855"
++    },
++    "worker": {
++      "localPath": "/private/tmp/n6-worker.log",
++      "sha256": "4aa9c5a94331f4f71480c28340bcf44e81ed6b2ed0b754a83f0ea930d30aa3e7"
++    },
++    "dependency": {
++      "localPath": "/private/tmp/n6-dependency-tests.log",
++      "sha256": "43736e6a630c41c0e29bb2e081b37007d774ff6268233d8773b5974fad62dda5"
++    },
++    "build": {
++      "localPath": "/private/tmp/n6-build.log",
++      "sha256": "cb5e3cb827d0a4b80d0266574e05078b30be53e876adfc22d65bc1342f5266c9"
++    },
++    "typecheck": {
++      "localPath": "/private/tmp/n6-typecheck.log",
++      "sha256": "9e957926002934292f1cb961988e7bed489fdfeeb261b0967f2b43723fbb2ef6"
++    },
++    "lint": {
++      "localPath": "/private/tmp/n6-lint.log",
++      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
++    }
++  },
++  "limitations": [
++    "No N6 route, authority witness or compact product inspector can be qualified until the exact resolver dependency is supplied.",
++    "151 passing checks do not certify any new N6 inspection path, classifier quality or historical evidence.",
++    "N5 publication is separate and already reports Production542.",
++    "A later live observation requires its own exact proposal."
++  ],
++  "buildNote": "pnpm initially attempted dependency reconciliation and aborted before a module purge. npm run invoked the same checked-in build script successfully using existing local dependencies; no install or package edits."
++}
+diff --git a/tests/browser/n6-source-advisory-review.test.mjs b/tests/browser/n6-source-advisory-review.test.mjs
+new file mode 100644
+index 00000000..076b96ae
+--- /dev/null
++++ b/tests/browser/n6-source-advisory-review.test.mjs
+@@ -0,0 +1,91 @@
++import test from 'node:test';
++import assert from 'node:assert/strict';
++import {chromium, expect} from '@playwright/test';
++import {createN6ReviewServer} from '../helpers/n6-source-advisory-review-fixture.mjs';
++
++test('N6 unavailable-inspector boundary preserves N5 item attribution and explicit acknowledgement', async () => {
++  const {server, url} = await createN6ReviewServer();
++  let browser;
++  try {
++    browser = await chromium.launch({headless: true});
++    const page = await browser.newPage({viewport: {width: 1280, height: 950}});
++    page.setDefaultTimeout(15000);
++    const errors = [], externalRequests = [];
++    page.on('pageerror', error => errors.push(error.message));
++    await page.route('**/*', route => {
++      if (new URL(route.request().url()).origin === new URL(url).origin) return route.continue();
++      externalRequests.push(route.request().url());
++      return route.abort();
++    });
++    await page.goto(url);
++    const dock = page.locator('.action-dock');
++    const button = name => dock.getByRole('button', {name, exact: true});
++    await expect(button('Generate')).toBeVisible();
++    assert.deepEqual(await page.evaluate(() => window.n6Trace), {requests: [], unexpectedFetches: [], acknowledgedRequests: 0, createdJobs: 0});
++    assert.equal(await page.evaluate(() => window.n6App.client.jobs.length), 0);
++
++    await button('Generate').click();
++    await expect(button('Acknowledge & send')).toBeVisible();
++    const known = page.locator('#generation-context-known .context-review-reason');
++    await expect(known).toContainText('flagged: hate');
++    await expect(known).not.toContainText('violence');
++    await expect(page.locator('#generation-context-empty .context-review-reason')).toContainText('category unavailable');
++    await expect(page.locator('#generation-context-legacy .context-review-reason')).toHaveCount(0);
++    await expect(page.locator('#generation-context-clear .context-review-reason')).toHaveCount(0);
++    await expect(page.locator('#generation-context-empty')).toContainText('<img data-n6-injected="true"');
++    await expect(page.locator('[data-n6-injected]')).toHaveCount(0);
++    assert.equal(await page.evaluate(() => window.n6MarkupExecuted), undefined);
++    await expect(page.locator('n6-review-fixture').getByRole('button', {name: /inspect|raw|evidence/i})).toHaveCount(0);
++    await expect(page.locator('n6-review-fixture a[href*="inspection"], n6-review-fixture a[href*="advisory"]')).toHaveCount(0);
++    assert.equal(await page.evaluate(() => window.n6Readiness.advisoryCapture.inspection), 'unavailable-before-admission');
++
++    // Reading/reflowing the warning has no acknowledgement or job side effect.
++    await page.setViewportSize({width: 390, height: 844});
++    await expect(button('Acknowledge & send')).toBeVisible();
++    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
++    const before = await page.evaluate(() => ({trace: window.n6Trace, jobs: window.n6App.client.jobs.length, acknowledgements: window.n6App.generation.acknowledgements ?? {}}));
++    assert.equal(before.trace.requests.length, 1);
++    assert.equal(before.trace.requests[0].payload.preflightAcknowledged, undefined);
++    assert.equal(before.trace.acknowledgedRequests, 0);
++    assert.equal(before.trace.createdJobs, 0);
++    assert.equal(before.jobs, 0);
++    assert.deepEqual(before.acknowledgements, {});
++
++    await button('Acknowledge & send').click();
++    await expect.poll(() => page.evaluate(() => window.n6Trace.acknowledgedRequests)).toBe(1);
++    await expect(button('Check request')).toBeDisabled();
++    const during = await page.evaluate(() => window.n6Trace);
++    assert.equal(during.requests.length, 2);
++    assert.equal(during.createdJobs, 0);
++    const original = structuredClone(during.requests[0]), acknowledged = structuredClone(during.requests[1]);
++    assert.equal(acknowledged.payload.preflightAcknowledged, true);
++    delete acknowledged.payload.preflightAcknowledged;
++    assert.deepEqual(acknowledged, original, 'the explicit acknowledgement retains the original request and source');
++    await page.getByText('Fixture counters and retained request', {exact: true}).click();
++    await page.getByRole('button', {name: 'Finish synthetic acknowledgement', exact: true}).click();
++    await expect(page.getByRole('heading', {name: 'Synthetic acknowledgement accepted'})).toBeVisible();
++    const after = await page.evaluate(() => ({trace: window.n6Trace, jobs: window.n6App.client.jobs.length, pending: window.n6App.client.pendingGeneration}));
++    assert.equal(after.trace.requests.length, 2);
++    assert.equal(after.trace.acknowledgedRequests, 1);
++    assert.equal(after.trace.createdJobs, 1);
++    assert.equal(after.jobs, 1);
++    assert.equal(after.pending, null);
++    assert.deepEqual(after.trace.unexpectedFetches, []);
++
++    await page.goto(`${url}?variant=legacy`);
++    await button('Generate').click();
++    await expect(button('Acknowledge & send')).toBeVisible();
++    const legacy = page.locator('#generation-context-legacy .context-review-reason');
++    await expect(legacy).toContainText('individual categories were not recorded');
++    await expect(legacy).not.toContainText('violence');
++    assert.equal(await page.evaluate(() => window.n6Trace.requests.length), 1);
++    assert.equal(await page.evaluate(() => window.n6Trace.acknowledgedRequests), 0);
++    assert.equal(await page.evaluate(() => window.n6App.client.jobs.length), 0);
++    assert.deepEqual(await page.evaluate(() => window.n6Trace.unexpectedFetches), []);
++    assert.deepEqual(externalRequests, []);
++    assert.deepEqual(errors, []);
++  } finally {
++    await browser?.close();
++    await server.close();
++  }
++});
+diff --git a/tests/helpers/n6-source-advisory-review-fixture.mjs b/tests/helpers/n6-source-advisory-review-fixture.mjs
+new file mode 100644
+index 00000000..287d2bb9
+--- /dev/null
++++ b/tests/helpers/n6-source-advisory-review-fixture.mjs
+@@ -0,0 +1,158 @@
++import {createServer} from 'vite';
++import {fileURLToPath} from 'node:url';
++
++// Synthetic UI-only fixture. The actual Still client and presenter are used;
++// current authority and provider behavior are deliberately not simulated.
++async function mountReviewFixture() {
++  const {html, LitElement} = await import('/@id/lit');
++  const {StillApp} = await import('/src/still/app.ts');
++  const {StillClient} = await import('/src/still/client.ts');
++  await import('/src/still/vendor/tokens/default.css');
++  await import('/src/still/theme.css');
++  const style = document.createElement('style');
++  style.textContent = (await import('/src/still/style.css?raw')).default.replaceAll('still-app', 'n6-review-fixture');
++  document.head.append(style);
++
++  const trace = window.n6Trace = {requests: [], unexpectedFetches: [], acknowledgedRequests: 0, createdJobs: 0};
++  const injectedText = '<img data-n6-injected="true" src="https://invalid.example/pixel" onerror="window.n6MarkupExecuted=true">';
++  const raw = [
++    ['ProjectCreated', {project_id: 'n6-project', name: 'Synthetic source review'}],
++    ['DocumentCreated', {project_id: 'n6-project', document_id: 'n6-document', title: 'Quiet observatory'}],
++    ...[
++      ['known', 'Creative direction', 'An observatory beside a quiet forest.'],
++      ['empty', 'Category unavailable', injectedText],
++      ['legacy', 'Legacy highlight', 'A blue ceramic cup.'],
++      ['clear', 'Clear isolated input', 'Soft daylight.'],
++    ].map(([block_id, handle, text], index) => ['BlockCreated', {
++      project_id: 'n6-project', document_id: 'n6-document', block_id,
++      type: 'direction', handle, position: String(index + 1), properties: {text, weight: 1, authority: 'authored'},
++    }]),
++  ];
++  const events = raw.map(([type, payload], index) => ({
++    type, payload, sequence: index + 1, eventId: `n6-event-${index}`, streamId: 'n6-synthetic-stream',
++    occurredAt: '2026-09-24T00:00:00.000Z', actor: 'user',
++  }));
++  const issue = {
++    id: 'context-safety', label: 'Source advisory', status: 'warning', severity: 'warning',
++    summary: `Source advisory flagged the overall inputs: hate, violence. Synthetic inert text: ${injectedText}`,
++    blockIds: ['known', 'empty'],
++    sourceVerdicts: [
++      {index: 0, sourceIndex: null, blockId: null, kind: 'snapshot', truncated: false, flagged: true, categories: ['violence'], scores: {violence: .9}},
++      {index: 1, sourceIndex: 0, blockId: 'known', kind: 'fact', truncated: false, flagged: true, categories: ['hate'], scores: {hate: .8}},
++      {index: 2, sourceIndex: 1, blockId: 'empty', kind: 'fact', truncated: false, flagged: true, categories: [], scores: null},
++      {index: 3, sourceIndex: 2, blockId: 'legacy', kind: 'fact', truncated: false, flagged: false, categories: [], scores: null},
++      {index: 4, sourceIndex: 3, blockId: 'clear', kind: 'fact', truncated: false, flagged: false, categories: [], scores: null},
++    ],
++  };
++  const legacy = new URL(location.href).searchParams.get('variant') === 'legacy';
++  if (legacy) { delete issue.sourceVerdicts; issue.blockIds = ['legacy']; }
++  const gate = {error: 'generation_preflight_review_required', readiness: {
++    preflightId: 'n6-synthetic-original-preflight', probes: [issue],
++    advisoryCapture: {status: 'unavailable', reason: 'not-observed', inspection: 'unavailable-before-admission', refs: {}},
++  }};
++  window.n6Readiness = gate.readiness;
++  let releaseAcknowledgement;
++  let app;
++  const state = () => {
++    const draft = app?.generation;
++    document.querySelector('#n6-fixture-state').textContent = JSON.stringify({
++      fixture: 'synthetic-only', variant: legacy ? 'legacy' : 'current', inspection: gate.readiness.advisoryCapture.inspection,
++      ...trace, clientJobs: app?.client.jobs.length ?? 0,
++      acknowledgements: draft?.acknowledgements ?? {},
++      requestId: draft?.requestId ?? null, pending: !!releaseAcknowledgement,
++      destination: window.n6Destination ?? null,
++    }, null, 2);
++  };
++
++  // This intercept exists before the app is attached. No application fetch can
++  // escape to a server; CSP separately blocks non-local subresources.
++  window.fetch = async (input, init = {}) => {
++    const url = new URL(typeof input === 'string' ? input : input.url, location.origin);
++    if (url.origin !== location.origin || url.pathname !== '/api/document-jobs' || init.method !== 'POST') {
++      trace.unexpectedFetches.push({url: url.href, method: init.method ?? 'GET'});
++      state();
++      throw new Error('Synthetic fixture blocked an unexpected fetch.');
++    }
++    const request = JSON.parse(init.body);
++    trace.requests.push(structuredClone(request));
++    state();
++    if (request.payload.preflightAcknowledged !== true) return Response.json(gate, {status: 428});
++    trace.acknowledgedRequests++;
++    await new Promise(resolve => { releaseAcknowledgement = resolve; state(); });
++    trace.createdJobs++;
++    state();
++    return Response.json({job: {
++      jobId: 'n6-synthetic-job', documentId: 'n6-document', requestKey: request.payload.requestKey,
++      status: 'completed', kind: 'generate', sourceSurface: 'still', members: [], attemptCount: 1,
++    }});
++  };
++  document.querySelector('#n6-release').addEventListener('click', () => {
++    const release = releaseAcknowledgement;
++    releaseAcknowledgement = undefined;
++    if (release) release();
++    state();
++  });
++  class FixtureClient extends StillClient {
++    async verifyScope() { return this.fence(); }
++    async checkGenerationReadiness() { return {ready: true, documentId: this.position.documentId}; }
++  }
++  class ReviewFixture extends StillApp {
++    connectedCallback() { LitElement.prototype.connectedCallback.call(this); }
++    updated() { this.scheduleDockFit(); state(); }
++    decide() {}
++    writeRoute() {}
++    currentRouteProblem() { return ''; }
++    navigate(view, ids) { window.n6Destination = {view, ...ids}; this.mode = ''; this.changed(); }
++    render() {
++      return html`<div class="still-shell"><main tabindex="-1">${window.n6Destination
++        ? html`<h1>Synthetic acknowledgement accepted</h1><p>The fixture recorded one synthetic job. No provider was called.</p>`
++        : this.renderCanvas()}</main>${window.n6Destination ? '' : this.renderDock()}${this.renderDockProbes()}${this.renderNotifications()}</div>`;
++    }
++  }
++  customElements.define('n6-review-fixture', ReviewFixture);
++  const client = new FixtureClient();
++  client.session = {user: {userId: 'n6-synthetic-owner', displayName: 'Fixture', role: 'creator'},
++    policy: {accepted: true, retentionDays: 1}, provider: {plannerConfigured: true}, projects: []};
++  client.events = events;
++  client.head = events.length;
++  client.position = {projectId: 'n6-project', documentId: 'n6-document', blockId: '', outputId: '', view: 'document', intent: '', recentActions: []};
++  app = window.n6App = new ReviewFixture();
++  app.loading = false;
++  app.mode = app.routeMode = 'generate';
++  app.client = client;
++  app.generation = client.prepareGeneration('image');
++  app.generation.requestId = 'n6-retained-synthetic-request';
++  client.onChange = () => app.changed();
++  document.querySelector('#n6-product').append(app);
++  await app.updateComplete;
++  state();
++}
++
++export async function createN6ReviewServer({port = 0} = {}) {
++  const server = await createServer({
++    root: fileURLToPath(new URL('../../', import.meta.url)), configFile: false,
++    cacheDir: '/private/tmp/forma-n6-review-vite-cache',
++    optimizeDeps: {noDiscovery: true, include: ['lit', 'lit/async-directive.js', 'lit/directives/if-defined.js', 'lit/directives/keyed.js', 'lit/directives/live.js', 'lit/directives/repeat.js', 'lit/static-html.js', 'qrcode', 'signal-polyfill', 'signal-utils/subtle/reaction']},
++    server: {host: '127.0.0.1', port, strictPort: port !== 0, hmr: false},
++    plugins: [{name: 'n6-source-advisory-synthetic-review', configureServer(vite) {
++      vite.middlewares.use('/api', (_request, response) => {
++        response.writeHead(451, {'content-type': 'application/json', 'cache-control': 'no-store'});
++        response.end(JSON.stringify({error: 'synthetic_fixture_no_server_api'}));
++      });
++      vite.middlewares.use('/n6-review', (_request, response) => {
++        response.writeHead(200, {
++          'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
++          'content-security-policy': "default-src 'self'; connect-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'",
++        });
++        response.end(`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>N6 synthetic boundary review</title><style>body{margin:0}#n6-fixture-disclosure{font:14px system-ui;padding:12px 20px;background:#fff6d9;color:#362e18}#n6-fixture-disclosure p{margin:4px 0}#n6-fixture-state{max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}#n6-product{position:relative;min-height:700px}</style></head><body><aside id="n6-fixture-disclosure"><strong>N6 synthetic browser fixture</strong><p>Raw pre-admission inspection is unavailable. This fixture reviews the existing N5 summary and explicit acknowledgement flow only. It certifies neither classifier quality nor historical evidence.</p><details><summary>Fixture counters and retained request</summary><pre id="n6-fixture-state"></pre><button id="n6-release" type="button">Finish synthetic acknowledgement</button></details></aside><div id="n6-product"></div><script type="module">(${mountReviewFixture.toString()})().catch(error=>{document.querySelector('#n6-fixture-state').textContent=error.stack;throw error;});</script></body></html>`);
++      });
++    }}],
++  });
++  await server.listen();
++  return {server, url: `http://127.0.0.1:${server.httpServer.address().port}/n6-review`};
++}
++
++if (process.argv[1] === fileURLToPath(import.meta.url)) {
++  const {url} = await createN6ReviewServer({port: Number(process.env.N6_REVIEW_PORT ?? 4196)});
++  console.log(url);
++}
+diff --git a/tests/n6-source-authority-dependency.test.mjs b/tests/n6-source-authority-dependency.test.mjs
+new file mode 100644
+index 00000000..0fcac088
+--- /dev/null
++++ b/tests/n6-source-authority-dependency.test.mjs
+@@ -0,0 +1,126 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import {registerOutputSourceImports} from './output-execution-test-helpers.mjs';
++
++const imports=registerOutputSourceImports();
++test.after(()=>imports.deregister());
++const {authoritativeCreativeContext}=await import('../worker/context-authority.ts');
++const {serializeEvent}=await import('../worker/event-read-primitives.ts');
++const {publicEventPayload}=await import('../worker/event-privacy.ts');
++const {standingConstraints}=await import('../src/model/taste.ts');
++const {preserveMemoryAuthoredCopies}=await import('../src/model/memory-authorship.ts');
++const {proveCurrentIncarnation}=await import('../worker/generation-current-source-proof.ts');
++
++// Executable dependency counterexamples, not an inspector qualification suite.
++// Every source is synthetic and the real projection/resolver functions run here.
++const event=(sequence,type,payload)=>({eventId:`event-${sequence}`,streamId:'creative:owner',sequence,
++  occurredAt:'2026-01-01T00:00:00.000Z',recordedAt:'2026-01-01T00:00:00.000Z',actor:'user:owner',
++  clientId:'web:editor',correlationId:'synthetic-n6',causationId:null,compensatesEventId:null,schemaVersion:1,type,payload});
++const history=()=>[
++  event(1,'ProjectCreated',{project_id:'project',name:'Synthetic project'}),
++  event(2,'DocumentCreated',{project_id:'project',document_id:'document',title:'Synthetic document'}),
++  event(3,'BlockCreated',{project_id:'project',document_id:'document',block_id:'direction',type:'direction',scope:'document',properties:{text:'A quiet harbor',authority:'authored'},position:'a1'}),
++];
++const resolve=events=>authoritativeCreativeContext(events,{documentId:'document',projectId:'project'});
++const identity=context=>({snapshot:context.snapshot,documentRevision:context.documentRevision,sourceBlockVersions:context.sourceBlockVersions});
++const rowFor=e=>({event_id:e.eventId,stream_id:e.streamId,sequence:e.sequence,occurred_at:e.occurredAt,recorded_at:e.recordedAt,
++  actor:e.actor,client_id:e.clientId,correlation_id:e.correlationId,causation_id:null,compensates_event_id:null,schema_version:1,type:e.type,
++  payload:JSON.stringify(publicEventPayload(e.eventId,e.payload,true).payload),private_json:JSON.stringify(e.payload),
++  private_event_id:e.eventId,owner_id:'owner',project_id:'project',document_id:e.payload.document_id??null,redacted_at:null});
++
++test('N6 dependency: authorized projection identity does not certify private sidecar custody',()=>{
++  const rows=history().map(rowFor),baseline=resolve(rows.map(serializeEvent));
++  for(const changed of [
++    {owner_id:'other-owner'},
++    {project_id:'other-project',document_id:'other-document'},
++    {private_event_id:'other-event'},
++  ]){
++    const altered=rows.map(row=>({...row,...changed}));
++    assert.deepEqual(identity(resolve(altered.map(serializeEvent))),identity(baseline));
++  }
++  // These fields are unavailable after serialization; the resolver cannot
++  // distinguish the rows above without a separately owned custody contract.
++  assert.equal(Object.hasOwn(serializeEvent(rows[2]),'owner_id'),false);
++});
++
++test('N6 dependency: source digest/revision alone does not bind event owner or stream',()=>{
++  const events=history(),baseline=resolve(events);
++  const substituted=events.map(e=>({...e,streamId:'creative:other-owner',actor:'user:other-owner'}));
++  assert.deepEqual(identity(resolve(substituted)),identity(baseline));
++  assert.ok(JSON.stringify(baseline.snapshot).length<28000);
++});
++
++test('N6 dependency: an unavailable private event can still produce a resolver snapshot',()=>{
++  const rows=history().map(rowFor),baseline=resolve(rows.map(serializeEvent));
++  // readProfileEventPage's LEFT JOIN supplies no private_json for a missing or
++  // redacted sidecar. serializeEvent intentionally falls back to public routing.
++  delete rows[2].private_json;
++  const fallback=resolve(rows.map(serializeEvent));
++  assert.equal(fallback.snapshot.facts.length,1);
++  assert.equal(fallback.snapshot.facts[0].properties.text,undefined);
++  assert.notDeepEqual(fallback.snapshot,baseline.snapshot);
++  assert.deepEqual(fallback.snapshot.facts[0].source_event_refs,['event-3']);
++});
++
++test('N6 dependency: selected source refs do not establish the project origin census',()=>{
++  const events=history(),baseline=resolve(events),withoutProject=resolve(events.slice(1));
++  assert.deepEqual(identity(withoutProject),identity(baseline));
++  const selectedRefs=new Set([
++    ...baseline.snapshot.facts.flatMap(f=>f.source_event_refs),
++    ...baseline.snapshot.relationships.flatMap(r=>r.source_event_refs),
++    ...baseline.projection.documents.find(d=>d.id==='document').sourceEvents,
++  ]);
++  assert.equal(selectedRefs.has('event-1'),false);
++  assert.throws(()=>proveCurrentIncarnation(events.slice(1),'document'),/document_origin_unproven/);
++});
++
++test('N6 dependency: standing constraints are a separate source consumer',()=>{
++  const events=history(),withConstraint=[...events,event(4,'PreferenceAuthored',{preference_id:'preference',axis:'exclusion',value:'No lettering',polarity:'forbid'})];
++  assert.deepEqual(identity(resolve(withConstraint)),identity(resolve(events)));
++  assert.equal(standingConstraints(events).length,0);
++  assert.equal(standingConstraints(withConstraint)[0].value,'No lettering');
++  assert.deepEqual(standingConstraints(withConstraint)[0].evidenceRefs,['event-4']);
++  // No assertion that the ordinary Still source-advisory wire contains this
++  // constraint: that wire currently uses the resolver snapshot unchanged.
++});
++
++test('N6 dependency: generation rights validation does not qualify every serialized fact lifetime',()=>{
++  const events=history();
++  events[2].payload.properties={text:'A quiet harbor',weight:0,rights_expires_at:'2000-01-01T00:00:00.000Z'};
++  const inactive=resolve(events);
++  assert.equal(inactive.snapshot.facts[0].active,false);
++  assert.equal(inactive.snapshot.facts[0].properties.rights_expires_at,'2000-01-01T00:00:00.000Z');
++  // Moderation's whole snapshot includes disabled facts, unlike generation's
++  // active-fact rights validation. N6 needs its own complete lifetime receipt.
++  events[2].payload.properties.weight=1;
++  assert.throws(()=>resolve(events),error=>error.code==='context_source_rights_expired');
++});
++
++test('N6 dependency: current properties cannot certify a retained historical source lifetime',()=>{
++  const events=history();
++  events[2].payload.properties.rights_expires_at='2000-01-01T00:00:00.000Z';
++  events.push(event(4,'BlockPropertyEdited',{block_id:'direction',property_path:'rights_expires_at',old_value:'2000-01-01T00:00:00.000Z',new_value:''}));
++  const context=resolve(events);
++  assert.equal(context.snapshot.facts[0].properties.rights_expires_at,'');
++  assert.deepEqual(context.snapshot.facts[0].source_event_refs,['event-3','event-4']);
++  assert.equal(Object.hasOwn(context,'sourceLifetimes'),false);
++});
++
++test('N6 dependency: accepted Memory authorship survives later edits and copied authored work',()=>{
++  const events=history();events[2].payload.memory_authored_version=1;
++  events.push(event(4,'BlockPropertyEdited',{block_id:'direction',property_path:'text',new_value:'A harbor with blue sky'}));
++  const context=resolve(events);
++  assert.equal(context.snapshot.facts[0].authorship,'accepted-memory-assisted');
++  assert.equal(context.snapshot.facts[0].independent_evidence,false);
++  const copied=preserveMemoryAuthoredCopies([{type:'BlockCreated',payload:{block_id:'copy',copied_from_block_id:'direction',properties:{text:'A harbor with blue sky'}}}],context.projection.blocks,events);
++  assert.equal(copied[0].payload.memory_authored_version,1);
++});
++
++test('N6 dependency: standalone current-source lifecycle proof rejects ordinary preflight telemetry',()=>{
++  const events=history();assert.equal(proveCurrentIncarnation(events,'document').projectId,'project');
++  for(const type of ['GenerationPreflightRequested','GenerationPreflightCompleted']){
++    const withTelemetry=[...events,event(4,type,{preflight_id:'preflight',document_id:'document'})];
++    assert.deepEqual(identity(resolve(withTelemetry)),identity(resolve(events)));
++    assert.throws(()=>proveCurrentIncarnation(withTelemetry,'document'),/current_lifecycle_proof_unavailable/);
++  }
++});
+-- 
+2.54.0
+

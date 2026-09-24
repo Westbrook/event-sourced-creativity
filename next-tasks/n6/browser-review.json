@@ -1,51 +1,29 @@
 {
-  "schemaVersion": "forma-n6-synthetic-browser-review-v1",
-  "verifiedAt": "2026-09-24T00:56:35.741505+00:00",
-  "method": "Codex in-app browser via cua_repl, final restarted fixture",
-  "urls": [
-    "http://127.0.0.1:4197/n6-review",
-    "http://127.0.0.1:4197/n6-review?variant=legacy"
+  "schemaVersion": "forma-n6-browser-review-v2",
+  "reviewedAt": "2026-09-24T01:49:53.485222+00:00",
+  "status": "pass",
+  "method": "Codex in-app browser CUA against local synthetic Vite fixture; actual StillApp, StillClient and SourceAdvisoryInspector",
+  "fixture": "tests/helpers/n6-source-advisory-review-fixture.mjs",
+  "url": "http://127.0.0.1:4197/n6-review",
+  "variants": [
+    "current",
+    "legacy"
   ],
-  "source": "Real StillApp summary rendering and StillClient request construction with synthetic intercepted API responses",
-  "checks": {
-    "knownItemCategory": "hate only; aggregate violence not attributed to that fact",
-    "emptyCategory": "flagged; category unavailable",
-    "legacyCategory": "individual categories were not recorded",
-    "clearInputs": "not highlighted",
-    "inertText": "markup visible as text; zero injected DOM elements",
-    "inspectionControls": 0,
-    "beforeExplicitAcknowledgement": {
-      "syntheticPOSTs": 1,
-      "acknowledgements": 0,
-      "jobs": 0,
-      "unexpectedFetches": 0
-    },
-    "explicitAcknowledgement": {
-      "syntheticPOSTs": 2,
-      "acknowledgements": 1,
-      "pendingJobs": 0,
-      "requestIdenticalExceptAcknowledgement": true,
-      "repeatControlDisabled": true
-    },
-    "completion": {
-      "syntheticJobs": 1,
-      "clientJobs": 1,
-      "acknowledgements": 1,
-      "unexpectedFetches": 0
-    },
-    "legacyReadOnlyReview": {
-      "syntheticPOSTs": 1,
-      "acknowledgements": 0,
-      "jobs": 0,
-      "unexpectedFetches": 0
-    }
-  },
+  "checks": [
+    "Current review offers selected read-only inspector separately from Acknowledge & send",
+    "Requested model, returned model, request ID and unknown response ID displayed distinctly",
+    "Positional input results, empty categories and unknown scores rendered",
+    "Exact request markup-like sentinel renders as inert text; zero injected elements",
+    "Inspection counters:1 selected GET,0 acknowledgements,0 jobs,0 unexpected fetches",
+    "Explicit acknowledgement:2 total original submission requests,1 acknowledged request,1 synthetic job; request unchanged except acknowledgement flag",
+    "Legacy selected GET shows unavailable metadata with no raw body;1 inspection,0 acknowledgements,0 jobs,0 unexpected fetches",
+    "Final normal-viewport screenshot inspected for layout"
+  ],
+  "providedDriver": "tests/browser/n6-source-advisory-review.test.mjs",
+  "driverExecuted": false,
+  "viewport": "normal desktop; no narrow viewport qualification claim",
   "liveProviderCalls": 0,
-  "inspectorImplemented": false,
-  "limitations": [
-    "No raw inspector success/denial browser path exists.",
-    "Desktop synthetic interaction only; automated browser driver and its narrow viewport assertions were not run.",
-    "Fixture uses a terminal synthetic job and does not certify hosted generation or classifier quality.",
-    "Vite/Lit development warnings: multiple Lit versions and en-toast-region follow-up update."
-  ]
+  "privateDataUsed": false,
+  "classifierQualityCertified": false,
+  "historicalEvidenceCertified": false
 }

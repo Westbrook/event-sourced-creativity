@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "forma-n6-candidate-v1",
+  "commit": "4db8cca534b47ae11028e41d0696ae04cc16cd8d",
+  "branch": "codex/forma-n6-inspector",
+  "baseCommit": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
+  "workspace": "/private/tmp/forma-n6-inspector",
+  "localOnly": true,
+  "productChanges": false,
+  "inspectorImplemented": false,
+  "releaseReady": false,
+  "patchSha256": "9e6dd73cf479c701c450e134c1e473f0e871b69296cec10219202931f469f374",
+  "artifactSha256": {
+    "ledger-addendum.md": "8423830a207a51db43eee52dcb45e82e3f164465e3b232fd325f16755a09a629",
+    "index.html": "752968815ca998190875bce9ad1b3a0a69b25c0d724a377c15e3ec8c14e59425",
+    "result.md": "a80c4c704f1f6c96e28d2ca1757730091c3fb50f51d92afc2d2fe7fdb8f8c90d",
+    "browser-review.json": "a6a2d47053e8794f46c5f8c533e104bf3191c119c69d20059e935a4bd4f54b12",
+    "test-manifest.json": "9114e19bd032b65f0a182b7d97f0f78008271df9c757d3ccbbaeead487d5688c",
+    "source-audit.md": "30d728e54c31824985e43cfd4bcd27dab71f409a34a7053ea2af49ce7ac5a797",
+    "dependency-design.md": "5e610aff754b077c5078b047ff9fd46a982b6f97fb13e4c36cd1dc4de5db8638",
+    "verification.json": "22f1c42892e7f6371f14dec05ed4074db592ed604b83bde8abb892d87e8b6f0c",
+    "qualification-matrix.json": "125bb7f9399d80556824c20882749c4bba8210e9c60d59d219b1a4a33ceb0424"
+  },
+  "verifiedAt": "2026-09-24T00:58:09.688976+00:00"
+}

@@ -1,95 +1,77 @@
 {
-  "schemaVersion": "forma-n6-safe-verification-v1",
-  "verifiedAt": "2026-09-24T00:56:35.741505+00:00",
-  "status": "dependency-fallback-verified-inspector-blocked",
-  "candidate": {
-    "version": "n6-dependency-v1",
-    "baseCommit": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
-    "branch": "codex/forma-n6-inspector",
-    "workspace": "/private/tmp/forma-n6-inspector",
-    "commitReceipt": "candidate.json in served review artifact; local candidate committed after these checks"
-  },
+  "schemaVersion": "forma-n6-safe-verification-v2",
+  "verifiedAt": "2026-09-24T01:49:53.485222+00:00",
+  "status": "verified-local-implementation",
+  "implementationCommit": "c511f0c45e6b5beed63cadac7586cf267a2b2997",
+  "dependencyAuditCommit": "4db8cca534b47ae11028e41d0696ae04cc16cd8d",
+  "baseCommit": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
+  "workspace": "/private/tmp/forma-n6-inspector",
+  "branch": "codex/forma-n6-inspector",
   "freshness": {
     "remoteMain": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
     "productionVersion": 542,
-    "productionCommit": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
-    "deploymentId": "appgdep_6ab473767cfc819188292ffa0d69b1b2",
-    "evidence": "Fresh authenticated ls-remote output in existing Run N4 ordinary observation task and N5 publication.json, read during N6 after user freshness request.",
-    "directN6RemoteAttempt": "HTTP403 without release credential; no credential recovery attempted",
-    "reconcileBeforeRelease": true
+    "method": "Direct authenticated git fetch repeated in N6 before local commit, plus direct Sites get_site",
+    "reconcileBeforeLaterRelease": true
   },
-  "inspectorImplemented": false,
-  "authorityWitnessImplemented": false,
-  "productDisclosureImplemented": false,
-  "applicationFilesChanged": false,
-  "rawSupportedCases": [],
-  "releaseReady": false,
-  "blocker": "Resolver-owned complete prospective source custody/dependency/lifetime/exclusion census and read-only requalification contract absent.",
+  "releaseReady": true,
+  "releaseRecommendation": "Verified local candidate for bounded release review; no publication or live observation authorized by this handoff.",
+  "inspectorImplemented": true,
+  "authorityWitnessImplemented": true,
+  "productDisclosureImplemented": true,
   "checks": {
-    "automatedPassed": 151,
-    "automatedFailed": 0,
-    "dependencyCounterexamples": 9,
-    "focusedRegression": 72,
-    "sourceAndRebuiltWorkerRegression": 70,
-    "build": "pass; existing chunk-size warning",
+    "newQualificationDistinctPassed": 167,
+    "sourceProducer": 23,
+    "sourceRoute": 72,
+    "rebuiltWorkerRoute": 72,
+    "focusedRegressionDistinctPassed": 89,
+    "totalDistinctAutomatedPassed": 256,
+    "failed": 0,
+    "build": "pass; existing large-chunk warning",
     "typecheck": "pass",
-    "changedFileLint": "pass",
-    "newBrowserFilesSyntax": "pass",
-    "syntheticBrowser": "final fixture manually passed in CUA; browser-review.json",
-    "fullN6RouteMatrix": "not run: route unimplemented",
+    "changedPathLint": "pass except four unchanged baseline no-empty findings in app.ts",
+    "baselineLintLocations": [
+      "src/still/app.ts:232",
+      "src/still/app.ts:262",
+      "src/still/app.ts:345",
+      "src/still/app.ts:346"
+    ],
+    "browser": "pass via CUA; driver supplied but not executed",
     "diffCheck": "pass"
   },
-  "originalDirtyCheckout": {
-    "checkedFiles": 167,
-    "unchanged": true,
-    "N6Writes": 0
+  "logs": {
+    "/private/tmp/n6-build.log": "930a8d73f9bfa2ca894adf1b29c0b3fd05805bb81374e8c287d1ec01342b920a",
+    "/private/tmp/n6-typecheck.log": "9e957926002934292f1cb961988e7bed489fdfeeb261b0967f2b43723fbb2ef6",
+    "/private/tmp/n6-lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/private/tmp/n6-app-baseline-lint.log": "5ff249ddff769e294a8acaa87e5e82f888b63b7526b3816e65b7999483002dc3",
+    "/private/tmp/n6-final-test-lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/private/tmp/n6-malformed-lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
-  "privacy": {
-    "historicalN4BodiesRead": false,
-    "historicalSourceReconstructed": false,
-    "privateDataInReport": false
+  "originalDirtyCheckout": {
+    "auditBaselineFiles": 167,
+    "stillMatchAudit": 157,
+    "concurrentDriftFiles": 10,
+    "N6FileWrites": 0,
+    "restoredOrOverwritten": false
   },
   "effects": {
     "liveProviderCalls": 0,
     "paidTrials": 0,
     "productionJobs": 0,
     "productionAcknowledgements": 0,
+    "productionSourceWrites": 0,
     "publication": false,
     "push": false,
-    "policyInputModelThresholdChanges": false,
-    "productionSourceWrites": 0
+    "policyInputModelThresholdChanges": false
   },
-  "logs": {
-    "focused": {
-      "localPath": "/private/tmp/n6-baseline-unit.log",
-      "sha256": "640fc31663e11bb03808d6a38f809516468315807751254508808854acd60855"
-    },
-    "worker": {
-      "localPath": "/private/tmp/n6-worker.log",
-      "sha256": "4aa9c5a94331f4f71480c28340bcf44e81ed6b2ed0b754a83f0ea930d30aa3e7"
-    },
-    "dependency": {
-      "localPath": "/private/tmp/n6-dependency-tests.log",
-      "sha256": "43736e6a630c41c0e29bb2e081b37007d774ff6268233d8773b5974fad62dda5"
-    },
-    "build": {
-      "localPath": "/private/tmp/n6-build.log",
-      "sha256": "cb5e3cb827d0a4b80d0266574e05078b30be53e876adfc22d65bc1342f5266c9"
-    },
-    "typecheck": {
-      "localPath": "/private/tmp/n6-typecheck.log",
-      "sha256": "9e957926002934292f1cb961988e7bed489fdfeeb261b0967f2b43723fbb2ef6"
-    },
-    "lint": {
-      "localPath": "/private/tmp/n6-lint.log",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    }
+  "privacy": {
+    "historicalN4BodiesRead": false,
+    "expiredSourceReconstructed": false,
+    "privateDataInReport": false
   },
-  "limitations": [
-    "No N6 route, authority witness or compact product inspector can be qualified until the exact resolver dependency is supplied.",
-    "151 passing checks do not certify any new N6 inspection path, classifier quality or historical evidence.",
-    "N5 publication is separate and already reports Production542.",
-    "A later live observation requires its own exact proposal."
-  ],
-  "buildNote": "pnpm initially attempted dependency reconciliation and aborted before a module purge. npm run invoked the same checked-in build script successfully using existing local dependencies; no install or package edits."
+  "remainingLimitations": [
+    "Conservative complete workspace census and closed plain authored schema",
+    "No classifier-quality or historical-evidence certification",
+    "No other-media receipt adoption",
+    "Later live observation requires a separate exact proposal"
+  ]
 }

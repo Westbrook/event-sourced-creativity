@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "forma-n6-safe-verification-v1",
+  "verifiedAt": "2026-09-24T00:56:35.741505+00:00",
+  "status": "dependency-fallback-verified-inspector-blocked",
+  "candidate": {
+    "version": "n6-dependency-v1",
+    "baseCommit": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
+    "branch": "codex/forma-n6-inspector",
+    "workspace": "/private/tmp/forma-n6-inspector",
+    "commitReceipt": "candidate.json in served review artifact; local candidate committed after these checks"
+  },
+  "freshness": {
+    "remoteMain": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
+    "productionVersion": 542,
+    "productionCommit": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
+    "deploymentId": "appgdep_6ab473767cfc819188292ffa0d69b1b2",
+    "evidence": "Fresh authenticated ls-remote output in existing Run N4 ordinary observation task and N5 publication.json, read during N6 after user freshness request.",
+    "directN6RemoteAttempt": "HTTP403 without release credential; no credential recovery attempted",
+    "reconcileBeforeRelease": true
+  },
+  "inspectorImplemented": false,
+  "authorityWitnessImplemented": false,
+  "productDisclosureImplemented": false,
+  "applicationFilesChanged": false,
+  "rawSupportedCases": [],
+  "releaseReady": false,
+  "blocker": "Resolver-owned complete prospective source custody/dependency/lifetime/exclusion census and read-only requalification contract absent.",
+  "checks": {
+    "automatedPassed": 151,
+    "automatedFailed": 0,
+    "dependencyCounterexamples": 9,
+    "focusedRegression": 72,
+    "sourceAndRebuiltWorkerRegression": 70,
+    "build": "pass; existing chunk-size warning",
+    "typecheck": "pass",
+    "changedFileLint": "pass",
+    "newBrowserFilesSyntax": "pass",
+    "syntheticBrowser": "final fixture manually passed in CUA; browser-review.json",
+    "fullN6RouteMatrix": "not run: route unimplemented",
+    "diffCheck": "pass"
+  },
+  "originalDirtyCheckout": {
+    "checkedFiles": 167,
+    "unchanged": true,
+    "N6Writes": 0
+  },
+  "privacy": {
+    "historicalN4BodiesRead": false,
+    "historicalSourceReconstructed": false,
+    "privateDataInReport": false
+  },
+  "effects": {
+    "liveProviderCalls": 0,
+    "paidTrials": 0,
+    "productionJobs": 0,
+    "productionAcknowledgements": 0,
+    "publication": false,
+    "push": false,
+    "policyInputModelThresholdChanges": false,
+    "productionSourceWrites": 0
+  },
+  "logs": {
+    "focused": {
+      "localPath": "/private/tmp/n6-baseline-unit.log",
+      "sha256": "640fc31663e11bb03808d6a38f809516468315807751254508808854acd60855"
+    },
+    "worker": {
+      "localPath": "/private/tmp/n6-worker.log",
+      "sha256": "4aa9c5a94331f4f71480c28340bcf44e81ed6b2ed0b754a83f0ea930d30aa3e7"
+    },
+    "dependency": {
+      "localPath": "/private/tmp/n6-dependency-tests.log",
+      "sha256": "43736e6a630c41c0e29bb2e081b37007d774ff6268233d8773b5974fad62dda5"
+    },
+    "build": {
+      "localPath": "/private/tmp/n6-build.log",
+      "sha256": "cb5e3cb827d0a4b80d0266574e05078b30be53e876adfc22d65bc1342f5266c9"
+    },
+    "typecheck": {
+      "localPath": "/private/tmp/n6-typecheck.log",
+      "sha256": "9e957926002934292f1cb961988e7bed489fdfeeb261b0967f2b43723fbb2ef6"
+    },
+    "lint": {
+      "localPath": "/private/tmp/n6-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "limitations": [
+    "No N6 route, authority witness or compact product inspector can be qualified until the exact resolver dependency is supplied.",
+    "151 passing checks do not certify any new N6 inspection path, classifier quality or historical evidence.",
+    "N5 publication is separate and already reports Production542.",
+    "A later live observation requires its own exact proposal."
+  ],
+  "buildNote": "pnpm initially attempted dependency reconciliation and aborted before a module purge. npm run invoked the same checked-in build script successfully using existing local dependencies; no install or package edits."
+}

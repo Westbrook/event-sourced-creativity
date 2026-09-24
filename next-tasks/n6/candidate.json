@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "forma-n6-candidate-v2",
+  "version": "n6-source-inspector-v1",
+  "implementationCommit": "c511f0c45e6b5beed63cadac7586cf267a2b2997",
+  "baseCommit": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
+  "preservedAuditCommit": "4db8cca534b47ae11028e41d0696ae04cc16cd8d",
+  "branch": "codex/forma-n6-inspector",
+  "localOnly": true,
+  "pushed": false,
+  "published": false,
+  "releaseReady": true,
+  "verification": "verification.json",
+  "deliveryReceipt": "Served candidate.json adds the final documentation commit after commit creation."
+}
