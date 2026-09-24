@@ -215,3 +215,5 @@ The existing Progress Report records the final commit, saved Site version and de
 ## September 24 delivery-audit completion pass
 
 The [completion ledger](still-unified-creation-completion-2026-09-24.md) supersedes earlier completeness/security claims where the delivery audit reproduced failures. Current source and production were independently rechecked at e5639057/v546 before edits; production remains disabled. Each finding retains its required workflow evidence and open deployed/human gates.
+
+Completion correction verification (2026-09-24): 50 focused tests pass, including controller → Worker → commit → history reload; TypeScript and scoped ESLint pass. See the completion ledger for finding-level evidence and remaining gates. No new publication or activation.

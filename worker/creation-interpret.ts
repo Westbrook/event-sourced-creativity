@@ -1,4 +1,6 @@
 import type { CreationAuthority, CreationDraft, CreationPlan } from '../src/model/creation.ts';
+import {creationBindingIssues} from '../src/model/creation-bindings.ts';
+import {enforceCreationDecisionLedger} from '../src/model/creation-corrections.ts';
 import { validateCreationPlan } from '../src/model/creation-validation.ts';
 import { ideaBodyText } from '../src/model/idea-body.ts';
 import { decisionHash } from './still-decision-store.ts';
@@ -21,6 +23,9 @@ export async function interpretCreationDraft(env:WorkerEnv,draft:CreationDraft,c
   if(raw.operationIdentity!==identity||!raw.plan)throw new Error('creation_interpretation_invalid');
   const plan=raw.plan;
   if(plan.draftId!==draft.id||plan.draftRevision!==draft.revision||plan.entryKind!==draft.entryKind||plan.sourceText!==sourceText||JSON.stringify(plan.scope)!==JSON.stringify(draft.scope)||JSON.stringify(plan.decisions)!==JSON.stringify(draft.decisions)||plan.modelVersion!==env.STILL_CREATION_ORGANIZER_MODEL)throw new Error('creation_interpretation_binding_invalid');
+  if(creationBindingIssues(draft,plan).length)throw new Error('creation_interpretation_identity_invalid');
+  const baseline=draft.plan??draft.correctionBaseline;
+  if(baseline&&enforceCreationDecisionLedger({...baseline,decisions:draft.decisions},plan).length)throw new Error('creation_decision_conflict');
   const validation=await validateCreationPlan({...plan,issues:[]},context.authority,undefined,{requireReview:false,requireAllocation:false});
   // Incomplete content is reviewable; fabricated IDs, bad evidence or altered scope are not.
   const reviewable=new Set(['incomplete_node','uncovered_source','title_body_requires_completion']);
@@ -49,4 +54,15 @@ export async function assessCreationDraftSplit(env:WorkerEnv,draft:CreationDraft
   const contextVersion=await decisionHash({scope:draft.scope,uses:draft.plan.uses.filter(u=>u.ideaId===node.id&&u.disposition==='retained').map(u=>({documentId:u.documentId,dependencies:u.dependencyManifest})),references:draft.plan.references.filter(r=>r.fromId===node.id||r.toId===node.id)});
   const keptTogetherVersions=draft.decisions.filter(d=>d.accepted&&d.kind==='keep-together'&&d.nodeIds.includes(node.id)).flatMap(d=>{try{const value=JSON.parse(d.detail??'{}') as {semanticVersion?:string;contextVersion?:string};return value.contextVersion===contextVersion&&typeof value.semanticVersion==='string'?[value.semanticVersion]:[];}catch{return [];}});
   return assessCreationSplit(env,{draftId:draft.id,draftRevision:draft.revision,nodeId,semanticVersion,contextVersion,text,newlyExtracted:node.revision<=1&&draft.plan.modelVersion!=='manual',explicit,keptTogetherVersions},draft.scope.custodyKey,signal);
+}
+
+/** Focused extraction sees the currently reviewed body, never the original whole input. */
+export async function interpretCreationSplit(env:WorkerEnv,draft:CreationDraft,nodeId:string,context:CreationInterpretationContext,signal?:AbortSignal){
+ const node=draft.plan?.nodes.find(n=>n.id===nodeId&&n.kind==='idea'&&n.disposition==='retained');
+ if(!node?.body)throw new Error('creation_split_node_unavailable');
+ const projectId=node.projectId;
+ const focused:CreationDraft={...structuredClone(draft),entryKind:'idea',scope:{...draft.scope,projectId,documentId:null},workingDocument:structuredClone(node.body.document),originalDocument:structuredClone(node.body.document),markers:[],plan:undefined,correctionBaseline:undefined,decisions:[],review:undefined};
+ const proposal=await interpretCreationDraft(env,focused,{...context,authority:{...context.authority,projectId,canAuthorProject:true}},signal);
+ if(proposal.nodes.some(n=>n.kind!=='idea')||proposal.nodes.filter(n=>n.disposition==='retained').length<2||proposal.uses.length)throw new Error('creation_split_not_useful');
+ return proposal;
 }

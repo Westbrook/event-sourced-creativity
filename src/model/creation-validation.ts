@@ -36,7 +36,7 @@ export async function creationReviewHashes(plan:CreationPlan,_authority?:Creatio
   for(const use of plan.uses.filter(use=>use.disposition==='retained'))useHashes[use.id]=await creationHash({use:{...use,revision:undefined},content:graph(use.ideaId)});
   const nodeHashes:Record<string,string>={};
   for(const node of nodes){
-    const uses=plan.uses.filter(use=>use.disposition==='retained'&&(node.kind==='document'?use.documentId===node.id:node.kind==='idea'?use.ideaId===node.id:false)).map(use=>[use.id,useHashes[use.id]]);
+    const uses=plan.uses.filter(use=>use.disposition==='retained'&&(node.kind==='document'?use.documentId===node.id:false)).map(use=>[use.id,useHashes[use.id]]);
     // Project approval includes its actual organization, not unreviewed hidden children.
     nodeHashes[node.id]=await creationHash({content:graph(node.id),uses,organization:node.kind==='project'?{nodes:nodes.filter(n=>n.id!==node.id).map(n=>graph(n.id)),uses:useHashes}:undefined});
   }
@@ -153,7 +153,7 @@ async function validateCreationPlanInternal(plan:CreationPlan,authority:Creation
   for(let i=0;i<covered.length;i++)if(!covered[i]&&/[\p{L}\p{N}]/u.test(plan.sourceText[i]!)){issues.push(issue('uncovered_source','Some supplied content is not accounted for. Review omissions or remove it explicitly.'));break;}
   // Reanalysis anti-reintroduction compares with the trusted previous plan via
   // enforceCreationDecisionLedger; overlapping scene evidence alone is not removal.
-  issues.push(...plan.issues.filter(i=>i.blocking));
+  issues.push(...plan.issues.filter(i=>i.blocking&&!['incomplete_node','uncovered_source','title_body_requires_completion'].includes(i.code)));
   const eventCount=nodes.length+plan.uses.filter(u=>u.disposition==='retained'&&!creationUseAlreadyAttached(u,authority)).length+plan.references.length;
   if(eventCount>CREATION_LIMITS.compiledEvents||!Number.isSafeInteger(plan.compiledEventBound)||plan.compiledEventBound<eventCount||plan.compiledEventBound>CREATION_LIMITS.compiledEvents)issues.push(issue('event_limit','The reviewed graph exceeds its 512-event bound.'));
   const hashes=await creationReviewHashes(plan);

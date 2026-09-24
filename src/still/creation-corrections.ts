@@ -105,15 +105,15 @@ export function renderCreationCorrections(options: CreationCorrectionsOptions) {
   const edit = (work: () => void) => update(() => { work(); c.preview = undefined; });
   const checkbox = (label: string, value: boolean, change: (value: boolean) => void) => html`
     <label><input type="checkbox" .checked=${live(value)} @change=${(e: Event) => edit(() => change((e.target as HTMLInputElement).checked))}> ${label}</label>`;
-  const patchEditor = (patch: Patch, key: string) => keyed(key, html`
+  const patchEditor = (patch: Patch, key: string, idea=true) => keyed(key, html`
     <label>Title <input .value=${live(patch.title)} @input=${(e: Event) => edit(() => { patch.title = (e.target as HTMLInputElement).value; })}></label>
-    <label>Idea type <select .value=${live(patch.type ?? '')} @change=${(e: Event) => edit(() => { patch.type = (e.target as HTMLSelectElement).value as Patch['type']; patch.subtype = undefined; })}>
+    ${idea?html`<label>Idea type <select .value=${live(patch.type ?? '')} @change=${(e: Event) => edit(() => { patch.type = (e.target as HTMLSelectElement).value as Patch['type']; patch.subtype = undefined; })}>
       <option value="">Choose type</option>${BLOCK_TYPES.map(type => html`<option value=${type.type}>${type.label}</option>`)}</select></label>
     <en-rich-text-editor aria-label="Complete replacement body" .document=${patch.body?.document}
       @en-change=${(event: CustomEvent<{ proposed: NonNullable<Patch['body']>['document'] }>) => edit(() => {
         patch.body = { schemaVersion: 1, document: structuredClone(event.detail.proposed) }; patch.text = ideaBodyText(patch.body);
       })}></en-rich-text-editor>
-    <p>Existing inline references keep their identities. Remove or revise a reference explicitly when its meaning changes.</p>`);
+    <p>Existing inline references keep their identities. Remove or revise a reference explicitly when its meaning changes.</p>`:nothing}`);
   return html`<section class="creation-corrections" aria-label="Correct proposed organization">
     <details><summary>Correct the proposed organization</summary>
       <label>Idea or Document <select .value=${live(c.selectedId)} @change=${(e: Event) => edit(() => {
@@ -127,19 +127,19 @@ export function renderCreationCorrections(options: CreationCorrectionsOptions) {
             ${plan.nodes.some(n => n.id === selected.id) ? html`<option value="merge">Merge into another Idea</option>` : html`<option value="partial">Use only this part</option>`}
           </select></label>
           ${c.mode === 'remove' ? html`
-            <p>Review all retained wording, including aliases and pronouns. Supply explicit replacement wording for every affected Idea; a saved Idea is repaired as a new independent variation.</p>
+            <p>Review all retained wording, including aliases and pronouns. Supply explicit replacement wording for every affected title or Idea; a saved Idea is repaired as a new independent variation.</p>
             <label>Other names and aliases (comma-separated) <input .value=${live(c.aliases)} @input=${(e: Event) => edit(() => { c.aliases = (e.target as HTMLInputElement).value; })}></label>
-            ${nodes.filter(n => n.kind === 'idea' && n.id !== selected.id).map(n => html`<details><summary>${n.title}</summary><p style="white-space:pre-wrap">${n.text}</p>
-              ${checkbox('Replace this body to preserve its remaining meaning', c.repairs.has(n.id), checked => { if (checked) c.repairs.set(n.id, copyPatch(n)); else c.repairs.delete(n.id); })}
-              ${c.repairs.has(n.id) ? html`${patchEditor(c.repairs.get(n.id)!, `repair:${n.id}`)}
+            ${[...nodes,...plan.nodes.filter(n=>n.kind==='project'&&n.disposition==='retained')].filter(n => n.id !== selected.id).map(n => html`<details><summary>${n.title}</summary><p style="white-space:pre-wrap">${n.text}</p>
+              ${checkbox('Repair this title or body to preserve its remaining meaning', c.repairs.has(n.id), checked => { if (checked) c.repairs.set(n.id, copyPatch(n)); else c.repairs.delete(n.id); })}
+              ${c.repairs.has(n.id) ? html`${patchEditor(c.repairs.get(n.id)!, `repair:${n.id}`, n.kind==='idea')}
                 ${checkbox('Any retained matching name refers to a different identity, which I have checked.', c.differentIdentityRepairs.has(n.id), checked => {
                   if (checked) c.differentIdentityRepairs.add(n.id); else c.differentIdentityRepairs.delete(n.id);
                 })}` : nothing}</details>`)}
-            ${checkbox('I reviewed aliases, pronouns, relationships and remaining meaning in every retained Idea.', c.semanticReviewed, v => { c.semanticReviewed = v; })}
+            ${checkbox('I reviewed aliases, pronouns, relationships and remaining meaning in every retained Idea, Document and Project title.', c.semanticReviewed, v => { c.semanticReviewed = v; })}
           ` : html`
             <p style="white-space:pre-wrap">Source: ${selected.text}</p>
             ${c.mode === 'merge' ? html`<label>Merge destination <select .value=${live(c.targetId)} @change=${(e: Event) => edit(() => { c.targetId = (e.target as HTMLSelectElement).value; })}>
-              <option value="">Choose destination</option>${nodes.filter(n => n.kind === 'idea' && n.id !== selected.id).map(n => html`<option value=${n.id}>${n.title}</option>`)}</select></label>
+              <option value="">Choose destination</option>${[...nodes,...plan.nodes.filter(n=>n.kind==='project'&&n.disposition==='retained')].filter(n => n.id !== selected.id).map(n => html`<option value=${n.id}>${n.title}</option>`)}</select></label>
               ${c.targetId ? html`<p style="white-space:pre-wrap">Destination: ${nodes.find(n => n.id === c.targetId)?.text}</p>` : nothing}
               ${checkbox('I reviewed both Ideas’ uses; an independent merge preserves destination-only uses.', c.differentUsesAcknowledged, v => { c.differentUsesAcknowledged = v; })}
             ` : html`<label>Destination <select .value=${live(c.documentId)} @change=${(e: Event) => edit(() => { c.documentId = (e.target as HTMLSelectElement).value; })}>

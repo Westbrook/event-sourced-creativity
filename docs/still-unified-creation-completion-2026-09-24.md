@@ -14,18 +14,18 @@ A passing helper does not close a workflow. Earlier evidence remains historical;
 
 | Finding | Repair status | Required/current evidence |
 | --- | --- | --- |
-| Derived incomplete-Idea issues | Open | Interpretation → edit → review → commit → reload |
-| Exact selected @ targets/occurrences | Open | Distinct equal labels, repeated target, invalid organizer and commit |
-| Durable accepted corrections after input edits | Open | Remove → edit → reinterpret; explicit Undo |
+| Derived incomplete-Idea issues | Implemented; local workflow verification (browser qualification pending) | Interpretation → edit → review → commit → reload |
+| Exact selected @ targets/occurrences | Implemented; local workflow verification (browser qualification pending) | Distinct equal labels, repeated target, invalid organizer and commit |
+| Durable accepted corrections after input edits | Implemented; local workflow verification (browser qualification pending) | Remove → edit → reinterpret; explicit Undo |
 | Late interpretation/preview publication | Implemented; local Worker integration passes | `creation-delivery-recovery.test.mjs`: discard/revision/pointer/redaction races roll back without orphan bodies; actual preview discard transaction |
 | Interrupted interpretation | Implemented; local Worker integration passes | Same identity terminalizes after 30-second lease; explicit new attempt commits and receipt reloads. No exactly-once inference claim |
 | Recovered receipt journals | Implemented; controller verification | Recovered save clears draft, commit and interpretation pointers; next New is fresh |
-| Full draft rescue/actionable errors | Open | Include review edits, decisions and source; render current server issues |
-| Correction event bounds | Open | Exact-bound variation/partial/merge through commit; 512/513 preserved |
-| Overlapping merge validity | Open | Deduplicated use proof through commit/fold |
-| Document removal approvals | Open | Real approval hashes remain valid for unchanged Ideas |
-| Focused split/provenance | Open | Unrelated content/approvals retained through commit |
-| Container-title removal mentions | Open | Impact review and explicit repair |
+| Full draft rescue/actionable errors | Implemented; local workflow verification (browser qualification pending) | Include review edits, decisions and source; render current server issues |
+| Correction event bounds | Implemented; local workflow verification (browser qualification pending) | Exact-bound variation/partial/merge through commit; 512/513 preserved |
+| Overlapping merge validity | Implemented; local workflow verification (browser qualification pending) | Deduplicated use proof through commit/fold |
+| Document removal approvals | Implemented; local workflow verification (browser qualification pending) | Real approval hashes remain valid for unchanged Ideas |
+| Focused split/provenance | Implemented; local workflow verification (browser qualification pending) | Unrelated content/approvals retained through commit |
+| Container-title removal mentions | Implemented; local workflow verification (browser qualification pending) | Impact review and explicit repair |
 | Withdrawn/private-redacted source eligibility | Open | Authenticated Worker refresh → search; before dispatch and hydration denials |
 | @Document constituents | Open | Exact selected roots, no adoption of later members |
 | Reviewed-Idea @ and / tools | Open | Browser input/review/ref authorization and undo |
@@ -45,3 +45,11 @@ A passing helper does not close a workflow. Earlier evidence remains historical;
 Atomic publication now asserts the active draft revision, exact protected-content pointer, unexpired content, custody and authorization. Interpretation also checks captured source state and the live operation lease. Discard terminalizes pending operations and clears their content pointers in its erasure transaction. An expired interpretation becomes a retained failed result; a new explicit attempt may execute again. The client journals only draft/revision/operation identifiers and keeps pending responses distinct from organizer failure. A successful recovered commit clears all journals.
 
 Workflow tests use the actual Worker and disposable SQLite plus an injected organizer. They establish deterministic lifecycle behavior, not cloud D1 timing or real-model execution. Deployment qualification remains required.
+
+## Correction workflow repair
+
+The controller/Worker workflow suite now completes eight delivery regressions through review, commit and history reload (or rejection before writes for invalid selected identities and reintroduced removals). The focused suite plus existing correction/interpreter/controller checks passes 50 tests. TypeScript and scoped ESLint pass. Evidence: `workflow-tests.log`, `correction-typecheck.log`, `correction-lint.log` in the completion evidence directory.
+
+Current validation derives incomplete-content errors from the edited graph. Exact selected identities are checked independently of organizer instructions at interpretation and review/commit. Clearing the active plan preserves the last server-acknowledged correction baseline. Removal checks include Project/Document titles with explicit repair controls. Correction event bounds are recomputed; overlapping merged uses have disposition proof; unchanged Idea approval hashes exclude unrelated Document uses. Split proposals operate on the edited Idea only, retain its identity as a composition, preserve unrelated approval and add provenance to extracted children. Full rescue JSON includes source, graph, decisions and review state.
+
+These are injected-provider/local SQLite results. Semantic removal detection beyond exact identities/spans and human evaluation of split usefulness remain fidelity qualification, not automated proof of model behavior.
