@@ -49,3 +49,14 @@ test('canonical removal immediately tombstones withdrawn Idea and container pros
  await f.ready();await appendAuditEvent(f.env,f.streamId,'user','BlockRestored',{project_id:f.projectId,block_id:'scene-reuse-direction'});await f.ready();
  assert.equal(f.sqlite.prepare("SELECT tombstone FROM creation_search_records WHERE source_id='scene-reuse-direction'").get().tombstone,0);
 });
+
+test('rehome invalidates both former and destination Projects before any background work',async t=>{
+ const f=await fixture(t),before=versions(f);
+ await appendAuditEvent(f.env,f.streamId,'user','BlockRehomed',{project_id:'second',block_id:'scene-reuse-direction',scope:'library'});
+ const affected=changed(f,before);assert.ok(affected.includes(f.projectId));assert.ok(affected.includes('second'));
+ assert.equal(f.sqlite.prepare("SELECT tombstone FROM creation_search_records WHERE source_id='scene-reuse-direction'").get().tombstone,1);
+ await f.ready();
+ const sources=f.sqlite.prepare("SELECT p.project_id,r.tombstone,c.content FROM creation_search_records r JOIN creation_search_partitions p ON p.partition_key=r.partition_key LEFT JOIN private_content c ON c.content_id=r.content_id WHERE r.source_id='scene-reuse-direction'").all();
+ assert.equal(sources.find(s=>s.project_id===f.projectId).tombstone,1);assert.equal(sources.find(s=>s.project_id==='second').tombstone,0);
+ assert.equal(JSON.parse(sources.find(s=>s.project_id==='second').content).projectId,'second');
+});
