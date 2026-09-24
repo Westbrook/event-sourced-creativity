@@ -1,3 +1,4 @@
+import {isCreationIndexKey} from './creation-vectors.ts';
 import { VIDEO_COVER_QUERY } from '../src/model/video-cover.ts';
 import { handleVideoCover } from './video-cover.ts';
 import {memoryAuthoredImageMediaAllowed} from './memory-authored-image-custody.ts';
@@ -165,6 +166,7 @@ export async function handleSharedView(request: Request, env: WorkerEnv, rawToke
 }
 
 export async function handleSharedMedia(request:Request,env:WorkerEnv,rawToken:string,key:string){
+  if(isCreationIndexKey(key))return new Response('Not found',{status:404});
   await ensureSchema(env);if(request.method!=="GET")return new Response("Method not allowed",{status:405});const row=await activeShare(env,rawToken);if(!row)return new Response("Not found",{status:404});
   const scope=rowScope(row);if(!scope||!shareAllowsMedia(scope,key))return new Response("Forbidden",{status:403});
   if(Number(row.governed_project??0)){const events=await readWorkspaceEvents(env,String(row.stream_id));const projection=foldEvents(events,Number.POSITIVE_INFINITY,scope.resourceId,scope.projectId);if(!await governedPackageSourceRightsCurrent(env,String(row.governed_organization_id??""),projection.blocks)||projection.artifacts.some((artifact)=>!artifactSourceVersions(artifact.id,events)?Boolean(Number(row.managed_pilot??0)):artifactReviewState(artifact,projection.blocks,events).status!=="approved"))return new Response("Not found",{status:404});}

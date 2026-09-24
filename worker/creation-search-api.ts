@@ -1,3 +1,5 @@
+import {CREATION_REPRESENTATION} from './creation-vectors.ts';
+import {runCreationMaintenance} from './creation-index-maintenance.ts';
 import {PLATFORM_PRINCIPAL_WITH_ACCESS_SQL,principalAccessFromRow} from './access-policy.ts';
 import { validCreationSearchRequest, type CreationSearchPartition } from '../src/model/creation-search.ts';
 import type { WorkerEnv, WorkerExecutionContext } from './runtime.ts';
@@ -12,14 +14,14 @@ import { preparePrivateContent } from './private-content-storage.ts';
 import { decisionHash } from './still-decision-store.ts';
 import { foldEvents } from '../src/model/events.ts';
 
-type Partition = CreationSearchPartition & {ownerId:string;projectAccessId?:string;organizationId?:string;invalidated:boolean;backfillComplete:boolean};
+export type Partition = CreationSearchPartition & {ownerId:string;projectAccessId?:string;organizationId?:string;invalidated:boolean;backfillComplete:boolean};
 type PartitionRow={partition_key:string;custody:string;project_id:string;owner_id:string;project_access_id:string|null;content_version:string;index_version:number;invalidated:number;backfill_complete:number};
 const privateHeaders={'cache-control':'private, no-store'};
-function asContext(p:Partition,user:PilotUser):ProjectRequestContext|undefined {
+export function asContext(p:Partition,user:PilotUser):ProjectRequestContext|undefined {
   if(!p.projectAccessId||!p.organizationId)return;
   return {contextId:'creation-search',organizationId:p.organizationId,projectAccessId:p.projectAccessId,projectId:p.projectId,ownerUserId:p.ownerId,principalUserId:user.userId,role:'reader',permissions:['project.read'],expiresAt:new Date(Date.now()+60000).toISOString()};
 }
-async function livePartitionAllowed(env:WorkerEnv,user:PilotUser,p:Partition) {
+export async function livePartitionAllowed(env:WorkerEnv,user:PilotUser,p:Partition) {
   if(user.access.permissionEpoch!==p.permissionEpoch)return false;
   if(!p.projectAccessId){
     if(p.ownerId!==user.userId||!user.access.capabilities.includes('project.read'))return false;
@@ -127,7 +129,7 @@ export async function handleCreationSearch(request:Request,env:WorkerEnv,executi
   const {partitions,complete}=await discoverPartitions(env,user,destination.entryKind==='project'?undefined:destination.projectId);
   if(destination.entryKind!=='project'&&!partitions.length)return Response.json({error:'creation_destination_unavailable'},{status:403,headers:privateHeaders});
   const authority:CreationSearchAuthority={
-    async authorize(principal,partition){const p=partitions.find(v=>searchPartitionKey(v)===searchPartitionKey(partition));if(!p||principal!==user.userId)return false;const fresh=await requireUser(request,env,'viewer',{account:'principal'});if(!fresh.user||!await livePartitionAllowed(env,fresh.user,p))return false;const row=await env.DB.prepare('SELECT index_version,content_version FROM creation_search_partitions WHERE partition_key=?').bind(searchPartitionKey(p)).first<{index_version:number;content_version:string}>();return !!row&&String(row.index_version)===p.indexVersion&&row.content_version===p.contentVersion;},
+    async authorize(principal,partition){const p=partitions.find(v=>searchPartitionKey(v)===searchPartitionKey(partition));if(!p||principal!==user.userId)return false;if(env.STILL_CREATION_INDEX_ENABLED==='true'&&!await env.DB.prepare('SELECT 1 FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()').bind(p.custody).first())return false;const fresh=await requireUser(request,env,'viewer',{account:'principal'});if(!fresh.user||!await livePartitionAllowed(env,fresh.user,p))return false;const row=await env.DB.prepare('SELECT index_version,content_version FROM creation_search_partitions WHERE partition_key=?').bind(searchPartitionKey(p)).first<{index_version:number;content_version:string}>();return !!row&&String(row.index_version)===p.indexVersion&&row.content_version===p.contentVersion;},
     permitsProvider(partition){return creationProviderPermitted(env,partition);},
     async hydrate(principal,partition,hit){
       if(!await this.authorize(principal,partition))return;
@@ -139,10 +141,12 @@ export async function handleCreationSearch(request:Request,env:WorkerEnv,executi
       return value;
     },
   };
-  const result=await searchCreationContent({principal:user.userId,request:input,entryKind:destination.entryKind,projectId:destination.projectId,partitions,partitionsComplete:complete,index:new D1CreationSearchIndex(env.DB,env.STILL_CREATION_SEARCH_MODEL),authority,learned:configuredCreationLearnedSearch(env),reranker:configuredCreationReranker(env),signal:request.signal});
+  const result=await searchCreationContent({principal:user.userId,request:input,entryKind:destination.entryKind,projectId:destination.projectId,partitions,partitionsComplete:complete,index:new D1CreationSearchIndex(env.DB,env.STILL_CREATION_INDEX_ENABLED==='true'?CREATION_REPRESENTATION.id:env.STILL_CREATION_SEARCH_MODEL),authority,learned:configuredCreationLearnedSearch(env),reranker:configuredCreationReranker(env),signal:request.signal});
+  if(env.STILL_CREATION_INDEX_ENABLED!=='true'){
   await env.DB.batch(partitions.map(p=>env.DB.prepare("INSERT INTO creation_search_jobs(partition_key,actor_user_id,permission_epoch,next_run) VALUES(?,?,?,?) ON CONFLICT(partition_key) DO UPDATE SET actor_user_id=excluded.actor_user_id,permission_epoch=excluded.permission_epoch").bind(searchPartitionKey(p),user.userId,String(user.access.permissionEpoch),new Date().toISOString())));
   // A typing request never awaits a history read or model indexing call.
   for(const p of partitions.filter(v=>v.invalidated||!v.backfillComplete||result.coverage.some(c=>c.projectId===v.projectId&&c.custody===v.custody&&c.expected!==null&&c.lexical<c.expected)||!!env.STILL_CREATION_SEARCH&&creationProviderPermitted(env,v)&&result.coverage.some(c=>c.projectId===v.projectId&&c.custody===v.custody&&c.expected!==null&&c.semantic<c.expected)).slice(0,2))execution?.waitUntil(maintainCreationSearchPartition(request,env,user,p).catch(()=>undefined));
+  }
   console.info(JSON.stringify({event:'creation-search',mode:result.mode,partial:result.partial,partitions:result.coverage.length,expected:result.coverage.reduce((n,c)=>n+(c.expected??0),0),lexical:result.coverage.reduce((n,c)=>n+c.lexical,0),semantic:result.coverage.reduce((n,c)=>n+c.semantic,0)}));
   return Response.json(result,{headers:privateHeaders});
 }
@@ -160,6 +164,7 @@ async function maintainCreationSearchPartition(request:Request,env:WorkerEnv,use
 
 /** Native scheduled continuation uses canonical principals, never retained request credentials. */
 export async function maintainCreationSearchJobs(env:WorkerEnv){
+ if(env.STILL_CREATION_INDEX_ENABLED==='true')return runCreationMaintenance(env,'legacy-runner-compatibility');
  if(!['1','true'].includes(String(env.STILL_UNIFIED_CREATION_ENABLED??'')))return;
  await ensureCreationSearchSchema(env.DB);
  const now=new Date().toISOString(),lease=new Date(Date.now()+60000).toISOString();

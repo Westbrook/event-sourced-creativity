@@ -1,3 +1,4 @@
+import {runCreationMaintenance} from './creation-index-maintenance.ts';
 import {maintainCreationSearchJobs} from './creation-search-api.ts';
 import { handleSourceEligibilityRead, SOURCE_ELIGIBILITY_PATH } from './source-eligibility-read.ts';
 import { handleSourceAdvisoryRead, SOURCE_ADVISORY_PATH } from './source-advisory-read.ts';
@@ -419,9 +420,10 @@ export default {
   async scheduled(_controller: unknown, env: WorkerEnv): Promise<void> {
     try {
       // Run each independent maintenance step even if an earlier one fails.
-      // These steps never enroll, infer, dispatch or retry a provider request.
+      // Creation has its own explicit inference enrollment; required cleanup always runs.
       let cleanupFailed = false, cleanupError: unknown;
       const cleanupSteps = [
+        () => runCreationMaintenance(env),
         () => sweepStillPanels(env),
         () => sweepResourceMemory(env),
         () => sweepScopeProfiles(env),
@@ -449,7 +451,7 @@ export default {
       if(cleanupFailed)throw cleanupError;
       // Native worker event only: the runner separately requires literal scheduling
       // admission, actor rollout and each existing background-purpose enrollment.
-      await maintainCreationSearchJobs(env);
+      if(env.STILL_CREATION_INDEX_ENABLED!=='true')await maintainCreationSearchJobs(env);
       await runLiveMemoryScheduled(env);
       await runNativeDerivationScheduled(env);
       await runScopeProfileScheduled(env);

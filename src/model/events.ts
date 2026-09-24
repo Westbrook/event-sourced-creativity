@@ -254,7 +254,10 @@ export type AuthoredSourceStep = { eventId:string; projectId:string; documentId:
 // Optional resolver observation. Eligibility is declared where canonical semantics
 // execute, never by a second consumer's event-type allowlist. Other semantics and
 // unknown future events remain in the complete census but cannot certify plain text.
-export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = "", observeSource?: (step:AuthoredSourceStep)=>void) {
+/** Private creation-index checkpoint: only canonical authoring state, never authorization.
+ * Callers restore a bounded set of referenced entities and persist the returned delta. */
+export type CreationAuthoringCheckpoint={projects:CreativeProjection['projects'];documents:CreativeDocument[];blocks:CreativeBlock[];relations:CreativeBlockRelation[];projectId:string;documentId:string};
+export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selectedDocumentId = "", selectedProjectId = "", observeSource?: (step:AuthoredSourceStep)=>void, authoringSeed?:CreationAuthoringCheckpoint) {
   const ordinarySource=observeSource?createOrdinaryImageSourceHistory():null;
   const projects = new Map<string, Omit<CreativeProject, "documentCount" | "collectionCount" | "blockCount" | "outputCount" | "artifactCount" | "recentGenerations" | "recentArtifacts">>();
   const blocks = new Map<string, CreativeBlock>();
@@ -294,6 +297,15 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
     latestCompile: null, brief: null, presentedBriefItems: new Set(),
     annotations: [], families: [], preferences: [], conditions: [], lastSession: null, currentSessionId: null, sessionOpen: false,
   };
+  if(authoringSeed){
+    for(const p of authoringSeed.projects)projects.set(p.id,p);
+    for(const d of authoringSeed.documents)documents.set(d.id,d);
+    for(const b of authoringSeed.blocks)blocks.set(b.id,b);
+    for(const r of authoringSeed.relations)blockRelations.set(r.id,r);
+    state.projectId=authoringSeed.projectId;state.documentId=authoringSeed.documentId;
+    state.projectName=projects.get(state.projectId)?.name??state.projectName;
+    state.documentTitle=documents.get(state.documentId)?.title??state.documentTitle;
+  }
   const familyProjectId = (payload: Record<string, unknown>, objectId = "") => {
     const explicit = String(payload.project_id ?? "");
     if (explicit) return explicit;
@@ -755,7 +767,7 @@ export function createCreativeEventFold(asOf = Number.POSITIVE_INFINITY, selecte
   // A single-resource history has no document/project declarations to select.
   // This snapshot is projection data only, never visibility or scope authority.
   const blockSnapshot=(id:string)=>{const block=blocks.get(id);return block?structuredClone(block):null;};
-  return { accept, finish, blockSnapshot, measureRetainedState:(limits:{bytes:number;nodes:number;depth:number}=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
+  return { accept, finish, blockSnapshot, authoringCheckpoint:()=>({projects:[...projects.values()],documents:[...documents.values()],blocks:[...blocks.values()],relations:[...blockRelations.values()],projectId:state.projectId,documentId:state.documentId}), measureRetainedState:(limits:{bytes:number;nodes:number;depth:number}=RETAINED_STATE_LIMITS)=>measureRetainedState(retainedState(),limits) };
 }
 
 export const shortEventType = (type: string) => type.replace(/([a-z])([A-Z])/g, "$1 $2");

@@ -48,6 +48,9 @@ export interface WorkerEnv {
   JEV_API_KEY?: string;
   /** Creation providers are opt-in service bindings; absent bindings stay degraded. */
   STILL_UNIFIED_CREATION_ENABLED?: string;
+  /** Independent inference admission; cleanup remains active while off. */
+  STILL_CREATION_INDEX_ENABLED?: string;
+  STILL_CREATION_DEPLOYMENT_ID?: string;
   STILL_CREATION_SEARCH?: Fetcher;
   STILL_CREATION_SEARCH_MODEL?: string;
   STILL_CREATION_ORGANIZER?: Fetcher;

@@ -1,3 +1,4 @@
+import {isCreationIndexKey} from './creation-vectors.ts';
 import {projectMemoryAuthoredImage} from './memory-authored-image.ts';
 import {memoryAuthoredImageMediaAllowed} from './memory-authored-image-custody.ts';
 import { hasCapability, requireConsent, requireUser } from "./pilot-policy.ts";
@@ -281,6 +282,7 @@ export async function uploadMedia(request: Request, env: WorkerEnv) {
   return Response.json({key,url:`/api/media/${encodeURIComponent(key)}`,name:file.name,mimeType,contentHash,kind:modelMime?"model3d":isVideo?"video":isAudio?"audio":SAFE_UPLOADED_IMAGE_TYPES.has(mimeType)?"image":"document",rights:"asserted",size:file.size,...(timing?{durationSeconds:timing.durationSeconds}:{}),...(extraction&&sourceEvidenceHash?{extraction,sourceEvidenceHash}:{}),...(managedPilot?{sourceClassification:managedPilot.source_classification}:{})});
 }
 export async function getMedia(request:Request,key:string,env:WorkerEnv){
+  if(isCreationIndexKey(key))return new Response('Not found',{status:404});
   const cover=new URL(request.url).searchParams.get(VIDEO_COVER_QUERY)==="webp";
   const scoped=hasProjectContextCookie(request);
   const auth=await requireUser(request,env,cover&&request.method==="POST"&&!scoped?"creator":"viewer",scoped?{account:"principal"}:{});if(auth.response||!auth.user)return auth.response!;
