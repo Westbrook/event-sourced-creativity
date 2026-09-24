@@ -1,43 +1,44 @@
-# Still hosted qualification — release decision
+# Still creation — incremental qualification decision
 
-**NO-GO for production activation.** Local preparation and repairs are distinct from hosted qualification. No paid provider run, new hosted resource, schedule, schema application or feature activation is authorized or performed by this packet. Required unavailable evidence remains a gate.
+**Ready for bounded hosted qualification once the named environment and authorization prerequisites are met. NO-GO for production activation.** All five frozen local throughput/retention cohorts pass their unchanged gates. Hosted scheduling, live quality, actual performance/retention, human fidelity/accessibility and rollout authorization remain open. No live provider call, hosted mutation, migration, source push, merge or publication occurred.
 
-## Exact baseline and candidate state
+## Exact source and publication
 
-The fresh native [baseline receipt](hosting-baseline-receipt.json) verifies production v550 / `c28af5fea0fc3ec2b37b878a544ec59c52a64daf`, succeeded deployment `appgdep_6ab573499a108191a2691a137672b93e`, environment revision 16 and unchanged `workspace_all` audience. Archive SHA-256 is `a629abf35cdb357f0affa0c309ebfc0591cfe235249404c97b7ce19ee813be7f`. That is the published disabled implementation; it is not a publication of subsequent qualification work.
+Runtime repairs `2314cf40` and [`d190ed41`](../../worker/creation-index-incremental.ts), plus observer `2d8d3a38`, are committed on `codex/still-hosted-qualification` in `/private/tmp/still-hosted-qualification`, continuing clean `fd99a45b`. Main remains `c28af5fea0fc3ec2b37b878a544ec59c52a64daf`; no remote is configured. The [final native recheck](hosting-final-recheck.json) confirms published v550 / that source, successful deployment `appgdep_6ab573499a108191a2691a137672b93e`, environment 16 and unchanged workspace audience/access revision 7. Production unified creation and indexing remain disabled.
 
-The runtime candidate is committed through `3786dc53379567dd6c9f16e6d0bf9ea0cacf9794` on `codex/still-hosted-qualification`. Scoped implementation commits, in order: `a93dbd1d`, `3c71eee3`, `738b612a`, `f259212c`, `a0edb97f`, `ec2a14d3`, `bd57baaf`, `3786dc53`. Qualification tools are committed as `6c600508` and browser synchronization as `2094797f`; these and subsequent evidence commits do not change this packaged runtime. Local main is still `c28af5fe`; no remote is configured, and no push, merge, Sites save or deployment occurred.
+The [new disabled archive](disabled-archive-receipt.json) is built from an exact Git export of runtime `d190ed4185ee04978f4db4834da80bb4ed2562c7`: raw tar SHA-256 `b7b676a0f81bd80e9f8d701a91dae482ee77058b0fc234a7bfd4146c1e364b33`, Worker SHA-256 `c75d1ff219b306710a9fa5b2631780251bde4f27ecb45415379d2a4b00fd050c`, 45,387,776 bytes / 622 files. It contains exactly the held 41 migrations, no candidate SQL or test qualification entry. It is **unpublished**. A schema-enabled qualification archive is not approved; never deploy v547. Old archive and failed-gate receipts remain historical evidence.
 
-The [disabled archive receipt](disabled-archive-receipt.json) records a clean detached build of that exact runtime: raw tar SHA-256 `7cbb34c7ab99f584b6e59b5cc85a675b869b20951e949a2222fab51c450d248b`, 45,351,936 bytes / 622 files; Worker SHA-256 `afbf3c0a5a0b5d08bb69d005a04abfad8790c56a42a478bf09718d15095ba5be`. It contains exactly the held 41 migrations and no candidate SQL or qualification entry. It has **not been published**. No schema-enabled archive is approved. The held policy remains in force; v547 must never be deployed. The archive's policy baseline v494 is historical migration-policy metadata, not the current published baseline.
+## Fixed engineering gates
 
-The [verification ledger](verification-2026-09-24.md) records final local checks and their limits. This is a tested engineering checkpoint and an explicit no-go decision, not completed release qualification.
+| Ideas / retention | Backfill ≤24h | Healthy edit ≤5m | Renewal | Withdrawn prose / objects ≤15m |
+| --- | --- | --- | --- | --- |
+| 1,000 / 30 days | 90m | 2m | 82m; no gaps or missed expiries | 1m / 5m |
+| 10,000 / 30 days | 628m | 2m | 558m; no gaps or missed expiries | 1m / 5m |
+| 1,000 / 1 day | 90m | 2m | 82m; no gaps or missed expiries | 1m / 5m |
+| 10,000 / 1 day | 628m | 2m | 558m; no gaps or missed expiries | 1m / 5m |
+| 10 / 1 day | 6m | 1m | 11m; no gaps or missed expiries | 1m / 5m |
 
-## Evidence decision ledger
+Default renewal is below 720 minutes. Every short-policy body, retained canonical snapshot, publication manifest and vector range renews strictly before its own original expiry. Table renewal durations measure cohort completion from the first due component; initial writes have staggered lifetimes. The observer enforces each original deadline independently and separately reports full coverage at the earliest source expiry. No deadline or criterion was extended. All cohorts preserve current durable coverage throughout renewal, with zero renewal provider calls. The additional 500-Idea workflow verifies that a withdrawal in another Project preserves 507 unchanged snapshots and the next ordinary edit publishes in one bounded maintenance wake, matching full canonical replay. The prior 50-quanta failure is preserved in the finding ledger. Five-minute object erasure leaves ten minutes of local margin under the unchanged 15-minute criterion; actual hosted wake jitter is not qualified.
 
-| Gate | State at this checkpoint | Evidence and remaining decision |
+[Throughput evidence](throughput-2026-09-24.md) binds every original source and component lifetime, minute-by-minute coverage, actual synthetic R2 bytes/checksums, source hashes and compressed witness hashes. The observer now measures actual renewal; a generation increment alone cannot pass. Corpus sizes, custody/Project distribution, canonical input, minute cadence, budgets and criteria are unchanged. Earlier failing runs are preserved.
+
+## Remaining gate ledger
+
+| Gate | Current disposition | Next concrete action |
 | --- | --- | --- |
-| Current lineage | PASS, read-only baseline | Native v550/source/deployment/archive receipt; final candidate identity recorded separately |
-| Supported schedule and isolated target | UNAVAILABLE | Finite [hosting decision/request](hosting-capability-decision.md); no schedule operation or accepted route-scoped machine identity established; no isolated target IDs allocated |
-| Authoritative schema compatibility | LOCAL REHEARSAL PASS / HOSTED UNAVAILABLE | 10/10 checks; 107 additive statements / 94 added objects; six partial-prefix recoveries converge. [Manifest](schema-candidate-manifest.json) digest `fbc89dffdc95b4f039db733a465941499093b7dc35c985f89b5b935561aa5743`. Actual complete ledger/definitions, target journal numbers and hosted backup/restore still absent |
-| Local throughput and lifecycle | FAIL — required implementation gates | [Final source-frozen receipts](throughput-2026-09-24.md): 1k/10k backfill90m/651m passes24h; healthy edit6m/38m fails5m; default10k renewal794m fails12h. One-day10k renewal has0/10,041 current sources at144m deadline. Prose/object erasure1m/15m and keyless terminal cleanup pass locally;15m has no wake-jitter margin |
-| Frozen relevance preparation | PREPARED, not live-qualified | Synthetic60-query packet, separately authored agent labels and hash-bound provenance. No private production rows or model outputs used to label. A label string alone does not establish independence |
-| Live relevance and disclosure | UNAVAILABLE | >=40 positive/>=20 negative held-out queries, >=90% top3, <=10% false positives, >=95% per-partition recall@20, zero forbidden disclosures still require authorized live capture |
-| Hosted responsiveness/resource economics | UNAVAILABLE | >=30 cold/warm/concurrent observations at each 1k/10k size, actual cold/runtime provenance, <=2s after-debounce p95 and<=100ms typing evidence; old injected samples do not close this |
-| Hosted lifecycle/retention/authority | UNAVAILABLE | Real update<=5min/deletion<=15min, backfill/renewal sustainability, private media denial, restart/late-write/orphan erasure and cross-deployment authority remain unwitnessed |
-| Organizer fidelity | UNAVAILABLE | 32 frozen organizer inputs prepared; >=30 live outputs with named human adjudication of invention/omission/constraints required |
-| Human accessibility | UNAVAILABLE | Existing browser automation retained; screen-reader tool/platform/reviewer journeys remain open |
-| Hosted recovery/rollback | UNAVAILABLE | Hosted lost-response/two-tab/discard/flags and schema-failure/restore/cleanup-preserving rollback receipts absent |
-| Cost and authorization | NO AUTHORIZATION | [Itemized proposed allowance](cost-estimate.json), $25 total/$5 canary proposal. All-provider lifetime/canary reservation implemented and locally tested; actual hosted enforcement, host/Jev account terms and named owners unresolved |
-| Production activation | NO-GO | Production remains disabled; exact later pilot authorization required even after all technical gates pass |
+| Incremental edit, affected containers, renewal and deletion engineering | PASS locally, five scale cohorts | Use this exact committed candidate for isolated qualification |
+| Source/schema/tool workflow checks | PASS locally | 374 focused workflows, 17 committed observer checks, 14 schema checks, 2 compiled native D1/R2 checks, 18 Chromium workflows; [verification ledger](verification-2026-09-24.md) records limitations |
+| Authoritative schema and migration recovery | LOCAL PASS / HOSTED UNAVAILABLE | Reconcile complete target ledger/definitions and backup/restore; bind actual journal numbers. 166 candidate statements/109 objects; manifest `19abc30864503bf1e5dd49f4b34b351acd543a2dc2fff000413b0726956d66d1`; no target migration performed |
+| Persistent scheduler or machine ingress and isolated resources | UNAVAILABLE | Named hosting/database owner must answer [exact capability request](hosting-capability-decision.md) and provide independent Site/DB/bucket/secret/trigger identities |
+| Provider/host spending and run authorization | NOT AUTHORIZED | Complete exact target-bound [authorization request](authorization-request.md), account tariffs, named operator/billing/cleanup owners and credential choice. Proposed $25 total/$5 canary remains unapproved |
+| Live relevance and disclosure | UNAVAILABLE | Frozen 40 positive / 20 negative queries; ≥90% top 3, ≤10%false-positive, ≥95% per-partition recall@20 and zero forbidden disclosures |
+| Hosted performance, scheduling and retention | UNAVAILABLE | Authorized cold/warm/concurrent 1k/10k runs, actual runtime economics, tab-closed/redeploy wakes, edit≤5m/deletion≤15m, expiry/late-write/orphan and authority checks |
+| Human fidelity and accessibility | UNAVAILABLE | Named human adjudication of ≥30 organizer outputs and screen-reader journeys |
+| Hosted recovery and rollback | UNAVAILABLE | Lost-response/two-tab/discard/flag, partial schema/restore and cleanup-preserving rollback receipts |
+| Production activation | NO-GO | Separate exact pilot authorization only after every required gate passes |
 
-The ledger intentionally distinguishes a passing local check from a passing hosted release gate. The completed local receipt cannot convert absent hosted/human evidence into a pass. Local freshness and renewal failures also block paid scale qualification; authorization alone cannot make this release ready. Preserve failed measurements alongside repaired reruns.
+No local indexing engineering criterion remains failed in the five current cohorts or the added unrelated-withdrawal workflow. An unrelated pre-existing `still-refresh-repair` replay-type assertion still fails on exact `fd99a45b`; it is preserved in the verification ledger, not attributed to this repair or silently marked passed.
 
-## Concrete remaining requests and next executable actions
+## Next executable action
 
-1. **Implementation owner:** implement bounded incremental updates and renewal that avoid replaying/rematerializing an entire Project before publishing one edited Idea, preserving authority/identity and erasure fences. Rerun the same frozen 1k/10k and one-day retention gates without raising paid limits or relaxing criteria. This engineering requirement is open.
-2. **Sites hosting/database owner (person/channel needed):** answer the exact request in [hosting-capability-decision.md](hosting-capability-decision.md), including schedule or documented machine identity, independent physical resources, authoritative schema/ledger, backup/restore and applicable tariff. Next action: fill actual IDs and produce the target-bound manifest; do not repeat generic scheduler research.
-3. **User/billing owner:** review the completed target manifest, named credentials/reuse choice and [authorization request](authorization-request.md). Approve only an exact bounded isolated canary after aggregate reservation/host cost controls are verified. Next action: run the separate development canary; stop on uncertainty. Scheduling need not block separately authorized manual paths, but manual evidence never closes autonomy.
-4. **Qualification operator and human reviewers (names needed):** perform the full frozen live/cohort/lifecycle package and record the exact environment/model/fixture/command/run identities; adjudicate organizer and screen-reader journeys. Next action after passing canary: execute full held-out capture without tuning and keep failures in denominators.
-5. **User/pilot and rollback owner:** only after all required gates pass, review the proposed one-custody 24-hour pilot in [operating runbook](operating-runbook.md). No pilot, notification, follow-up schedule or production activation has been created.
-
-Current incremental paid-provider calls and known paid-provider spend for preparation are zero. Hosted scheduling, live search quality, hosted performance and retention are **not verified**. No hosted resources were created by this packet; this is not a claim that a hosted cleanup exercise passed.
+Obtain the named platform owner's finite response and fill the actual isolated target identities, complete schema/backup manifest and all-in cost. Present that concrete packet for the missing bounded canary authorization. After approval, run the separate development canary, then the frozen hosted package using the [operating runbook](operating-runbook.md). Manual invocation may qualify its own path but cannot qualify autonomous scheduling. No new spending, provisioning, production migration or activation is inferred from this engineering completion.

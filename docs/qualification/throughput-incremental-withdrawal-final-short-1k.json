@@ -1,0 +1,2251 @@
+{
+  "schema": 2,
+  "renewalFault": null,
+  "renewalObserverHash": "3f3837f3147a50f66ea11d4aa9a90f0a61e93783944e92c3db8dc88b08a15ee8",
+  "phaseTotals": {
+    "backfill": {
+      "ticks": 90,
+      "operations": 29317,
+      "calls": 44,
+      "inputBytes": 506946,
+      "tokens": 126750,
+      "put": 54,
+      "get": 22,
+      "head": 142,
+      "delete": 22,
+      "list": 9
+    },
+    "healthy-edit": {
+      "ticks": 2,
+      "operations": 513,
+      "calls": 2,
+      "inputBytes": 13494,
+      "tokens": 3374,
+      "put": 3,
+      "get": 4,
+      "head": 32,
+      "delete": 0,
+      "list": 1
+    },
+    "withdrawal": {
+      "ticks": 5,
+      "operations": 1200,
+      "calls": 1,
+      "inputBytes": 13353,
+      "tokens": 3339,
+      "put": 4,
+      "get": 7,
+      "head": 10,
+      "delete": 9,
+      "list": 0
+    },
+    "restore-coverage": {
+      "ticks": 5,
+      "operations": 1102,
+      "calls": 3,
+      "inputBytes": 38751,
+      "tokens": 9689,
+      "put": 5,
+      "get": 4,
+      "head": 38,
+      "delete": 8,
+      "list": 1
+    },
+    "renewal": {
+      "ticks": 82,
+      "operations": 18530,
+      "calls": 0,
+      "inputBytes": 0,
+      "tokens": 0,
+      "put": 6,
+      "get": 60,
+      "head": 211,
+      "delete": 14,
+      "list": 9
+    },
+    "short-retention-stability": {
+      "ticks": 120,
+      "operations": 18864,
+      "calls": 0,
+      "inputBytes": 0,
+      "tokens": 0,
+      "put": 0,
+      "get": 0,
+      "head": 252,
+      "delete": 0,
+      "list": 12
+    },
+    "shutdown": {
+      "ticks": 1,
+      "operations": 296,
+      "calls": 0,
+      "inputBytes": 0,
+      "tokens": 0,
+      "put": 0,
+      "get": 0,
+      "head": 21,
+      "delete": 21,
+      "list": 0
+    }
+  },
+  "readiness": {
+    "initialBackfillWithin24Hours": true,
+    "healthyEditWithin5Minutes": true,
+    "withdrawnObjectsWithin15Minutes": true,
+    "withdrawnPrivateProseWithin15Minutes": true,
+    "renewalWithin12Hours": true,
+    "renewalWithinActualWindow": true,
+    "renewalNoCoverageGap": true
+  },
+  "fixtureGeneratorHash": "d51031bb69e17673e319814d6d481c6491a72be1f726064c40bc1a8eac986829",
+  "sourceHashes": {
+    "src/model/events.ts": "673e5cc5fc63dbf532e53108304c520804b11d569e014858e29bd26c85dcefe2",
+    "worker/creation-api.ts": "f9b30e5638f43279839c83c8fc1ffa75c68737e07f584e23d8b55e3f64997aab",
+    "worker/creation-authority.ts": "2ed295b0e6322f175920bffb2a21827a617313f35ee91dd24af969dacf7c7141",
+    "worker/creation-commits.ts": "e9a58ae5735e845ce9be526fa541b7c18839d2d13cdb4d98df8786b2d95009d6",
+    "worker/creation-index-authority.ts": "38ec255a7e3716628544b2d6888266bd80b58db294ad7abce0222899ee7cc2b9",
+    "worker/creation-index-budget.ts": "6d7c34b3ac51865f0201410db6244be41f9d96f0f642dcfd396d059ae3cc561b",
+    "worker/creation-index-compaction.ts": "e370dc0a732eb011e2398e47c5718b63c100d1b37328c2f12f1ab2122487d9d7",
+    "worker/creation-index-incremental-vectors.ts": "3fc5b94ed4695dce953ca017147d22a22c636f621fee75d1cb8e2fcdac2ea549",
+    "worker/creation-index-incremental.ts": "e66f3e77eda6f0895c7c768645c48711b847061d9e53c709fe5b98e3bf24f98a",
+    "worker/creation-index-maintenance.ts": "18c8d558f55bb510f9408b7f54c3402a2f35e2169b1090647cdda985ea6ed798",
+    "worker/creation-index-private.ts": "5099310f1a490c66f1ee2cd04a5ab5bdc5a6959688d121535abd608d96b2a375",
+    "worker/creation-index-projection-stage.ts": "075544961f7c5fccd8fab3c50b7878d7019792df2cb4e59074cc42397f692e82",
+    "worker/creation-index-projection.ts": "fdd5fbbe850c836a14bab24c9d2e30e5e22385f2fffb660cf8650fe9424bc6be",
+    "worker/creation-index-reconcile.ts": "8edd389b53505b0b31e13d45cf7eb7e4fb87b072506559ab207cb6e2d180f34e",
+    "worker/creation-index-renewal.ts": "d59766ca446d126a9e1586cacdbb28f5b0068ab2ed37b320efd4079928557e3a",
+    "worker/creation-index-routing.ts": "86bfaf0543acad9806d4b1f0a21860f9cb27045cca0b839b0ca8908f7da5f14f",
+    "worker/creation-index-schema.ts": "2778ad00b77b2c3fe4335997fbbe64af0343ee2c5e27aef5b4799c4dafb8e2d4",
+    "worker/creation-index-search.ts": "e1c099ef8da9d24a36ca1551425ddf1827ef359b2f5030c868416a3636220348",
+    "worker/creation-interpret.ts": "412ae830680da0b84c3eb2a8e781803bcb8bd92610c937706c8071f39fce56cf",
+    "worker/creation-organization-contract.ts": "3c440c9f511e211df31b19d942fb7783714a9511b6d335d6c9962579e708382e",
+    "worker/creation-provider-http.ts": "c51ac3b16370250b375fbf8fbfb8b0ab91640fa8b4f6ebddcd51abf72f73c02d",
+    "worker/creation-provider-service.ts": "3d809961476a7dcb46e2bb42ca6cb49542ede9a1fdb24e44f568b2a52ff6f83f",
+    "worker/creation-qualification-budget.ts": "2d7d1c2d883d965c7208e99c782d26bd54a7f68f8913379717e49aa5faf258e6",
+    "worker/creation-search-api.ts": "7ee04c0d1d30c9283e5f0d77410799d6a3389084e2a714191dec899c7e8b867d",
+    "worker/creation-search-index.ts": "4876fe2b38e306282a790561e1a101dd164ad788b783337b634f95e79de2019a",
+    "worker/creation-search-providers.ts": "b6aa996d24f1118d647419348c67bbeba9f77943a2b87d92fbcacbe69ecc9154",
+    "worker/creation-search.ts": "753ed14e9d974b0f6014c346d3cb614f1d881cf54dcedb8b17c7acf12c62644d",
+    "worker/creation-store.ts": "545e38d0c0290e4617459c63f4c2d980417fdbb3c7b3c5740c1aeeee26903a42",
+    "worker/creation-vectors.ts": "020fbc0f32a9ae626978b8412dd44868025c4b83cd53a60b09e836751b70c892",
+    "worker/memory-native-boundary.ts": "a6fa7878a94fe425c51bc61511d736aceb286a3cae9c2ff3f471f4cbd92ee7e8",
+    "worker/private-content-storage.ts": "ca836551432ab3c76c162a09fe37d82eaa4d920aeffa652934194670a74e2bc9"
+  },
+  "endingSourceHashes": {
+    "src/model/events.ts": "673e5cc5fc63dbf532e53108304c520804b11d569e014858e29bd26c85dcefe2",
+    "worker/creation-api.ts": "f9b30e5638f43279839c83c8fc1ffa75c68737e07f584e23d8b55e3f64997aab",
+    "worker/creation-authority.ts": "2ed295b0e6322f175920bffb2a21827a617313f35ee91dd24af969dacf7c7141",
+    "worker/creation-commits.ts": "e9a58ae5735e845ce9be526fa541b7c18839d2d13cdb4d98df8786b2d95009d6",
+    "worker/creation-index-authority.ts": "38ec255a7e3716628544b2d6888266bd80b58db294ad7abce0222899ee7cc2b9",
+    "worker/creation-index-budget.ts": "6d7c34b3ac51865f0201410db6244be41f9d96f0f642dcfd396d059ae3cc561b",
+    "worker/creation-index-compaction.ts": "e370dc0a732eb011e2398e47c5718b63c100d1b37328c2f12f1ab2122487d9d7",
+    "worker/creation-index-incremental-vectors.ts": "3fc5b94ed4695dce953ca017147d22a22c636f621fee75d1cb8e2fcdac2ea549",
+    "worker/creation-index-incremental.ts": "e66f3e77eda6f0895c7c768645c48711b847061d9e53c709fe5b98e3bf24f98a",
+    "worker/creation-index-maintenance.ts": "18c8d558f55bb510f9408b7f54c3402a2f35e2169b1090647cdda985ea6ed798",
+    "worker/creation-index-private.ts": "5099310f1a490c66f1ee2cd04a5ab5bdc5a6959688d121535abd608d96b2a375",
+    "worker/creation-index-projection-stage.ts": "075544961f7c5fccd8fab3c50b7878d7019792df2cb4e59074cc42397f692e82",
+    "worker/creation-index-projection.ts": "fdd5fbbe850c836a14bab24c9d2e30e5e22385f2fffb660cf8650fe9424bc6be",
+    "worker/creation-index-reconcile.ts": "8edd389b53505b0b31e13d45cf7eb7e4fb87b072506559ab207cb6e2d180f34e",
+    "worker/creation-index-renewal.ts": "d59766ca446d126a9e1586cacdbb28f5b0068ab2ed37b320efd4079928557e3a",
+    "worker/creation-index-routing.ts": "86bfaf0543acad9806d4b1f0a21860f9cb27045cca0b839b0ca8908f7da5f14f",
+    "worker/creation-index-schema.ts": "2778ad00b77b2c3fe4335997fbbe64af0343ee2c5e27aef5b4799c4dafb8e2d4",
+    "worker/creation-index-search.ts": "e1c099ef8da9d24a36ca1551425ddf1827ef359b2f5030c868416a3636220348",
+    "worker/creation-interpret.ts": "412ae830680da0b84c3eb2a8e781803bcb8bd92610c937706c8071f39fce56cf",
+    "worker/creation-organization-contract.ts": "3c440c9f511e211df31b19d942fb7783714a9511b6d335d6c9962579e708382e",
+    "worker/creation-provider-http.ts": "c51ac3b16370250b375fbf8fbfb8b0ab91640fa8b4f6ebddcd51abf72f73c02d",
+    "worker/creation-provider-service.ts": "3d809961476a7dcb46e2bb42ca6cb49542ede9a1fdb24e44f568b2a52ff6f83f",
+    "worker/creation-qualification-budget.ts": "2d7d1c2d883d965c7208e99c782d26bd54a7f68f8913379717e49aa5faf258e6",
+    "worker/creation-search-api.ts": "7ee04c0d1d30c9283e5f0d77410799d6a3389084e2a714191dec899c7e8b867d",
+    "worker/creation-search-index.ts": "4876fe2b38e306282a790561e1a101dd164ad788b783337b634f95e79de2019a",
+    "worker/creation-search-providers.ts": "b6aa996d24f1118d647419348c67bbeba9f77943a2b87d92fbcacbe69ecc9154",
+    "worker/creation-search.ts": "753ed14e9d974b0f6014c346d3cb614f1d881cf54dcedb8b17c7acf12c62644d",
+    "worker/creation-store.ts": "545e38d0c0290e4617459c63f4c2d980417fdbb3c7b3c5740c1aeeee26903a42",
+    "worker/creation-vectors.ts": "020fbc0f32a9ae626978b8412dd44868025c4b83cd53a60b09e836751b70c892",
+    "worker/memory-native-boundary.ts": "a6fa7878a94fe425c51bc61511d736aceb286a3cae9c2ff3f471f4cbd92ee7e8",
+    "worker/private-content-storage.ts": "ca836551432ab3c76c162a09fe37d82eaa4d920aeffa652934194670a74e2bc9"
+  },
+  "sourceChangedDuringRun": [],
+  "pendingWork": [
+    {
+      "kind": "deletion",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "discovery",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "manifest-reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "reconciliation",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 1
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 0,
+      "cursor": "",
+      "count": 18
+    },
+    {
+      "kind": "renewal",
+      "state": "ready",
+      "error_class": null,
+      "generation": 2,
+      "cursor": "",
+      "count": 3
+    }
+  ],
+  "shutdown": {
+    "metadataRows": {
+      "creation_index_block_routes": 0,
+      "creation_index_replay_skeletons": 0,
+      "creation_index_snapshots": 0,
+      "creation_index_snapshot_heads": 0
+    },
+    "preShutdown": {
+      "objects": 21,
+      "published": 1041
+    },
+    "ticks": 1,
+    "objectsRemaining": 0,
+    "privateBodiesRemaining": 0,
+    "checkpointRows": 0,
+    "providerCalls": 0
+  },
+  "attempts": {
+    "count": 50,
+    "reserved": 572544,
+    "tokens": 143152
+  },
+  "shortRetentionWindow": {
+    "ticks": 120,
+    "minPublished": 1041,
+    "completeTicks": 120,
+    "generationIncrements": 0,
+    "providerCalls": 0
+  },
+  "kind": "offline-injected-provider-unseeded-lifecycle",
+  "sourceCommit": "d190ed4185ee04978f4db4834da80bb4ed2562c7",
+  "sourceRoot": "/private/tmp/still-hosted-qualification",
+  "ideas": 1000,
+  "projects": 21,
+  "custodies": 2,
+  "canonicalEvents": 1045,
+  "initialIndexRows": 0,
+  "expectedSources": 1042,
+  "retentionDays": 1,
+  "tickSeconds": 60,
+  "maxTicks": 3000,
+  "ticks": 305,
+  "partialTick": 48,
+  "fullTick": 90,
+  "backfillCoverage": {
+    "total": 1042,
+    "published": 1042
+  },
+  "healthyEdit": {
+    "atTick": 90,
+    "visibleTick": 92,
+    "delayMinutes": 2,
+    "pass": true,
+    "trace": [
+      {
+        "tick": 91,
+        "receipt": {
+          "status": "completed",
+          "claimed": 7,
+          "completed": 7,
+          "retried": 0,
+          "held": 0,
+          "bytes": 2048,
+          "tokens": 28,
+          "providerAttempts": 1
+        },
+        "work": [
+          {
+            "kind": "embedding",
+            "state": "ready",
+            "count": 2
+          },
+          {
+            "kind": "publication",
+            "state": "ready",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "tick": 92,
+        "receipt": {
+          "status": "completed",
+          "claimed": 5,
+          "completed": 5,
+          "retried": 0,
+          "held": 0,
+          "bytes": 65536,
+          "tokens": 3346,
+          "providerAttempts": 1
+        },
+        "work": [
+          {
+            "kind": "embedding",
+            "state": "ready",
+            "count": 2
+          }
+        ]
+      }
+    ],
+    "snapshotBaseline": {
+      "partition_key": "[\"personal:dev-local-creative\",\"throughput-project-2\"]",
+      "generation": 0,
+      "head": 546,
+      "owner_head": 546,
+      "snapshot_count": 50
+    },
+    "ownerDelta": [
+      {
+        "sequence": 547,
+        "type": "BlockPropertyEdited",
+        "project_id": "throughput-project-0",
+        "block_id": "throughput-idea-000000",
+        "property_path": "text"
+      },
+      {
+        "sequence": 548,
+        "type": "BlockPropertyEdited",
+        "project_id": "throughput-project-2",
+        "block_id": "throughput-idea-000002",
+        "property_path": "text"
+      }
+    ]
+  },
+  "edit": {
+    "atTick": 48,
+    "visibleTick": 89,
+    "delayMinutes": 41,
+    "pass": false
+  },
+  "withdrawal": {
+    "atTick": 92,
+    "erasedTick": 97,
+    "delayMinutes": 5,
+    "pass": true,
+    "objects": 1,
+    "privateBodiesBefore": 4,
+    "privateBodiesAt15Minutes": null,
+    "privateBodyErasedTick": 93,
+    "privateBodyDelayMinutes": 1,
+    "privateBodyReappeared": false,
+    "privateBodyPass": true
+  },
+  "renewal": {
+    "status": "completed",
+    "leadSeconds": 8640,
+    "actualRenewalWindowSeconds": 8640,
+    "ticks": 82,
+    "within12Hours": true,
+    "withinActualRenewalWindow": true,
+    "coverage": {
+      "total": 1042,
+      "published": 1041
+    },
+    "providerCalls": 50,
+    "withdrawalImmediateDenied": true,
+    "postStabilityTicksToFirstDeadline": 0,
+    "witness": {
+      "contract": "all-original-source-body-manifest-vector-retention; strict per-source deadlines; every-minute durable coverage",
+      "snapshotDigest": "d9fb148a1b2e46971f854148e9e7bb84737801ba42d1666d7866670a801a275c",
+      "sourceCount": 1041,
+      "initialDurableSources": 1041,
+      "firstDue": 1790364815.078,
+      "firstDeadline": 1790373455.078,
+      "firstSourceDeadline": 1790374115,
+      "lastDeadline": 1790378435.078,
+      "snapshotSources": 1041,
+      "snapshotPartitions": 21,
+      "firstShortWindow": {
+        "tick": 257,
+        "at": 1790374115.078,
+        "coverage": 1041,
+        "expectedSources": 1041,
+        "renewed": 1041,
+        "deadlineMisses": 0
+      },
+      "minCoverage": 1041,
+      "gapTicks": 0,
+      "noCoverageGap": true,
+      "renewedSources": 1041,
+      "deadlineMisses": [],
+      "observations": [
+        {
+          "tick": 102,
+          "at": 1790364815.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 0,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 103,
+          "at": 1790364875.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 0,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 104,
+          "at": 1790364935.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 0,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 105,
+          "at": 1790364995.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 0,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 106,
+          "at": 1790365055.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 0,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 107,
+          "at": 1790365115.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 0,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 108,
+          "at": 1790365175.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 0,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 109,
+          "at": 1790365235.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 0,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 110,
+          "at": 1790365295.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 0,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 111,
+          "at": 1790365355.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 32,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 112,
+          "at": 1790365415.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 128,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 113,
+          "at": 1790365475.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 207,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 114,
+          "at": 1790365535.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 239,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 115,
+          "at": 1790365595.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 331,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 116,
+          "at": 1790365655.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 423,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 117,
+          "at": 1790365715.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 557,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 118,
+          "at": 1790365775.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 691,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 119,
+          "at": 1790365835.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 767,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 120,
+          "at": 1790365895.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 800,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 121,
+          "at": 1790365955.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 852,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 122,
+          "at": 1790366015.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 886,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 123,
+          "at": 1790366075.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 910,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 124,
+          "at": 1790366135.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 923,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 125,
+          "at": 1790366195.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 936,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 126,
+          "at": 1790366255.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 965,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 127,
+          "at": 1790366315.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 987,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 128,
+          "at": 1790366375.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 987,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 129,
+          "at": 1790366435.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 987,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 130,
+          "at": 1790366495.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 987,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 131,
+          "at": 1790366555.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 987,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 132,
+          "at": 1790366615.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1019,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 133,
+          "at": 1790366675.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1019,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 134,
+          "at": 1790366735.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 135,
+          "at": 1790366795.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 136,
+          "at": 1790366855.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 137,
+          "at": 1790366915.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 138,
+          "at": 1790366975.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 139,
+          "at": 1790367035.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 140,
+          "at": 1790367095.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 141,
+          "at": 1790367155.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 142,
+          "at": 1790367215.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 143,
+          "at": 1790367275.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 144,
+          "at": 1790367335.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 145,
+          "at": 1790367395.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 146,
+          "at": 1790367455.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 147,
+          "at": 1790367515.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 148,
+          "at": 1790367575.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 149,
+          "at": 1790367635.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 150,
+          "at": 1790367695.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 151,
+          "at": 1790367755.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 152,
+          "at": 1790367815.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 153,
+          "at": 1790367875.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 154,
+          "at": 1790367935.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 155,
+          "at": 1790367995.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 156,
+          "at": 1790368055.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 157,
+          "at": 1790368115.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 158,
+          "at": 1790368175.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 159,
+          "at": 1790368235.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 160,
+          "at": 1790368295.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 161,
+          "at": 1790368355.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 162,
+          "at": 1790368415.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 163,
+          "at": 1790368475.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 164,
+          "at": 1790368535.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1035,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 165,
+          "at": 1790368595.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 166,
+          "at": 1790368655.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 167,
+          "at": 1790368715.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 168,
+          "at": 1790368775.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 169,
+          "at": 1790368835.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 170,
+          "at": 1790368895.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 171,
+          "at": 1790368955.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 172,
+          "at": 1790369015.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 173,
+          "at": 1790369075.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 174,
+          "at": 1790369135.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1037,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 175,
+          "at": 1790369195.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1038,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 176,
+          "at": 1790369255.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1038,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 177,
+          "at": 1790369315.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1038,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 178,
+          "at": 1790369375.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1039,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 179,
+          "at": 1790369435.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1039,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 180,
+          "at": 1790369495.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1039,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 181,
+          "at": 1790369555.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1039,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 182,
+          "at": 1790369615.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1039,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 183,
+          "at": 1790369675.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1039,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 184,
+          "at": 1790369735.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 185,
+          "at": 1790369795.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 186,
+          "at": 1790369855.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 187,
+          "at": 1790369915.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 188,
+          "at": 1790369975.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 189,
+          "at": 1790370035.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 190,
+          "at": 1790370095.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 191,
+          "at": 1790370155.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 192,
+          "at": 1790370215.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 193,
+          "at": 1790370275.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 194,
+          "at": 1790370335.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 195,
+          "at": 1790370395.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 196,
+          "at": 1790370455.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 197,
+          "at": 1790370515.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 198,
+          "at": 1790370575.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 199,
+          "at": 1790370635.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 200,
+          "at": 1790370695.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 201,
+          "at": 1790370755.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 202,
+          "at": 1790370815.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 203,
+          "at": 1790370875.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 204,
+          "at": 1790370935.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 205,
+          "at": 1790370995.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 206,
+          "at": 1790371055.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 207,
+          "at": 1790371115.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 208,
+          "at": 1790371175.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 209,
+          "at": 1790371235.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 210,
+          "at": 1790371295.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 211,
+          "at": 1790371355.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 212,
+          "at": 1790371415.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 213,
+          "at": 1790371475.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 214,
+          "at": 1790371535.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 215,
+          "at": 1790371595.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 216,
+          "at": 1790371655.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 217,
+          "at": 1790371715.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 218,
+          "at": 1790371775.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 219,
+          "at": 1790371835.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 220,
+          "at": 1790371895.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 221,
+          "at": 1790371955.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 222,
+          "at": 1790372015.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 223,
+          "at": 1790372075.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 224,
+          "at": 1790372135.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 225,
+          "at": 1790372195.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 226,
+          "at": 1790372255.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 227,
+          "at": 1790372315.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 228,
+          "at": 1790372375.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 229,
+          "at": 1790372435.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 230,
+          "at": 1790372495.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 231,
+          "at": 1790372555.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 232,
+          "at": 1790372615.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 233,
+          "at": 1790372675.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 234,
+          "at": 1790372735.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 235,
+          "at": 1790372795.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 236,
+          "at": 1790372855.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 237,
+          "at": 1790372915.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 238,
+          "at": 1790372975.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 239,
+          "at": 1790373035.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 240,
+          "at": 1790373095.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 241,
+          "at": 1790373155.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 242,
+          "at": 1790373215.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 243,
+          "at": 1790373275.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 244,
+          "at": 1790373335.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 245,
+          "at": 1790373395.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 246,
+          "at": 1790373455.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 247,
+          "at": 1790373515.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 248,
+          "at": 1790373575.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 249,
+          "at": 1790373635.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 250,
+          "at": 1790373695.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 251,
+          "at": 1790373755.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 252,
+          "at": 1790373815.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 253,
+          "at": 1790373875.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 254,
+          "at": 1790373935.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 255,
+          "at": 1790373995.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 256,
+          "at": 1790374055.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 257,
+          "at": 1790374115.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 258,
+          "at": 1790374175.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 259,
+          "at": 1790374235.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 260,
+          "at": 1790374295.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 261,
+          "at": 1790374355.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 262,
+          "at": 1790374415.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 263,
+          "at": 1790374475.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 264,
+          "at": 1790374535.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 265,
+          "at": 1790374595.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 266,
+          "at": 1790374655.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 267,
+          "at": 1790374715.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 268,
+          "at": 1790374775.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 269,
+          "at": 1790374835.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 270,
+          "at": 1790374895.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 271,
+          "at": 1790374955.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 272,
+          "at": 1790375015.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 273,
+          "at": 1790375075.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 274,
+          "at": 1790375135.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 275,
+          "at": 1790375195.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 276,
+          "at": 1790375255.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 277,
+          "at": 1790375315.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 278,
+          "at": 1790375375.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 279,
+          "at": 1790375435.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 280,
+          "at": 1790375495.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 281,
+          "at": 1790375555.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 282,
+          "at": 1790375615.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 283,
+          "at": 1790375675.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 284,
+          "at": 1790375735.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 285,
+          "at": 1790375795.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 286,
+          "at": 1790375855.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 287,
+          "at": 1790375915.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 288,
+          "at": 1790375975.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 289,
+          "at": 1790376035.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 290,
+          "at": 1790376095.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 291,
+          "at": 1790376155.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 292,
+          "at": 1790376215.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 293,
+          "at": 1790376275.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 294,
+          "at": 1790376335.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 295,
+          "at": 1790376395.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 296,
+          "at": 1790376455.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 297,
+          "at": 1790376515.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 298,
+          "at": 1790376575.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 299,
+          "at": 1790376635.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 300,
+          "at": 1790376695.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 301,
+          "at": 1790376755.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 302,
+          "at": 1790376815.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 303,
+          "at": 1790376875.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        },
+        {
+          "tick": 304,
+          "at": 1790376935.078,
+          "coverage": 1041,
+          "expectedSources": 1041,
+          "renewed": 1041,
+          "deadlineMisses": 0
+        }
+      ],
+      "sourceWitnessArtifact": {
+        "path": "throughput-incremental-withdrawal-final-short-1k.renewal-witness.ndjson.gz",
+        "encoding": "gzip+ndjson",
+        "sourceCount": 1041,
+        "sha256": "bcf8411d191f8f77de57a59dcc5a53bd96b1a8bccecf5dc9bdbd279f76c28521",
+        "uncompressedSha256": "4bf502c33db9a0e34cf2fcfa7606b1f422c9e8c9991a092ca3a5894faeccc935"
+      }
+    },
+    "noCoverageGap": true
+  },
+  "provider": {
+    "calls": 50,
+    "inputs": 1278,
+    "inputBytes": 572544,
+    "tokens": 143152,
+    "maxInputs": 32,
+    "maxPayloadBytes": 22403
+  },
+  "d1": {
+    "operations": 69828,
+    "maxTickOperations": 631,
+    "slowReads": [
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_row.scope_type, 'organizationId', grant_r",
+        {
+          "calls": 7338,
+          "totalMs": 3079.9050500001,
+          "maxMs": 2.82425000000012
+        }
+      ],
+      [
+        "WITH candidates AS MATERIALIZED(SELECT r.source_id,r.kind,r.revision,r.content_hash,r.content_id,c.content,sc.content_id AS snapshot_id,sc.content AS snapshot_c",
+        {
+          "calls": 445,
+          "totalMs": 1754.9502030000076,
+          "maxMs": 5.930292000000009
+        }
+      ],
+      [
+        "SELECT e.entity_id,c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id WHERE e.partition_key=? AND e.generation=? AND",
+        {
+          "calls": 92,
+          "totalMs": 255.54158399999778,
+          "maxMs": 5.335332999999991
+        }
+      ],
+      [
+        "SELECT * FROM(SELECT o.object_key,o.checksum,o.byte_count,o.expires,(SELECT expires FROM(SELECT COUNT(*) AS n,MIN(MIN(s.expires,unixepoch(c.expires_at))) AS exp",
+        {
+          "calls": 445,
+          "totalMs": 203.34987700001238,
+          "maxMs": 0.8667919999998048
+        }
+      ],
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=p.project_access_id WHERE p.partition_ke",
+        {
+          "calls": 7338,
+          "totalMs": 173.01055799997482,
+          "maxMs": 0.2355000000002292
+        }
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        {
+          "calls": 7338,
+          "totalMs": 117.41213000001392,
+          "maxMs": 0.21562500000027285
+        }
+      ],
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=unixepoch()) AND (? IS NULL OR kind IN(SEL",
+        {
+          "calls": 2233,
+          "totalMs": 107.37397200000339,
+          "maxMs": 0.27141600000004473
+        }
+      ],
+      [
+        "SELECT 1 FROM creation_search_records r LEFT JOIN private_content c ON c.content_id=r.content_id LEFT JOIN creation_index_snapshots snapshot ON snapshot.partiti",
+        {
+          "calls": 445,
+          "totalMs": 81.76877900000181,
+          "maxMs": 0.6025829999998678
+        }
+      ],
+      [
+        "SELECT 1 FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        {
+          "calls": 6333,
+          "totalMs": 80.89161400004684,
+          "maxMs": 0.146708000000217
+        }
+      ],
+      [
+        "SELECT 1 FROM creation_index_sources s JOIN creation_search_records r ON r.partition_key=s.partition_key AND r.source_id=s.source_id AND r.revision=s.revision A",
+        {
+          "calls": 445,
+          "totalMs": 70.02789900001153,
+          "maxMs": 0.36458399999901303
+        }
+      ]
+    ],
+    "topOperations": [
+      [
+        "SELECT p.*,o.organization_id FROM creation_search_partitions p LEFT JOIN organization_projects o ON o.project_access_id=",
+        7338
+      ],
+      [
+        " SELECT principal.*, COALESCE((SELECT json_group_array(json_object( 'capability', grant_row.capability, 'scope', grant_r",
+        7338
+      ],
+      [
+        "SELECT 1 AS present FROM organization_projects WHERE project_id=? AND owner_user_id=? LIMIT 1",
+        7338
+      ],
+      [
+        "SELECT 1 FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        6333
+      ],
+      [
+        "INSERT INTO private_content (content_id,owner_id,kind,content,created_at,expires_at,redacted_at) SELECT ?,?,?,?,?,?,NULL",
+        4781
+      ],
+      [
+        "UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND redacted_at IS NULL AND kind NOT IN('document-a",
+        4781
+      ],
+      [
+        "SELECT job_key FROM creation_index_work WHERE due<=unixepoch() AND (state='ready' OR state='running' AND lease_until<=un",
+        2233
+      ],
+      [
+        "INSERT OR REPLACE INTO creation_index_projection(partition_key,generation,entity_id,kind,content_id) SELECT ?,?,?,?,? WH",
+        1651
+      ],
+      [
+        "UPDATE creation_index_work SET state='running',lease_token=?,lease_until=unixepoch()+?,attempts=attempts+1,touched=unixe",
+        1433
+      ],
+      [
+        "SELECT r.content_id FROM creation_search_records r JOIN private_content c ON c.content_id=r.content_id WHERE r.partition",
+        1142
+      ],
+      [
+        "DELETE FROM creation_index_fences",
+        1141
+      ],
+      [
+        "SELECT c.content FROM creation_index_projection e JOIN private_content c ON c.content_id=e.content_id AND c.redacted_at ",
+        1096
+      ],
+      [
+        "INSERT INTO creation_index_fences(id) VALUES(CASE WHEN EXISTS(SELECT 1 FROM( SELECT principal.*, COALESCE((SELECT json_g",
+        1061
+      ],
+      [
+        "INSERT INTO creation_index_fences(id) VALUES(CASE WHEN EXISTS(SELECT 1 FROM creation_index_work j WHERE j.job_key=? AND ",
+        1048
+      ],
+      [
+        "INSERT INTO creation_search_records(partition_key,source_id,kind,revision,content_hash,content_id,source_version,tombsto",
+        1048
+      ],
+      [
+        "DELETE FROM creation_search_terms WHERE partition_key=? AND source_id=?",
+        1048
+      ],
+      [
+        "INSERT INTO creation_search_terms(partition_key,term_hash,source_id) SELECT ?,value,? FROM json_each(?)",
+        1048
+      ],
+      [
+        "SELECT policy_epoch,expires FROM creation_index_enrollments WHERE custody=? AND enabled=1 AND expires>unixepoch()",
+        1005
+      ],
+      [
+        "INSERT OR IGNORE INTO creation_index_work(job_key,kind,partition_key,priority) VALUES(?,?,'',0)",
+        915
+      ],
+      [
+        "SELECT state,write_until,erase_due,unixepoch() AS now FROM creation_index_objects WHERE object_key=?",
+        589
+      ]
+    ],
+    "allocatedFixtureBytes": 16097280
+  },
+  "r2": {
+    "put": 72,
+    "get": 97,
+    "head": 706,
+    "delete": 74,
+    "list": 32,
+    "uploadedBytes": 5304320,
+    "readBytes": 8183808,
+    "peakBytes": 2799616,
+    "peakObjects": 35
+  },
+  "nodeFixture": {
+    "elapsedMs": 16826.732208,
+    "peakHeapBytes": 219993344,
+    "peakRssBytes": 582451200
+  },
+  "oldestQueueAgeSeconds": 90780,
+  "oldestQueueAgeBeforeRenewalJump": 5460,
+  "clockJumpSeconds": 72600,
+  "failedWork": [],
+  "trajectory": [
+    {
+      "tick": 90,
+      "published": 1042,
+      "records": 1042,
+      "providerCalls": 44,
+      "receipt": {
+        "status": "completed",
+        "claimed": 5,
+        "completed": 5,
+        "retried": 0,
+        "held": 0,
+        "bytes": 0,
+        "tokens": 0,
+        "providerAttempts": 0
+      }
+    }
+  ],
+  "qualification": "NOT hosted, NOT live relevance, simulated provider token usage, Node heap is not hosted resource evidence"
+}

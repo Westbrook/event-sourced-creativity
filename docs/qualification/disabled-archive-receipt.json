@@ -1,17 +1,17 @@
 {
   "kind": "local-disabled-candidate-archive",
-  "createdAt": "2026-09-24T20:49:55.086245+00:00",
-  "implementationCommit": "3786dc53379567dd6c9f16e6d0bf9ea0cacf9794",
-  "buildCheckout": "clean detached checkout",
-  "buildCheckoutPath": "/private/tmp/still-release-3786dc53",
+  "createdAt": "2026-09-24T21:42:11.191683+00:00",
+  "implementationCommit": "d190ed4185ee04978f4db4834da80bb4ed2562c7",
+  "buildCheckout": "exact git archive export of runtime commit; dependency symlink outside package",
+  "buildCheckoutPath": "/private/tmp/still-release-d190ed41",
   "trackedAndUntrackedSourceClean": true,
-  "archiveName": "still-hosted-disabled-3786dc53.tar",
-  "archiveSha256": "7cbb34c7ab99f584b6e59b5cc85a675b869b20951e949a2222fab51c450d248b",
+  "archiveName": "still-hosted-disabled-d190ed41.tar",
+  "archiveSha256": "b7b676a0f81bd80e9f8d701a91dae482ee77058b0fc234a7bfd4146c1e364b33",
   "archiveHashKind": "raw-tar-bytes",
-  "archiveBytes": 45351936,
+  "archiveBytes": 45387776,
   "fileCount": 622,
-  "workerSha256": "afbf3c0a5a0b5d08bb69d005a04abfad8790c56a42a478bf09718d15095ba5be",
-  "workerBytes": 3594235,
+  "workerSha256": "c75d1ff219b306710a9fa5b2631780251bde4f27ecb45415379d2a4b00fd050c",
+  "workerBytes": 3629781,
   "migrationCount": 41,
   "migrationPaths": [
     "dist/.openai/drizzle/0041_still_decision_cache.sql",
@@ -57,7 +57,7 @@
     "dist/.openai/drizzle/0038_scene_source_generations.sql"
   ],
   "heldPolicy": {
-    "archive": "/private/tmp/still-hosted-disabled-3786dc53.tar",
+    "archive": "/private/tmp/still-hosted-disabled-d190ed41.tar",
     "mode": "hold-unqualified-memory-migrations",
     "baselineCommit": "00e23d97431a89a0c8d02e095dafe931e5c16172",
     "baselineVersion": 494,
@@ -74,5 +74,6 @@
     "version": 550,
     "source": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf"
   },
-  "durableArchivePath": "/Users/westbrook/.codex/visualizations/2026/09/23/01a0cbee-4f16-7831-b5f9-6383633672b9/still-creation-plan/still-hosted-disabled-3786dc53.tar"
+  "durableArchivePath": "/Users/westbrook/.codex/visualizations/2026/09/23/01a0cbee-4f16-7831-b5f9-6383633672b9/still-creation-plan/still-hosted-disabled-d190ed41.tar",
+  "previousReceipt": "evidence/disabled-archive-2314cf40-receipt.json"
 }

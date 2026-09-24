@@ -1,0 +1,78 @@
+{
+  "kind": "local-incremental-qualification-verification",
+  "recordedAt": "2026-09-24T21:43:43.287810+00:00",
+  "runtimeCommit": "d190ed4185ee04978f4db4834da80bb4ed2562c7",
+  "observerCommit": "2d8d3a3849a02ad63bf8a1ce9ba6f3bfadbb2600",
+  "branch": "codex/still-hosted-qualification",
+  "publishedVersion": 550,
+  "publishedSource": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "productionActivated": false,
+  "hostedMutations": 0,
+  "externalProviderCalls": 0,
+  "knownIncrementalProviderSpendUsd": 0,
+  "checks": [
+    {
+      "check": "workflow-regressions",
+      "passed": 374,
+      "failed": 0,
+      "command": "node --import tsx --test --test-concurrency=2 tests/creation-*.test.mjs tests/still-creation*.test.mjs tests/streamed-event-folds.test.mjs",
+      "log": "evidence/withdrawal-workflow-regressions.log",
+      "sha256": "686e5d69b8d4587ad8b511d23e16307fe8eb2e6ea4025d719b9ebc5605a805c7"
+    },
+    {
+      "check": "compiled-native-workerd",
+      "passed": 2,
+      "failed": 0,
+      "command": "node --import tsx --test tests/browser/still-index-workerd.test.mjs tests/browser/still-qualification-budget-workerd.test.mjs",
+      "log": "evidence/withdrawal-compiled-native-workerd.log",
+      "sha256": "1d9184ebda67b03f19fee058f7d08ba3ba33e41ccbd3df5e4059b5a846623289"
+    },
+    {
+      "check": "chromium-workflows",
+      "passed": 18,
+      "failed": 0,
+      "command": "CREATION_TEST_BROWSER=chromium CREATION_PLAYWRIGHT_MODULE=file:///Users/westbrook/Documents/repos/design-system/node_modules/@playwright/test/index.mjs node --import tsx --test tests/browser/still-unified-creation.test.mjs tests/browser/still-creation-help.test.mjs",
+      "log": "evidence/withdrawal-chromium-workflows.log",
+      "sha256": "c5281f34b169c6c1627ea93dd2f11a6e45185d3604a7f64adab31b0ba900a3a6"
+    },
+    {
+      "check": "typecheck",
+      "passed": null,
+      "failed": 0,
+      "command": "npx tsc --noEmit",
+      "log": "evidence/withdrawal-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "build",
+      "passed": null,
+      "failed": 0,
+      "command": "npm run build",
+      "log": "evidence/withdrawal-build.log",
+      "sha256": "d6d0297af505af970428ae3348bb2f84d82cb877f5cd027aa47346d914fb20ba"
+    },
+    {
+      "check": "changed-path-lint",
+      "passed": null,
+      "failed": 0,
+      "command": "npx eslint worker/creation-index-incremental.ts worker/creation-search-index.ts tests/creation-index-incremental.test.mjs",
+      "log": "evidence/withdrawal-changed-path-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "scope": "Local deterministic/injected execution, compiled local workerd and Chromium. Hosted scheduling, live models, actual performance/retention and human qualification remain unverified.",
+  "preservedFailure": "Initial broad737checks:733pass/4fail. Shared API snapshot purge fixed; minimal SQL fixture updated to actual columns; injected10000 search recheck passes at controlled concurrency; unrelated still-refresh replay-type assertion reproduces unchanged. Sandbox loopback denial and missingtsx loader rerun correctly; original logs preserved.",
+  "sourceExport": "/private/tmp/still-release-d190ed41",
+  "priorVerification": "evidence/verification-2314cf40.json",
+  "baselineFailure": {
+    "source": "fd99a45bee52518f5d764202684841f5ade12b27",
+    "kind": "exact git archive export",
+    "command": "node --import tsx --test --test-name-pattern='history keeps' tests/still-refresh-repair.test.mjs",
+    "passed": 0,
+    "failed": 1,
+    "log": "evidence/incremental-baseline-refresh-fd99a45b.log",
+    "sha256": "1c19c870012d6e9b3dfe8f6973ac4d6213d0285bdd83fa19205222ee15348284"
+  },
+  "exportFixtureLimitation": "First final suite run in exact git archive export had four throughput tests fail because the provenance harness needs Git metadata. Final full374checks run in unchanged committed worktree passed; native/browser/build use exact export. Original failure log retained.",
+  "additionalWorkflow": "500-Idea Project next edit after unrelated withdrawal:50projection/materializationquanta before repair;1boundedmaintenancewake after repair,507unchanged snapshots retained,canonical fullreplay equivalence and withdrawn prose erasure.13adversarial schema boundary checks pass."
+}

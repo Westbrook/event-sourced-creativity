@@ -1,0 +1,113 @@
+✖ history keeps all reducer input types exact and transport memory bounded (2.426209ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 716.130834
+
+✖ failing tests:
+
+test at tests/still-refresh-repair.test.mjs:11:1
+✖ history keeps all reducer input types exact and transport memory bounded (2.426209ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+  
+    [
+      'ProjectCreated',
+      'ProjectOpened',
+      'ProjectRenamed',
+      'ProjectStateChanged',
+  ...
+      'CollectionItemMoved',
+  +   'GenerationRequested',
+  +   'GenerationFailed',
+  +   'BudgetReserved',
+  +   'GenerationUsageRecorded',
+  +   'ModelRegistered',
+  +   'AdapterVersioned',
+  +   'CapabilityDeclared',
+      'ContextCompiled',
+      'GuestImageResultClaimed',
+      'IdeationPreviewCompleted',
+      'GenerationCompleted',
+      'GeneratedImageEdited',
+  
+      at TestContext.<anonymous> (/private/tmp/still-hosted-qualification/tests/still-refresh-repair.test.mjs:13:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1306:25)
+      at Test.start (node:internal/test_runner/test:1177:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [
+      'ProjectCreated',           'ProjectOpened',             'ProjectRenamed',
+      'ProjectStateChanged',      'DocumentCreated',           'DocumentRenamed',
+      'DocumentForked',           'DocumentOpened',            'DocumentRemoved',
+      'DocumentRestored',         'BlockCreated',              'BlockDocumentAttached',
+      'BlockDocumentDetached',    'BlockRehomed',              'BlockRenamed',
+      'BlockPropertyEdited',      'BlockWeightSet',            'BlockLocked',
+      'BlockUnlocked',            'BlockRemoved',              'BlockRestored',
+      'BlockRelationAdded',       'BlockRelationRemoved',      'ChipEdited',
+      'ExtractionRequested',      'ExtractionCompleted',       'ExtractionFailed',
+      'CollectionCreated',        'CollectionRenamed',         'CollectionRemoved',
+      'CollectionRestored',       'CollectionItemAdded',       'CollectionItemRemoved',
+      'CollectionItemMoved',      'GenerationRequested',       'GenerationFailed',
+      'BudgetReserved',           'GenerationUsageRecorded',   'ModelRegistered',
+      'AdapterVersioned',         'CapabilityDeclared',        'ContextCompiled',
+      'GuestImageResultClaimed',  'IdeationPreviewCompleted',  'GenerationCompleted',
+      'GeneratedImageEdited',     'DocumentRenderCompleted',   'DocumentArtifactEdited',
+      'OutputRenamed',            'ImageFocalPointCalculated', 'ObjectPinned',
+      'ObjectUnpinned',           'ObjectSaved',               'PromptFanOutputPromoted',
+      'ObjectDiscarded',          'AddedToLibrary',            'RemovedFromLibrary',
+      'BriefComposed',            'BriefItemPresented',        'BriefItemIgnored',
+      'BriefItemAccepted',        'BriefDismissed',            'EmptyCanvasChosen',
+      'SessionOpened',            'SessionClosed',             'AnnotationAdded',
+      'AnnotationRetracted',      'FamilyDeclared',            'FamilyAnchorSet',
+      'FamilyMembershipAsserted', 'ClaimSuperseded',           'PreferenceAuthored',
+      'PreferenceRevoked',        'PromptTechniquePreferred',  'PromptTechniquePreferenceRevoked',
+      'ConditionSet',             'ConditionFired'
+    ],
+    expected: [
+      'ProjectCreated',            'ProjectOpened',
+      'ProjectRenamed',            'ProjectStateChanged',
+      'DocumentCreated',           'DocumentRenamed',
+      'DocumentForked',            'DocumentOpened',
+      'DocumentRemoved',           'DocumentRestored',
+      'BlockCreated',              'BlockDocumentAttached',
+      'BlockDocumentDetached',     'BlockRehomed',
+      'BlockRenamed',              'BlockPropertyEdited',
+      'BlockWeightSet',            'BlockLocked',
+      'BlockUnlocked',             'BlockRemoved',
+      'BlockRestored',             'BlockRelationAdded',
+      'BlockRelationRemoved',      'ChipEdited',
+      'ExtractionRequested',       'ExtractionCompleted',
+      'ExtractionFailed',          'CollectionCreated',
+      'CollectionRenamed',         'CollectionRemoved',
+      'CollectionRestored',        'CollectionItemAdded',
+      'CollectionItemRemoved',     'CollectionItemMoved',
+      'ContextCompiled',           'GuestImageResultClaimed',
+      'IdeationPreviewCompleted',  'GenerationCompleted',
+      'GeneratedImageEdited',      'DocumentRenderCompleted',
+      'DocumentArtifactEdited',    'OutputRenamed',
+      'ImageFocalPointCalculated', 'ObjectPinned',
+      'ObjectUnpinned',            'ObjectSaved',
+      'PromptFanOutputPromoted',   'ObjectDiscarded',
+      'AddedToLibrary',            'RemovedFromLibrary',
+      'BriefComposed',             'BriefItemPresented',
+      'BriefItemIgnored',          'BriefItemAccepted',
+      'BriefDismissed',            'EmptyCanvasChosen',
+      'SessionOpened',             'SessionClosed',
+      'AnnotationAdded',           'AnnotationRetracted',
+      'FamilyDeclared',            'FamilyAnchorSet',
+      'FamilyMembershipAsserted',  'ClaimSuperseded',
+      'PreferenceAuthored',        'PreferenceRevoked',
+      'PromptTechniquePreferred',  'PromptTechniquePreferenceRevoked',
+      'ConditionSet',              'ConditionFired'
+    ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

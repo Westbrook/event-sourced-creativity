@@ -1,0 +1,32 @@
+[
+  {
+    "ideas": 65,
+    "beforeSnapshots": 72,
+    "afterForeignRemovalSnapshots": 0,
+    "targetInvalidated": 0,
+    "incremental": false,
+    "quanta": {
+      "projection": 4,
+      "materialize": 5
+    },
+    "rows": {
+      "events": 75,
+      "materialized": 72
+    }
+  },
+  {
+    "ideas": 500,
+    "beforeSnapshots": 507,
+    "afterForeignRemovalSnapshots": 0,
+    "targetInvalidated": 0,
+    "incremental": false,
+    "quanta": {
+      "projection": 18,
+      "materialize": 32
+    },
+    "rows": {
+      "events": 510,
+      "materialized": 507
+    }
+  }
+]

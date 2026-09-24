@@ -1,0 +1,970 @@
+{
+  "kind": "offline-injected-unseeded-lifecycle",
+  "runtimeCommit": "d190ed4185ee04978f4db4834da80bb4ed2562c7",
+  "toolsCommit": "2d8d3a38",
+  "decision": "All five fixed local lifecycle cohorts pass; independent post-foreign-withdrawal edit regression passes in one bounded wake. Hosted scheduling, live relevance, actual platform performance and deployed retention remain open; production activation is not qualified or authorized.",
+  "sourceHashEncoding": "sha256(UTF-8 JSON with sourceHashes keys sorted; no whitespace)",
+  "fixtureEquivalence": "throughput-incremental-fixture-equivalence.json",
+  "allReceiptAndWitnessHashesVerified": true,
+  "allComponentRenewalDeadlinesVerified": true,
+  "measurements": [
+    {
+      "receipt": "throughput-incremental-withdrawal-final-1k.json",
+      "receiptSha256": "88010fce862b58eeccdfa4bf58abd25c6b36299aec2049a6f16cf9f72a84fb46",
+      "sourceHashSetSha256": "a1e24ffafd3e89a0e636be6e512d6e9c631bca906a7cd3076aae417d6a54530a",
+      "observedSourceCommit": "d190ed4185ee04978f4db4834da80bb4ed2562c7",
+      "renewalWitness": {
+        "path": "throughput-incremental-withdrawal-final-1k.renewal-witness.ndjson.gz",
+        "encoding": "gzip+ndjson",
+        "sourceCount": 1041,
+        "sha256": "db74a2405888d671252bf6d167716048417eb3f80c577daaac396a9231acd05f",
+        "uncompressedSha256": "bf44b2462f1054e822bfc93b5c1062021e691ceaa43fceb78a6faa6a204cf041"
+      },
+      "ideas": 1000,
+      "projects": 21,
+      "custodies": 2,
+      "retentionDays": 30,
+      "fullBackfillMinutes": 90,
+      "healthyEditMinutes": 2,
+      "renewalMinutes": 82,
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": true,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": true,
+        "renewalWithinActualWindow": true,
+        "renewalNoCoverageGap": true
+      },
+      "minimumRenewalLeadSecondsByComponent": {
+        "body": 85860.0,
+        "snapshot": 85140.0,
+        "manifest": 85859.56699991226,
+        "vector": 85859.56699991226
+      },
+      "minimumRenewalLeadSeconds": 85140.0,
+      "sourceCount": 1041,
+      "snapshotSources": 1041,
+      "snapshotPartitions": 21,
+      "minimumCoverage": 1041,
+      "firstSourceExpiryWindow": null,
+      "shortRetentionWindow": null,
+      "withdrawal": {
+        "atTick": 92,
+        "erasedTick": 97,
+        "delayMinutes": 5,
+        "pass": true,
+        "objects": 1,
+        "privateBodiesBefore": 4,
+        "privateBodiesAt15Minutes": null,
+        "privateBodyErasedTick": 93,
+        "privateBodyDelayMinutes": 1,
+        "privateBodyReappeared": false,
+        "privateBodyPass": true
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0,
+          "creation_index_snapshots": 0,
+          "creation_index_snapshot_heads": 0
+        },
+        "preShutdown": {
+          "objects": 21,
+          "published": 1041
+        },
+        "ticks": 1,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 90,
+          "operations": 29317,
+          "calls": 44,
+          "inputBytes": 506946,
+          "tokens": 126750,
+          "put": 54,
+          "get": 22,
+          "head": 142,
+          "delete": 22,
+          "list": 9
+        },
+        "healthy-edit": {
+          "ticks": 2,
+          "operations": 513,
+          "calls": 2,
+          "inputBytes": 13494,
+          "tokens": 3374,
+          "put": 3,
+          "get": 4,
+          "head": 32,
+          "delete": 0,
+          "list": 1
+        },
+        "withdrawal": {
+          "ticks": 5,
+          "operations": 1200,
+          "calls": 1,
+          "inputBytes": 13353,
+          "tokens": 3339,
+          "put": 4,
+          "get": 7,
+          "head": 10,
+          "delete": 9,
+          "list": 0
+        },
+        "restore-coverage": {
+          "ticks": 5,
+          "operations": 1102,
+          "calls": 3,
+          "inputBytes": 38751,
+          "tokens": 9689,
+          "put": 5,
+          "get": 4,
+          "head": 38,
+          "delete": 8,
+          "list": 1
+        },
+        "renewal": {
+          "ticks": 82,
+          "operations": 18530,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 6,
+          "get": 60,
+          "head": 211,
+          "delete": 14,
+          "list": 9
+        },
+        "shutdown": {
+          "ticks": 1,
+          "operations": 296,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 21,
+          "delete": 21,
+          "list": 0
+        }
+      },
+      "provider": {
+        "calls": 50,
+        "inputs": 1278,
+        "inputBytes": 572544,
+        "tokens": 143152,
+        "maxInputs": 32,
+        "maxPayloadBytes": 22403
+      },
+      "d1": {
+        "operations": 50964,
+        "maxTickOperations": 631
+      },
+      "r2": {
+        "put": 72,
+        "get": 97,
+        "head": 454,
+        "delete": 74,
+        "list": 20,
+        "uploadedBytes": 5304320,
+        "readBytes": 8183808,
+        "peakBytes": 2799616,
+        "peakObjects": 35
+      },
+      "nodeFixture": {
+        "elapsedMs": 10456.081083000001,
+        "peakHeapBytes": 200312264,
+        "peakRssBytes": 471597056
+      }
+    },
+    {
+      "receipt": "throughput-incremental-withdrawal-final-10k.json",
+      "receiptSha256": "5400d844c28a1088288dc57c2771a8f5300e74b1313608bc1f70264f04b86a51",
+      "sourceHashSetSha256": "a1e24ffafd3e89a0e636be6e512d6e9c631bca906a7cd3076aae417d6a54530a",
+      "observedSourceCommit": "d190ed4185ee04978f4db4834da80bb4ed2562c7",
+      "renewalWitness": {
+        "path": "throughput-incremental-withdrawal-final-10k.renewal-witness.ndjson.gz",
+        "encoding": "gzip+ndjson",
+        "sourceCount": 10041,
+        "sha256": "f2d040c6d22cec2f88a32d36f0576beeec017284c32b7c95977ae61660a7e76b",
+        "uncompressedSha256": "a5135eb1b578ec6bfac46a07ec37769e37b32c199b6564f144ac4abf4f141f32"
+      },
+      "ideas": 10000,
+      "projects": 21,
+      "custodies": 2,
+      "retentionDays": 30,
+      "fullBackfillMinutes": 628,
+      "healthyEditMinutes": 2,
+      "renewalMinutes": 558,
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": true,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": true,
+        "renewalWithinActualWindow": true,
+        "renewalNoCoverageGap": true
+      },
+      "minimumRenewalLeadSecondsByComponent": {
+        "body": 85860.0,
+        "snapshot": 80040.0,
+        "manifest": 85859.27800011635,
+        "vector": 85859.27800011635
+      },
+      "minimumRenewalLeadSeconds": 80040.0,
+      "sourceCount": 10041,
+      "snapshotSources": 10041,
+      "snapshotPartitions": 21,
+      "minimumCoverage": 10041,
+      "firstSourceExpiryWindow": null,
+      "shortRetentionWindow": null,
+      "withdrawal": {
+        "atTick": 630,
+        "erasedTick": 635,
+        "delayMinutes": 5,
+        "pass": true,
+        "objects": 1,
+        "privateBodiesBefore": 4,
+        "privateBodiesAt15Minutes": null,
+        "privateBodyErasedTick": 631,
+        "privateBodyDelayMinutes": 1,
+        "privateBodyReappeared": false,
+        "privateBodyPass": true
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0,
+          "creation_index_snapshots": 0,
+          "creation_index_snapshot_heads": 0
+        },
+        "preShutdown": {
+          "objects": 42,
+          "published": 10041
+        },
+        "ticks": 3,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 628,
+          "operations": 232849,
+          "calls": 513,
+          "inputBytes": 5447548,
+          "tokens": 1361971,
+          "put": 538,
+          "get": 351,
+          "head": 5145,
+          "delete": 353,
+          "list": 185
+        },
+        "healthy-edit": {
+          "ticks": 2,
+          "operations": 523,
+          "calls": 2,
+          "inputBytes": 22361,
+          "tokens": 5591,
+          "put": 3,
+          "get": 2,
+          "head": 10,
+          "delete": 2,
+          "list": 0
+        },
+        "withdrawal": {
+          "ticks": 5,
+          "operations": 1093,
+          "calls": 4,
+          "inputBytes": 70272,
+          "tokens": 17569,
+          "put": 6,
+          "get": 23,
+          "head": 8,
+          "delete": 8,
+          "list": 4
+        },
+        "restore-coverage": {
+          "ticks": 70,
+          "operations": 17236,
+          "calls": 45,
+          "inputBytes": 427863,
+          "tokens": 106973,
+          "put": 59,
+          "get": 156,
+          "head": 735,
+          "delete": 177,
+          "list": 16
+        },
+        "renewal": {
+          "ticks": 558,
+          "operations": 137102,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 2,
+          "get": 354,
+          "head": 2193,
+          "delete": 26,
+          "list": 103
+        },
+        "shutdown": {
+          "ticks": 3,
+          "operations": 867,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 42,
+          "delete": 42,
+          "list": 0
+        }
+      },
+      "provider": {
+        "calls": 564,
+        "inputs": 13075,
+        "inputBytes": 5968044,
+        "tokens": 1492104,
+        "maxInputs": 32,
+        "maxPayloadBytes": 22418
+      },
+      "d1": {
+        "operations": 389676,
+        "maxTickOperations": 640
+      },
+      "r2": {
+        "put": 608,
+        "get": 886,
+        "head": 8133,
+        "delete": 608,
+        "list": 308,
+        "uploadedBytes": 53334016,
+        "readBytes": 326041600,
+        "peakBytes": 25507840,
+        "peakObjects": 390
+      },
+      "nodeFixture": {
+        "elapsedMs": 741248.739041,
+        "peakHeapBytes": 713108504,
+        "peakRssBytes": 1472249856
+      }
+    },
+    {
+      "receipt": "throughput-incremental-withdrawal-final-short-1k.json",
+      "receiptSha256": "83e4afe4192da1f53c89c1289dff9f292e1647d8141a2390ac07224a340e1f83",
+      "sourceHashSetSha256": "a1e24ffafd3e89a0e636be6e512d6e9c631bca906a7cd3076aae417d6a54530a",
+      "observedSourceCommit": "d190ed4185ee04978f4db4834da80bb4ed2562c7",
+      "renewalWitness": {
+        "path": "throughput-incremental-withdrawal-final-short-1k.renewal-witness.ndjson.gz",
+        "encoding": "gzip+ndjson",
+        "sourceCount": 1041,
+        "sha256": "bcf8411d191f8f77de57a59dcc5a53bd96b1a8bccecf5dc9bdbd279f76c28521",
+        "uncompressedSha256": "4bf502c33db9a0e34cf2fcfa7606b1f422c9e8c9991a092ca3a5894faeccc935"
+      },
+      "ideas": 1000,
+      "projects": 21,
+      "custodies": 2,
+      "retentionDays": 1,
+      "fullBackfillMinutes": 90,
+      "healthyEditMinutes": 2,
+      "renewalMinutes": 82,
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": true,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": true,
+        "renewalWithinActualWindow": true,
+        "renewalNoCoverageGap": true
+      },
+      "minimumRenewalLeadSecondsByComponent": {
+        "body": 8100.0,
+        "snapshot": 7380.0,
+        "manifest": 8099.921999931335,
+        "vector": 8099.921999931335
+      },
+      "minimumRenewalLeadSeconds": 7380.0,
+      "sourceCount": 1041,
+      "snapshotSources": 1041,
+      "snapshotPartitions": 21,
+      "minimumCoverage": 1041,
+      "firstSourceExpiryWindow": {
+        "tick": 257,
+        "at": 1790374115.078,
+        "coverage": 1041,
+        "expectedSources": 1041,
+        "renewed": 1041,
+        "deadlineMisses": 0
+      },
+      "shortRetentionWindow": {
+        "ticks": 120,
+        "minPublished": 1041,
+        "completeTicks": 120,
+        "generationIncrements": 0,
+        "providerCalls": 0
+      },
+      "withdrawal": {
+        "atTick": 92,
+        "erasedTick": 97,
+        "delayMinutes": 5,
+        "pass": true,
+        "objects": 1,
+        "privateBodiesBefore": 4,
+        "privateBodiesAt15Minutes": null,
+        "privateBodyErasedTick": 93,
+        "privateBodyDelayMinutes": 1,
+        "privateBodyReappeared": false,
+        "privateBodyPass": true
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0,
+          "creation_index_snapshots": 0,
+          "creation_index_snapshot_heads": 0
+        },
+        "preShutdown": {
+          "objects": 21,
+          "published": 1041
+        },
+        "ticks": 1,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 90,
+          "operations": 29317,
+          "calls": 44,
+          "inputBytes": 506946,
+          "tokens": 126750,
+          "put": 54,
+          "get": 22,
+          "head": 142,
+          "delete": 22,
+          "list": 9
+        },
+        "healthy-edit": {
+          "ticks": 2,
+          "operations": 513,
+          "calls": 2,
+          "inputBytes": 13494,
+          "tokens": 3374,
+          "put": 3,
+          "get": 4,
+          "head": 32,
+          "delete": 0,
+          "list": 1
+        },
+        "withdrawal": {
+          "ticks": 5,
+          "operations": 1200,
+          "calls": 1,
+          "inputBytes": 13353,
+          "tokens": 3339,
+          "put": 4,
+          "get": 7,
+          "head": 10,
+          "delete": 9,
+          "list": 0
+        },
+        "restore-coverage": {
+          "ticks": 5,
+          "operations": 1102,
+          "calls": 3,
+          "inputBytes": 38751,
+          "tokens": 9689,
+          "put": 5,
+          "get": 4,
+          "head": 38,
+          "delete": 8,
+          "list": 1
+        },
+        "renewal": {
+          "ticks": 82,
+          "operations": 18530,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 6,
+          "get": 60,
+          "head": 211,
+          "delete": 14,
+          "list": 9
+        },
+        "short-retention-stability": {
+          "ticks": 120,
+          "operations": 18864,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 252,
+          "delete": 0,
+          "list": 12
+        },
+        "shutdown": {
+          "ticks": 1,
+          "operations": 296,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 21,
+          "delete": 21,
+          "list": 0
+        }
+      },
+      "provider": {
+        "calls": 50,
+        "inputs": 1278,
+        "inputBytes": 572544,
+        "tokens": 143152,
+        "maxInputs": 32,
+        "maxPayloadBytes": 22403
+      },
+      "d1": {
+        "operations": 69828,
+        "maxTickOperations": 631
+      },
+      "r2": {
+        "put": 72,
+        "get": 97,
+        "head": 706,
+        "delete": 74,
+        "list": 32,
+        "uploadedBytes": 5304320,
+        "readBytes": 8183808,
+        "peakBytes": 2799616,
+        "peakObjects": 35
+      },
+      "nodeFixture": {
+        "elapsedMs": 16826.732208,
+        "peakHeapBytes": 219993344,
+        "peakRssBytes": 582451200
+      }
+    },
+    {
+      "receipt": "throughput-incremental-withdrawal-final-short-10k.json",
+      "receiptSha256": "049388b8696f70e61b8e51c32f82d9a8f60cc338d8982902c763125c09b33dd0",
+      "sourceHashSetSha256": "a1e24ffafd3e89a0e636be6e512d6e9c631bca906a7cd3076aae417d6a54530a",
+      "observedSourceCommit": "d190ed4185ee04978f4db4834da80bb4ed2562c7",
+      "renewalWitness": {
+        "path": "throughput-incremental-withdrawal-final-short-10k.renewal-witness.ndjson.gz",
+        "encoding": "gzip+ndjson",
+        "sourceCount": 10041,
+        "sha256": "27e4d38a6444daf8473a4c1086e4986b701b51370815cae3e327a509fa1cf1db",
+        "uncompressedSha256": "d6c16c072250cfaea5856ce5d35a552cbc2c98cd61d6bee9ec8eca01c1046783"
+      },
+      "ideas": 10000,
+      "projects": 21,
+      "custodies": 2,
+      "retentionDays": 1,
+      "fullBackfillMinutes": 628,
+      "healthyEditMinutes": 2,
+      "renewalMinutes": 558,
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": true,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": true,
+        "renewalWithinActualWindow": true,
+        "renewalNoCoverageGap": true
+      },
+      "minimumRenewalLeadSecondsByComponent": {
+        "body": 8100.0,
+        "snapshot": 2280.0,
+        "manifest": 8099.700000047684,
+        "vector": 8099.700000047684
+      },
+      "minimumRenewalLeadSeconds": 2280.0,
+      "sourceCount": 10041,
+      "snapshotSources": 10041,
+      "snapshotPartitions": 21,
+      "minimumCoverage": 10041,
+      "firstSourceExpiryWindow": {
+        "tick": 926,
+        "at": 1790383422.3,
+        "coverage": 10041,
+        "expectedSources": 10041,
+        "renewed": 9880,
+        "deadlineMisses": 0
+      },
+      "shortRetentionWindow": {
+        "ticks": 120,
+        "minPublished": 10041,
+        "completeTicks": 120,
+        "generationIncrements": 0,
+        "providerCalls": 0
+      },
+      "withdrawal": {
+        "atTick": 630,
+        "erasedTick": 635,
+        "delayMinutes": 5,
+        "pass": true,
+        "objects": 1,
+        "privateBodiesBefore": 4,
+        "privateBodiesAt15Minutes": null,
+        "privateBodyErasedTick": 631,
+        "privateBodyDelayMinutes": 1,
+        "privateBodyReappeared": false,
+        "privateBodyPass": true
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0,
+          "creation_index_snapshots": 0,
+          "creation_index_snapshot_heads": 0
+        },
+        "preShutdown": {
+          "objects": 42,
+          "published": 10041
+        },
+        "ticks": 3,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 628,
+          "operations": 232850,
+          "calls": 513,
+          "inputBytes": 5447548,
+          "tokens": 1361971,
+          "put": 538,
+          "get": 351,
+          "head": 5148,
+          "delete": 353,
+          "list": 185
+        },
+        "healthy-edit": {
+          "ticks": 2,
+          "operations": 523,
+          "calls": 2,
+          "inputBytes": 22361,
+          "tokens": 5591,
+          "put": 3,
+          "get": 2,
+          "head": 10,
+          "delete": 2,
+          "list": 0
+        },
+        "withdrawal": {
+          "ticks": 5,
+          "operations": 1094,
+          "calls": 4,
+          "inputBytes": 70272,
+          "tokens": 17569,
+          "put": 6,
+          "get": 23,
+          "head": 9,
+          "delete": 9,
+          "list": 4
+        },
+        "restore-coverage": {
+          "ticks": 72,
+          "operations": 17639,
+          "calls": 47,
+          "inputBytes": 442201,
+          "tokens": 110557,
+          "put": 62,
+          "get": 158,
+          "head": 738,
+          "delete": 179,
+          "list": 17
+        },
+        "renewal": {
+          "ticks": 558,
+          "operations": 137147,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 2,
+          "get": 354,
+          "head": 2193,
+          "delete": 26,
+          "list": 103
+        },
+        "short-retention-stability": {
+          "ticks": 120,
+          "operations": 19182,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 462,
+          "delete": 0,
+          "list": 22
+        },
+        "shutdown": {
+          "ticks": 3,
+          "operations": 867,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 42,
+          "delete": 42,
+          "list": 0
+        }
+      },
+      "provider": {
+        "calls": 566,
+        "inputs": 13139,
+        "inputBytes": 5982382,
+        "tokens": 1495688,
+        "maxInputs": 32,
+        "maxPayloadBytes": 22418
+      },
+      "d1": {
+        "operations": 409308,
+        "maxTickOperations": 640
+      },
+      "r2": {
+        "put": 611,
+        "get": 888,
+        "head": 8602,
+        "delete": 611,
+        "list": 331,
+        "uploadedBytes": 53596160,
+        "readBytes": 326172672,
+        "peakBytes": 25507840,
+        "peakObjects": 390
+      },
+      "nodeFixture": {
+        "elapsedMs": 852811.1475000001,
+        "peakHeapBytes": 779993144,
+        "peakRssBytes": 1329086464
+      }
+    },
+    {
+      "receipt": "throughput-incremental-withdrawal-final-short-tiny.json",
+      "receiptSha256": "e5b7adb7ad2c7995d437b9e120aa97771b04f0f81c097e3ac84acabff1099540",
+      "sourceHashSetSha256": "a1e24ffafd3e89a0e636be6e512d6e9c631bca906a7cd3076aae417d6a54530a",
+      "observedSourceCommit": "d190ed4185ee04978f4db4834da80bb4ed2562c7",
+      "renewalWitness": {
+        "path": "throughput-incremental-withdrawal-final-short-tiny.renewal-witness.ndjson.gz",
+        "encoding": "gzip+ndjson",
+        "sourceCount": 13,
+        "sha256": "cda5f222859508edfcdfc4832f083978ffc9d2a26566ccac1b5bf4b8474682a2",
+        "uncompressedSha256": "85fadb8cfa2ef52f52c0798293f773c1fdd4bcbc4f515bbdede43d16eba2b357"
+      },
+      "ideas": 10,
+      "projects": 2,
+      "custodies": 2,
+      "retentionDays": 1,
+      "fullBackfillMinutes": 6,
+      "healthyEditMinutes": 1,
+      "renewalMinutes": 11,
+      "readiness": {
+        "initialBackfillWithin24Hours": true,
+        "healthyEditWithin5Minutes": true,
+        "withdrawnObjectsWithin15Minutes": true,
+        "withdrawnPrivateProseWithin15Minutes": true,
+        "renewalWithin12Hours": true,
+        "renewalWithinActualWindow": true,
+        "renewalNoCoverageGap": true
+      },
+      "minimumRenewalLeadSecondsByComponent": {
+        "body": 8100.940999984741,
+        "snapshot": 8100.940999984741,
+        "manifest": 8100,
+        "vector": 8220
+      },
+      "minimumRenewalLeadSeconds": 8100,
+      "sourceCount": 13,
+      "snapshotSources": 13,
+      "snapshotPartitions": 2,
+      "minimumCoverage": 13,
+      "firstSourceExpiryWindow": {
+        "tick": 157,
+        "at": 1790372632,
+        "coverage": 13,
+        "expectedSources": 13,
+        "renewed": 13,
+        "deadlineMisses": 0
+      },
+      "shortRetentionWindow": {
+        "ticks": 120,
+        "minPublished": 13,
+        "completeTicks": 120,
+        "generationIncrements": 0,
+        "providerCalls": 0
+      },
+      "withdrawal": {
+        "atTick": 7,
+        "erasedTick": 12,
+        "delayMinutes": 5,
+        "pass": true,
+        "objects": 1,
+        "privateBodiesBefore": 4,
+        "privateBodiesAt15Minutes": null,
+        "privateBodyErasedTick": 8,
+        "privateBodyDelayMinutes": 1,
+        "privateBodyReappeared": false,
+        "privateBodyPass": true
+      },
+      "shutdown": {
+        "metadataRows": {
+          "creation_index_block_routes": 0,
+          "creation_index_replay_skeletons": 0,
+          "creation_index_snapshots": 0,
+          "creation_index_snapshot_heads": 0
+        },
+        "preShutdown": {
+          "objects": 2,
+          "published": 13
+        },
+        "ticks": 1,
+        "objectsRemaining": 0,
+        "privateBodiesRemaining": 0,
+        "checkpointRows": 0,
+        "providerCalls": 0
+      },
+      "phaseTotals": {
+        "backfill": {
+          "ticks": 6,
+          "operations": 851,
+          "calls": 4,
+          "inputBytes": 23336,
+          "tokens": 5836,
+          "put": 4,
+          "get": 1,
+          "head": 4,
+          "delete": 0,
+          "list": 1
+        },
+        "healthy-edit": {
+          "ticks": 1,
+          "operations": 184,
+          "calls": 1,
+          "inputBytes": 110,
+          "tokens": 28,
+          "put": 1,
+          "get": 0,
+          "head": 1,
+          "delete": 0,
+          "list": 0
+        },
+        "withdrawal": {
+          "ticks": 5,
+          "operations": 548,
+          "calls": 2,
+          "inputBytes": 2410,
+          "tokens": 604,
+          "put": 3,
+          "get": 5,
+          "head": 13,
+          "delete": 7,
+          "list": 1
+        },
+        "restore-coverage": {
+          "ticks": 1,
+          "operations": 40,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 0,
+          "delete": 0,
+          "list": 0
+        },
+        "renewal": {
+          "ticks": 11,
+          "operations": 677,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 3,
+          "head": 4,
+          "delete": 0,
+          "list": 2
+        },
+        "short-retention-stability": {
+          "ticks": 120,
+          "operations": 5472,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 24,
+          "delete": 0,
+          "list": 12
+        },
+        "short-retention-deadline": {
+          "ticks": 13,
+          "operations": 603,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 2,
+          "delete": 0,
+          "list": 1
+        },
+        "shutdown": {
+          "ticks": 1,
+          "operations": 49,
+          "calls": 0,
+          "inputBytes": 0,
+          "tokens": 0,
+          "put": 0,
+          "get": 0,
+          "head": 2,
+          "delete": 2,
+          "list": 0
+        }
+      },
+      "provider": {
+        "calls": 7,
+        "inputs": 30,
+        "inputBytes": 25856,
+        "tokens": 6468,
+        "maxInputs": 15,
+        "maxPayloadBytes": 19871
+      },
+      "d1": {
+        "operations": 8430,
+        "maxTickOperations": 184
+      },
+      "r2": {
+        "put": 8,
+        "get": 9,
+        "head": 50,
+        "delete": 9,
+        "list": 17,
+        "uploadedBytes": 98304,
+        "readBytes": 112640,
+        "peakBytes": 61440,
+        "peakObjects": 6
+      },
+      "nodeFixture": {
+        "elapsedMs": 838.548042,
+        "peakHeapBytes": 160057528,
+        "peakRssBytes": 366788608
+      }
+    }
+  ],
+  "runtimeSourceHashSetSha256": "a1e24ffafd3e89a0e636be6e512d6e9c631bca906a7cd3076aae417d6a54530a"
+}

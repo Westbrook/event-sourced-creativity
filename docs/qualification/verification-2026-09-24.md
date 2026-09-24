@@ -1,3 +1,29 @@
+# Incremental repair verification — September 24, 2026
+
+Runtime `d190ed4185ee04978f4db4834da80bb4ed2562c7` and observer `2d8d3a3849a02ad63bf8a1ce9ba6f3bfadbb2600` are committed on the existing qualification branch. Main/published remain c28af5fe/v550; no merge, push or publication. Production stays disabled. All five current frozen scale cohorts pass; this admits the candidate to bounded hosted qualification only after environment and authorization prerequisites, not production activation.
+
+| Current check | Result | Scope |
+| --- | --- | --- |
+| Focused creation/index/Still creation/streamed-fold regressions |374/374 PASS|Committed runtime in Git worktree; controlled test concurrency 2; canonical persistence/reload and injected providers|
+| Committed renewal observer and lifecycle controls |17/17 PASS|Actual component expiry; withheld jobs, forged metadata, partial lifetime extensions, corrupt bytes and missing snapshot controls|
+| Independent incremental/vector/private-removal review |32/32 PASS|Subset of workflow suite; real shared API, source equivalence, lease/withdrawal races and unchanged bytes|
+| Schema/release candidate checks |14/14 PASS|166 statements, 109 added objects, six partial-prefix recoveries; old-trigger upgrade tested|
+| Exact Git-export build; source typecheck and changed-path lint |PASS|Build from exact export; unchanged committed source type/lint checks; held 41 package verified; existing chunk-size warnings|
+| Compiled local workerd/D1/R2 |2/2 PASS|Cleanup isolation and admission concurrency; no hosted scheduler or provider calls|
+| Chromium creation/help browser workflows |18/18 PASS|Current committed build/source, providers disabled; accepted review/recovery/editor behavior preserved|
+| Five source-frozen throughput/retention cohorts |ALL PASS|Unseeded canonical 1k/10k and 1-day cohorts; simulated minute clock; actual fixture bytes, injected vectors|
+| Hosted/live/human gates |UNAVAILABLE|No hosted mutation, paid calls, spending or activation; explicit release hold|
+
+[Machine receipt](verification-incremental-2026-09-24.json), [five-cohort evidence](throughput-2026-09-24.md), [source-only schema manifest](schema-candidate-manifest.json), [independent review](independent-review.md) and [disabled archive](disabled-archive-receipt.json) bind commands/hashes and limits. Previous three-engine 18/18 results are historical; only Chromium was rerun for this server-only continuation. Native scheduled tests deliberately retain an unrelated missing-panel-table exception while proving index cleanup still runs.
+
+The first broader 737-test run had 733 passes and 4 failures. It found the real shared migration-cursor purge (fixed with actual API regressions), a minimal SQL fixture missing newly used real schema columns (corrected), and an injected 10k concurrent-search timeout under unrestricted test contention (six capacity/index rechecks pass; full focused suite passes with concurrency 2). The fourth is an unrelated replay-type assertion in `still-refresh-repair.test.mjs`, reproduced on an exact Git export of pre-repair fd99a45b. No runtime source for that check changed. Preserve these failures; do not claim the whole repository test suite is green. Local timeout/capacity success does not establish hosted p95.
+
+Sandbox loopback denial and an invocation lacking the required tsx loader were rerun with the correct loader and authorized local server access; both original logs remain. The first final full-suite attempt in the exact Git archive export had four provenance-dependent throughput checks fail because that export has no Git metadata; the unchanged committed worktree rerun passes all 374 checks. Native/browser/build verification still uses the exact export, and the fixture failure log is retained. No test criterion was relaxed. Five-minute deletion is measured only under punctual simulated wakes; missed-wake and actual retention remain hosted gates.
+
+---
+
+The following is the prior fd99a45b delivery ledger, retained as history. Its failing scale numbers and old runtime/archive identities are superseded only by the evidence above.
+
 # Final local qualification ledger — September 24, 2026
 
 **Production activation: NO-GO.** The exact runtime checkpoint is `3786dc53379567dd6c9f16e6d0bf9ea0cacf9794`, based on published v550 / `c28af5fe`. This branch has not been merged, pushed, saved in Sites or deployed. Runtime changes preserve the existing creation UI and product contract. Qualification tools are committed as `6c600508`; the test synchronization repair is committed as `2094797f`. These and subsequent evidence commits do not change the packaged runtime.

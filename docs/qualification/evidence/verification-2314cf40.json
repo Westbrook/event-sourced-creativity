@@ -1,0 +1,92 @@
+{
+  "kind": "local-incremental-qualification-verification",
+  "recordedAt": "2026-09-24T21:27:35.036926+00:00",
+  "runtimeCommit": "2314cf404f9b17202a6f530f9ab833e311deeb89",
+  "observerCommit": "2d8d3a3849a02ad63bf8a1ce9ba6f3bfadbb2600",
+  "branch": "codex/still-hosted-qualification",
+  "publishedVersion": 550,
+  "publishedSource": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "productionActivated": false,
+  "hostedMutations": 0,
+  "externalProviderCalls": 0,
+  "knownIncrementalProviderSpendUsd": 0,
+  "checks": [
+    {
+      "check": "workflow-regressions",
+      "passed": 356,
+      "failed": 0,
+      "command": "node --import tsx --test --test-concurrency=2 tests/creation-*.test.mjs tests/still-creation*.test.mjs tests/streamed-event-folds.test.mjs",
+      "log": "evidence/incremental-workflow-regressions.log",
+      "sha256": "96f029127fcfc4bd8e6228b83c24de1b9377564b8de4457ee15dc31447b65cec"
+    },
+    {
+      "check": "committed-renewal-observer",
+      "passed": 17,
+      "failed": 0,
+      "command": "node --import tsx --test tests/creation-index-throughput.test.mjs tests/creation-index-throughput-renewal.test.mjs",
+      "log": "evidence/incremental-committed-renewal-observer.log",
+      "sha256": "59944da5284ab2a2a2853539ccd9dc75daf80525412a6c4ab26e4eb6ea562517"
+    },
+    {
+      "check": "compiled-native-workerd",
+      "passed": 2,
+      "failed": 0,
+      "command": "node --import tsx --test tests/browser/still-index-workerd.test.mjs tests/browser/still-qualification-budget-workerd.test.mjs",
+      "log": "evidence/incremental-compiled-native-workerd.log",
+      "sha256": "89eaadd70b7b606dc51bf511fdc6387c531f4d5b0bc441c4cd0e36dcfb546beb"
+    },
+    {
+      "check": "chromium-workflows",
+      "passed": 18,
+      "failed": 0,
+      "command": "CREATION_TEST_BROWSER=chromium CREATION_PLAYWRIGHT_MODULE=file:///Users/westbrook/Documents/repos/design-system/node_modules/@playwright/test/index.mjs node --import tsx --test tests/browser/still-unified-creation.test.mjs tests/browser/still-creation-help.test.mjs",
+      "log": "evidence/incremental-chromium-workflows.log",
+      "sha256": "c2532a1fab83903017be62fea15a2fdc80f348a9e2b54e9573b0f6bd937c249c"
+    },
+    {
+      "check": "typecheck",
+      "passed": null,
+      "failed": 0,
+      "command": "npm run typecheck",
+      "log": "evidence/incremental-typecheck.log",
+      "sha256": "9e957926002934292f1cb961988e7bed489fdfeeb261b0967f2b43723fbb2ef6"
+    },
+    {
+      "check": "build",
+      "passed": null,
+      "failed": 0,
+      "command": "npm run build",
+      "log": "evidence/incremental-build.log",
+      "sha256": "b7dba0994507d9b200cdcec281724afbfbf06504c1ba6c1f15acf26813bf47e5"
+    },
+    {
+      "check": "changed-path-lint",
+      "passed": null,
+      "failed": 0,
+      "command": "npx eslint changed runtime, observer and regression files",
+      "log": "evidence/incremental-changed-path-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "rechecked-capacity-and-index",
+      "passed": 6,
+      "failed": 0,
+      "command": "node --import tsx --test tests/creation-search-index.test.mjs tests/creation-index-capacity.test.mjs",
+      "log": "evidence/incremental-rechecked-capacity-and-index.log",
+      "sha256": "f4e27f387cd834a283d5072acc063123698764768ad8088b05567d9df42936cf"
+    }
+  ],
+  "scope": "Local deterministic/injected execution, compiled local workerd and Chromium. Hosted scheduling, live models, actual performance/retention and human qualification remain unverified.",
+  "preservedFailure": "Initial broad737checks:733pass/4fail. Shared API snapshot purge fixed; minimal SQL fixture updated to actual columns; injected10000 search recheck passes at controlled concurrency; unrelated still-refresh replay-type assertion reproduces unchanged. Sandbox loopback denial and missingtsx loader rerun correctly; original logs preserved.",
+  "sourceExport": "/private/tmp/still-release-2314cf40",
+  "priorVerification": "verification-2026-09-24.json",
+  "baselineFailure": {
+    "source": "fd99a45bee52518f5d764202684841f5ade12b27",
+    "kind": "exact git archive export",
+    "command": "node --import tsx --test --test-name-pattern='history keeps' tests/still-refresh-repair.test.mjs",
+    "passed": 0,
+    "failed": 1,
+    "log": "evidence/incremental-baseline-refresh-fd99a45b.log",
+    "sha256": "1c19c870012d6e9b3dfe8f6973ac4d6213d0285bdd83fa19205222ee15348284"
+  }
+}

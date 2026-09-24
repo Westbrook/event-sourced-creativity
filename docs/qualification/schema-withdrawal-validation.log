@@ -1,0 +1,22 @@
+✔ generated search and semantic candidates equal their current runtime schemas (0.778417ms)
+✔ hashed additive manifest repeats exactly and preserves authored rows, constraints and ordinary routes (79.166125ms)
+✔ failure after 1 committed statements resumes exact schema and preserves authored data (31.843375ms)
+✔ failure after 6 committed statements resumes exact schema and preserves authored data (29.819958ms)
+✔ failure after 20 committed statements resumes exact schema and preserves authored data (31.777ms)
+✔ failure after 71 committed statements resumes exact schema and preserves authored data (31.986292ms)
+✔ failure after 161 committed statements resumes exact schema and preserves authored data (34.318708ms)
+✔ failure after 165 committed statements resumes exact schema and preserves authored data (33.162708ms)
+✔ statement tampering fails before writes and held production archive policy remains exactly 41 migrations (15.608083ms)
+✔ every partial-application recovery converges to the clean installation schema (0.090208ms)
+✔ repeat installation upgrades the existing invalidation trigger without extending pending erasure (18.912458ms)
+✔ repeat installation replaces pre-snapshot authority triggers and revocation purges retained snapshots (19.466792ms)
+✔ exact unjournaled candidate rehearses twice without modifying canonical/private authored data (65.869083ms)
+✔ candidate schemas apply twice to the current application baseline without changing authored history; release stays held (61.817375ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1344.301834

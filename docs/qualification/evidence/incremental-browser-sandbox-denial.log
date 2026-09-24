@@ -1,0 +1,40 @@
+✖ contextual creation help preserves writing and review across every entry (65.425708ms)
+✖ unified creation keyboard, current-version review, long content and mobile report return (65.227834ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1239.643375
+
+✖ failing tests:
+
+test at tests/browser/still-creation-help.test.mjs:9:1
+✖ contextual creation help preserves writing and review across every entry (65.425708ms)
+  Error: listen EPERM: operation not permitted 127.0.0.1:5173
+      at Server.setupListenHandle [as _listen2] (node:net:1986:21)
+      at listenInCluster (node:net:2065:12)
+      at node:net:2274:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '127.0.0.1',
+    port: 5173
+  }
+
+test at tests/browser/still-unified-creation.test.mjs:8:1
+✖ unified creation keyboard, current-version review, long content and mobile report return (65.227834ms)
+  Error: listen EPERM: operation not permitted 127.0.0.1:5173
+      at Server.setupListenHandle [as _listen2] (node:net:1986:21)
+      at listenInCluster (node:net:2065:12)
+      at node:net:2274:7
+      at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+    code: 'EPERM',
+    errno: -1,
+    syscall: 'listen',
+    address: '127.0.0.1',
+    port: 5173
+  }

@@ -1,0 +1,25 @@
+✔ actual body, manifest and vector retention can qualify without changing generation (2.457625ms)
+✔ body-only expiry extension cannot masquerade as complete renewal (0.261042ms)
+✔ manifest-only expiry extension cannot masquerade as complete renewal (0.184792ms)
+✔ vector-only expiry extension cannot masquerade as complete renewal (0.164042ms)
+✔ a generation bump alone is not renewal evidence (0.64075ms)
+✔ unchanged-size corrupted R2 bytes invalidate otherwise extended retention (0.376416ms)
+✔ each component has its own deadline; earlier shard renewal does not force a later body deadline (0.2995ms)
+✔ retention extended at the original deadline is too late (0.20975ms)
+✔ protected canonical snapshot retention participates in the earliest due time and completion proof (0.348417ms)
+✔ expired canonical snapshot fails even while indexed body and vector remain live (0.237291ms)
+✔ a token expiry extension does not qualify as a fresh full policy lifetime (0.189333ms)
+✔ head-absent legacy partition still requires source, manifest and vector renewal without inventing a snapshot obligation (0.169042ms)
+✔ a present snapshot head with missing canonical body is an invalid initial renewal proof (0.185583ms)
+✔ canonical corpus reaches published coverage, records actual edits and physically erases withdrawn vectors and derived prose (1251.977125ms)
+✔ a bounded run preserves incomplete coverage as unavailable, never fabricates completed backfill (39.506ms)
+✔ one-day policy renews inside its actual shorter window and remains observable afterward (934.723042ms)
+✔ withholding real renewal jobs cannot pass on existing publication or generation metadata (949.727625ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3307.580417

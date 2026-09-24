@@ -1,0 +1,78 @@
+{
+  "baselineCommit": "fd99a45b",
+  "candidateToolsCommit": "2d8d3a38",
+  "canonicalFixtureBlock": {
+    "byteEqual": true,
+    "bytes": 1574,
+    "sha256": "69a5f39bbc308f7a0fea727419f04b21e5637b1b432d823e52baa2d70c3f8338",
+    "startMarker": "// Empty canonical event store only;",
+    "endMarkerExclusive": "await ensureCreationSearchSchema"
+  },
+  "mutationStatements": {
+    "duringBackfillEdit": {
+      "byteEqual": true,
+      "sha256": "7bd696173c02fcbd17df68350ba7fb2fc9f26360a5b1a72cae6e27cf3f171594"
+    },
+    "healthyEdit": {
+      "byteEqual": true,
+      "sha256": "f41d0054a9d72bc18fddfccb1cefccfedac0d502d38cf55ba721cb20fea9316d"
+    },
+    "withdrawal": {
+      "byteEqual": true,
+      "sha256": "71c6049ca2388421b88869ef6e855ec1f816eea9f2b6afeb91fc955bc81e5f03"
+    }
+  },
+  "cadence": {
+    "minuteIncrementUnchanged": true,
+    "tickSeconds": 60
+  },
+  "maintenanceBudgetModule": {
+    "byteEqual": true,
+    "sha256": "6d7c34b3ac51865f0201410db6244be41f9d96f0f642dcfd396d059ae3cc561b"
+  },
+  "fixedCohorts": [
+    {
+      "ideas": 1000,
+      "projects": 21,
+      "custodies": 2,
+      "retentionDays": 30,
+      "maxTicks": 3000
+    },
+    {
+      "ideas": 10000,
+      "projects": 21,
+      "custodies": 2,
+      "retentionDays": 30,
+      "maxTicks": 6000
+    },
+    {
+      "ideas": 1000,
+      "projects": 21,
+      "custodies": 2,
+      "retentionDays": 1,
+      "maxTicks": 3000
+    },
+    {
+      "ideas": 10000,
+      "projects": 21,
+      "custodies": 2,
+      "retentionDays": 1,
+      "maxTicks": 6000
+    },
+    {
+      "ideas": 10,
+      "projects": 2,
+      "custodies": 2,
+      "retentionDays": 1,
+      "maxTicks": 160
+    }
+  ],
+  "unchangedGates": {
+    "initialBackfillMinutes": 1440,
+    "healthyEditMinutes": 5,
+    "defaultRenewalMinutes": 720,
+    "physicalDeletionMinutes": 15,
+    "shortPolicy": "strictly before each original component expiry"
+  },
+  "observerChange": "Generation increments replaced with ALLsource durable body, manifest and vector retention witnesses; required canonical snapshot retention included when a partition snapshot head exists. First source deadline coverage and all minute coverage retained. No corpus, text, mutation, cadence or maintenance budget reduction."
+}

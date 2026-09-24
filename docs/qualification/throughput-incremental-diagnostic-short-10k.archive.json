@@ -1,0 +1,11 @@
+{
+  "originalReceipt": "throughput-incremental-diagnostic-short-10k.json",
+  "rawPreservedAt": "/private/tmp/still-incremental-diagnostic-short-10k.raw.json",
+  "archive": "throughput-incremental-diagnostic-short-10k.json.gz",
+  "encoding": "gzip",
+  "originalSha256": "c53837f8a5e40c8a3e77bc6117afe80e22d359aebc7215896e5768006d1ca30a",
+  "archiveSha256": "9a75e62270e9b39fe73240163d9d0772044c7a2217aed9065666c72e4596b827",
+  "originalBytes": 30587340,
+  "archiveBytes": 1935746,
+  "classification": "historical diagnostic; earlier observer/runtime; not final qualification"
+}

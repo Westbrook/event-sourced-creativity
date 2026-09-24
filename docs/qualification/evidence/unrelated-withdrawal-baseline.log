@@ -1,0 +1,62 @@
+{"event":"creation-index-maintenance","run":"af97e0c2-1c2c-494d-8ece-4975066ecc70","outcome":"completed","claimed":4,"completed":4,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"31de95eb-3cef-44e9-8cb9-a4ce02b8ccc4","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"4627ca08-8ba6-4d4b-8af4-64bc75c721d0","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":4096,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"5946f560-b024-4fda-b5e4-51ac79ffb064","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"2d9147a3-7f10-48dd-aa02-73eed64e81d4","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"34421e62-b731-407f-9148-77f13fb010b6","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":65536,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"4cd5f47d-16fb-4cae-a0bc-d9f0b667be52","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":65536,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"7e5e0124-8666-4844-a208-5b83cc43957b","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":18432,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"17847f28-9c4f-49e6-a981-f18d197f9be3","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"9c59935e-8c39-4905-a4a3-1c49341e4572","outcome":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"9fdb06ff-33ae-40cf-a2e1-bee356078e6e","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"40e33822-981c-4324-9524-11d99d27e967","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":2048,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"3b1282e1-0b91-4d93-8c8c-cc9bd152a0e7","outcome":"completed","claimed":5,"completed":5,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+✔ post unrelated withdrawal profile 65 (303.88875ms)
+ℹ {"ideas":65,"beforeSnapshots":72,"afterForeignRemovalSnapshots":0,"targetInvalidated":0,"incremental":false,"quanta":{"projection":4,"materialize":5},"rows":{"events":75,"materialized":72}}
+{"event":"creation-index-maintenance","run":"628522c9-0105-46c8-afb9-33bc7a1e56c3","outcome":"completed","claimed":4,"completed":4,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"be19afdd-0d72-43bb-95b0-dac0163f2844","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"a2ee515c-7c9b-4851-ac14-d54e151ee8fc","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":4096,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"10d740ff-ea88-4b26-815d-c28212c68bab","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"8e0f52a1-ab94-4ea4-afaa-9b126297df4f","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"54289df9-f046-421e-a26e-b0d7a9ff1ec0","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"fd14cf2b-188d-4dae-b664-7c1c9d50f2c1","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"a9ae0301-7698-4a3d-afbb-1920b4956ad5","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"8010e871-e1a8-42fb-9bf6-ff31f0d79850","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"bc7b293c-7e18-4c59-809e-00e9dccd3829","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"c3c9c148-7268-427f-9688-9d3685d8fff1","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"89777ce5-418e-436a-b031-b5e03b1a2357","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"5ab17dd6-dfdd-43ea-9e56-b1a2631904d2","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"f6dbd33c-1617-4dcd-b55a-ba88657169ab","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"2af0cf18-54f4-4db0-808b-8121d83fb768","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"0ec06a0c-2ee7-411f-a665-ee7e1a8d9f81","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"94656d5e-ec0c-4948-93a2-f57520c91c12","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"6342ce6a-d454-4693-9c2d-0d3784b3d51d","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"415328f5-1a14-4dd3-a20f-6c629d9cf14f","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"3e016e2c-b8d8-4947-ad12-65f941d4d872","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"c8c93598-3d23-47a7-8ccc-186d60f36efc","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":65536,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"6ae89f0b-d8bc-4427-afba-31d3b376c3f4","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":131072,"tokens":200,"providerAttempts":2,"errorClass":null}
+{"event":"creation-index-maintenance","run":"c63493a5-f811-428e-8791-83ba8cad76fd","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":65536,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"0bc0decc-ed4f-4947-a140-f9513a240f38","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":131072,"tokens":200,"providerAttempts":2,"errorClass":null}
+{"event":"creation-index-maintenance","run":"6a329fcd-3e14-4662-92eb-76b64cd4aea2","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":65536,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"dff627dc-cd0f-4bfb-a0c1-db35efa37056","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":131072,"tokens":200,"providerAttempts":2,"errorClass":null}
+{"event":"creation-index-maintenance","run":"0cf167ec-2a1f-4c7a-8262-307804f6f266","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":65536,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"2c6abd6d-8a85-48d7-9818-4f97b666cd94","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":131072,"tokens":200,"providerAttempts":2,"errorClass":null}
+{"event":"creation-index-maintenance","run":"92a3cecb-82ca-4b7c-9b28-0914878330b6","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":65536,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"07bb4d69-3d37-4c9f-aee0-ad089d964fe1","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":131072,"tokens":200,"providerAttempts":2,"errorClass":null}
+{"event":"creation-index-maintenance","run":"39e0bd50-718e-4045-87c7-220d3695c934","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":49152,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"1674dabf-129f-4495-862c-6a716e982b2c","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":26624,"tokens":200,"providerAttempts":2,"errorClass":null}
+{"event":"creation-index-maintenance","run":"048c88cb-e491-43b3-90c5-9e5241bb5be1","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":4096,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"6027f88e-ad64-4936-934a-2c135cfdf98d","outcome":"completed","claimed":6,"completed":6,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"dd9fe361-4819-4b57-aea0-999d1d277e40","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+{"event":"creation-index-maintenance","run":"a5e30515-9698-4a46-9200-8d225bff95cb","outcome":"completed","claimed":7,"completed":7,"retried":0,"held":0,"bytes":2048,"tokens":100,"providerAttempts":1,"errorClass":null}
+{"event":"creation-index-maintenance","run":"de626a00-f2aa-44d7-956f-8f380bd06827","outcome":"completed","claimed":6,"completed":6,"retried":0,"held":0,"bytes":0,"tokens":0,"providerAttempts":0,"errorClass":null}
+✔ post unrelated withdrawal profile 500 (2031.685291ms)
+ℹ {"ideas":500,"beforeSnapshots":507,"afterForeignRemovalSnapshots":0,"targetInvalidated":0,"incremental":false,"quanta":{"projection":18,"materialize":32},"rows":{"events":510,"materialized":507}}
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3599.917917

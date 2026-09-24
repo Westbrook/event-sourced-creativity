@@ -2,6 +2,22 @@
 
 This ledger continues the v550 implementation. “Local pass” means deterministic/injected or local native-runtime evidence; none of these entries is a hosted/live-model qualification claim. Production creation/indexing remain disabled. See [release decision](release-decision.md) for release gates.
 
+## Incremental repair checkpoint — committedd190ed41
+
+| Finding | Repair | Workflow closure |
+| --- | --- | --- |
+| One ordinary Idea edit replays every Project event/source | Complete eligible private canonical snapshots, ≤32 guarded text deltas, targeted Idea and affected Project/Document materialization | Canonical delta/full-replay equivalence, untouched body identity/deadline, real shared API; final1k/10k edit gates pass |
+| Withdrawal in another Project erased507unaffected snapshots; its next500-Idea edit needed50quanta | Preserve only exact unrelated BlockRemoved identities absent all current/former sources and snapshots; private/public custody disagreement purges anchors | Real500-Idea nextedit publishes in1boundedwake; identical full canonical result and withdrawnprose absent;13private/public boundary regressions |
+| Unrelated same-owner text edit disables delta reuse | Ignore explicit foreign text only when exact identity is absent target snapshots/current/former records; conflicting identity falls back | Reproduced frozen-cohort tail; canonical wrong-Project identity regression |
+| Shared API bookkeeping purges valid snapshots | Active same-identity monotone migration cursor advances preserve anchors; all security/status/regression changes invalidate | Real GET→POST→maintenance→publication; unsafe status, identity and cursor regressions purge |
+| Whole-Project renewal loses coverage or misses expiry | Fresh source/canonical bodies and sidecars, atomic pointer swap under authority/generation/lease fences; checksum-verified all-member vector lifetime extension | Nine renewal workflows including expired/corrupt fallback and stale lease; five frozen scale cohorts preserve full coverage and all original expiry deadlines |
+| Unchanged shards are needlessly rewritten | Denied suspended state; only exact complete unchanged membership carries under atomic canonical fences | Byte equality, mixed-source rebuild, expired/retired/stale-lease/revision denial; no retired resurrection |
+| Deletion at15m has no margin | Original nonextendable300-second erasure deadline retained through suspension/fallback/retirement | Repeated invalidation and real fixture R2 erasure; all scale cohorts prose1m/object5m |
+| Old installed candidate triggers omit new purge behavior | Explicit trigger replacement in source-only migration candidate | Upgrade from pre-snapshot definitions, revocation purge, repeat install and six partial-prefix recovery workflows |
+| Generation change can masquerade as renewal | All-source body/snapshot/manifest/range lifetime and durable-byte observation with each original deadline |17 observer/workflow checks; generation-only, body-only, manifest-only, vector-only, corrupt-byte and withheld-work controls fail |
+
+These engineering findings are closed locally by committed workflow and scale evidence. Hosted guarantees and human/live qualification remain open. The rows below preserve the prior checkpoint; its6m/38m/794m and short-retention failures are historical, not the current disposition.
+
 | Reproduced finding | Implementation | Meaningful workflow evidence | Disposition |
 | --- | --- | --- | --- |
 | One source per embedding call makes scheduled backfill structurally too slow | Batch at most 32 passages/24k input bytes within the same custody/partition/model; retain two calls/tick, four work quanta and transport budgets | `creation-index-batching.test.mjs`; canonical unseeded 1k/10k throughput receipts include container representations and actual publication | Local repair; measured scale limits stay visible |

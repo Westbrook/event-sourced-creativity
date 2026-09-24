@@ -10,7 +10,7 @@ Prefer an existing supported isolated environment. If the owner confirms none ex
 
 After the owner supplies the operation and IDs, fill the proposal, retain its capability/isolation receipts, reconcile the database inventory, and produce a target-numbered migration manifest. Do not ask the user to approve an unspecified production migration. [Source manifest](schema-candidate-manifest.json) is hashed dependency order only, with no target IDs or host migration numbers; [recovery procedure](schema-reconciliation-and-recovery.md) explains the remaining reconciliation and rehearsal.
 
-Local scale gates also remain failed: healthy edits at 1k/10k take6m/38m, and 10k default renewal takes794m. Repair these before paid scale qualification. [Measured evidence](throughput-2026-09-24.md).
+The five unchanged local scale gates now pass on committed d190ed41: healthy edits take 2m at both scales, default renewal is below 12 hours, short-policy renewal preserves full coverage before every component expiry, and object deletion takes 5m. [Measured evidence](throughput-2026-09-24.md). This removes the engineering hold; actual target, hosted evidence, credential choice and spending authorization remain required.
 
 ## 2. Exact bounded run requested after target reconciliation
 
@@ -18,8 +18,8 @@ The request will authorize only the named isolated environment and the exact rev
 
 | Field | Prepared choice / remaining value |
 | --- | --- |
-| Verified production reference | Site `appgprj_6a7a020e334881919ed8aea0363cb98f`, v550, source `c28af5fea0fc3ec2b37b878a544ec59c52a64daf`, environment16, `workspace_all` |
-| Candidate source/archive | Runtime `3786dc53`; clean disabled archive raw SHA-256 `7cbb34c7ab99f584b6e59b5cc85a675b869b20951e949a2222fab51c450d248b`; [exact receipt](disabled-archive-receipt.json). No schema-enabled archive approved |
+| Verified production reference | Site `appgprj_6a7a020e334881919ed8aea0363cb98f`, v550, source `c28af5fea0fc3ec2b37b878a544ec59c52a64daf`, environment 16, `workspace_all` |
+| Candidate source/archive | Runtime `d190ed4185ee04978f4db4834da80bb4ed2562c7`; clean disabled archive raw SHA-256 `b7b676a0f81bd80e9f8d701a91dae482ee77058b0fc234a7bfd4146c1e364b33`; [exact receipt](disabled-archive-receipt.json). No schema-enabled archive approved |
 | Embeddings | `text-embedding-3-small`; representation `openai-small-512-l2-source-v1-utf8passage2048-overlap256-f32le-v1` |
 | Organizer proposal | `gpt-4.1-mini-2025-04-14` Responses model, 16,384 output-token adapter ceiling; proposed qualification limit 24,000 serialized input bytes, including instructions/schema; reject over-bound fixtures without truncation |
 | Jev | Existing `jev-latest:creation-identity-v19` contract; record actual resolved model/revision and account tariff before each cohort; stop on undocumented drift |

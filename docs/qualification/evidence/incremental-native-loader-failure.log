@@ -1,0 +1,30 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+file:///private/tmp/still-release-2314cf40/worker/creation-search-index.ts:66
+export class D1CreationSearchIndex implements CreationSearchIndex {
+  constructor(readonly db:D1Database,readonly semanticModel?:string) {}
+                       ^^^^^^^^^^^^^
+  async lexical(p:CreationSearchPartition,query:string,limit:number,signal:AbortSignal):Promise<CreationSearchHit[]> {
+
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript parameter property is not supported in strip-only mode
+    at parseTypeScript (node:internal/modules/typescript:68:40)
+    at processTypeScriptCode (node:internal/modules/typescript:146:42)
+    at stripTypeScriptModuleTypes (node:internal/modules/typescript:209:22)
+    at ModuleLoader.<anonymous> (node:internal/modules/esm/translators:645:29)
+    at #translate (node:internal/modules/esm/loader:435:20)
+    at afterLoad (node:internal/modules/esm/loader:491:29)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:496:12)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:549:36)
+    at afterResolve (node:internal/modules/esm/loader:597:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:603:12) {
+  code: 'ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX'
+}
+
+Node.js v24.16.0
+✖ tests/browser/still-index-workerd.test.mjs (58.556792ms)
+
+Interrupted while running:
+
+⚠ tests/browser/still-qualification-budget-workerd.test.mjs (tests/browser/still-qualification-budget-workerd.test.mjs:1:1)
