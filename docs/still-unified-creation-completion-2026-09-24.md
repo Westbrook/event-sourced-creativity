@@ -1,6 +1,6 @@
 # Still creation completion — finding, repair and qualification ledger
 
-Status: implementation underway; production disabled; **not release ready**.
+Status: local implementation verified; disabled release preparation; **not release ready**.
 
 ## Verified baseline
 
@@ -14,30 +14,30 @@ A passing helper does not close a workflow. Earlier evidence remains historical;
 
 | Finding | Repair status | Required/current evidence |
 | --- | --- | --- |
-| Derived incomplete-Idea issues | Implemented; local workflow verification (browser qualification pending) | Interpretation → edit → review → commit → reload |
-| Exact selected @ targets/occurrences | Implemented; local workflow verification (browser qualification pending) | Distinct equal labels, repeated target, invalid organizer and commit |
-| Durable accepted corrections after input edits | Implemented; local workflow verification (browser qualification pending) | Remove → edit → reinterpret; explicit Undo |
+| Derived incomplete-Idea issues | Implemented; commit/reload workflow verified locally | Interpretation → edit → review → commit → reload |
+| Exact selected @ targets/occurrences | Implemented; commit/reload workflow verified locally | Distinct equal labels, repeated target, invalid organizer and commit |
+| Durable accepted corrections after input edits | Implemented; commit/reload workflow verified locally | Remove → edit → reinterpret; explicit Undo |
 | Late interpretation/preview publication | Implemented; local Worker integration passes | `creation-delivery-recovery.test.mjs`: discard/revision/pointer/redaction races roll back without orphan bodies; actual preview discard transaction |
 | Interrupted interpretation | Implemented; local Worker integration passes | Same identity terminalizes after 30-second lease; explicit new attempt commits and receipt reloads. No exactly-once inference claim |
 | Recovered receipt journals | Implemented; controller verification | Recovered save clears draft, commit and interpretation pointers; next New is fresh |
-| Full draft rescue/actionable errors | Implemented; local workflow verification (browser qualification pending) | Include review edits, decisions and source; render current server issues |
-| Correction event bounds | Implemented; local workflow verification (browser qualification pending) | Exact-bound variation/partial/merge through commit; 512/513 preserved |
-| Overlapping merge validity | Implemented; local workflow verification (browser qualification pending) | Deduplicated use proof through commit/fold |
-| Document removal approvals | Implemented; local workflow verification (browser qualification pending) | Real approval hashes remain valid for unchanged Ideas |
-| Focused split/provenance | Implemented; local workflow verification (browser qualification pending) | Unrelated content/approvals retained through commit |
-| Container-title removal mentions | Implemented; local workflow verification (browser qualification pending) | Impact review and explicit repair |
+| Full draft rescue/actionable errors | Implemented; commit/reload workflow verified locally | Include review edits, decisions and source; render current server issues |
+| Correction event bounds | Implemented; commit/reload workflow verified locally | Exact-bound variation/partial/merge through commit; 512/513 preserved |
+| Overlapping merge validity | Implemented; commit/reload workflow verified locally | Deduplicated use proof through commit/fold |
+| Document removal approvals | Implemented; commit/reload workflow verified locally | Real approval hashes remain valid for unchanged Ideas |
+| Focused split/provenance | Implemented; commit/reload workflow verified locally | Unrelated content/approvals retained through commit |
+| Container-title removal mentions | Implemented; commit/reload workflow verified locally | Impact review and explicit repair |
 | Withdrawn/private-redacted source eligibility | Implemented; authenticated Worker lifecycle tests pass | Authenticated Worker refresh → search; before dispatch and hydration denials |
-| @Document constituents | Open | Exact selected roots, no adoption of later members |
-| Reviewed-Idea @ and / tools | Open | Browser input/review/ref authorization and undo |
-| Initial partial reuse | Open | Partial/whole choice, independent provenance, source unchanged |
-| Confirmed passage replacement | Open | Exact range/highlight, explicit acceptance, undo, stale rejection |
+| @Document constituents | Implemented; local UI/controller/Worker checks | Exact selected roots, no adoption of later members |
+| Reviewed-Idea @ and / tools | Implemented; local UI/controller/Worker checks | Browser input/review/ref authorization and undo |
+| Initial partial reuse | Implemented; local UI/controller/Worker checks | Partial/whole choice, independent provenance, source unchanged |
+| Confirmed passage replacement | Implemented; local UI/controller/Worker checks | Exact range/highlight, explicit acceptance, undo, stale rejection |
 | Account relevance/coverage | Implemented; multi-partition regression passes | 21+ Project permutations, no false definitive no-match |
 | Targeted invalidation | Implemented; actual SQLite triggers verified | Attention-only events do not invalidate; relevant mutations do |
 | Autonomous indexing/expiry/cleanup | Implemented; local scheduled and provider lifecycle tests pass | Durable continuation, expiry renewal, deletion/orphan lifecycle |
-| Normal navigation capability | Open | Authoritative feature capability; rollback retains old routes |
-| Operational metrics | Open | Coverage/queue age/failure/recovery without creative text |
-| Candidate migration/release package | Open | Current release sequence, preservation and rollback checks |
-| Local browser/access/performance | Open | Three entries, keyboard/IME, narrow layouts/help; measured budgets |
+| Normal navigation capability | Implemented; local qualification; deployed gate open | Authoritative feature capability; rollback retains old routes |
+| Operational metrics | Implemented; local qualification; deployed gate open | Coverage/queue age/failure/recovery without creative text |
+| Candidate migration/release package | Implemented; local qualification; deployed gate open | Current release sequence, preservation and rollback checks |
+| Local browser/access/performance | Local checks; human/live latency gates open | Three entries, keyboard/IME, narrow layouts/help; measured budgets |
 | Deployed/provider/human qualification | Gated, not executed | Actual Fetcher/D1/AI/Vectorize bindings, held-out fidelity/relevance/latency, screen-reader completion, deployed smoke/recovery/rollback |
 
 ## Recovery repair evidence and limits
@@ -61,3 +61,11 @@ All authorized partition pools are merged before the global 24-candidate hydrati
 Durable jobs resume staged 32-record pages without additional typing or history reconstruction per page. Scheduled work rehydrates current principal, consent, permission epoch and custody; identity policies requiring an observed authentication context fail closed. Renewal replaces expiring protected bodies and resets semantic acknowledgement. Cleanup removes superseded/expired local bodies and calls the provider deletion endpoint for tombstones. Provider expiry sweeps delete lease-specific vector IDs without damaging renewed records.
 
 Evidence: `creation-search-delivery.test.mjs`, `creation-search-index.test.mjs`, `creation-provider-service.test.mjs`, `creation-corpus-search.test.mjs` and `creation-search-performance.test.mjs`; focused search/candidate qualification passed 43 tests. These use real local Worker/SQLite and injected learned providers. First-build history cost, deployed scheduled execution, async vector physical deletion and crash-created remote orphan cleanup still require deployed qualification.
+
+## Interaction completion
+
+The rich editor exposes explicit Document constituent checkboxes, and reviewed Idea bodies use the same @ and / extensions. Newly named Ideas remain incomplete until edited/reviewed; Format commands create nonexclusive preferred Outputs without triggering generation. Initial partial reuse stores an independent exact excerpt and provenance, preserves the saved source, and survives undo/redo/reload. Passage replacement is revision-bound and explicitly confirmed; unique exact source-backed text can be suggested, while ambiguous/unmatched text requires user selection. Nothing outside the accepted range is removed.
+
+Reviewed saved references are reauthorized and their full included dependencies disclosed. Recovery rehydrates the exact previously selected versions; changed sources require explicit refresh and renewed affected review. Reference selection unions source manifests instead of losing earlier selections. Repeated declarations may define one Idea while retaining exact inline occurrence identity.
+
+`creation-delivery-workflows.test.mjs` exercises these with actual review/commit/history reload. `tests/browser/still-unified-creation.test.mjs` adds normal navigation, Document constituent selection, reviewed @/Format editing and initial partial/passage preview with undo/redo/reload; the adjacent help suite preserves N6/N7 and review state. These verify local interactions, not organizer fidelity. The complete gate/action table is in `still-unified-creation-release-2026-09-24.md`.

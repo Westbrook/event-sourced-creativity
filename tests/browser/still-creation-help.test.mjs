@@ -254,7 +254,8 @@ test('contextual creation help preserves writing and review across every entry',
           const splitResponse = page.waitForResponse(response => response.url().endsWith('/split'));
           await page.getByRole('combobox', {name: 'Idea type'}).selectOption('direction');
           await waitSaved(page);
-          await splitResponse; // Settle the earlier edit's debounced assessment before attributing requests to help.
+          await splitResponse;
+          await page.waitForFunction(() => {const flow=document.querySelector('still-creation-flow')?.flow;return !!flow?.split&&flow.split.draftRevision===flow.draft.revision&&!flow?.hasUnacknowledgedChanges;}); // Settle the latest edit, including a second debounce, before attributing requests to help.
           await page.locator('.creation-full-content').evaluate(el => {el.scrollTop = 80;});
           const before = await reviewSnapshot(page);
           const requestCount = consequentialRequests().length;

@@ -87,3 +87,10 @@ export function acceptCreationReplacements(editor:CreationReplacementEditor,prev
  editor.clearRangeDecorations();
  return previews.map(preview=>({id:crypto.randomUUID(),kind:'correction',nodeIds:[...preview.rootIds],revision:preview.draftRevision,accepted:true,...(preview.range.coordinate==='text'?{sourceRanges:[{start:preview.range.from,end:preview.range.to}]}:{}),detail:JSON.stringify({kind:'reviewed-reference-replacement',previewId:preview.id,range:preview.range,passage:preview.passage,remainingText:preview.remainingText,resultingText:preview.resultingText,sourceVersions:preview.sources.map(({id,revision,hash})=>({id,revision,hash}))})}));
 }
+
+/** Offer only an exact, unique source-backed passage; acceptance is always explicit. */
+export function suggestCreationReplacementRange(editor:CreationReplacementEditor,sources:readonly CreativeBlock[]):RichRange|undefined{
+ const text=richDocumentText(editor.document);
+ const phrases=[...sources.flatMap(b=>{const body=String(b.properties.text??'');return [body,...body.split(/(?<=[.!?])\s+/u),...(text.length>=12&&body.includes(text)?[text]:[])];})].filter(s=>s.length>=12).sort((a,b)=>b.length-a.length);
+ for(const phrase of phrases){const from=text.indexOf(phrase);if(from<0||text.indexOf(phrase,from+1)>=0)continue;const range:RichRange={coordinate:'text',from,to:from+phrase.length,expectedText:phrase,revision:editor.revision};if(isCreationReplacementRangeValid(editor,range))return range;}
+}

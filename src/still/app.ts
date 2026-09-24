@@ -804,7 +804,7 @@ export class StillApp extends LitElement {
     if(this.generation&&!this.generation.attempted){this.chooseFormat('');return;}
     this.closeMode();
   }
-  private unifiedCreation(){return this.isCreationMode()&&new URLSearchParams(location.search).get('creation')==='1';}
+  private unifiedCreation(){return this.isCreationMode()&&this.client.session?.creation?.enabled===true;}
   private isCreationMode(){return ['new-project','new-document','add-context'].includes(this.mode);}
   private writeRecoveryKey(){return `${this.client.scopeKey}:${this.client.epoch}:${this.mode}:${this.client.pendingWriteId}`;}
   private renderWriteRecovery(){return this.client.hasUnconfirmedWrite ? html`<p class="gate-notice" role="status">${this.writeRecovery?.key===this.writeRecoveryKey()?'The earlier save is still unconfirmed. You can edit this draft. Choose Save draft to submit your current changes, or Back to review saved work. The earlier save may still exist; saving again could create a duplicate.':'You can keep editing this draft. Check save looks for the earlier save without submitting your changes.'}</p>` : nothing;}

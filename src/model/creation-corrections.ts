@@ -159,7 +159,7 @@ export function rebindCreationCorrectionUndo(before:CreationPlan,refreshed:Creat
   const shape=(plan:CreationPlan)=>({...plan,nodes:plan.nodes.map(node=>({...node,sourceEvidence:node.sourceEvidence.filter(e=>e.kind!=='existing')})),uses:plan.uses.map(({dependencyManifest,...use})=>use)});
   if(JSON.stringify(shape(before))!==JSON.stringify(shape(refreshed)))throw new Error('Only trusted dependency bindings can refresh a correction Undo.');
   const next=copy(refreshed),decision=next.decisions.at(-1);if(!decision?.detail||!decision.accepted)return next;
-  const record=JSON.parse(decision.detail);if(record.schemaVersion!==1||record.afterSignature!==undoSignature(before))throw new Error('Refresh the latest correction before rebinding its Undo.');
+  let record;try{record=JSON.parse(decision.detail);}catch{return next;}if(record.schemaVersion!==1||record.afterSignature!==undoSignature(before))throw new Error('Refresh the latest correction before rebinding its Undo.');
   record.afterSignature=undoSignature(next);decision.detail=JSON.stringify(record);return next;
 }
 
