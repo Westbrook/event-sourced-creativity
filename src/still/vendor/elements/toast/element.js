@@ -1,3 +1,5 @@
+import { isDOMElement } from '../internal/dom-kind.js';
+import { connectionDocument } from '../internal/element-registry.js';
 import { html, css } from 'lit';
 import { EnElement } from '../internal/en-element.js';
 import { foundationStyles } from '../../styles/foundations.js';
@@ -16,6 +18,10 @@ import { dispatchChange } from '../../primitives/interactions/events.js';
  * @csspart content - Message body.
  * @csspart actions - Action layout.
  * @csspart close - Shared en-button control.
+ * @cssprop --en-toast-enter-duration - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-toast-enter-ease - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-toast-exit-duration - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-toast-exit-ease - Optional theme presentation; see the customization registry for state, fallback and reachability.
  * @cssprop --en-toast-background - Surface fill, falling back to shared surface color.
  * @cssprop --en-toast-color - Message text color.
  * @cssprop --en-toast-border-color - Notification border color.
@@ -79,7 +85,7 @@ export class EnToast extends EnElement {
             });
     }
     /** Plain message text used by the containing announcement region. */
-    get messageText() { return this.announcement.trim() || [...this.childNodes].filter(node => !(node instanceof Element) || !node.hasAttribute('slot')).map(node => node.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim(); }
+    get messageText() { return this.announcement.trim() || [...this.childNodes].filter(node => !(isDOMElement(node)) || !node.hasAttribute('slot')).map(node => node.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim(); }
     /** Full uninterrupted countdown budget in milliseconds, before hover/focus pauses. Actions still prevent expiry. */
     get effectiveDuration() {
         if (!Number.isFinite(this.duration) || this.duration <= 0)
@@ -112,7 +118,7 @@ export class EnToast extends EnElement {
         this.visibility();
     };
     swipeStart = (event) => {
-        if (!this.swipe || !event.isPrimary || event.button !== 0 || this.matches(':focus-within') || event.composedPath().some(node => node instanceof Element && node.matches('button,a,input,select,textarea,en-button,[contenteditable],slot[name=actions]')))
+        if (!this.swipe || !event.isPrimary || event.button !== 0 || this.matches(':focus-within') || event.composedPath().some(node => isDOMElement(node) && node.matches('button,a,input,select,textarea,en-button,[contenteditable],slot[name=actions]')))
             return;
         const surface = event.currentTarget;
         this.gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, dx: 0, horizontal: false, surface };
@@ -149,7 +155,7 @@ export class EnToast extends EnElement {
     actionsChanged = () => { const slot = this.renderRoot.querySelector('slot[name="actions"]'); this.actionContent = !!slot?.assignedNodes({ flatten: true }).some(node => node.nodeType === 1 || !!node.textContent?.trim()); this.pause(); this.resume(); };
     connectedCallback() { super.connectedCallback(); this.visibilityObserver = new MutationObserver(this.contentVisibility); this.visibilityObserver.observe(this, { attributes: true, attributeOldValue: true, attributeFilter: ['hidden', toastQueuedAttribute], childList: true, characterData: true, subtree: true }); this.ownerDocument.addEventListener('visibilitychange', this.visibility); this.addEventListener('pointerenter', this.enter); this.addEventListener('pointerleave', this.leave); this.addEventListener('focusin', this.focusIn); this.addEventListener('focusout', this.focusOut); if (this.hasUpdated)
         void this.updateComplete.then(() => this.resume()); }
-    disconnectedCallback() { this.visibilityObserver?.disconnect(); this.swipeCancel(); this.pause(); this.hovered = false; this.focused = false; this.ownerDocument.removeEventListener('visibilitychange', this.visibility); this.removeEventListener('pointerenter', this.enter); this.removeEventListener('pointerleave', this.leave); this.removeEventListener('focusin', this.focusIn); this.removeEventListener('focusout', this.focusOut); super.disconnectedCallback(); }
+    disconnectedCallback() { this.visibilityObserver?.disconnect(); this.swipeCancel(); this.pause(); this.hovered = false; this.focused = false; connectionDocument(this).removeEventListener('visibilitychange', this.visibility); this.removeEventListener('pointerenter', this.enter); this.removeEventListener('pointerleave', this.leave); this.removeEventListener('focusin', this.focusIn); this.removeEventListener('focusout', this.focusOut); super.disconnectedCallback(); }
     updated(changed) {
         if (!this.open || !this.swipe)
             this.swipeCancel();

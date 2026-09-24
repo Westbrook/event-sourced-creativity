@@ -2,6 +2,10 @@ import { html, svg, nothing } from 'lit';
 export const icons = {
     bold: svg `<path d="M7 4h6a4 4 0 0 1 0 8H7V4Zm0 8h7a4 4 0 0 1 0 8H7v-8Z" />`,
     italic: svg `<path d="M10 4h9M5 20h9M15 4 9 20" />`,
+    underline: svg `<path d="M6 3v8a6 6 0 0 0 12 0V3M4 21h16" />`,
+    'align-start': svg `<path d="M4 5h16M4 10h10M4 15h16M4 20h10" />`,
+    'align-center': svg `<path d="M4 5h16M7 10h10M4 15h16M7 20h10" />`,
+    'align-end': svg `<path d="M4 5h16M10 10h10M4 15h16M10 20h10" />`,
     heading: svg `<path d="M5 4v16M19 4v16M5 12h14" />`,
     paragraph: svg `<path d="M13 4H9a5 5 0 0 0 0 10h4M13 4v16M18 4v16M9 4h12" />`,
     'bullet-list': svg `<circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /><path d="M9 6h12M9 12h12M9 18h12" />`,
@@ -27,6 +31,7 @@ export const icons = {
 export const iconTemplate = (name, label) => html `
   <svg
     class="en-icon"
+    ?data-logical=${name === 'align-start' || name === 'align-end'}
     part="base"
     viewBox="0 0 24 24"
     fill="none"

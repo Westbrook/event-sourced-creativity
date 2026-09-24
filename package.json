@@ -28,9 +28,18 @@
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.1",
+    "@lit/context": "1.1.6",
     "@phosphor-icons/core": "^2.1.1",
     "drizzle-orm": "0.45.2",
     "lit": "3.3.3",
+    "prosemirror-commands": "^1.7.2",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.12",
+    "prosemirror-schema-list": "^1.5.1",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-transform": "^1.12.1",
+    "prosemirror-view": "^1.42.5",
     "qrcode": "^1.5.4",
     "signal-polyfill": "0.2.2",
     "signal-utils": "0.21.1",
@@ -42,6 +51,7 @@
     "@eslint/js": "9.39.4",
     "@playwright/test": "1.62.1",
     "@types/node": "22.19.19",
+    "@types/qrcode": "^1.5.6",
     "@types/three": "0.185.4",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
@@ -50,8 +60,7 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.59.3",
     "vite": "8.0.13",
-    "wrangler": "4.92.0",
-    "@types/qrcode": "^1.5.6"
+    "wrangler": "4.92.0"
   },
   "type": "module"
 }

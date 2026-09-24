@@ -17,7 +17,9 @@ export interface VirtualCollectionControllerOptions {
     occludedBlockStart?: () => number;
     /** Space obscured by a sticky footer inside the scrollport. */
     occludedBlockEnd?: () => number;
-    /** Application-owned recovery when a focused record is removed from the data set. */
+    /** Focusable recovery target; defaults to the content in document mode, otherwise the viewport. */
+    focusTarget?: () => HTMLElement | null | undefined;
+    /** Application-owned recovery when a focused record is removed; receives the resolved recovery target. */
     onFocusedItemRemoved?: (key: string, viewport: HTMLElement) => void;
 }
 /**

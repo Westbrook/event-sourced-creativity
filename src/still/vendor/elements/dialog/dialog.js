@@ -13,6 +13,10 @@ import { composedContains, focusedElement, restoreFocus } from './focus.js';
  * Application property writes are authoritative and emit no change event.
  * Native form submission and essential instructions belong in the slotted content.
  *
+ * @cssprop --en-dialog-enter-duration - Optional family presentation; see the customization registry.
+ * @cssprop --en-dialog-enter-ease - Optional family presentation; see the customization registry.
+ * @cssprop --en-dialog-exit-duration - Optional family presentation; see the customization registry.
+ * @cssprop --en-dialog-exit-ease - Optional family presentation; see the customization registry.
  * @cssprop --en-duration-enter - Optional native surface entry paint duration (0–500ms).
  * @cssprop --en-duration-exit - Optional native surface exit paint duration (0–500ms); never delays state or focus.
  * @cssprop --en-ease-enter - Native surface entry easing.
@@ -32,6 +36,8 @@ import { composedContains, focusedElement, restoreFocus } from './focus.js';
  * @cssprop --en-ease-focus-exit - Supplemental focus exit timing function.
  * @slot - Dialog body. Flow content and controls are supported.
  * @slot label - Noninteractive title phrasing; falls back to the label attribute.
+ * @slot description - Short supporting summary; replaces the description attribute/property fallback.
+ * @csspart description - Supporting summary; inherits text styles without adding an empty layout box.
  * @slot footer - Optional actions, in reading order after the body.
  * @csspart surface - The native dialog surface.
  * @csspart header - Visible heading and dismiss action.
@@ -51,6 +57,7 @@ import { composedContains, focusedElement, restoreFocus } from './focus.js';
 export class EnDialog extends EnElement {
     static properties = {
         for: { type: String, reflect: true },
+        kind: { reflect: true }, description: {}, initialFocus: { attribute: 'initial-focus' },
         open: { type: Boolean, reflect: true, noAccessor: true },
         label: { type: String, useDefault: true },
         closeLabel: { type: String, attribute: 'close-label', useDefault: true },
@@ -119,6 +126,9 @@ export class EnDialog extends EnElement {
     constructor() {
         super();
         this.for = '';
+        this.kind = 'dialog';
+        this.description = '';
+        this.initialFocus = '';
         this.label = '';
         this.closeLabel = 'Close';
         this.dismissible = true;
@@ -248,6 +258,9 @@ export class EnDialog extends EnElement {
                 ? requested.element : this.#nativeOpener;
             setNativeSurfaceOpen(dialog, true);
             dialog.showModal();
+            const target = this.initialFocus ? [...this.querySelectorAll('[id]')].find(el => el.id === this.initialFocus) : null;
+            if (target && !target.matches('[disabled], [hidden], [inert]') && !target.closest('[hidden], [inert]'))
+                target.focus({ preventScroll: true });
             this.#nativeOpen = true;
         }
         else if (!this.open && dialog.open) {
@@ -321,6 +334,7 @@ export class EnDialog extends EnElement {
     /** Native lifecycle bindings for specialized modal content without a nested dialog. */
     get dialogView() {
         return {
+            kind: this.kind === 'alertdialog' ? 'alertdialog' : 'dialog', description: this.description,
             surfaceClass: this.surfaceClass, placement: this.#compactPresentation ? 'bottom' : this.placement, label: this.label,
             closeLabel: this.closeLabel, dismissible: this.dismissible,
             closedBy: this.supportsNativeClosedBy ? this.effectiveClosedBy : 'closerequest',

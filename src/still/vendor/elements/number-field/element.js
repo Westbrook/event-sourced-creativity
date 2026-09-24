@@ -4,6 +4,12 @@ import { EditableFieldElement } from '../forms-private/editable-field.js';
  * Native number editing plus keyboard-operable decrement/increment buttons.
  * Accepted value is a string, including the empty string; bounds and stepping use native number semantics.
  * Label slots prefer consumer content and fall back to the corresponding label properties.
+ * @cssprop --en-number-step-pressed-scale - number-step held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-number-step-pressed-offset - number-step held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-number-step-press-duration - number-step held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-number-step-release-duration - number-step held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-number-step-pressed-shadow - number-step held-state refinement; geometry is bounded and reduced motion wins.
+ * @cssprop --en-number-step-pressed-background - number-step held-state refinement; geometry is bounded and reduced motion wins.
  * @tagname en-number-field
  * @slot label - Visible field label; falls back to label.
  * @slot description - Supporting text; falls back to the description attribute/property.
@@ -18,6 +24,12 @@ import { EditableFieldElement } from '../forms-private/editable-field.js';
  * @csspart increment - Increase button.
  * @csspart description - Supporting text.
  * @csspart error - Validation feedback.
+ * @cssprop --en-input-border-color - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-border-width - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-hover-border-color - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-invalid-border-color - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-invalid-border-width - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-radius - Optional theme presentation; see the customization registry for state, fallback and reachability.
  * @cssprop --en-control-background - Control background.
  * @cssprop --en-input-background - Field fill falling back to the shared control background.
  * @cssprop --en-input-color - Field text falling back to the shared control color.
@@ -36,8 +48,8 @@ import { EditableFieldElement } from '../forms-private/editable-field.js';
  * @cssprop --en-duration-focus-exit - Exit duration for supplemental focus decoration.
  * @cssprop --en-ease-focus-enter - Entry easing for supplemental focus decoration.
  * @cssprop --en-ease-focus-exit - Exit easing for supplemental focus decoration.
- * @fires en-input - Current native editing draft and composition state.
- * @fires en-change - Cancelable accepted-value change; provisional value and form data are available during dispatch.
+ * @fires {import('../events.js').DraftInputEvent} en-input - Current native editing draft and composition state.
+ * @fires {import('../events.js').FieldChangeEvent} en-change - Cancelable accepted-value change; provisional value and form data are available during dispatch.
  */
 export class EnNumberField extends EditableFieldElement {
     static properties = {

@@ -1,3 +1,4 @@
+import { controlTargetSize } from './internal/target-size.js';
 import { css } from 'lit';
 import { sizedStyles } from './internal/sizing.js';
 import { token as t, override as o } from './internal/values.js';
@@ -19,6 +20,7 @@ export const feedbackStyles = sizedStyles(css `
   .en-badge__prefix { display: contents; }
   .en-badge__label { min-inline-size: 0; }
   .en-badge[data-variant='accent'] { background: ${o('--en-badge-background', t('--en-color-accent-subtle'))}; color: ${o('--en-badge-color', t('--en-color-action-text'))}; }
+  .en-badge:is([data-variant='success'], [data-variant='warning'], [data-variant='danger']) { background: ${o('--en-badge-background', t('--en-color-surface'))}; }
   .en-badge[data-variant='success'] { color: ${o('--en-badge-color', t('--en-color-success-text'))}; }
   .en-badge[data-variant='warning'] { color: ${o('--en-badge-color', t('--en-color-warning-text'))}; }
   .en-badge[data-variant='danger'] { color: ${o('--en-badge-color', t('--en-color-danger-text'))}; }
@@ -41,6 +43,7 @@ export const feedbackStyles = sizedStyles(css `
 `);
 export const mediaStyles = sizedStyles(css `
   .en-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; inline-size: ${o('--en-icon-size', t('--en-size-icon'))}; block-size: ${o('--en-icon-size', t('--en-size-icon'))}; vertical-align: middle; color: inherit; }
+  svg.en-icon[data-logical]:dir(rtl) { scale:-1 1; }
   .en-icon > :where(svg, img), .en-icon ::slotted(svg), .en-icon ::slotted(img) { display: block; inline-size: 100%; block-size: 100%; }
   svg.en-icon, .en-icon > svg, .en-icon ::slotted(svg) { display: block; stroke-width: ${t('--en-size-icon-stroke')}; }
   .en-avatar { display: inline-grid; place-items: center; vertical-align: middle; flex: none; inline-size: ${o('--en-avatar-size', t('--en-size-avatar'))}; block-size: ${o('--en-avatar-size', t('--en-size-avatar'))}; overflow: hidden; border-radius: ${o('--en-avatar-radius', t('--en-radius-pill'))}; background: ${t('--en-color-surface-subtle')}; color: ${t('--en-color-text')}; }
@@ -51,9 +54,14 @@ export const mediaStyles = sizedStyles(css `
 `);
 /** A neutral color-sample control; its surrounding presentation belongs to the consumer. */
 export const swatchStyles = sizedStyles(css `
-  :host { inline-size: max(${o('--en-swatch-size', t('--en-size-swatch'))}, ${t('--en-size-target-min')}); min-inline-size: ${t('--en-size-target-min')}; }
-  .en-swatch__sample { position: relative; display: block; appearance: none; inline-size: 100%; block-size: max(${o('--en-swatch-size', t('--en-size-swatch'))}, ${t('--en-size-target-min')}); min-inline-size: ${t('--en-size-target-min')}; padding: 0; margin: 0; overflow: hidden; border: ${t('--en-border-width')} solid ${t('--en-color-boundary')}; border-radius: ${t('--en-radius-control')}; background: transparent; color: inherit; cursor: pointer; }
+  :host { inline-size: max(${o('--en-swatch-size', t('--en-size-swatch'))}, ${controlTargetSize(false, t('--en-size-target-min'))}); min-inline-size: ${controlTargetSize(false, t('--en-size-target-min'))}; }
+  .en-swatch__sample { position: relative; display: block; appearance: none; inline-size: 100%; block-size: max(${o('--en-swatch-size', t('--en-size-swatch'))}, ${controlTargetSize(false, t('--en-size-target-min'))}); min-inline-size: ${controlTargetSize(false, t('--en-size-target-min'))}; padding: 0; margin: 0; overflow: hidden; border: ${t('--en-border-width')} solid ${t('--en-color-boundary')}; border-radius: ${t('--en-radius-control')}; background: transparent; color: inherit; cursor: pointer; }
+  @media (any-pointer: coarse) {
+    :host { inline-size:max(${o('--en-swatch-size', t('--en-size-swatch'))},${controlTargetSize(true, t('--en-size-target-min'))}); min-inline-size:${controlTargetSize(true, t('--en-size-target-min'))}; }
+    .en-swatch__sample { min-inline-size:${controlTargetSize(true, t('--en-size-target-min'))}; min-block-size:${controlTargetSize(true, t('--en-size-target-min'))}; }
+  }
   @media (hover: hover) { .en-swatch__sample:not(:disabled):hover { border-color: ${t('--en-color-action')}; } }
+  .en-swatch__sample:not(:disabled):active { border-width: max(2px, ${t('--en-border-width')}); }
   .en-swatch__sample:disabled { cursor: default; }
   .en-swatch__color { display: block; inline-size: 100%; block-size: 100%; }
   ${focusStyles}

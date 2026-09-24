@@ -10,6 +10,7 @@ export const buttonTemplate = (view) => html `
     data-variant=${view.variant}
     data-size=${view.size}
     ?disabled=${view.disabled || view.loading}
+    aria-pressed=${ifDefined(view.pressed ?? undefined)}
     aria-busy=${view.loading ? 'true' : 'false'}
     aria-haspopup=${ifDefined(view.popupRole ?? undefined)}
     aria-expanded=${ifDefined(view.popupExpanded ?? undefined)}

@@ -1,8 +1,11 @@
+import { pressStyles } from './press.js';
+import { pressRecipes } from './press-recipes.js';
 import { css } from 'lit';
 import { token as t, override as o } from './values.js';
 /** Shared paint only. Callers retain native semantics, focus, geometry and forced colors. */
 export function optionPaint(s) {
     return css `
+    ${s.motion === false ? css `` : pressStyles(s.base, css `${s.pressed}:not([aria-disabled='true']):not(:disabled):not([data-press='none']):not([data-reorderable])`, pressRecipes.option)}
     ${s.base} {
       /* Reset each row's state slots: a nested option must not inherit its parent's state. */
       --_en-option-selected-background: initial;
@@ -41,7 +44,7 @@ export function optionPaint(s) {
       --_en-option-active-color: var(--en-option-active-color, var(--en-option-color));
     }` : css ``}
     ${s.pressed} {
-      --_en-option-pressed-background: var(--en-option-pressed-background, var(--en-option-background));
+      --_en-option-pressed-background: var(--en-option-pressed-background, var(--en-option-background, color-mix(in srgb, ${s.hoverBackground} 82%, currentColor)));
       --_en-option-pressed-color: var(--en-option-pressed-color, var(--en-option-color));
     }
     ${s.disabled} {

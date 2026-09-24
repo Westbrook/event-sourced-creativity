@@ -8,7 +8,9 @@ import { FormController } from '../../primitives/interactions/form-controller.js
 import { foundationStyles } from '../../styles/foundations.js';
 import { formStyles, controlStyles } from '../../styles/controls.js';
 import { EnElement } from '../internal/en-element.js';
-/** Private adapter. Internal nodes, selectors and IDs are not public APIs. */
+/** Private adapter. Internal nodes, selectors and IDs are not public APIs.
+ * @fires {import('../events.js').FieldChangeEvent} en-change - Cancelable tentative string value.
+ */
 export class FormFieldElement extends EnElement {
     static formAssociated = true;
     valueDefaults = new DefaultState(this, 'value', attribute => attribute ?? '', value => String(value), value => { this.value = value; });
@@ -159,12 +161,13 @@ export class FormFieldElement extends EnElement {
         if (this.isDisabled)
             return;
         this.valueDefaults.markDirty();
+        const connected = this.isConnected;
         dispatchChange(this, {
             previous: this.value,
             proposed,
             reason,
             getRevision: () => this.authorRevision,
-            canCommit: value => this.canCommitValue(value),
+            canCommit: value => !this.isDisabled && (!connected || this.isConnected) && this.canCommitValue(value),
             stage: value => this.stageValue(value),
             rollback: value => this.stageValue(value),
             commit: value => {

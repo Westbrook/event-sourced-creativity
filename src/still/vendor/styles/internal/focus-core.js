@@ -1,3 +1,4 @@
+import { pressTransitions } from './press.js';
 import { css } from 'lit';
 import { token as t, override as o } from './values.js';
 function familyValue(family, name, fallback) {
@@ -38,8 +39,8 @@ export function focusVisibleStylesFor(selector, options = {}) {
     const v = focusValues(options);
     const rest = options.restSelector;
     const animate = rest && options.halo !== false;
-    const baseShadow = options.baseShadow ?? css `0 0 0 0 transparent`;
-    const otherTransitions = options.baseTransitions ? css `${options.baseTransitions},` : css ``;
+    const baseShadow = options.baseShadow ?? css `var(--_en-press-shadow, 0 0 0 0 transparent)`;
+    const otherTransitions = css `${options.baseTransitions ?? pressTransitions},`;
     return css `
     ${rest ? focusScrollStylesFor(rest, options) : css ``}
     ${animate ? css `${rest} {

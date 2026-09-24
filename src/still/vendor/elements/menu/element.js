@@ -1,10 +1,11 @@
+import { isDOMNode } from '../internal/dom-kind.js';
+import { ChildUpgrades } from '../internal/child-upgrades.js';
 import { admitOverlayClick, eligibleOverlayTrigger } from '../internal/overlay-trigger.js';
 import { FloatingSurface } from '../popover/floating-surface.js';
 import { foundationStyles } from '../../styles/foundations.js';
 import { menuStyles } from '../../styles/commands.js';
 import { RovingFocusController } from '../../primitives/interactions/roving-focus.js';
 import { claimFocusParticipant } from '../internal/focus-participant.js';
-import { elementRegistry } from '../internal/element-registry.js';
 import { ownMenuItem, menuCheckState } from '../internal/menu-owner.js';
 import { MenuInteractionController } from './interaction-controller.js';
 import { MenuPositionController } from './position-controller.js';
@@ -13,6 +14,10 @@ import { restoreFocus } from '../dialog/focus.js';
 /**
  * A slot-first native popover menu for application commands.
  * Supply an explicit label and a same-tree external button through for.
+ * @cssprop --en-popup-enter-duration - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-popup-enter-ease - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-popup-exit-duration - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-popup-exit-ease - Optional theme presentation; see the customization registry for state, fallback and reachability.
  * @cssprop --en-duration-enter - Optional native surface entry paint duration (0–500ms).
  * @cssprop --en-duration-exit - Optional native surface exit paint duration (0–500ms); never delays state or focus.
  * @cssprop --en-ease-enter - Native surface entry easing.
@@ -46,7 +51,7 @@ import { restoreFocus } from '../dialog/focus.js';
  * @csspart surface - Named native menu popover.
  * @csspart back - Native menu action returning from a replacement submenu.
  * @fires {import('../dialog/types.js').OverlayChangeEvent} en-change - Cancelable tentative boolean open state: {previous, proposed, reason}.
- * @fires en-action - Original item command intent bubbles through the menu; it is not re-emitted.
+ * @fires {import('../events.js').CommandActionEvent} en-action - Original item command intent bubbles through the menu; it is not re-emitted.
  */
 export class EnMenu extends FloatingSurface {
     static properties = { ...FloatingSurface.properties, label: { type: String, useDefault: true }, backLabel: { type: String, attribute: 'back-label', useDefault: true } };
@@ -71,7 +76,8 @@ export class EnMenu extends FloatingSurface {
     needsFocus = false;
     entryFocus = null;
     layoutVetoRevision;
-    observedRegistries = new WeakSet();
+    upgrades = new ChildUpgrades(this, () => { this.readChildren(); this.syncTriggerAttributes(); });
+    triggerUpgrades = new ChildUpgrades(this, () => this.syncTriggerAttributes());
     roving = new RovingFocusController(this, {
         items: () => this.focusItems,
         orientation: 'vertical',
@@ -88,7 +94,7 @@ export class EnMenu extends FloatingSurface {
         closeForTab: event => this.closeForTab(event),
     });
     placementController = new MenuPositionController(this, {
-        anchor: () => this.replacementMode && this.parentMenu ? this.parentMenu.surface : this.trigger, popup: () => this.surface, open: () => this.presentedOpen,
+        anchor: () => this.replacementMode && this.parentMenu ? this.parentMenu.surface : this.positionAnchor, popup: () => this.surface, open: () => this.presentedOpen,
         submenu: () => this.parentMenu !== null,
         adaptPresentation: (width, gap) => this.adaptPresentation(width, gap),
         replacement: () => this.replacementMode && this.parentMenu !== null,
@@ -152,14 +158,16 @@ export class EnMenu extends FloatingSurface {
     /** Submenus remain siblings of their trigger inside the parent menu's slot. */
     get parentMenu() {
         const parent = this.parentElement;
-        return parent?.localName === 'en-menu' && 'show' in parent && this.trigger?.parentElement === parent ? parent : null;
+        return (parent?.localName === 'en-menu' || parent?.localName === 'en-context-menu') && 'show' in parent && this.trigger?.parentElement === parent ? parent : null;
     }
     get childMenus() {
         return [...(this.children ?? [])].filter((child) => child.localName === 'en-menu' && 'hide' in child);
     }
+    /** Specialized invocation may position at a point while retaining the real trigger. */
+    get positionAnchor() { return this.trigger; }
     acceptsTrigger(element) {
         return super.acceptsTrigger(element) || (element.localName === 'en-menu-item'
-            && element.parentElement === this.parentElement && this.parentElement?.localName === 'en-menu');
+            && element.parentElement === this.parentElement && (this.parentElement?.localName === 'en-menu' || this.parentElement?.localName === 'en-context-menu'));
     }
     requestOpen(proposed, reason) {
         if (proposed && !this.open)
@@ -190,7 +198,7 @@ export class EnMenu extends FloatingSurface {
     submenuKeyDown = (event) => {
         if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || !this.open)
             return;
-        if (event.composedPath().find(node => node.localName === 'en-menu') !== this)
+        if (event.composedPath().find(node => ['en-menu', 'en-context-menu'].includes(node.localName)) !== this)
             return;
         const reverse = this.ownerDocument.defaultView?.getComputedStyle(this).direction === 'rtl' ? 'ArrowRight' : 'ArrowLeft';
         if (this.parentMenu && event.key === reverse) {
@@ -202,6 +210,7 @@ export class EnMenu extends FloatingSurface {
     get managesOwnPosition() { return true; }
     get triggerAttributes() { return triggerIsItem(this.trigger) ? {} : { 'aria-haspopup': 'menu', 'aria-expanded': String(this.open) }; }
     syncTriggerAttributes() {
+        this.triggerUpgrades.watch(this.trigger ? [this.trigger] : []);
         if (!triggerIsItem(this.trigger)) {
             super.syncTriggerAttributes();
             return;
@@ -212,8 +221,6 @@ export class EnMenu extends FloatingSurface {
         // A selective registration bundle can define menus before menu items.
         // Do not create expando properties or assume a reactive update promise.
         if (!('updateComplete' in item)) {
-            void elementRegistry(item)?.whenDefined('en-menu-item').then(() => { if (this.isConnected && this.trigger === item)
-                this.syncTriggerAttributes(); });
             return;
         }
         // Hydrate the exact SSR branch before adding a client-bound submenu indicator.
@@ -423,16 +430,7 @@ export class EnMenu extends FloatingSurface {
     }
     readChildren = () => {
         const slot = this.renderRoot?.querySelector('slot:not([name])');
-        for (const item of slot?.assignedElements() ?? []) {
-            if (item.localName !== 'en-menu-item' || 'action' in item)
-                continue;
-            const registry = elementRegistry(item);
-            if (!registry || this.observedRegistries.has(registry))
-                continue;
-            this.observedRegistries.add(registry);
-            void registry.whenDefined('en-menu-item').then(() => { if (this.isConnected)
-                this.readChildren(); });
-        }
+        this.upgrades.watch(slot?.assignedElements() ?? []);
         const next = (slot?.assignedElements() ?? []).filter((item) => item.localName === 'en-menu-item' && 'action' in item);
         for (const [item, release] of this.releases)
             if (!next.includes(item)) {
@@ -508,7 +506,7 @@ export class EnMenu extends FloatingSurface {
     }
     back = () => { this.hide('back'); };
     pointerDown = (event) => {
-        if (event.composedPath().find(node => node.localName === 'en-menu') !== this)
+        if (event.composedPath().find(node => ['en-menu', 'en-context-menu'].includes(node.localName)) !== this)
             return;
         this.lastPointerType = event.pointerType;
     };
@@ -541,20 +539,20 @@ export class EnMenu extends FloatingSurface {
     }
     pointerOut = (event) => {
         const next = event.relatedTarget;
-        if (!(next instanceof Node) || !this.contains(next))
+        if (!(isDOMNode(next)) || !this.contains(next))
             this.clearHover();
     };
     pointerOver = (event) => {
         if (event.pointerType !== 'mouse' || !this.open || !this.shown)
             return;
-        if (event.composedPath().find(node => node.localName === 'en-menu') !== this) {
+        if (event.composedPath().find(node => ['en-menu', 'en-context-menu'].includes(node.localName)) !== this) {
             this.clearHover();
             return;
         }
         const item = event.composedPath().find(node => this.items.includes(node));
         if (!item)
             return;
-        if (event.relatedTarget instanceof Node && (item === event.relatedTarget || item.contains(event.relatedTarget)))
+        if (isDOMNode(event.relatedTarget) && (item === event.relatedTarget || item.contains(event.relatedTarget)))
             return;
         this.pointerPoint = { x: event.clientX, y: event.clientY };
         const branch = this.childMenus.find(menu => menu.open);

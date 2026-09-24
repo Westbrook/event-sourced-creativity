@@ -1,9 +1,9 @@
+import { ChildUpgrades } from '../internal/child-upgrades.js';
 import { EnElement } from '../internal/en-element.js';
 import { foundationStyles } from '../../styles/foundations.js';
 import { toolbarStyles } from '../../styles/commands.js';
 import { RovingFocusController } from '../../primitives/interactions/roving-focus.js';
 import { claimFocusParticipant } from '../internal/focus-participant.js';
-import { elementRegistry } from '../internal/element-registry.js';
 import { toolbarTemplate } from './template.js';
 /**
  * A named action group with roving button navigation or ordinary mixed-control Tab order.
@@ -23,7 +23,7 @@ export class EnToolbar extends EnElement {
     nativeNavigation = false;
     observer;
     roving;
-    observedRegistries = new WeakSet();
+    upgrades = new ChildUpgrades(this, () => this.refresh());
     initialized = false;
     constructor() {
         super();
@@ -53,7 +53,7 @@ export class EnToolbar extends EnElement {
             if (child.getAttribute('slot'))
                 return false;
             // Supported direct buttons own their encapsulated label/icon content.
-            if (child.localName === 'button' || child.localName === 'en-button')
+            if (child.localName === 'button' || ['en-button', 'en-toggle-button'].includes(child.localName))
                 return false;
             // Unknown custom children may own a private interactive tree. Never assume
             // they are decorative or reach through that tree to take its tab stops.
@@ -73,9 +73,9 @@ export class EnToolbar extends EnElement {
         // Establish the initial composite only once its authored custom controls
         // can participate, otherwise an intervening native button would become the
         // remembered entry before an earlier custom button finishes upgrading.
-        if (!this.initialized && Array.from(this.children).some(child => !child.getAttribute('slot') && child.localName === 'en-button' && !('updateComplete' in child)))
+        if (!this.initialized && Array.from(this.children).some(child => !child.getAttribute('slot') && ['en-button', 'en-toggle-button'].includes(child.localName) && !('updateComplete' in child)))
             return [];
-        const items = Array.from(this.children).filter((child) => !child.getAttribute('slot') && (child.localName === 'button' || child.localName === 'en-button' && 'updateComplete' in child));
+        const items = Array.from(this.children).filter((child) => !child.getAttribute('slot') && (child.localName === 'button' || ['en-button', 'en-toggle-button'].includes(child.localName) && 'updateComplete' in child));
         if (items.length)
             this.initialized = true;
         return items;
@@ -93,25 +93,7 @@ export class EnToolbar extends EnElement {
         this.refresh();
     }
     observeButtonUpgrade() {
-        // This runs after child mutations as well as initial connection. Registering
-        // the toolbar never registers its consumer's controls as a side effect.
-        for (const item of this.children) {
-            if (item.localName !== 'en-button' || 'updateComplete' in item)
-                continue;
-            const registry = elementRegistry(item);
-            // Null denotes an uninitialized scoped tree. Never resolve it against an
-            // unrelated document registry, or repeatedly wait on an already resolved name.
-            if (!registry || this.observedRegistries.has(registry))
-                continue;
-            this.observedRegistries.add(registry);
-            void registry.whenDefined('en-button').then(() => {
-                if (this.isConnected) {
-                    // Undefined custom controls were never claimed as native host stops.
-                    // Retain existing leases, including any already yielded to the author.
-                    this.refresh();
-                }
-            });
-        }
+        this.upgrades.watch(Array.from(this.children).filter(item => ['en-button', 'en-toggle-button'].includes(item.localName)));
     }
     disconnectedCallback() {
         this.observer?.disconnect();

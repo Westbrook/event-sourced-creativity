@@ -1,3 +1,4 @@
+import { insetButtonStyles } from './internal/inset-action.js';
 import { css } from 'lit';
 import { sizedStyles } from './internal/sizing.js';
 import { buttonAppearanceStyles, buttonFocusStyles, buttonForcedHoverStyles } from './internal/button-rules.js';
@@ -22,4 +23,5 @@ export const buttonStyles = sizedStyles(css `
     ${controlForcedDisabledStyles(css `:is(.en-button):is(:disabled, [aria-disabled='true'])`)}
     ${buttonForcedHoverStyles}
   }
+  ${insetButtonStyles}
 `);

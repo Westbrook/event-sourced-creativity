@@ -1,3 +1,4 @@
+import { arrowExtent, positionOverlayArrow } from '../internal/overlay-arrow.js';
 import { admitOverlayClick, eligibleOverlayTrigger } from '../internal/overlay-trigger.js';
 import { setNativeSurfaceOpen } from '../internal/native-surface.js';
 import { EnElement } from '../internal/en-element.js';
@@ -164,6 +165,10 @@ export class FloatingSurface extends EnElement {
         this.observeTrigger();
         this.syncTriggerAttributes();
         this.syncPopover();
+        if (_changes.has('arrow') && this.open) {
+            this.position();
+            this.startListening();
+        }
     }
     triggerClick = (event) => {
         if (!admitOverlayClick(event, eligibleOverlayTrigger(this, this.for, this.trigger)))
@@ -324,7 +329,7 @@ export class FloatingSurface extends EnElement {
         const height = this.ownerDocument.documentElement.clientHeight;
         const bounds = surface.getBoundingClientRect();
         // Gap follows the inherited spacing token; geometry is not a fixed visual scale.
-        const gap = parseFloat(view.getComputedStyle(surface).rowGap) || 0;
+        const gap = (parseFloat(view.getComputedStyle(surface).rowGap) || 0) + arrowExtent(surface);
         const rtl = view.getComputedStyle(this).direction === 'rtl';
         const preferredLeft = rtl ? anchor.right - bounds.width : anchor.left;
         const left = Math.max(gap, Math.min(preferredLeft, width - bounds.width - gap));
@@ -334,6 +339,7 @@ export class FloatingSurface extends EnElement {
         surface.style.top = `${top}px`;
         surface.style.right = 'auto';
         surface.style.bottom = 'auto';
+        positionOverlayArrow(surface, trigger);
     };
     #schedulePosition = () => {
         const view = this.ownerDocument.defaultView;
@@ -379,8 +385,12 @@ export class FloatingSurface extends EnElement {
             const ResizeObserverConstructor = this.ownerDocument.defaultView?.ResizeObserver;
             if (ResizeObserverConstructor) {
                 this.#resizeObserver = new ResizeObserverConstructor(this.#schedulePosition);
-                if (this.surface)
+                if (this.surface) {
                     this.#resizeObserver.observe(this.surface);
+                    const arrow = this.surface.querySelector('.en-overlay-arrow');
+                    if (arrow)
+                        this.#resizeObserver.observe(arrow);
+                }
                 if (this.trigger)
                     this.#resizeObserver.observe(this.trigger);
             }

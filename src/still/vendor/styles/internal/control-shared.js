@@ -1,3 +1,4 @@
+import { controlTargetSize } from './target-size.js';
 import { css } from 'lit';
 import { token as t, override as o } from './values.js';
 import { textControlBlockSize } from './control-size.js';
@@ -9,7 +10,7 @@ export function controlSurfaceStyles(selector) {
     return css `${selector} {
     box-sizing: border-box;
     min-inline-size: 0;
-    min-block-size: max(${o('--en-control-min-size', t('--en-size-control-min'))}, ${t('--en-size-target-min')});
+    min-block-size: ${controlTargetSize()};
     max-inline-size: 100%;
     padding-block: ${t('--en-space-control-block')};
     padding-inline: ${o('--en-control-inline-padding', t('--en-space-control-inline'))};
@@ -33,10 +34,10 @@ export function controlDisabledStyles(selector) {
   }`;
 }
 export function controlTouchBlockStyles(selector) {
-    return css `${selector} { min-block-size: max(${o('--en-control-min-size', t('--en-size-control-min'))}, ${t('--en-size-target-touch')}); }`;
+    return css `${selector} { min-block-size: ${controlTargetSize(true)}; }`;
 }
 export function controlTouchInlineStyles(selector) {
-    return css `${selector} { min-inline-size: max(${o('--en-control-min-size', t('--en-size-control-min'))}, ${t('--en-size-target-touch')}); }`;
+    return css `${selector} { min-inline-size: ${controlTargetSize(true)}; }`;
 }
 export function controlReducedMotionStyles(selector) {
     return css `${selector} { transition: none; }`;

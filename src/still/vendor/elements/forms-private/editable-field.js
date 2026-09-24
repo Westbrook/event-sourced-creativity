@@ -22,6 +22,9 @@ export class EditableFieldElement extends FormFieldElement {
         this.autocomplete = '';
         this.inputMode = '';
     }
+    canCommitValue(value) {
+        return !this.readOnly && super.canCommitValue(value);
+    }
     reconcile() { this.editing?.sync(); }
     /** Select editable text using native selection behavior where the input type supports it. */
     select() { this.controlNode?.select(); }

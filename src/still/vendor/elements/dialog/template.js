@@ -4,6 +4,7 @@ import { html, nothing } from 'lit';
 export function dialogTemplate(view) {
     return html `
     <dialog class=${view.surfaceClass} part=${view.surfacePart ?? "surface"} data-placement=${view.placement}
+      role=${view.kind ?? 'dialog'} aria-describedby="en-overlay-description"
       aria-labelledby="en-overlay-heading" closedby=${view.closedBy}
       inert @beforetoggle=${nativeSurfaceBeforeToggle} @cancel=${view.cancel} @close=${view.close}
       @pointerdown=${view.pointerDown} @pointerup=${view.pointerUp}
@@ -18,6 +19,7 @@ export function dialogTemplate(view) {
           </en-button>
         ` : null}
       </div>
+      <div id="en-overlay-description" class="en-overlay-description" part="description"><slot name="description"><span class="en-overlay-description-fallback">${view.description || nothing}</span></slot></div>
       <div class="en-overlay-body" part="body">${view.body ?? html `<slot></slot>`}</div>
       ${view.footer === nothing ? nothing : html `<div class="en-overlay-footer" part="footer">${view.footer ?? html `<slot name="footer"></slot>`}</div>`}
     </dialog>`;

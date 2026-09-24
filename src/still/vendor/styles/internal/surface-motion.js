@@ -1,7 +1,7 @@
 import { css } from 'lit';
 import { token as t } from './values.js';
-const enter = css `clamp(0ms, ${t('--en-duration-enter')}, 500ms)`;
-const exit = css `clamp(0ms, ${t('--en-duration-exit')}, 500ms)`;
+const enter = css `clamp(0ms, var(--en-dialog-enter-duration, ${t('--en-duration-enter')}), 500ms)`;
+const exit = css `clamp(0ms, var(--en-dialog-exit-duration, ${t('--en-duration-exit')}), 500ms)`;
 const offset = css `clamp(0px, ${t('--en-motion-surface-offset')}, 8px)`;
 const scale = css `clamp(.95, ${t('--en-motion-surface-scale')}, 1)`;
 const phase = css `var(--_en-surface-duration, 0ms) var(--_en-surface-ease, linear)`;
@@ -11,7 +11,11 @@ export const surfaceTransitions = css `opacity var(--_en-surface-opacity-duratio
  * Only native display/overlay transitions retain exit paint. The adapter closes
  * and removes focus participation immediately. Anchored rectangles never move.
  */
-export function nativeSurfaceMotion(base, open, closed, entry, pseudoElement = css ``) {
+export function nativeSurfaceMotion(base, open, closed, entry, pseudoElement = css ``, family = 'popup') {
+    const enter = family === 'dialog' ? css `clamp(0ms, var(--en-dialog-enter-duration, ${t('--en-duration-enter')}), 500ms)` : css `clamp(0ms, var(--en-popup-enter-duration, ${t('--en-duration-enter')}), 500ms)`;
+    const exit = family === 'dialog' ? css `clamp(0ms, var(--en-dialog-exit-duration, ${t('--en-duration-exit')}), 500ms)` : css `clamp(0ms, var(--en-popup-exit-duration, ${t('--en-duration-exit')}), 500ms)`;
+    const enterEase = family === 'dialog' ? css `var(--en-dialog-enter-ease, ${t('--en-ease-enter')})` : css `var(--en-popup-enter-ease, ${t('--en-ease-enter')})`;
+    const exitEase = family === 'dialog' ? css `var(--en-dialog-exit-ease, ${t('--en-ease-exit')})` : css `var(--en-popup-exit-ease, ${t('--en-ease-exit')})`;
     // Pseudo-elements must sit outside :where(), including the native select picker.
     const restSelector = css `:where(${base})${pseudoElement}`;
     const openSelector = css `${open}${pseudoElement}`;
@@ -21,7 +25,7 @@ export function nativeSurfaceMotion(base, open, closed, entry, pseudoElement = c
       ${restSelector} {
         --_en-surface-duration: ${exit};
         --_en-surface-opacity-duration: ${exit};
-        --_en-surface-ease: ${t('--en-ease-exit')};
+        --_en-surface-ease: ${exitEase};
         opacity: 0;
         transition: ${surfaceTransitions};
       }
@@ -30,7 +34,7 @@ export function nativeSurfaceMotion(base, open, closed, entry, pseudoElement = c
         /* Modal and menu entry keep content opaque. Fade surfaces reverse
            from their current opacity when reopened during exit. */
         --_en-surface-opacity-duration: ${entry === 'fade' ? enter : css `0ms`};
-        --_en-surface-ease: ${t('--en-ease-enter')};
+        --_en-surface-ease: ${enterEase};
         opacity: 1;
       }
       ${closedSelector} { pointer-events: none; }
@@ -38,7 +42,7 @@ export function nativeSurfaceMotion(base, open, closed, entry, pseudoElement = c
         /* Opaque command content and its primary focus contour are immediate.
            Elevation adds entry paint without corrupting measured iPhone geometry. */
         @keyframes en-surface-elevation { from { box-shadow: none; } }
-        ${openSelector} { animation: en-surface-elevation ${enter} ${t('--en-ease-enter')}; }
+        ${openSelector} { animation: en-surface-elevation ${enter} ${enterEase}; }
       ` : css ``}
       @starting-style { ${openSelector} { opacity: ${entry === 'fade' ? 0 : 1}; } }
     }
@@ -52,7 +56,7 @@ export function nativeSurfaceMotion(base, open, closed, entry, pseudoElement = c
 }
 /** Palette styles provide an origin that keeps centering independent of this scale. */
 export const modalSurfaceMotion = css `
-  ${nativeSurfaceMotion(css `dialog:is(.en-dialog, .en-drawer)`, css `dialog:is(.en-dialog, .en-drawer)[open]`, css `dialog:is(.en-dialog, .en-drawer):not([open])`, 'move')}
+  ${nativeSurfaceMotion(css `dialog:is(.en-dialog, .en-drawer)`, css `dialog:is(.en-dialog, .en-drawer)[open]`, css `dialog:is(.en-dialog, .en-drawer):not([open])`, 'move', css ``, 'dialog')}
   @supports (transition-behavior: allow-discrete) and (overlay: auto) {
     dialog:is(.en-dialog, .en-drawer) {
       --_en-surface-x: 0px;
@@ -78,11 +82,11 @@ export const modalSurfaceMotion = css `
     }
     dialog:is(.en-dialog, .en-drawer)::backdrop {
       opacity: 0;
-      transition: opacity ${exit} ${t('--en-ease-exit')}, display ${exit} allow-discrete, overlay ${exit} allow-discrete;
+      transition: opacity ${exit} var(--en-dialog-exit-ease, ${t('--en-ease-exit')}), display ${exit} allow-discrete, overlay ${exit} allow-discrete;
     }
     dialog:is(.en-dialog, .en-drawer)[open]::backdrop {
       opacity: 1;
-      transition: opacity ${enter} ${t('--en-ease-enter')}, display ${enter} allow-discrete, overlay ${enter} allow-discrete;
+      transition: opacity ${enter} var(--en-dialog-enter-ease, ${t('--en-ease-enter')}), display ${enter} allow-discrete, overlay ${enter} allow-discrete;
     }
     dialog:is(.en-dialog, .en-drawer):not([open])::backdrop { pointer-events: none; }
     @starting-style { dialog:is(.en-dialog, .en-drawer)[open]::backdrop { opacity: 0; } }

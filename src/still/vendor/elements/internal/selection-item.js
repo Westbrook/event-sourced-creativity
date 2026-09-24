@@ -21,8 +21,8 @@ export class SelectionItemElement extends LitElement {
             : undefined;
         this.requestUpdate('value', previous, options);
     }
-    /** Exclude this choice from user selection. The parent retains value authority. */
     #disabled = false;
+    /** Exclude this choice from user selection. The parent retains value authority. @default false */
     get disabled() { return this.#disabled; }
     set disabled(value) {
         const previous = this.#disabled;
@@ -31,8 +31,8 @@ export class SelectionItemElement extends LitElement {
             this.toggleAttribute('disabled', this.#disabled);
         this.requestUpdate('disabled', previous);
     }
-    /** Plain label fallback when no label content is supplied. */
     #label = '';
+    /** Plain label fallback when no label content is supplied. @default '' */
     get label() { return this.#label; }
     set label(value) {
         const previous = this.#label;

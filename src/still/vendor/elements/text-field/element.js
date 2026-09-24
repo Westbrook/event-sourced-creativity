@@ -1,3 +1,4 @@
+import { adornedFieldStyles } from '../../styles/controls.js';
 import { html, nothing } from 'lit';
 import { EditableFieldElement } from '../forms-private/editable-field.js';
 /**
@@ -5,16 +6,23 @@ import { EditableFieldElement } from '../forms-private/editable-field.js';
  * Native drafts emit en-input; non-composing value changes dispatch the cancelable en-change event.
  * The label slot falls back to label. External labels are not forwarded into shadow DOM.
  * @tagname en-text-field
+ * @slot prefix - Leading decoration or independently named action; never part of the input label.
+ * @slot suffix - Trailing units or independently named action.
+ * @slot help-action - Adjacent independently named help button.
  * @slot label - Visible field label; falls back to label.
  * @slot description - Supporting text; falls back to the description attribute/property.
  * @csspart field - Field layout.
  * @csspart label - Visible label.
  * @csspart control - Native input.
  * @csspart focus-frame - Noninteractive field frame supporting the supplemental focus accent.
- * @csspart supporting-text - Alias of description for independent composite forwarding.
- * @csspart validation-message - Alias of error for independent composite forwarding.
  * @csspart description - Supporting text.
  * @csspart error - Validation feedback.
+ * @cssprop --en-input-border-color - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-border-width - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-hover-border-color - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-invalid-border-color - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-invalid-border-width - Optional theme presentation; see the customization registry for state, fallback and reachability.
+ * @cssprop --en-input-radius - Optional theme presentation; see the customization registry for state, fallback and reachability.
  * @cssprop --en-control-background - Control background.
  * @cssprop --en-input-background - Field fill falling back to the shared control background.
  * @cssprop --en-input-color - Field text falling back to the shared control color.
@@ -37,25 +45,31 @@ import { EditableFieldElement } from '../forms-private/editable-field.js';
  * @cssprop --en-duration-focus-exit - Exit duration for supplemental focus decoration.
  * @cssprop --en-ease-focus-enter - Entry easing for supplemental focus decoration.
  * @cssprop --en-ease-focus-exit - Exit easing for supplemental focus decoration.
- * @fires en-input - Current native editing draft and composition state.
- * @fires en-change - Cancelable accepted-value change; provisional value and form data are available during dispatch.
+ * @fires {import('../events.js').DraftInputEvent} en-input - Current native editing draft and composition state.
+ * @fires {import('../events.js').FieldChangeEvent} en-change - Cancelable accepted-value change; provisional value and form data are available during dispatch.
  */
 export class EnTextField extends EditableFieldElement {
-    descriptionPart = 'description supporting-text';
-    errorPart = 'error validation-message';
     static properties = {
         ...EditableFieldElement.properties,
+        adorned: { type: Boolean, reflect: true },
         type: { type: String },
         minLength: { type: Number, attribute: 'minlength' },
         maxLength: { type: Number, attribute: 'maxlength' },
         pattern: { type: String },
     };
+    static styles = [...EditableFieldElement.styles, adornedFieldStyles];
     constructor() {
         super();
         this.type = 'text';
+        this.adorned = false;
         this.minLength = undefined;
         this.maxLength = undefined;
         this.pattern = '';
+    }
+    renderControlFrame() {
+        if (!this.adorned)
+            return super.renderControlFrame();
+        return html `<div class="en-field-focus-frame en-adorned" part="focus-frame" ?data-invalid=${Boolean(this.visibleError)}><slot name="prefix"></slot>${this.renderControl()}<slot name="suffix"></slot><slot name="help-action"></slot></div>`;
     }
     renderControl() {
         const inputType = ['text', 'email', 'password', 'url', 'tel'].includes(this.type) ? this.type : 'text';

@@ -1,49 +1,70 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-const source = path.resolve(process.argv[2] || '../design-system');
+
+const [sourceArgument, revision, ...extra] = process.argv.slice(2);
+if (!sourceArgument || !/^[a-f0-9]{40}$/.test(revision ?? '') || extra.length) {
+  throw new Error('Use: node scripts/vendor-still-primitives.mjs <clean-built-design-system> <40-character-revision>. Partial refreshes are no longer supported.');
+}
+const source = path.resolve(sourceArgument);
 const target = path.resolve('src/still/vendor');
-const visited = new Set();
-const imports = /(?:from\s*|import\s*)(['"])([^'"\n]+)\1/g;
-const destination = file => path.join(target, path.relative(path.join(source, 'packages'), file).replace(/^([^/]+)\/dist\//, '$1/'));
+const modules = new Map();
+const imports = /(?:from\s*|import\s*\(?\s*)(['"])([^'"\n]+)\1/g;
+const relativePath = file => path.relative(path.join(source, 'packages'), file).replace(/^([^/]+)\/dist\//, '$1/');
 function visit(file) {
-  if (visited.has(file)) return;
-  visited.add(file);
-  let code = fs.readFileSync(file, 'utf8');
-  for (const match of code.matchAll(imports)) {
+  if (modules.has(file)) return;
+  const original = fs.readFileSync(file, 'utf8');
+  modules.set(file, { original });
+  for (const match of original.matchAll(imports)) {
     const spec = match[2], pkg = /^@en-reve\/([^/]+)\/(.+)$/.exec(spec);
-    const dep = spec.startsWith('.') ? path.resolve(path.dirname(file), spec) : pkg ? path.join(source, 'packages', pkg[1], 'dist', pkg[2]) : null;
-    if (dep) visit(dep);
+    const dependency = spec.startsWith('.') ? path.resolve(path.dirname(file), spec)
+      : pkg ? path.join(source, 'packages', pkg[1], 'dist', pkg[2]) : null;
+    if (dependency) visit(dependency);
   }
-  code = code.replace(/(['"])@en-reve\/([^/'"]+)\/([^'"]+)\1/g, (_, quote, pkg, subpath) => {
-    let relative = path.relative(path.dirname(destination(file)), path.join(target, pkg, subpath));
+  const code = original.replace(/(['"])@en-reve\/([^/'"]+)\/([^'"]+)\1/g, (_, quote, pkg, subpath) => {
+    let relative = path.relative(path.dirname(relativePath(file)), path.join(pkg, subpath));
     if (!relative.startsWith('.')) relative = './' + relative;
     return quote + relative + quote;
   }).replace(/^\/\/# sourceMappingURL=.*$/gm, '');
-  fs.mkdirSync(path.dirname(destination(file)), { recursive: true });
-  fs.writeFileSync(destination(file), code);
-  if(file.endsWith('.js')){const types=file.replace(/\.js$/,'.d.ts');if(fs.existsSync(types))visit(types);}
+  modules.set(file, { original, code });
+  if (file.endsWith('.js')) {
+    const types = file.replace(/\.js$/, '.d.ts');
+    if (fs.existsSync(types)) visit(types);
+  }
 }
-const virtualOnly=process.argv.includes('--virtual-only');
-for (const name of virtualOnly ? [] : ['button', 'toolbar', 'textarea', 'drawer', 'badge', 'select', 'checkbox', 'search-input', 'number-field', 'text-field', 'tooltip', 'switch', 'menu', 'menu-item', 'toast', 'toast-region', 'skeleton']) visit(path.join(source, `packages/elements/dist/define/${name}.js`));
-for(const layer of ['state','interactions','templates']) visit(path.join(source, `packages/primitives/dist/${layer}/virtual-collection.js`));
-if(virtualOnly){
- fs.writeFileSync(path.join(target,'virtual-collection-provenance.json'),JSON.stringify({source:'design-system',modules:[...visited].map(f=>path.relative(source,f)),builtClosureSha256:createHash('sha256').update([...visited].sort().map(f=>fs.readFileSync(f,'utf8')).join('')).digest('hex')},null,2)+'\n');
- console.log(`Copied ${visited.size} virtual collection modules.`);
- process.exit(0);
+for (const name of ['button', 'toolbar', 'textarea', 'drawer', 'dialog', 'icon', 'badge', 'select', 'checkbox', 'search-input', 'number-field', 'text-field', 'tooltip', 'switch', 'menu', 'menu-item', 'toast', 'toast-region', 'skeleton', 'rich-text-editor']) {
+  visit(path.join(source, `packages/elements/dist/define/${name}.js`));
+}
+for (const name of ['rich-document', 'editor-command-matcher']) visit(path.join(source, `packages/elements/dist/${name}.js`));
+for (const layer of ['state', 'interactions', 'templates']) visit(path.join(source, `packages/primitives/dist/${layer}/virtual-collection.js`));
+
+// Resolve the entire closure before writing. Every implementation comes from the source build;
+// the only transformations are package-relative imports and removal of source-map comments.
+const tokenCSS = fs.readFileSync(path.join(source, 'packages/tokens/dist/default.css'));
+const license = fs.readFileSync(path.join(source, 'LICENSE'));
+const sourceHash = createHash('sha256'), outputHash = createHash('sha256');
+for (const [file, { original, code }] of [...modules].sort(([a], [b]) => a.localeCompare(b))) {
+  const relative = relativePath(file), destination = path.join(target, relative);
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  fs.writeFileSync(destination, code);
+  sourceHash.update(path.relative(source, file)).update(original);
+  outputHash.update(relative).update(code);
 }
 fs.mkdirSync(path.join(target, 'tokens'), { recursive: true });
-fs.copyFileSync(path.join(source, 'packages/tokens/dist/default.css'), path.join(target, 'tokens/default.css'));
-fs.copyFileSync(path.join(source, 'LICENSE'), path.join(target, 'LICENSE'));
-fs.writeFileSync(path.join(target, 'README.md'), '# Design-system primitives\n\nSelective built module closure from the sibling `/design-system` repository. MIT license included. Regenerate using `node scripts/vendor-still-primitives.mjs ../design-system`. Internal imports are made relative; runtime dependencies remain the existing Lit and Signal packages. No Forma UI dependencies.\n');
-const sourceHash = createHash('sha256');
-for (const file of [...visited].sort()) sourceHash.update(path.relative(source, file)).update(fs.readFileSync(file));
-sourceHash.update(fs.readFileSync(path.join(source, 'packages/tokens/dist/default.css')));
+fs.writeFileSync(path.join(target, 'tokens/default.css'), tokenCSS);
+fs.writeFileSync(path.join(target, 'LICENSE'), license);
+sourceHash.update(tokenCSS);
+outputHash.update('tokens/default.css').update(tokenCSS);
+fs.writeFileSync(path.join(target, 'README.md'), '# En Reve components for Still\n\nUnpatched built module closure from design-system main. Exact source revision, module inventory and build/output hashes are recorded in provenance.json. Build tokens, styles, primitives and elements in an isolated checkout of that revision, then run `node scripts/vendor-still-primitives.mjs <built-checkout> <revision>` from the Still repository. Do not use a dirty checkout’s dist as evidence of main.\n\nAll editor, clipboard, command, portable-document and document-scrolling capabilities now come from upstream. No preserved extension files or implementation patches are applied. Partial refresh modes are retired to avoid mixing library versions. Only internal package imports and source-map comments are transformed.\n\nRuntime dependencies include Lit, Signals, Lit Context and ProseMirror. MIT license included. Customize through Still’s theme and public APIs; application reference/authorization policy belongs in Still.\n');
 fs.writeFileSync(path.join(target, 'provenance.json'), JSON.stringify({
   source: 'design-system',
   version: JSON.parse(fs.readFileSync(path.join(source, 'packages/elements/package.json'), 'utf8')).version,
-  revision: process.argv[3] || null,
+  revision,
   builtClosureSha256: sourceHash.digest('hex'),
-  modules: visited.size,
+  outputClosureSha256: outputHash.digest('hex'),
+  preservedExtensions: [],
+  extensionAdoptions: [],
+  modules: modules.size,
+  modulePaths: [...modules.keys()].map(relativePath).sort(),
 }, null, 2) + '\n');
-console.log(`Copied ${visited.size} primitive modules and token CSS.`);
+console.log(`Copied ${modules.size} upstream modules and token CSS; no local library patches.`);

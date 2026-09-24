@@ -30,8 +30,8 @@ import { EditableFieldElement } from '../forms-private/editable-field.js';
  * @cssprop --en-duration-focus-exit - Exit duration for supplemental focus decoration.
  * @cssprop --en-ease-focus-enter - Entry easing for supplemental focus decoration.
  * @cssprop --en-ease-focus-exit - Exit easing for supplemental focus decoration.
- * @fires en-input - Current native editing draft and composition state.
- * @fires en-change - Cancelable accepted-value change; provisional value and form data are available during dispatch.
+ * @fires {import('../events.js').DraftInputEvent} en-input - Current native editing draft and composition state.
+ * @fires {import('../events.js').FieldChangeEvent} en-change - Cancelable accepted-value change; provisional value and form data are available during dispatch.
  */
 export class EnSearchInput extends EditableFieldElement {
     renderControl() {

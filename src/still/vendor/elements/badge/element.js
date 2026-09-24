@@ -10,7 +10,7 @@ import { badgeTemplate } from './template.js';
  * @cssprop --en-badge-radius - Badge corner radius.
  * @slot - Default status text, used when no named label is supplied.
  * @slot label - The status text.
- * @slot prefix - Optional decorative indicator.
+ * @slot prefix - Optional indicator. Content is exposed to assistive technology; authors must hide decorative content with aria-hidden="true" and supply alternatives for meaningful images.
  * @csspart base - The badge surface.
  * @csspart label - The status label container.
  */
