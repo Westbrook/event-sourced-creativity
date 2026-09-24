@@ -24,10 +24,10 @@ async function patchEnvelope(f,r,phase,change,{rehash=true}={}){
  if(rehash){const digest=await hash(raw);patchReadiness(f,r,v=>{v.advisoryCapture.refs[id].sha256=digest;});}
 }
 for(const runtime of ['source','production bundle']){
- for(const variant of ['cardinality','invalid','json','unknown-identity','unknown-scores'])test(`${runtime}: N6 preserves ${variant} as invalid or unknown`,async t=>{
+ for(const variant of ['cardinality','invalid','json','duplicate','unknown-identity','unknown-scores'])test(`${runtime}: N6 preserves ${variant} as invalid or unknown`,async t=>{
   const f=await fixture(t,runtime),{readiness}=await preflight(f,'original',variant),response=await f.inspect(selector(readiness)),body=await response.json();
   assert.equal(response.status,200,JSON.stringify(body));
-  if(['cardinality','invalid','json'].includes(variant)){assert.equal(body.validity,'invalid');assert.ok(body.inputs.every(i=>i.flagged===null&&i.categories===null&&i.scores===null));}
+  if(['cardinality','invalid','json','duplicate'].includes(variant)){assert.equal(body.validity,'invalid');assert.ok(body.inputs.every(i=>i.flagged===null&&i.categories===null&&i.scores===null));}
   if(variant==='unknown-identity')assert.deepEqual(body.identity,{requestedModel:'omni-moderation-latest',returnedModel:null,requestId:null,responseId:null});
   if(variant==='unknown-scores')assert.ok(body.inputs.every(i=>i.scores===null));
  });
@@ -126,3 +126,8 @@ for(const runtime of ['source','production bundle']){
   assert.equal((await f.inspect(selector(r))).status,409);
  });
 }
+
+for(const runtime of ['source','production bundle'])test(`${runtime}: N6 oversized provider body stays unavailable`,async t=>{
+ const f=await fixture(t,runtime),{readiness:r,calls}=await preflight(f,'original','oversized');
+ assert.equal(calls.length,1);const response=await f.inspect(selector(r)),body=await response.json();assert.equal(response.status,409);assert.equal(body.rawAvailable,false);assert.equal(body.raw,undefined);
+});

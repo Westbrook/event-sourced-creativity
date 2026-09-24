@@ -68,6 +68,8 @@ export async function preflight(f,requestKey='original',variant='valid',inputPat
   if(variant==='cardinality')results.pop();
   if(variant==='invalid')results[0].categories.violence='unknown';
   const identity=variant==='unknown-identity'?{}:{id:'synthetic-response',model:'synthetic-returned-model'};
+  if(variant==='duplicate')return new Response('{"model":"ambiguous-a","model":"ambiguous-b","results":'+JSON.stringify(results)+'}',{status:200});
+  if(variant==='oversized')return new Response(' '.repeat(65537),{status:200});
   return variant==='json'?new Response('{not json',{status:200}):Response.json({...identity,results},{headers:variant==='unknown-identity'?{}:{'x-request-id':'synthetic-request'}});
  };
  try{

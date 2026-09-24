@@ -110,7 +110,10 @@ export async function handleSourceAdvisoryRead(request:Request,env:WorkerEnv):Pr
   try{if(memoryDerivationJsonUniqueKeys(responseBody))body=object(JSON.parse(responseBody));}catch{/* Raw invalid response remains an explicitly unknown result. */}
   const valid=validModerationResults(body,witness!.manifest.length);
   const knownIdentity=(value:unknown)=>typeof value==='string'?value:null;
-  if(knownIdentity(body?.model)!==knownIdentity(b.returnedModel)||knownIdentity(body?.id)!==knownIdentity(b.responseId))fail('returned_identity_mismatch');
+  // Ambiguous/malformed JSON has no reliable returned body identity. Retain its
+  // exact bytes but keep all inferred fields unknown. A uniquely parsed body must
+  // still match the original observed envelope identity.
+  if(body&&(knownIdentity(body.model)!==knownIdentity(b.returnedModel)||knownIdentity(body.id)!==knownIdentity(b.responseId)))fail('returned_identity_mismatch');
   const results=valid?(body!.results as Array<Record<string,unknown>>):null;
   const value={schemaVersion:'source-advisory-inspection-v1',status:'available',documentId,preflightId,originPreflightId:origin.preflightId,adopted:preflightId!==origin.preflightId,
     expiresAt:new Date(Math.min(...deadlines)).toISOString(),identity:{requestedModel:parsedRequest.model,returnedModel:knownIdentity(body?.model),requestId:knownIdentity(b.requestId),responseId:knownIdentity(body?.id)},
