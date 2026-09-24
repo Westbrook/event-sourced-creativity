@@ -40,3 +40,9 @@ Next concrete decision: approve a hosting-supported private Fetcher-binding path
 ## Evidence interpretation
 
 See `still-unified-creation-completion-2026-09-24.md` for finding-to-fix mapping and `still-unified-creation-verification-2026-09-23.md` for the accumulated ledger. Durable final logs are under `docs/evidence/still-creation-completion-2026-09-24`. Browser tests execute real UI/controller/Worker against disposable SQLite with providers unset; corpus/provider tests inject inference and vector transport. Neither is a live-model claim. Only the scoped checks described in the ledger were run, not the entire repository test suite.
+
+## Archive qualification incident
+
+The generic Sites packaging helper recopies the source `drizzle` tree over the build's held migration set. Archive inspection caught this before deployment: saved v547 (`4c1dcc58`) contains unqualified candidates and **must never be deployed**. Saving another archive for that same source SHA returns the original immutable saved version, so release requires a new source commit and a newly saved version.
+
+Use the repository's existing `scripts/package-disabled-memory-release.mjs` after restoring `dist/.openai/drizzle` with `copyReleaseMigrations`. Keep that verified archive separate from the generic helper's archive. Before native save, inspect the tar itself: exactly 41 SQL files plus the exact policy journal, every policy hash matching, zero candidate files, and Worker bytes matching the tested build. Save the separately verified archive; reject any native archive receipt whose digest differs. This does not change source candidate migrations or authorize their production application.
