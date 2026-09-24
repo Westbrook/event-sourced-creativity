@@ -1,3 +1,5 @@
+> September 24: the default delivery path now uses bounded authenticated HTTP providers in the existing Sites Worker. Private Fetcher examples below describe the retained compatibility adapter only. Pinned native representation, D1 enrollment, custody limits, immutable R2 shards and operational gates are documented in [the semantic index implementation](still-semantic-index-2026-09-24.md). No second Worker or native AI/vector binding is mandatory.
+
 # Still creation provider and search adapter contract
 
 Implementation: v19. The creation rollout remains off by default. These bindings are deployment configuration contracts, not proof of provider qualification. This implementation task did not provision or call paid providers.

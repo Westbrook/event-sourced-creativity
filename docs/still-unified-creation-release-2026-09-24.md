@@ -1,3 +1,5 @@
+> September 24 semantic-index continuation: mandatory private Fetcher/Workers AI/Vectorize requirements below are superseded by the same-Worker HTTP/D1/private-R2 implementation. See [semantic implementation and gates](still-semantic-index-2026-09-24.md) and [operations](still-semantic-index-operations-2026-09-24.md). All other qualification, migration, archive, rollback and activation gates remain open as recorded.
+
 # Still unified creation — disabled release candidate
 
 This is an implementation and qualification package, **not activation approval or release readiness**. Production unified creation remains disabled. No provider provisioning, paid inference, production migration application, automatic generation or Memory feature work is included.
