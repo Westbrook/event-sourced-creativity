@@ -60,3 +60,20 @@ test('rehome invalidates both former and destination Projects before any backgro
  assert.equal(sources.find(s=>s.project_id===f.projectId).tombstone,1);assert.equal(sources.find(s=>s.project_id==='second').tombstone,0);
  assert.equal(JSON.parse(sources.find(s=>s.project_id==='second').content).projectId,'second');
 });
+
+test('canonical duplicate identity in another Project releases the previous indexed identity immediately',async t=>{
+ const f=await fixture(t),before=versions(f);
+ await appendAuditEvent(f.env,f.streamId,'user','BlockCreated',{project_id:'second',block_id:'scene-reuse-direction',scope:'library',type:'text',properties:{text:'Replacement canonical identity in the second Project.'}});
+ assert.ok(changed(f,before).includes(f.projectId),'previous indexed Project must invalidate when its identity is recreated elsewhere');
+ assert.equal(f.sqlite.prepare("SELECT tombstone FROM creation_search_records r JOIN creation_search_partitions p ON p.partition_key=r.partition_key WHERE p.project_id=? AND r.source_id='scene-reuse-direction'").get(f.projectId).tombstone,1);
+ await f.ready();
+ assert.equal(f.sqlite.prepare("SELECT r.tombstone FROM creation_search_records r JOIN creation_search_partitions p ON p.partition_key=r.partition_key WHERE p.project_id=? AND r.source_id='scene-reuse-direction'").get(f.projectId).tombstone,1);
+ const now=f.sqlite.prepare("SELECT c.content FROM creation_search_records r JOIN creation_search_partitions p ON p.partition_key=r.partition_key JOIN private_content c ON c.content_id=r.content_id WHERE p.project_id='second' AND r.source_id='scene-reuse-direction'").get();assert.equal(JSON.parse(now.content).text,'Replacement canonical identity in the second Project.');
+});
+
+test('nontext legacy recreation cannot leave a completed former Project identity eligible',async t=>{
+ const f=await fixture(t);await appendAuditEvent(f.env,f.streamId,'user','BlockCreated',{project_id:f.projectId,block_id:true,scope:'library',type:'text',properties:{text:'Legacy boolean identity body.'}});await f.ready();
+ const before=versions(f);await appendAuditEvent(f.env,f.streamId,'user','BlockCreated',{project_id:'second',block_id:true,scope:'library',type:'text',properties:{text:'Recreated elsewhere.'}});
+ assert.ok(changed(f,before).includes(f.projectId));assert.equal(f.sqlite.prepare("SELECT r.tombstone FROM creation_search_records r JOIN creation_search_partitions p ON p.partition_key=r.partition_key WHERE p.project_id=? AND r.source_id='true'").get(f.projectId).tombstone,1);
+ await f.ready();assert.equal(f.sqlite.prepare("SELECT r.tombstone FROM creation_search_records r JOIN creation_search_partitions p ON p.partition_key=r.partition_key WHERE p.project_id=? AND r.source_id='true'").get(f.projectId).tombstone,1);
+});
