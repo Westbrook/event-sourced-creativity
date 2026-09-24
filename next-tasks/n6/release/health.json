@@ -1,0 +1,30 @@
+{
+  "checkedAt": "2026-09-24T12:08:07.818705+00:00",
+  "checks": [
+    {
+      "path": "/assets/index-Tmhg5jm3.js",
+      "status": 200,
+      "sha256": "bac8ba703e7fe6fcae154168c96b7abd800a18f9fbfa8df9207b991d9037398c",
+      "cacheControl": "public, max-age=0, must-revalidate",
+      "matchesBuild": true
+    },
+    {
+      "path": "/assets/entry-DTb8IBzl.js",
+      "status": 200,
+      "sha256": "e9eee79c0f54ff983521a2b4811da4bd884b8e3b7114247590e9e640e018fdda",
+      "cacheControl": "public, max-age=0, must-revalidate",
+      "matchesBuild": true
+    },
+    {
+      "path": "/api/source-advisory",
+      "status": 400,
+      "sha256": "177f6412e69d42c7ddd5bf5ce4b952d8ff2d3e8cef399362024aca1044eab1a2",
+      "cacheControl": "private, no-store",
+      "result": {
+        "status": "unavailable",
+        "reason": "invalid_selection"
+      }
+    }
+  ],
+  "scope": "Two exact static assets and malformed selected GET only; no application initialization, valid private evidence read, provider or preflight operation."
+}

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "n6-release-verification-v1",
+  "sourceCommit": "dec2b13be54505095609cb1bf2abfef6f3fa0685",
+  "productionVersion": 545,
+  "status": "passed",
+  "checks": {
+    "n6SourceAndRebuiltWorker": 250,
+    "focusedRegressions": 89,
+    "syntheticBrowser": 3,
+    "total": 342
+  },
+  "build": "pass",
+  "typecheck": "pass",
+  "schema": "pass",
+  "customElementsManifest": "161 elements current",
+  "changedPathLint": "pass",
+  "baselineLint": {
+    "count": 4,
+    "file": "src/still/app.ts",
+    "rule": "no-empty",
+    "lines": [
+      241,
+      271,
+      354,
+      355
+    ],
+    "comparison": "Exact unchanged line bytes from Production544 main"
+  },
+  "migrationGate": 41,
+  "frozenBuildFiles": 622,
+  "workerSha256": "e9895290abfb756a00370c159c0a980c3df47bbc338e15b50fb1b183684caef6",
+  "packageSha256": "67e70e62f1918dd0c223a4a0cfea2902b1ee864823ec78e32b10e0a336609178",
+  "deployment": "succeeded",
+  "environmentRevision": 16,
+  "accessRevision": 7,
+  "workspaceEligibility": "unknown",
+  "providerOperations": 0,
+  "historicalEvidenceRecovered": false,
+  "privateLivePayloadsRead": 0,
+  "limitations": [
+    "Complete canonical workspace census <=128 dependencies and untruncated snapshot <28000 UTF-16 units.",
+    "Unsupported history anywhere in the workspace remains unavailable.",
+    "No classifier quality, historical N4 evidence or other-media qualification."
+  ],
+  "supersededRun": "One overlapping build/test run had 68 bundle failures from rebuilding dist during execution; excluded from release evidence. Final build frozen and all 250 qualification tests rerun serially and passed."
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "n6-production-release-v1",
+  "projectId": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "productionVersion": 545,
+  "versionId": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_16b4be093c6c819194d5aa2ab6d6dd7e",
+  "deploymentId": "appgdep_6ab5125e00508191bd8decf5e7a0ea60",
+  "status": "succeeded",
+  "deployedAt": "2026-09-24T12:07:17.262779+00:00",
+  "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+  "sourceCommit": "dec2b13be54505095609cb1bf2abfef6f3fa0685",
+  "previousProductionVersion": 544,
+  "previousMain": "d8255c6d37d5a59e5f0faaca963c4cd584cbcc9c",
+  "n5Dependency": "1091e3ef5dadc5854dcfa0382117180c9e73d2d5",
+  "archiveStorage": {
+    "archive_format": "tar",
+    "sediment_file_id": "file_0000000048248211a76abbdb4cb81b8e",
+    "content_hash": "sha256:8ef8fc1879d5614355fa41f412de8ec6ad95b9d40778f45b5e97071fd506165a",
+    "size_bytes": 44390400,
+    "file_count": 622
+  },
+  "envRevision": 16,
+  "accessMode": "workspace_all",
+  "accessRevision": 7,
+  "environmentUnchanged": true,
+  "allowedMigrations": 41,
+  "providerCalls": 0,
+  "livePreflights": 0,
+  "acknowledgements": 0,
+  "workspaceEligibility": "unknown",
+  "publicationAuthorizedBy": "User release continuation",
+  "workerIdentityEvidence": "Exact frozen Worker hash recorded locally and included in saved 622-file build archive tied to pushed source; native deployment succeeded. Runtime Worker bytes are not downloadable independently. Two production client assets match the build."
+}

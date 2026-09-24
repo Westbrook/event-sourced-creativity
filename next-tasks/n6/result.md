@@ -1,3 +1,5 @@
+> Current release: [Production 545, verified publication](release/result.md). The following is the preserved pre-release local implementation milestone.
+
 # N6 — prospective source-advisory inspector
 
 Implemented locally on published N5 main `1091e3ef5dadc5854dcfa0382117180c9e73d2d5`, preserving audit commit `4db8cca534b47ae11028e41d0696ae04cc16cd8d`. Direct authenticated fetch was repeated before handoff; remote main still matches and Sites reports Production 542. N5 release is complete and independent. No push or publication occurred.

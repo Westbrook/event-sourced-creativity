@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "n6-release-browser-v1",
+  "sourceCommit": "dec2b13be54505095609cb1bf2abfef6f3fa0685",
+  "driver": "Playwright Chromium",
+  "casesPassed": 3,
+  "viewports": [
+    1280,
+    390
+  ],
+  "checks": [
+    "Actual Still disclosure with original and adopted synthetic witness",
+    "Legacy unavailable metadata",
+    "Escaped inert raw markup",
+    "Requested/returned identity and positional unknowns",
+    "Selection clears inspection",
+    "Expiry clears raw disclosure",
+    "Explicit acknowledgement remains separate with exact original wire and job counters"
+  ],
+  "screenshots": [
+    {
+      "file": "adopted-390.png",
+      "sha256": "7a4ca553ddf508e88b232d33ade6c936ab2f34ad2a410d4831a1738e59eddfb5",
+      "syntheticOnly": true
+    },
+    {
+      "file": "adopted-1280.png",
+      "sha256": "0e69df8dc895f5d2c51dd28c081cb92fc6a4879de2ff3a060b65217ec110b44f",
+      "syntheticOnly": true
+    },
+    {
+      "file": "expired-390.png",
+      "sha256": "ecdb1393afd1eaceacfbf7c29efbd94c03f1ef99ba7d9fa0a2031b8077617136",
+      "syntheticOnly": true
+    },
+    {
+      "file": "expired-1280.png",
+      "sha256": "093d37eb2b8fecf142d5ee5cfa34a186303ed302094fe25e1f92143291e6fce4",
+      "syntheticOnly": true
+    }
+  ],
+  "liveProviderCalls": 0,
+  "classifierQualityCertified": false
+}
