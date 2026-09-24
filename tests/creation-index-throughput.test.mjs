@@ -1,0 +1,53 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {runThroughput} from '../scripts/still-index-throughput.mjs';
+
+test('canonical corpus reaches published coverage, records actual edits and physically erases withdrawn vectors and derived prose',async()=>{
+ const r=await runThroughput({ideas:10,projects:2,maxTicks:120,renewal:true});
+ assert.equal(r.initialIndexRows,0);
+ assert.equal(r.custodies,2);
+ assert.equal(r.backfillCoverage.published,r.expectedSources);
+ assert.ok(r.provider.calls>0);
+ assert.equal(r.attempts.count,r.provider.calls);
+ assert.equal(Object.values(r.phaseTotals).reduce((n,p)=>n+p.calls,0),r.provider.calls);
+ assert.equal(Object.values(r.phaseTotals).reduce((n,p)=>n+p.inputBytes,0),r.provider.inputBytes);
+ assert.equal(r.attempts.tokens,r.provider.tokens);
+ assert.ok(r.attempts.reserved>=r.provider.tokens);
+ assert.ok(r.provider.maxInputs<=32);
+ assert.ok(r.provider.maxPayloadBytes<=24000);
+ assert.ok(r.healthyEdit.visibleTick!==null,'post-backfill edit must reach publication');
+ assert.equal(r.healthyEdit.pass,true,'small healthy corpus edit stays within five minutes');
+ assert.ok(r.edit.visibleTick!==null,'canonical property_path/new_value edit must reach publication');
+ assert.ok(r.withdrawal.objects>0,'withdrawal must target actually written vectors');
+ assert.equal(r.withdrawal.pass,true);
+ assert.equal(r.withdrawal.privateBodyPass,true);
+ assert.equal(r.renewal.withdrawalImmediateDenied,true);
+ assert.equal(r.renewal.status,'completed');
+ assert.equal(r.renewal.withinActualRenewalWindow,true);
+ assert.equal(r.readiness.initialBackfillWithin24Hours,true);
+ assert.equal(r.failedWork.length,0);
+ assert.equal(r.shutdown.objectsRemaining,0);
+ assert.equal(r.shutdown.checkpointRows,0);
+ assert.equal(r.shutdown.privateBodiesRemaining,0);
+ assert.deepEqual(r.shutdown.metadataRows,{creation_index_block_routes:0,creation_index_replay_skeletons:0});
+ assert.equal(r.shutdown.providerCalls,0);
+ assert.match(r.qualification,/NOT hosted/);
+});
+test('a bounded run preserves incomplete coverage as unavailable, never fabricates completed backfill',async()=>{
+ const r=await runThroughput({ideas:10,projects:2,maxTicks:1,renewal:false});
+ assert.equal(r.fullTick,null);
+ assert.equal(r.withdrawal.pass,false);
+ assert.equal(r.renewal.status,'unavailable-backfill-incomplete');
+ assert.ok((r.backfillCoverage.published??0)<r.expectedSources);
+});
+test('one-day policy renews inside its actual shorter window and remains observable afterward',async()=>{
+ const r=await runThroughput({ideas:10,projects:2,maxTicks:160,retentionDays:1});
+ assert.equal(r.renewal.leadSeconds,8640);
+ assert.equal(r.renewal.withinActualRenewalWindow,true);
+ assert.ok(r.renewal.ticks*60<=r.renewal.actualRenewalWindowSeconds);
+ assert.equal(r.shortRetentionWindow.ticks,120);
+ assert.ok(r.shortRetentionWindow.generationIncrements<=4,'short retention must not repeatedly rebuild freshly renewed bodies');
+ assert.equal(r.withdrawal.privateBodyReappeared,false);
+ assert.equal(r.shutdown.privateBodiesRemaining,0);
+ assert.equal(r.shutdown.objectsRemaining,0);
+});
