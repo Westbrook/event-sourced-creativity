@@ -1,0 +1,450 @@
+{
+  "version": "p3-producer-trace-v1",
+  "baseCommit": "1e13b771e5af1f3907113c1ebf242fd11f06959b",
+  "scope": "Tracked worker, generation-reliability and scripts TS/JS/MJS; exact study-table references plus manually traced authoring/sponsor/F3 contracts. This is not a semantic whole-program proof.",
+  "scannedFiles": 759,
+  "usages": {
+    "generation_study_grants": [
+      {
+        "path": "scripts/seal-generation-p3.mjs",
+        "line": 13,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/authority.mjs",
+        "line": 44,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/authority.mjs",
+        "line": 46,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/host.mjs",
+        "line": 103,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/host.mjs",
+        "line": 144,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/host.mjs",
+        "line": 175,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/host.mjs",
+        "line": 241,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 73,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 78,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 79,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 83,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 84,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 85,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 139,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+        "line": 19,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+        "line": 21,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 73,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 78,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 79,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 83,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 84,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 85,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 139,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 180,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 181,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 217,
+        "insertion": false
+      }
+    ],
+    "generation_study_supplied_reviews": [
+      {
+        "path": "scripts/seal-generation-p3.mjs",
+        "line": 13,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+        "line": 18,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+        "line": 63,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+        "line": 65,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+        "line": 71,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+        "line": 82,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 181,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 199,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 204,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 205,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 210,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 211,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 215,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 216,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 217,
+        "insertion": false
+      }
+    ],
+    "generation_study_financial_grants": [
+      {
+        "path": "scripts/seal-generation-p3.mjs",
+        "line": 13,
+        "insertion": false
+      },
+      {
+        "path": "scripts/seal-generation-p3.mjs",
+        "line": 39,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/financial-policy.mjs",
+        "line": 41,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/host.mjs",
+        "line": 202,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 60,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 61,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 66,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 67,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 71,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 72,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 73,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/schema-contract.mjs",
+        "line": 97,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 60,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 61,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 66,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 67,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 71,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 72,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 73,
+        "insertion": false
+      },
+      {
+        "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+        "line": 97,
+        "insertion": false
+      }
+    ]
+  },
+  "sourceAnchors": [
+    {
+      "path": "worker/authoring-commits.ts",
+      "line": 14,
+      "symbol": "export type AuthoringPlan="
+    },
+    {
+      "path": "worker/authoring-commits.ts",
+      "line": 36,
+      "symbol": "export async function storeAuthoringPreview"
+    },
+    {
+      "path": "worker/authoring-commits.ts",
+      "line": 146,
+      "symbol": "export async function commitAuthoringPlan"
+    },
+    {
+      "path": "worker/authoring-commits.ts",
+      "line": 148,
+      "symbol": "if(!plan.events.length"
+    },
+    {
+      "path": "worker/authoring-commits.ts",
+      "line": 180,
+      "symbol": "INSERT INTO authoring_commits"
+    },
+    {
+      "path": "worker/context-application-api.ts",
+      "line": 102,
+      "symbol": "export async function handleContextApplication"
+    },
+    {
+      "path": "worker/context-application-api.ts",
+      "line": 122,
+      "symbol": "saved.plan.operation!==\"context-proposal\""
+    },
+    {
+      "path": "worker/experience-sponsor-approval.ts",
+      "line": 37,
+      "symbol": "export type SponsorApprovalProposal"
+    },
+    {
+      "path": "worker/experience-sponsor-approval.ts",
+      "line": 46,
+      "symbol": "export async function compileSponsorApprovalProposal"
+    },
+    {
+      "path": "worker/experience-sponsor-approval.ts",
+      "line": 131,
+      "symbol": "export async function approveSponsorCampaign"
+    },
+    {
+      "path": "worker/experience-sponsor-approval.ts",
+      "line": 167,
+      "symbol": "INSERT INTO experience_sponsor_approvals"
+    },
+    {
+      "path": "worker/experience-sponsor-policy.ts",
+      "line": 132,
+      "symbol": "export function readSponsorPolicy"
+    },
+    {
+      "path": "worker/pilot-policy.ts",
+      "line": 103,
+      "symbol": "export async function requireExistingHoldAdministrator"
+    },
+    {
+      "path": "worker/principal-request-core.ts",
+      "line": 15,
+      "symbol": "function identityFromRequest"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+      "line": 12,
+      "symbol": "export const reviewBinding"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+      "line": 27,
+      "symbol": "export async function retainSuppliedStudyInputs"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+      "line": 48,
+      "symbol": "export async function suppliedStudyInputs"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+      "line": 74,
+      "symbol": "export async function observeSuppliedArm"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/authority.mjs",
+      "line": 10,
+      "symbol": "export async function checkedBatch"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/authority.mjs",
+      "line": 24,
+      "symbol": "export async function authenticateStudy"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/financial-policy.mjs",
+      "line": 9,
+      "symbol": "export function validateFinancialPolicy"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/financial-policy.mjs",
+      "line": 37,
+      "symbol": "export async function resolveFinancialPolicy"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/financial-reconciliation.mjs",
+      "line": 36,
+      "symbol": "export async function appendVerifiedReconciliation"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/host.mjs",
+      "line": 232,
+      "symbol": "async function cleanup"
+    }
+  ],
+  "unsupported": "Authenticated F3 exact-operation financial approval producer feeding generation_study_financial_grants",
+  "nonTestInsertions": 0,
+  "unmodifiedRuntimeFiles": 601,
+  "preservedHistoricalFiles": 43,
+  "p2EnvelopeMatches": 610,
+  "p2ChangedSourceFiles": [
+    "tests/generation-p2-fixture.mjs"
+  ],
+  "ready": false
+}

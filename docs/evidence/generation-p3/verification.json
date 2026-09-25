@@ -1,0 +1,75 @@
+{
+  "version": "p3-local-verification-v1",
+  "localDelivery": "exact-unsupported-interface-and-minimum-extension",
+  "producerConnected": false,
+  "fullAuthenticatedReviewCommitIntakeHostChain": "not exercised: no supported F3 producer; cannot label seeded authority a connected chain",
+  "ready": false,
+  "liveAuthorized": false,
+  "userReviewed": false,
+  "hostedQualified": false,
+  "providerCalls": 0,
+  "mockProviderTransport": "intercepted locally; P2 and cleanup fixtures may dispatch synthetic responses only",
+  "tests": {
+    "newBoundary": {
+      "pass": 9,
+      "fail": 0,
+      "log": "producer-boundary.log"
+    },
+    "reusedRegressions": {
+      "pass": 233,
+      "fail": 0,
+      "log": "regressions.log",
+      "includes": "P2/P1/C2, retained v1 native host, finance/preparation, bridge, provenance and F2 false/null"
+    },
+    "finalAffectedRerun": {
+      "pass": 57,
+      "fail": 0,
+      "log": "final-focused.log",
+      "note": "48 P2 plus 9 P3; repeated checks, not 57 additional distinct tests"
+    }
+  },
+  "lint": {
+    "result": "pass",
+    "log": "lint.log",
+    "paths": [
+      "tests/generation-p2-fixture.mjs",
+      "tests/generation-p3-producer-boundary.test.mjs",
+      "scripts/seal-generation-p3.mjs"
+    ]
+  },
+  "buildAndTypecheck": {
+    "rerun": false,
+    "reason": "No product/runtime/schema change. Existing P2 application build/type and Node bundled-host receipts retained; seal script checks every bound runtime source byte before reusing the built identity."
+  },
+  "productionCodeChanged": false,
+  "productionSchemaInstalled": false,
+  "realGrantsCreated": false,
+  "deployed": false,
+  "pushed": false,
+  "spending": false,
+  "deadline": "2026-10-01T00:00:00.000Z",
+  "authorityBoundaries": [
+    "Only fixture decisions simulated; no real approval",
+    "No authenticated F3 financial approval producer in inspected source",
+    "No authentic billing/lifecycle verifier established",
+    "Source-free policy metadata requires producer discipline; free string validation does not prove it",
+    "Failed physical deletion does not release funding or automatically retry",
+    "Node/SQLite success is not hosted qualification"
+  ],
+  "notCoveredBecauseProducerAbsent": [
+    "Actual retained study display and commit",
+    "Wrong or stale authentic study review and changed displayed bytes/protocol/runtime",
+    "Duplicate/concurrent authentic study approval commit",
+    "Rollback of study/review/two-financial-grant producer transaction"
+  ],
+  "coveredExistingBoundaries": [
+    "Absent authority and client-forged flags",
+    "Actual sponsor producer rejects F3 policy",
+    "Both operation financial grants required before private intake",
+    "Real intake transaction partial failure and concurrency",
+    "Changed source/principal, revocation/expiry and private kinds",
+    "Disabled host/intake zero database/provider calls",
+    "Six POST slots, nine records, human pause/expected-failure, original-only recovery",
+    "Financial uncertainty and lifecycle holds survive cleanup failures"
+  ]
+}

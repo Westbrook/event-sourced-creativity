@@ -1,0 +1,17 @@
+✔ P3 authenticated personal administrator cannot produce missing study authority through intake (114.605042ms)
+✔ P3 exact self-sealed F3 policies pass shape validation but cannot authorize either operation (58.924583ms)
+✔ P3 existing sponsor approval producer rejects F3 policy rather than silently translating it (54.9885ms)
+✔ P3 one exact financial approval cannot authorize the other image operation (54.9345ms)
+✔ P3 forged HTTP decision flags cannot fill the missing financial producer (53.668791ms)
+✔ P3 partial private intake failure rolls back both supplied copies (54.76025ms)
+✔ P3 concurrent exact intake produces at most the two original copies and no purchase (80.801542ms)
+✔ P3 disabled host and intake touch neither database nor provider (47.353709ms)
+✔ P3 one failed deletion attempt proves neither physical closure nor released financial retention (492.063666ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3495.324583

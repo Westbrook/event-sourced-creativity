@@ -112,3 +112,18 @@ No semantic NLP parser, global provenance exemption or source-authority framewor
 | Video/3D / E, F, K | Immutable intent and source-free uncertainty holds are reusable concepts, not adopted guarantees | Image-only local proof | Queue/result interfaces, temporal/geometry/scale/material/reference checks, real costs and lifecycle; independent artifact review |
 
 Expected non-safety fidelity failure is a measured comparison outcome. Safety, authority, custody and financial uncertainty remain separate stopping conditions. Cross-media adoption and real quality/acceptance are unqualified; no new historical reader, backfill or authority repair.
+
+### P3 — exact financial approval producer remains unsupported
+
+[P3 adoption/run packet](evidence/generation-p3/result.md) · [minimum typed extension](evidence/generation-p3/minimum-extension.md). Local boundary proof only; no production code or media route adopted.
+
+| Route / owner | Finding and evidence | Transfer limit |
+| --- | --- | --- |
+| Supplied direct Image / P3, authoring and F3 | Existing authenticated authoring commits lack a study operation; sponsor approval rejects the F3 policy. Study intake requires both exact financial grants before private copies. Nine local tests cover absent authority, forged flags, cross-operation denial, actual sponsor rejection, intake rollback/concurrency, default-off and failed deletion preserving funding. | One narrowly typed F3 approval operation in the existing authoring domain is proposed, not implemented. Real account/billing/lifecycle and hosted binding remain missing; no quality or historical-cause result. |
+| Ordinary planner Image / I, C, H | P3 preserves the frozen agent-authored direction and experimental renderer factor. No planner or advisory was run live. | No planner improvement or historical witness inferred from transaction tests. |
+| Story / Scene | Explicit creative review, payer approval, financial settlement and custody are different records. | Each route must identify its actual producer and liability terms; narrative fidelity/speaker/order remain untested here. |
+| Slides / Storyboard | A child operation's financial approval cannot silently authorize its sibling; paired Image denial is demonstrated locally. | Page/shot identities, per-child billing, citations/layout/continuity and actual review require separate qualification. |
+| Speech / Music | Source-free financial retention cannot be inferred from an arbitrary policy JSON string; the actual producer must keep scripts/lyrics/private evidence separate. | Voice/rights, duration/codec, listening and media-specific rates not qualified by P3. |
+| Video / 3D | A failed one-time cleanup attempt is not physical erasure or lifecycle closure; retained funding must remain observable. | Queue/asset deletion ownership, temporal/geometry/material constraints and provider billing need their own native contracts. |
+
+All prior I/P1/C2/P2 entries remain intact. N10H complete, N8A parked, N6 archived and 847/six exclusions unchanged. No route adoption, hosted compatibility, financial truth, cross-media quality or user acceptance follows from P3's local proof.
