@@ -1,4 +1,5 @@
 import {canonical,hash} from '../core.mjs';
+import {authoringStudyExecutionGuards} from '../../../worker/authoring-study-proof.ts';
 import {operationKey} from '../execution-plan.mjs';
 import {PROTOCOL,validateSuppliedPlan} from '../p2/contract.mjs';
 import {authenticateStudy,checkedBatch,assertion} from './authority.mjs';
@@ -20,31 +21,41 @@ async function suppliedReview(request,env,grantId,plan,{recovery=false}={}){
  if(!grant||grant.source_ref!==b.sourceRef||grant.direction_ref!==b.directionRef||grant.source_hash!==b.sourceSha256||grant.direction_hash!==b.directionSha256||grant.runtime_hash!==hash(plan.runtimeIdentity)||grant.authority_version!==b.authorityVersion||grant.expires_at!==b.expiresAt)fail('study_supplied_grant');
  const g={sql:"EXISTS(SELECT 1 FROM generation_study_grants WHERE grant_id=? AND owner_id=? AND plan_id=? AND authority_version=? AND status='authorized' AND expires_at=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[grantId,user.userId,plan.id,b.authorityVersion,b.expiresAt]};
  if(!await db.prepare(`SELECT 1 WHERE ${review.sql}`).bind(...review.bindings).first())fail('study_supplied_review_unavailable');
- return {...a,grant,principal,guards:[a.guard,g,review]};
+ const producer=b.authorityVersion==='authoring-study-v1'?await authoringStudyExecutionGuards(env,{owner:user.userId,grantId,planId:plan.id,reviewId:b.reviewId,principal}):[];
+ return {...a,grant,principal,guards:[a.guard,g,review,...producer]};
 }
 /** Local trusted intake consumes existing review and financial authority. It creates private copies only,
- * never grants/reviews, and has no HTTP route. Synthetic callers must seed explicitly marked fixture authority. */
+ * never grants/reviews, and has no HTTP route. Legacy fixtures seed authority; the P4 version consumes the authenticated authoring receipt. */
 export async function retainSuppliedStudyInputs(request,env,{grantId,plan,source,direction,financialPolicies,financialAccount}){
- const a=await suppliedReview(request,env,grantId,plan),b=plan.candidate.suppliedInputs,db=a.db;
+ const a=await suppliedReview(request,env,grantId,plan),db=a.db;
  if(source!==JSON.stringify(plan.packet.suppliedSnapshot)||direction!==JSON.stringify(plan.packet.direction.value)||[source,direction].some(v=>Buffer.byteLength(v)>1048576))fail('study_supplied_bytes');
  for(const trial of plan.manifest.trials){
   const policy=financialPolicies?.find(p=>p.scope.operationId===operationKey(a.user.userId,plan,trial));
   if(!policy)fail('study_supplied_financial_required');
   a.guards.push((await resolveFinancialPolicy(env,{policy,scope:imageFinancialScope(plan,trial,a.user.userId,financialAccount),grantId,ownerId:a.user.userId})).guard);
  }
- const rows=[[b.sourceRef,SOURCE_KIND,source],[b.directionRef,DIRECTION_KIND,direction]];
- const statements=[];
- for(const [ref,kind,content] of rows){
-  const prior=await db.prepare('SELECT * FROM private_content WHERE content_id=?').bind(ref).first();
-  if(prior){if(prior.owner_id!==a.user.userId||prior.kind!==kind||prior.content!==content||prior.expires_at!==b.expiresAt||prior.redacted_at!==null)fail('study_supplied_existing_copy');}
-  else statements.push(db.prepare("INSERT INTO private_content VALUES(?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,NULL)").bind(ref,a.user.userId,kind,content,b.expiresAt));
- }
- const scope=privateContentScopeGuard(a.user.userId),memory=await nativeMemoryAnswerExclusion(env,{answerAlias:'private_content'});
- for(const [ref,kind,content] of rows)statements.push(assertion(db,{sql:`EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind=? AND content=? AND expires_at=? AND redacted_at IS NULL AND ${scope.sql} AND ${memory.sql} AND NOT EXISTS(SELECT 1 FROM project_resource_scopes r WHERE r.resource_kind='content' AND r.resource_id=private_content.content_id))`,bindings:[ref,a.user.userId,kind,content,b.expiresAt,...scope.bindings,...memory.bindings]}));
+ const statements=await prepareSuppliedStudyCopies(env,{plan,owner:a.user.userId,source,direction});
  if(env.DB!==db)fail('study_database_changed');
  await checkedBatch(env,a.guards,statements);
  return suppliedStudyInputs(request,env,grantId,plan);
 }
+/** Statement construction only. Caller must atomically prove review, both financial grants and principal. */
+export async function prepareSuppliedStudyCopies(env,{plan,owner,source,direction}){
+ validateSuppliedPlan(plan);const db=env.DB,b=plan.candidate.suppliedInputs;
+ if(source!==JSON.stringify(plan.packet.suppliedSnapshot)||direction!==JSON.stringify(plan.packet.direction.value)||[source,direction].some(v=>Buffer.byteLength(v)>1048576))fail('study_supplied_bytes');
+ const rows=[[b.sourceRef,SOURCE_KIND,source],[b.directionRef,DIRECTION_KIND,direction]];
+ const statements=[];
+ for(const [ref,kind,content] of rows){
+  const prior=await db.prepare('SELECT * FROM private_content WHERE content_id=?').bind(ref).first();
+  if(prior){if(prior.owner_id!==owner||prior.kind!==kind||prior.content!==content||prior.expires_at!==b.expiresAt||prior.redacted_at!==null)fail('study_supplied_existing_copy');}
+  else statements.push(db.prepare("INSERT INTO private_content VALUES(?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,NULL)").bind(ref,owner,kind,content,b.expiresAt));
+ }
+ const scope=privateContentScopeGuard(owner),memory=await nativeMemoryAnswerExclusion(env,{answerAlias:'private_content'});
+ for(const [ref,kind,content] of rows)statements.push(assertion(db,{sql:`EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind=? AND content=? AND expires_at=? AND redacted_at IS NULL AND ${scope.sql} AND ${memory.sql} AND NOT EXISTS(SELECT 1 FROM project_resource_scopes r WHERE r.resource_kind='content' AND r.resource_id=private_content.content_id))`,bindings:[ref,owner,kind,content,b.expiresAt,...scope.bindings,...memory.bindings]}));
+ if(env.DB!==db)fail('study_database_changed');
+ return statements;
+}
+
 export async function suppliedStudyInputs(request,env,grantId,plan,options={}){
  const a=await suppliedReview(request,env,grantId,plan,options),{db,user}=a,b=plan.candidate.suppliedInputs;
  const scope=privateContentScopeGuard(user.userId),memory=await nativeMemoryAnswerExclusion(env,{answerAlias:'private_content'});

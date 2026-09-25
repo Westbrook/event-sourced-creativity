@@ -1,0 +1,129 @@
+{
+  "modes": [
+    {
+      "mode": "accepted-estimate",
+      "commit": "committed",
+      "afterCommit": {
+        "authoring_study_commits": 1,
+        "generation_study_grants": 1,
+        "generation_study_supplied_reviews": 1,
+        "generation_study_financial_grants": 2,
+        "generation_study_operations": 0,
+        "copies": 2
+      },
+      "interceptedPosts": 6,
+      "evidenceRecords": 18,
+      "humanGate": true,
+      "settlementGate": true
+    },
+    {
+      "mode": "bounded-proof",
+      "commit": "committed",
+      "afterCommit": {
+        "authoring_study_commits": 1,
+        "generation_study_grants": 1,
+        "generation_study_supplied_reviews": 1,
+        "generation_study_financial_grants": 2,
+        "generation_study_operations": 0,
+        "copies": 2
+      },
+      "interceptedPosts": 6,
+      "evidenceRecords": 18,
+      "humanGate": true,
+      "settlementGate": true
+    }
+  ],
+  "missingEvidence": [
+    {
+      "syntheticFixture": true,
+      "proposalClassification": "actual",
+      "missing": "baseline:account",
+      "committable": false,
+      "issues": [
+        "baseline: authoring_study_evidence_unavailable"
+      ],
+      "commit": {
+        "status": "denied",
+        "error": "authoring_study_evidence_required",
+        "newPurchases": 0
+      },
+      "counts": {
+        "authoring_study_commits": 0,
+        "generation_study_grants": 0,
+        "generation_study_supplied_reviews": 0,
+        "generation_study_financial_grants": 0,
+        "generation_study_operations": 0,
+        "copies": 0
+      }
+    },
+    {
+      "syntheticFixture": true,
+      "proposalClassification": "actual",
+      "missing": "treatment:lifecycle",
+      "committable": false,
+      "issues": [
+        "treatment: authoring_study_evidence_unavailable"
+      ],
+      "commit": {
+        "status": "denied",
+        "error": "authoring_study_evidence_required",
+        "newPurchases": 0
+      },
+      "counts": {
+        "authoring_study_commits": 0,
+        "generation_study_grants": 0,
+        "generation_study_supplied_reviews": 0,
+        "generation_study_financial_grants": 0,
+        "generation_study_operations": 0,
+        "copies": 0
+      }
+    },
+    {
+      "syntheticFixture": true,
+      "proposalClassification": "actual",
+      "missing": "treatment:deletion",
+      "committable": false,
+      "issues": [
+        "treatment: authoring_study_evidence_unavailable"
+      ],
+      "commit": {
+        "status": "denied",
+        "error": "authoring_study_evidence_required",
+        "newPurchases": 0
+      },
+      "counts": {
+        "authoring_study_commits": 0,
+        "generation_study_grants": 0,
+        "generation_study_supplied_reviews": 0,
+        "generation_study_financial_grants": 0,
+        "generation_study_operations": 0,
+        "copies": 0
+      }
+    },
+    {
+      "syntheticFixture": true,
+      "proposalClassification": "actual",
+      "missing": "treatment:bound",
+      "committable": false,
+      "issues": [
+        "treatment: authoring_study_evidence_unavailable"
+      ],
+      "commit": {
+        "status": "denied",
+        "error": "authoring_study_evidence_required",
+        "newPurchases": 0
+      },
+      "counts": {
+        "authoring_study_commits": 0,
+        "generation_study_grants": 0,
+        "generation_study_supplied_reviews": 0,
+        "generation_study_financial_grants": 0,
+        "generation_study_operations": 0,
+        "copies": 0
+      }
+    }
+  ],
+  "actualGrant": false,
+  "realProviderCalls": 0,
+  "userFinancialConsent": false
+}

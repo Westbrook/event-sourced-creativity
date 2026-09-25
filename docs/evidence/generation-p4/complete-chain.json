@@ -1,0 +1,2141 @@
+{
+  "version": "p4-synthetic-complete-chain-v1",
+  "classification": "synthetic",
+  "actualGrant": false,
+  "realProviderCalls": 0,
+  "actualSpending": false,
+  "userFinancialConsent": false,
+  "hostedQualified": false,
+  "modes": [
+    {
+      "mode": "accepted-estimate",
+      "preview": {
+        "status": "review",
+        "display": {
+          "operation": "generation-supplied-study-approval",
+          "version": 1,
+          "classification": "synthetic",
+          "proposalId": "fc3aa84f7d23c56e6bcd09db2470e239b94ab4ae62e6b9d24f8b4d98ab10874e",
+          "intentId": "629362985cc6b4372d43033d4cc84a2153a9b5be7d57eca519c0da4ee94948ca",
+          "ownerId": "mock-owner",
+          "principalHash": "4e2c509c7c7b60a72b74281b077e2b8ea67ec4518e205f3c45e856a48c1230e9",
+          "sourceBytes": "{\"document\":{\"title\":\"Free run — agent-proposed study draft\"},\"facts\":[{\"block_id\":\"p1-demo-only\",\"type\":\"direction\",\"role\":\"direction\",\"intent\":\"include\",\"effect\":\"include\",\"properties\":{\"text\":\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\",\"weight\":1,\"spatial_scope\":{\"kind\":\"document\",\"falloff\":\"hard\",\"feather\":0}}}],\"standing_constraints\":[],\"references\":[],\"relationships\":[],\"combined_contexts\":[],\"pins\":[],\"tail\":[]}",
+          "directionBytes": "{\"title\":\"Free run\",\"rationale\":\"A separate dog and ball read clearly in a quiet park.\",\"scene\":\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\",\"palette\":[\"grass green\",\"pale blue\",\"red\"],\"next_moves\":[\"Keep the tether legible\",\"Preserve the gap\"]}",
+          "declaredAuthor": "agent-proposed-study-draft",
+          "protocol": {
+            "id": "p2-human-between-arm-v1",
+            "expectedFidelityFailures": [
+              "baseline tether",
+              "collar or harness",
+              "cropped paws",
+              "overlap or missing gap",
+              "other prespecified non-safety rubric failure"
+            ],
+            "fidelityRule": "Record and compare; never by itself a hard stop. Treatment requires a durable human observation and explicit resume for this protocol after original settlement and funded lifecycle.",
+            "hardStops": [
+              "advisory flag or invalid response",
+              "exact moderation flag or invalid response",
+              "unsafe output",
+              "provider error",
+              "uncertain dispatch or charge",
+              "custody or receipt failure",
+              "expiry or revocation",
+              "configuration drift",
+              "explicit user stop"
+            ],
+            "resume": "Authenticated reviewed principal records a durable observation bound to original operation, artifact and receipt; safety=clear, fidelity=pass or expected-failure, and explicit resume. Unknown safety and unclassified fidelity remain paused; unsafe or explicit stop is terminal for this packet.",
+            "deadline": "Existing October 1 proposal expiry is unchanged. A real future review must create a new explicitly approved packet/version."
+          },
+          "plan": {
+            "version": "generation-supplied-study-v2",
+            "packet": {
+              "schemaVersion": "p2-prospective-request-pilot-v2",
+              "ready": false,
+              "liveAuthorized": false,
+              "baseCommit": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+              "selectedFactor": "i-renderer-authored-precedence-v2",
+              "candidateManifestSha256": "bc1bf6455254d26f28601c5a454ae41f2e6ab71708e1cba969b2644c06ce636d",
+              "candidateProfileSha256": "4ce9c0bf77972a0eaac5569d71f0aef7e7f89686a958bf26a90fc6654d9db570",
+              "input": {
+                "version": "p1-supplied-bytes-v1",
+                "bytesSha256": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                "byteLength": 745,
+                "declaredAuthor": "agent-proposed-study-draft",
+                "review": null,
+                "expiresAt": "2026-10-01T00:00:00.000Z",
+                "claim": "exact supplied bytes, declared authorship/review, configuration and observed response only",
+                "excludedClaims": [
+                  "workspace-completeness",
+                  "historical-authorship",
+                  "source-rights-lineage",
+                  "old-provider-witness"
+                ],
+                "evidenceClass": "proposed-input-not-user-authored-fact",
+                "id": "p1-supplied-input:5b99445b7f8bacfb92463ce98f0e2fcff4cbfc64f9f316b636d9c62f4494a2b5"
+              },
+              "suppliedSnapshot": {
+                "document": {
+                  "title": "Free run — agent-proposed study draft"
+                },
+                "facts": [
+                  {
+                    "block_id": "p1-demo-only",
+                    "type": "direction",
+                    "role": "direction",
+                    "intent": "include",
+                    "effect": "include",
+                    "properties": {
+                      "text": "A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.",
+                      "weight": 1,
+                      "spatial_scope": {
+                        "kind": "document",
+                        "falloff": "hard",
+                        "feather": 0
+                      }
+                    }
+                  }
+                ],
+                "standing_constraints": [],
+                "references": [],
+                "relationships": [],
+                "combined_contexts": [],
+                "pins": [],
+                "tail": []
+              },
+              "direction": {
+                "value": {
+                  "title": "Free run",
+                  "rationale": "A separate dog and ball read clearly in a quiet park.",
+                  "scene": "A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.",
+                  "palette": [
+                    "grass green",
+                    "pale blue",
+                    "red"
+                  ],
+                  "next_moves": [
+                    "Keep the tether legible",
+                    "Preserve the gap"
+                  ]
+                },
+                "sha256": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                "origin": "agent-proposed intentionally conflicting frozen study input; never a provider response",
+                "reviewed": false
+              },
+              "mode": "renderer-only; frozen supplied direction",
+              "humanReviewRequired": [
+                "brief",
+                "intentional direction conflict",
+                "exact arms",
+                "factor/rubric",
+                "future authority, lifecycle and financial proposal"
+              ],
+              "claimsExcluded": [
+                "N4 original response replay",
+                "historical cause",
+                "complete workspace authority",
+                "source-rights lineage",
+                "model quality improvement"
+              ],
+              "logicalCounts": {
+                "planner": 0,
+                "sourceAdvisory": 2,
+                "exactModeration": 2,
+                "images": 2,
+                "checker": 0,
+                "evaluator": 0,
+                "referenceModeration": 0,
+                "retrieval": 0
+              },
+              "transport": {
+                "maxAttemptsPerOperation": 1,
+                "maxTotalPOSTs": 6,
+                "concurrency": 1,
+                "automaticRetries": 0,
+                "ordering": "baseline then treatment; disclosed order confound"
+              },
+              "advisoryItemsPerArm": 2,
+              "maximumFinalImagesPerArm": 1,
+              "partialImages": 0,
+              "settings": {
+                "model": "gpt-image-2.5-sunburst",
+                "endpoint": "/v1/images/generations",
+                "quality": "high",
+                "size": "1536x1024",
+                "outputFormat": "png",
+                "references": [],
+                "stream": false,
+                "moderation": null,
+                "planner": {
+                  "mode": "frozen"
+                },
+                "checker": {
+                  "mode": "off"
+                }
+              },
+              "arms": [
+                {
+                  "arm": "baseline",
+                  "stage": "advisory",
+                  "endpoint": "https://api.openai.com/v1/moderations",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[\"{\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"},\\\"facts\\\":[{\\\"block_id\\\":\\\"p1-demo-only\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}}}],\\\"standing_constraints\\\":[],\\\"references\\\":[],\\\"relationships\\\":[],\\\"combined_contexts\\\":[],\\\"pins\\\":[],\\\"tail\\\":[]}\",\"direction · direction · include · include · A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\"]}",
+                  "clientId": null,
+                  "byteLength": 1265,
+                  "sha256": "430e4cf16d06566357a2c7fa06226f8fbce968832fb8abf8bb3f88c70c8f08fd",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "baseline",
+                  "stage": "exact",
+                  "endpoint": "https://api.openai.com/v1/moderations",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[{\"type\":\"text\",\"text\":\"Create one polished landscape image that realizes the supplied creative direction.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\"}]}",
+                  "clientId": null,
+                  "byteLength": 3345,
+                  "sha256": "391464897eea92c57939d8dbe81061cbd098540685a2a5410d6e7b734111589d",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "baseline",
+                  "stage": "image",
+                  "endpoint": "https://api.openai.com/v1/images/generations",
+                  "body": "{\"model\":\"gpt-image-2.5-sunburst\",\"prompt\":\"Create one polished landscape image that realizes the supplied creative direction.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\",\"n\":1,\"size\":\"1536x1024\",\"quality\":\"high\",\"output_format\":\"png\",\"user\":\"forma_3110e90e6198187220dfc9499560d6a6\"}",
+                  "clientId": "forma-image-a145f191-8760-4b51-8156-17eaaa668068",
+                  "byteLength": 3433,
+                  "sha256": "cf8a803ec454033a4c75a1034b29faa58dddcc4b62f149d816de1c28de48e7ff",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "treatment",
+                  "stage": "advisory",
+                  "endpoint": "https://api.openai.com/v1/moderations",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[\"{\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"},\\\"facts\\\":[{\\\"block_id\\\":\\\"p1-demo-only\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}}}],\\\"standing_constraints\\\":[],\\\"references\\\":[],\\\"relationships\\\":[],\\\"combined_contexts\\\":[],\\\"pins\\\":[],\\\"tail\\\":[]}\",\"direction · direction · include · include · A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\"]}",
+                  "clientId": null,
+                  "byteLength": 1265,
+                  "sha256": "430e4cf16d06566357a2c7fa06226f8fbce968832fb8abf8bb3f88c70c8f08fd",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "treatment",
+                  "stage": "exact",
+                  "endpoint": "https://api.openai.com/v1/moderations",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[{\"type\":\"text\",\"text\":\"Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\"}]}",
+                  "clientId": null,
+                  "byteLength": 3656,
+                  "sha256": "9ad9040d8ecc653966518df78a85a79ee0d5e65a7c730e664dacdcb7472d1613",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "treatment",
+                  "stage": "image",
+                  "endpoint": "https://api.openai.com/v1/images/generations",
+                  "body": "{\"model\":\"gpt-image-2.5-sunburst\",\"prompt\":\"Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\",\"n\":1,\"size\":\"1536x1024\",\"quality\":\"high\",\"output_format\":\"png\",\"user\":\"forma_3110e90e6198187220dfc9499560d6a6\"}",
+                  "clientId": "forma-image-a4c04922-2afd-4edb-8c2d-1061d0638fed",
+                  "byteLength": 3744,
+                  "sha256": "72df975f4aa5be482b4cf0f90b6f7ccda87bb93c832c155aa1cc3239810e3ace",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                }
+              ],
+              "exactDiff": {
+                "offset": 0,
+                "remove": "Create one polished landscape image that realizes the supplied creative direction.",
+                "insert": "Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.",
+                "fields": [
+                  "image.prompt",
+                  "exactModeration.input[0].text"
+                ],
+                "netUTF8Bytes": 311
+              },
+              "budget": {
+                "currency": "USD",
+                "authorizedMicrousd": 0,
+                "proposedAllowanceMicrousd": 3000000,
+                "maximumExposureMicrousd": null,
+                "providerEnforcedCap": false,
+                "historicalApprovalsReusable": false,
+                "perArmAllowanceMicrousd": 1500000,
+                "conditionalStressEstimateMicrousd": 1276845,
+                "inputTokenProxy": "exact image request UTF-8 bytes plus 4096 per arm; unqualified",
+                "assumedOutputTokensPerArm": 20000,
+                "lifecycleFunded": false
+              },
+              "actualOutcomes": [],
+              "blockers": [
+                "no qualified supplied-input admission/custody/finance binding",
+                "input/direction/factor unreviewed",
+                "live environment/account/configuration unverified",
+                "funded retention/settlement and separate paid authority absent"
+              ],
+              "supersedes": {
+                "id": "p1-pilot:5fafe5ed7f5a0fdfff4ce7111ff0d7363bb545fa924e4aebfa4eb3a2c59961e2",
+                "sha256": "6cb8b79499cd09ae45c08101dfbe044326725f5be4d66254916d699717c87412"
+              },
+              "protocol": {
+                "id": "p2-human-between-arm-v1",
+                "expectedFidelityFailures": [
+                  "baseline tether",
+                  "collar or harness",
+                  "cropped paws",
+                  "overlap or missing gap",
+                  "other prespecified non-safety rubric failure"
+                ],
+                "fidelityRule": "Record and compare; never by itself a hard stop. Treatment requires a durable human observation and explicit resume for this protocol after original settlement and funded lifecycle.",
+                "hardStops": [
+                  "advisory flag or invalid response",
+                  "exact moderation flag or invalid response",
+                  "unsafe output",
+                  "provider error",
+                  "uncertain dispatch or charge",
+                  "custody or receipt failure",
+                  "expiry or revocation",
+                  "configuration drift",
+                  "explicit user stop"
+                ],
+                "resume": "Authenticated reviewed principal records a durable observation bound to original operation, artifact and receipt; safety=clear, fidelity=pass or expected-failure, and explicit resume. Unknown safety and unclassified fidelity remain paused; unsafe or explicit stop is terminal for this packet.",
+                "deadline": "Existing October 1 proposal expiry is unchanged. A real future review must create a new explicitly approved packet/version."
+              },
+              "id": "p2-pilot:641d2e2ddc37adfbbf5ef897033f36fd9c9c41a9b510e5819a48a7f7183c5528"
+            },
+            "manifest": {
+              "cells": [
+                {
+                  "id": "baseline",
+                  "sourceHash": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                  "plannerHash": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                  "promptHash": "650a1e2ca196f2738cd19d3c8ad6d1d4a468ec767fc1648b2bc094cb42cc6db9",
+                  "config": {
+                    "model": "gpt-image-2.5-sunburst",
+                    "endpoint": "/v1/images/generations",
+                    "quality": "high",
+                    "size": "1536x1024",
+                    "outputFormat": "png",
+                    "references": [],
+                    "stream": false,
+                    "moderation": null,
+                    "planner": {
+                      "mode": "frozen"
+                    },
+                    "checker": {
+                      "mode": "off"
+                    },
+                    "prompt": "Create one polished landscape image that realizes the supplied creative direction.\n\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\n\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\n\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\n\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\n\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\n\nAttached source-image policy:\nNo source-image pixels are attached. Use only the compiled text context.\n\nSpatial application map:\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\n\nCombined-context isolation map:\nNo combined contexts were supplied.\n\nCreative direction:\n{\"title\":\"Free run\",\"rationale\":\"A separate dog and ball read clearly in a quiet park.\",\"scene\":\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\",\"palette\":[\"grass green\",\"pale blue\",\"red\"],\"next_moves\":[\"Keep the tether legible\",\"Preserve the gap\"]}\n\nActive creative context:\n{\"facts\":[{\"decision_key\":\"decision_1\",\"type\":\"direction\",\"role\":\"direction\",\"intent\":\"include\",\"effect\":\"include\",\"properties\":{\"text\":\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\",\"weight\":1,\"spatial_scope\":{\"kind\":\"document\",\"falloff\":\"hard\",\"feather\":0}},\"order\":1}],\"relationships\":[],\"pins\":[],\"standing_constraints\":[],\"document\":{\"title\":\"Free run — agent-proposed study draft\"}}"
+                  }
+                },
+                {
+                  "id": "treatment",
+                  "sourceHash": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                  "plannerHash": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                  "promptHash": "3daea35e8005d6fe04aa7169f68f307848b7dbc5e37df806a188d6b3cdec690e",
+                  "config": {
+                    "model": "gpt-image-2.5-sunburst",
+                    "endpoint": "/v1/images/generations",
+                    "quality": "high",
+                    "size": "1536x1024",
+                    "outputFormat": "png",
+                    "references": [],
+                    "stream": false,
+                    "moderation": null,
+                    "planner": {
+                      "mode": "frozen"
+                    },
+                    "checker": {
+                      "mode": "off"
+                    },
+                    "prompt": "Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\n\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\n\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\n\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\n\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\n\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\n\nAttached source-image policy:\nNo source-image pixels are attached. Use only the compiled text context.\n\nSpatial application map:\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\n\nCombined-context isolation map:\nNo combined contexts were supplied.\n\nCreative direction:\n{\"title\":\"Free run\",\"rationale\":\"A separate dog and ball read clearly in a quiet park.\",\"scene\":\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\",\"palette\":[\"grass green\",\"pale blue\",\"red\"],\"next_moves\":[\"Keep the tether legible\",\"Preserve the gap\"]}\n\nActive creative context:\n{\"facts\":[{\"decision_key\":\"decision_1\",\"type\":\"direction\",\"role\":\"direction\",\"intent\":\"include\",\"effect\":\"include\",\"properties\":{\"text\":\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\",\"weight\":1,\"spatial_scope\":{\"kind\":\"document\",\"falloff\":\"hard\",\"feather\":0}},\"order\":1}],\"relationships\":[],\"pins\":[],\"standing_constraints\":[],\"document\":{\"title\":\"Free run — agent-proposed study draft\"}}"
+                  }
+                }
+              ],
+              "trials": [
+                {
+                  "id": "baseline",
+                  "cellId": "baseline",
+                  "repeat": 0
+                },
+                {
+                  "id": "treatment",
+                  "cellId": "treatment",
+                  "repeat": 0
+                }
+              ]
+            },
+            "candidate": {
+              "id": "i-renderer-authored-precedence-v2",
+              "evidenceClass": "agent-proposed-supplied-study",
+              "suppliedInputs": {
+                "kind": "supplied-agent-draft",
+                "reviewId": "5c31ac9cc0a7a820e6ad11068f82717923331654fb27f702c10fcef5fdf4f4b2",
+                "authorityVersion": "authoring-study-v1",
+                "sourceRef": "44b908b157f6164689e4269cf3e7e02d2f2f4f065be03ab75a112344ac59225c",
+                "directionRef": "de23a5b8a6993f0a75f8ae7e468b1d83dd31e048b4ca0a2ebaf4c6e26fb71dd7",
+                "declaredAuthor": "agent-proposed-study-draft",
+                "approvedUse": "p2-human-between-arm-v1",
+                "expiresAt": "2026-10-01T00:00:00.000Z",
+                "sourceSha256": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                "directionSha256": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e"
+              }
+            },
+            "financial": {
+              "version": "supplied-requires-server-financial-policy",
+              "available": false,
+              "maximumCostMicrousd": null,
+              "id": "f2-financial:5ce32892a9059ba33a8b1e508b3519eb1eca0f69641b2e528b3eb235f98efa2f"
+            },
+            "user": "forma_b866504f342113df97681059983baa90",
+            "runtimeIdentity": {
+              "adapterSha256": "7c1e7b49aebf97a0a92f19fbfb41eee7386fb5ff4e77b39c145838ec215a68ef",
+              "schema": "supplied-v2"
+            },
+            "preparation": {
+              "required": false
+            },
+            "requests": {
+              "baseline": {
+                "advisory": {
+                  "provider": "openai",
+                  "endpoint": "/v1/moderations",
+                  "method": "POST",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[\"{\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"},\\\"facts\\\":[{\\\"block_id\\\":\\\"p1-demo-only\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}}}],\\\"standing_constraints\\\":[],\\\"references\\\":[],\\\"relationships\\\":[],\\\"combined_contexts\\\":[],\\\"pins\\\":[],\\\"tail\\\":[]}\",\"direction · direction · include · include · A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\"]}"
+                },
+                "moderation": {
+                  "provider": "openai",
+                  "endpoint": "/v1/moderations",
+                  "method": "POST",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[{\"type\":\"text\",\"text\":\"Create one polished landscape image that realizes the supplied creative direction.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\"}]}"
+                },
+                "image": {
+                  "provider": "openai",
+                  "endpoint": "/v1/images/generations",
+                  "method": "POST",
+                  "body": "{\"model\":\"gpt-image-2.5-sunburst\",\"prompt\":\"Create one polished landscape image that realizes the supplied creative direction.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\",\"n\":1,\"size\":\"1536x1024\",\"quality\":\"high\",\"output_format\":\"png\",\"user\":\"forma_b866504f342113df97681059983baa90\"}"
+                },
+                "storage": {
+                  "provider": "private-custody",
+                  "endpoint": "artifact",
+                  "method": "PUT",
+                  "body": "{\"cellId\":\"baseline\",\"format\":\"png\",\"size\":\"1536x1024\"}"
+                }
+              },
+              "treatment": {
+                "advisory": {
+                  "provider": "openai",
+                  "endpoint": "/v1/moderations",
+                  "method": "POST",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[\"{\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"},\\\"facts\\\":[{\\\"block_id\\\":\\\"p1-demo-only\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}}}],\\\"standing_constraints\\\":[],\\\"references\\\":[],\\\"relationships\\\":[],\\\"combined_contexts\\\":[],\\\"pins\\\":[],\\\"tail\\\":[]}\",\"direction · direction · include · include · A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\"]}"
+                },
+                "moderation": {
+                  "provider": "openai",
+                  "endpoint": "/v1/moderations",
+                  "method": "POST",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[{\"type\":\"text\",\"text\":\"Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\"}]}"
+                },
+                "image": {
+                  "provider": "openai",
+                  "endpoint": "/v1/images/generations",
+                  "method": "POST",
+                  "body": "{\"model\":\"gpt-image-2.5-sunburst\",\"prompt\":\"Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\",\"n\":1,\"size\":\"1536x1024\",\"quality\":\"high\",\"output_format\":\"png\",\"user\":\"forma_b866504f342113df97681059983baa90\"}"
+                },
+                "storage": {
+                  "provider": "private-custody",
+                  "endpoint": "artifact",
+                  "method": "PUT",
+                  "body": "{\"cellId\":\"treatment\",\"format\":\"png\",\"size\":\"1536x1024\"}"
+                }
+              }
+            },
+            "inventory": {
+              "perTrial": {
+                "planner": 0,
+                "sourceAdvisory": 1,
+                "moderation": 1,
+                "image": 1,
+                "storage": 1,
+                "contextChecker": 0,
+                "evaluator": 0,
+                "evidenceWrites": 9
+              },
+              "trials": 2,
+              "maxTotalPOSTs": 6,
+              "maxImages": 2,
+              "concurrency": 1,
+              "generationRetries": 0,
+              "reconciliationReadsPerOriginal": 2
+            },
+            "execution": "disabled",
+            "ready": false,
+            "liveAuthorized": false,
+            "maximumCostMicrousd": null,
+            "authorizedCostMicrousd": 0,
+            "providerEnforcedChargeCap": false,
+            "id": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2"
+          },
+          "configurationHash": "4b6bf7f464d73c78c7178fe853525f7bd0c833ced39f35113f51ae1fb56b81e7",
+          "operationIds": [
+            "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d"
+          ],
+          "approvalInventory": {
+            "version": 1,
+            "providerPosts": 0,
+            "privateReviewRecords": 1,
+            "privateEvidenceRecords": 12,
+            "privateCopyRecords": 2,
+            "durableConfigurationRecords": 1,
+            "durableEvidenceReferenceRecords": 12,
+            "durableReceiptRecords": 1,
+            "studyGrantRecords": 1,
+            "suppliedReviewRecords": 1,
+            "financialGrantRecords": 2,
+            "materialCommitInserts": 7,
+            "privateEvidenceMaximumBytesPerRecord": 262144,
+            "privateCopiesMaximumBytesPerRecord": 1048576,
+            "expiry": "2026-10-01T00:00:00.000Z",
+            "lifecycleScope": "study-and-financial-retention"
+          },
+          "evidence": [
+            {
+              "arm": "baseline",
+              "records": [
+                {
+                  "accountId": "e5a207fc58e80855f4ab74bb487422a18bfd9199b147c279d2a676772366ee41",
+                  "classification": "synthetic",
+                  "credentialBinding": "6441e816d415b1f131d39bee5be4c0a6d1713b4eb6e1217f874f18b79e697b5b",
+                  "kind": "account",
+                  "projectHeader": null,
+                  "region": "us",
+                  "scopeHash": "68c5ef09371cce5ebc6abd46028129fe5b4fbc97265f350daf864bf5bb01eb6b",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. account",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "costBasis": "reviewed-exact-inventory",
+                  "estimateMicrousd": 1000,
+                  "kind": "rate",
+                  "reviewExpiresAt": "2026-10-01T00:00:00.000Z",
+                  "scopeHash": "68c5ef09371cce5ebc6abd46028129fe5b4fbc97265f350daf864bf5bb01eb6b",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. rate",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "liability",
+                  "liabilityOwner": "mock-owner",
+                  "mode": "accepted-estimate",
+                  "scopeHash": "68c5ef09371cce5ebc6abd46028129fe5b4fbc97265f350daf864bf5bb01eb6b",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. liability",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "evidenceRetentionThrough": "2026-10-02T00:00:00.000Z",
+                  "kind": "settlement",
+                  "method": "original-request-final-incurred",
+                  "scopeHash": "68c5ef09371cce5ebc6abd46028129fe5b4fbc97265f350daf864bf5bb01eb6b",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. settlement",
+                  "verifierId": "435327ac73f112de6d1f058bbe8d5d1395da9db07b8e31c94f20bcc73af5c39d",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "fundedThrough": "2026-10-02T00:00:00.000Z",
+                  "fundingRef": "04b2b27333cde87a0aaa18f7b7f5e501314fd97497d4c0c51310894cae085934",
+                  "kind": "lifecycle",
+                  "liabilityOwner": "mock-owner",
+                  "maximumMicrousd": 1000,
+                  "scope": "study-and-financial-retention",
+                  "scopeHash": "68c5ef09371cce5ebc6abd46028129fe5b4fbc97265f350daf864bf5bb01eb6b",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. lifecycle",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "deletion",
+                  "method": "verified-original-object-and-private-evidence",
+                  "operatorId": "1b62fdec7bb4d4d08f9b76517b02126b75591098353a1b9d62911b313b32e254",
+                  "scopeHash": "68c5ef09371cce5ebc6abd46028129fe5b4fbc97265f350daf864bf5bb01eb6b",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. deletion",
+                  "through": "2026-10-02T00:00:00.000Z",
+                  "version": 1
+                }
+              ]
+            },
+            {
+              "arm": "treatment",
+              "records": [
+                {
+                  "accountId": "e5a207fc58e80855f4ab74bb487422a18bfd9199b147c279d2a676772366ee41",
+                  "classification": "synthetic",
+                  "credentialBinding": "6441e816d415b1f131d39bee5be4c0a6d1713b4eb6e1217f874f18b79e697b5b",
+                  "kind": "account",
+                  "projectHeader": null,
+                  "region": "us",
+                  "scopeHash": "4d8605a28ee1c1ca1bddf7b7bef9fe955f5840698bc32644e623053a6dbcca72",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. account",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "costBasis": "reviewed-exact-inventory",
+                  "estimateMicrousd": 1000,
+                  "kind": "rate",
+                  "reviewExpiresAt": "2026-10-01T00:00:00.000Z",
+                  "scopeHash": "4d8605a28ee1c1ca1bddf7b7bef9fe955f5840698bc32644e623053a6dbcca72",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. rate",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "liability",
+                  "liabilityOwner": "mock-owner",
+                  "mode": "accepted-estimate",
+                  "scopeHash": "4d8605a28ee1c1ca1bddf7b7bef9fe955f5840698bc32644e623053a6dbcca72",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. liability",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "evidenceRetentionThrough": "2026-10-02T00:00:00.000Z",
+                  "kind": "settlement",
+                  "method": "original-request-final-incurred",
+                  "scopeHash": "4d8605a28ee1c1ca1bddf7b7bef9fe955f5840698bc32644e623053a6dbcca72",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. settlement",
+                  "verifierId": "435327ac73f112de6d1f058bbe8d5d1395da9db07b8e31c94f20bcc73af5c39d",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "fundedThrough": "2026-10-02T00:00:00.000Z",
+                  "fundingRef": "04b2b27333cde87a0aaa18f7b7f5e501314fd97497d4c0c51310894cae085934",
+                  "kind": "lifecycle",
+                  "liabilityOwner": "mock-owner",
+                  "maximumMicrousd": 1000,
+                  "scope": "study-and-financial-retention",
+                  "scopeHash": "4d8605a28ee1c1ca1bddf7b7bef9fe955f5840698bc32644e623053a6dbcca72",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. lifecycle",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "deletion",
+                  "method": "verified-original-object-and-private-evidence",
+                  "operatorId": "1b62fdec7bb4d4d08f9b76517b02126b75591098353a1b9d62911b313b32e254",
+                  "scopeHash": "4d8605a28ee1c1ca1bddf7b7bef9fe955f5840698bc32644e623053a6dbcca72",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. deletion",
+                  "through": "2026-10-02T00:00:00.000Z",
+                  "version": 1
+                }
+              ]
+            }
+          ],
+          "financialPolicies": [
+            {
+              "version": "generation-financial-policy-v1",
+              "scope": {
+                "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+                "planId": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2",
+                "kind": "image",
+                "sourceHash": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                "directionHash": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                "requestHash": "a2969d484e66f32bb206ff30f5bd5ac40ed100f9368d7b1ff1fbb7553f8fdeb0",
+                "promptHash": "650a1e2ca196f2738cd19d3c8ad6d1d4a468ec767fc1648b2bc094cb42cc6db9",
+                "runtimeHash": "1d68ba4479c1d7d834d37f53405579d0f83ed69ac9ca0bfe7100b90b21e1e6f4",
+                "inventoryHash": "8bb9f2593f5180fa5124ef4c36688d981f62bb5ea8107be99d0e49faa2c3f6db",
+                "payerId": "mock-owner",
+                "accountId": "e5a207fc58e80855f4ab74bb487422a18bfd9199b147c279d2a676772366ee41",
+                "region": "us"
+              },
+              "mode": "accepted-estimate",
+              "reservationMicrousd": 1000000,
+              "lifecycleReserveMicrousd": 1000,
+              "estimate": {
+                "microusd": 1000,
+                "costBasis": "reviewed-exact-inventory",
+                "evidenceRef": "33359cb4be3dcb3403d575188ea9ce0c736c2f1e651da31fe5343d0b410ff9be",
+                "reviewExpiresAt": "2026-10-01T00:00:00.000Z",
+                "assumptions": [
+                  "two-supplied-copies",
+                  "three-provider-stages-per-arm",
+                  "nine-evidence-records-per-arm",
+                  "original-only-recovery",
+                  "funded-financial-retention-and-verified-deletion",
+                  "one-private-authoring-review",
+                  "six-typed-evidence-records-per-arm-plus-bound-if-applicable",
+                  "one-configuration-and-one-receipt-plus-opaque-evidence-references"
+                ]
+              },
+              "bound": null,
+              "residualDecision": {
+                "accepted": true,
+                "unknownMaximumAccepted": true,
+                "decisionRef": "cc16aa130386e060b666e4bb33d504a199e3e2f1a36917072a82e06a5c2f4aaf",
+                "liabilityOwner": "mock-owner"
+              },
+              "maximumLossMicrousd": null,
+              "providerEnforcedChargeCap": false,
+              "expiresAt": "2026-10-01T00:00:00.000Z",
+              "inFlightLimit": 1,
+              "stopBehavior": "stop-before-next-stage-no-retry",
+              "overrunPolicy": "retain-and-hold",
+              "nextPurchase": "after-settlement-and-funded-lifecycle",
+              "lifecycle": {
+                "scope": "exact-study-inventory-including-financial-retention",
+                "liabilityOwner": "mock-owner",
+                "evidenceRef": "673d2a45578d0ebe0e1e96b1afbbbe935c0ea784c1ff8d3cbb45f14cdb0cb56b",
+                "through": "2026-10-02T00:00:00.000Z",
+                "maximumMicrousd": 1000
+              },
+              "id": "financial-policy:d677d0f33128722f31c9b1d5ba27b2edb74125f6d6b5e2bf04b70528563a4390"
+            },
+            {
+              "version": "generation-financial-policy-v1",
+              "scope": {
+                "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+                "planId": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2",
+                "kind": "image",
+                "sourceHash": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                "directionHash": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                "requestHash": "82275ba075d694513e3937b4dfd85634c8b3b5e4be03dc1481c15572f5ca4846",
+                "promptHash": "3daea35e8005d6fe04aa7169f68f307848b7dbc5e37df806a188d6b3cdec690e",
+                "runtimeHash": "1d68ba4479c1d7d834d37f53405579d0f83ed69ac9ca0bfe7100b90b21e1e6f4",
+                "inventoryHash": "8bb9f2593f5180fa5124ef4c36688d981f62bb5ea8107be99d0e49faa2c3f6db",
+                "payerId": "mock-owner",
+                "accountId": "e5a207fc58e80855f4ab74bb487422a18bfd9199b147c279d2a676772366ee41",
+                "region": "us"
+              },
+              "mode": "accepted-estimate",
+              "reservationMicrousd": 1000000,
+              "lifecycleReserveMicrousd": 1000,
+              "estimate": {
+                "microusd": 1000,
+                "costBasis": "reviewed-exact-inventory",
+                "evidenceRef": "6d73c368ddc882e2fb8753df8a76d1508d06598238268783bf9637d197b89534",
+                "reviewExpiresAt": "2026-10-01T00:00:00.000Z",
+                "assumptions": [
+                  "two-supplied-copies",
+                  "three-provider-stages-per-arm",
+                  "nine-evidence-records-per-arm",
+                  "original-only-recovery",
+                  "funded-financial-retention-and-verified-deletion",
+                  "one-private-authoring-review",
+                  "six-typed-evidence-records-per-arm-plus-bound-if-applicable",
+                  "one-configuration-and-one-receipt-plus-opaque-evidence-references"
+                ]
+              },
+              "bound": null,
+              "residualDecision": {
+                "accepted": true,
+                "unknownMaximumAccepted": true,
+                "decisionRef": "9ee23e9e89726af05f42f664302693eac97351b9df9fc3ecb98f2b565db18d12",
+                "liabilityOwner": "mock-owner"
+              },
+              "maximumLossMicrousd": null,
+              "providerEnforcedChargeCap": false,
+              "expiresAt": "2026-10-01T00:00:00.000Z",
+              "inFlightLimit": 1,
+              "stopBehavior": "stop-before-next-stage-no-retry",
+              "overrunPolicy": "retain-and-hold",
+              "nextPurchase": "after-settlement-and-funded-lifecycle",
+              "lifecycle": {
+                "scope": "exact-study-inventory-including-financial-retention",
+                "liabilityOwner": "mock-owner",
+                "evidenceRef": "c5dfe1e7ed350ec95b44e87e053e5c44f4b070326a78753f3f1516a533a2ac39",
+                "through": "2026-10-02T00:00:00.000Z",
+                "maximumMicrousd": 1000
+              },
+              "id": "financial-policy:14ad6cfda9138e63b2f163791f1a977abdec32010efaf0f608e3d601b7e923a1"
+            }
+          ],
+          "financialMeaning": "Proposed terms only until explicit authenticated commit. Reservation is not a provider cap. Accepted estimate means unknown maximum exposure; provider settlement and funded lifecycle still required.",
+          "approvalMeaning": "Approval creates no purchase. Execution is separately gated. Expected benign fidelity failure requires human review; safety/custody/authorization/invalid moderation/uncertain accounting stop. No retries or replacements.",
+          "expectedDecision": "APPROVE_STUDY_ACCEPT_UNKNOWN_EXPOSURE",
+          "expiresAt": "2026-10-01T00:00:00.000Z",
+          "committable": true,
+          "issues": []
+        },
+        "displayHash": "e8d1204fed5a5b70f063af5c5302e5b44a1570ca99e255956381b9a29287b6e2",
+        "previewId": "abe912695e9eed871db68b6a385920284c218e238e5269b9eb89671306e185b0",
+        "committable": true,
+        "newPurchases": 0
+      },
+      "explicitSimulatedDecision": {
+        "action": "commit",
+        "proposalId": "fc3aa84f7d23c56e6bcd09db2470e239b94ab4ae62e6b9d24f8b4d98ab10874e",
+        "previewId": "abe912695e9eed871db68b6a385920284c218e238e5269b9eb89671306e185b0",
+        "displayHash": "e8d1204fed5a5b70f063af5c5302e5b44a1570ca99e255956381b9a29287b6e2",
+        "intentId": "629362985cc6b4372d43033d4cc84a2153a9b5be7d57eca519c0da4ee94948ca",
+        "decision": "APPROVE_STUDY_ACCEPT_UNKNOWN_EXPOSURE"
+      },
+      "commit": {
+        "status": "committed",
+        "reused": false,
+        "receipt": {
+          "operation": "generation-supplied-study-approval",
+          "version": 1,
+          "classification": "synthetic",
+          "previewId": "abe912695e9eed871db68b6a385920284c218e238e5269b9eb89671306e185b0",
+          "proposalId": "fc3aa84f7d23c56e6bcd09db2470e239b94ab4ae62e6b9d24f8b4d98ab10874e",
+          "intentId": "629362985cc6b4372d43033d4cc84a2153a9b5be7d57eca519c0da4ee94948ca",
+          "displayHash": "e8d1204fed5a5b70f063af5c5302e5b44a1570ca99e255956381b9a29287b6e2",
+          "configurationHash": "4b6bf7f464d73c78c7178fe853525f7bd0c833ced39f35113f51ae1fb56b81e7",
+          "principalHash": "4e2c509c7c7b60a72b74281b077e2b8ea67ec4518e205f3c45e856a48c1230e9",
+          "planId": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2",
+          "grantId": "d977f5d3f6e8d09977ce8a85ae8cc8ba2c7b449753cca2a60fe275d197189b3e",
+          "reviewId": "5c31ac9cc0a7a820e6ad11068f82717923331654fb27f702c10fcef5fdf4f4b2",
+          "operationIds": [
+            "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d"
+          ],
+          "financialPolicyIds": [
+            "financial-policy:d677d0f33128722f31c9b1d5ba27b2edb74125f6d6b5e2bf04b70528563a4390",
+            "financial-policy:14ad6cfda9138e63b2f163791f1a977abdec32010efaf0f608e3d601b7e923a1"
+          ],
+          "expiresAt": "2026-10-01T00:00:00.000Z",
+          "newPurchases": 0
+        },
+        "newPurchases": 0
+      },
+      "afterCommit": {
+        "authoring_study_commits": 1,
+        "generation_study_grants": 1,
+        "generation_study_supplied_reviews": 1,
+        "generation_study_financial_grants": 2,
+        "generation_study_operations": 0,
+        "copies": 2
+      },
+      "baseline": {
+        "action": "hold",
+        "newPurchases": 1,
+        "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+        "reason": "original_charge_unreconciled",
+        "contentOutcome": "usable",
+        "accountingState": "unknown",
+        "uncachedEstimateMicrousd": 650,
+        "measuredMicrousd": null
+      },
+      "humanGate": true,
+      "settlementGate": true,
+      "settlement": {
+        "action": "completed",
+        "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+        "measuredMicrousd": 650,
+        "newPurchases": 0,
+        "financial": {
+          "providerSettled": true,
+          "lifecycleFunded": true,
+          "nextPurchaseEligible": true,
+          "evidenceId": "baseline-1",
+          "originalResidualMicrousd": null,
+          "remainingUncertaintyMicrousd": 0,
+          "incurredMicrousd": 650,
+          "incurredTokens": 30,
+          "reason": null,
+          "lifecycle": {
+            "evidence_id": "baseline-1",
+            "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "sequence": 1,
+            "previous_id": null,
+            "original_charge_hash": "df70380e57f3771fc59b4d3bb1dd34f13d51187d35fdda8afbdd2a3096d1b866",
+            "policy_id": "financial-policy:d677d0f33128722f31c9b1d5ba27b2edb74125f6d6b5e2bf04b70528563a4390",
+            "evidence_kind": "verified-incurred-charge",
+            "authority_version": "SYNTHETIC-verifier",
+            "evidence_ref": "SYNTHETIC-billing",
+            "recorded_at": "2026-09-24T12:00:00.000Z",
+            "provider_settled": 1,
+            "incurred_microusd": 650,
+            "incurred_tokens": 30,
+            "remaining_uncertainty_microusd": 0,
+            "lifecycle_microusd": 800,
+            "lifecycle_scope": "exact-study-inventory-including-financial-retention",
+            "liability_owner": "mock-owner",
+            "lifecycle_through": "2026-10-02T00:00:00.000Z",
+            "lifecycle_evidence_ref": "SYNTHETIC-lifecycle",
+            "lifecycle_closed": 0,
+            "lifecycle_incurred_microusd": null
+          }
+        },
+        "artifactState": "retained",
+        "nextPurchaseEligible": true
+      },
+      "treatment": {
+        "action": "hold",
+        "newPurchases": 1,
+        "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "reason": "original_charge_unreconciled",
+        "contentOutcome": "usable",
+        "accountingState": "unknown",
+        "uncachedEstimateMicrousd": 650,
+        "measuredMicrousd": null
+      },
+      "afterChain": {
+        "authoring_study_commits": 1,
+        "generation_study_grants": 1,
+        "generation_study_supplied_reviews": 1,
+        "generation_study_financial_grants": 2,
+        "generation_study_operations": 2,
+        "copies": 2
+      },
+      "interceptedPostCount": 6,
+      "evidence": [
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "advisory-request"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "advisory-response"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "image-request"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "image-response"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "moderation-request"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "moderation-response"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "plan"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "storage-request"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "storage-response"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "advisory-request"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "advisory-response"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "image-request"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "image-response"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "moderation-request"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "moderation-response"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "plan"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "storage-request"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "storage-response"
+        }
+      ],
+      "originalOnlyStages": [
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "stage": "advisory",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "stage": "image",
+          "status": "received"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "stage": "moderation",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "stage": "storage",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "stage": "advisory",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "stage": "image",
+          "status": "received"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "stage": "moderation",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "stage": "storage",
+          "status": "complete"
+        }
+      ],
+      "status": {
+        "status": "committed",
+        "receipt": {
+          "operation": "generation-supplied-study-approval",
+          "version": 1,
+          "classification": "synthetic",
+          "previewId": "abe912695e9eed871db68b6a385920284c218e238e5269b9eb89671306e185b0",
+          "proposalId": "fc3aa84f7d23c56e6bcd09db2470e239b94ab4ae62e6b9d24f8b4d98ab10874e",
+          "intentId": "629362985cc6b4372d43033d4cc84a2153a9b5be7d57eca519c0da4ee94948ca",
+          "displayHash": "e8d1204fed5a5b70f063af5c5302e5b44a1570ca99e255956381b9a29287b6e2",
+          "configurationHash": "4b6bf7f464d73c78c7178fe853525f7bd0c833ced39f35113f51ae1fb56b81e7",
+          "principalHash": "4e2c509c7c7b60a72b74281b077e2b8ea67ec4518e205f3c45e856a48c1230e9",
+          "planId": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2",
+          "grantId": "d977f5d3f6e8d09977ce8a85ae8cc8ba2c7b449753cca2a60fe275d197189b3e",
+          "reviewId": "5c31ac9cc0a7a820e6ad11068f82717923331654fb27f702c10fcef5fdf4f4b2",
+          "operationIds": [
+            "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d"
+          ],
+          "financialPolicyIds": [
+            "financial-policy:d677d0f33128722f31c9b1d5ba27b2edb74125f6d6b5e2bf04b70528563a4390",
+            "financial-policy:14ad6cfda9138e63b2f163791f1a977abdec32010efaf0f608e3d601b7e923a1"
+          ],
+          "expiresAt": "2026-10-01T00:00:00.000Z",
+          "newPurchases": 0
+        },
+        "newPurchases": 0
+      }
+    },
+    {
+      "mode": "bounded-proof",
+      "preview": {
+        "status": "review",
+        "display": {
+          "operation": "generation-supplied-study-approval",
+          "version": 1,
+          "classification": "synthetic",
+          "proposalId": "fc3aa84f7d23c56e6bcd09db2470e239b94ab4ae62e6b9d24f8b4d98ab10874e",
+          "intentId": "629362985cc6b4372d43033d4cc84a2153a9b5be7d57eca519c0da4ee94948ca",
+          "ownerId": "mock-owner",
+          "principalHash": "4e2c509c7c7b60a72b74281b077e2b8ea67ec4518e205f3c45e856a48c1230e9",
+          "sourceBytes": "{\"document\":{\"title\":\"Free run — agent-proposed study draft\"},\"facts\":[{\"block_id\":\"p1-demo-only\",\"type\":\"direction\",\"role\":\"direction\",\"intent\":\"include\",\"effect\":\"include\",\"properties\":{\"text\":\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\",\"weight\":1,\"spatial_scope\":{\"kind\":\"document\",\"falloff\":\"hard\",\"feather\":0}}}],\"standing_constraints\":[],\"references\":[],\"relationships\":[],\"combined_contexts\":[],\"pins\":[],\"tail\":[]}",
+          "directionBytes": "{\"title\":\"Free run\",\"rationale\":\"A separate dog and ball read clearly in a quiet park.\",\"scene\":\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\",\"palette\":[\"grass green\",\"pale blue\",\"red\"],\"next_moves\":[\"Keep the tether legible\",\"Preserve the gap\"]}",
+          "declaredAuthor": "agent-proposed-study-draft",
+          "protocol": {
+            "id": "p2-human-between-arm-v1",
+            "expectedFidelityFailures": [
+              "baseline tether",
+              "collar or harness",
+              "cropped paws",
+              "overlap or missing gap",
+              "other prespecified non-safety rubric failure"
+            ],
+            "fidelityRule": "Record and compare; never by itself a hard stop. Treatment requires a durable human observation and explicit resume for this protocol after original settlement and funded lifecycle.",
+            "hardStops": [
+              "advisory flag or invalid response",
+              "exact moderation flag or invalid response",
+              "unsafe output",
+              "provider error",
+              "uncertain dispatch or charge",
+              "custody or receipt failure",
+              "expiry or revocation",
+              "configuration drift",
+              "explicit user stop"
+            ],
+            "resume": "Authenticated reviewed principal records a durable observation bound to original operation, artifact and receipt; safety=clear, fidelity=pass or expected-failure, and explicit resume. Unknown safety and unclassified fidelity remain paused; unsafe or explicit stop is terminal for this packet.",
+            "deadline": "Existing October 1 proposal expiry is unchanged. A real future review must create a new explicitly approved packet/version."
+          },
+          "plan": {
+            "version": "generation-supplied-study-v2",
+            "packet": {
+              "schemaVersion": "p2-prospective-request-pilot-v2",
+              "ready": false,
+              "liveAuthorized": false,
+              "baseCommit": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+              "selectedFactor": "i-renderer-authored-precedence-v2",
+              "candidateManifestSha256": "bc1bf6455254d26f28601c5a454ae41f2e6ab71708e1cba969b2644c06ce636d",
+              "candidateProfileSha256": "4ce9c0bf77972a0eaac5569d71f0aef7e7f89686a958bf26a90fc6654d9db570",
+              "input": {
+                "version": "p1-supplied-bytes-v1",
+                "bytesSha256": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                "byteLength": 745,
+                "declaredAuthor": "agent-proposed-study-draft",
+                "review": null,
+                "expiresAt": "2026-10-01T00:00:00.000Z",
+                "claim": "exact supplied bytes, declared authorship/review, configuration and observed response only",
+                "excludedClaims": [
+                  "workspace-completeness",
+                  "historical-authorship",
+                  "source-rights-lineage",
+                  "old-provider-witness"
+                ],
+                "evidenceClass": "proposed-input-not-user-authored-fact",
+                "id": "p1-supplied-input:5b99445b7f8bacfb92463ce98f0e2fcff4cbfc64f9f316b636d9c62f4494a2b5"
+              },
+              "suppliedSnapshot": {
+                "document": {
+                  "title": "Free run — agent-proposed study draft"
+                },
+                "facts": [
+                  {
+                    "block_id": "p1-demo-only",
+                    "type": "direction",
+                    "role": "direction",
+                    "intent": "include",
+                    "effect": "include",
+                    "properties": {
+                      "text": "A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.",
+                      "weight": 1,
+                      "spatial_scope": {
+                        "kind": "document",
+                        "falloff": "hard",
+                        "feather": 0
+                      }
+                    }
+                  }
+                ],
+                "standing_constraints": [],
+                "references": [],
+                "relationships": [],
+                "combined_contexts": [],
+                "pins": [],
+                "tail": []
+              },
+              "direction": {
+                "value": {
+                  "title": "Free run",
+                  "rationale": "A separate dog and ball read clearly in a quiet park.",
+                  "scene": "A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.",
+                  "palette": [
+                    "grass green",
+                    "pale blue",
+                    "red"
+                  ],
+                  "next_moves": [
+                    "Keep the tether legible",
+                    "Preserve the gap"
+                  ]
+                },
+                "sha256": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                "origin": "agent-proposed intentionally conflicting frozen study input; never a provider response",
+                "reviewed": false
+              },
+              "mode": "renderer-only; frozen supplied direction",
+              "humanReviewRequired": [
+                "brief",
+                "intentional direction conflict",
+                "exact arms",
+                "factor/rubric",
+                "future authority, lifecycle and financial proposal"
+              ],
+              "claimsExcluded": [
+                "N4 original response replay",
+                "historical cause",
+                "complete workspace authority",
+                "source-rights lineage",
+                "model quality improvement"
+              ],
+              "logicalCounts": {
+                "planner": 0,
+                "sourceAdvisory": 2,
+                "exactModeration": 2,
+                "images": 2,
+                "checker": 0,
+                "evaluator": 0,
+                "referenceModeration": 0,
+                "retrieval": 0
+              },
+              "transport": {
+                "maxAttemptsPerOperation": 1,
+                "maxTotalPOSTs": 6,
+                "concurrency": 1,
+                "automaticRetries": 0,
+                "ordering": "baseline then treatment; disclosed order confound"
+              },
+              "advisoryItemsPerArm": 2,
+              "maximumFinalImagesPerArm": 1,
+              "partialImages": 0,
+              "settings": {
+                "model": "gpt-image-2.5-sunburst",
+                "endpoint": "/v1/images/generations",
+                "quality": "high",
+                "size": "1536x1024",
+                "outputFormat": "png",
+                "references": [],
+                "stream": false,
+                "moderation": null,
+                "planner": {
+                  "mode": "frozen"
+                },
+                "checker": {
+                  "mode": "off"
+                }
+              },
+              "arms": [
+                {
+                  "arm": "baseline",
+                  "stage": "advisory",
+                  "endpoint": "https://api.openai.com/v1/moderations",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[\"{\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"},\\\"facts\\\":[{\\\"block_id\\\":\\\"p1-demo-only\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}}}],\\\"standing_constraints\\\":[],\\\"references\\\":[],\\\"relationships\\\":[],\\\"combined_contexts\\\":[],\\\"pins\\\":[],\\\"tail\\\":[]}\",\"direction · direction · include · include · A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\"]}",
+                  "clientId": null,
+                  "byteLength": 1265,
+                  "sha256": "430e4cf16d06566357a2c7fa06226f8fbce968832fb8abf8bb3f88c70c8f08fd",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "baseline",
+                  "stage": "exact",
+                  "endpoint": "https://api.openai.com/v1/moderations",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[{\"type\":\"text\",\"text\":\"Create one polished landscape image that realizes the supplied creative direction.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\"}]}",
+                  "clientId": null,
+                  "byteLength": 3345,
+                  "sha256": "391464897eea92c57939d8dbe81061cbd098540685a2a5410d6e7b734111589d",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "baseline",
+                  "stage": "image",
+                  "endpoint": "https://api.openai.com/v1/images/generations",
+                  "body": "{\"model\":\"gpt-image-2.5-sunburst\",\"prompt\":\"Create one polished landscape image that realizes the supplied creative direction.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\",\"n\":1,\"size\":\"1536x1024\",\"quality\":\"high\",\"output_format\":\"png\",\"user\":\"forma_3110e90e6198187220dfc9499560d6a6\"}",
+                  "clientId": "forma-image-a145f191-8760-4b51-8156-17eaaa668068",
+                  "byteLength": 3433,
+                  "sha256": "cf8a803ec454033a4c75a1034b29faa58dddcc4b62f149d816de1c28de48e7ff",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "treatment",
+                  "stage": "advisory",
+                  "endpoint": "https://api.openai.com/v1/moderations",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[\"{\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"},\\\"facts\\\":[{\\\"block_id\\\":\\\"p1-demo-only\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}}}],\\\"standing_constraints\\\":[],\\\"references\\\":[],\\\"relationships\\\":[],\\\"combined_contexts\\\":[],\\\"pins\\\":[],\\\"tail\\\":[]}\",\"direction · direction · include · include · A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\"]}",
+                  "clientId": null,
+                  "byteLength": 1265,
+                  "sha256": "430e4cf16d06566357a2c7fa06226f8fbce968832fb8abf8bb3f88c70c8f08fd",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "treatment",
+                  "stage": "exact",
+                  "endpoint": "https://api.openai.com/v1/moderations",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[{\"type\":\"text\",\"text\":\"Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\"}]}",
+                  "clientId": null,
+                  "byteLength": 3656,
+                  "sha256": "9ad9040d8ecc653966518df78a85a79ee0d5e65a7c730e664dacdcb7472d1613",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                },
+                {
+                  "arm": "treatment",
+                  "stage": "image",
+                  "endpoint": "https://api.openai.com/v1/images/generations",
+                  "body": "{\"model\":\"gpt-image-2.5-sunburst\",\"prompt\":\"Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\",\"n\":1,\"size\":\"1536x1024\",\"quality\":\"high\",\"output_format\":\"png\",\"user\":\"forma_3110e90e6198187220dfc9499560d6a6\"}",
+                  "clientId": "forma-image-a4c04922-2afd-4edb-8c2d-1061d0638fed",
+                  "byteLength": 3744,
+                  "sha256": "72df975f4aa5be482b4cf0f90b6f7ccda87bb93c832c155aa1cc3239810e3ace",
+                  "identityNote": "mock capture identities; future operations require newly reserved identities"
+                }
+              ],
+              "exactDiff": {
+                "offset": 0,
+                "remove": "Create one polished landscape image that realizes the supplied creative direction.",
+                "insert": "Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.",
+                "fields": [
+                  "image.prompt",
+                  "exactModeration.input[0].text"
+                ],
+                "netUTF8Bytes": 311
+              },
+              "budget": {
+                "currency": "USD",
+                "authorizedMicrousd": 0,
+                "proposedAllowanceMicrousd": 3000000,
+                "maximumExposureMicrousd": null,
+                "providerEnforcedCap": false,
+                "historicalApprovalsReusable": false,
+                "perArmAllowanceMicrousd": 1500000,
+                "conditionalStressEstimateMicrousd": 1276845,
+                "inputTokenProxy": "exact image request UTF-8 bytes plus 4096 per arm; unqualified",
+                "assumedOutputTokensPerArm": 20000,
+                "lifecycleFunded": false
+              },
+              "actualOutcomes": [],
+              "blockers": [
+                "no qualified supplied-input admission/custody/finance binding",
+                "input/direction/factor unreviewed",
+                "live environment/account/configuration unverified",
+                "funded retention/settlement and separate paid authority absent"
+              ],
+              "supersedes": {
+                "id": "p1-pilot:5fafe5ed7f5a0fdfff4ce7111ff0d7363bb545fa924e4aebfa4eb3a2c59961e2",
+                "sha256": "6cb8b79499cd09ae45c08101dfbe044326725f5be4d66254916d699717c87412"
+              },
+              "protocol": {
+                "id": "p2-human-between-arm-v1",
+                "expectedFidelityFailures": [
+                  "baseline tether",
+                  "collar or harness",
+                  "cropped paws",
+                  "overlap or missing gap",
+                  "other prespecified non-safety rubric failure"
+                ],
+                "fidelityRule": "Record and compare; never by itself a hard stop. Treatment requires a durable human observation and explicit resume for this protocol after original settlement and funded lifecycle.",
+                "hardStops": [
+                  "advisory flag or invalid response",
+                  "exact moderation flag or invalid response",
+                  "unsafe output",
+                  "provider error",
+                  "uncertain dispatch or charge",
+                  "custody or receipt failure",
+                  "expiry or revocation",
+                  "configuration drift",
+                  "explicit user stop"
+                ],
+                "resume": "Authenticated reviewed principal records a durable observation bound to original operation, artifact and receipt; safety=clear, fidelity=pass or expected-failure, and explicit resume. Unknown safety and unclassified fidelity remain paused; unsafe or explicit stop is terminal for this packet.",
+                "deadline": "Existing October 1 proposal expiry is unchanged. A real future review must create a new explicitly approved packet/version."
+              },
+              "id": "p2-pilot:641d2e2ddc37adfbbf5ef897033f36fd9c9c41a9b510e5819a48a7f7183c5528"
+            },
+            "manifest": {
+              "cells": [
+                {
+                  "id": "baseline",
+                  "sourceHash": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                  "plannerHash": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                  "promptHash": "650a1e2ca196f2738cd19d3c8ad6d1d4a468ec767fc1648b2bc094cb42cc6db9",
+                  "config": {
+                    "model": "gpt-image-2.5-sunburst",
+                    "endpoint": "/v1/images/generations",
+                    "quality": "high",
+                    "size": "1536x1024",
+                    "outputFormat": "png",
+                    "references": [],
+                    "stream": false,
+                    "moderation": null,
+                    "planner": {
+                      "mode": "frozen"
+                    },
+                    "checker": {
+                      "mode": "off"
+                    },
+                    "prompt": "Create one polished landscape image that realizes the supplied creative direction.\n\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\n\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\n\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\n\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\n\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\n\nAttached source-image policy:\nNo source-image pixels are attached. Use only the compiled text context.\n\nSpatial application map:\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\n\nCombined-context isolation map:\nNo combined contexts were supplied.\n\nCreative direction:\n{\"title\":\"Free run\",\"rationale\":\"A separate dog and ball read clearly in a quiet park.\",\"scene\":\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\",\"palette\":[\"grass green\",\"pale blue\",\"red\"],\"next_moves\":[\"Keep the tether legible\",\"Preserve the gap\"]}\n\nActive creative context:\n{\"facts\":[{\"decision_key\":\"decision_1\",\"type\":\"direction\",\"role\":\"direction\",\"intent\":\"include\",\"effect\":\"include\",\"properties\":{\"text\":\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\",\"weight\":1,\"spatial_scope\":{\"kind\":\"document\",\"falloff\":\"hard\",\"feather\":0}},\"order\":1}],\"relationships\":[],\"pins\":[],\"standing_constraints\":[],\"document\":{\"title\":\"Free run — agent-proposed study draft\"}}"
+                  }
+                },
+                {
+                  "id": "treatment",
+                  "sourceHash": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                  "plannerHash": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                  "promptHash": "3daea35e8005d6fe04aa7169f68f307848b7dbc5e37df806a188d6b3cdec690e",
+                  "config": {
+                    "model": "gpt-image-2.5-sunburst",
+                    "endpoint": "/v1/images/generations",
+                    "quality": "high",
+                    "size": "1536x1024",
+                    "outputFormat": "png",
+                    "references": [],
+                    "stream": false,
+                    "moderation": null,
+                    "planner": {
+                      "mode": "frozen"
+                    },
+                    "checker": {
+                      "mode": "off"
+                    },
+                    "prompt": "Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\n\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\n\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\n\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\n\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\n\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\n\nAttached source-image policy:\nNo source-image pixels are attached. Use only the compiled text context.\n\nSpatial application map:\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\n\nCombined-context isolation map:\nNo combined contexts were supplied.\n\nCreative direction:\n{\"title\":\"Free run\",\"rationale\":\"A separate dog and ball read clearly in a quiet park.\",\"scene\":\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\",\"palette\":[\"grass green\",\"pale blue\",\"red\"],\"next_moves\":[\"Keep the tether legible\",\"Preserve the gap\"]}\n\nActive creative context:\n{\"facts\":[{\"decision_key\":\"decision_1\",\"type\":\"direction\",\"role\":\"direction\",\"intent\":\"include\",\"effect\":\"include\",\"properties\":{\"text\":\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\",\"weight\":1,\"spatial_scope\":{\"kind\":\"document\",\"falloff\":\"hard\",\"feather\":0}},\"order\":1}],\"relationships\":[],\"pins\":[],\"standing_constraints\":[],\"document\":{\"title\":\"Free run — agent-proposed study draft\"}}"
+                  }
+                }
+              ],
+              "trials": [
+                {
+                  "id": "baseline",
+                  "cellId": "baseline",
+                  "repeat": 0
+                },
+                {
+                  "id": "treatment",
+                  "cellId": "treatment",
+                  "repeat": 0
+                }
+              ]
+            },
+            "candidate": {
+              "id": "i-renderer-authored-precedence-v2",
+              "evidenceClass": "agent-proposed-supplied-study",
+              "suppliedInputs": {
+                "kind": "supplied-agent-draft",
+                "reviewId": "5c31ac9cc0a7a820e6ad11068f82717923331654fb27f702c10fcef5fdf4f4b2",
+                "authorityVersion": "authoring-study-v1",
+                "sourceRef": "44b908b157f6164689e4269cf3e7e02d2f2f4f065be03ab75a112344ac59225c",
+                "directionRef": "de23a5b8a6993f0a75f8ae7e468b1d83dd31e048b4ca0a2ebaf4c6e26fb71dd7",
+                "declaredAuthor": "agent-proposed-study-draft",
+                "approvedUse": "p2-human-between-arm-v1",
+                "expiresAt": "2026-10-01T00:00:00.000Z",
+                "sourceSha256": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                "directionSha256": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e"
+              }
+            },
+            "financial": {
+              "version": "supplied-requires-server-financial-policy",
+              "available": false,
+              "maximumCostMicrousd": null,
+              "id": "f2-financial:5ce32892a9059ba33a8b1e508b3519eb1eca0f69641b2e528b3eb235f98efa2f"
+            },
+            "user": "forma_b866504f342113df97681059983baa90",
+            "runtimeIdentity": {
+              "adapterSha256": "7c1e7b49aebf97a0a92f19fbfb41eee7386fb5ff4e77b39c145838ec215a68ef",
+              "schema": "supplied-v2"
+            },
+            "preparation": {
+              "required": false
+            },
+            "requests": {
+              "baseline": {
+                "advisory": {
+                  "provider": "openai",
+                  "endpoint": "/v1/moderations",
+                  "method": "POST",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[\"{\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"},\\\"facts\\\":[{\\\"block_id\\\":\\\"p1-demo-only\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}}}],\\\"standing_constraints\\\":[],\\\"references\\\":[],\\\"relationships\\\":[],\\\"combined_contexts\\\":[],\\\"pins\\\":[],\\\"tail\\\":[]}\",\"direction · direction · include · include · A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\"]}"
+                },
+                "moderation": {
+                  "provider": "openai",
+                  "endpoint": "/v1/moderations",
+                  "method": "POST",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[{\"type\":\"text\",\"text\":\"Create one polished landscape image that realizes the supplied creative direction.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\"}]}"
+                },
+                "image": {
+                  "provider": "openai",
+                  "endpoint": "/v1/images/generations",
+                  "method": "POST",
+                  "body": "{\"model\":\"gpt-image-2.5-sunburst\",\"prompt\":\"Create one polished landscape image that realizes the supplied creative direction.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\",\"n\":1,\"size\":\"1536x1024\",\"quality\":\"high\",\"output_format\":\"png\",\"user\":\"forma_b866504f342113df97681059983baa90\"}"
+                },
+                "storage": {
+                  "provider": "private-custody",
+                  "endpoint": "artifact",
+                  "method": "PUT",
+                  "body": "{\"cellId\":\"baseline\",\"format\":\"png\",\"size\":\"1536x1024\"}"
+                }
+              },
+              "treatment": {
+                "advisory": {
+                  "provider": "openai",
+                  "endpoint": "/v1/moderations",
+                  "method": "POST",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[\"{\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"},\\\"facts\\\":[{\\\"block_id\\\":\\\"p1-demo-only\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}}}],\\\"standing_constraints\\\":[],\\\"references\\\":[],\\\"relationships\\\":[],\\\"combined_contexts\\\":[],\\\"pins\\\":[],\\\"tail\\\":[]}\",\"direction · direction · include · include · A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\"]}"
+                },
+                "moderation": {
+                  "provider": "openai",
+                  "endpoint": "/v1/moderations",
+                  "method": "POST",
+                  "body": "{\"model\":\"omni-moderation-latest\",\"input\":[{\"type\":\"text\",\"text\":\"Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\"}]}"
+                },
+                "image": {
+                  "provider": "openai",
+                  "endpoint": "/v1/images/generations",
+                  "method": "POST",
+                  "body": "{\"model\":\"gpt-image-2.5-sunburst\",\"prompt\":\"Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.\\n\\nOutput frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.\\n\\nUse every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.\\n\\nAny fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.\\n\\nSpatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.\\n\\nDo not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.\\n\\nAttached source-image policy:\\nNo source-image pixels are attached. Use only the compiled text context.\\n\\nSpatial application map:\\n- Apply direction “A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 100%.\\n\\nCombined-context isolation map:\\nNo combined contexts were supplied.\\n\\nCreative direction:\\n{\\\"title\\\":\\\"Free run\\\",\\\"rationale\\\":\\\"A separate dog and ball read clearly in a quiet park.\\\",\\\"scene\\\":\\\"A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.\\\",\\\"palette\\\":[\\\"grass green\\\",\\\"pale blue\\\",\\\"red\\\"],\\\"next_moves\\\":[\\\"Keep the tether legible\\\",\\\"Preserve the gap\\\"]}\\n\\nActive creative context:\\n{\\\"facts\\\":[{\\\"decision_key\\\":\\\"decision_1\\\",\\\"type\\\":\\\"direction\\\",\\\"role\\\":\\\"direction\\\",\\\"intent\\\":\\\"include\\\",\\\"effect\\\":\\\"include\\\",\\\"properties\\\":{\\\"text\\\":\\\"A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.\\\",\\\"weight\\\":1,\\\"spatial_scope\\\":{\\\"kind\\\":\\\"document\\\",\\\"falloff\\\":\\\"hard\\\",\\\"feather\\\":0}},\\\"order\\\":1}],\\\"relationships\\\":[],\\\"pins\\\":[],\\\"standing_constraints\\\":[],\\\"document\\\":{\\\"title\\\":\\\"Free run — agent-proposed study draft\\\"}}\",\"n\":1,\"size\":\"1536x1024\",\"quality\":\"high\",\"output_format\":\"png\",\"user\":\"forma_b866504f342113df97681059983baa90\"}"
+                },
+                "storage": {
+                  "provider": "private-custody",
+                  "endpoint": "artifact",
+                  "method": "PUT",
+                  "body": "{\"cellId\":\"treatment\",\"format\":\"png\",\"size\":\"1536x1024\"}"
+                }
+              }
+            },
+            "inventory": {
+              "perTrial": {
+                "planner": 0,
+                "sourceAdvisory": 1,
+                "moderation": 1,
+                "image": 1,
+                "storage": 1,
+                "contextChecker": 0,
+                "evaluator": 0,
+                "evidenceWrites": 9
+              },
+              "trials": 2,
+              "maxTotalPOSTs": 6,
+              "maxImages": 2,
+              "concurrency": 1,
+              "generationRetries": 0,
+              "reconciliationReadsPerOriginal": 2
+            },
+            "execution": "disabled",
+            "ready": false,
+            "liveAuthorized": false,
+            "maximumCostMicrousd": null,
+            "authorizedCostMicrousd": 0,
+            "providerEnforcedChargeCap": false,
+            "id": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2"
+          },
+          "configurationHash": "6c8a9d02c584e79860ba7cbf5e2152692f5d600945563007793261994bf96968",
+          "operationIds": [
+            "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d"
+          ],
+          "approvalInventory": {
+            "version": 1,
+            "providerPosts": 0,
+            "privateReviewRecords": 1,
+            "privateEvidenceRecords": 14,
+            "privateCopyRecords": 2,
+            "durableConfigurationRecords": 1,
+            "durableEvidenceReferenceRecords": 14,
+            "durableReceiptRecords": 1,
+            "studyGrantRecords": 1,
+            "suppliedReviewRecords": 1,
+            "financialGrantRecords": 2,
+            "materialCommitInserts": 7,
+            "privateEvidenceMaximumBytesPerRecord": 262144,
+            "privateCopiesMaximumBytesPerRecord": 1048576,
+            "expiry": "2026-10-01T00:00:00.000Z",
+            "lifecycleScope": "study-and-financial-retention"
+          },
+          "evidence": [
+            {
+              "arm": "baseline",
+              "records": [
+                {
+                  "accountId": "e5a207fc58e80855f4ab74bb487422a18bfd9199b147c279d2a676772366ee41",
+                  "classification": "synthetic",
+                  "credentialBinding": "6441e816d415b1f131d39bee5be4c0a6d1713b4eb6e1217f874f18b79e697b5b",
+                  "kind": "account",
+                  "projectHeader": null,
+                  "region": "us",
+                  "scopeHash": "4a28aa478deb33339523fde9b50c779cfc1643406f97a2b6e3d5bf2e2775a32a",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. account",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "costBasis": "reviewed-exact-inventory",
+                  "estimateMicrousd": 1000,
+                  "kind": "rate",
+                  "reviewExpiresAt": "2026-10-01T00:00:00.000Z",
+                  "scopeHash": "4a28aa478deb33339523fde9b50c779cfc1643406f97a2b6e3d5bf2e2775a32a",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. rate",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "liability",
+                  "liabilityOwner": "mock-owner",
+                  "mode": "bounded-proof",
+                  "scopeHash": "4a28aa478deb33339523fde9b50c779cfc1643406f97a2b6e3d5bf2e2775a32a",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. liability",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "evidenceRetentionThrough": "2026-10-02T00:00:00.000Z",
+                  "kind": "settlement",
+                  "method": "original-request-final-incurred",
+                  "scopeHash": "4a28aa478deb33339523fde9b50c779cfc1643406f97a2b6e3d5bf2e2775a32a",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. settlement",
+                  "verifierId": "435327ac73f112de6d1f058bbe8d5d1395da9db07b8e31c94f20bcc73af5c39d",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "fundedThrough": "2026-10-02T00:00:00.000Z",
+                  "fundingRef": "04b2b27333cde87a0aaa18f7b7f5e501314fd97497d4c0c51310894cae085934",
+                  "kind": "lifecycle",
+                  "liabilityOwner": "mock-owner",
+                  "maximumMicrousd": 1000,
+                  "scope": "study-and-financial-retention",
+                  "scopeHash": "4a28aa478deb33339523fde9b50c779cfc1643406f97a2b6e3d5bf2e2775a32a",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. lifecycle",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "deletion",
+                  "method": "verified-original-object-and-private-evidence",
+                  "operatorId": "1b62fdec7bb4d4d08f9b76517b02126b75591098353a1b9d62911b313b32e254",
+                  "scopeHash": "4a28aa478deb33339523fde9b50c779cfc1643406f97a2b6e3d5bf2e2775a32a",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. deletion",
+                  "through": "2026-10-02T00:00:00.000Z",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "bound",
+                  "maximumCostMicrousd": 2000,
+                  "method": "substantiated-exact-inventory",
+                  "proofRef": "e48f4ab99c85e1922da655dfa56f61f0b0cb095732f2b366f84dca8e18f506be",
+                  "scopeHash": "4a28aa478deb33339523fde9b50c779cfc1643406f97a2b6e3d5bf2e2775a32a",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. bound",
+                  "version": 1
+                }
+              ]
+            },
+            {
+              "arm": "treatment",
+              "records": [
+                {
+                  "accountId": "e5a207fc58e80855f4ab74bb487422a18bfd9199b147c279d2a676772366ee41",
+                  "classification": "synthetic",
+                  "credentialBinding": "6441e816d415b1f131d39bee5be4c0a6d1713b4eb6e1217f874f18b79e697b5b",
+                  "kind": "account",
+                  "projectHeader": null,
+                  "region": "us",
+                  "scopeHash": "9de88159e4f43c92ca8ac6230b3742d2e4ad910ef8a29f1c00bbef73f8430fbc",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. account",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "costBasis": "reviewed-exact-inventory",
+                  "estimateMicrousd": 1000,
+                  "kind": "rate",
+                  "reviewExpiresAt": "2026-10-01T00:00:00.000Z",
+                  "scopeHash": "9de88159e4f43c92ca8ac6230b3742d2e4ad910ef8a29f1c00bbef73f8430fbc",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. rate",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "liability",
+                  "liabilityOwner": "mock-owner",
+                  "mode": "bounded-proof",
+                  "scopeHash": "9de88159e4f43c92ca8ac6230b3742d2e4ad910ef8a29f1c00bbef73f8430fbc",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. liability",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "evidenceRetentionThrough": "2026-10-02T00:00:00.000Z",
+                  "kind": "settlement",
+                  "method": "original-request-final-incurred",
+                  "scopeHash": "9de88159e4f43c92ca8ac6230b3742d2e4ad910ef8a29f1c00bbef73f8430fbc",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. settlement",
+                  "verifierId": "435327ac73f112de6d1f058bbe8d5d1395da9db07b8e31c94f20bcc73af5c39d",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "fundedThrough": "2026-10-02T00:00:00.000Z",
+                  "fundingRef": "04b2b27333cde87a0aaa18f7b7f5e501314fd97497d4c0c51310894cae085934",
+                  "kind": "lifecycle",
+                  "liabilityOwner": "mock-owner",
+                  "maximumMicrousd": 1000,
+                  "scope": "study-and-financial-retention",
+                  "scopeHash": "9de88159e4f43c92ca8ac6230b3742d2e4ad910ef8a29f1c00bbef73f8430fbc",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. lifecycle",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "deletion",
+                  "method": "verified-original-object-and-private-evidence",
+                  "operatorId": "1b62fdec7bb4d4d08f9b76517b02126b75591098353a1b9d62911b313b32e254",
+                  "scopeHash": "9de88159e4f43c92ca8ac6230b3742d2e4ad910ef8a29f1c00bbef73f8430fbc",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. deletion",
+                  "through": "2026-10-02T00:00:00.000Z",
+                  "version": 1
+                },
+                {
+                  "classification": "synthetic",
+                  "kind": "bound",
+                  "maximumCostMicrousd": 2000,
+                  "method": "substantiated-exact-inventory",
+                  "proofRef": "e48f4ab99c85e1922da655dfa56f61f0b0cb095732f2b366f84dca8e18f506be",
+                  "scopeHash": "9de88159e4f43c92ca8ac6230b3742d2e4ad910ef8a29f1c00bbef73f8430fbc",
+                  "terms": "SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. bound",
+                  "version": 1
+                }
+              ]
+            }
+          ],
+          "financialPolicies": [
+            {
+              "version": "generation-financial-policy-v1",
+              "scope": {
+                "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+                "planId": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2",
+                "kind": "image",
+                "sourceHash": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                "directionHash": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                "requestHash": "a2969d484e66f32bb206ff30f5bd5ac40ed100f9368d7b1ff1fbb7553f8fdeb0",
+                "promptHash": "650a1e2ca196f2738cd19d3c8ad6d1d4a468ec767fc1648b2bc094cb42cc6db9",
+                "runtimeHash": "1d68ba4479c1d7d834d37f53405579d0f83ed69ac9ca0bfe7100b90b21e1e6f4",
+                "inventoryHash": "8bb9f2593f5180fa5124ef4c36688d981f62bb5ea8107be99d0e49faa2c3f6db",
+                "payerId": "mock-owner",
+                "accountId": "e5a207fc58e80855f4ab74bb487422a18bfd9199b147c279d2a676772366ee41",
+                "region": "us"
+              },
+              "mode": "bounded-proof",
+              "reservationMicrousd": 1000000,
+              "lifecycleReserveMicrousd": 1000,
+              "estimate": {
+                "microusd": 1000,
+                "costBasis": "reviewed-exact-inventory",
+                "evidenceRef": "33359cb4be3dcb3403d575188ea9ce0c736c2f1e651da31fe5343d0b410ff9be",
+                "reviewExpiresAt": "2026-10-01T00:00:00.000Z",
+                "assumptions": [
+                  "two-supplied-copies",
+                  "three-provider-stages-per-arm",
+                  "nine-evidence-records-per-arm",
+                  "original-only-recovery",
+                  "funded-financial-retention-and-verified-deletion",
+                  "one-private-authoring-review",
+                  "six-typed-evidence-records-per-arm-plus-bound-if-applicable",
+                  "one-configuration-and-one-receipt-plus-opaque-evidence-references"
+                ]
+              },
+              "bound": {
+                "maximumCostMicrousd": 2000,
+                "evidenceRef": "fed74b0be63a348298c1de1c4edaefe1cbf4f6a887f3ff48bc8bc7b8af2e08dc",
+                "scope": "exact-study-inventory-including-financial-retention"
+              },
+              "residualDecision": null,
+              "maximumLossMicrousd": null,
+              "providerEnforcedChargeCap": false,
+              "expiresAt": "2026-10-01T00:00:00.000Z",
+              "inFlightLimit": 1,
+              "stopBehavior": "stop-before-next-stage-no-retry",
+              "overrunPolicy": "retain-and-hold",
+              "nextPurchase": "after-settlement-and-funded-lifecycle",
+              "lifecycle": {
+                "scope": "exact-study-inventory-including-financial-retention",
+                "liabilityOwner": "mock-owner",
+                "evidenceRef": "673d2a45578d0ebe0e1e96b1afbbbe935c0ea784c1ff8d3cbb45f14cdb0cb56b",
+                "through": "2026-10-02T00:00:00.000Z",
+                "maximumMicrousd": 1000
+              },
+              "id": "financial-policy:44b89d0dd537fde7166d5df88c116634570fefe30f847d87c2c3d58867020003"
+            },
+            {
+              "version": "generation-financial-policy-v1",
+              "scope": {
+                "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+                "planId": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2",
+                "kind": "image",
+                "sourceHash": "9091dc5d30ce6df52d853ffba0250b5bef94a9b5895202bae869b8d136ede90d",
+                "directionHash": "016738c59d50abdf07190d6588d6c5df8f322c6ba3c8a08014b6cfc86edc419e",
+                "requestHash": "82275ba075d694513e3937b4dfd85634c8b3b5e4be03dc1481c15572f5ca4846",
+                "promptHash": "3daea35e8005d6fe04aa7169f68f307848b7dbc5e37df806a188d6b3cdec690e",
+                "runtimeHash": "1d68ba4479c1d7d834d37f53405579d0f83ed69ac9ca0bfe7100b90b21e1e6f4",
+                "inventoryHash": "8bb9f2593f5180fa5124ef4c36688d981f62bb5ea8107be99d0e49faa2c3f6db",
+                "payerId": "mock-owner",
+                "accountId": "e5a207fc58e80855f4ab74bb487422a18bfd9199b147c279d2a676772366ee41",
+                "region": "us"
+              },
+              "mode": "bounded-proof",
+              "reservationMicrousd": 1000000,
+              "lifecycleReserveMicrousd": 1000,
+              "estimate": {
+                "microusd": 1000,
+                "costBasis": "reviewed-exact-inventory",
+                "evidenceRef": "6d73c368ddc882e2fb8753df8a76d1508d06598238268783bf9637d197b89534",
+                "reviewExpiresAt": "2026-10-01T00:00:00.000Z",
+                "assumptions": [
+                  "two-supplied-copies",
+                  "three-provider-stages-per-arm",
+                  "nine-evidence-records-per-arm",
+                  "original-only-recovery",
+                  "funded-financial-retention-and-verified-deletion",
+                  "one-private-authoring-review",
+                  "six-typed-evidence-records-per-arm-plus-bound-if-applicable",
+                  "one-configuration-and-one-receipt-plus-opaque-evidence-references"
+                ]
+              },
+              "bound": {
+                "maximumCostMicrousd": 2000,
+                "evidenceRef": "a03b743626005f5969a1452e439130374809817256541c23a8e2e34f57b074da",
+                "scope": "exact-study-inventory-including-financial-retention"
+              },
+              "residualDecision": null,
+              "maximumLossMicrousd": null,
+              "providerEnforcedChargeCap": false,
+              "expiresAt": "2026-10-01T00:00:00.000Z",
+              "inFlightLimit": 1,
+              "stopBehavior": "stop-before-next-stage-no-retry",
+              "overrunPolicy": "retain-and-hold",
+              "nextPurchase": "after-settlement-and-funded-lifecycle",
+              "lifecycle": {
+                "scope": "exact-study-inventory-including-financial-retention",
+                "liabilityOwner": "mock-owner",
+                "evidenceRef": "c5dfe1e7ed350ec95b44e87e053e5c44f4b070326a78753f3f1516a533a2ac39",
+                "through": "2026-10-02T00:00:00.000Z",
+                "maximumMicrousd": 1000
+              },
+              "id": "financial-policy:887cd9719a9ae11a6ba417f0ce964ca379210810e2643e17f4219842541c6f59"
+            }
+          ],
+          "financialMeaning": "Proposed terms only until explicit authenticated commit. Reservation is not a provider cap. Accepted estimate means unknown maximum exposure; provider settlement and funded lifecycle still required.",
+          "approvalMeaning": "Approval creates no purchase. Execution is separately gated. Expected benign fidelity failure requires human review; safety/custody/authorization/invalid moderation/uncertain accounting stop. No retries or replacements.",
+          "expectedDecision": "APPROVE_STUDY_BOUNDED_PROOF",
+          "expiresAt": "2026-10-01T00:00:00.000Z",
+          "committable": true,
+          "issues": []
+        },
+        "displayHash": "29b32e8ed9f6453533f16f5298316b0869b92ef271d6b64d28b636ae90e30118",
+        "previewId": "1c7ddf741970253ce79daf444de00fad0160591ab5fcd4d9a4c0be273729baf0",
+        "committable": true,
+        "newPurchases": 0
+      },
+      "explicitSimulatedDecision": {
+        "action": "commit",
+        "proposalId": "fc3aa84f7d23c56e6bcd09db2470e239b94ab4ae62e6b9d24f8b4d98ab10874e",
+        "previewId": "1c7ddf741970253ce79daf444de00fad0160591ab5fcd4d9a4c0be273729baf0",
+        "displayHash": "29b32e8ed9f6453533f16f5298316b0869b92ef271d6b64d28b636ae90e30118",
+        "intentId": "629362985cc6b4372d43033d4cc84a2153a9b5be7d57eca519c0da4ee94948ca",
+        "decision": "APPROVE_STUDY_BOUNDED_PROOF"
+      },
+      "commit": {
+        "status": "committed",
+        "reused": false,
+        "receipt": {
+          "operation": "generation-supplied-study-approval",
+          "version": 1,
+          "classification": "synthetic",
+          "previewId": "1c7ddf741970253ce79daf444de00fad0160591ab5fcd4d9a4c0be273729baf0",
+          "proposalId": "fc3aa84f7d23c56e6bcd09db2470e239b94ab4ae62e6b9d24f8b4d98ab10874e",
+          "intentId": "629362985cc6b4372d43033d4cc84a2153a9b5be7d57eca519c0da4ee94948ca",
+          "displayHash": "29b32e8ed9f6453533f16f5298316b0869b92ef271d6b64d28b636ae90e30118",
+          "configurationHash": "6c8a9d02c584e79860ba7cbf5e2152692f5d600945563007793261994bf96968",
+          "principalHash": "4e2c509c7c7b60a72b74281b077e2b8ea67ec4518e205f3c45e856a48c1230e9",
+          "planId": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2",
+          "grantId": "d977f5d3f6e8d09977ce8a85ae8cc8ba2c7b449753cca2a60fe275d197189b3e",
+          "reviewId": "5c31ac9cc0a7a820e6ad11068f82717923331654fb27f702c10fcef5fdf4f4b2",
+          "operationIds": [
+            "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d"
+          ],
+          "financialPolicyIds": [
+            "financial-policy:44b89d0dd537fde7166d5df88c116634570fefe30f847d87c2c3d58867020003",
+            "financial-policy:887cd9719a9ae11a6ba417f0ce964ca379210810e2643e17f4219842541c6f59"
+          ],
+          "expiresAt": "2026-10-01T00:00:00.000Z",
+          "newPurchases": 0
+        },
+        "newPurchases": 0
+      },
+      "afterCommit": {
+        "authoring_study_commits": 1,
+        "generation_study_grants": 1,
+        "generation_study_supplied_reviews": 1,
+        "generation_study_financial_grants": 2,
+        "generation_study_operations": 0,
+        "copies": 2
+      },
+      "baseline": {
+        "action": "hold",
+        "newPurchases": 1,
+        "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+        "reason": "original_charge_unreconciled",
+        "contentOutcome": "usable",
+        "accountingState": "unknown",
+        "uncachedEstimateMicrousd": 650,
+        "measuredMicrousd": null
+      },
+      "humanGate": true,
+      "settlementGate": true,
+      "settlement": {
+        "action": "completed",
+        "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+        "measuredMicrousd": 650,
+        "newPurchases": 0,
+        "financial": {
+          "providerSettled": true,
+          "lifecycleFunded": true,
+          "nextPurchaseEligible": true,
+          "evidenceId": "baseline-1",
+          "originalResidualMicrousd": null,
+          "remainingUncertaintyMicrousd": 0,
+          "incurredMicrousd": 650,
+          "incurredTokens": 30,
+          "reason": null,
+          "lifecycle": {
+            "evidence_id": "baseline-1",
+            "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "sequence": 1,
+            "previous_id": null,
+            "original_charge_hash": "df70380e57f3771fc59b4d3bb1dd34f13d51187d35fdda8afbdd2a3096d1b866",
+            "policy_id": "financial-policy:44b89d0dd537fde7166d5df88c116634570fefe30f847d87c2c3d58867020003",
+            "evidence_kind": "verified-incurred-charge",
+            "authority_version": "SYNTHETIC-verifier",
+            "evidence_ref": "SYNTHETIC-billing",
+            "recorded_at": "2026-09-24T12:00:00.000Z",
+            "provider_settled": 1,
+            "incurred_microusd": 650,
+            "incurred_tokens": 30,
+            "remaining_uncertainty_microusd": 0,
+            "lifecycle_microusd": 800,
+            "lifecycle_scope": "exact-study-inventory-including-financial-retention",
+            "liability_owner": "mock-owner",
+            "lifecycle_through": "2026-10-02T00:00:00.000Z",
+            "lifecycle_evidence_ref": "SYNTHETIC-lifecycle",
+            "lifecycle_closed": 0,
+            "lifecycle_incurred_microusd": null
+          }
+        },
+        "artifactState": "retained",
+        "nextPurchaseEligible": true
+      },
+      "treatment": {
+        "action": "hold",
+        "newPurchases": 1,
+        "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "reason": "original_charge_unreconciled",
+        "contentOutcome": "usable",
+        "accountingState": "unknown",
+        "uncachedEstimateMicrousd": 650,
+        "measuredMicrousd": null
+      },
+      "afterChain": {
+        "authoring_study_commits": 1,
+        "generation_study_grants": 1,
+        "generation_study_supplied_reviews": 1,
+        "generation_study_financial_grants": 2,
+        "generation_study_operations": 2,
+        "copies": 2
+      },
+      "interceptedPostCount": 6,
+      "evidence": [
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "advisory-request"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "advisory-response"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "image-request"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "image-response"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "moderation-request"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "moderation-response"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "plan"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "storage-request"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "slot": "storage-response"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "advisory-request"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "advisory-response"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "image-request"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "image-response"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "moderation-request"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "moderation-response"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "plan"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "storage-request"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "slot": "storage-response"
+        }
+      ],
+      "originalOnlyStages": [
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "stage": "advisory",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "stage": "image",
+          "status": "received"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "stage": "moderation",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "stage": "storage",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "stage": "advisory",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "stage": "image",
+          "status": "received"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "stage": "moderation",
+          "status": "complete"
+        },
+        {
+          "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "stage": "storage",
+          "status": "complete"
+        }
+      ],
+      "status": {
+        "status": "committed",
+        "receipt": {
+          "operation": "generation-supplied-study-approval",
+          "version": 1,
+          "classification": "synthetic",
+          "previewId": "1c7ddf741970253ce79daf444de00fad0160591ab5fcd4d9a4c0be273729baf0",
+          "proposalId": "fc3aa84f7d23c56e6bcd09db2470e239b94ab4ae62e6b9d24f8b4d98ab10874e",
+          "intentId": "629362985cc6b4372d43033d4cc84a2153a9b5be7d57eca519c0da4ee94948ca",
+          "displayHash": "29b32e8ed9f6453533f16f5298316b0869b92ef271d6b64d28b636ae90e30118",
+          "configurationHash": "6c8a9d02c584e79860ba7cbf5e2152692f5d600945563007793261994bf96968",
+          "principalHash": "4e2c509c7c7b60a72b74281b077e2b8ea67ec4518e205f3c45e856a48c1230e9",
+          "planId": "supplied-execution:2ef6dac1ba7372405677aea27e23ad473b91d707311e01a4dd047165ab70a3c2",
+          "grantId": "d977f5d3f6e8d09977ce8a85ae8cc8ba2c7b449753cca2a60fe275d197189b3e",
+          "reviewId": "5c31ac9cc0a7a820e6ad11068f82717923331654fb27f702c10fcef5fdf4f4b2",
+          "operationIds": [
+            "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d"
+          ],
+          "financialPolicyIds": [
+            "financial-policy:44b89d0dd537fde7166d5df88c116634570fefe30f847d87c2c3d58867020003",
+            "financial-policy:887cd9719a9ae11a6ba417f0ce964ca379210810e2643e17f4219842541c6f59"
+          ],
+          "expiresAt": "2026-10-01T00:00:00.000Z",
+          "newPurchases": 0
+        },
+        "newPurchases": 0
+      }
+    }
+  ],
+  "missingEvidence": [
+    {
+      "syntheticFixture": true,
+      "proposalClassification": "actual",
+      "missing": "baseline:account",
+      "committable": false,
+      "issues": [
+        "baseline: authoring_study_evidence_unavailable"
+      ],
+      "commit": {
+        "status": "denied",
+        "error": "authoring_study_evidence_required",
+        "newPurchases": 0
+      },
+      "counts": {
+        "authoring_study_commits": 0,
+        "generation_study_grants": 0,
+        "generation_study_supplied_reviews": 0,
+        "generation_study_financial_grants": 0,
+        "generation_study_operations": 0,
+        "copies": 0
+      }
+    },
+    {
+      "syntheticFixture": true,
+      "proposalClassification": "actual",
+      "missing": "treatment:lifecycle",
+      "committable": false,
+      "issues": [
+        "treatment: authoring_study_evidence_unavailable"
+      ],
+      "commit": {
+        "status": "denied",
+        "error": "authoring_study_evidence_required",
+        "newPurchases": 0
+      },
+      "counts": {
+        "authoring_study_commits": 0,
+        "generation_study_grants": 0,
+        "generation_study_supplied_reviews": 0,
+        "generation_study_financial_grants": 0,
+        "generation_study_operations": 0,
+        "copies": 0
+      }
+    },
+    {
+      "syntheticFixture": true,
+      "proposalClassification": "actual",
+      "missing": "treatment:deletion",
+      "committable": false,
+      "issues": [
+        "treatment: authoring_study_evidence_unavailable"
+      ],
+      "commit": {
+        "status": "denied",
+        "error": "authoring_study_evidence_required",
+        "newPurchases": 0
+      },
+      "counts": {
+        "authoring_study_commits": 0,
+        "generation_study_grants": 0,
+        "generation_study_supplied_reviews": 0,
+        "generation_study_financial_grants": 0,
+        "generation_study_operations": 0,
+        "copies": 0
+      }
+    },
+    {
+      "syntheticFixture": true,
+      "proposalClassification": "actual",
+      "missing": "treatment:bound",
+      "committable": false,
+      "issues": [
+        "treatment: authoring_study_evidence_unavailable"
+      ],
+      "commit": {
+        "status": "denied",
+        "error": "authoring_study_evidence_required",
+        "newPurchases": 0
+      },
+      "counts": {
+        "authoring_study_commits": 0,
+        "generation_study_grants": 0,
+        "generation_study_supplied_reviews": 0,
+        "generation_study_financial_grants": 0,
+        "generation_study_operations": 0,
+        "copies": 0
+      }
+    }
+  ]
+}

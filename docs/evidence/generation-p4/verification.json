@@ -1,0 +1,95 @@
+{
+  "version": "p4-local-verification-v1",
+  "localProducerComplete": true,
+  "ready": false,
+  "liveAuthorized": false,
+  "userReviewed": false,
+  "userFinancialConsent": false,
+  "hostedQualified": false,
+  "actualGrant": false,
+  "installedRealSchema": false,
+  "providerCalls": 0,
+  "spending": false,
+  "pushed": false,
+  "merged": false,
+  "deadline": "2026-10-01T00:00:00.000Z",
+  "tests": {
+    "producer": {
+      "pass": 75,
+      "fail": 0,
+      "log": "producer-tests.log"
+    },
+    "affectedP2C2FinanceContext": {
+      "pass": 248,
+      "fail": 0,
+      "log": "regressions.log"
+    },
+    "documentCopyCanvas": {
+      "pass": 77,
+      "fail": 0,
+      "log": "authoring-regressions.log"
+    },
+    "total": 400
+  },
+  "checks": {
+    "applicationBuild": "pass",
+    "typecheck": "pass",
+    "changedFileLint": "pass",
+    "optionalSchemaContract": "pass",
+    "bundledProducerAndHostDefaultOff": "pass",
+    "ordinaryAuthoringPrefixByteUnchanged": "dc14df482af4898619782fb8a55064b1458cf67c4dff976004a256622d55e8fa"
+  },
+  "browser": {
+    "url": "http://127.0.0.1:4194/?progress-report",
+    "positiveSimulatedDecisionBothModes": true,
+    "missingLifecycleAndBoundDisabled": true,
+    "syntheticDisclosureVisible": true,
+    "privateDisplayAndExactCommandDisclosures": true,
+    "providerExecutionEndpoint": false,
+    "loopbackOnly": true,
+    "reportReviewIsNotConsent": true
+  },
+  "completeChain": {
+    "modes": [
+      "accepted-estimate",
+      "bounded-proof"
+    ],
+    "transaction": [
+      "study grant",
+      "supplied review",
+      "baseline F3 grant",
+      "treatment F3 grant",
+      "supplied source copy",
+      "agent direction copy",
+      "immutable authoring receipt"
+    ],
+    "postCountPerPair": 6,
+    "interceptedOnly": true,
+    "privateHostEvidencePerArm": 9,
+    "receiptPerApproval": 1,
+    "humanPause": true,
+    "originalSettlementGate": true,
+    "faultAfterEachMaterialInsert": 7,
+    "finalAssertionFaultsAfterAllWrites": [
+      "principal",
+      "evidence",
+      "configuration"
+    ],
+    "lostAcknowledgementAndConcurrentOriginalReceipt": true
+  },
+  "custody": {
+    "fixedFinancialDescriptionsOpaqueRefs": true,
+    "privateTermsCanaryAbsentFromFinancialRows": true,
+    "privateErasurePreservesAccountingAndHolds": true,
+    "remotePhysicalErasureProven": false,
+    "actualFundingProven": false
+  },
+  "limitations": [
+    "Synthetic trusted-edge/evidence/billing records are fixture inputs, not real authority or user acceptance.",
+    "Optional entry is callable locally but not registered on a real target.",
+    "Node/SQLite transaction and Node bundle are not D1/workerd/R2 qualification.",
+    "The existing Sites target metadata is only a compatibility lead; physical bindings are not attested.",
+    "Actual evidence issuance, payment liability, settlement, funded lifecycle and deletion owners remain unfilled.",
+    "New exact approval required after the October 1 deadline; no automatic renewal."
+  ]
+}

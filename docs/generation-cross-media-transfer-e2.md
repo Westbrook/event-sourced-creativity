@@ -127,3 +127,11 @@ Expected non-safety fidelity failure is a measured comparison outcome. Safety, a
 | Video / 3D | A failed one-time cleanup attempt is not physical erasure or lifecycle closure; retained funding must remain observable. | Queue/asset deletion ownership, temporal/geometry/material constraints and provider billing need their own native contracts. |
 
 All prior I/P1/C2/P2 entries remain intact. N10H complete, N8A parked, N6 archived and 847/six exclusions unchanged. No route adoption, hosted compatibility, financial truth, cross-media quality or user acceptance follows from P3's local proof.
+
+### P4 — authenticated image-study side effect (local only)
+
+P3's producer gap is now implemented as `generation-supplied-study-approval`, a separate typed authoring side-effect receipt. Its exact private review and explicit decision commit two image-operation F3 grants plus study/review/private copies in one transaction. The document event proof is unchanged. Tests connect that receipt to the real P2 host, preserving the human baseline-fidelity pause, original settlement gate, six one-use POST slots and nine evidence records per arm.
+
+Transfer lesson: a route with financial side effects needs its own exact inventory, principal/evidence proof, immutable intent and atomic receipt. An event-writing operation, a sponsor allowance, shape-valid policy JSON or a report review cannot stand in for that authority. Durable financial descriptions can be source-free by construction using controlled vocabulary and opaque references while full evidence remains private and expiring. This does not qualify text/video/3D routes: each would need its own concrete inventory and lifecycle evidence, and no such follow-on work is proposed here.
+
+Evidence: `docs/evidence/generation-p4/complete-chain.json`, `verification.json`, `interface.md` and `release-envelope.json`. All positive decisions, transport, billing and deletion exercises are synthetic local fixtures. No adoption, image-quality, actual funding/acceptance or hosted-readiness claim follows. Local producer work ends here; live execution stays parked pending concrete real evidence and one target decision. N10H/N8A/N6 and original 847/six exclusions are unchanged; the October 1 proposal does not renew automatically.
