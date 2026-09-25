@@ -16,6 +16,13 @@ export function validateWire(request,stage,user){
   if(typeof prompt!=='string'||!prompt.isWellFormed()||!prompt.length||prompt!==prompt.trim()||Buffer.byteLength(prompt)>HOST_LIMITS.promptBytes)deny('study_prompt_invalid');
   return b;
 }
+/** Separate v2 advisory contract; v1 exact-prompt validation is unchanged. */
+export function validateAdvisoryWire(request){
+ if(!request||request.provider!=='openai'||request.method!=='POST'||request.endpoint!=='/v1/moderations'||typeof request.body!=='string'||!memoryDerivationJsonUniqueKeys(request.body))deny('study_advisory_contract');
+ const b=JSON.parse(request.body);
+ if(Object.keys(b).sort().join(',')!=='input,model'||b.model!=='omni-moderation-latest'||!Array.isArray(b.input)||b.input.length!==2||b.input.some(v=>typeof v!=='string'||!v.length||!v.isWellFormed()||Buffer.byteLength(v)>HOST_LIMITS.promptBytes))deny('study_advisory_contract');
+ return b;
+}
 /** Exact wire body, one fetch, no SDK retry and no status/result fallback. Called only after durable intent. */
 export async function submitStudyStage(env,request,stage,{signal,checkpoint}){
   const response=await fetch('https://api.openai.com'+request.endpoint,{method:'POST',redirect:'error',signal,headers:{authorization:`Bearer ${env.OPENAI_API_KEY}`,'content-type':'application/json'},body:request.body});
@@ -23,15 +30,15 @@ export async function submitStudyStage(env,request,stage,{signal,checkpoint}){
   const requestId=typeof headerId==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(headerId)?headerId:null;
   // Request identity survives a lost/oversized/malformed body before private custody.
   await checkpoint({phase:'headers',requestId,httpStatus:response.status});
-  const raw=await readStudyBody(response,signal,stage==='moderation'?HOST_LIMITS.evidenceBytes:HOST_LIMITS.responseBytes);
+  const raw=await readStudyBody(response,signal,stage==='advisory'?65536:stage==='moderation'?HOST_LIMITS.evidenceBytes:HOST_LIMITS.responseBytes);
   if(!memoryDerivationJsonUniqueKeys(raw))deny('study_response_duplicate_or_invalid_json');
   const body=JSON.parse(raw);
   const receiptHash=digest(raw),usage=body.usage??null;
   await checkpoint({phase:'receipt',requestId,httpStatus:response.status,receiptHash,usage});
   if(!response.ok)return {outcome:'unknown',requestId,receiptHash,raw,usage};
-  if(stage==='moderation'){
-    if(!validModerationResults(body,1))deny('study_moderation_invalid');
-    return {outcome:body.results[0].flagged?'refused':'usable',requestId,receiptHash,raw,usage:null};
+  if(stage==='moderation'||stage==='advisory'){
+    if(!validModerationResults(body,stage==='advisory'?2:1))deny('study_moderation_invalid');
+    return {outcome:body.results.some(r=>r.flagged)?'refused':'usable',requestId,receiptHash,raw,usage:null};
   }
   if(!Array.isArray(body.data)||body.data.length!==1||typeof body.data[0]?.b64_json!=='string')deny('study_image_missing');
   const encoded=body.data[0].b64_json;

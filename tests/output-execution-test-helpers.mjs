@@ -24,8 +24,8 @@ export function registerOutputSourceImports() {
   } });
 }
 
-export function outputTestDatabase() {
-  const sqlite = new DatabaseSync(":memory:");
+export function outputTestDatabase({filename = ":memory:"} = {}) {
+  const sqlite = new DatabaseSync(filename);
   sqlite.exec("PRAGMA foreign_keys=ON");
   class Statement {
     constructor(sql, bindings = []) { this.sql = sql; this.bindings = bindings; }

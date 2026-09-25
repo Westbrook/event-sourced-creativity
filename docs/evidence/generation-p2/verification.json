@@ -1,0 +1,103 @@
+{
+  "version": "p2-local-verification-v1",
+  "ready": false,
+  "liveAuthorized": false,
+  "packetId": "p2-pilot:641d2e2ddc37adfbbf5ef897033f36fd9c9c41a9b510e5819a48a7f7183c5528",
+  "envelopeId": "p2-local-release:08a52c63c76ea86bc617e139e1b1a066611f5b31b933d950bd4a1a2a4f676ad8",
+  "proposalPlanId": "supplied-execution:a977d3fc68de718a107361e07006c6cbf567a1af785bbf8832d4c61cd2db9ac3",
+  "mainBase": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "c2OriginalCommit": "7096cdaf1d6495b5590895e6aec0678c3c07d01f",
+  "c2IntegratedCommit": "398189887ab91f1d41552b52b4a79b5b5965090a",
+  "tests": {
+    "p2": {
+      "pass": 48,
+      "fail": 0,
+      "log": "focused.log"
+    },
+    "integrated": {
+      "pass": 143,
+      "fail": 0,
+      "log": "integrated.log",
+      "includes": "unchanged 109 H/F/advisory/bridge plus P1 and C2 semantic suites"
+    },
+    "preC2": {
+      "pass": 105,
+      "fail": 4,
+      "log": "pre-c2-regressions.log",
+      "resolved": "C2 authored semantic carriers, all 13 anchors preserved"
+    }
+  },
+  "checks": {
+    "typecheck": "pass",
+    "changedFileLint": "pass",
+    "applicationBuild": "pass; Vite chunk size warnings only",
+    "v1Schema": "pass unchanged",
+    "v2Schema": "pass optional empty local fixture only",
+    "c2Artifacts": "pass unchanged current versions",
+    "c2Bridge": "pass unchanged current version",
+    "builtHostDefaultOff": "pass; DB trap and zero fetch",
+    "sealedSource": "pass"
+  },
+  "builtHost": {
+    "sha256": "8f6fdf1d8bf2d7655afb13cecf5e0c14bd76907bf9420051579bec7eef5ea69e",
+    "bytes": 5805740,
+    "sourceFiles": 601,
+    "artifacts": {
+      "host.mjs": "8f6fdf1d8bf2d7655afb13cecf5e0c14bd76907bf9420051579bec7eef5ea69e",
+      "assets/experience-guest-image-stage-custody-De24Ov3q.js": "fbed6f23b2a49bcd1f6ed4c72c4d4a3360688b542cc2e2a04c0a03c362fc3b66",
+      "assets/memory-document-job-origin-retirement-schema-YX0XNtRD.js": "2735c2f22f9a855b4a0bf139d53af94fef7f40bcb71c3b589a07d70e5eb01ff8",
+      "assets/memory-live-conversation-DV_VWMoc.js": "97c19e87a882ef1a9a2e58ed14e2a0d9f1a377c993b7b7795cf9a71553847a89",
+      "assets/organization-project-nesting-api-BchbdI81.js": "3d81870e7cedfcdac5c8e0922009ab1ba2194ba2f8d9f84b1be6e521367327dc",
+      "assets/output-reconciliation-entry-B_FJDqXF.js": "e24b4fd766d779e1019713c29a9bffa987ccee9651ff387e1363d82ba792636e"
+    },
+    "environment": "Node 24 via existing Vite toolchain; not hosted/workerd qualification"
+  },
+  "applicationWorkerSha256": "56bcaa88cf11fd4ae97a48f31240b11d023f29c1e277d283fd834de15fed5edb",
+  "preserved": {
+    "docs/evidence/generation-p1/contract-regressions.log": true,
+    "docs/evidence/generation-p1/demo-envelopes.json": true,
+    "docs/evidence/generation-p1/i-candidate.json": true,
+    "docs/evidence/generation-p1/i-profile.mjs": true,
+    "docs/evidence/generation-p1/index.html": true,
+    "docs/evidence/generation-p1/interception.json": true,
+    "docs/evidence/generation-p1/ledger-addendum.md": true,
+    "docs/evidence/generation-p1/p1-tests.log": true,
+    "docs/evidence/generation-p1/pilot-packet.json": true,
+    "docs/evidence/generation-p1/result.md": true,
+    "docs/evidence/generation-p1/verification.json": true,
+    "evals/generation-reliability/execution-plan.mjs": true,
+    "evals/generation-reliability/native-host/schema-contract.mjs": true,
+    "evals/generation-reliability/preparation/contract.mjs": true,
+    "db/generation-study.pending.sql": true
+  },
+  "providerCalls": 0,
+  "realGrantsInstalled": false,
+  "productionSchemaInstalled": false,
+  "deployed": false,
+  "pushed": false,
+  "spending": false,
+  "userReviewed": false,
+  "remaining": [
+    "Real review/commit adapter into generation_study_supplied_reviews is not connected; local trusted intake consumes existing authority only.",
+    "No actual selected principal, private input approval, reviewed configuration or exact paid authorization.",
+    "No authentic final charge, account/rate/liability and funded physical retention/deletion evidence.",
+    "No disabled hosted target transaction/resource/runtime qualification or deployment.",
+    "No real image outcomes or quality/acceptance claim."
+  ],
+  "historicalChecks": [
+    "Historical native-host envelope rejects changed source; retained unchanged.",
+    "Historical integrated-release-v2 one-file source assumption is stale; retained unchanged. P2 has a separately named successor local envelope."
+  ],
+  "limits": {
+    "actualProviderImages": 0,
+    "maximumProposedPOSTs": 6,
+    "maximumProposedImages": 2,
+    "planner": 0,
+    "concurrency": 1,
+    "retries": 0,
+    "evidenceWritesPerArm": 9,
+    "imageBytesMaximum": 16777216,
+    "evidenceBytesPerArm": 2097152,
+    "proposalExpiresAt": "2026-10-01T00:00:00.000Z"
+  }
+}

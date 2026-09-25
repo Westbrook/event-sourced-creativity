@@ -1,0 +1,10 @@
+{
+  "capture": "e2a-capture:35d665dd5cc18c4d007a9bb019bf3bd36d310852f0536b2c9803d91d1e4a3214",
+  "financial": "f2-financial:c0db60d49e0078f42c4d46264eba9631b7357b6d77d0d1e8ee4b37e50d8b02f8",
+  "plan": "execution:f319117750b0f14fa3391d90e969e3f8bdb09edf721630a013253280b17900f8",
+  "coverage": 13,
+  "available": false,
+  "renewed": false,
+  "liveAuthorized": false,
+  "providerCalls": 0
+}

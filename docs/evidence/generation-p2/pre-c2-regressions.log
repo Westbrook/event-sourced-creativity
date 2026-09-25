@@ -1,0 +1,185 @@
+✔ advisory clear survives request capture failure (22.119541ms)
+✔ advisory clear survives response capture failure (1.430375ms)
+✔ advisory clear survives both capture failure (1.039166ms)
+✔ advisory flagged survives request capture failure (1.090708ms)
+✔ advisory flagged survives response capture failure (0.737833ms)
+✔ advisory flagged survives both capture failure (0.487458ms)
+✔ N6 input-witness failure preserves original wire, verdict and one dispatch (0.552042ms)
+✔ disabled by default: no authority, custody, reservation, transport or key read (9.617958ms)
+✔ actual unchanged adapter JSON bytes match the reviewed direct cell including omissions (30.198208ms)
+✔ completed evidence survives journal reopen; reuse verifies all receipts and pixels with zero calls (19.900334ms)
+✔ two journal connections atomically reserve only one purchase (16.063666ms)
+✔ simultaneous initial admissions race at SQLite reservation (18.764834ms)
+✔ lost response remains unknown across reopen/new experiment/config; no replacement pixels (12.913667ms)
+✔ accepted crash: only two durable original reads across reruns, never resubmission (15.273083ms)
+✔ missing usage retains content success and pixels while all new initiation holds (17.761083ms)
+✔ accounting checkpoint persists before a response-retention failure (13.7985ms)
+✔ expired access, revoked access and expired admission cannot initiate a purchase (3.237667ms)
+✔ retention expires at private write boundary; no provider dispatch (4.529208ms)
+✔ invalid review, F2 unavailable, preparation and payload mutation all have zero purchases (3.556792ms)
+✔ snapshot inputs before asynchronous authorization prevents candidate mutation (16.116125ms)
+✔ stop before admission; explicit resume required; stop after moderation resumes image once (17.846333ms)
+✔ malformed/flagged moderation blocks image; over-estimate charge holds without replacement (21.555166ms)
+✔ reconciliation rejects changed provider identity and never reclaims failed read (17.133125ms)
+✔ new journal cannot replace the canonical authority-bound ledger (5.279333ms)
+✔ process death after dispatch intent survives reopen and cannot purchase again (162.1005ms)
+✔ accounting summary includes preparation, custody, unknown spend and all unexecuted stages (14.535459ms)
+✔ unsupported original-request retrieval holds without even a status read (13.119625ms)
+✔ false control/reconciliation callbacks are not authority receipts (4.267917ms)
+✖ actual C arms reproduce adapter bytes and immutable study contains exact F2 gate (16.771416ms)
+✔ caller authorized flag grants nothing, opaque transport errors never enter journal (9.443709ms)
+✔ allowance revoked between moderation and image stops at the next checkpoint (16.118958ms)
+✖ new runner rejects live flags; checked study remains immutable and offline (195.982458ms)
+✔ accepted-estimate: exact server grant admits mock host without changing F2; funded lifecycle permits completion (380.705791ms)
+✔ bounded-proof: exact server grant admits mock host without changing F2; funded lifecycle permits completion (276.059375ms)
+✔ financial grant denies absent (56.105917ms)
+✔ financial grant denies forged-request (56.78575ms)
+✔ financial grant denies expired (53.602ms)
+✔ financial grant denies wrong-payer (70.484292ms)
+✔ financial grant denies wrong-operation (70.203459ms)
+✔ financial grant denies wrong-account (54.541625ms)
+✔ financial grant denies wrong-policy (52.421792ms)
+✔ policy binds sourceHash (48.073ms)
+✔ policy binds requestHash (46.313209ms)
+✔ policy binds runtimeHash (50.927417ms)
+✔ policy binds inventoryHash (48.554041ms)
+✔ policy binds payerId (50.720333ms)
+✔ policy binds region (55.907ms)
+✔ accepted estimate rejects cap/authority mutation bound (55.884542ms)
+✔ accepted estimate rejects cap/authority mutation maximumLossMicrousd (58.328375ms)
+✔ accepted estimate rejects cap/authority mutation providerEnforcedChargeCap (62.090084ms)
+✔ accepted estimate rejects cap/authority mutation residualDecision (54.85375ms)
+✔ accepted estimate rejects cap/authority mutation expiresAt (53.601292ms)
+✔ accepted estimate rejects cap/authority mutation inFlightLimit (62.992541ms)
+✔ receipt and reconciliation remain immutable; estimate is never incurred evidence; chains reject forks (295.567458ms)
+✔ timeout and missing charge cannot be cleared by lifecycle policy or a second grant (156.580917ms)
+✔ unclamped incurred overrun remains visible and holds future purchase (306.326875ms)
+✔ restart after token settlement resumes original dollar settlement once (324.574875ms)
+✔ funded lifecycle cannot be released early; verified closure settles actual expense once (295.397875ms)
+✔ new unknown assessment or expired lifecycle blocks payer despite prior operational completion (287.714833ms)
+✔ pure generic preparation policy requires separate exact operation and inventory (50.541875ms)
+✔ server append is idempotent after lost acknowledgement; conflicting retry and binding rejected (323.415458ms)
+✔ second arm needs its own exact authority and settled first purchase with funded obligations (587.22375ms)
+✔ financial revocation at reservation commit rolls back both monetary reserves and buys nothing (64.053208ms)
+✔ expired provision blocks ordinary new reservation without any reconcile call (304.727458ms)
+✔ lifecycle actual overrun is recorded unclamped and blocks next purchase (313.378625ms)
+✔ a partial incurred overrun cannot disappear in later evidence (288.171708ms)
+✔ wrong receipt, wrong lifecycle owner and unfunded provision cannot complete (357.650917ms)
+✔ revocation after moderation stops image dispatch and retains original reservation (152.921291ms)
+✔ reconciliation cannot switch away from the original canonical DB (311.510875ms)
+✔ native disabled path has no authority, DB, key or transport work (1.802083ms)
+✔ real D1 adapters atomically reserve and checkpoint paid identity before private custody; recover original only (456.922458ms)
+✔ two independently constructed workers racing admission buy once (284.455708ms)
+✔ failure inside native reservation batch rolls back H state and both native counters (59.752458ms)
+✔ lost reservation acknowledgement retains canonical hold across fresh host; no fetch (80.034291ms)
+✔ current native I/O rejects expired-source (74.805625ms)
+✔ current native I/O rejects redacted-source (57.152708ms)
+✔ current native I/O rejects owner (53.229542ms)
+✔ current native I/O rejects permission (42.040334ms)
+✔ current native I/O rejects project-scope (49.445667ms)
+✔ current native I/O rejects schema (44.794875ms)
+✔ authority change at the reservation commit is rechecked atomically (49.422791ms)
+✔ outside native reservation blocks H3; H3 unknown exposure blocks outside reservation and zero release (340.83475ms)
+✔ direct lost response has one POST, durable intent, no polling or replacement (181.473417ms)
+✔ bounded image receipt handles duplicate without retry (165.169166ms)
+✔ bounded image receipt handles wrong-size without retry (149.504541ms)
+✔ bounded image receipt handles corrupt-png without retry (163.439167ms)
+✔ bounded image receipt handles missing-usage without retry (336.830958ms)
+✔ bounded image receipt handles status-503 without retry (178.389875ms)
+✔ accounting receipt survives private storage failure (268.66ms)
+✔ conflicting original charge and unclamped overrun keep hold (282.512458ms)
+✔ different original provider identity cannot settle (308.557458ms)
+✔ bounded reader rejects body size, invalid UTF8 and cancellation (0.684959ms)
+✖ public C/F2 current evidence stays unavailable and never gets promoted by host switch (5.129958ms)
+✔ stop after moderation resumes once without repeating the completed check (341.250541ms)
+✔ dispatch-intent lost acknowledgement prevents even the first fetch and all resubmission (113.933459ms)
+✔ source redaction at request-custody commit prevents subsequent provider transmission (110.365334ms)
+✔ missing retained evidence blocks completed reuse without buying a replacement (326.468208ms)
+✔ unknown external failed job blocks dispatch even without a new bridge reservation (58.42775ms)
+✔ changing DB binding, request owner, runtime or C request identity cannot escape authority (49.823708ms)
+✔ strict bounded unique moderation stops image dispatch: ories":{}}],"results":[]} (110.685458ms)
+✔ strict bounded unique moderation stops image dispatch: {"results":[]} (119.539ms)
+✔ strict bounded unique moderation stops image dispatch: ies":{"violence":true}}]} (112.156167ms)
+✖ actual public F2 false/null is rejected even with retained mock grant bindings (45.784875ms)
+✔ untrusted provider usage extensions stay out of accounting rows (146.757208ms)
+✔ artifact read quota persists across host instances and consumes failed original reads (408.373958ms)
+✔ cleanup only after original expiry removes private copies and retains purchase/charge identity (306.452625ms)
+✔ verified incurred charges do not resolve unknown future infrastructure exposure (308.007625ms)
+✔ older consequential unknown step blocks admission without native reservation rows (55.825792ms)
+✔ unacknowledged financial receipt never progresses to private image custody (184.258709ms)
+ℹ tests 109
+ℹ suites 0
+ℹ pass 105
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7762.960792
+
+✖ failing tests:
+
+test at tests/generation-execution-bridge.test.mjs:211:1
+✖ actual C arms reproduce adapter bytes and immutable study contains exact F2 gate (16.771416ms)
+  Error: semantic_coverage_missing:approved-excerpt,nested-authored-opaque
+      at validateCoverage (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/core.mjs:54:29)
+      at freezeCase (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/core.mjs:44:3)
+      at captureE2aFixture (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/e2a/capture.mjs:37:22)
+      at firstCompilerStudy (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/first-compiler-study.mjs:11:37)
+      at async TestContext.<anonymous> (/private/tmp/forma-p1-request-comparison/tests/generation-execution-bridge.test.mjs:213:14)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at tests/generation-execution-bridge.test.mjs:242:1
+✖ new runner rejects live flags; checked study remains immutable and offline (195.982458ms)
+  AssertionError [ERR_ASSERTION]: file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/core.mjs:54
+    if (missing.length) throw new Error(`semantic_coverage_missing:${missing.join(',')}`);
+                              ^
+  
+  Error: semantic_coverage_missing:approved-excerpt,nested-authored-opaque
+      at validateCoverage (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/core.mjs:54:29)
+      at freezeCase (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/core.mjs:44:3)
+      at captureE2aFixture (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/e2a/capture.mjs:37:22)
+      at firstCompilerStudy (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/first-compiler-study.mjs:11:37)
+      at async file:///private/tmp/forma-p1-request-comparison/scripts/check-generation-execution-bridge.mjs:23:14
+  
+  Node.js v24.16.0
+  
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (/private/tmp/forma-p1-request-comparison/tests/generation-execution-bridge.test.mjs:243:61)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1306:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:897:18)
+      at Test.postRun (node:internal/test_runner/test:1447:19)
+      at Test.run (node:internal/test_runner/test:1372:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at tests/generation-study-native.test.mjs:89:1
+✖ public C/F2 current evidence stays unavailable and never gets promoted by host switch (5.129958ms)
+  Error: semantic_coverage_missing:approved-excerpt,nested-authored-opaque
+      at validateCoverage (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/core.mjs:54:29)
+      at freezeCase (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/core.mjs:44:3)
+      at captureE2aFixture (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/e2a/capture.mjs:37:22)
+      at firstCompilerStudy (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/first-compiler-study.mjs:11:37)
+      at async TestContext.<anonymous> (/private/tmp/forma-p1-request-comparison/tests/generation-study-native.test.mjs:89:115)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
+
+test at tests/generation-study-native.test.mjs:126:1
+✖ actual public F2 false/null is rejected even with retained mock grant bindings (45.784875ms)
+  Error: semantic_coverage_missing:approved-excerpt,nested-authored-opaque
+      at validateCoverage (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/core.mjs:54:29)
+      at freezeCase (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/core.mjs:44:3)
+      at captureE2aFixture (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/e2a/capture.mjs:37:22)
+      at firstCompilerStudy (file:///private/tmp/forma-p1-request-comparison/evals/generation-reliability/first-compiler-study.mjs:11:37)
+      at async TestContext.<anonymous> (/private/tmp/forma-p1-request-comparison/tests/generation-study-native.test.mjs:127:38)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7)
