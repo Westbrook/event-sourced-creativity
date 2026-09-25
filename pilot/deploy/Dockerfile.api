@@ -8,7 +8,7 @@ RUN npm ci --prefix pilot --ignore-scripts --omit=dev --no-audit --no-fund
 COPY src ./src
 COPY worker ./worker
 COPY pilot/src/api.mjs pilot/src/core-repository.mjs pilot/src/core-http.mjs pilot/src/core-init.mjs pilot/src/cipher.mjs pilot/src/database.mjs pilot/src/identity.mjs pilot/src/routes.mjs ./pilot/src/
-COPY pilot/sql/001-platform.sql pilot/sql/003-core.sql ./pilot/sql/
+COPY pilot/sql/001-platform.sql pilot/sql/003-core.sql pilot/sql/004-test-users.sql ./pilot/sql/
 USER node
 ENV NODE_ENV=production PILOT_BIND=0.0.0.0 PORT=8080
 EXPOSE 8080

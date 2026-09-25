@@ -1,4 +1,4 @@
-// Local UI harness ONLY. Production api.mjs has no identity switch or fixture path.
+// Local UI harness ONLY. Production api.mjs has no synthetic IAP login or fixture path; app test-user selection is supported.
 import {readFile,writeFile} from 'node:fs/promises';
 import {randomBytes} from 'node:crypto';
 import {generateKeyPair,SignJWT,createLocalJWKSet,exportJWK} from 'jose';

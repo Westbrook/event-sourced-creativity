@@ -42,3 +42,7 @@ See `docs/operations-r1.md` for the deployment procedure and `docs/infrastructur
 `deploy/render.mjs` generates runnable R1 workloads once actual target values are supplied. It includes a fresh 5Gi PostgreSQL PVC, password-authenticated bootstrap/runtime roles, schema initialization, web/API services and PostgreSQL network isolation. The legacy `deploy/workloads.yaml` and `deploy/verify.yml` are v2 references, not the R1 deployment entry points.
 
 Receipts: `evidence/core-receipt.json` (R1), `evidence/receipt.json` (historical A/B/C local proofs). Raw logs are ignored. No user review or acceptance is inferred from tests.
+
+## Separate IAP admission and app test users
+
+One admitted IAP operator can create up to 19 additional app test users in the Test release controls. Each has a separate workspace, consent, drafts and permissions. Use the generated app email to share a project; select each user in its own tab to exercise read/edit/revocation. Selection is pinned for each loaded page and enforced against the signed-in operator by the server. This is controlled persona testing, not independent Google-account authentication. A second Google login is no longer required for app sharing/revocation acceptance.

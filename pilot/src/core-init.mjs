@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import {poolFromEnvironment,transaction} from './database.mjs';
 import {initializeCore} from './core-repository.mjs';
 const admissions=JSON.parse(await readFile(process.env.PILOT_ADMISSIONS_FILE,'utf8'));
-if(!Array.isArray(admissions)||admissions.length<2||admissions.length>20||admissions.some(a=>!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email)||!['creator','viewer'].includes(a.role)))throw Error('two_to_twenty_named_test_accounts_required');
+if(!Array.isArray(admissions)||admissions.length<1||admissions.length>20||admissions.some(a=>!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a.email)||!['creator','viewer'].includes(a.role)))throw Error('one_to_twenty_named_iap_operators_required');
 const password=(await readFile(process.env.PILOT_RUNTIME_PASSWORD_FILE,'utf8')).trim();if(password.length<32)throw Error('strong_fresh_runtime_password_required');
 const pool=poolFromEnvironment();try{
  await initializeCore(pool);

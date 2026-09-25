@@ -9,7 +9,7 @@ Local verified evidence must remain distinct from hosted acceptance:
 | Native Still creation/review and Forma edit return | Browser journey, real PG, same IDs/prose | Pending live URL |
 | Consent, IAP signature, role/scope | Local signed tokens and denial tests | Pending real admitted accounts |
 | Rich references, conflicts, retry receipts | Native controller + HTTP + PostgreSQL tests | Pending shared browser test |
-| Sharing/viewer/revocation | Two signed synthetic principals, exact event IDs, denied reads/writes | Pending second real IAP principal |
+| Sharing/viewer/revocation | Both independent signed identities and one signed operator with two app principals; exact event IDs, denied reads/writes | Pending two controlled app users behind one real IAP operator |
 | Offered source deletion | Physical current event/draft/operation body erasure and reference guards | Pending hosted repetition |
 | Application restart persistence | Local Node restart; PostgreSQL retained | Pending pod restart |
 | Deployment | Images, native checks, fresh schema/runtime-role container checks | Pending GitHub/infra/auth inputs and rollout |

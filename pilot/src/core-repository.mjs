@@ -20,7 +20,7 @@ const fail=(code,status=409,extra)=>{throw new CoreError(code,status,extra);};
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9:_-]{1,180}$/.test(id);
 const checkId=id=>{if(!safeId(id))fail('invalid_id',400);return id;};
 const same=(a,b)=>JSON.stringify(a??null)===JSON.stringify(b??null);
-export const CORE_MIGRATIONS=[new URL('../sql/001-platform.sql',import.meta.url),new URL('../sql/003-core.sql',import.meta.url)];
+export const CORE_MIGRATIONS=[new URL('../sql/001-platform.sql',import.meta.url),new URL('../sql/003-core.sql',import.meta.url),new URL('../sql/004-test-users.sql',import.meta.url)];
 export const initializeCore=pool=>migrate(pool,CORE_MIGRATIONS);
 export class CoreRepository{
  constructor(pool,{encryptionRoot,expiresAt}){this.pool=pool;this.cipher=contentCipher(encryptionRoot);if(!Number.isFinite(Date.parse(expiresAt)))throw Error('test_lifetime_required');this.expiresAt=expiresAt;}
@@ -38,6 +38,29 @@ export class CoreRepository{
   if(binding){const p=await this.principal(db,binding.principal_id,{consent:false});if(p.email!==email)fail('identity_binding_changed',403);return p;}
   const {rowCount}=await db.query('SELECT 1 FROM pilot.principals WHERE lower(email)=$1',[email]);if(rowCount)fail('identity_binding_conflict',403);
   const id='test-'+randomUUID();await db.query('INSERT INTO pilot.principals(principal_id,account_id,email,display_name,role) VALUES($1,$1,$2,$3,$4)',[id,email,email.split('@')[0],admission.role]);await db.query('INSERT INTO pilot.identity_bindings VALUES($1,$2,$3)',[identity.issuer,identity.subject,id]);await db.query('INSERT INTO pilot.workspaces(workspace_id,owner_id) VALUES($1,$2)',['personal-'+id,id]);return this.principal(db,id,{consent:false});
+ });}
+ testUsers(controller,displayName){return transaction(this.pool,async db=>{
+  const p=await this.principal(db,controller,{consent:false});
+  const {rows}=await db.query('SELECT p.principal_id,p.email,p.display_name FROM pilot.controlled_test_users c JOIN pilot.principals p USING(principal_id) WHERE c.controller_id=$1 AND p.disabled_at IS NULL ORDER BY c.created_at,p.principal_id',[controller]);
+  let created;
+  if(displayName!==undefined){
+   if(p.role!=='creator')fail('creator_required',403);
+   if(typeof displayName!=='string'||!displayName.trim()||displayName.trim().length>80)fail('test_user_name_required',400);
+   if(rows.length>=19)fail('test_user_limit',409);
+   const id='test-'+randomUUID(),email=id+'@users.pilot.invalid';
+   await db.query('INSERT INTO pilot.principals(principal_id,account_id,email,display_name,role) VALUES($1,$1,$2,$3,$4)',[id,email,displayName.trim(),'creator']);
+   await db.query('INSERT INTO pilot.workspaces(workspace_id,owner_id) VALUES($1,$2)',['personal-'+id,id]);
+   await db.query('INSERT INTO pilot.controlled_test_users(controller_id,principal_id) VALUES($1,$2)',[controller,id]);
+   created={principal_id:id,email,display_name:displayName.trim()};rows.push(created);
+  }
+  return {controllerEmail:p.email,users:[{principal_id:p.principal_id,email:p.email,display_name:p.display_name},...rows],...(created?{created}:{})};
+ });}
+ selectTestUser(controller,selected){return transaction(this.pool,async db=>{
+  const p=await this.principal(db,controller,{consent:false});
+  if(!selected||selected==='primary'||selected===controller)return p;
+  const {rowCount}=await db.query('SELECT 1 FROM pilot.controlled_test_users WHERE controller_id=$1 AND principal_id=$2',[controller,checkId(selected)]);
+  if(!rowCount)fail('test_user_not_controlled',403);
+  return this.principal(db,selected,{consent:false});
  });}
  consent(actor,version){return transaction(this.pool,async db=>{await this.principal(db,actor,{consent:false});if(version!==POLICY_VERSION)fail('current_policy_required',400);await db.query('UPDATE pilot.principals SET consent_version=$2,consented_at=clock_timestamp() WHERE principal_id=$1',[actor,version]);return {accepted:true};});}
  async access(db,p){

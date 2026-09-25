@@ -13,9 +13,9 @@ export function createCoreServer({repository,verify,origin,staticRoot,sourceComm
   try{
    const url=new URL(req.url,origin),path=url.pathname;
    if(path==='/healthz')return send(200,{ok:true,sourceCommit});
-   if(path==='/readyz'){await repository.pool.query("SELECT 1 FROM public.pilot_migrations WHERE name='003-core.sql'").then(r=>{if(!r.rowCount)throw Error('migration_required');});return send(200,{ready:true,sourceCommit,release:'R1'});}
+   if(path==='/readyz'){await repository.pool.query("SELECT 1 FROM public.pilot_migrations WHERE name='004-test-users.sql'").then(r=>{if(!r.rowCount)throw Error('migration_required');});return send(200,{ready:true,sourceCommit,release:'R1'});}
    // Every private operation derives its actor from a verified assertion. Caller identity headers are ignored.
-   const identity=await verify(new Headers(req.headers)),principal=await repository.enroll(identity),actor=principal.principal_id;
+   const identity=await verify(new Headers(req.headers)),controller=await repository.enroll(identity);
    if(!path.startsWith('/api/')){
     if(!staticRoot||!['GET','HEAD'].includes(req.method))return send(404,{error:'pilot_route_unavailable'});
     const file=pageEntry(path)??(/^\/assets\/[A-Za-z0-9_./-]+$/.test(path)&&!path.includes('..')?path.slice(1):null);if(!file)return send(404,{error:'pilot_route_unavailable'});
@@ -26,6 +26,11 @@ export function createCoreServer({repository,verify,origin,staticRoot,sourceComm
     if(!req.headers['content-type']?.startsWith('application/json'))return send(415,{error:'json_required'});
     let size=0;const chunks=[];for await(const c of req){size+=c.length;if(size>1024*1024)return send(413,{error:'request_too_large'});chunks.push(c);}try{body=JSON.parse(Buffer.concat(chunks).toString());}catch{return send(400,{error:'invalid_json'});}if(!body||typeof body!=='object'||Array.isArray(body))return send(400,{error:'invalid_json'});
    }
+   // Management stays with the authenticated controller, never the selected app user.
+   if(path==='/api/pilot/test-users'&&req.method==='GET')return send(200,await repository.testUsers(controller.principal_id));
+   if(path==='/api/pilot/test-users'&&req.method==='POST'){if(typeof body.displayName!=='string')return send(400,{error:'test_user_name_required'});return send(201,await repository.testUsers(controller.principal_id,body.displayName));}
+   // The header is only a selector. Ownership is checked server-side on every request.
+   const principal=await repository.selectTestUser(controller.principal_id,req.headers['x-still-test-user']),actor=principal.principal_id;
    const resource=resourceFrom(req);
    if(path==='/api/session'&&req.method==='GET')return send(200,await repository.session(actor,resource));
    if(path==='/api/session'&&req.method==='POST'){if(body.action!=='accept_terms'||body.ownershipConfirmed!==true||body.providerProcessingConfirmed!==true)return send(400,{error:'explicit_consent_required'});await repository.consent(actor,'pilot-2026-08-10');return send(200,await repository.session(actor,resource));}

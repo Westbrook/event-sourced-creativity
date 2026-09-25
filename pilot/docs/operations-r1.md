@@ -6,7 +6,7 @@ Complete the actions in `infrastructure-request.md`. Use only the allocated prot
 
 Copy `deploy/release.example.json` outside source control and fill the actual values. `spendCeiling` is a string such as `10 USD` only after an owner approves that amount; the example intentionally leaves it unset. `expiresAt` is an ISO UTC timestamp. This is a test-lifetime access fence and owner cleanup deadline, not billing enforcement. The pinned PostgreSQL 17.9 Alpine image matches tested schema behavior; no pgvector is required.
 
-Create `accounts.json` containing the two actual admitted IAP addresses and their `creator` or `viewer` admission role. Example shape: `[{"email":"ACTUAL_ACCOUNT","role":"creator"}, ...]`. The initializer updates admissions on each rollout. It never auto-accepts product consent. Do not use the local synthetic accounts for hosted acceptance.
+Create `accounts.json` containing one or more actual admitted IAP operator addresses and their `creator` or `viewer` admission role. Example shape: `[{"email":"ACTUAL_ACCOUNT","role":"creator"}, ...]`. The initializer updates admissions on each rollout. It never auto-accepts product consent. Do not use the local synthetic accounts for hosted acceptance.
 
 Generate fresh credentials without printing them:
 
@@ -31,18 +31,20 @@ The platform route directs `/api` to `api` and all allowed frontend routes to `f
 
 ## Hosted acceptance
 
-1. Sign in with each admitted account and explicitly complete native product consent. Check an unadmitted account is denied.
+1. Sign in with the admitted IAP operator. In Test release controls, create a second app test user. Each user must complete native product consent separately. Keep different users in separate tabs; selection is pinned per loaded tab. Independent IAP admission/denial remains a separate boundary check.
 2. Create Project → Document → Idea through Still. Review/approve, reload, and record their IDs and revision.
 3. Open that document in Forma using the test controls. Edit its native rich body, including an existing Idea reference. Save, return to Still and reload. Verify same IDs/reference targets/prose.
 4. Make overlapping edits; verify the stale writer is rejected and can retain/review their draft. Do not overwrite a newer value merely by refreshing its head.
-5. Share to the second principal as viewer (write denied), then editor. Revoke and verify reads/writes fail after reload. Use exact admitted email, never a caller-supplied actor ID.
+5. Share to the second principal as viewer (write denied), then editor. Revoke and verify reads/writes fail after reload. Use the generated app test email shown by the controls. The user selector is validated against the verified operator on every request.
 6. Try deleting a referenced Idea (denied), delete its referencing source, then delete the original. Verify current private events/drafts/receipts are erased. Upload and derived-storage tests are excluded because those types are unavailable.
 7. Restart only the test API pod, reload both deep links, and verify data persists. Deploy the same revision again through the workflow, then record its image/commit receipts and repeat a read/edit.
 
-Readiness and local JWT tests do not substitute for this real two-account acceptance. Record actual hosted URLs only after the test passes.
+Readiness and local JWT tests do not substitute for this hosted two-app-user acceptance. Record actual hosted URLs only after the test passes.
+
+App test users are controlled testing personas, not independently authenticated people. Each has its own principal, personal workspace, consent, drafts and grants. The admitted operator can intentionally act as either user. These tests qualify app authorization and do not establish separation between independent Google accounts. Removing the operator admission denies access to every user they control.
 
 ## Recovery and cleanup
 
-Compatible redeploys retain the fresh PVC, root and admissions. Revert to an earlier **R1-compatible** image pair by completing a release config with its exact digests and applying the rendered manifest to the same namespace. Keep the current schema and authoritative revocations/deletions. Do not roll back to the pre-R1 API or restore an old database snapshot containing deleted sources. If no compatible candidate exists, stop API access and diagnose; do not reset data automatically.
+Compatible redeploys retain the fresh PVC, root and admissions. Revert to an earlier **R1-compatible** image pair by completing a release config with its exact digests and applying the rendered manifest to the same namespace. Keep the current schema and authoritative revocations/deletions. The app-user release requires migration `004-test-users.sql`; recovery images must include it in their migration ledger. Do not roll back to the pre-R1 API or restore an old database snapshot containing deleted sources. If no compatible candidate exists, stop API access and diagnose; do not reset data automatically.
 
 At expiry the API denies access, but pods/disks still incur infrastructure charges. The named cleanup owner must disable deployment, remove only this release’s route/admission/IAM grants and workloads, and deliberately delete its PVC, empty private bucket, secrets and retained image/log artifacts under the approved retention rules. Storage deletion is irreversible; preserve any user-requested export only under separate authorization. Check the billing allocation is no longer accruing resource charges. No scheduled cleanup has been created in this task.

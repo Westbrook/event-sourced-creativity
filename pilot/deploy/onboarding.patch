@@ -1,9 +1,9 @@
 diff --git a/docs/still-prototron.md b/docs/still-prototron.md
 new file mode 100644
-index 0000000..8330845
+index 0000000..2e700d7
 --- /dev/null
 +++ b/docs/still-prototron.md
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,62 @@
 +# Still core test release
 +
 +This onboards `still-platform-pilot` on Prototron using the supported
@@ -36,11 +36,12 @@ index 0000000..8330845
 +
 +The user authorized a **$200 total infrastructure spending ceiling** for this
 +test. Resource quotas are capacity limits, not a billing cap. Billing/cleanup
-+owner is `westbrook.johnson@reve.art`. Expiry and the admitted test accounts are
++owner is `westbrook.johnson@reve.art`. Expiry and live IAP admission verification are
 +still unresolved. Record those values and a cost-control procedure before
 +deploying billable workloads.
-+The second account is for real sharing/revocation acceptance; it is not needed
-+to review this onboarding change.
++One IAP operator can create and select multiple app test users for app-level
++sharing/revocation acceptance. Each has separate app permissions and content.
++This does not qualify isolation between independent Google accounts.
 +
 +After infrastructure review/merge, a maintainer applies
 +`terraform/reve-prototyping` through the normal process. Create the private app
@@ -175,7 +176,7 @@ index 0000000..a924161
 +    persistentvolumeclaims: "1"
 diff --git a/k8s/prototron/user-namespaces/still-platform-pilot/route.yaml b/k8s/prototron/user-namespaces/still-platform-pilot/route.yaml
 new file mode 100644
-index 0000000..6a9bfb4
+index 0000000..e1a51d5
 --- /dev/null
 +++ b/k8s/prototron/user-namespaces/still-platform-pilot/route.yaml
 @@ -0,0 +1,18 @@
@@ -191,12 +192,12 @@ index 0000000..6a9bfb4
 +  parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: reve-dev, namespace: reve-system}]
 +  hostnames: [still-platform-pilot.p.reve-dev.com]
 +  rules:
-+  - matches: [{path: {type: PathPrefix, value: /api}}]
-+    backendRefs: [{group: '', kind: Service, name: api, port: 80, weight: 1}]
-+    timeouts: {request: 30s}
-+  - matches: [{path: {type: PathPrefix, value: /}}]
-+    backendRefs: [{group: '', kind: Service, name: frontend, port: 80, weight: 1}]
-+    timeouts: {request: 30s}
++    - matches: [{path: {type: PathPrefix, value: /api}}]
++      backendRefs: [{group: '', kind: Service, name: api, port: 80, weight: 1}]
++      timeouts: {request: 30s}
++    - matches: [{path: {type: PathPrefix, value: /}}]
++      backendRefs: [{group: '', kind: Service, name: frontend, port: 80, weight: 1}]
++      timeouts: {request: 30s}
 diff --git a/terraform/reve-prototyping/user-namespaces.tf b/terraform/reve-prototyping/user-namespaces.tf
 index 5f07050..a751fee 100644
 --- a/terraform/reve-prototyping/user-namespaces.tf
