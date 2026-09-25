@@ -1,0 +1,17 @@
+{
+  "packageVersion": "0.45.2",
+  "migratorSourceSha256": "9540ef89a7fcbaa11eab6f74cf3024fe575a436a9cb0d1e3533afd0cdb65225f",
+  "nativeMechanismVerified": false,
+  "diff": {
+    "missing": [],
+    "extra": [
+      {
+        "type": "table",
+        "name": "__drizzle_migrations",
+        "tbl_name": "__drizzle_migrations",
+        "sql": "CREATE TABLE \"__drizzle_migrations\" (\n\t\t\tid SERIAL PRIMARY KEY,\n\t\t\thash text NOT NULL,\n\t\t\tcreated_at numeric\n\t\t)"
+      }
+    ],
+    "changed": []
+  }
+}

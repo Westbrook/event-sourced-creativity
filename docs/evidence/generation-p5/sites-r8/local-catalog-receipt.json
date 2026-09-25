@@ -1,0 +1,1065 @@
+{
+  "ok": true,
+  "action": "catalog",
+  "diagnosticVersion": "p5-catalog-r8",
+  "dataset": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a",
+  "catalog": [
+    {
+      "type": "table",
+      "name": "_cf_METADATA",
+      "tbl_name": "_cf_METADATA",
+      "sql": "CREATE TABLE _cf_METADATA (\n        key INTEGER PRIMARY KEY,\n        value BLOB\n      )"
+    },
+    {
+      "type": "trigger",
+      "name": "authoring_study_commit_no_delete",
+      "tbl_name": "authoring_study_commits",
+      "sql": "CREATE TRIGGER authoring_study_commit_no_delete BEFORE DELETE ON authoring_study_commits BEGIN SELECT RAISE(ABORT,'authoring_study_receipt_immutable'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "authoring_study_commit_no_update",
+      "tbl_name": "authoring_study_commits",
+      "sql": "CREATE TRIGGER authoring_study_commit_no_update BEFORE UPDATE ON authoring_study_commits BEGIN SELECT RAISE(ABORT,'authoring_study_receipt_immutable'); END"
+    },
+    {
+      "type": "table",
+      "name": "authoring_study_commits",
+      "tbl_name": "authoring_study_commits",
+      "sql": "CREATE TABLE authoring_study_commits (\n preview_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL UNIQUE REFERENCES authoring_study_configurations(proposal_id),\n owner_id TEXT NOT NULL REFERENCES users(user_id), intent_id TEXT NOT NULL UNIQUE,\n operation TEXT NOT NULL CHECK(operation='generation-supplied-study-approval'), version INTEGER NOT NULL CHECK(version=1),\n display_hash TEXT NOT NULL, configuration_hash TEXT NOT NULL, principal_hash TEXT NOT NULL,\n plan_id TEXT NOT NULL, grant_id TEXT NOT NULL UNIQUE REFERENCES generation_study_grants(grant_id),\n review_id TEXT NOT NULL UNIQUE REFERENCES generation_study_supplied_reviews(review_id),\n baseline_operation TEXT NOT NULL UNIQUE, treatment_operation TEXT NOT NULL UNIQUE,\n evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)), receipt_json TEXT NOT NULL CHECK(json_valid(receipt_json)),\n expires_at TEXT NOT NULL, verified INTEGER NOT NULL CHECK(verified=1), created_at TEXT NOT NULL\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "authoring_study_configuration_identity",
+      "tbl_name": "authoring_study_configurations",
+      "sql": "CREATE TRIGGER authoring_study_configuration_identity BEFORE UPDATE ON authoring_study_configurations\n WHEN NEW.proposal_id IS NOT OLD.proposal_id OR NEW.owner_id IS NOT OLD.owner_id OR NEW.configuration_hash IS NOT OLD.configuration_hash OR NEW.expires_at IS NOT OLD.expires_at OR OLD.status='revoked'\n BEGIN SELECT RAISE(ABORT,'authoring_study_configuration_immutable'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "authoring_study_configuration_no_delete",
+      "tbl_name": "authoring_study_configurations",
+      "sql": "CREATE TRIGGER authoring_study_configuration_no_delete BEFORE DELETE ON authoring_study_configurations BEGIN SELECT RAISE(ABORT,'authoring_study_configuration_immutable'); END"
+    },
+    {
+      "type": "table",
+      "name": "authoring_study_configurations",
+      "tbl_name": "authoring_study_configurations",
+      "sql": "CREATE TABLE authoring_study_configurations (\n proposal_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(user_id),\n configuration_hash TEXT NOT NULL, expires_at TEXT NOT NULL,\n status TEXT NOT NULL CHECK(status IN('active','revoked'))\n)"
+    },
+    {
+      "type": "table",
+      "name": "authoring_study_evidence",
+      "tbl_name": "authoring_study_evidence",
+      "sql": "CREATE TABLE authoring_study_evidence (\n evidence_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL REFERENCES authoring_study_configurations(proposal_id),\n owner_id TEXT NOT NULL REFERENCES users(user_id), kind TEXT NOT NULL CHECK(kind IN('account','rate','liability','settlement','lifecycle','deletion','bound')),\n content_ref TEXT NOT NULL UNIQUE, content_hash TEXT NOT NULL,\n authority_id TEXT NOT NULL, expires_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('verified','revoked'))\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "authoring_study_evidence_identity",
+      "tbl_name": "authoring_study_evidence",
+      "sql": "CREATE TRIGGER authoring_study_evidence_identity BEFORE UPDATE ON authoring_study_evidence\n WHEN NEW.evidence_id IS NOT OLD.evidence_id OR NEW.proposal_id IS NOT OLD.proposal_id OR NEW.owner_id IS NOT OLD.owner_id OR NEW.kind IS NOT OLD.kind OR NEW.content_ref IS NOT OLD.content_ref OR NEW.content_hash IS NOT OLD.content_hash OR NEW.authority_id IS NOT OLD.authority_id OR NEW.expires_at IS NOT OLD.expires_at OR OLD.status='revoked'\n BEGIN SELECT RAISE(ABORT,'authoring_study_evidence_immutable'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "authoring_study_evidence_no_delete",
+      "tbl_name": "authoring_study_evidence",
+      "sql": "CREATE TRIGGER authoring_study_evidence_no_delete BEFORE DELETE ON authoring_study_evidence BEGIN SELECT RAISE(ABORT,'authoring_study_evidence_immutable'); END"
+    },
+    {
+      "type": "table",
+      "name": "budget_counters",
+      "tbl_name": "budget_counters",
+      "sql": "CREATE TABLE `budget_counters` (\n\t`scope` text NOT NULL,\n\t`scope_id` text NOT NULL,\n\t`period` text NOT NULL,\n\t`used_tokens` integer DEFAULT 0 NOT NULL,\n\t`reserved_tokens` integer DEFAULT 0 NOT NULL,\n\t`hard_limit_tokens` integer NOT NULL,\n\t`updated_at` text NOT NULL,\n\tPRIMARY KEY(`scope`, `scope_id`, `period`)\n)"
+    },
+    {
+      "type": "table",
+      "name": "budget_hold_dispositions",
+      "tbl_name": "budget_hold_dispositions",
+      "sql": "CREATE TABLE `budget_hold_dispositions` (\n\t`disposition_id` text PRIMARY KEY NOT NULL,\n\t`operator_id` text NOT NULL,\n\t`job_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`token_reservation_id` text NOT NULL,\n\t`cost_reservation_id` text NOT NULL,\n\t`command_sha256` text NOT NULL,\n\t`record_sha256` text NOT NULL,\n\t`record_json` text NOT NULL,\n\t`event_id` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+    },
+    {
+      "type": "index",
+      "name": "budget_hold_dispositions_cost_reservation_id_unique",
+      "tbl_name": "budget_hold_dispositions",
+      "sql": "CREATE UNIQUE INDEX `budget_hold_dispositions_cost_reservation_id_unique` ON `budget_hold_dispositions` (`cost_reservation_id`)"
+    },
+    {
+      "type": "index",
+      "name": "budget_hold_dispositions_event_id_unique",
+      "tbl_name": "budget_hold_dispositions",
+      "sql": "CREATE UNIQUE INDEX `budget_hold_dispositions_event_id_unique` ON `budget_hold_dispositions` (`event_id`)"
+    },
+    {
+      "type": "trigger",
+      "name": "budget_hold_dispositions_no_delete",
+      "tbl_name": "budget_hold_dispositions",
+      "sql": "CREATE TRIGGER budget_hold_dispositions_no_delete BEFORE DELETE ON budget_hold_dispositions\n    BEGIN SELECT RAISE(ABORT,'hold_dispositions_are_append_only'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "budget_hold_dispositions_no_replace",
+      "tbl_name": "budget_hold_dispositions",
+      "sql": "CREATE TRIGGER budget_hold_dispositions_no_replace BEFORE INSERT ON budget_hold_dispositions\n    WHEN EXISTS(SELECT 1 FROM budget_hold_dispositions WHERE disposition_id=NEW.disposition_id\n      OR token_reservation_id=NEW.token_reservation_id OR cost_reservation_id=NEW.cost_reservation_id\n      OR event_id=NEW.event_id OR (job_id=NEW.job_id AND correlation_id=NEW.correlation_id))\n    BEGIN SELECT RAISE(ABORT,'hold_dispositions_are_append_only'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "budget_hold_dispositions_no_update",
+      "tbl_name": "budget_hold_dispositions",
+      "sql": "CREATE TRIGGER budget_hold_dispositions_no_update BEFORE UPDATE ON budget_hold_dispositions\n    BEGIN SELECT RAISE(ABORT,'hold_dispositions_are_append_only'); END"
+    },
+    {
+      "type": "index",
+      "name": "budget_hold_dispositions_token_reservation_id_unique",
+      "tbl_name": "budget_hold_dispositions",
+      "sql": "CREATE UNIQUE INDEX `budget_hold_dispositions_token_reservation_id_unique` ON `budget_hold_dispositions` (`token_reservation_id`)"
+    },
+    {
+      "type": "table",
+      "name": "budget_reservations",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TABLE `budget_reservations` (\n\t`reservation_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`operation` text NOT NULL,\n\t`period` text NOT NULL,\n\t`reserved_tokens` integer NOT NULL,\n\t`used_tokens` integer DEFAULT 0 NOT NULL,\n\t`status` text NOT NULL,\n\t`settlement_reason` text,\n\t`created_at` text NOT NULL,\n\t`settled_at` text,\n\t`updated_at` text NOT NULL\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "budget_reservations_disposition_no_delete",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER budget_reservations_disposition_no_delete\n      BEFORE DELETE ON budget_reservations WHEN EXISTS(SELECT 1 FROM budget_hold_dispositions WHERE token_reservation_id=OLD.reservation_id)\n      BEGIN SELECT RAISE(ABORT,'administrative_disposition_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "budget_reservations_disposition_no_insert",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER budget_reservations_disposition_no_insert\n      BEFORE INSERT ON budget_reservations WHEN EXISTS(SELECT 1 FROM budget_hold_dispositions WHERE token_reservation_id=NEW.reservation_id)\n      BEGIN SELECT RAISE(ABORT,'administrative_disposition_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "budget_reservations_disposition_no_update",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER budget_reservations_disposition_no_update\n      BEFORE UPDATE ON budget_reservations WHEN EXISTS(SELECT 1 FROM budget_hold_dispositions WHERE token_reservation_id IN(OLD.reservation_id,NEW.reservation_id))\n      BEGIN SELECT RAISE(ABORT,'administrative_disposition_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "budget_reservations_video_reconciliation_no_delete",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER budget_reservations_video_reconciliation_no_delete\n      BEFORE DELETE ON budget_reservations WHEN EXISTS(SELECT 1 FROM managed_video_reconciliations WHERE token_reservation_id=OLD.reservation_id)\n      BEGIN SELECT RAISE(ABORT,'video_reconciliation_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "budget_reservations_video_reconciliation_no_insert",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER budget_reservations_video_reconciliation_no_insert\n      BEFORE INSERT ON budget_reservations WHEN EXISTS(SELECT 1 FROM managed_video_reconciliations WHERE token_reservation_id=NEW.reservation_id)\n      BEGIN SELECT RAISE(ABORT,'video_reconciliation_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "budget_reservations_video_reconciliation_no_update",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER budget_reservations_video_reconciliation_no_update\n      BEFORE UPDATE ON budget_reservations WHEN EXISTS(SELECT 1 FROM managed_video_reconciliations WHERE token_reservation_id IN(OLD.reservation_id,NEW.reservation_id))\n      BEGIN SELECT RAISE(ABORT,'video_reconciliation_requires_review'); END"
+    },
+    {
+      "type": "table",
+      "name": "canvas_governance_requirements",
+      "tbl_name": "canvas_governance_requirements",
+      "sql": "CREATE TABLE `canvas_governance_requirements` (\n\t`requirement_id` text PRIMARY KEY NOT NULL,\n\t`status` text NOT NULL,\n\t`approved_by_user_id` text,\n\t`approved_by_name` text,\n\t`approved_at` text,\n\t`evidence_ref` text,\n\t`details_json` text DEFAULT '{}' NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "capability_grants",
+      "tbl_name": "capability_grants",
+      "sql": "CREATE TABLE `capability_grants` (\n\t`grant_id` text PRIMARY KEY NOT NULL,\n\t`user_id` text NOT NULL,\n\t`capability` text NOT NULL,\n\t`scope_type` text NOT NULL,\n\t`organization_id` text,\n\t`project_access_id` text,\n\t`project_id` text,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`granted_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`expires_at` text,\n\t`revoked_at` text\n)"
+    },
+    {
+      "type": "table",
+      "name": "consequential_execution_steps",
+      "tbl_name": "consequential_execution_steps",
+      "sql": "CREATE TABLE `consequential_execution_steps` (\n\t`execution_id` text NOT NULL,\n\t`step_index` integer NOT NULL,\n\t`token_reservation_id` text NOT NULL,\n\t`cost_reservation_id` text NOT NULL,\n\t`maximum_tokens` integer NOT NULL,\n\t`maximum_microusd` integer NOT NULL,\n\t`status` text NOT NULL,\n\t`provider_request_id` text,\n\t`verified_tokens` integer,\n\t`verified_microusd` integer,\n\t`updated_at` text NOT NULL,\n\tPRIMARY KEY(`execution_id`, `step_index`)\n)"
+    },
+    {
+      "type": "table",
+      "name": "consequential_executions",
+      "tbl_name": "consequential_executions",
+      "sql": "CREATE TABLE `consequential_executions` (\n\t`execution_id` text PRIMARY KEY NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`document_id` text NOT NULL,\n\t`organization_id` text,\n\t`project_access_id` text,\n\t`operation` text NOT NULL,\n\t`intent_hash` text NOT NULL,\n\t`binding_hash` text NOT NULL,\n\t`consent_ref` text NOT NULL,\n\t`result_ref` text,\n\t`status` text NOT NULL,\n\t`error_code` text,\n\t`created_at` text NOT NULL,\n\t`expires_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "cost_budget_counters",
+      "tbl_name": "cost_budget_counters",
+      "sql": "CREATE TABLE `cost_budget_counters` (\n\t`scope` text NOT NULL,\n\t`scope_id` text NOT NULL,\n\t`period` text NOT NULL,\n\t`used_microusd` integer DEFAULT 0 NOT NULL,\n\t`reserved_microusd` integer DEFAULT 0 NOT NULL,\n\t`hard_limit_microusd` integer NOT NULL,\n\t`updated_at` text NOT NULL,\n\tPRIMARY KEY(`scope`, `scope_id`, `period`)\n)"
+    },
+    {
+      "type": "table",
+      "name": "cost_budget_reservations",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TABLE `cost_budget_reservations` (\n\t`reservation_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`workspace_id` text DEFAULT 'forma' NOT NULL,\n\t`stream_id` text DEFAULT '' NOT NULL,\n\t`correlation_id` text DEFAULT '' NOT NULL,\n\t`operation` text NOT NULL,\n\t`period` text NOT NULL,\n\t`reserved_microusd` integer NOT NULL,\n\t`used_microusd` integer DEFAULT 0 NOT NULL,\n\t`status` text NOT NULL,\n\t`allow_user_overage` integer DEFAULT false NOT NULL,\n\t`created_at` text NOT NULL,\n\t`settled_at` text,\n\t`updated_at` text NOT NULL\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "cost_budget_reservations_disposition_no_delete",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER cost_budget_reservations_disposition_no_delete\n      BEFORE DELETE ON cost_budget_reservations WHEN EXISTS(SELECT 1 FROM budget_hold_dispositions WHERE cost_reservation_id=OLD.reservation_id)\n      BEGIN SELECT RAISE(ABORT,'administrative_disposition_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "cost_budget_reservations_disposition_no_insert",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER cost_budget_reservations_disposition_no_insert\n      BEFORE INSERT ON cost_budget_reservations WHEN EXISTS(SELECT 1 FROM budget_hold_dispositions WHERE cost_reservation_id=NEW.reservation_id)\n      BEGIN SELECT RAISE(ABORT,'administrative_disposition_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "cost_budget_reservations_disposition_no_update",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER cost_budget_reservations_disposition_no_update\n      BEFORE UPDATE ON cost_budget_reservations WHEN EXISTS(SELECT 1 FROM budget_hold_dispositions WHERE cost_reservation_id IN(OLD.reservation_id,NEW.reservation_id))\n      BEGIN SELECT RAISE(ABORT,'administrative_disposition_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "cost_budget_reservations_video_reconciliation_no_delete",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER cost_budget_reservations_video_reconciliation_no_delete\n      BEFORE DELETE ON cost_budget_reservations WHEN EXISTS(SELECT 1 FROM managed_video_reconciliations WHERE cost_reservation_id=OLD.reservation_id)\n      BEGIN SELECT RAISE(ABORT,'video_reconciliation_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "cost_budget_reservations_video_reconciliation_no_insert",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER cost_budget_reservations_video_reconciliation_no_insert\n      BEFORE INSERT ON cost_budget_reservations WHEN EXISTS(SELECT 1 FROM managed_video_reconciliations WHERE cost_reservation_id=NEW.reservation_id)\n      BEGIN SELECT RAISE(ABORT,'video_reconciliation_requires_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "cost_budget_reservations_video_reconciliation_no_update",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER cost_budget_reservations_video_reconciliation_no_update\n      BEFORE UPDATE ON cost_budget_reservations WHEN EXISTS(SELECT 1 FROM managed_video_reconciliations WHERE cost_reservation_id IN(OLD.reservation_id,NEW.reservation_id))\n      BEGIN SELECT RAISE(ABORT,'video_reconciliation_requires_review'); END"
+    },
+    {
+      "type": "table",
+      "name": "document_jobs",
+      "tbl_name": "document_jobs",
+      "sql": "CREATE TABLE `document_jobs` (\n\t`job_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`document_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`status` text NOT NULL,\n\t`source_surface` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`requested_sequence` integer NOT NULL,\n\t`request_json` text NOT NULL,\n\t`result_json` text,\n\t`error_message` text,\n\t`attempt_count` integer DEFAULT 0 NOT NULL,\n\t`requested_at` text NOT NULL,\n\t`started_at` text,\n\t`completed_at` text,\n\t`lease_expires_at` text,\n\t`notified_at` text,\n\t`expires_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n, scene_source_version_json TEXT, scene_source_protocol INTEGER NOT NULL DEFAULT 0 CHECK(scene_source_protocol IN(0,1)))"
+    },
+    {
+      "type": "table",
+      "name": "event_private_payloads",
+      "tbl_name": "event_private_payloads",
+      "sql": "CREATE TABLE `event_private_payloads` (\n\t`private_event_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`project_id` text,\n\t`document_id` text,\n\t`private_json` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`redacted_at` text\n)"
+    },
+    {
+      "type": "table",
+      "name": "events",
+      "tbl_name": "events",
+      "sql": "CREATE TABLE `events` (\n\t`event_id` text PRIMARY KEY NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`sequence` integer NOT NULL,\n\t`occurred_at` text NOT NULL,\n\t`recorded_at` text NOT NULL,\n\t`actor` text NOT NULL,\n\t`client_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`causation_id` text,\n\t`compensates_event_id` text,\n\t`schema_version` integer DEFAULT 1 NOT NULL,\n\t`type` text NOT NULL,\n\t`payload` text NOT NULL\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "events_block_delete",
+      "tbl_name": "events",
+      "sql": "CREATE TRIGGER `events_block_delete`\nBEFORE DELETE ON `events` BEGIN\n\tSELECT RAISE(ABORT, 'events are append-only');\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "events_block_update",
+      "tbl_name": "events",
+      "sql": "CREATE TRIGGER `events_block_update`\nBEFORE UPDATE ON `events` BEGIN\n\tSELECT RAISE(ABORT, 'events are append-only');\nEND"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_assertions",
+      "tbl_name": "generation_study_assertions",
+      "sql": "CREATE TABLE generation_study_assertions (passed INTEGER NOT NULL CHECK(passed=1))"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_charge_no_delete",
+      "tbl_name": "generation_study_charges",
+      "sql": "CREATE TRIGGER generation_study_charge_no_delete BEFORE DELETE ON generation_study_charges BEGIN SELECT RAISE(ABORT,'generation_study_immutable_charge'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_charge_no_update",
+      "tbl_name": "generation_study_charges",
+      "sql": "CREATE TRIGGER generation_study_charge_no_update BEFORE UPDATE ON generation_study_charges BEGIN SELECT RAISE(ABORT,'generation_study_immutable_charge'); END"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_charges",
+      "tbl_name": "generation_study_charges",
+      "sql": "CREATE TABLE generation_study_charges (\n operation_id TEXT PRIMARY KEY REFERENCES generation_study_operations(operation_id), provider_request_id TEXT NOT NULL,\n receipt_hash TEXT NOT NULL, measured_microusd INTEGER NOT NULL CHECK(measured_microusd>=0), measured_tokens INTEGER NOT NULL CHECK(measured_tokens>=0),\n authority_version TEXT NOT NULL, evidence_ref TEXT NOT NULL, recorded_at TEXT NOT NULL,\n scope_hash TEXT NOT NULL, residual_exposure_microusd INTEGER CHECK(residual_exposure_microusd IS NULL OR residual_exposure_microusd>=0)\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_cost_no_delete",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_cost_no_delete BEFORE DELETE ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations WHERE cost_reservation_id=OLD.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_purchase'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_cost_settlement",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_cost_settlement BEFORE UPDATE ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations o WHERE o.cost_reservation_id=OLD.reservation_id)\n AND (NEW.reserved_microusd!=OLD.reserved_microusd OR NEW.owner_id!=OLD.owner_id OR NEW.period!=OLD.period OR\n (NEW.status NOT IN('active','authorizing','executing') AND NOT EXISTS(SELECT 1 FROM generation_study_operations o JOIN generation_study_charges c USING(operation_id)\n WHERE o.cost_reservation_id=OLD.reservation_id AND c.provider_request_id=o.provider_request_id AND c.receipt_hash=o.receipt_hash AND ((o.financial_policy_id IS NULL AND c.measured_microusd=NEW.used_microusd) OR EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=o.operation_id AND r.policy_id=o.financial_policy_id AND r.provider_settled=1 AND r.incurred_microusd=NEW.used_microusd AND r.sequence=(SELECT MAX(sequence) FROM generation_study_reconciliations WHERE operation_id=o.operation_id))))))\n BEGIN SELECT RAISE(ABORT,'generation_study_original_charge_required'); END"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_evidence",
+      "tbl_name": "generation_study_evidence",
+      "sql": "CREATE TABLE generation_study_evidence (\n operation_id TEXT NOT NULL REFERENCES generation_study_operations(operation_id), slot TEXT NOT NULL,\n content_ref TEXT NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY(operation_id,slot)\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_external_cost",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_external_cost BEFORE INSERT ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations o WHERE o.owner_id=NEW.owner_id AND o.status!='completed' AND o.cost_reservation_id!=NEW.reservation_id AND COALESCE(o.lifecycle_reservation_id,'')!=NEW.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_outstanding_exposure'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_external_tokens",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_external_tokens BEFORE INSERT ON budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations o WHERE o.owner_id=NEW.owner_id AND o.status!='completed' AND o.token_reservation_id!=NEW.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_outstanding_exposure'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_financial_grant_identity",
+      "tbl_name": "generation_study_financial_grants",
+      "sql": "CREATE TRIGGER generation_study_financial_grant_identity BEFORE UPDATE ON generation_study_financial_grants\n WHEN NEW.grant_id IS NOT OLD.grant_id OR NEW.operation_id IS NOT OLD.operation_id OR NEW.owner_id IS NOT OLD.owner_id OR NEW.policy_id IS NOT OLD.policy_id OR NEW.policy_json IS NOT OLD.policy_json OR NEW.expires_at IS NOT OLD.expires_at\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_financial_grant'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_financial_grant_no_delete",
+      "tbl_name": "generation_study_financial_grants",
+      "sql": "CREATE TRIGGER generation_study_financial_grant_no_delete BEFORE DELETE ON generation_study_financial_grants BEGIN SELECT RAISE(ABORT,'generation_study_immutable_financial_grant'); END"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_financial_grants",
+      "tbl_name": "generation_study_financial_grants",
+      "sql": "CREATE TABLE generation_study_financial_grants (\n grant_id TEXT NOT NULL REFERENCES generation_study_grants(grant_id), operation_id TEXT NOT NULL,\n owner_id TEXT NOT NULL REFERENCES users(user_id), policy_id TEXT NOT NULL, policy_json TEXT NOT NULL CHECK(json_valid(policy_json)),\n expires_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('authorized','revoked')),\n PRIMARY KEY(grant_id,operation_id)\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_grant_identity",
+      "tbl_name": "generation_study_grants",
+      "sql": "CREATE TRIGGER generation_study_grant_identity BEFORE UPDATE ON generation_study_grants\n WHEN NEW.grant_id!=OLD.grant_id OR NEW.owner_id!=OLD.owner_id OR NEW.plan_id!=OLD.plan_id OR NEW.runtime_hash!=OLD.runtime_hash OR NEW.source_ref!=OLD.source_ref OR NEW.direction_ref!=OLD.direction_ref OR NEW.source_hash!=OLD.source_hash OR NEW.direction_hash!=OLD.direction_hash OR NEW.authority_version!=OLD.authority_version OR NEW.allowance_microusd!=OLD.allowance_microusd OR NEW.token_allowance!=OLD.token_allowance OR NEW.expires_at!=OLD.expires_at\n BEGIN SELECT RAISE(ABORT,'generation_study_new_authority_version_required'); END"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_grants",
+      "tbl_name": "generation_study_grants",
+      "sql": "CREATE TABLE generation_study_grants (\n grant_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(user_id),\n plan_id TEXT NOT NULL, runtime_hash TEXT NOT NULL, source_ref TEXT NOT NULL, direction_ref TEXT NOT NULL,\n source_hash TEXT NOT NULL, direction_hash TEXT NOT NULL, authority_version TEXT NOT NULL,\n allowance_microusd INTEGER NOT NULL CHECK(allowance_microusd>0), token_allowance INTEGER NOT NULL CHECK(token_allowance>0),\n expires_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('authorized','revoked')), stopped INTEGER NOT NULL DEFAULT 0 CHECK(stopped IN(0,1))\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_lifecycle_cost_hold",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_lifecycle_cost_hold BEFORE INSERT ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_lifecycle_holds WHERE owner_id=NEW.owner_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_lifecycle_exposure'); END"
+    },
+    {
+      "type": "view",
+      "name": "generation_study_lifecycle_holds",
+      "tbl_name": "generation_study_lifecycle_holds",
+      "sql": "CREATE VIEW generation_study_lifecycle_holds AS\n SELECT o.owner_id,o.operation_id FROM generation_study_operations o\n JOIN generation_study_reconciliations r ON r.operation_id=o.operation_id\n AND r.sequence=(SELECT MAX(sequence) FROM generation_study_reconciliations WHERE operation_id=o.operation_id)\n WHERE o.financial_policy_id IS NOT NULL AND\n (r.policy_id!=o.financial_policy_id OR NOT EXISTS(SELECT 1 FROM generation_study_financial_grants g WHERE g.grant_id=o.grant_id AND g.operation_id=o.operation_id AND g.owner_id=o.owner_id AND g.policy_id=r.policy_id AND json_extract(g.policy_json,'$.lifecycle.scope')=r.lifecycle_scope AND json_extract(g.policy_json,'$.lifecycle.liabilityOwner')=r.liability_owner AND json_extract(g.policy_json,'$.lifecycle.through')=r.lifecycle_through AND json_extract(g.policy_json,'$.lifecycle.maximumMicrousd')>=r.lifecycle_microusd) OR r.provider_settled!=1 OR r.remaining_uncertainty_microusd IS NOT 0 OR\n (r.lifecycle_closed=1 AND (r.lifecycle_microusd!=0 OR r.lifecycle_incurred_microusd IS NULL OR r.lifecycle_incurred_microusd>COALESCE((SELECT reserved_microusd FROM cost_budget_reservations WHERE reservation_id=o.lifecycle_reservation_id),0))) OR\n (r.lifecycle_closed=0 AND (r.lifecycle_through<=strftime('%Y-%m-%dT%H:%M:%fZ','now') OR NOT EXISTS(\n SELECT 1 FROM cost_budget_reservations c WHERE c.reservation_id=o.lifecycle_reservation_id AND c.owner_id=o.owner_id AND c.status='active' AND c.reserved_microusd>=r.lifecycle_microusd))))"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_lifecycle_no_delete",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_lifecycle_no_delete BEFORE DELETE ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations WHERE lifecycle_reservation_id=OLD.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_provision'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_lifecycle_settlement",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_lifecycle_settlement BEFORE UPDATE ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations WHERE lifecycle_reservation_id=OLD.reservation_id)\n AND (NEW.reservation_id!=OLD.reservation_id OR NEW.workspace_id!=OLD.workspace_id OR NEW.stream_id!=OLD.stream_id OR NEW.correlation_id!=OLD.correlation_id OR NEW.operation!=OLD.operation OR NEW.reserved_microusd!=OLD.reserved_microusd OR NEW.owner_id!=OLD.owner_id OR NEW.period!=OLD.period OR\n (NEW.status NOT IN('active','authorizing') AND NOT EXISTS(SELECT 1 FROM generation_study_operations o JOIN generation_study_reconciliations r USING(operation_id)\n WHERE o.lifecycle_reservation_id=OLD.reservation_id AND r.sequence=(SELECT MAX(sequence) FROM generation_study_reconciliations WHERE operation_id=o.operation_id)\n AND r.lifecycle_closed=1 AND r.lifecycle_microusd=0 AND r.remaining_uncertainty_microusd=0 AND r.provider_settled=1 AND r.lifecycle_incurred_microusd=NEW.used_microusd)))\n BEGIN SELECT RAISE(ABORT,'generation_study_verified_lifecycle_closure_required'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_lifecycle_token_hold",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_lifecycle_token_hold BEFORE INSERT ON budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_lifecycle_holds WHERE owner_id=NEW.owner_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_lifecycle_exposure'); END"
+    },
+    {
+      "type": "index",
+      "name": "generation_study_one_outstanding",
+      "tbl_name": "generation_study_operations",
+      "sql": "CREATE UNIQUE INDEX generation_study_one_outstanding ON generation_study_operations(owner_id) WHERE status!='completed'"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_operation_identity",
+      "tbl_name": "generation_study_operations",
+      "sql": "CREATE TRIGGER generation_study_operation_identity BEFORE UPDATE ON generation_study_operations\n WHEN NEW.operation_id!=OLD.operation_id OR NEW.owner_id!=OLD.owner_id OR NEW.grant_id!=OLD.grant_id OR NEW.plan_id!=OLD.plan_id OR NEW.trial_id!=OLD.trial_id OR NEW.request_hash!=OLD.request_hash OR NEW.token_reservation_id!=OLD.token_reservation_id OR NEW.cost_reservation_id!=OLD.cost_reservation_id OR NEW.expires_at!=OLD.expires_at OR NEW.financial_policy_id IS NOT OLD.financial_policy_id OR NEW.lifecycle_reservation_id IS NOT OLD.lifecycle_reservation_id\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_identity'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_operation_no_delete",
+      "tbl_name": "generation_study_operations",
+      "sql": "CREATE TRIGGER generation_study_operation_no_delete BEFORE DELETE ON generation_study_operations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_purchase'); END"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_operations",
+      "tbl_name": "generation_study_operations",
+      "sql": "CREATE TABLE generation_study_operations (\n operation_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(user_id), grant_id TEXT NOT NULL REFERENCES generation_study_grants(grant_id),\n plan_id TEXT NOT NULL, trial_id TEXT NOT NULL, request_hash TEXT NOT NULL,\n token_reservation_id TEXT NOT NULL UNIQUE, cost_reservation_id TEXT NOT NULL UNIQUE,\n status TEXT NOT NULL CHECK(status IN('reserved','paused','running','hold','completed')), reason TEXT,\n provider_request_id TEXT, receipt_hash TEXT, usage_json TEXT, measured_microusd INTEGER, measured_tokens INTEGER,\n artifact_ref TEXT, artifact_hash TEXT, private_bytes INTEGER NOT NULL DEFAULT 0, private_writes INTEGER NOT NULL DEFAULT 0,\n artifact_reads INTEGER NOT NULL DEFAULT 0, cleanup_attempts INTEGER NOT NULL DEFAULT 0,\n created_at TEXT NOT NULL, expires_at TEXT NOT NULL,\n financial_policy_id TEXT, lifecycle_reservation_id TEXT UNIQUE\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_reconciliation_chain",
+      "tbl_name": "generation_study_reconciliations",
+      "sql": "CREATE TRIGGER generation_study_reconciliation_chain BEFORE INSERT ON generation_study_reconciliations\n WHEN NEW.sequence!=COALESCE((SELECT MAX(sequence)+1 FROM generation_study_reconciliations WHERE operation_id=NEW.operation_id),1)\n OR NEW.previous_id IS NOT (SELECT evidence_id FROM generation_study_reconciliations WHERE operation_id=NEW.operation_id ORDER BY sequence DESC LIMIT 1)\n BEGIN SELECT RAISE(ABORT,'generation_study_reconciliation_chain'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_reconciliation_finality",
+      "tbl_name": "generation_study_reconciliations",
+      "sql": "CREATE TRIGGER generation_study_reconciliation_finality BEFORE INSERT ON generation_study_reconciliations\n WHEN EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=NEW.operation_id AND (NEW.incurred_microusd<r.incurred_microusd OR NEW.incurred_tokens<r.incurred_tokens))\n OR EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=NEW.operation_id AND r.provider_settled=1\n AND (NEW.provider_settled!=1 OR NEW.incurred_microusd!=r.incurred_microusd OR NEW.incurred_tokens!=r.incurred_tokens))\n OR EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=NEW.operation_id AND r.lifecycle_closed=1\n AND (NEW.lifecycle_closed!=1 OR NEW.lifecycle_incurred_microusd IS NOT r.lifecycle_incurred_microusd))\n BEGIN SELECT RAISE(ABORT,'generation_study_settled_amount_immutable'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_reconciliation_no_delete",
+      "tbl_name": "generation_study_reconciliations",
+      "sql": "CREATE TRIGGER generation_study_reconciliation_no_delete BEFORE DELETE ON generation_study_reconciliations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_reconciliation'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_reconciliation_no_update",
+      "tbl_name": "generation_study_reconciliations",
+      "sql": "CREATE TRIGGER generation_study_reconciliation_no_update BEFORE UPDATE ON generation_study_reconciliations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_reconciliation'); END"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_reconciliations",
+      "tbl_name": "generation_study_reconciliations",
+      "sql": "CREATE TABLE generation_study_reconciliations (\n evidence_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL REFERENCES generation_study_charges(operation_id),\n sequence INTEGER NOT NULL CHECK(sequence>0), previous_id TEXT REFERENCES generation_study_reconciliations(evidence_id),\n original_charge_hash TEXT NOT NULL, policy_id TEXT NOT NULL, evidence_kind TEXT NOT NULL CHECK(evidence_kind='verified-incurred-charge'),\n authority_version TEXT NOT NULL, evidence_ref TEXT NOT NULL, recorded_at TEXT NOT NULL,\n provider_settled INTEGER NOT NULL CHECK(provider_settled IN(0,1)),\n incurred_microusd INTEGER NOT NULL CHECK(incurred_microusd>=0), incurred_tokens INTEGER NOT NULL CHECK(incurred_tokens>=0),\n remaining_uncertainty_microusd INTEGER CHECK(remaining_uncertainty_microusd IS NULL OR remaining_uncertainty_microusd>=0),\n lifecycle_microusd INTEGER NOT NULL CHECK(lifecycle_microusd>=0), lifecycle_scope TEXT NOT NULL,\n liability_owner TEXT NOT NULL, lifecycle_through TEXT NOT NULL, lifecycle_evidence_ref TEXT NOT NULL,\n lifecycle_closed INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_closed IN(0,1)), lifecycle_incurred_microusd INTEGER,\n UNIQUE(operation_id,sequence)\n)"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_stages",
+      "tbl_name": "generation_study_stages",
+      "sql": "CREATE TABLE generation_study_stages (\n operation_id TEXT NOT NULL REFERENCES generation_study_operations(operation_id),\n stage TEXT NOT NULL CHECK(stage IN('advisory','moderation','image','storage')),\n status TEXT NOT NULL CHECK(status IN('intent','received','complete')),\n request_hash TEXT NOT NULL, receipt_hash TEXT, PRIMARY KEY(operation_id,stage)\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_supplied_grant_revocation",
+      "tbl_name": "generation_study_grants",
+      "sql": "CREATE TRIGGER generation_study_supplied_grant_revocation BEFORE UPDATE ON generation_study_grants\n WHEN OLD.status='revoked' AND NEW.status!='revoked' AND EXISTS(SELECT 1 FROM generation_study_supplied_reviews WHERE grant_id=OLD.grant_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_supplied_revocation_terminal'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_supplied_observation_no_delete",
+      "tbl_name": "generation_study_supplied_observations",
+      "sql": "CREATE TRIGGER generation_study_supplied_observation_no_delete BEFORE DELETE ON generation_study_supplied_observations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_observation'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_supplied_observation_no_update",
+      "tbl_name": "generation_study_supplied_observations",
+      "sql": "CREATE TRIGGER generation_study_supplied_observation_no_update BEFORE UPDATE ON generation_study_supplied_observations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_observation'); END"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_supplied_observations",
+      "tbl_name": "generation_study_supplied_observations",
+      "sql": "CREATE TABLE generation_study_supplied_observations (\n operation_id TEXT PRIMARY KEY REFERENCES generation_study_operations(operation_id),\n review_id TEXT NOT NULL REFERENCES generation_study_supplied_reviews(review_id),\n owner_id TEXT NOT NULL REFERENCES users(user_id), principal_hash TEXT NOT NULL,\n artifact_hash TEXT NOT NULL, receipt_hash TEXT NOT NULL, protocol TEXT NOT NULL,\n safety TEXT NOT NULL CHECK(safety IN('clear','unsafe')),\n fidelity TEXT NOT NULL CHECK(fidelity IN('pass','expected-failure')), finding TEXT NOT NULL,\n evidence_ref TEXT NOT NULL, resume INTEGER NOT NULL CHECK(resume IN(0,1)), recorded_at TEXT NOT NULL\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_supplied_review_identity",
+      "tbl_name": "generation_study_supplied_reviews",
+      "sql": "CREATE TRIGGER generation_study_supplied_review_identity BEFORE UPDATE ON generation_study_supplied_reviews\n WHEN NEW.review_id!=OLD.review_id OR NEW.grant_id!=OLD.grant_id OR NEW.owner_id!=OLD.owner_id OR NEW.principal_hash!=OLD.principal_hash OR NEW.binding_json!=OLD.binding_json OR NEW.expires_at!=OLD.expires_at OR (OLD.status='revoked' AND NEW.status!='revoked') OR (OLD.hard_stop IS NOT NULL AND NEW.hard_stop IS NOT OLD.hard_stop)\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_review'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_supplied_review_no_delete",
+      "tbl_name": "generation_study_supplied_reviews",
+      "sql": "CREATE TRIGGER generation_study_supplied_review_no_delete BEFORE DELETE ON generation_study_supplied_reviews BEGIN SELECT RAISE(ABORT,'generation_study_immutable_review'); END"
+    },
+    {
+      "type": "table",
+      "name": "generation_study_supplied_reviews",
+      "tbl_name": "generation_study_supplied_reviews",
+      "sql": "CREATE TABLE generation_study_supplied_reviews (\n review_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL UNIQUE REFERENCES generation_study_grants(grant_id),\n owner_id TEXT NOT NULL REFERENCES users(user_id), principal_hash TEXT NOT NULL,\n binding_json TEXT NOT NULL, expires_at TEXT NOT NULL,\n status TEXT NOT NULL CHECK(status IN('authorized','revoked')),\n hard_stop TEXT\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_supplied_stage_identity",
+      "tbl_name": "generation_study_stages",
+      "sql": "CREATE TRIGGER generation_study_supplied_stage_identity BEFORE UPDATE ON generation_study_stages\n WHEN NEW.operation_id!=OLD.operation_id OR NEW.stage!=OLD.stage OR NEW.request_hash!=OLD.request_hash OR (OLD.receipt_hash IS NOT NULL AND NEW.receipt_hash IS NOT OLD.receipt_hash) OR (OLD.status='received' AND NEW.status='intent') OR (OLD.status='complete' AND NEW.status!='complete')\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_intent'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_supplied_stage_no_delete",
+      "tbl_name": "generation_study_stages",
+      "sql": "CREATE TRIGGER generation_study_supplied_stage_no_delete BEFORE DELETE ON generation_study_stages BEGIN SELECT RAISE(ABORT,'generation_study_immutable_intent'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_token_no_delete",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_token_no_delete BEFORE DELETE ON budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations WHERE token_reservation_id=OLD.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_purchase'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "generation_study_token_settlement",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE TRIGGER generation_study_token_settlement BEFORE UPDATE ON budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations o WHERE o.token_reservation_id=OLD.reservation_id)\n AND (NEW.reserved_tokens!=OLD.reserved_tokens OR NEW.owner_id!=OLD.owner_id OR NEW.period!=OLD.period OR\n (NEW.status NOT IN('active','authorizing') AND NOT EXISTS(SELECT 1 FROM generation_study_operations o JOIN generation_study_charges c USING(operation_id)\n WHERE o.token_reservation_id=OLD.reservation_id AND c.provider_request_id=o.provider_request_id AND c.receipt_hash=o.receipt_hash AND ((o.financial_policy_id IS NULL AND c.measured_tokens=NEW.used_tokens) OR EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=o.operation_id AND r.policy_id=o.financial_policy_id AND r.provider_settled=1 AND r.incurred_tokens=NEW.used_tokens AND r.sequence=(SELECT MAX(sequence) FROM generation_study_reconciliations WHERE operation_id=o.operation_id))))))\n BEGIN SELECT RAISE(ABORT,'generation_study_original_usage_required'); END"
+    },
+    {
+      "type": "index",
+      "name": "idx_budget_reservations_correlation",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE INDEX `idx_budget_reservations_correlation` ON `budget_reservations` (`correlation_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_budget_reservations_owner_status",
+      "tbl_name": "budget_reservations",
+      "sql": "CREATE INDEX `idx_budget_reservations_owner_status` ON `budget_reservations` (`owner_id`,`status`,`created_at`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_capability_grants_organization",
+      "tbl_name": "capability_grants",
+      "sql": "CREATE INDEX `idx_capability_grants_organization` ON `capability_grants` (`organization_id`,`capability`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_capability_grants_user_status",
+      "tbl_name": "capability_grants",
+      "sql": "CREATE INDEX `idx_capability_grants_user_status` ON `capability_grants` (`user_id`,`status`,`capability`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_consequential_executions_actor_scope",
+      "tbl_name": "consequential_executions",
+      "sql": "CREATE INDEX `idx_consequential_executions_actor_scope` ON `consequential_executions` (`actor_user_id`,`project_id`,`document_id`,`status`,`created_at`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_cost_budget_reservations_owner_correlation",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE INDEX `idx_cost_budget_reservations_owner_correlation` ON `cost_budget_reservations` (`owner_id`,`correlation_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_cost_budget_reservations_owner_status_period",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE INDEX `idx_cost_budget_reservations_owner_status_period` ON `cost_budget_reservations` (`owner_id`,`status`,`period`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_cost_budget_reservations_workspace_period_status",
+      "tbl_name": "cost_budget_reservations",
+      "sql": "CREATE INDEX `idx_cost_budget_reservations_workspace_period_status` ON `cost_budget_reservations` (`workspace_id`,`period`,`status`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_document_jobs_owner_status",
+      "tbl_name": "document_jobs",
+      "sql": "CREATE INDEX `idx_document_jobs_owner_status` ON `document_jobs` (`owner_id`,`status`,`requested_at`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_document_jobs_stream_correlation",
+      "tbl_name": "document_jobs",
+      "sql": "CREATE INDEX `idx_document_jobs_stream_correlation` ON `document_jobs` (`stream_id`,`correlation_id`,`job_id`,`owner_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_document_jobs_stream_document",
+      "tbl_name": "document_jobs",
+      "sql": "CREATE INDEX `idx_document_jobs_stream_document` ON `document_jobs` (`stream_id`,`document_id`,`requested_at`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_document_jobs_stream_status_requested",
+      "tbl_name": "document_jobs",
+      "sql": "CREATE INDEX `idx_document_jobs_stream_status_requested` ON `document_jobs` (`stream_id`,`status`,`requested_at`,`job_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_event_private_payloads_owner_scope",
+      "tbl_name": "event_private_payloads",
+      "sql": "CREATE INDEX `idx_event_private_payloads_owner_scope` ON `event_private_payloads` (`owner_id`,`project_id`,`document_id`,`redacted_at`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_events_correlation",
+      "tbl_name": "events",
+      "sql": "CREATE INDEX `idx_events_correlation` ON `events` (`correlation_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_events_nonphantom_stream_sequence",
+      "tbl_name": "events",
+      "sql": "CREATE INDEX `idx_events_nonphantom_stream_sequence` ON `events` (`stream_id`,`sequence`) WHERE NOT (\n  type='AttentionEpisodeObserved'\n  AND COALESCE(json_extract(payload,'$.capture_version'),'') IN ('attention-v1','attention-v2')\n  AND COALESCE(json_extract(payload,'$.terminal_type'),'')='idle_timeout'\n  AND COALESCE(json_extract(payload,'$.terminal_ref'),'')=''\n  AND COALESCE(CAST(json_extract(payload,'$.active_ms') AS REAL),-1)=30000\n  AND COALESCE(CAST(json_extract(payload,'$.idle_ms') AS REAL),-1)>=30000\n  AND COALESCE(json_extract(payload,'$.surface'),'')<>''\n  AND COALESCE(json_extract(payload,'$.context'),'')=COALESCE(json_extract(payload,'$.surface'),'')||'-overview'\n  AND COALESCE(json_type(payload,'$.visible_refs'),'')='array'\n  AND json_array_length(payload,'$.visible_refs')=0\n  AND COALESCE(CAST(json_extract(payload,'$.friction_score') AS REAL),0)<.45\n  AND COALESCE(CAST(json_extract(payload,'$.outcome_weight') AS REAL),0)<.18\n)"
+    },
+    {
+      "type": "index",
+      "name": "idx_events_stream_actor",
+      "tbl_name": "events",
+      "sql": "CREATE INDEX `idx_events_stream_actor` ON `events` (`stream_id`,`actor`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_events_stream_sequence",
+      "tbl_name": "events",
+      "sql": "CREATE UNIQUE INDEX `idx_events_stream_sequence` ON `events` (`stream_id`,`sequence`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_events_stream_type",
+      "tbl_name": "events",
+      "sql": "CREATE INDEX `idx_events_stream_type` ON `events` (`stream_id`,`type`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_events_type_occurred_stream",
+      "tbl_name": "events",
+      "sql": "CREATE INDEX `idx_events_type_occurred_stream` ON `events` (`type`,`occurred_at`,`stream_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_hold_dispositions_job_attempt",
+      "tbl_name": "budget_hold_dispositions",
+      "sql": "CREATE UNIQUE INDEX `idx_hold_dispositions_job_attempt` ON `budget_hold_dispositions` (`job_id`,`correlation_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_org_identity_binding_subject",
+      "tbl_name": "organization_identity_bindings",
+      "sql": "CREATE INDEX `idx_org_identity_binding_subject` ON `organization_identity_bindings` (`organization_id`,`authentication_source`,`subject`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_org_identity_binding_user",
+      "tbl_name": "organization_identity_bindings",
+      "sql": "CREATE UNIQUE INDEX `idx_org_identity_binding_user` ON `organization_identity_bindings` (`organization_id`,`user_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_organization_memberships_org_user",
+      "tbl_name": "organization_memberships",
+      "sql": "CREATE UNIQUE INDEX `idx_organization_memberships_org_user` ON `organization_memberships` (`organization_id`,`user_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_organization_memberships_user_status",
+      "tbl_name": "organization_memberships",
+      "sql": "CREATE INDEX `idx_organization_memberships_user_status` ON `organization_memberships` (`user_id`,`status`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_organization_projects_organization",
+      "tbl_name": "organization_projects",
+      "sql": "CREATE INDEX `idx_organization_projects_organization` ON `organization_projects` (`organization_id`,`status`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_organization_projects_owner",
+      "tbl_name": "organization_projects",
+      "sql": "CREATE INDEX `idx_organization_projects_owner` ON `organization_projects` (`owner_user_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_organization_projects_owner_project",
+      "tbl_name": "organization_projects",
+      "sql": "CREATE UNIQUE INDEX `idx_organization_projects_owner_project` ON `organization_projects` (`owner_user_id`,`project_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_organizations_owner",
+      "tbl_name": "organizations",
+      "sql": "CREATE INDEX `idx_organizations_owner` ON `organizations` (`owner_user_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_output_execution_grants_unique_1",
+      "tbl_name": "output_execution_grants",
+      "sql": "CREATE UNIQUE INDEX idx_output_execution_grants_unique_1 ON output_execution_grants(scope_key,preflight_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_output_operation_slots_unique_1",
+      "tbl_name": "output_operation_slots",
+      "sql": "CREATE UNIQUE INDEX idx_output_operation_slots_unique_1 ON output_operation_slots(scope_key,grant_id,target_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_output_operation_slots_unique_2",
+      "tbl_name": "output_operation_slots",
+      "sql": "CREATE UNIQUE INDEX idx_output_operation_slots_unique_2 ON output_operation_slots(scope_key,target_id,target_contract_digest,attempt_ordinal)"
+    },
+    {
+      "type": "index",
+      "name": "idx_output_operation_slots_unique_3",
+      "tbl_name": "output_operation_slots",
+      "sql": "CREATE UNIQUE INDEX idx_output_operation_slots_unique_3 ON output_operation_slots(job_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_output_operation_slots_unique_4",
+      "tbl_name": "output_operation_slots",
+      "sql": "CREATE UNIQUE INDEX idx_output_operation_slots_unique_4 ON output_operation_slots(cost_reservation_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_output_operation_slots_unique_5",
+      "tbl_name": "output_operation_slots",
+      "sql": "CREATE UNIQUE INDEX idx_output_operation_slots_unique_5 ON output_operation_slots(token_reservation_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_output_plan_revisions_unique_1",
+      "tbl_name": "output_plan_revisions",
+      "sql": "CREATE UNIQUE INDEX idx_output_plan_revisions_unique_1 ON output_plan_revisions(scope_key,plan_id,revision)"
+    },
+    {
+      "type": "index",
+      "name": "idx_output_plans_document",
+      "tbl_name": "output_plan_revisions",
+      "sql": "CREATE INDEX idx_output_plans_document ON output_plan_revisions(scope_key,document_id,revision DESC)"
+    },
+    {
+      "type": "index",
+      "name": "idx_output_provider_calls_unique_1",
+      "tbl_name": "output_provider_calls",
+      "sql": "CREATE UNIQUE INDEX idx_output_provider_calls_unique_1 ON output_provider_calls(client_request_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_pilot_cohorts_active_organization",
+      "tbl_name": "pilot_cohorts",
+      "sql": "CREATE UNIQUE INDEX `idx_pilot_cohorts_active_organization` ON `pilot_cohorts` (`organization_id`) WHERE \"pilot_cohorts\".\"status\"='active'"
+    },
+    {
+      "type": "index",
+      "name": "idx_pilot_cohorts_organization_status",
+      "tbl_name": "pilot_cohorts",
+      "sql": "CREATE INDEX `idx_pilot_cohorts_organization_status` ON `pilot_cohorts` (`organization_id`,`status`,`starts_at`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_pilot_cost_reservation_cohort_actor",
+      "tbl_name": "pilot_cost_reservation_scopes",
+      "sql": "CREATE INDEX `idx_pilot_cost_reservation_cohort_actor` ON `pilot_cost_reservation_scopes` (`cohort_id`,`actor_user_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_pilot_participants_cohort_email",
+      "tbl_name": "pilot_participants",
+      "sql": "CREATE UNIQUE INDEX `idx_pilot_participants_cohort_email` ON `pilot_participants` (`cohort_id`,`email_normalized`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_pilot_participants_cohort_user",
+      "tbl_name": "pilot_participants",
+      "sql": "CREATE UNIQUE INDEX `idx_pilot_participants_cohort_user` ON `pilot_participants` (`cohort_id`,`user_id`) WHERE \"pilot_participants\".\"user_id\" IS NOT NULL"
+    },
+    {
+      "type": "index",
+      "name": "idx_pilot_participants_organization_status",
+      "tbl_name": "pilot_participants",
+      "sql": "CREATE INDEX `idx_pilot_participants_organization_status` ON `pilot_participants` (`organization_id`,`status`,`user_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_private_content_owner_expiry",
+      "tbl_name": "private_content",
+      "sql": "CREATE INDEX `idx_private_content_owner_expiry` ON `private_content` (`owner_id`,`expires_at`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_private_content_pending_expiry",
+      "tbl_name": "private_content",
+      "sql": "CREATE INDEX `idx_private_content_pending_expiry` ON `private_content` (`expires_at`) WHERE \"private_content\".\"redacted_at\" IS NULL AND \"private_content\".\"kind\"!='document-artifact'"
+    },
+    {
+      "type": "index",
+      "name": "idx_private_content_retention_organization_expiry",
+      "tbl_name": "private_content_retention_scopes",
+      "sql": "CREATE INDEX `idx_private_content_retention_organization_expiry` ON `private_content_retention_scopes` (`organization_id`,`assigned_expires_at`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_project_budget_scope_organization",
+      "tbl_name": "project_budget_reservation_scopes",
+      "sql": "CREATE INDEX `idx_project_budget_scope_organization` ON `project_budget_reservation_scopes` (`organization_id`,`project_access_id`,`created_at`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_project_event_scopes_owner",
+      "tbl_name": "project_event_scopes",
+      "sql": "CREATE INDEX `idx_project_event_scopes_owner` ON `project_event_scopes` (`owner_user_id`,`source_sequence`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_project_event_scopes_sequence",
+      "tbl_name": "project_event_scopes",
+      "sql": "CREATE UNIQUE INDEX `idx_project_event_scopes_sequence` ON `project_event_scopes` (`project_access_id`,`project_sequence`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_project_memberships_access_user",
+      "tbl_name": "project_memberships",
+      "sql": "CREATE UNIQUE INDEX `idx_project_memberships_access_user` ON `project_memberships` (`project_access_id`,`user_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_project_memberships_user_status",
+      "tbl_name": "project_memberships",
+      "sql": "CREATE INDEX `idx_project_memberships_user_status` ON `project_memberships` (`user_id`,`status`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_project_resource_scopes_owner_kind_actor",
+      "tbl_name": "project_resource_scopes",
+      "sql": "CREATE INDEX `idx_project_resource_scopes_owner_kind_actor` ON `project_resource_scopes` (`owner_user_id`,`resource_kind`,`resource_id`,`actor_user_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_project_resource_scopes_resource",
+      "tbl_name": "project_resource_scopes",
+      "sql": "CREATE INDEX `idx_project_resource_scopes_resource` ON `project_resource_scopes` (`resource_kind`,`resource_id`,`owner_user_id`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_users_email",
+      "tbl_name": "users",
+      "sql": "CREATE UNIQUE INDEX `idx_users_email` ON `users` (`email`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_users_role",
+      "tbl_name": "users",
+      "sql": "CREATE INDEX `idx_users_role` ON `users` (`role`)"
+    },
+    {
+      "type": "index",
+      "name": "idx_video_reconciliations_job_attempt",
+      "tbl_name": "managed_video_reconciliations",
+      "sql": "CREATE UNIQUE INDEX `idx_video_reconciliations_job_attempt` ON `managed_video_reconciliations` (`job_id`,`correlation_id`)"
+    },
+    {
+      "type": "table",
+      "name": "managed_video_reconciliations",
+      "tbl_name": "managed_video_reconciliations",
+      "sql": "CREATE TABLE `managed_video_reconciliations` (\n\t`reconciliation_id` text PRIMARY KEY NOT NULL,\n\t`operator_id` text NOT NULL,\n\t`job_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`token_reservation_id` text NOT NULL,\n\t`cost_reservation_id` text NOT NULL,\n\t`command_sha256` text NOT NULL,\n\t`treatment_sha256` text NOT NULL,\n\t`record_sha256` text NOT NULL,\n\t`record_json` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+    },
+    {
+      "type": "index",
+      "name": "managed_video_reconciliations_cost_reservation_id_unique",
+      "tbl_name": "managed_video_reconciliations",
+      "sql": "CREATE UNIQUE INDEX `managed_video_reconciliations_cost_reservation_id_unique` ON `managed_video_reconciliations` (`cost_reservation_id`)"
+    },
+    {
+      "type": "trigger",
+      "name": "managed_video_reconciliations_no_delete",
+      "tbl_name": "managed_video_reconciliations",
+      "sql": "CREATE TRIGGER managed_video_reconciliations_no_delete BEFORE DELETE ON managed_video_reconciliations\n    BEGIN SELECT RAISE(ABORT,'video_reconciliations_are_append_only'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "managed_video_reconciliations_no_replace",
+      "tbl_name": "managed_video_reconciliations",
+      "sql": "CREATE TRIGGER managed_video_reconciliations_no_replace BEFORE INSERT ON managed_video_reconciliations\n    WHEN EXISTS(SELECT 1 FROM managed_video_reconciliations WHERE reconciliation_id=NEW.reconciliation_id\n      OR token_reservation_id=NEW.token_reservation_id OR cost_reservation_id=NEW.cost_reservation_id\n      OR (job_id=NEW.job_id AND correlation_id=NEW.correlation_id))\n    BEGIN SELECT RAISE(ABORT,'video_reconciliations_are_append_only'); END"
+    },
+    {
+      "type": "trigger",
+      "name": "managed_video_reconciliations_no_update",
+      "tbl_name": "managed_video_reconciliations",
+      "sql": "CREATE TRIGGER managed_video_reconciliations_no_update BEFORE UPDATE ON managed_video_reconciliations\n    BEGIN SELECT RAISE(ABORT,'video_reconciliations_are_append_only'); END"
+    },
+    {
+      "type": "index",
+      "name": "managed_video_reconciliations_token_reservation_id_unique",
+      "tbl_name": "managed_video_reconciliations",
+      "sql": "CREATE UNIQUE INDEX `managed_video_reconciliations_token_reservation_id_unique` ON `managed_video_reconciliations` (`token_reservation_id`)"
+    },
+    {
+      "type": "table",
+      "name": "n10h_guard",
+      "tbl_name": "n10h_guard",
+      "sql": "CREATE TABLE `n10h_guard` (\n\t`ok` integer NOT NULL,\n\tCONSTRAINT \"one_change\" CHECK(ok=1)\n)"
+    },
+    {
+      "type": "table",
+      "name": "n10h_run",
+      "tbl_name": "n10h_run",
+      "sql": "CREATE TABLE `n10h_run` (\n\t`id` integer PRIMARY KEY NOT NULL,\n\t`owner` text NOT NULL,\n\t`phase` text NOT NULL,\n\t`next` integer NOT NULL,\n\t`started` integer NOT NULL,\n\t`cleanup` integer NOT NULL,\n\t`reads` integer NOT NULL,\n\t`writes` integer NOT NULL,\n\t`report` text\n)"
+    },
+    {
+      "type": "table",
+      "name": "organization_identity_bindings",
+      "tbl_name": "organization_identity_bindings",
+      "sql": "CREATE TABLE `organization_identity_bindings` (\n\t`binding_id` text PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`authentication_source` text NOT NULL,\n\t`subject` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`revoked_at` text\n)"
+    },
+    {
+      "type": "table",
+      "name": "organization_memberships",
+      "tbl_name": "organization_memberships",
+      "sql": "CREATE TABLE `organization_memberships` (\n\t`membership_id` text PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`role` text NOT NULL,\n\t`status` text DEFAULT 'pending' NOT NULL,\n\t`invited_by_user_id` text NOT NULL,\n\t`accepted_at` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`revoked_at` text\n)"
+    },
+    {
+      "type": "table",
+      "name": "organization_projects",
+      "tbl_name": "organization_projects",
+      "sql": "CREATE TABLE `organization_projects` (\n\t`project_access_id` text PRIMARY KEY NOT NULL,\n\t`project_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "organization_security_policies",
+      "tbl_name": "organization_security_policies",
+      "sql": "CREATE TABLE `organization_security_policies` (\n\t`organization_id` text PRIMARY KEY NOT NULL,\n\t`authentication_source` text DEFAULT 'any' NOT NULL,\n\t`allowed_domains_json` text DEFAULT '[]' NOT NULL,\n\t`require_mfa` integer DEFAULT false NOT NULL,\n\t`encryption_mode` text DEFAULT 'platform-unverified' NOT NULL,\n\t`max_session_minutes` integer DEFAULT 480 NOT NULL,\n\t`version` integer DEFAULT 1 NOT NULL,\n\t`updated_by_user_id` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "organizations",
+      "tbl_name": "organizations",
+      "sql": "CREATE TABLE `organizations` (\n\t`organization_id` text PRIMARY KEY NOT NULL,\n\t`name` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "output_execution_grants",
+      "tbl_name": "output_execution_grants",
+      "sql": "CREATE TABLE output_execution_grants(\n    scope_key TEXT NOT NULL,grant_id TEXT NOT NULL,plan_revision_id TEXT NOT NULL,actor_user_id TEXT NOT NULL,payer_user_id TEXT NOT NULL,context_id TEXT,\n    preflight_id TEXT NOT NULL,authorization_event_id TEXT NOT NULL,maximum_microusd INTEGER NOT NULL CHECK(typeof(maximum_microusd)='integer' AND maximum_microusd>0 AND maximum_microusd<=1000000000000),\n    maximum_calls INTEGER NOT NULL CHECK(typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=10000),\n    status TEXT NOT NULL CHECK(status IN('authorized','active','completed','revoked','exceeded')),expires_at TEXT NOT NULL,created_at TEXT NOT NULL,\n    PRIMARY KEY(scope_key,grant_id),\n    FOREIGN KEY(scope_key,plan_revision_id) REFERENCES output_plan_revisions(scope_key,plan_revision_id),\n    FOREIGN KEY(scope_key,preflight_id) REFERENCES output_preflights(scope_key,preflight_id),\n    FOREIGN KEY(authorization_event_id) REFERENCES events(event_id))"
+    },
+    {
+      "type": "table",
+      "name": "output_operation_routes",
+      "tbl_name": "output_operation_routes",
+      "sql": "CREATE TABLE output_operation_routes(\n    scope_key TEXT NOT NULL,slot_id TEXT NOT NULL,stage_key TEXT NOT NULL,provider TEXT NOT NULL,model TEXT NOT NULL,\n    maximum_calls INTEGER NOT NULL CHECK(typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=1000),\n    PRIMARY KEY(scope_key,slot_id,stage_key),FOREIGN KEY(scope_key,slot_id) REFERENCES output_operation_slots(scope_key,slot_id))"
+    },
+    {
+      "type": "table",
+      "name": "output_operation_slots",
+      "tbl_name": "output_operation_slots",
+      "sql": "CREATE TABLE output_operation_slots(\n    scope_key TEXT NOT NULL,slot_id TEXT NOT NULL,grant_id TEXT NOT NULL,plan_revision_id TEXT NOT NULL,target_id TEXT NOT NULL,\n    target_contract_digest TEXT NOT NULL,source_digest TEXT NOT NULL,provider TEXT NOT NULL,model TEXT NOT NULL,\n    route_digest TEXT NOT NULL,job_id TEXT NOT NULL,cost_reservation_id TEXT NOT NULL,token_reservation_id TEXT NOT NULL,\n    maximum_microusd INTEGER NOT NULL CHECK(typeof(maximum_microusd)='integer' AND maximum_microusd>0 AND maximum_microusd<=1000000000000),\n    maximum_calls INTEGER NOT NULL CHECK(typeof(maximum_calls)='integer' AND maximum_calls>0 AND maximum_calls<=1000),maximum_tokens INTEGER NOT NULL CHECK(typeof(maximum_tokens)='integer' AND maximum_tokens>0),\n    attempt_ordinal INTEGER NOT NULL DEFAULT 0 CHECK(typeof(attempt_ordinal)='integer' AND attempt_ordinal>=0),previous_slot_id TEXT,\n    status TEXT NOT NULL CHECK(status IN('authorized','queued','running','succeeded','failed','cancelled','unavailable','uncertain')),\n    outcome_event_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,\n    PRIMARY KEY(scope_key,slot_id),\n    CHECK((attempt_ordinal=0 AND previous_slot_id IS NULL) OR (attempt_ordinal>0 AND previous_slot_id IS NOT NULL)),\n    FOREIGN KEY(scope_key,grant_id) REFERENCES output_execution_grants(scope_key,grant_id),\n    FOREIGN KEY(scope_key,previous_slot_id) REFERENCES output_operation_slots(scope_key,slot_id),\n    FOREIGN KEY(scope_key,plan_revision_id,target_id) REFERENCES output_plan_targets(scope_key,plan_revision_id,target_id))"
+    },
+    {
+      "type": "table",
+      "name": "output_plan_revisions",
+      "tbl_name": "output_plan_revisions",
+      "sql": "CREATE TABLE output_plan_revisions(\n    scope_key TEXT NOT NULL,scope_kind TEXT NOT NULL CHECK(scope_kind IN('personal','project')),owner_user_id TEXT NOT NULL,\n    project_id TEXT NOT NULL,document_id TEXT NOT NULL,organization_id TEXT,project_access_id TEXT,\n    plan_revision_id TEXT NOT NULL,plan_id TEXT NOT NULL,revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>0),\n    confirmed_event_id TEXT NOT NULL,requirements_digest TEXT NOT NULL,source_digest TEXT NOT NULL,\n    resolver_version TEXT NOT NULL,source_head INTEGER NOT NULL CHECK(typeof(source_head)='integer' AND source_head>=0),target_count INTEGER NOT NULL CHECK(typeof(target_count)='integer' AND target_count>=0 AND target_count<=1000),created_at TEXT NOT NULL,\n    PRIMARY KEY(scope_key,plan_revision_id),\n    FOREIGN KEY(confirmed_event_id) REFERENCES events(event_id),\n    CHECK((scope_kind='personal' AND organization_id IS NULL AND project_access_id IS NULL) OR (scope_kind='project' AND organization_id IS NOT NULL AND project_access_id IS NOT NULL)))"
+    },
+    {
+      "type": "table",
+      "name": "output_plan_targets",
+      "tbl_name": "output_plan_targets",
+      "sql": "CREATE TABLE \"output_plan_targets\"(\n    scope_key TEXT NOT NULL,plan_revision_id TEXT NOT NULL,target_id TEXT NOT NULL,target_contract_digest TEXT NOT NULL,\n    media_kind TEXT NOT NULL CHECK(media_kind IN('image','slides','audio','video','document','model3d','unknown')),\n    required INTEGER NOT NULL CHECK(required IN(0,1)),selected INTEGER NOT NULL CHECK(selected IN(0,1)),ordinal INTEGER NOT NULL CHECK(typeof(ordinal)='integer' AND ordinal>=0),\n    PRIMARY KEY(scope_key,plan_revision_id,target_id),\n    FOREIGN KEY(scope_key,plan_revision_id) REFERENCES output_plan_revisions(scope_key,plan_revision_id))"
+    },
+    {
+      "type": "table",
+      "name": "output_preflights",
+      "tbl_name": "output_preflights",
+      "sql": "CREATE TABLE output_preflights(\n    scope_key TEXT NOT NULL,preflight_id TEXT NOT NULL,plan_revision_id TEXT NOT NULL,actor_user_id TEXT NOT NULL,\n    terms_digest TEXT NOT NULL,event_id TEXT NOT NULL,expires_at TEXT NOT NULL,created_at TEXT NOT NULL,\n    PRIMARY KEY(scope_key,preflight_id),FOREIGN KEY(scope_key,plan_revision_id) REFERENCES output_plan_revisions(scope_key,plan_revision_id),\n    FOREIGN KEY(event_id) REFERENCES events(event_id))"
+    },
+    {
+      "type": "table",
+      "name": "output_provider_calls",
+      "tbl_name": "output_provider_calls",
+      "sql": "CREATE TABLE output_provider_calls(\n    scope_key TEXT NOT NULL,slot_id TEXT NOT NULL,call_key TEXT NOT NULL,client_request_id TEXT NOT NULL,request_digest TEXT NOT NULL,\n    stage_key TEXT NOT NULL,provider TEXT NOT NULL,model TEXT NOT NULL,\n    reserved_microusd INTEGER NOT NULL CHECK(typeof(reserved_microusd)='integer' AND reserved_microusd>0),used_microusd INTEGER CHECK(used_microusd IS NULL OR typeof(used_microusd)='integer' AND used_microusd>=0),\n    status TEXT NOT NULL CHECK(status IN('pending','uncertain','settled','rejected')),provider_response_id TEXT,created_at TEXT NOT NULL,settled_at TEXT,\n    PRIMARY KEY(scope_key,slot_id,call_key),\n    FOREIGN KEY(scope_key,slot_id,stage_key) REFERENCES output_operation_routes(scope_key,slot_id,stage_key))"
+    },
+    {
+      "type": "table",
+      "name": "p5_rehearsal_guard",
+      "tbl_name": "p5_rehearsal_guard",
+      "sql": "CREATE TABLE p5_rehearsal_guard (ok INTEGER NOT NULL CHECK(ok=1))"
+    },
+    {
+      "type": "table",
+      "name": "p5_rehearsal_run",
+      "tbl_name": "p5_rehearsal_run",
+      "sql": "CREATE TABLE p5_rehearsal_run (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL, dataset TEXT NOT NULL, phase TEXT NOT NULL, cursor INTEGER NOT NULL DEFAULT 0, started INTEGER NOT NULL, requests INTEGER NOT NULL DEFAULT 0, report TEXT, retained_hash TEXT NOT NULL, reads INTEGER NOT NULL DEFAULT 0, writes INTEGER NOT NULL DEFAULT 0)"
+    },
+    {
+      "type": "trigger",
+      "name": "pilot_active_cohort_deletion_guard",
+      "tbl_name": "pilot_cohorts",
+      "sql": "CREATE TRIGGER pilot_active_cohort_deletion_guard BEFORE DELETE ON pilot_cohorts\n  WHEN OLD.status IN ('active','paused')\n  BEGIN\n    SELECT RAISE(ABORT,'active_pilot_cannot_be_deleted');\n  END"
+    },
+    {
+      "type": "table",
+      "name": "pilot_cohorts",
+      "tbl_name": "pilot_cohorts",
+      "sql": "CREATE TABLE `pilot_cohorts` (\n\t`cohort_id` text PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`starts_at` text NOT NULL,\n\t`ends_at` text NOT NULL,\n\t`max_participants` integer DEFAULT 10 NOT NULL,\n\t`participant_cap_microusd` integer DEFAULT 15000000 NOT NULL,\n\t`organization_cap_microusd` integer DEFAULT 150000000 NOT NULL,\n\t`source_classification` text DEFAULT 'non-sensitive-licensed' NOT NULL,\n\t`created_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "pilot_cost_reservation_scopes",
+      "tbl_name": "pilot_cost_reservation_scopes",
+      "sql": "CREATE TABLE `pilot_cost_reservation_scopes` (\n\t`reservation_id` text PRIMARY KEY NOT NULL,\n\t`cohort_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "pilot_participants",
+      "tbl_name": "pilot_participants",
+      "sql": "CREATE TABLE `pilot_participants` (\n\t`participant_id` text PRIMARY KEY NOT NULL,\n\t`cohort_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`email_normalized` text NOT NULL,\n\t`user_id` text,\n\t`role` text DEFAULT 'member' NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`invited_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`revoked_at` text\n)"
+    },
+    {
+      "type": "trigger",
+      "name": "pilot_project_owner_membership_deletion_guard",
+      "tbl_name": "organization_memberships",
+      "sql": "CREATE TRIGGER pilot_project_owner_membership_deletion_guard BEFORE DELETE ON organization_memberships\n  WHEN EXISTS(SELECT 1 FROM pilot_cohorts cohort WHERE cohort.organization_id=OLD.organization_id AND cohort.status IN ('active','paused'))\n    AND EXISTS(SELECT 1 FROM organization_projects project WHERE project.organization_id=OLD.organization_id AND project.owner_user_id=OLD.user_id AND project.status IN('indexing','active'))\n  BEGIN\n    SELECT RAISE(ABORT,'project_owner_transfer_required');\n  END"
+    },
+    {
+      "type": "trigger",
+      "name": "pilot_project_owner_membership_guard",
+      "tbl_name": "organization_memberships",
+      "sql": "CREATE TRIGGER pilot_project_owner_membership_guard BEFORE UPDATE OF status ON organization_memberships\n  WHEN NEW.status='revoked' AND OLD.status!='revoked'\n    AND EXISTS(SELECT 1 FROM pilot_cohorts cohort WHERE cohort.organization_id=OLD.organization_id AND cohort.status IN ('active','paused'))\n    AND EXISTS(SELECT 1 FROM organization_projects project WHERE project.organization_id=OLD.organization_id AND project.owner_user_id=OLD.user_id AND project.status IN('indexing','active'))\n  BEGIN\n    SELECT RAISE(ABORT,'project_owner_transfer_required');\n  END"
+    },
+    {
+      "type": "table",
+      "name": "private_content",
+      "tbl_name": "private_content",
+      "sql": "CREATE TABLE `private_content` (\n\t`content_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`content` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`expires_at` text NOT NULL,\n\t`redacted_at` text\n)"
+    },
+    {
+      "type": "table",
+      "name": "private_content_retention_scopes",
+      "tbl_name": "private_content_retention_scopes",
+      "sql": "CREATE TABLE `private_content_retention_scopes` (\n\t`content_id` text PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`classification` text NOT NULL,\n\t`policy_version` integer NOT NULL,\n\t`assigned_expires_at` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "project_budget_reservation_scopes",
+      "tbl_name": "project_budget_reservation_scopes",
+      "sql": "CREATE TABLE `project_budget_reservation_scopes` (\n\t`reservation_kind` text NOT NULL,\n\t`reservation_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`workspace_scope_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\tPRIMARY KEY(`reservation_kind`, `reservation_id`)\n)"
+    },
+    {
+      "type": "table",
+      "name": "project_event_scopes",
+      "tbl_name": "project_event_scopes",
+      "sql": "CREATE TABLE `project_event_scopes` (\n\t`event_id` text PRIMARY KEY NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`source_stream_id` text NOT NULL,\n\t`source_sequence` integer NOT NULL,\n\t`project_sequence` integer NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+    },
+    {
+      "type": "table",
+      "name": "project_memberships",
+      "tbl_name": "project_memberships",
+      "sql": "CREATE TABLE `project_memberships` (\n\t`membership_id` text PRIMARY KEY NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`role` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`granted_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`revoked_at` text\n)"
+    },
+    {
+      "type": "table",
+      "name": "project_resource_scopes",
+      "tbl_name": "project_resource_scopes",
+      "sql": "CREATE TABLE `project_resource_scopes` (\n\t`project_access_id` text NOT NULL,\n\t`resource_kind` text NOT NULL,\n\t`resource_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`visibility` text DEFAULT 'collaborative_output' NOT NULL,\n\t`source_event_id` text,\n\t`actor_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\tPRIMARY KEY(`project_access_id`, `resource_kind`, `resource_id`)\n)"
+    },
+    {
+      "type": "table",
+      "name": "users",
+      "tbl_name": "users",
+      "sql": "CREATE TABLE `users` (\n\t`user_id` text PRIMARY KEY NOT NULL,\n\t`email` text NOT NULL,\n\t`display_name` text NOT NULL,\n\t`role` text DEFAULT 'creator' NOT NULL,\n\t`consent_version` text,\n\t`consented_at` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+    }
+  ],
+  "metrics": {
+    "action": "catalog",
+    "step": "",
+    "statements": 1,
+    "attemptedStatements": 1,
+    "bindingCalls": 1,
+    "failedBatches": 0,
+    "reads": 405,
+    "writes": 0,
+    "databaseBytes": 794624,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    }
+  },
+  "instance": "27e78c34-7d6a-419e-90e2-141189ee543f"
+}

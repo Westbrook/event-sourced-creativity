@@ -1,0 +1,61 @@
+{
+  "version": "p5-sites-catalog-diagnostic-r8",
+  "target": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "nativeParent": "1565d8ac8a568bd0b9b7bde789eadc450e384364",
+  "parentVersion": 2,
+  "sourceTreeSha256": "5bb16e8f21cc58cfa0def054ba81ba9e68bf837ed32c1a490d398f915d9ba019",
+  "sourceArchive": {
+    "path": "/private/tmp/forma-p5-sites-diagnostic-source-r8.tar.gz",
+    "sha256": "7cc991d119dfbd27d679053a0de9d71db60ffd6edaf02409f77a74b40060acce",
+    "bytes": 2334237,
+    "files": 231
+  },
+  "archive": {
+    "path": "/private/tmp/forma-p5-sites-diagnostic-r8.tar.gz",
+    "sha256": "9a548d7680227a24b630c2ba9b89c08fa7f4706022e5a3cd298cd1ba5d5d5d6e",
+    "bytes": 355288,
+    "files": 9,
+    "nativeUncompressedTarSha256": "9115a6f0fc2b716233e4f701483f11d1073ce1872f04475402f58b8229e26f91"
+  },
+  "workerSha256": "467a739a2480141e491866831e6e563b4f9a9363fb5dcb58534fbb6cfec5eb30",
+  "sourceDelta": [
+    "artifact.json",
+    "src/catalog.mjs",
+    "src/worker.mjs"
+  ],
+  "archiveDelta": [
+    "dist/server/index.js"
+  ],
+  "datasetId": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a",
+  "diagnostic": "owner-only fixed catalog query; at most256objects,32KiB SQL each,256KiB entire response; expiry2026-10-01T00:00:00Z",
+  "unchanged": [
+    "all historical source outside listed delta",
+    "both migrations and metadata",
+    "raw Start equality",
+    "fixture and original cleanup",
+    "authentication/audience/bindings/expiry"
+  ],
+  "validation": {
+    "focusedChecks": 21,
+    "outboundAttempts": 0,
+    "prior29Or266Rerun": false,
+    "sourceArchiveMatched": true,
+    "nineFileArchiveMatched": true,
+    "pluginPackager": "Sites0.1.71 package-site.mjs; COPYFILE_DISABLE=1 excludes macOS metadata; plugin unmodified",
+    "nativeAdmission": false
+  },
+  "hostedActionsThisContinuation": 0,
+  "authorizedForPublication": false,
+  "remainingAuthority": {
+    "additionalLimit": 37,
+    "charged": 9,
+    "unused": 28,
+    "normalStop": 25,
+    "recoveryReserve": 12,
+    "cleanupLimit": 5,
+    "underlyingHTTPExact": false,
+    "earlierAuthUnknown": true
+  },
+  "retention": "Existing OptionB and indefinite owner retention unchanged; diagnostic source/version history and metadata evidence retained under same owner. No automatic erasure.",
+  "id": "p5-sites-catalog:daef3e10f1bdb5bcc5046127d83e8451ca900f3b7a7c60614dad3b6797ab0d2e"
+}

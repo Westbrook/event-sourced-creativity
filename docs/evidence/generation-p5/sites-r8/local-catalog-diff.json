@@ -1,0 +1,30 @@
+{
+  "receipt": "docs/evidence/generation-p5/sites-r8/local-catalog-receipt.json",
+  "raw": {
+    "missing": [],
+    "extra": [
+      {
+        "type": "table",
+        "name": "_cf_METADATA",
+        "tbl_name": "_cf_METADATA",
+        "sql": "CREATE TABLE _cf_METADATA (\n        key INTEGER PRIMARY KEY,\n        value BLOB\n      )"
+      }
+    ],
+    "changed": []
+  },
+  "existingGuard": {
+    "missing": [],
+    "extra": [],
+    "changed": []
+  },
+  "excludedByUnchangedGuard": [
+    {
+      "type": "table",
+      "name": "_cf_METADATA",
+      "tbl_name": "_cf_METADATA",
+      "sql": "CREATE TABLE _cf_METADATA (\n        key INTEGER PRIMARY KEY,\n        value BLOB\n      )"
+    }
+  ],
+  "normalizationApplied": false,
+  "executionAuthorized": false
+}

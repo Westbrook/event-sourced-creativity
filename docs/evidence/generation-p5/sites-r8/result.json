@@ -1,0 +1,28 @@
+{
+  "status": "local-diagnostic-ready-changed-hosted-action-pending",
+  "localDiagnosisComplete": true,
+  "hostedCauseIdentified": false,
+  "nativeCatalogAvailableThisTurn": false,
+  "overviewCapProven": false,
+  "expectedCatalogExactFromMigrations": true,
+  "localHypotheses": [
+    "Drizzle default __drizzle_migrations adds one raw-catalog object",
+    "column-definition whitespace changes raw SQL without tested PRAGMA structural changes"
+  ],
+  "diagnosticEnvelope": "p5-sites-catalog:daef3e10f1bdb5bcc5046127d83e8451ca900f3b7a7c60614dad3b6797ab0d2e",
+  "candidateWorkerSha256": "467a739a2480141e491866831e6e563b4f9a9363fb5dcb58534fbb6cfec5eb30",
+  "localChecks": 21,
+  "hostedActionsThisContinuation": 0,
+  "sourcePublished": false,
+  "nativeAdmission": false,
+  "additionalRequestsCharged": 9,
+  "unusedReservations": 28,
+  "changedActionAccepted": false,
+  "proposedAction": "Privately publish exact R8 diagnostic, read catalog once, preserve raw/offline diff, restore saved version2. No Start or migrations.",
+  "proposalReservationCeiling": 18,
+  "priorCostRetentionAccepted": true,
+  "p5Complete": false,
+  "deadline": "2026-10-01T00:00:00Z",
+  "next": "User review of changed-action decision; if accepted and Sites tools callable, follow exact publication/read/restoration plan without renewed cost/retention intake. Otherwise remain local and preserve source/envelope.",
+  "notes": "No actual Forma or financial qualification; P2 gates,847/six exclusions and cross-media quality limits retained."
+}

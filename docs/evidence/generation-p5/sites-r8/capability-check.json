@@ -1,0 +1,37 @@
+{
+  "currentSitesToolCount": 0,
+  "guidance": "/Users/westbrook/.codex/plugins/cache/openai-curated-remote/sites/0.1.71/skills/sites-hosting/SKILL.md",
+  "retainedOverviewContract": {
+    "inputs": [
+      "project_id",
+      "binding_name"
+    ],
+    "paginationInput": false,
+    "nextCursorOutput": false,
+    "responseFields": [
+      "bindings",
+      "selected_binding_name",
+      "tables",
+      "model_projection"
+    ]
+  },
+  "retainedRowsContract": {
+    "inputs": [
+      "project_id",
+      "binding_name",
+      "table_name",
+      "offset",
+      "limit"
+    ],
+    "maximumRows": 25,
+    "nextOffset": "model_projection.next_offset only",
+    "tableSelection": "exact user table from overview",
+    "arbitrarySQL": false,
+    "catalogDefinitions": false
+  },
+  "hard50BackendLimitVerified": false,
+  "inference": "50 alphabetically first names consistent with cap but not proof; retained response says0omitted. Do not infer missing trailing tables.",
+  "supportedReadFound": false,
+  "smallestPlatformCapability": "owner-only bounded schema-definition export from sqlite_schema with completeness metadata, no user rows or writes",
+  "hostedCalls": 0
+}

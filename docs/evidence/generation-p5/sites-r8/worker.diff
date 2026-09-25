@@ -1,0 +1,35 @@
+--- rehearsal/p5-sites/src/worker.mjs	2026-09-25 14:37:09
++++ /private/tmp/forma-p5-sites-diagnostic-r8/src/worker.mjs	2026-09-25 19:14:48
+@@ -1,6 +1,7 @@
+ import { AsyncLocalStorage } from 'node:async_hooks';
+ import { createSitesStudyApi, SITES_STUDY_PREFIX, hash, canonical, operationKey, HOST_LIMITS } from './application.mjs';
+ import D from './dataset.json';
++import { CATALOG_SQL, CATALOG_VERSION, boundedCatalog, boundedCatalogResponse } from './catalog.mjs';
+ const local = new AsyncLocalStorage();
+ const api = createSitesStudyApi(D.config);
+ const fail = (message) => { throw Error(message); };
+@@ -186,7 +187,7 @@
+     await claim(db, "UPDATE p5_rehearsal_run SET phase='disabled',report=NULL WHERE id=1 AND phase='cleaning'");
+     return { disabled: true, deleted, privateBodiesRemaining: 0, residual, proof, retained: 'Synthetic immutable original intent/accounting plus empty schema, compiled source and old/new tombstones. No production records.' };
+ }
+-const page = `<!doctype html><meta charset="utf-8"><title>P5 private rehearsal</title><style>body{font:18px system-ui;max-width:780px;margin:50px auto;background:#faf8f2;color:#222}button{padding:12px;margin:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}</style><h1>P5 synthetic rehearsal</h1><p>One finite run. Native owner access required. No real provider transport. Local preparation is not hosted authorization.</p><button id="status">Status</button><button id="start">Start</button><button id="next">Next fixed step</button><button id="stop">Stop</button><button id="cleanup">Clean and disable</button><pre id="output"></pre><script>let cursor=0;async function call(action){const b=action==='step'?{action,index:cursor}:{action};const r=await fetch('/p5',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const j=await r.json();document.querySelector('#output').textContent=JSON.stringify(j,null,2);if(j.state)cursor=j.state.cursor;}for(const a of ['status','start','stop','cleanup'])document.getElementById(a).onclick=()=>call(a);document.getElementById('next').onclick=()=>call('step');</script>`;
++const page = `<!doctype html><meta charset="utf-8"><title>P5 private rehearsal</title><style>body{font:18px system-ui;max-width:780px;margin:50px auto;background:#faf8f2;color:#222}button{padding:12px;margin:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}</style><h1>P5 synthetic rehearsal</h1><p>One finite run. Native owner access required. No real provider transport. Local preparation is not hosted authorization.</p><button id="status">Status</button><button id="catalog">Read catalog</button><button id="start">Start</button><button id="next">Next fixed step</button><button id="stop">Stop</button><button id="cleanup">Clean and disable</button><pre id="output"></pre><script>let cursor=0;async function call(action){const b=action==='step'?{action,index:cursor}:{action};const r=await fetch('/p5',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const j=await r.json();document.querySelector('#output').textContent=JSON.stringify(j,null,2);if(j.state)cursor=j.state.cursor;}for(const a of ['status','catalog','start','stop','cleanup'])document.getElementById(a).onclick=()=>call(a);document.getElementById('next').onclick=()=>call('step');</script>`;
+ export default { async fetch(request, bindings) {
+         instance ??= crypto.randomUUID();
+         const c = { bindings, action: '', step: '', statements: 0, attemptedStatements: 0, bindingCalls: 0, failedBatches: 0, reads: 0, writes: 0, databaseBytes: 0, providers: 0, intent: [], r2: { put: 0, get: 0, delete: 0 }, deadline: Date.now() + 120000 };
+@@ -216,8 +217,14 @@
+                 check(input && Object.getPrototypeOf(input) === Object.prototype, 'command_required');
+                 const action = input.action;
+                 c.action = action;
+-                check(['start', 'step', 'status', 'stop', 'cleanup'].includes(action) && JSON.stringify(Object.keys(input).sort()) === JSON.stringify(action === 'step' ? ['action', 'index'] : ['action']), 'fixed_fields_required');
++                check(['start', 'step', 'status', 'stop', 'cleanup', 'catalog'].includes(action) && JSON.stringify(Object.keys(input).sort()) === JSON.stringify(action === 'step' ? ['action', 'index'] : ['action']), 'fixed_fields_required');
+                 const db = bindings.DB;
++                // Branch before every user-row/run read; same native-owner/origin/body gates.
++                if (action === 'catalog') {
++                    check(Date.now() < expiry, 'catalog_expired');
++                    const catalog = boundedCatalog(await all(db, CATALOG_SQL));
++                    return boundedCatalogResponse({ ok: true, action, diagnosticVersion: CATALOG_VERSION, dataset: D.datasetId, catalog, metrics: { ...c, bindings: undefined, deadline: undefined }, instance }, headers);
++                }
+                 let state = await one(db, 'SELECT * FROM p5_rehearsal_run WHERE id=1');
+                 if (state)
+                     check(state.owner === uid && state.dataset === D.datasetId, 'owner_or_dataset_changed');

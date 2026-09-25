@@ -1,0 +1,270 @@
+{
+  "sourceFilesVerified": 19,
+  "archiveFilesVerified": 9,
+  "deployedSourceCommit": "1565d8ac8a568bd0b9b7bde789eadc450e384364",
+  "nativeTarHashMatched": true,
+  "sqliteVersion": "3.53.3",
+  "expectedObjects": 172,
+  "counts": {
+    "trigger": 57,
+    "table": 52,
+    "index": 62,
+    "view": 1
+  },
+  "exactPackagedMigrationDiff": {
+    "missing": [],
+    "extra": [],
+    "changed": []
+  },
+  "hypotheses": {
+    "named_excluded_bookkeeping": {
+      "missing": [],
+      "extra": [],
+      "changed": []
+    },
+    "drizzle_default_bookkeeping": {
+      "missing": [],
+      "extra": [
+        {
+          "type": "table",
+          "name": "__drizzle_migrations",
+          "tbl_name": "__drizzle_migrations",
+          "sql": "CREATE TABLE \"__drizzle_migrations\" (id SERIAL PRIMARY KEY,hash text NOT NULL,created_at numeric)"
+        }
+      ],
+      "changed": []
+    },
+    "create_keyword_spacing": {
+      "missing": [],
+      "extra": [],
+      "changed": []
+    },
+    "column_type_spacing": {
+      "missing": [],
+      "extra": [],
+      "changed": [
+        {
+          "name": "budget_hold_dispositions",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `budget_hold_dispositions` (\n\t`disposition_id` text PRIMARY KEY NOT NULL,\n\t`operator_id` text NOT NULL,\n\t`job_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`token_reservation_id` text NOT NULL,\n\t`cost_reservation_id` text NOT NULL,\n\t`command_sha256` text NOT NULL,\n\t`record_sha256` text NOT NULL,\n\t`record_json` text NOT NULL,\n\t`event_id` text NOT NULL,\n\t`created_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `budget_hold_dispositions` (\n\t`disposition_id` text  PRIMARY KEY NOT NULL,\n\t`operator_id` text NOT NULL,\n\t`job_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`token_reservation_id` text NOT NULL,\n\t`cost_reservation_id` text NOT NULL,\n\t`command_sha256` text NOT NULL,\n\t`record_sha256` text NOT NULL,\n\t`record_json` text NOT NULL,\n\t`event_id` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "budget_reservations",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `budget_reservations` (\n\t`reservation_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`operation` text NOT NULL,\n\t`period` text NOT NULL,\n\t`reserved_tokens` integer NOT NULL,\n\t`used_tokens` integer DEFAULT 0 NOT NULL,\n\t`status` text NOT NULL,\n\t`settlement_reason` text,\n\t`created_at` text NOT NULL,\n\t`settled_at` text,\n\t`updated_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `budget_reservations` (\n\t`reservation_id` text  PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`operation` text NOT NULL,\n\t`period` text NOT NULL,\n\t`reserved_tokens` integer NOT NULL,\n\t`used_tokens` integer DEFAULT 0 NOT NULL,\n\t`status` text NOT NULL,\n\t`settlement_reason` text,\n\t`created_at` text NOT NULL,\n\t`settled_at` text,\n\t`updated_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "canvas_governance_requirements",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `canvas_governance_requirements` (\n\t`requirement_id` text PRIMARY KEY NOT NULL,\n\t`status` text NOT NULL,\n\t`approved_by_user_id` text,\n\t`approved_by_name` text,\n\t`approved_at` text,\n\t`evidence_ref` text,\n\t`details_json` text DEFAULT '{}' NOT NULL,\n\t`updated_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `canvas_governance_requirements` (\n\t`requirement_id` text  PRIMARY KEY NOT NULL,\n\t`status` text NOT NULL,\n\t`approved_by_user_id` text,\n\t`approved_by_name` text,\n\t`approved_at` text,\n\t`evidence_ref` text,\n\t`details_json` text DEFAULT '{}' NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "capability_grants",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `capability_grants` (\n\t`grant_id` text PRIMARY KEY NOT NULL,\n\t`user_id` text NOT NULL,\n\t`capability` text NOT NULL,\n\t`scope_type` text NOT NULL,\n\t`organization_id` text,\n\t`project_access_id` text,\n\t`project_id` text,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`granted_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`expires_at` text,\n\t`revoked_at` text\n)",
+              "observed": "CREATE TABLE `capability_grants` (\n\t`grant_id` text  PRIMARY KEY NOT NULL,\n\t`user_id` text NOT NULL,\n\t`capability` text NOT NULL,\n\t`scope_type` text NOT NULL,\n\t`organization_id` text,\n\t`project_access_id` text,\n\t`project_id` text,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`granted_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`expires_at` text,\n\t`revoked_at` text\n)"
+            }
+          }
+        },
+        {
+          "name": "consequential_executions",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `consequential_executions` (\n\t`execution_id` text PRIMARY KEY NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`document_id` text NOT NULL,\n\t`organization_id` text,\n\t`project_access_id` text,\n\t`operation` text NOT NULL,\n\t`intent_hash` text NOT NULL,\n\t`binding_hash` text NOT NULL,\n\t`consent_ref` text NOT NULL,\n\t`result_ref` text,\n\t`status` text NOT NULL,\n\t`error_code` text,\n\t`created_at` text NOT NULL,\n\t`expires_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `consequential_executions` (\n\t`execution_id` text  PRIMARY KEY NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`document_id` text NOT NULL,\n\t`organization_id` text,\n\t`project_access_id` text,\n\t`operation` text NOT NULL,\n\t`intent_hash` text NOT NULL,\n\t`binding_hash` text NOT NULL,\n\t`consent_ref` text NOT NULL,\n\t`result_ref` text,\n\t`status` text NOT NULL,\n\t`error_code` text,\n\t`created_at` text NOT NULL,\n\t`expires_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "cost_budget_reservations",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `cost_budget_reservations` (\n\t`reservation_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`workspace_id` text DEFAULT 'forma' NOT NULL,\n\t`stream_id` text DEFAULT '' NOT NULL,\n\t`correlation_id` text DEFAULT '' NOT NULL,\n\t`operation` text NOT NULL,\n\t`period` text NOT NULL,\n\t`reserved_microusd` integer NOT NULL,\n\t`used_microusd` integer DEFAULT 0 NOT NULL,\n\t`status` text NOT NULL,\n\t`allow_user_overage` integer DEFAULT false NOT NULL,\n\t`created_at` text NOT NULL,\n\t`settled_at` text,\n\t`updated_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `cost_budget_reservations` (\n\t`reservation_id` text  PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`workspace_id` text DEFAULT 'forma' NOT NULL,\n\t`stream_id` text DEFAULT '' NOT NULL,\n\t`correlation_id` text DEFAULT '' NOT NULL,\n\t`operation` text NOT NULL,\n\t`period` text NOT NULL,\n\t`reserved_microusd` integer NOT NULL,\n\t`used_microusd` integer DEFAULT 0 NOT NULL,\n\t`status` text NOT NULL,\n\t`allow_user_overage` integer DEFAULT false NOT NULL,\n\t`created_at` text NOT NULL,\n\t`settled_at` text,\n\t`updated_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "document_jobs",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `document_jobs` (\n\t`job_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`document_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`status` text NOT NULL,\n\t`source_surface` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`requested_sequence` integer NOT NULL,\n\t`request_json` text NOT NULL,\n\t`result_json` text,\n\t`error_message` text,\n\t`attempt_count` integer DEFAULT 0 NOT NULL,\n\t`requested_at` text NOT NULL,\n\t`started_at` text,\n\t`completed_at` text,\n\t`lease_expires_at` text,\n\t`notified_at` text,\n\t`expires_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n, scene_source_version_json TEXT, scene_source_protocol INTEGER NOT NULL DEFAULT 0 CHECK(scene_source_protocol IN(0,1)))",
+              "observed": "CREATE TABLE `document_jobs` (\n\t`job_id` text  PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`document_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`status` text NOT NULL,\n\t`source_surface` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`requested_sequence` integer NOT NULL,\n\t`request_json` text NOT NULL,\n\t`result_json` text,\n\t`error_message` text,\n\t`attempt_count` integer DEFAULT 0 NOT NULL,\n\t`requested_at` text NOT NULL,\n\t`started_at` text,\n\t`completed_at` text,\n\t`lease_expires_at` text,\n\t`notified_at` text,\n\t`expires_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n, scene_source_version_json TEXT, scene_source_protocol INTEGER NOT NULL DEFAULT 0 CHECK(scene_source_protocol IN(0,1)))"
+            }
+          }
+        },
+        {
+          "name": "event_private_payloads",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `event_private_payloads` (\n\t`private_event_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`project_id` text,\n\t`document_id` text,\n\t`private_json` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`redacted_at` text\n)",
+              "observed": "CREATE TABLE `event_private_payloads` (\n\t`private_event_id` text  PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`project_id` text,\n\t`document_id` text,\n\t`private_json` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`redacted_at` text\n)"
+            }
+          }
+        },
+        {
+          "name": "events",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `events` (\n\t`event_id` text PRIMARY KEY NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`sequence` integer NOT NULL,\n\t`occurred_at` text NOT NULL,\n\t`recorded_at` text NOT NULL,\n\t`actor` text NOT NULL,\n\t`client_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`causation_id` text,\n\t`compensates_event_id` text,\n\t`schema_version` integer DEFAULT 1 NOT NULL,\n\t`type` text NOT NULL,\n\t`payload` text NOT NULL\n)",
+              "observed": "CREATE TABLE `events` (\n\t`event_id` text  PRIMARY KEY NOT NULL,\n\t`stream_id` text NOT NULL,\n\t`sequence` integer NOT NULL,\n\t`occurred_at` text NOT NULL,\n\t`recorded_at` text NOT NULL,\n\t`actor` text NOT NULL,\n\t`client_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`causation_id` text,\n\t`compensates_event_id` text,\n\t`schema_version` integer DEFAULT 1 NOT NULL,\n\t`type` text NOT NULL,\n\t`payload` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "managed_video_reconciliations",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `managed_video_reconciliations` (\n\t`reconciliation_id` text PRIMARY KEY NOT NULL,\n\t`operator_id` text NOT NULL,\n\t`job_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`token_reservation_id` text NOT NULL,\n\t`cost_reservation_id` text NOT NULL,\n\t`command_sha256` text NOT NULL,\n\t`treatment_sha256` text NOT NULL,\n\t`record_sha256` text NOT NULL,\n\t`record_json` text NOT NULL,\n\t`created_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `managed_video_reconciliations` (\n\t`reconciliation_id` text  PRIMARY KEY NOT NULL,\n\t`operator_id` text NOT NULL,\n\t`job_id` text NOT NULL,\n\t`correlation_id` text NOT NULL,\n\t`token_reservation_id` text NOT NULL,\n\t`cost_reservation_id` text NOT NULL,\n\t`command_sha256` text NOT NULL,\n\t`treatment_sha256` text NOT NULL,\n\t`record_sha256` text NOT NULL,\n\t`record_json` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "organization_identity_bindings",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `organization_identity_bindings` (\n\t`binding_id` text PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`authentication_source` text NOT NULL,\n\t`subject` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`revoked_at` text\n)",
+              "observed": "CREATE TABLE `organization_identity_bindings` (\n\t`binding_id` text  PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`authentication_source` text NOT NULL,\n\t`subject` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`revoked_at` text\n)"
+            }
+          }
+        },
+        {
+          "name": "organization_memberships",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `organization_memberships` (\n\t`membership_id` text PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`role` text NOT NULL,\n\t`status` text DEFAULT 'pending' NOT NULL,\n\t`invited_by_user_id` text NOT NULL,\n\t`accepted_at` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`revoked_at` text\n)",
+              "observed": "CREATE TABLE `organization_memberships` (\n\t`membership_id` text  PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`role` text NOT NULL,\n\t`status` text DEFAULT 'pending' NOT NULL,\n\t`invited_by_user_id` text NOT NULL,\n\t`accepted_at` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`revoked_at` text\n)"
+            }
+          }
+        },
+        {
+          "name": "organization_projects",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `organization_projects` (\n\t`project_access_id` text PRIMARY KEY NOT NULL,\n\t`project_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `organization_projects` (\n\t`project_access_id` text  PRIMARY KEY NOT NULL,\n\t`project_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "organization_security_policies",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `organization_security_policies` (\n\t`organization_id` text PRIMARY KEY NOT NULL,\n\t`authentication_source` text DEFAULT 'any' NOT NULL,\n\t`allowed_domains_json` text DEFAULT '[]' NOT NULL,\n\t`require_mfa` integer DEFAULT false NOT NULL,\n\t`encryption_mode` text DEFAULT 'platform-unverified' NOT NULL,\n\t`max_session_minutes` integer DEFAULT 480 NOT NULL,\n\t`version` integer DEFAULT 1 NOT NULL,\n\t`updated_by_user_id` text NOT NULL,\n\t`updated_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `organization_security_policies` (\n\t`organization_id` text  PRIMARY KEY NOT NULL,\n\t`authentication_source` text DEFAULT 'any' NOT NULL,\n\t`allowed_domains_json` text DEFAULT '[]' NOT NULL,\n\t`require_mfa` integer DEFAULT false NOT NULL,\n\t`encryption_mode` text DEFAULT 'platform-unverified' NOT NULL,\n\t`max_session_minutes` integer DEFAULT 480 NOT NULL,\n\t`version` integer DEFAULT 1 NOT NULL,\n\t`updated_by_user_id` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "organizations",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `organizations` (\n\t`organization_id` text PRIMARY KEY NOT NULL,\n\t`name` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `organizations` (\n\t`organization_id` text  PRIMARY KEY NOT NULL,\n\t`name` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "pilot_cohorts",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `pilot_cohorts` (\n\t`cohort_id` text PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`starts_at` text NOT NULL,\n\t`ends_at` text NOT NULL,\n\t`max_participants` integer DEFAULT 10 NOT NULL,\n\t`participant_cap_microusd` integer DEFAULT 15000000 NOT NULL,\n\t`organization_cap_microusd` integer DEFAULT 150000000 NOT NULL,\n\t`source_classification` text DEFAULT 'non-sensitive-licensed' NOT NULL,\n\t`created_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `pilot_cohorts` (\n\t`cohort_id` text  PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`starts_at` text NOT NULL,\n\t`ends_at` text NOT NULL,\n\t`max_participants` integer DEFAULT 10 NOT NULL,\n\t`participant_cap_microusd` integer DEFAULT 15000000 NOT NULL,\n\t`organization_cap_microusd` integer DEFAULT 150000000 NOT NULL,\n\t`source_classification` text DEFAULT 'non-sensitive-licensed' NOT NULL,\n\t`created_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "pilot_cost_reservation_scopes",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `pilot_cost_reservation_scopes` (\n\t`reservation_id` text PRIMARY KEY NOT NULL,\n\t`cohort_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`created_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `pilot_cost_reservation_scopes` (\n\t`reservation_id` text  PRIMARY KEY NOT NULL,\n\t`cohort_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "pilot_participants",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `pilot_participants` (\n\t`participant_id` text PRIMARY KEY NOT NULL,\n\t`cohort_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`email_normalized` text NOT NULL,\n\t`user_id` text,\n\t`role` text DEFAULT 'member' NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`invited_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`revoked_at` text\n)",
+              "observed": "CREATE TABLE `pilot_participants` (\n\t`participant_id` text  PRIMARY KEY NOT NULL,\n\t`cohort_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`email_normalized` text NOT NULL,\n\t`user_id` text,\n\t`role` text DEFAULT 'member' NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`invited_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`revoked_at` text\n)"
+            }
+          }
+        },
+        {
+          "name": "private_content",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `private_content` (\n\t`content_id` text PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`content` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`expires_at` text NOT NULL,\n\t`redacted_at` text\n)",
+              "observed": "CREATE TABLE `private_content` (\n\t`content_id` text  PRIMARY KEY NOT NULL,\n\t`owner_id` text NOT NULL,\n\t`kind` text NOT NULL,\n\t`content` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`expires_at` text NOT NULL,\n\t`redacted_at` text\n)"
+            }
+          }
+        },
+        {
+          "name": "private_content_retention_scopes",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `private_content_retention_scopes` (\n\t`content_id` text PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`classification` text NOT NULL,\n\t`policy_version` integer NOT NULL,\n\t`assigned_expires_at` text NOT NULL,\n\t`created_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `private_content_retention_scopes` (\n\t`content_id` text  PRIMARY KEY NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`classification` text NOT NULL,\n\t`policy_version` integer NOT NULL,\n\t`assigned_expires_at` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "project_event_scopes",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `project_event_scopes` (\n\t`event_id` text PRIMARY KEY NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`source_stream_id` text NOT NULL,\n\t`source_sequence` integer NOT NULL,\n\t`project_sequence` integer NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`created_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `project_event_scopes` (\n\t`event_id` text  PRIMARY KEY NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`owner_user_id` text NOT NULL,\n\t`source_stream_id` text NOT NULL,\n\t`source_sequence` integer NOT NULL,\n\t`project_sequence` integer NOT NULL,\n\t`actor_user_id` text NOT NULL,\n\t`created_at` text NOT NULL\n)"
+            }
+          }
+        },
+        {
+          "name": "project_memberships",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `project_memberships` (\n\t`membership_id` text PRIMARY KEY NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`role` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`granted_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`revoked_at` text\n)",
+              "observed": "CREATE TABLE `project_memberships` (\n\t`membership_id` text  PRIMARY KEY NOT NULL,\n\t`project_access_id` text NOT NULL,\n\t`project_id` text NOT NULL,\n\t`organization_id` text NOT NULL,\n\t`user_id` text NOT NULL,\n\t`role` text NOT NULL,\n\t`status` text DEFAULT 'active' NOT NULL,\n\t`granted_by_user_id` text NOT NULL,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL,\n\t`revoked_at` text\n)"
+            }
+          }
+        },
+        {
+          "name": "users",
+          "fields": {
+            "sql": {
+              "expected": "CREATE TABLE `users` (\n\t`user_id` text PRIMARY KEY NOT NULL,\n\t`email` text NOT NULL,\n\t`display_name` text NOT NULL,\n\t`role` text DEFAULT 'creator' NOT NULL,\n\t`consent_version` text,\n\t`consented_at` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)",
+              "observed": "CREATE TABLE `users` (\n\t`user_id` text  PRIMARY KEY NOT NULL,\n\t`email` text NOT NULL,\n\t`display_name` text NOT NULL,\n\t`role` text DEFAULT 'creator' NOT NULL,\n\t`consent_version` text,\n\t`consented_at` text,\n\t`created_at` text NOT NULL,\n\t`updated_at` text NOT NULL\n)"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "hypothesisConclusion": "Local only. __drizzle_migrations creates one extra object and reproduces equality refusal. Selected intra-definition whitespace changes preserve PRAGMA structure but differ in raw SQL. Neither is identified as hosted cause.",
+  "overview": {
+    "listed": 50,
+    "expectedTables": 52,
+    "matchesFirst50Exactly": true,
+    "notListed": [
+      "project_resource_scopes",
+      "users"
+    ],
+    "absenceProven": false,
+    "contract": "Retained read_database_overview contract has project_id/binding_name only, no limit/offset/cursor request or next cursor response. Returned model_projection reported0omitted. Actual backend50cap is not established by that contract; no pagination API is available. Do not call trailing names absent."
+  },
+  "hostedCauseIdentified": false,
+  "hostedCalls": 0
+}

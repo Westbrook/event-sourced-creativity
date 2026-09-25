@@ -1,0 +1,102 @@
+{
+  "files": [
+    {
+      "path": "capability-check.json",
+      "sha256": "fb4e77325d36361e11c5bc7a7de67e167b7d11f4b4511e4db5639325117bb192"
+    },
+    {
+      "path": "catalog.mjs",
+      "sha256": "ad581073134fc3063086534381fbeb7b77f87fa65d52dbdab07deb73997bd47d"
+    },
+    {
+      "path": "decision.md",
+      "sha256": "f95fa34a084e9d15f07719c35b25de755c8e3ccf032733e6f21ef33123cf4db0"
+    },
+    {
+      "path": "diagnostic-validation.json",
+      "sha256": "c404992cef7ce49942fd8f97c10bd4cef4fe2c1f9705c5e386985df31baa131f"
+    },
+    {
+      "path": "drizzle-migrator-diff.json",
+      "sha256": "91a5e68d8dcca1c4d56b18b9631a9163d518c097385010b1b71ace893dba22b9"
+    },
+    {
+      "path": "index.html",
+      "sha256": "d82199af875c5bc42112ca7fe9b16e54597a995460931fde7d43dc970578c045"
+    },
+    {
+      "path": "local-catalog-diagnosis.json",
+      "sha256": "eba4b507c9bd90c80572447b734b1ae387d8a579030def88ffacf95110e6074b"
+    },
+    {
+      "path": "local-catalog-diff.json",
+      "sha256": "6e0d6b07b3ddcda68bbc00216c8dc6434a791c31b4bf9d9f29333b1b8d0bd1cc"
+    },
+    {
+      "path": "local-catalog-receipt.json",
+      "sha256": "2226c3182312a158fc324c62cea8f9b48f788fc2a0c12a27d2b444e374c4705c"
+    },
+    {
+      "path": "reconstructed-catalog.json",
+      "sha256": "cf1fbd6e6d44d4b400ad993a1477bab8c7647e9e43b2a39fdf43d3c9064dce8e"
+    },
+    {
+      "path": "release-envelope.json",
+      "sha256": "ed10f7b0d87576b1d7daf49b2af8331ce1f8f8acb9356828dbf83d43f22a6386"
+    },
+    {
+      "path": "request-ledger.json",
+      "sha256": "815a49ad6cbd2d0464b156cfce5e73bc34e513e0db0079aeef8293e21bdfa38a"
+    },
+    {
+      "path": "result.json",
+      "sha256": "06def2e4261b90c6d42f72560ce2de0be02969abb96dc423a5e5062b6a65ca41"
+    },
+    {
+      "path": "result.md",
+      "sha256": "7cc5548d96058c2977afea200cf3b6fd75dc5087bf654f24e8eb8f4280583be3"
+    },
+    {
+      "path": "source-manifest.json",
+      "sha256": "18d75016f419a5bdd2041fb82407218a91a0c118a00330416688e7b3b4315251"
+    },
+    {
+      "path": "worker.diff",
+      "sha256": "84c344e206aee88dc27d7a1dce9f2c7d679dcfca312063c141db79c9f1c86184"
+    }
+  ],
+  "supportingSources": [
+    {
+      "path": "scripts/diagnose-generation-p5-catalog.py",
+      "sha256": "c1cd0ce7450d266c3677bd8678baa4dadd8940ab4dfe5c0873158d7a8171aa33"
+    },
+    {
+      "path": "scripts/prepare-generation-p5-diagnostic.mjs",
+      "sha256": "2a4a79a3868f08b9147c69627d5eddabd2630de1b61454ffe58d2beae0ace0ff"
+    },
+    {
+      "path": "scripts/check-generation-p5-diagnostic.mjs",
+      "sha256": "7b4d9281cc6c6e2bba8c21e197037e5ddc3e8fb6dd665b867a7c33aeb2315984"
+    },
+    {
+      "path": "scripts/compare-generation-p5-catalog.mjs",
+      "sha256": "f24d5bc0859960ce005d33f8f320703a4c60bbbb79500b83988371890848f271"
+    },
+    {
+      "path": "scripts/seal-generation-p5-diagnostic.py",
+      "sha256": "5ff4231702b045084eeecf2cdc5664e21d0a22825980f68840c9c5d87b2b2b67"
+    },
+    {
+      "path": "rehearsal/p5-sites-diagnostic/worker.mjs",
+      "sha256": "6e25fe7989e9f1be0fb783a8e64d3efcd85ac41e0093949d969d4ea7cb49967b"
+    },
+    {
+      "path": "rehearsal/p5-sites-diagnostic/catalog.mjs",
+      "sha256": "ad581073134fc3063086534381fbeb7b77f87fa65d52dbdab07deb73997bd47d"
+    },
+    {
+      "path": "docs/generation-cross-media-schema-diagnostics.md",
+      "sha256": "4e8d8aa56f0fbb07a6c5eadc0423485b54e82269f0dfc463232b7472bf1183a5"
+    }
+  ]
+}
