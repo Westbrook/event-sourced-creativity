@@ -1,0 +1,266 @@
+{
+  "version": "p5-offline-resource-audit-v1",
+  "classification": "synthetic",
+  "runtime": "Node SQLite and intercepted transport; NOT managed workerd/D1/R2 qualification",
+  "realProviderCalls": 0,
+  "realAuthority": false,
+  "productSourceChanged": false,
+  "packetId": "p2-pilot:641d2e2ddc37adfbbf5ef897033f36fd9c9c41a9b510e5819a48a7f7183c5528",
+  "exactSingleOpeningDifference": true,
+  "sourceEvidence": "P4 source at 4eb1db542a6cd41bcb9f956fd68eb45105f10397",
+  "limitsReference": "https://developers.cloudflare.com/d1/platform/limits/",
+  "modes": [
+    {
+      "mode": "accepted-estimate",
+      "stats": {
+        "statements": 3782,
+        "batches": 188,
+        "maxBatchStatements": 64,
+        "maxSqlBytes": 16379,
+        "maxParameters": 18,
+        "maxValueBytes": 67864,
+        "maxBoundBytes": 159469,
+        "limitViolations": [],
+        "phases": {
+          "preview": {
+            "statements": 59,
+            "batches": 4,
+            "directCalls": 32
+          },
+          "commit": {
+            "statements": 236,
+            "batches": 11,
+            "directCalls": 100
+          },
+          "baseline": {
+            "statements": 1546,
+            "batches": 76,
+            "directCalls": 736
+          },
+          "human-observation": {
+            "statements": 81,
+            "batches": 4,
+            "directCalls": 37
+          },
+          "baseline-settlement": {
+            "statements": 27,
+            "batches": 3,
+            "directCalls": 17
+          },
+          "treatment": {
+            "statements": 1586,
+            "batches": 76,
+            "directCalls": 740
+          },
+          "treatment-settlement": {
+            "statements": 27,
+            "batches": 3,
+            "directCalls": 17
+          },
+          "original-recovery": {
+            "statements": 220,
+            "batches": 11,
+            "directCalls": 112
+          }
+        }
+      },
+      "privateInventory": [
+        {
+          "kind": "agent-authored-study-direction",
+          "records": 1,
+          "bytes": 388,
+          "maximumRecordBytes": 388
+        },
+        {
+          "kind": "authoring-study-preview",
+          "records": 1,
+          "bytes": 67864,
+          "maximumRecordBytes": 67864
+        },
+        {
+          "kind": "study-financial-evidence",
+          "records": 12,
+          "bytes": 5090,
+          "maximumRecordBytes": 487
+        },
+        {
+          "kind": "supplied-study-evidence",
+          "records": 18,
+          "bytes": 146193,
+          "maximumRecordBytes": 54032
+        },
+        {
+          "kind": "supplied-study-source",
+          "records": 1,
+          "bytes": 745,
+          "maximumRecordBytes": 745
+        }
+      ],
+      "previewBytes": 67864,
+      "approvalInventory": {
+        "version": 1,
+        "providerPosts": 0,
+        "privateReviewRecords": 1,
+        "privateEvidenceRecords": 12,
+        "privateCopyRecords": 2,
+        "durableConfigurationRecords": 1,
+        "durableEvidenceReferenceRecords": 12,
+        "durableReceiptRecords": 1,
+        "studyGrantRecords": 1,
+        "suppliedReviewRecords": 1,
+        "financialGrantRecords": 2,
+        "materialCommitInserts": 7,
+        "privateEvidenceMaximumBytesPerRecord": 262144,
+        "privateCopiesMaximumBytesPerRecord": 1048576,
+        "expiry": "2026-10-01T00:00:00.000Z",
+        "lifecycleScope": "study-and-financial-retention"
+      },
+      "interceptedPosts": 6,
+      "originalStages": [
+        {
+          "stage": "advisory",
+          "records": 2
+        },
+        {
+          "stage": "image",
+          "records": 2
+        },
+        {
+          "stage": "moderation",
+          "records": 2
+        },
+        {
+          "stage": "storage",
+          "records": 2
+        }
+      ],
+      "objects": 2
+    },
+    {
+      "mode": "bounded-proof",
+      "stats": {
+        "statements": 4130,
+        "batches": 188,
+        "maxBatchStatements": 66,
+        "maxSqlBytes": 16379,
+        "maxParameters": 18,
+        "maxValueBytes": 68684,
+        "maxBoundBytes": 160289,
+        "limitViolations": [],
+        "phases": {
+          "preview": {
+            "statements": 65,
+            "batches": 4,
+            "directCalls": 36
+          },
+          "commit": {
+            "statements": 260,
+            "batches": 11,
+            "directCalls": 112
+          },
+          "baseline": {
+            "statements": 1690,
+            "batches": 76,
+            "directCalls": 812
+          },
+          "human-observation": {
+            "statements": 89,
+            "batches": 4,
+            "directCalls": 41
+          },
+          "baseline-settlement": {
+            "statements": 27,
+            "batches": 3,
+            "directCalls": 17
+          },
+          "treatment": {
+            "statements": 1730,
+            "batches": 76,
+            "directCalls": 816
+          },
+          "treatment-settlement": {
+            "statements": 27,
+            "batches": 3,
+            "directCalls": 17
+          },
+          "original-recovery": {
+            "statements": 242,
+            "batches": 11,
+            "directCalls": 124
+          }
+        }
+      },
+      "privateInventory": [
+        {
+          "kind": "agent-authored-study-direction",
+          "records": 1,
+          "bytes": 388,
+          "maximumRecordBytes": 388
+        },
+        {
+          "kind": "authoring-study-preview",
+          "records": 1,
+          "bytes": 68684,
+          "maximumRecordBytes": 68684
+        },
+        {
+          "kind": "study-financial-evidence",
+          "records": 14,
+          "bytes": 5900,
+          "maximumRecordBytes": 487
+        },
+        {
+          "kind": "supplied-study-evidence",
+          "records": 18,
+          "bytes": 146193,
+          "maximumRecordBytes": 54032
+        },
+        {
+          "kind": "supplied-study-source",
+          "records": 1,
+          "bytes": 745,
+          "maximumRecordBytes": 745
+        }
+      ],
+      "previewBytes": 68684,
+      "approvalInventory": {
+        "version": 1,
+        "providerPosts": 0,
+        "privateReviewRecords": 1,
+        "privateEvidenceRecords": 14,
+        "privateCopyRecords": 2,
+        "durableConfigurationRecords": 1,
+        "durableEvidenceReferenceRecords": 14,
+        "durableReceiptRecords": 1,
+        "studyGrantRecords": 1,
+        "suppliedReviewRecords": 1,
+        "financialGrantRecords": 2,
+        "materialCommitInserts": 7,
+        "privateEvidenceMaximumBytesPerRecord": 262144,
+        "privateCopiesMaximumBytesPerRecord": 1048576,
+        "expiry": "2026-10-01T00:00:00.000Z",
+        "lifecycleScope": "study-and-financial-retention"
+      },
+      "interceptedPosts": 6,
+      "originalStages": [
+        {
+          "stage": "advisory",
+          "records": 2
+        },
+        {
+          "stage": "image",
+          "records": 2
+        },
+        {
+          "stage": "moderation",
+          "records": 2
+        },
+        {
+          "stage": "storage",
+          "records": 2
+        }
+      ],
+      "objects": 2
+    }
+  ]
+}

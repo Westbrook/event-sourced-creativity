@@ -1,0 +1,9 @@
+Only opening instruction changes; all remaining prompt bytes identical.
+
+BASELINE
+Create one polished landscape image that realizes the supplied creative direction.
+
+TREATMENT
+Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.
+
+Net UTF-8 delta: 311 bytes. These use historical mock safety identifiers; not approved live requests.

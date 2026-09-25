@@ -134,4 +134,16 @@ P3's producer gap is now implemented as `generation-supplied-study-approval`, a 
 
 Transfer lesson: a route with financial side effects needs its own exact inventory, principal/evidence proof, immutable intent and atomic receipt. An event-writing operation, a sponsor allowance, shape-valid policy JSON or a report review cannot stand in for that authority. Durable financial descriptions can be source-free by construction using controlled vocabulary and opaque references while full evidence remains private and expiring. This does not qualify text/video/3D routes: each would need its own concrete inventory and lifecycle evidence, and no such follow-on work is proposed here.
 
+## P5 operational inspection — target decision pending
+
+P5's [preparation checkpoint](evidence/generation-p5/result.md) adds read-only Sites receipts and an offline resource audit, not a live comparison. No media route changed.
+
+| Affected route/component | Concrete implication | Required validation before transfer |
+| --- | --- | --- |
+| Supplied Image approval and native study host | Synthetic bounded treatment performs 816 direct DB calls plus 76 batches; separate statement count is 1,730. Node execution and logical DB/MEDIA names do not qualify managed limits or physical custody. | Actual selected-runtime per-request accounting, physical DB/bucket/edge evidence, atomic rollback and lost-ack/restart proof on the exact adapter. |
+| Supplied Image cleanup / P4 authoring previews and evidence | Host cleanup explicitly covers operation evidence, pixels and source/direction, while P4 private previews and typed financial evidence need an operator-owned expiry path, including uncommitted proposals. | Exact private inventory deletion/absence, no Memory/project widening, immutable finance/holds preserved; backup/provider retention disclosed separately. |
+| Story/Scene, Slides/Storyboard, Speech/Music, Video/3D | Repeated authority validation and larger private review inventories can consume runtime limits; aggregate billing cannot necessarily settle an individual child purchase. | Each existing serializer/route needs its own DB-call/resource audit, real billing attribution, lifecycle funding and content-specific human review. No implementation, other-media port or quality improvement is inferred. |
+
+N10H stays complete, N8A parked, N6 archived; original 847/six exclusions and rejection/source uncertainty remain. P5's current outcome is no-go pending target/access and authentic operating evidence. Neither the separate GKE infrastructure authorization nor prior image allowances authorize this study.
+
 Evidence: `docs/evidence/generation-p4/complete-chain.json`, `verification.json`, `interface.md` and `release-envelope.json`. All positive decisions, transport, billing and deletion exercises are synthetic local fixtures. No adoption, image-quality, actual funding/acceptance or hosted-readiness claim follows. Local producer work ends here; live execution stays parked pending concrete real evidence and one target decision. N10H/N8A/N6 and original 847/six exclusions are unchanged; the October 1 proposal does not renew automatically.

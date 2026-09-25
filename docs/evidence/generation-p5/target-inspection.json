@@ -1,0 +1,191 @@
+{
+  "version": "p5-sites-read-only-v1",
+  "checkedAt": "2026-09-25T14:25:50.594Z",
+  "source": "Authenticated Sites connector read-only metadata; no runtime qualification",
+  "projectId": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "title": "Forma Creative Studio",
+  "currentVersion": 550,
+  "currentSource": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "archive": "sha256:a629abf35cdb357f0affa0c309ebfc0591cfe235249404c97b7ce19ee813be7f",
+  "deployment": {
+    "id": "appgdep_6ab573499a108191a2691a137672b93e",
+    "status": "succeeded",
+    "environmentRevision": 16
+  },
+  "access": {
+    "mode": "workspace_all",
+    "revision": 7,
+    "currentUserRole": "owner",
+    "ownerIdentified": true,
+    "eligibleStudyPrincipalVerified": false
+  },
+  "environment": {
+    "revision": 16,
+    "updated_at": "2026-09-22T01:39:20.975432+00:00",
+    "entries": [
+      {
+        "key": "FAL_IMAGE_EDIT_MODEL",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "FAL_IMAGE_MODEL",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "FAL_IMAGE_PREVIEW_MODEL",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "FAL_KEY",
+        "is_secret": true,
+        "valueDisclosed": false
+      },
+      {
+        "key": "FAL_REFERENCE_VIDEO_MODEL",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "FAL_VIDEO_MODEL",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "FORMA_IMAGE_PROVIDER",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "FORMA_RETENTION_DAYS",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "FORMA_USER_TOKEN_LIMIT",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "FORMA_VIDEO_PROVIDER",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "FORMA_WORKSPACE_TOKEN_LIMIT",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "JEV_API_KEY",
+        "is_secret": true,
+        "valueDisclosed": false
+      },
+      {
+        "key": "OPENAI_API_KEY",
+        "is_secret": true,
+        "valueDisclosed": false
+      },
+      {
+        "key": "OPENAI_IMAGE_MODEL",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "OPENAI_MODEL",
+        "is_secret": false,
+        "valueDisclosed": true
+      },
+      {
+        "key": "OPENAI_PROJECT",
+        "is_secret": false,
+        "valueDisclosed": true
+      }
+    ]
+  },
+  "database": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "bindings": [
+      "DB"
+    ],
+    "selected_binding_name": "DB",
+    "tables": [
+      "__forma_event_save_repair_receipts",
+      "__forma_memory_schema_repair_receipts",
+      "artifact_revisions",
+      "assistant_action_commits",
+      "assistant_action_proposals",
+      "assistant_billing_reconciliations",
+      "assistant_specialist_tasks",
+      "assistant_turns",
+      "authoring_commits",
+      "budget_counters",
+      "budget_hold_dispositions",
+      "budget_reservations",
+      "budget_scope_policies",
+      "canvas_governance_requirements",
+      "capability_grants",
+      "consequential_execution_steps",
+      "consequential_executions",
+      "cost_budget_counters",
+      "cost_budget_reservations",
+      "delivery_decisions",
+      "document_jobs",
+      "event_client_receipts",
+      "event_private_payloads",
+      "event_write_stage",
+      "events",
+      "external_content",
+      "generation_preflights",
+      "impersonation_sessions",
+      "managed_video_reconciliations",
+      "memory_authored_image_receipts",
+      "memory_derivation_asset_edges",
+      "memory_derivation_completion_cursors",
+      "memory_derivation_completions",
+      "memory_derivation_consumer_contents",
+      "memory_derivation_consumer_parents",
+      "memory_derivation_consumer_sources",
+      "memory_derivation_consumers",
+      "memory_derivation_contexts",
+      "memory_derivation_cursors",
+      "memory_derivation_finance",
+      "memory_derivation_grants",
+      "memory_derivation_index_intents",
+      "memory_derivation_job_finance",
+      "memory_derivation_job_sources",
+      "memory_derivation_jobs",
+      "memory_derivation_month_caps",
+      "memory_derivation_no_dispatch",
+      "memory_derivation_observation_controls",
+      "memory_derivation_producer_cursors",
+      "memory_derivation_producer_jobs"
+    ],
+    "model_projection": {
+      "truncated": false,
+      "omitted_project_id": false,
+      "omitted_selected_binding": false,
+      "omitted_bindings": 0,
+      "omitted_tables": 0
+    },
+    "qualification": "Names returned by overview only; not sqlite_schema SQL, rows, physical identity or full schema parity"
+  },
+  "logicalBindings": {
+    "DB": "D1",
+    "MEDIA": "R2",
+    "ASSETS": "assets"
+  },
+  "physicalBindings": null,
+  "capabilityLimits": [
+    "No physical D1 database UUID or R2 bucket identity in available response contracts",
+    "No disposable database/storage attachment or allocation operation among available Sites tools",
+    "Database reader does not accept arbitrary SQL or return complete schema definitions",
+    "Site publish operations target production; no isolated preview deployment operation",
+    "Existing Worker build packages only held baseline migrations; pending study SQL is excluded"
+  ],
+  "conclusion": "Existing target identified but operational support for isolated fixture/physical attestation unresolved. No declaration that Sites universally cannot support this study.",
+  "mutations": 0,
+  "providerCalls": 0
+}

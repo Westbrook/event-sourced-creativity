@@ -1,0 +1,187 @@
+{
+  "version": "p5-review-draft-v1",
+  "status": "not-executable-pending-target-and-real-evidence",
+  "ready": false,
+  "liveAuthorized": false,
+  "realAuthority": false,
+  "historicalPacket": {
+    "id": "p2-pilot:641d2e2ddc37adfbbf5ef897033f36fd9c9c41a9b510e5819a48a7f7183c5528",
+    "sha256": "abaa6b90bf4a885870d131a314641ff2a7d21b60bbaa921dac77263c17889fae"
+  },
+  "question": "Does the authored-precedence opening help honor the agent-written brief against a deliberately conflicting frozen agent-written direction?",
+  "selectedFactor": "i-renderer-authored-precedence-v2",
+  "brief": {
+    "document": {
+      "title": "Free run — agent-proposed study draft"
+    },
+    "facts": [
+      {
+        "block_id": "p1-demo-only",
+        "type": "direction",
+        "role": "direction",
+        "intent": "include",
+        "effect": "include",
+        "properties": {
+          "text": "A small black-and-white dog runs freely off leash across a grassy park, with a red ball on the ground to its right. Show the entire dog, all four paws and the whole ball with a clear gap between them. Use a low side view, soft morning light and a pale blue sky. Do not include any leash, tether, collar, harness, people, text, signs, logos or additional animals.",
+          "weight": 1,
+          "spatial_scope": {
+            "kind": "document",
+            "falloff": "hard",
+            "feather": 0
+          }
+        }
+      }
+    ],
+    "standing_constraints": [],
+    "references": [],
+    "relationships": [],
+    "combined_contexts": [],
+    "pins": [],
+    "tail": []
+  },
+  "frozenDirection": {
+    "title": "Free run",
+    "rationale": "A separate dog and ball read clearly in a quiet park.",
+    "scene": "A small black-and-white dog runs freely off leash on grass; the red ball is to its right. Both are fully visible and separated. A thin tether attaches to the dog collar and trails left.",
+    "palette": [
+      "grass green",
+      "pale blue",
+      "red"
+    ],
+    "next_moves": [
+      "Keep the tether legible",
+      "Preserve the gap"
+    ]
+  },
+  "exactDiff": {
+    "offset": 0,
+    "remove": "Create one polished landscape image that realizes the supplied creative direction.",
+    "insert": "Create one polished landscape image that realizes the supplied creative direction subject to authored requirements. Creative direction is planner interpretation, not additional authorship: when it conflicts with an authored requirement, the authored requirement takes precedence within its stated subject, region, relationship and combined-context scope. Retain compatible planner suggestions.",
+    "fields": [
+      "image.prompt",
+      "exactModeration.input[0].text"
+    ],
+    "netUTF8Bytes": 311
+  },
+  "settings": {
+    "model": "gpt-image-2.5-sunburst",
+    "endpoint": "/v1/images/generations",
+    "quality": "high",
+    "size": "1536x1024",
+    "outputFormat": "png",
+    "references": [],
+    "stream": false,
+    "moderation": null,
+    "planner": {
+      "mode": "frozen"
+    },
+    "checker": {
+      "mode": "off"
+    }
+  },
+  "logicalCounts": {
+    "planner": 0,
+    "sourceAdvisory": 2,
+    "exactModeration": 2,
+    "images": 2,
+    "checker": 0,
+    "evaluator": 0,
+    "referenceModeration": 0,
+    "retrieval": 0
+  },
+  "transport": {
+    "maxAttemptsPerOperation": 1,
+    "maxTotalPOSTs": 6,
+    "concurrency": 1,
+    "automaticRetries": 0,
+    "ordering": "baseline then treatment; disclosed order confound"
+  },
+  "protocol": {
+    "id": "p2-human-between-arm-v1",
+    "expectedFidelityFailures": [
+      "baseline tether",
+      "collar or harness",
+      "cropped paws",
+      "overlap or missing gap",
+      "other prespecified non-safety rubric failure"
+    ],
+    "fidelityRule": "Record and compare; never by itself a hard stop. Treatment requires a durable human observation and explicit resume for this protocol after original settlement and funded lifecycle.",
+    "hardStops": [
+      "advisory flag or invalid response",
+      "exact moderation flag or invalid response",
+      "unsafe output",
+      "provider error",
+      "uncertain dispatch or charge",
+      "custody or receipt failure",
+      "expiry or revocation",
+      "configuration drift",
+      "explicit user stop"
+    ],
+    "resume": "Authenticated reviewed principal records a durable observation bound to original operation, artifact and receipt; safety=clear, fidelity=pass or expected-failure, and explicit resume. Unknown safety and unclassified fidelity remain paused; unsafe or explicit stop is terminal for this packet.",
+    "deadline": "Existing October 1 proposal expiry is unchanged. A real future review must create a new explicitly approved packet/version."
+  },
+  "rubric": [
+    "dog visibly unattached (primary)",
+    "no collar or harness",
+    "entire dog and all four paws visible",
+    "whole ball to right with clear separation",
+    "single dog",
+    "grass, pale blue sky, morning light, low side view",
+    "no people or extra animals",
+    "no visible text, signs or logos"
+  ],
+  "scores": [
+    "pass",
+    "fail",
+    "uncertain"
+  ],
+  "generalQuality": "Record coherence/artifacts separately",
+  "reviewerDisclosure": "Neutral X/Y where feasible. Baseline-first is fixed; observer knows baseline at between-arm gate. Do not claim blinding. Lock per-arm assessments before mapping comparison.",
+  "claimsExcluded": [
+    "N4 original response replay",
+    "historical cause",
+    "complete workspace authority",
+    "source-rights lineage",
+    "model quality improvement",
+    "refusal-rate estimate",
+    "ChatGPT parity",
+    "reliability-rate improvement",
+    "automatic rollout"
+  ],
+  "binding": {
+    "target": null,
+    "runtime": null,
+    "principal": null,
+    "payer": null,
+    "account": null,
+    "region": null,
+    "credentialBinding": null,
+    "projectHeader": null,
+    "evidenceIssuers": null,
+    "financialMode": null,
+    "proposalId": null,
+    "operationIds": null
+  },
+  "dates": {
+    "proposalExpiresAt": "2026-10-01T00:00:00.000Z",
+    "proposedPrivateCleanupDue": "2026-10-01T00:00:00.000Z",
+    "operatorCompletionDeadline": null,
+    "financialRetentionThrough": null,
+    "fundedThrough": null,
+    "reviewed": false,
+    "rule": "Do not extend existing lifetime or consent. If not reviewed and executable before expiry, create a new exact version and explicitly review all dates."
+  },
+  "cost": {
+    "currency": "USD",
+    "authorizedMicrousd": 0,
+    "historicalUnacceptedAllowanceMicrousd": 3000000,
+    "maximumExposureMicrousd": null,
+    "providerEnforcedCap": false,
+    "illustrativeStressEstimateMicrousd": 1276845,
+    "estimateIsBound": false,
+    "lifecycleFunded": false
+  },
+  "authenticEvidenceReady": false,
+  "actualOutcomes": [],
+  "next": "Complete target decision, qualification and real evidence; rebind and reseal exact requests in private custody before seeking finite paid approval."
+}

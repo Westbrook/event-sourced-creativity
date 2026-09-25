@@ -1,0 +1,77 @@
+{
+  "version": "p5-target-checklist-v1",
+  "status": "not-executed",
+  "providerTransport": "must intercept every provider call; fixture cannot access live credentials",
+  "checks": [
+    {
+      "id": "identity",
+      "result": "unqualified",
+      "requiredEvidence": "Actual trusted edge principal; forged identity stripped; absent/non-admin/impersonated/project/pilot/Memory/wrong-origin denied; no fixture principal promoted"
+    },
+    {
+      "id": "bindings",
+      "result": "unqualified",
+      "requiredEvidence": "Hosting-owner physical DB and bucket identity tied to exact deployment and runtime; source declaration insufficient"
+    },
+    {
+      "id": "schema",
+      "result": "unqualified",
+      "requiredEvidence": "Full current sqlite_schema and migration receipts; preconditions and unrelated-row preservation; exact optional contracts after atomic install"
+    },
+    {
+      "id": "limits",
+      "result": "unqualified",
+      "requiredEvidence": "Actual per-request D1 query/subrequest accounting, rows scanned/written, CPU/memory and D1 value/SQL/bind limits; no inference from Node"
+    },
+    {
+      "id": "atomicity",
+      "result": "unqualified",
+      "requiredEvidence": "Failure at each seven approval inserts plus after final insert; zero partial receipt/grant/copy; preview fault; authorization/evidence/config mutation in transaction"
+    },
+    {
+      "id": "concurrency",
+      "result": "unqualified",
+      "requiredEvidence": "Two identical simultaneous commits converge on same immutable receipt; conflicting intent denied; concurrent execution cannot duplicate stage"
+    },
+    {
+      "id": "ack",
+      "result": "unqualified",
+      "requiredEvidence": "Lost commit response recovers original only after current authority; lost dispatch acknowledgement holds original operation, never retries"
+    },
+    {
+      "id": "restart",
+      "result": "unqualified",
+      "requiredEvidence": "Committed stage intent survives process restart; no re-dispatch, no replacement purchase"
+    },
+    {
+      "id": "revocation",
+      "result": "unqualified",
+      "requiredEvidence": "Expired/revoked proposal/evidence/identity/source prevents all later I/O; resolving accounting hold cannot clear terminal stop"
+    },
+    {
+      "id": "custody",
+      "result": "unqualified",
+      "requiredEvidence": "Exact owner-private inputs/previews/evidence/output, expiry and no Memory/project promotion; denied readers; non-cacheable response; export inventory"
+    },
+    {
+      "id": "cleanup",
+      "result": "unqualified",
+      "requiredEvidence": "Expired pixels plus operation evidence, P4 private preview and typed financial evidence, source/direction; DB/R2 absence observed separately from backup/provider retention; financial records unchanged"
+    },
+    {
+      "id": "default-off",
+      "result": "unqualified",
+      "requiredEvidence": "Approval and execution gates tested independently with DB/fetch traps; ordinary authoring unaffected"
+    },
+    {
+      "id": "between-arm",
+      "result": "unqualified",
+      "requiredEvidence": "Baseline tether scored as expected failure; real human observation/resume, original settlement and funded lifecycle required before treatment"
+    },
+    {
+      "id": "fixture-isolation",
+      "result": "unqualified",
+      "requiredEvidence": "Synthetic evidence/decisions and original operations distinct from real authority; approve finite hosting resources before writes"
+    }
+  ]
+}
