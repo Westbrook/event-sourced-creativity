@@ -1,0 +1,8 @@
+{
+  "implementationCommit": "7096cdaf1d6495b5590895e6aec0678c3c07d01f",
+  "branch": "codex/forma-c2-semantic-coverage",
+  "workspace": "/private/tmp/forma-c2-semantic-coverage",
+  "baseCommit": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "integration": "Cherry-pick implementationCommit; the following handoff-only commit adds this locator. Do not rewrite I/P1 commits or historical envelopes.",
+  "changedFilesCommand": "git show --stat 7096cdaf1d6495b5590895e6aec0678c3c07d01f"
+}
