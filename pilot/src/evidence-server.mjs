@@ -1,6 +1,7 @@
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 const files=new Map([
+ ['/test-users-receipt.json', ['../evidence/test-users-receipt.json','application/json']],
  ['/core-receipt.json', ['../evidence/core-receipt.json','application/json']],
  ['/operations-r1.md', ['../docs/operations-r1.md','text/plain']],
  ['/receipt.json', ['../evidence/receipt.json','application/json']],

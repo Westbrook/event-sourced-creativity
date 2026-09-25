@@ -1,0 +1,31 @@
+{
+  "implementationCommit": "d80419c0",
+  "identityModel": "Verified IAP operator controls separate Still/Forma app test users",
+  "hosted": false,
+  "secondGoogleAccountRequiredForAppAuthorizationTests": false,
+  "verification": {
+    "focusedTestsPassed": 8,
+    "focusedTestsSkipped": 0,
+    "nativeWorkflow": "Creation, references, same event IDs, conflict recovery, sharing, denied writes, revocation, deletion: independent IAP identities and one IAP operator with separate app users",
+    "controllerIsolation": "Other operators cannot select controlled users; unverified and revoked operators denied; independent consent and expiry enforced; bounded creation",
+    "tabSelection": "Pinned per loaded page; request bodies preserved; no automatic selector on cross-origin or asset requests",
+    "build": "Still and Forma build pass; identity bootstrap precedes both module entries",
+    "typecheck": "Direct installed TypeScript CLI passes",
+    "lint": "Changed-file ESLint passes",
+    "cem": "Pass",
+    "localization": "Pass",
+    "productionContainer": "Fresh schema initializes with one admission; restricted runtime role creates/selects a second app user; DDL denied; readiness passes as uid1000"
+  },
+  "browser": {
+    "localCreationVerified": true,
+    "displayName": "Sharing tester",
+    "principalId": "test-67dd8a27-0857-4b23-92ca-a09bf17377ec",
+    "switchVisualCheck": "Pending: browser automation stalled on switch confirmation; user asked to dismiss it"
+  },
+  "limitations": [
+    "Controlled personas do not prove independent Google-account isolation",
+    "No GKE release or hosted acceptance claimed",
+    "Budget is $200 total; billing/cleanup owner westbrook.johnson@reve.art; expiry unresolved",
+    "Infrastructure PR1253 is open; current checks pending after YAML indentation fix"
+  ]
+}
