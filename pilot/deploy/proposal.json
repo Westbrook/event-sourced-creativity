@@ -1,5 +1,5 @@
 {
-  "status": "r1-native-local-verified-infrastructure-unresolved",
+  "status": "r1-local-verified-gcp-access-restored-allocation-pending",
   "repository": "reve-ai/still-platform-pilot",
   "namespace": "still-platform-pilot",
   "hostname": "still-platform-pilot.p.reve-dev.com",
@@ -19,7 +19,7 @@
     null,
     null
   ],
-  "iapAudience": null,
+  "iapAudience": "/projects/55499293561/global/backendServices/234778523344085902",
   "billingAccount": null,
   "budgetUSD": null,
   "quotedCostUSD": null,
