@@ -1,0 +1,76 @@
+{
+  "acceptedAt": "2026-09-25T22:06:48.638974+00:00",
+  "authorization": "User approved 37 additional HTTP requests; normal stop at25,12 reserved for stop/cleanup/verification; at most5 cleanup attempts. Prior authentication HTTP remains unknown. Exact R3/private version2/optionB/indefinite retention unchanged.",
+  "limit": 37,
+  "normalStop": 25,
+  "reservedRecovery": 12,
+  "issued": 6,
+  "cleanupAttempts": 0,
+  "entries": [
+    {
+      "sequence": 1,
+      "utc": "2026-09-25T22:06:48.757607+00:00",
+      "action": "status",
+      "requests": 1,
+      "cumulative": 1,
+      "state": "Status control invoked; no displayed receipt, no matching recent Worker event observed",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "unit": "conservative one-request reservation, retained even if no request was emitted"
+    },
+    {
+      "sequence": 2,
+      "utc": "2026-09-25T22:08:04.059778+00:00",
+      "action": "status-semantic-diagnostic",
+      "requests": 1,
+      "cumulative": 2,
+      "state": "Status control invoked; no displayed receipt, no matching recent Worker event observed",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "unit": "conservative one-request reservation, retained even if no request was emitted"
+    },
+    {
+      "sequence": 3,
+      "utc": "2026-09-25T22:08:39.191271+00:00",
+      "action": "native-read-worker-errors",
+      "requests": 1,
+      "cumulative": 3,
+      "state": "read-only native call completed",
+      "recovery": false,
+      "unit": "one native connector call reservation; backend internal HTTP not measured"
+    },
+    {
+      "sequence": 4,
+      "utc": "2026-09-25T22:08:39.224045+00:00",
+      "action": "native-read-run-state",
+      "requests": 1,
+      "cumulative": 4,
+      "state": "read-only native call completed",
+      "recovery": false,
+      "unit": "one native connector call reservation; backend internal HTTP not measured"
+    },
+    {
+      "sequence": 5,
+      "utc": "2026-09-25T22:08:48.410300+00:00",
+      "action": "native-read-request-trace",
+      "requests": 1,
+      "cumulative": 5,
+      "state": "read-only native call completed",
+      "recovery": false,
+      "unit": "one native connector call reservation; backend internal HTTP not measured"
+    },
+    {
+      "sequence": 6,
+      "utc": "2026-09-25T22:09:36.352828+00:00",
+      "action": "user-status-diagnostic",
+      "requests": 1,
+      "cumulative": 6,
+      "state": "reserved for one user Status click; pending",
+      "recovery": false
+    }
+  ],
+  "priorAccounting": "../sites-r5/request-ledger.json; unknown, not reset or represented within original80",
+  "applicationRunStarted": false,
+  "exactTotalHttpVerified": false,
+  "accounting": "Additional allowance only. Six conservative reservations: two attempted browser Status actions, three native read-only diagnostic calls, one pending manual Status. No claim that native internal traffic was measured. Earlier authentication traffic remains unknown."
+}

@@ -1,0 +1,29 @@
+{
+  "checkedAt": "2026-09-25T22:10:13.168Z",
+  "status": "authenticated-page-controls-unresponsive-before-import",
+  "target": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "sourceCommit": "1565d8ac8a568bd0b9b7bde789eadc450e384364",
+  "sealedSourceCommit": "9b83437c2590322cf3cc4340f5939a398494d1c7",
+  "nativeVersion": 2,
+  "additionalRequestAllowance": 37,
+  "reserved": 6,
+  "cleanupAttempts": 0,
+  "importSent": false,
+  "claimedSteps": 0,
+  "runCompleted": false,
+  "permanentDisablementVerified": false,
+  "providerCalls": 0,
+  "sourceChanged": false,
+  "hostedMutationsThisContinuation": false,
+  "observations": [
+    "Authenticated owner page visible.",
+    "Two Status control invocations left output empty. Read-only DOM inspection exposed the original inline script; handlers appeared absent in that inspection scope.",
+    "Native p5_rehearsal_run table is empty.",
+    "Recent native request trace returned no events; error trace shows only earlier GET /favicon.ico 409.",
+    "Browser console capture returned no errors. Root cause is not yet established; do not assert CSP or service outage."
+  ],
+  "next": "Await one manual Status click (reservation6). If a receipt appears, continue original sequence under remaining allowance. If page scripting remains nonfunctional, diagnose supported browser/page workflow locally; no credentials extraction, injected fetch, guard weakening, source patch or redeploy without appropriate reseal/review.",
+  "retention": "OptionB unknown hosting prices and indefinite private retention from2026-09-25T21:04:00Z, owner westbrook.johnson@reve.art, until separately reviewed change/deletion remain accepted.",
+  "scope": "Preserve October1 2026 00UTC expiry without renewal, P2 gates,847/six exclusions,cross-media limits; actualForma non-purchase checklist remains necessary before any paid comparison.",
+  "p5Complete": false
+}

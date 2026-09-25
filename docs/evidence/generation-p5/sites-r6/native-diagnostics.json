@@ -1,0 +1,42 @@
+{
+  "checkedAt": "2026-09-25T22:09:36.381Z",
+  "errorEvents": [
+    {
+      "timestamp": 1790372673953,
+      "route": "GET /favicon.ico",
+      "requestId": "034cb987936cdb509fde726c6c651896",
+      "outcome": "ok",
+      "status": 409
+    }
+  ],
+  "recentEvents": [],
+  "state": {
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "binding_name": "DB",
+    "table_name": "p5_rehearsal_run",
+    "columns": [
+      "id",
+      "owner",
+      "dataset",
+      "phase",
+      "cursor",
+      "started",
+      "requests",
+      "report",
+      "retained_hash",
+      "reads",
+      "writes"
+    ],
+    "rows": [],
+    "limit": 1,
+    "offset": 0,
+    "has_more": false,
+    "model_projection": {
+      "truncated": false,
+      "truncated_values": 0,
+      "omitted_columns": 0,
+      "omitted_rows": 0,
+      "next_offset": null
+    }
+  }
+}
