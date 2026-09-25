@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "release": "R1",
+  "scopeVersion": 3,
+  "recordedAt": "2026-09-25T01:59:30.240Z",
+  "status": "local-native-candidate-verified; infrastructure-unresolved",
+  "sourceCommit": "54006a99a5d88ea46c087c7c1e10ee030bf3821d",
+  "sourceBranch": "codex/still-gke-pilot",
+  "sourceHashes": {
+    "pilot/src/api.mjs": "1604a8af87802e33ebcc9125dc159ff3133f8ebc982628f838e36bab9186f15f",
+    "pilot/src/core-repository.mjs": "feb98a74d318870cb0c9a32dcb3d0b68716f4d55b7d4985b56e93cb78e06942d",
+    "pilot/src/core-http.mjs": "c6811c1e4e6ffa1d51e2b3e55f1642f2d7df4e80877de0ba2e98f99bf963b0cc",
+    "pilot/src/core-init.mjs": "d258b5613425b72ca58bf76f0c851de9f598ec3b13a1e7a37a8d493089a5c478",
+    "pilot/src/cipher.mjs": "2b3ef5d297c3c4c46941b80117a3673467bb68c61c1e006a7716573926bb2d03",
+    "pilot/src/database.mjs": "01efd513dde6abc63ac06a8157421b08389703cc7f844a36c1834daad75456da",
+    "pilot/src/identity.mjs": "34852b7f737e5db171ff3cd15e5408d4206743d236f7a0198fe9184eee069db6",
+    "pilot/sql/003-core.sql": "a4c32804f125d7cd09e65c82a6449acb3157111b4236d760d7f79ff2d2b0f5ba",
+    "src/components/context-block.ts": "a3950494d4ffa9e4af4007ef68b1085e736769e6d1048bd77a137ed32064fce8",
+    "src/still/creation-controller.ts": "f3e6866513935041652b250f3e372c7c1b8e5976d475487a8f45cc1f333afc72",
+    "pilot/web/controls.ts": "c4873fc4aa4eb77ffbc676d2c515d41bd4fbc2adabab8b955daa83fc3c76a36d",
+    "pilot/web/core.css": "2210b87573eede84fdd90bc71f70c53e08bfc0ed6f564b00eeda6c570c5be212",
+    ".github/workflows/still-core.yml": "17253775c4827f7636fd501fb23ef4942b539a272e77a0d4a5ca980fd081edaf"
+  },
+  "images": [
+    {
+      "tag": "still-pilot-api:r1",
+      "id": "sha256:81181b9146eb621d7854d4a836690d354790ff50ea2eed0075a48f774af898d1",
+      "architecture": "arm64",
+      "repoDigests": [
+        "still-pilot-api@sha256:81181b9146eb621d7854d4a836690d354790ff50ea2eed0075a48f774af898d1"
+      ],
+      "pushed": false
+    },
+    {
+      "tag": "still-pilot-web:r1",
+      "id": "sha256:d15b45c6afc85b24d3212c96de53fc0512f93d8957bd1d2679d77a0e4efff792",
+      "architecture": "arm64",
+      "repoDigests": [
+        "still-pilot-web@sha256:d15b45c6afc85b24d3212c96de53fc0512f93d8957bd1d2679d77a0e4efff792"
+      ],
+      "pushed": false
+    },
+    {
+      "tag": "postgres:17.9-alpine",
+      "id": "sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609",
+      "architecture": "arm64",
+      "repoDigests": [
+        "postgres@sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609"
+      ],
+      "pushed": false
+    }
+  ],
+  "hosted": {
+    "deployed": false,
+    "url": null,
+    "liveIapQualified": false,
+    "realAccountJourney": false,
+    "githubWorkflowRun": null,
+    "namespaceAllocated": false
+  },
+  "verification": {
+    "nativeCreationAndRichDocumentTests": 379,
+    "nativeContextAndFocusRegressionTests": 630,
+    "r1IntegrationBoundaryAndManifestTests": 5,
+    "totalPassingExecutions": 1014,
+    "skippedInThoseSuites": 0,
+    "typecheck": "passed",
+    "changedFilesLint": "passed",
+    "customElementsManifest": "passed",
+    "localization": "passed",
+    "coreViteBuild": "passed; existing chunk-size warning",
+    "workflowYaml": "parsed",
+    "container": {
+      "apiNonRootReadOnly": true,
+      "readyAgainstPostgres": true,
+      "unsignedIdentityDenied": true,
+      "syntheticServersAbsent": true,
+      "freshSchemaPasswordAuth": true,
+      "runtimeDDLRejected": true,
+      "webNativeDeepLinks": true,
+      "webUnknownRoutesDenied": true,
+      "platform": "local arm64; hosted CI builds linux/amd64"
+    },
+    "browser": {
+      "actualStillCreation": true,
+      "actualFormaEditor": true,
+      "acknowledgedFormaSave": true,
+      "returnToStillSameIdsAndProse": true,
+      "nodeRestartPersistence": true,
+      "projectId": "creation-d41d240d08e206d311ea9ab44a9cd6fe7a307a97",
+      "documentId": "creation-735987155f79664c1bf8d618a8e6538e722a4004",
+      "ideaId": "creation-a1620e47eb8339278ddb8b1c34d9b639647c109b",
+      "finalText": "A keeper watches the quiet harbor beneath three lanterns. Saved in Forma and returned to Still.",
+      "identity": "locally-signed synthetic accounts, not live IAP"
+    }
+  },
+  "localUrls": {
+    "still": "http://127.0.0.1:5230/still?progress-report",
+    "forma": "http://127.0.0.1:5230/document/creation-735987155f79664c1bf8d618a8e6538e722a4004/harbor-notes?progress-report",
+    "report": "http://127.0.0.1:4187/",
+    "evidence": "http://127.0.0.1:5208/"
+  },
+  "blockingActions": [
+    "Refresh gcloud authentication for the configured Reve account; current test-cluster read returns 401.",
+    "Allocate app repository/namespace through current proto onboarding and maintainer Terraform apply.",
+    "Resolve two admitted IAP emails, actual audience, owner, infrastructure ceiling and expiry.",
+    "Provision fresh secrets/PVC, private empty bucket, quota and protected routes; activate GitHub OIDC deployment and run hosted acceptance."
+  ],
+  "disabled": [
+    "paid providers",
+    "uploads",
+    "public sharing",
+    "semantic search",
+    "Memory",
+    "Canvas",
+    "broader Forma tools/admin",
+    "background generation"
+  ],
+  "limitations": [
+    "No hosted URL, real IAP admission, pod restart, hosted two-principal acceptance or redeploy receipt yet.",
+    "No live GCS object/storage qualification; R1 exposes no uploads.",
+    "Test expiry denies access; owner-driven infrastructure teardown is still required.",
+    "The complete repository test suite was not run locally; focused relevant suites above passed and the workflow retains the full app verification gate.",
+    "R2 worker/indexing and R3 hosted Memory remain future milestones."
+  ]
+}
