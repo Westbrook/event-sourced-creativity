@@ -1,0 +1,28 @@
+# Copy into the separately authorized repository's .github/workflows only after resource review.
+name: Pilot local verification
+on: [pull_request, merge_group, workflow_dispatch]
+permissions: {contents: read}
+jobs:
+ verify:
+  runs-on: ubuntu-latest
+  services:
+   postgres:
+    image: pgvector/pgvector@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966
+    env: {POSTGRES_PASSWORD: synthetic-ci-only}
+    ports: ['5432:5432']
+    options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+  steps:
+  - uses: actions/checkout@v4
+  - uses: actions/setup-node@v4
+    with: {node-version: '24.16.0'}
+  - run: corepack enable && corepack pnpm install --frozen-lockfile
+  - run: npm ci --prefix pilot --ignore-scripts
+  - run: pnpm run cem:check && pnpm run i18n:check && pnpm run typecheck && pnpm run lint && pnpm test && pnpm run build
+  - run: node node_modules/vite/bin/vite.js build --config pilot/vite.config.ts
+  - run: node --import tsx --test pilot/tests/*.test.mjs
+    env:
+     PILOT_DATABASE_URL: postgresql://postgres:synthetic-ci-only@localhost:5432/postgres
+     PILOT_MEMORY_DATABASE_URL: postgresql://postgres:synthetic-ci-only@localhost:5432/postgres
+# No WebTransport build/service/ticket checks: omitted deliberately for this pilot.
+# Deployment stage intentionally absent. Preserve OIDC, protected environment, digest receipts
+# and verified-main gating when exact authorization is supplied; never enable via this file.

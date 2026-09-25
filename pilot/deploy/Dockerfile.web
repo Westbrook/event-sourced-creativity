@@ -1,0 +1,7 @@
+# Render immutable digests from the approved image receipt before hosted use.
+ARG NGINX_IMAGE=nginx:1.28-alpine
+FROM ${NGINX_IMAGE}
+COPY pilot/deploy/nginx.conf /etc/nginx/nginx.conf
+COPY pilot/dist/web /usr/share/nginx/html
+USER 101
+EXPOSE 8080

@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "at": "2026-09-25T00:20:37.968838+00:00",
+  "branch": "codex/still-gke-pilot",
+  "baseCommit": "ed16305afd6e74fc7b40fd4c0697f570cccad262",
+  "sourceManifestSha256": "390ab07edc77f0b25f675c5c1a85c5879ffd063dbb94199cc700a8146e52b3db",
+  "sourceManifest": {
+    "eslint.config.mjs": "ea6ee2bebd26e7b45ddb8d953523708fe2bb6f0f61951f13fef56739240eb631",
+    "pilot/.gitignore": "4f53c3f176178440f43945a2041d0dd21ed11c22f2d3ba9a375c432eb7b609d6",
+    "pilot/README.md": "b41e27260c672806136bfb6efbe991c3adb28d95583453510edc6d1135a5187b",
+    "pilot/deploy/Dockerfile.api": "4cd93a795c7109985e2c0d462aa8c6f99dccf3fe5210f6c067a7147485d5ffbf",
+    "pilot/deploy/Dockerfile.api.dockerignore": "62b47a757a565a10b0b743e7fc8bbef011a01e43e6fd234eb97a9fe80d685142",
+    "pilot/deploy/Dockerfile.web": "bf4e35b0cc1968146c3135602eb6812977fa1b31ff35e308295447ed4fc49321",
+    "pilot/deploy/Dockerfile.web.dockerignore": "a20d93597cd89aaa0d17545a3c0e3a349923f537f6554997fdf89085af67f98e",
+    "pilot/deploy/nginx.conf": "028b9285e20c3fa49c26d055a0d776741c911736f3f63f50d87ea7f20ecaaee2",
+    "pilot/deploy/proposal.json": "6c715404804fabb7c833909399b49c6986e263491700837fd1828947b8a6c014",
+    "pilot/deploy/verify.yml": "fb110983181176274c108f67c0b651c2ce12e78bdc02702122d7e900bd4efe84",
+    "pilot/deploy/workloads.yaml": "46b10a4fa12e7564defe66a211928f5a6ae4d379f2f65031aceaec05c9e3c885",
+    "pilot/docs/infrastructure-request.md": "18f0f14869b530612362d5c82831dd19ecef38d50bb8cbe25d741720506fe369",
+    "pilot/docs/qualification.md": "692a1d0e2968f430bad9b8e7e7423e8a2d3b6c0d0fcfb7fbc3b716730496900e",
+    "pilot/package-lock.json": "d4854683bfa8b865527fde442f363841c61a4c12b3122319557ae3efb9dcac5f",
+    "pilot/package.json": "80fd238254c3382f47ebc5fceac0f34d80d308bb17b975b05f9fcc1aeb78c904",
+    "pilot/sql/001-platform.sql": "d4d840a7cf63dd1186c5c887254cc736810c6e2bc60d258a323f04b8046b2d65",
+    "pilot/sql/002-memory.sql": "5365ddd46e6784d49af83efd81a6bdeec130a2bb63c738b20cacdd90e1e91b85",
+    "pilot/src/api.mjs": "9770ed5a5c71f0365d89ed0c5ef83287864ff776bda9883517253e277881bc18",
+    "pilot/src/database.mjs": "2c855af25b77a21e10bc8871bd5238d76871e56f1f9b01c2c2dd187a1f325bc9",
+    "pilot/src/evidence-server.mjs": "a0df512e72dfa450174bc2bddefaf1590ab23801c325be0865c5b951095e7377",
+    "pilot/src/fixture.mjs": "6bf33ecbc8a34b2bfa7df79b4386354358afdfa74d36201c2b719e2203e3b3f5",
+    "pilot/src/identity.mjs": "635dc8b953cbeca869897fe6b4c496c77f5d6dcb57ca2a9dc3371c79cb6d4ae0",
+    "pilot/src/jobs.mjs": "f41c0b6eb87f2d093cf05ab32d2e53fe187f4237fdebf98c0973a5d333817e08",
+    "pilot/src/memory-service.mjs": "b6332d739dda66551da88570b2d69487fae0898d2f6b8df64c84b68591c614d5",
+    "pilot/src/memory.mjs": "2f69240fc8398dc4e3d282d0da754406be189aac734a908fb3986e1be534acdd",
+    "pilot/src/objects.mjs": "02fded9aee70a89be0dd293ab75ceea310746b63a5d1a9f941e40319de76dec8",
+    "pilot/src/preview.mjs": "0619632b9a90b04a88bdbf5ddc821435b313b5058ff2caaa0f1bbfb273580076",
+    "pilot/src/repository.mjs": "e9e96d15c7299edf48971246c784b8c42f4167078c6df44bb0a8da024c440119",
+    "pilot/src/routes.mjs": "a9a153f15cbf08cc44fd0283432865ed815007db03f849853112a13df5347acf",
+    "pilot/src/worker.mjs": "c4207116b87313b3ec1bb5d238f58533921b99ac840e2fb98746ca8ef6ab0516",
+    "pilot/tests/identity.test.mjs": "f8b20c54a6da48422801af6d52bb8bd7ae088dccdd69d39315a0d26a827f2cc3",
+    "pilot/tests/memory-auth.test.mjs": "fb60c97b47b880e8a377f025f06f9285b3abab235e41e5ad8dc8a0a5fefd66a3",
+    "pilot/tests/memory.test.mjs": "1c9004fad9943ebb0e6a4f7b02573c7a779921c6aa258dc5cf5d0c09b14c42f3",
+    "pilot/tests/migration.test.mjs": "e3ef353cd60e30c400bc4eb0b9d74eae1da1754a198f384efa7bc2e3437f4325",
+    "pilot/tests/object-lifetime.test.mjs": "4e3bc060a4159043531b2db3536493b8ebe65f6d57fff4346d8ed8892c9fd30e",
+    "pilot/tests/platform.test.mjs": "4b72081100c067c504a027ff9ef39827d5bf7b7258a66f89a76d305416b7d6ca",
+    "pilot/tests/preview-http.test.mjs": "dfff41ac55b0f9bb39c889c63693061f4629cfe139d6df84664fdadafddfdce8",
+    "pilot/tests/routes.test.mjs": "14348a6a41d12b2dc7391ed99bca0fcb52cdec07b56bc4529427f39344a336c5",
+    "pilot/vite.config.ts": "c71a108d08815e939c0a16337d8e50057dc9492fc06ac94496a0e2864b8570c9"
+  },
+  "checks": {
+    "pilot": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "databases": "real local PostgreSQL 17.9 and pgvector 0.8.2"
+    },
+    "focusedNative": {
+      "passed": 61,
+      "failed": 0,
+      "skipped": 0
+    },
+    "typescript": "pass",
+    "targetedLint": "pass",
+    "cem": "pass",
+    "i18n": "pass",
+    "memorySchemaManifest": "pass unchanged",
+    "frontendBuild": "pass Still and actual Forma entries",
+    "sitesBuild": "pass",
+    "nginx": "pass non-root read-only syntax and ten live route checks",
+    "apiImage": "pass build and non-root read-only adapter imports"
+  },
+  "images": {
+    "webLocalImageId": "sha256:1f8d80aa8048a8fe812c34a217e17ee11a452189eb8ae20e9ecb0eeb6d9fc9db",
+    "apiLocalImageId": "sha256:005355a547be8f23ecece3c39f946c57fe4994910f9a3edb173346729002f382",
+    "registryDigests": null,
+    "published": false
+  },
+  "metadataOnlyReceipts": [
+    {
+      "test": "memory-pg-v1",
+      "extension": "0.8.2",
+      "partitions": 2,
+      "deleteReceipt": "36d4a4f8-a0ee-445b-9fda-b866f4467f9f",
+      "restoredWithdrawn": 0,
+      "provider": "synthetic-three-dimensions",
+      "hosted": false
+    },
+    {
+      "test": "late-object-erasure",
+      "source": "source-831525c7-30b4-4770-8002-707c4c27c42d",
+      "adapter": "controlled-test-double",
+      "gcsQualified": false,
+      "inference": false
+    },
+    {
+      "test": "pg-native-graph",
+      "workspace": "workspace-e5968dd2-e3ba-4cbb-8330-7612b67ac3b6",
+      "project": "creation-ed6457755aecad74286b0284f4b3fd149d96f621",
+      "document": "creation-13564bef40344801d4a20467473af91f2848951a",
+      "idea": "creation-888a0d5a85e5c39e44636e5f05e748e40f757a03",
+      "revision": 4,
+      "formaRoute": "/document/creation-13564bef40344801d4a20467473af91f2848951a/notes",
+      "hosted": false,
+      "uiJourney": false
+    }
+  ],
+  "ui": {
+    "checkpoint": "A synthetic only",
+    "created": [
+      "Project",
+      "Document",
+      "Idea via manual staged review"
+    ],
+    "manualReviewIssue": "Initial controls retained disabled state; reload recovered the draft. Further qualification required.",
+    "formaEditJourney": false,
+    "userReviewed": false,
+    "userAccepted": false
+  },
+  "limitations": [
+    "Native authenticated HTTP/custody/encryption and full role adapters are incomplete; readiness returns 503.",
+    "Local JWT keys do not qualify real IAP or machine identity.",
+    "Object fault tests use controlled storage; no live GCS IAM/retention/physical erasure claim.",
+    "Independent hosted worker execution, native indexing, uncertain provider reconciliation and schema rollback after deploy remain unqualified.",
+    "Memory uses synthetic 3D vectors; no semantic or scale result; native intents and disaster restore pending.",
+    "Full repository-wide test/lint suite was not run; focused native checks are explicitly scoped.",
+    "Owner/account/budget/cost quote/expiry infrastructure fields unanswered; packet is not activation-ready."
+  ],
+  "logSha256": {
+    "cem.log": "21613a99dd723b90ca943a14ac3ad007129dc8f7e48d1ebec8a1cf998083bd1a",
+    "lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "nginx-check.log": "d65a321ff6825ed2c0e064eaa9814b85f4047183cc3425e80f38ab47923c9634",
+    "web-container.log": "7b9cef6bf664f97ef0456df3158354d150ff842d0f7d60747424ee5765b86268",
+    "sites-build.log": "5e57b142cacf28dd1093cb13683c9eb56e7844e958e4564e0d14ef347dc51841",
+    "adapter-tests.log": "858eac38bfbadd86c792f28eb6938b09760ff4079297601ea64fbb0316a19756",
+    "typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "i18n.log": "ee677c2127a594b7623450014203c9ad0c22994ef2e1eb833a852cdf939007e7",
+    "routes.log": "21f6df37ff0cbbd86d19cc855e2ddde10cc738f085ad256e08d7855527329f6a",
+    "api-container.log": "729b0924bab4b090e813ac79ee2e5de7ff355463615979780bb5432d0b5eceff",
+    "native-tests.log": "879ae674b56ac6692d5e1d346bba7a7e3b76b289d38b9dc562d5dd5f797311d1",
+    "memory-schema.log": "7f9c899b386e01d15b039ac0f5aad4d7da1bdff5c9f9e51324dd255a87bd1436",
+    "nginx-http.log": "184ac7a3352b7a6a20ffa7fc75aaf920e4683ff95c959db5faab630f713453c6",
+    "preview-http.log": "30e3ef81cb580b103bc3c3386f5239b95b84ff55c2023d2a3fd6f09ac53ed95d",
+    "frontend-build.log": "c03d956cff140c7336fe86daaed17bb38adb576475fbda7c5e8855aef2053665",
+    "api-image-check.log": "10e67d1ea5bbba03e3b9267440689965e9986c6e5d4466ff3fb672648bb8d0b1"
+  }
+}

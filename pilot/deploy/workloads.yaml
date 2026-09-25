@@ -1,0 +1,157 @@
+# PROPOSAL ONLY. Images, service accounts, secrets and quota require platform allocation.
+# No automatic deploy workflow is installed. API readiness deliberately fails until B is implemented.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: still-platform-runtime, namespace: still-platform-pilot}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api, namespace: still-platform-pilot}
+spec:
+ replicas: 0
+ selector: {matchLabels: {app: api}}
+ template:
+  metadata: {labels: {app: api}}
+  spec:
+   serviceAccountName: still-platform-runtime
+   automountServiceAccountToken: false
+   securityContext: {runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+   containers:
+   - name: api
+     image: REPLACE_WITH_API_DIGEST
+     ports: [{containerPort: 8080}]
+     envFrom: [{secretRef: {name: still-pilot-runtime}}]
+     env: [{name: PILOT_BIND, value: '0.0.0.0'}, {name: STILL_PROVIDERS_ENABLED, value: 'false'}]
+     resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: '1', memory: 1Gi}}
+     readinessProbe: {httpGet: {path: /readyz, port: 8080}}
+     livenessProbe: {httpGet: {path: /healthz, port: 8080}}
+     securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: independent-cleanup, namespace: still-platform-pilot}
+spec:
+ schedule: '* * * * *'
+ suspend: true
+ concurrencyPolicy: Forbid
+ startingDeadlineSeconds: 45
+ successfulJobsHistoryLimit: 2
+ failedJobsHistoryLimit: 3
+ jobTemplate:
+  spec:
+   backoffLimit: 1
+   activeDeadlineSeconds: 50
+   ttlSecondsAfterFinished: 86400
+   template:
+    metadata: {labels: {app: cleanup}}
+    spec:
+     restartPolicy: Never
+     serviceAccountName: still-platform-runtime
+     automountServiceAccountToken: false
+     securityContext: {runAsNonRoot: true, runAsUser: 1000, seccompProfile: {type: RuntimeDefault}}
+     containers:
+     - name: cleanup
+       image: REPLACE_WITH_API_DIGEST
+       command: [node, --import, tsx, pilot/src/jobs.mjs, cleanup]
+       envFrom: [{secretRef: {name: still-pilot-runtime}}]
+       env: [{name: PILOT_JOB_LIMIT, value: '10'}, {name: STILL_PROVIDERS_ENABLED, value: 'false'}]
+       resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: '1', memory: 512Mi}}
+       securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+---
+apiVersion: batch/v1
+kind: Job
+metadata: {name: migrate-REPLACE_REVISION, namespace: still-platform-pilot}
+spec:
+ backoffLimit: 0
+ activeDeadlineSeconds: 120
+ ttlSecondsAfterFinished: 86400
+ template:
+  spec:
+   restartPolicy: Never
+   serviceAccountName: still-platform-runtime
+   automountServiceAccountToken: false
+   containers:
+   - name: migration
+     image: REPLACE_WITH_API_DIGEST
+     command: [node, pilot/src/database.mjs]
+     envFrom: [{secretRef: {name: still-pilot-migration}}]
+     resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: '1', memory: 512Mi}}
+---
+# Companion permissions missing from starter; bind only the approved deploy/operator identity.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: pilot-jobs-deployer, namespace: still-platform-pilot}
+rules:
+- apiGroups: [batch]
+  resources: [jobs, cronjobs]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: ['']
+  resources: [pods, pods/log, events]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: pilot-jobs-deployer, namespace: still-platform-pilot}
+subjects:
+- kind: User
+  name: REPLACE_WITH_APPROVED_DEPLOY_IDENTITY
+  apiGroup: rbac.authorization.k8s.io
+roleRef: {kind: Role, name: pilot-jobs-deployer, apiGroup: rbac.authorization.k8s.io}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: worker, namespace: still-platform-pilot}
+spec:
+ replicas: 0 # Activate only after native indexing/outbox integration, before hosted B.
+ selector: {matchLabels: {app: worker}}
+ template:
+  metadata: {labels: {app: worker}}
+  spec:
+   serviceAccountName: still-platform-runtime
+   automountServiceAccountToken: false
+   containers:
+   - name: worker
+     image: REPLACE_WITH_API_DIGEST
+     # Cleanup-only runtime until native indexing/outbox integration is qualified.
+     command: [node, --import, tsx, pilot/src/worker.mjs]
+     envFrom: [{secretRef: {name: still-pilot-runtime}}]
+     resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: '1', memory: 1Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web, namespace: still-platform-pilot}
+spec:
+ replicas: 0
+ selector: {matchLabels: {app: web}}
+ template:
+  metadata: {labels: {app: web}}
+  spec:
+   automountServiceAccountToken: false
+   securityContext: {runAsNonRoot: true, runAsUser: 101}
+   containers:
+   - name: web
+     image: REPLACE_WITH_WEB_DIGEST
+     ports: [{containerPort: 8080}]
+     resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: 250m, memory: 256Mi}}
+     readinessProbe: {httpGet: {path: /healthz, port: 8080}}
+     volumeMounts: [{name: temp, mountPath: /tmp}]
+     securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+   volumes: [{name: temp, emptyDir: {sizeLimit: 32Mi}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: web, namespace: still-platform-pilot}
+spec: {selector: {app: web}, ports: [{port: 80, targetPort: 8080}]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: api, namespace: still-platform-pilot}
+spec: {selector: {app: api}, ports: [{port: 80, targetPort: 8080}]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: memory, namespace: still-platform-pilot}
+spec: {selector: {app: memory}, ports: [{port: 8081, targetPort: 8081}]}
+# The platform must supply Gateway HTTPRoute, IAP policy, scoped network policy,
+# runtime workload-identity binding, Memory deployment/role, quotas, database and buckets.

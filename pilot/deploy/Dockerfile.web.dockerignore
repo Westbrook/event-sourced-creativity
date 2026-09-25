@@ -1,0 +1,7 @@
+**
+!pilot/
+!pilot/deploy/
+!pilot/deploy/nginx.conf
+!pilot/dist/
+!pilot/dist/web/
+!pilot/dist/web/**
