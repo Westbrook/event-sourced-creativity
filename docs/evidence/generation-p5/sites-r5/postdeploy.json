@@ -1,0 +1,93 @@
+{
+  "projectId": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "version": 2,
+  "access": {
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "access_mode": "custom",
+    "allowed_account_user_ids": [
+      "bfd7e025-62d1-411d-864c-77a2670671cb"
+    ],
+    "external_visitor_count": 0,
+    "allowed_users": [
+      {
+        "account_user_id": "bfd7e025-62d1-411d-864c-77a2670671cb",
+        "email": "westbrook.johnson@reve.art",
+        "name": "Westbrook Johnson",
+        "role": "owner"
+      }
+    ],
+    "allowed_groups": [],
+    "allowed_workspace_group_ids": [],
+    "allowed_tenant_group_ids": [],
+    "revision": 1,
+    "updated_at": "2026-09-24T21:14:06.126431+00:00",
+    "allowed_editors": []
+  },
+  "database": {
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "bindings": [
+      "DB"
+    ],
+    "selected_binding_name": "DB",
+    "tables": [
+      "authoring_study_commits",
+      "authoring_study_configurations",
+      "authoring_study_evidence",
+      "budget_counters",
+      "budget_hold_dispositions",
+      "budget_reservations",
+      "canvas_governance_requirements",
+      "capability_grants",
+      "consequential_execution_steps",
+      "consequential_executions",
+      "cost_budget_counters",
+      "cost_budget_reservations",
+      "document_jobs",
+      "event_private_payloads",
+      "events",
+      "generation_study_assertions",
+      "generation_study_charges",
+      "generation_study_evidence",
+      "generation_study_financial_grants",
+      "generation_study_grants",
+      "generation_study_operations",
+      "generation_study_reconciliations",
+      "generation_study_stages",
+      "generation_study_supplied_observations",
+      "generation_study_supplied_reviews",
+      "managed_video_reconciliations",
+      "n10h_guard",
+      "n10h_run",
+      "organization_identity_bindings",
+      "organization_memberships",
+      "organization_projects",
+      "organization_security_policies",
+      "organizations",
+      "output_execution_grants",
+      "output_operation_routes",
+      "output_operation_slots",
+      "output_plan_revisions",
+      "output_plan_targets",
+      "output_preflights",
+      "output_provider_calls",
+      "p5_rehearsal_guard",
+      "p5_rehearsal_run",
+      "pilot_cohorts",
+      "pilot_cost_reservation_scopes",
+      "pilot_participants",
+      "private_content",
+      "private_content_retention_scopes",
+      "project_budget_reservation_scopes",
+      "project_event_scopes",
+      "project_memberships"
+    ],
+    "model_projection": {
+      "truncated": false,
+      "omitted_project_id": false,
+      "omitted_selected_binding": false,
+      "omitted_bindings": 0,
+      "omitted_tables": 0
+    }
+  },
+  "envRevision": 0
+}

@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "savedVersion": 2,
+  "nativeTarSha256": "f3f1e46de1903ad7284552511cce02e9b10037f5411423b58c0a6b2978f927c4",
+  "nativeTarBytes": 2283520,
+  "compressedReviewedArchiveSha256": "8cd9282dfe1dbebf053cffcc87f8d767cafb19e4c163d8133f5c19768425f3ff",
+  "compressionOnlyNormalization": true,
+  "nativeSourceCommitMatches": true,
+  "fileCount": 9
+}

@@ -1,0 +1,43 @@
+{
+  "at": "2026-09-25T21:24:19.667664+00:00",
+  "status": "private-release-succeeded-rehearsal-blocked-before-import",
+  "economicBasis": "B; accepted finite-resource exposure at unknown hosting prices, no dollar guarantee",
+  "projectId": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "sourceCommit": "1565d8ac8a568bd0b9b7bde789eadc450e384364",
+  "sourceTreeSha256": "375bf438fd14dc640f98e0297e2a1b1abb08964daa5f3631a7974878b9aa714e",
+  "version": 2,
+  "deploymentId": "appgdep_6ab6e571c65c819191089aa9e692de74",
+  "nativeArchiveAdmission": true,
+  "privateDeploymentSucceeded": true,
+  "audienceUnchanged": true,
+  "environmentRevision": 0,
+  "browserObservation": "Ordinary signed-in path offered Continue with ChatGPT, then auth.openai.com security verification. No bypass token used. Authentication tab closed to stop activity.",
+  "requestAccounting": {
+    "conservativeReservations": 43,
+    "nativeControlCalls": 10,
+    "observedGitHttp": 3,
+    "browserHttpExact": null,
+    "totalHttpCeilingVerified": false,
+    "cleanupAttempts": 0
+  },
+  "syntheticStartRequests": 0,
+  "claimedSteps": 0,
+  "providerCalls": 0,
+  "objectsWrittenByP5": 0,
+  "cleanupAttempted": false,
+  "permanentDisablementVerified": false,
+  "residueNow": "Pushed/saved synthetic source and Worker history; deployed 144-object migration and original schema retained. MEDIA requested by admitted manifest and deployment succeeded; runtime binding/resource inventory not yet independently observed. No P5 fixture import or object put was sent. The full 62-row plus P5-tombstone post-run footprint was not created by this attempt.",
+  "n10h": "Disabled tombstone observed immediately before publication; migration and historical source preserved; no old action called. Postdeploy database overview confirms n10h_run still exists; unchanged value after deployment not independently re-read.",
+  "managedRuntimeQualified": false,
+  "actualFormaQualified": false,
+  "expiry": "2026-10-01T00:00:00Z",
+  "expiryRenewed": false,
+  "archivable": false,
+  "remaining": [
+    "Ordinary owner authentication and trustworthy remaining HTTP accounting before more hosted requests",
+    "Finite import/ten steps or terminal failure, original cleanup and permanent disablement remain unperformed",
+    "Independent MEDIA/runtime/schema and final tombstone/residue receipts",
+    "Actual Forma non-purchase checklist and authentic paid authority remain separate"
+  ],
+  "next": "Reconcile authentication traffic within original80/5 authority; if this cannot be established, obtain a specific bounded recovery allowance before issuing further hosted requests. Existing source/action/owner/retention acceptance remains valid; no new source or expiry renewal implied."
+}

@@ -1,0 +1,134 @@
+{
+  "limit": 80,
+  "normalStop": 68,
+  "reservedRecovery": 12,
+  "cleanupLimit": 5,
+  "issued": 43,
+  "cleanupAttempts": 0,
+  "entries": [
+    {
+      "sequence": 1,
+      "utc": "2026-09-25T21:14:49.781581+00:00",
+      "action": "native:get_site",
+      "reservedRequests": 1,
+      "cumulative": 1,
+      "outcome": "success; preflight.json",
+      "unit": "native control call; backend internal HTTP unobserved"
+    },
+    {
+      "sequence": 2,
+      "utc": "2026-09-25T21:14:49.781656+00:00",
+      "action": "native:get_environment_variables",
+      "reservedRequests": 1,
+      "cumulative": 2,
+      "outcome": "success; preflight.json",
+      "unit": "native control call; backend internal HTTP unobserved"
+    },
+    {
+      "sequence": 3,
+      "utc": "2026-09-25T21:14:49.781658+00:00",
+      "action": "native:read_database_overview",
+      "reservedRequests": 1,
+      "cumulative": 3,
+      "outcome": "success; preflight.json",
+      "unit": "native control call; backend internal HTTP unobserved"
+    },
+    {
+      "sequence": 4,
+      "utc": "2026-09-25T21:15:26.401578+00:00",
+      "action": "native:list_site_versions",
+      "reservedRequests": 1,
+      "cumulative": 4,
+      "outcome": "success; original-version-and-tombstone.json",
+      "unit": "native control call; backend internal HTTP unobserved"
+    },
+    {
+      "sequence": 5,
+      "utc": "2026-09-25T21:15:26.401657+00:00",
+      "action": "native:read_n10h_run",
+      "reservedRequests": 1,
+      "cumulative": 5,
+      "outcome": "success; original-version-and-tombstone.json",
+      "unit": "native control call; backend internal HTTP unobserved"
+    },
+    {
+      "sequence": 6,
+      "utc": "2026-09-25T21:17:24.973028+00:00",
+      "action": "native:create_source_repository_write_credential",
+      "reservedRequests": 1,
+      "cumulative": 6,
+      "outcome": "success; ephemeral credential, no publish-on-push",
+      "unit": "native control call; backend internal HTTP unobserved"
+    },
+    {
+      "sequence": 7,
+      "utc": "2026-09-25T21:18:25.049639+00:00",
+      "action": "git ls-remote then one non-force push",
+      "reservedRequests": 5,
+      "cumulative": 11,
+      "outcome": "success",
+      "unit": "conservative HTTP reservation; actual sends counted from redacted transport headers",
+      "actualHttpRequests": 3,
+      "receipt": "source-push.json"
+    },
+    {
+      "sequence": 8,
+      "utc": "2026-09-25T21:19:06.404912+00:00",
+      "action": "native:save_site_version; exact reviewed prebuilt archive",
+      "reservedRequests": 1,
+      "cumulative": 12,
+      "outcome": "success; native admission, saved version2",
+      "unit": "native control call; internal upload traffic unobserved"
+    },
+    {
+      "sequence": 9,
+      "utc": "2026-09-25T21:19:43.829468+00:00",
+      "action": "native:deploy_private_site_version2",
+      "reservedRequests": 1,
+      "cumulative": 13,
+      "outcome": "success; version2 privately deployed",
+      "unit": "native control call; backend internal HTTP unobserved"
+    },
+    {
+      "sequence": 10,
+      "utc": "2026-09-25T21:21:07.255235+00:00",
+      "action": "native:postdeploy_get_site",
+      "reservedRequests": 1,
+      "cumulative": 14,
+      "outcome": "success; postdeploy.json",
+      "unit": "native control call; backend internal HTTP unobserved"
+    },
+    {
+      "sequence": 11,
+      "utc": "2026-09-25T21:21:07.255315+00:00",
+      "action": "native:postdeploy_database_overview",
+      "reservedRequests": 1,
+      "cumulative": 15,
+      "outcome": "success; postdeploy.json",
+      "unit": "native control call; backend internal HTTP unobserved"
+    },
+    {
+      "sequence": 12,
+      "utc": "2026-09-25T21:21:37.030040+00:00",
+      "action": "ordinary signed-in browser navigation to private deployed page",
+      "reservedRequests": 8,
+      "cumulative": 23,
+      "outcome": "Reached owner sign-in page; no Worker action dispatched. Navigation/auth allowance retained conservatively.",
+      "unit": "HTTP allowance for page, favicon and bounded auth redirects; no automatic reload"
+    },
+    {
+      "sequence": 13,
+      "utc": "2026-09-25T21:22:32.679422+00:00",
+      "action": "one Continue with ChatGPT sign-in navigation",
+      "reservedRequests": 20,
+      "cumulative": 43,
+      "outcome": "Authentication security-verification page; browser tab closed. No fixture actions. Exact browser HTTP/subrequest count unavailable.",
+      "unit": "conservative browser auth-navigation allowance; exact browser subrequests not exposed",
+      "actualHttpRequests": null
+    }
+  ],
+  "accounting": "Operator/driver HTTP sends and conservative native control-call reservations; hidden platform-internal traffic is not measured HTTP. Persist before each send; no retries.",
+  "requestCeilingVerified": false,
+  "accountingBlocker": "43 conservative reserved slots include native control reservations and browser allowances; they are not a verified count of total HTTP. Browser authentication subrequests were not observable. Stop before further hosted requests; reconcile original limit or obtain a separate explicit bounded recovery decision.",
+  "normalWorkStopped": true
+}

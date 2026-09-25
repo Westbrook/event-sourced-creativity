@@ -1,0 +1,27 @@
+{
+  "version": "sites-r4-decision-v1",
+  "url": "http://127.0.0.1:4193/next-tasks/p5/sites-r4/decision.md",
+  "accepted": true,
+  "economicBasis": "B",
+  "monetaryCeiling": null,
+  "costOwner": "westbrook.johnson@reve.art",
+  "retentionDuration": "indefinite",
+  "retentionOwner": "westbrook.johnson@reve.art",
+  "endDisposition": "Retain the remaining database/rows/schema, empty bucket and source/version history privately and indefinitely, starting September 25, 2026 at 21:04 UTC. westbrook.johnson@reve.art owns that continuing retention until a separately reviewed change or deletion is authorized. No automatic removal is promised.",
+  "decisionExpressed": "accept",
+  "actionScopeAcceptedConditionally": true,
+  "hostingAccount": "westbrook.johnson@reve.art",
+  "retentionStartRequested": "today",
+  "retentionStartDate": "2026-09-25",
+  "complete": true,
+  "retentionStartUTC": "2026-09-25T21:04:00Z",
+  "retentionAccepted": true,
+  "previousUnverifiedMonetaryProposal": {
+    "basis": "A",
+    "amount": 200,
+    "currencySymbol": "$",
+    "superseded": true
+  },
+  "finiteResourceUnknownPriceExposureAccepted": true,
+  "acceptedAt": "2026-09-25T21:14:22.950Z"
+}
