@@ -1,0 +1,112 @@
+{
+  "version": "sunburst-financial-2026-09-22-v1",
+  "cell": {
+    "model": "gpt-image-2.5-sunburst",
+    "endpoint": "/v1/images/generations",
+    "referenceCount": 0,
+    "settings": {
+      "quality": "high",
+      "size": "1536x1024",
+      "outputFormat": "png"
+    }
+  },
+  "cellHash": "68008a79fcf32e26816043c08e285d39372de2f6c9e1af7dcaaa95547163e861",
+  "available": false,
+  "maximumCostMicrousd": null,
+  "providerEnforcedChargeCap": false,
+  "status": "unavailable_pending_separate_empirical_qualification",
+  "evaluatedAt": "2026-09-25T00:00:00Z",
+  "pricingEvidence": {
+    "reviewedAt": "2026-09-22T17:12:16Z",
+    "reviewExpiresAt": "2026-09-23T17:12:16Z",
+    "pricingUrl": "https://developers.openai.com/api/docs/pricing",
+    "modelUrl": "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst",
+    "moderationUrl": "https://developers.openai.com/api/docs/guides/moderation",
+    "calculatorUrl": "https://developers.openai.com/_astro/GptImageTokenCalculator.react.Z2Zu5XGo.js",
+    "calculatorSha256": "893dc3f5500595ac138e607ed0f59aff87bd92354938ec9213e089c0a5d0b60a",
+    "calculatorOutputTokens": 1372,
+    "usdPerMillionTokens": {
+      "textInput": 5,
+      "imageInput": 8,
+      "imageOutput": 30
+    },
+    "cacheDiscountAssumed": false,
+    "requestedAliasSnapshot": null
+  },
+  "captureEvidence": {
+    "id": "e2a-capture:35d665dd5cc18c4d007a9bb019bf3bd36d310852f0536b2c9803d91d1e4a3214",
+    "evidenceClass": "new-current-synthetic-control",
+    "sourceBytesHash": "3b9c9da28926e79d2e5567a51a16eda9945b2d97ac170f26237457442c92736f",
+    "directionBytesHash": "7713d552ee980b45aa87f95d72e7907b43b9e3462cb2dc80340acbb3b2833570",
+    "directionProvenance": "synthetic-authored-fixture"
+  },
+  "stageInventoryHash": "3768f000440d14516e235eb004dce75a5ec4fcc95c38700c241ffc6699e27bc7",
+  "promptEvidence": [
+    {
+      "id": "baseline",
+      "captureId": "e2a-capture:35d665dd5cc18c4d007a9bb019bf3bd36d310852f0536b2c9803d91d1e4a3214",
+      "sha256": "9586b17bf0d5391b9c3230469569bcc29b67e73ec46fb3f27c1dde83a218e8f7",
+      "utf8Bytes": 6682,
+      "estimatedOutputTokens": 1372,
+      "applicationInputTokenAllowance": 10778,
+      "applicationOutputTokenAllowance": 2744,
+      "conservativeImageEstimateMicrousd": 136210,
+      "estimateVersion": "gpt-image-2.5-sunburst-doc-calculator-2026-09-18"
+    },
+    {
+      "id": "candidate",
+      "captureId": "e2a-capture:35d665dd5cc18c4d007a9bb019bf3bd36d310852f0536b2c9803d91d1e4a3214",
+      "sha256": "f1b5051520f50cf3328a40e25e4f62969e57235c732626c4af9d8e681bce541e",
+      "utf8Bytes": 6527,
+      "estimatedOutputTokens": 1372,
+      "applicationInputTokenAllowance": 10623,
+      "applicationOutputTokenAllowance": 2744,
+      "conservativeImageEstimateMicrousd": 135435,
+      "estimateVersion": "gpt-image-2.5-sunburst-doc-calculator-2026-09-18"
+    }
+  ],
+  "components": {
+    "imageGeneration": {
+      "state": "estimate_only",
+      "conservativeMicrousd": 271645
+    },
+    "standaloneModeration": {
+      "state": "documented_free",
+      "providerFeeMicrousd": 0,
+      "callsPerTrial": 1
+    },
+    "cache": {
+      "state": "discount_not_used",
+      "settlementCachedSplit": null
+    },
+    "referencesAndPartials": {
+      "state": "not_applicable"
+    },
+    "plannerMainlineCheckerEvaluator": {
+      "state": "excluded",
+      "callsPerTrial": 0
+    },
+    "infrastructureAndHumanReview": {
+      "state": "unqualified",
+      "maximumMicrousd": null
+    }
+  },
+  "inheritedFinancialGate": false,
+  "limits": {
+    "maximumPromptUtf8Bytes": 32000,
+    "maximumConcurrentInFlight": 1,
+    "automaticGenerationRetries": 0,
+    "authorizedAllowanceMicrousd": 0,
+    "maximumUnreconciledExposureMicrousd": null,
+    "newDispatchAllowed": false
+  },
+  "gaps": [
+    "pricing_review_expired_or_invalid",
+    "actual_planner_direction_missing_separate_preparation_required",
+    "consumption_allowance_not_a_verified_upper_bound",
+    "charge_reconciliation_unqualified",
+    "storage_retention_and_operational_costs_unqualified",
+    "no_live_authorization_in_this_task"
+  ],
+  "id": "f2-financial:c0db60d49e0078f42c4d46264eba9631b7357b6d77d0d1e8ee4b37e50d8b02f8"
+}

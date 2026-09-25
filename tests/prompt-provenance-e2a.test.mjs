@@ -20,14 +20,14 @@ test('only four typed provenance fields change; all source/direction inputs stay
   assert.deepEqual(buildSpatialPromptDirectives(result.snapshot), buildSpatialPromptDirectives(f.source));
 });
 
-test('authored opaque strings, quotations and nested provenance survive byte-for-byte', () => {
+test('authored opaque strings, quotations and serialized nested sign copy survive byte-for-byte', () => {
   const f = newCurrentE2aFixture(), c = captureE2aFixture(f);
   for (const text of ['7f4c20aa-9123-4f00-8777-abc123def456', 'source_execution_id is deliberately printed on the sign.', 'authored-opaque-id', 'PRINT THIS', 'VISIBLE-PROPOSAL']) assert.ok(c.after.prompt.includes(text));
   assert.deepEqual(projectE2aSource(f.source, treatment(f)).snapshot.facts[3], f.source.facts[3]);
   assert.ok(!c.after.prompt.includes('fixture-execution-e2a'));
 });
 
-test('unbound lookalike properties and arbitrary nested provenance are never recursively stripped', () => {
+test('E2a private projection leaves unbound properties intact before provider metadata filtering', () => {
   const f = newCurrentE2aFixture();
   f.source.facts[3].properties.nested = structuredClone(f.source.facts[1].properties);
   f.source.facts[3].properties.source_execution_id = 'authored-direct-field';
@@ -122,9 +122,9 @@ test('private payload labels and missing requirement mappings cannot be admitted
 });
 
 test('checked-in candidate is reproduced exactly by the current compiler', () => {
-  const saved = JSON.parse(readFileSync(new URL('../evals/generation-reliability/e2a/artifacts/capture.json', import.meta.url)));
+  const saved = JSON.parse(readFileSync(new URL('../evals/generation-reliability/e2a/artifacts/v2/capture.json', import.meta.url)));
   assert.deepEqual(captureE2aFixture(newCurrentE2aFixture()), saved);
-  const base = new URL('../evals/generation-reliability/e2a/artifacts/', import.meta.url);
+  const base = new URL('../evals/generation-reliability/e2a/artifacts/v2/', import.meta.url);
   for (const arm of ['before', 'after']) assert.equal(readFileSync(new URL(`${arm}.txt`, base), 'utf8'), saved[arm].prompt);
   assert.deepEqual(JSON.parse(readFileSync(new URL('exact-diff.json', base))), saved.exactDiff);
   assert.deepEqual(JSON.parse(readFileSync(new URL('semantic-ledger.json', base))), saved.privateEvidence);

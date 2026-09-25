@@ -1,0 +1,14 @@
+{
+  "beforeHash": "9586b17bf0d5391b9c3230469569bcc29b67e73ec46fb3f27c1dde83a218e8f7",
+  "afterHash": "f1b5051520f50cf3328a40e25e4f62969e57235c732626c4af9d8e681bce541e",
+  "beforeBytes": 6682,
+  "afterBytes": 6527,
+  "textOffset": 4088,
+  "byteOffset": 4117,
+  "removed": "context_detail\":true,\"source_execution_id\":\"fixture-execution-e2a\",\"source_proposal_id\":\"fixture-proposal-e2a\",\"human_edited\":true,\"created_from\":\"approved-context-proposal\"",
+  "inserted": "human_edited\":true",
+  "removedUtf8Hex": "636f6e746578745f64657461696c223a747275652c22736f757263655f657865637574696f6e5f6964223a22666978747572652d657865637574696f6e2d653261222c22736f757263655f70726f706f73616c5f6964223a22666978747572652d70726f706f73616c2d653261222c2268756d616e5f656469746564223a747275652c22637265617465645f66726f6d223a22617070726f7665642d636f6e746578742d70726f706f73616c22",
+  "insertedUtf8Hex": "68756d616e5f656469746564223a74727565",
+  "beforeEnd": 4261,
+  "afterEnd": 4106
+}

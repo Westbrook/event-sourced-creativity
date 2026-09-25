@@ -20,7 +20,7 @@ if(mode==='--mock') {
     console.log(JSON.stringify({mode:'MOCK_ONLY',first:first.action,rerun:reuse.action,realProviderCalls:0,...executionSummary(plan,journal)},null,2));
   }finally{journal.close();await rm(directory,{recursive:true,force:true});}
 }else{
-  const plan=await firstCompilerStudy(),bytes=JSON.stringify(plan,null,2)+'\n',path=new URL('../evals/generation-reliability/bridge-artifacts/v5/first-study.json',import.meta.url);
+  const plan=await firstCompilerStudy(),bytes=JSON.stringify(plan,null,2)+'\n',path=new URL('../evals/generation-reliability/bridge-artifacts/v6-c2/first-study.json',import.meta.url);
   if(mode==='--write') {
     await mkdir(new URL('.',path),{recursive:true});
     try {await writeFile(path,bytes,{flag:'wx',mode:0o600});}catch(error){if(error.code!=='EEXIST')throw error;}
