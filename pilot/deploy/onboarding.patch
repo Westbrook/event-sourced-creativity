@@ -1,6 +1,6 @@
 diff --git a/docs/still-prototron.md b/docs/still-prototron.md
 new file mode 100644
-index 0000000..2e700d7
+index 0000000..4d23de7
 --- /dev/null
 +++ b/docs/still-prototron.md
 @@ -0,0 +1,62 @@
@@ -36,9 +36,9 @@ index 0000000..2e700d7
 +
 +The user authorized a **$200 total infrastructure spending ceiling** for this
 +test. Resource quotas are capacity limits, not a billing cap. Billing/cleanup
-+owner is `westbrook.johnson@reve.art`. Expiry and live IAP admission verification are
-+still unresolved. Record those values and a cost-control procedure before
-+deploying billable workloads.
++owner is `westbrook.johnson@reve.art`. The user selected an open-ended test with no
++scheduled access cutoff. Verify live IAP admission and establish a cost-control
++procedure within the unchanged $200 total ceiling before deploying workloads.
 +One IAP operator can create and select multiple app test users for app-level
 +sharing/revocation acceptance. Each has separate app permissions and content.
 +This does not qualify isolation between independent Google accounts.
@@ -48,8 +48,8 @@ index 0000000..2e700d7
 +repository and protected deployment environment, fresh credentials and private
 +bucket, then enable the verified-main GitHub-to-GKE workflow. Retain the secrets
 +and PVC across ordinary redeploys. The app validates signed IAP assertions and
-+its own named admissions, roles and consent; it rejects access after the release
-+expiry. An operator must remove the resources to stop their ongoing charges.
++its own named admissions, roles and consent. This release has no scheduled
++access cutoff. An operator must remove the resources to stop their ongoing charges.
 +
 +The test requires actual hosted verification of sign-in, persistence, the same
 +document edited in Still and Forma, sharing/revocation, deletion, pod restart

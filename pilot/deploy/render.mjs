@@ -5,7 +5,7 @@ for(const k of required)if(typeof c[k]!=='string'||!c[k].trim())throw Error('req
 for(const k of ['namespace','runtimeServiceAccount'])if(!/^[a-z][a-z0-9-]{2,62}$/.test(c[k]))throw Error('invalid:'+k);
 if(!/^https:\/\/[a-z0-9-]+\.p\.reve-dev\.com$/.test(c.origin))throw Error('isolated_prototron_origin_required');
 if(!/^\/projects\/\d+\/global\/backendServices\/\d+$/.test(c.iapAudience))throw Error('actual_iap_backend_audience_required');
-if(!/^[a-f0-9]{40}$/.test(c.revision)||Date.parse(c.expiresAt)<=Date.now()||!Number.isFinite(Date.parse(c.expiresAt)))throw Error('current_revision_and_future_expiry_required');
+if(!/^[a-f0-9]{40}$/.test(c.revision)||(c.expiresAt!=='open-ended'&&(Date.parse(c.expiresAt)<=Date.now()||!Number.isFinite(Date.parse(c.expiresAt)))))throw Error('current_revision_and_explicit_lifetime_required');
 for(const k of ['apiImage','webImage','postgresImage'])if(!/^[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}$/.test(c[k]))throw Error('immutable_image_required:'+k);
 if(!/^[a-z0-9][a-z0-9._-]{2,221}$/.test(c.bucket)||!/^\d+(\.\d{1,2})? USD$/.test(c.spendCeiling))throw Error('bucket_and_explicit_usd_ceiling_required');
 const ns=c.namespace,metadata=name=>({name,namespace:ns,labels:{'app.kubernetes.io/part-of':ns},annotations:{'still.test/owner':c.owner,'still.test/expires-at':c.expiresAt,'still.test/spend-ceiling':c.spendCeiling,'still.test/revision':c.revision}});

@@ -8,7 +8,7 @@ import {createCoreServer} from './core-http.mjs';
 import {iapVerifier} from './identity.mjs';
 const pool=poolFromEnvironment();await initializeCore(pool);
 const path=new URL('../.local/core-root',import.meta.url);let encryptionRoot;try{encryptionRoot=await readFile(path,'utf8');}catch{encryptionRoot=randomBytes(32).toString('base64');await writeFile(path,encryptionRoot,{mode:0o600});}
-const repository=new CoreRepository(pool,{encryptionRoot,expiresAt:'2026-10-08T23:59:59Z'});
+const repository=new CoreRepository(pool,{encryptionRoot,expiresAt:'open-ended'});
 for(const email of ['owner@pilot.invalid','collaborator@pilot.invalid'])await pool.query("INSERT INTO pilot.admissions(email,role) VALUES($1,'creator') ON CONFLICT DO NOTHING",[email]);
 const {privateKey,publicKey}=await generateKeyPair('ES256'),jwk=await exportJWK(publicKey);jwk.kid='local-core';
 const audience='/projects/1/global/backendServices/1',verify=iapVerifier({audience,keys:createLocalJWKSet({keys:[jwk]})});

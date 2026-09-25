@@ -15,7 +15,7 @@ class PilotControls extends HTMLElement {
   const home=()=>location.href='/still'+(new URL(location.href).searchParams.has('progress-report')?'?progress-report':'');
   const switchTo=(id:string)=>{sessionStorage.setItem('still-pilot-test-user',id);home();};
   void this.run(async()=>{
-   const result=await this.api('/api/pilot/test-users');let selected='primary';try{selected=sessionStorage.getItem('still-pilot-test-user')||'primary';}catch{/* Primary is available without tab storage. */}
+   const result=await this.api('/api/pilot/test-users');if(result.openEnded){const note=document.createElement('p');note.textContent='Open-ended test · no scheduled access cutoff. Saved work remains until deleted or the environment is removed.';users.append(note);}let selected='primary';try{selected=sessionStorage.getItem('still-pilot-test-user')||'primary';}catch{/* Primary is available without tab storage. */}
    for(const [index,user] of result.users.entries()){const option=document.createElement('option');option.value=index===0?'primary':user.principal_id;option.textContent=user.display_name+' · '+user.email;choose.append(option);}
    choose.value=selected;
    const active=result.users.find((user:{principal_id:string},index:number)=>selected==='primary'?index===0:user.principal_id===selected);

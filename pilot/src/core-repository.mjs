@@ -23,11 +23,11 @@ const same=(a,b)=>JSON.stringify(a??null)===JSON.stringify(b??null);
 export const CORE_MIGRATIONS=[new URL('../sql/001-platform.sql',import.meta.url),new URL('../sql/003-core.sql',import.meta.url),new URL('../sql/004-test-users.sql',import.meta.url)];
 export const initializeCore=pool=>migrate(pool,CORE_MIGRATIONS);
 export class CoreRepository{
- constructor(pool,{encryptionRoot,expiresAt}){this.pool=pool;this.cipher=contentCipher(encryptionRoot);if(!Number.isFinite(Date.parse(expiresAt)))throw Error('test_lifetime_required');this.expiresAt=expiresAt;}
+ constructor(pool,{encryptionRoot,expiresAt}){this.pool=pool;this.cipher=contentCipher(encryptionRoot);if(expiresAt!=='open-ended'&&!Number.isFinite(Date.parse(expiresAt)))throw Error('test_lifetime_required');this.expiresAt=expiresAt==='open-ended'?null:expiresAt;}
  seal(value,id){return this.cipher.seal(value,'still-core-v1:'+id);}
  open(value,id){return this.cipher.open(value,'still-core-v1:'+id);}
  async principal(db,id,{consent=true}={}){
-  if(Date.now()>=Date.parse(this.expiresAt))fail('test_release_expired',403);
+  if(this.expiresAt!==null&&Date.now()>=Date.parse(this.expiresAt))fail('test_release_expired',403);
   const {rows:[p]}=await db.query('SELECT * FROM pilot.principals WHERE principal_id=$1 AND disabled_at IS NULL FOR UPDATE',[id]);if(!p)fail('authentication_required',401);
   if(consent&&p.consent_version!==POLICY_VERSION)fail('pilot_terms_required',428,{policyVersion:POLICY_VERSION});return p;
  }
@@ -53,7 +53,7 @@ export class CoreRepository{
    await db.query('INSERT INTO pilot.controlled_test_users(controller_id,principal_id) VALUES($1,$2)',[controller,id]);
    created={principal_id:id,email,display_name:displayName.trim()};rows.push(created);
   }
-  return {controllerEmail:p.email,users:[{principal_id:p.principal_id,email:p.email,display_name:p.display_name},...rows],...(created?{created}:{})};
+  return {controllerEmail:p.email,openEnded:this.expiresAt===null,users:[{principal_id:p.principal_id,email:p.email,display_name:p.display_name},...rows],...(created?{created}:{})};
  });}
  selectTestUser(controller,selected){return transaction(this.pool,async db=>{
   const p=await this.principal(db,controller,{consent:false});
@@ -101,15 +101,15 @@ export class CoreRepository{
  validateDraft(d){if(!d||d.schemaVersion!==1||!['project','document','idea'].includes(d.entryKind)||!d.scope||!Array.isArray(d.markers)||!Array.isArray(d.referenceSelections)||!Array.isArray(d.decisions)||JSON.stringify(d).length>800000)fail('creation_draft_invalid',400);decodeRichDocument(d.originalDocument);decodeRichDocument(d.workingDocument);}
  draft(actor,id,method,body={}){return transaction(this.pool,async db=>{
   const p=await this.principal(db,actor);let d,row;
-  if(!id){d=structuredClone(body.draft);this.validateDraft(d);id=checkId(d.id);const current=await this.draftContext(db,p,d);d.scope=current.scope;d.revision=1;d.acknowledgedRevision=1;d.state='editing';d.expiresAt=this.expiresAt;
+  if(!id){d=structuredClone(body.draft);this.validateDraft(d);id=checkId(d.id);const current=await this.draftContext(db,p,d);d.scope=current.scope;d.revision=1;d.acknowledgedRevision=1;d.state='editing';d.expiresAt=this.expiresAt??'';
    await db.query('INSERT INTO pilot.core_drafts VALUES($1,$2,$3,$4,1,$5,\'active\')',[id,current.workspace.workspace_id,actor,current.projectId,this.seal(d,id)]);return {draft:d,scope:d.scope,revision:1,expiresAt:d.expiresAt};}
-  ({rows:[row]}=await db.query("SELECT * FROM pilot.core_drafts WHERE draft_id=$1 AND actor_id=$2 AND state='active' FOR UPDATE",[checkId(id),actor]));if(!row)fail('creation_draft_unavailable',404);d=this.open(row.body,id);const current=await this.draftContext(db,p,d);
-  if(method==='GET')return {draft:d,scope:current.scope,revision:row.revision,expiresAt:this.expiresAt};
+  ({rows:[row]}=await db.query("SELECT * FROM pilot.core_drafts WHERE draft_id=$1 AND actor_id=$2 AND state='active' FOR UPDATE",[checkId(id),actor]));if(!row)fail('creation_draft_unavailable',404);d=this.open(row.body,id);d.expiresAt=this.expiresAt??'';const current=await this.draftContext(db,p,d);
+  if(method==='GET')return {draft:d,scope:current.scope,revision:row.revision,expiresAt:this.expiresAt??''};
   if(body.expectedRevision!==row.revision)fail('creation_revision_conflict',409,{revision:row.revision});
   if(method==='DELETE'){await db.query('DELETE FROM pilot.core_operations WHERE draft_id=$1',[id]);await db.query('DELETE FROM pilot.core_drafts WHERE draft_id=$1',[id]);return {discarded:true};}
   const next=structuredClone(body.draft);this.validateDraft(next);if(next.entryKind!==d.entryKind||!same(next.scope,d.scope)||!same(d.scope,current.scope))fail('creation_scope_denied',403);
-  next.id=id;next.revision=row.revision+1;next.acknowledgedRevision=next.revision;next.expiresAt=this.expiresAt;next.state=next.plan?'review':'editing';if(next.plan){next.plan.scope=current.scope;next.plan.draftId=id;next.plan.draftRevision=next.revision;}if(next.review)next.review.lastAcknowledgedRevision=next.revision;
-  await db.query('UPDATE pilot.core_drafts SET revision=$2,body=$3 WHERE draft_id=$1',[id,next.revision,this.seal(next,id)]);return {draft:next,scope:current.scope,revision:next.revision,expiresAt:this.expiresAt};
+  next.id=id;next.revision=row.revision+1;next.acknowledgedRevision=next.revision;next.expiresAt=this.expiresAt??'';next.state=next.plan?'review':'editing';if(next.plan){next.plan.scope=current.scope;next.plan.draftId=id;next.plan.draftRevision=next.revision;}if(next.review)next.review.lastAcknowledgedRevision=next.revision;
+  await db.query('UPDATE pilot.core_drafts SET revision=$2,body=$3 WHERE draft_id=$1',[id,next.revision,this.seal(next,id)]);return {draft:next,scope:current.scope,revision:next.revision,expiresAt:this.expiresAt??''};
  });}
  creation(actor,id,action,body={}){return transaction(this.pool,async db=>{
   const p=await this.principal(db,actor),{rows:[row]}=await db.query('SELECT * FROM pilot.core_drafts WHERE draft_id=$1 AND actor_id=$2 FOR UPDATE',[checkId(id),actor]);if(!row)fail('creation_draft_unavailable',404);
@@ -154,7 +154,7 @@ export class CoreRepository{
  session(actor,resourceId){return transaction(this.pool,async db=>{
   const p=await this.principal(db,actor,{consent:false}),s=await this.scope(db,p,resourceId),access=s.access,role=access.projects.find(x=>x.projectId===s.projectId)?.role,capabilities=['self.profile.read','self.profile.manage',...(p.role==='creator'?['project.author','project.read']:['project.read'])];
   const budget={used:0,reserved:0,limit:0},cost={usedMicrousd:0,reservedMicrousd:0,limitMicrousd:0,remainingMicrousd:0};
-  return {user:{userId:actor,email:p.email,displayName:p.display_name,role:p.role,consentVersion:p.consent_version,consentedAt:p.consented_at?.toISOString()??null},impersonation:null,policy:{version:POLICY_VERSION,accepted:p.consent_version===POLICY_VERSION,passiveCapture:false,externalAssetsRequireAssertion:true,retentionDays:Math.max(0,Math.ceil((Date.parse(this.expiresAt)-Date.now())/86400000)),sharing:'Named test principals only',attentionCapture:{available:false,defaultOn:false,retentionDays:0,rawInputCapture:false}},provider:{name:'disabled',model:'none',configured:false,plannerConfigured:false,videoConfigured:false,audioConfigured:false,model3dConfigured:false,imageProviders:[]},creation:{enabled:true,manualOnly:true},capabilities,permissionEpoch:access.permissionEpoch,organizations:[],projects:access.projects.filter(x=>x.role!=='owner'),budgets:{period:'test',user:budget,workspace:budget},costBudgets:{period:'test',currency:'USD',user:cost,workspace:cost},canvas:{version:'r1-disabled',mode:'pilot',pilotAvailable:false,access:false,accessReason:'pilot-gate-incomplete',blockedBy:[],requirements:[]},...(s.owner?{}:{projectContext:{organizationId:s.workspace.workspace_id,projectAccessId:s.projectId,projectId:s.projectId,ownerUserId:s.workspace.owner_id,role,permissions:role==='editor'?['project.read','project.author']:['project.read'],expiresAt:this.expiresAt}}),pilot:{release:'R1',providers:false,uploads:false,memory:false,expiresAt:this.expiresAt}};
+  return {user:{userId:actor,email:p.email,displayName:p.display_name,role:p.role,consentVersion:p.consent_version,consentedAt:p.consented_at?.toISOString()??null},impersonation:null,policy:{version:POLICY_VERSION,accepted:p.consent_version===POLICY_VERSION,passiveCapture:false,externalAssetsRequireAssertion:true,retentionDays:this.expiresAt===null?0:Math.max(0,Math.ceil((Date.parse(this.expiresAt)-Date.now())/86400000)),sharing:'Named test principals only',attentionCapture:{available:false,defaultOn:false,retentionDays:0,rawInputCapture:false}},provider:{name:'disabled',model:'none',configured:false,plannerConfigured:false,videoConfigured:false,audioConfigured:false,model3dConfigured:false,imageProviders:[]},creation:{enabled:true,manualOnly:true},capabilities,permissionEpoch:access.permissionEpoch,organizations:[],projects:access.projects.filter(x=>x.role!=='owner'),budgets:{period:'test',user:budget,workspace:budget},costBudgets:{period:'test',currency:'USD',user:cost,workspace:cost},canvas:{version:'r1-disabled',mode:'pilot',pilotAvailable:false,access:false,accessReason:'pilot-gate-incomplete',blockedBy:[],requirements:[]},...(s.owner?{}:{projectContext:{organizationId:s.workspace.workspace_id,projectAccessId:s.projectId,projectId:s.projectId,ownerUserId:s.workspace.owner_id,role,permissions:role==='editor'?['project.read','project.author']:['project.read'],expiresAt:this.expiresAt}}),pilot:{release:'R1',providers:false,uploads:false,memory:false,expiresAt:this.expiresAt,openEnded:this.expiresAt===null,authoredContentRetention:'until-deletion-or-teardown'}};
  });}
  share(actor,projectId,target,role){return transaction(this.pool,async db=>{
   const p=await this.principal(db,actor),s=await this.scope(db,p,projectId,true);if(!s.owner||s.resource.kind!=='project')fail('owner_required',403);if(!['editor','viewer','revoked'].includes(role))fail('invalid_role',400);

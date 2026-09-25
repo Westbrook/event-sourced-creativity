@@ -22,7 +22,7 @@
   "billingAccount": null,
   "budgetUSD": 200,
   "quotedCostUSD": null,
-  "expiresAt": null,
+  "expiresAt": "open-ended",
   "proposedLimits": {
     "requestsCPU": "225m",
     "limitsCPU": "4",
@@ -52,7 +52,7 @@
     "R2 workers/indexing/cleanup",
     "R3 hosted Memory qualification"
   ],
-  "budgetScope": "Total infrastructure ceiling for this test; expiry pending",
+  "budgetScope": "Total infrastructure ceiling of $200 for this open-ended test; no automatic billing cap configured",
   "infrastructurePR": "https://github.com/reve-ai/reve-infra/pull/1253",
   "identityModel": "Verified IAP operator controls separate app test users; app authorization is evaluated per selected user"
 }

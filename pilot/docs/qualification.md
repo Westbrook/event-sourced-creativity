@@ -14,7 +14,7 @@ Local verified evidence must remain distinct from hosted acceptance:
 | Application restart persistence | Local Node restart; PostgreSQL retained | Pending pod restart |
 | Deployment | Images, native checks, fresh schema/runtime-role container checks | Pending GitHub/infra/auth inputs and rollout |
 
-Only plain authored Idea/Project sources are offered for permanent deletion. Document-only deletion, uploads, derived objects, model attempts and search stores are disabled. Applied creation drafts are reduced to scope metadata; private creation prose is not retained in completed receipts. Active drafts remain encrypted until discarded, affected-source deletion or test teardown. The configured test expiry denies access; teardown is an owner action, not an automatic cloud cost cap.
+Only plain authored Idea/Project sources are offered for permanent deletion. Document-only deletion, uploads, derived objects, model attempts and search stores are disabled. Applied creation drafts are reduced to scope metadata; private creation prose is not retained in completed receipts. Active drafts remain encrypted until discarded, affected-source deletion or test teardown. The test is explicitly open-ended; teardown is an owner action, not an automatic cloud cost cap.
 
 Unknown APIs/pages return an error. R1 UI hides unrelated generation, delivery, Memory and broader workspace controls; direct requests remain denied at the server. Model-free manual creation is real native behavior, not simulated provider validation. No frozen qualification packet is retuned.
 

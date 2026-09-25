@@ -1,0 +1,19 @@
+{
+  "decision": "Open-ended test, explicitly authorized by user",
+  "configuration": "expiresAt=open-ended",
+  "budgetUSD": 200,
+  "budgetScope": "Total infrastructure ceiling, unchanged; not automatic billing enforcement",
+  "owner": "westbrook.johnson@reve.art",
+  "verification": {
+    "focusedTests": 8,
+    "skipped": 0,
+    "failures": 0,
+    "openEndedNativeWorkflow": "Pass: creation, references, edit, sharing/revocation, deletion",
+    "boundedExpiryDenial": "Still enforced for dated configurations",
+    "missingOrInvalidLifetime": "Deployment rejected",
+    "build": "pass",
+    "typecheck": "pass",
+    "changedFileLint": "pass"
+  },
+  "hosted": false
+}
