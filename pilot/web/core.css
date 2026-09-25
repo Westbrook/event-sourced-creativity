@@ -1,0 +1,10 @@
+/* This stylesheet is included only by the R1 build. Server capability gates remain authoritative. */
+html[data-pilot-core] :is(#document-results-panel,#document-workbench-inspector,.composer-dock,forma-project-rail,forma-studio-mode-nav,.document-workbench-tasks,forma-output-requirements,forma-document-memory-brief,.document-quick-edit-review,.context-next-actions,.document-insight,.context-provenance,.add-block,.document-actions,.health-pill,.context-composition,.block-meta,.remove-block,.reference-composition-open){display:none!important}
+html[data-pilot-core] .studio-grid{grid-template-columns:minmax(0,1fr)!important;max-width:900px;margin-inline:auto}
+html[data-pilot-core] .workspace-page{grid-template-columns:minmax(0,1fr)!important}
+html[data-pilot-core] .studio-main{width:100%}
+html[data-pilot-core] forma-shell :is(a[href^='/library'],a[href^='/activity'],a[href^='/deliver'],button[aria-label='Account and settings'],button[aria-label='Search or run a command'],.account-share-action){display:none!important}
+html[data-pilot-core] forma-shell .blank-context button{display:none!important}
+html[data-pilot-core] forma-shell .top-actions>button,html[data-pilot-core] forma-ui-audience-navigation{display:none!important}
+html[data-pilot-core] .context-controls-panel :is(.context-composition,.block-type-controls,.block-meta,.block-actions){display:none!important}
+html[data-pilot-core] .context-controls-panel :is(.block-classifiers,forma-context-intelligence,forma-spatial-scope-editor,.block-rail){display:none!important}

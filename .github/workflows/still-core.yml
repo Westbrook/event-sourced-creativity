@@ -1,0 +1,101 @@
+name: Still R1 verify and deploy
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: {POSTGRES_PASSWORD: synthetic-ci-only}
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: {node-version: '24.16.0'}
+      - run: corepack enable && corepack pnpm install --frozen-lockfile
+      - run: npm ci --prefix pilot --ignore-scripts
+      - run: pnpm run cem:check && pnpm run i18n:check && pnpm run typecheck && pnpm run lint && pnpm test && pnpm run build
+      - run: SOURCE_COMMIT=${{ github.sha }} PILOT_RELEASE=core node node_modules/vite/bin/vite.js build --config pilot/vite.config.ts
+      - run: node --import tsx --test --test-concurrency=1 pilot/tests/core-*.test.mjs pilot/tests/identity.test.mjs pilot/tests/routes.test.mjs
+        env:
+          PILOT_DATABASE_URL: postgresql://postgres:synthetic-ci-only@localhost:5432/postgres
+      - uses: actions/upload-artifact@v7
+        with: {name: 'core-web-${{ github.sha }}', path: pilot/dist/core-web, if-no-files-found: error, retention-days: 1}
+  deploy:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.REVE_DEPLOYMENT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: {name: development, url: '${{ vars.REVE_APP_ORIGIN }}'}
+    concurrency: {group: still-core-development, cancel-in-progress: false}
+    permissions: {contents: read, id-token: write}
+    env:
+      GCP_PROJECT: reve-prototyping
+      GCP_REGION: us-west1
+      APP_NAME: ${{ vars.REVE_APP_NAME }}
+      DEPLOY_SERVICE_ACCOUNT: ${{ vars.REVE_DEPLOY_SERVICE_ACCOUNT }}
+      RELEASE_CONFIG: ${{ vars.STILL_CORE_RELEASE_CONFIG }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with: {node-version: '24.16.0'}
+      - uses: actions/download-artifact@v8
+        with: {name: 'core-web-${{ github.sha }}', path: pilot/dist/core-web}
+      - name: Validate the established target before any cloud mutation
+        run: |
+          node pilot/deploy/prepare-config.mjs > /tmp/release.json
+          node pilot/deploy/render.mjs /tmp/release.json > /dev/null
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: reve-prototyping
+          workload_identity_provider: projects/14139768646/locations/global/workloadIdentityPools/github-dev-oidc/providers/github-dev-oidc-provider
+          service_account: ${{ env.DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/get-gke-credentials@v3
+        with: {project_id: reve-prototyping, cluster_name: prototron, location: us-west1}
+      - name: Confirm provisioned namespace, admissions and secrets
+        run: |
+          ns=$(node -p "JSON.parse(require('fs').readFileSync('/tmp/release.json')).namespace")
+          kubectl get namespace "$ns"
+          kubectl -n "$ns" get configmap still-core-admissions -o name
+          kubectl -n "$ns" get secret still-core-secrets -o name
+      - name: Build and push the verified candidate
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+          base="us-west1-docker.pkg.dev/reve-prototyping/prototron/${APP_NAME}"
+          docker build --platform linux/amd64 -f pilot/deploy/Dockerfile.api -t "${base}-api:${GITHUB_SHA}" .
+          docker build --platform linux/amd64 -f pilot/deploy/Dockerfile.web -t "${base}-web:${GITHUB_SHA}" .
+          docker push "${base}-api:${GITHUB_SHA}"
+          docker push "${base}-web:${GITHUB_SHA}"
+          export API_IMAGE="${base}-api@$(gcloud artifacts docker images describe "${base}-api:${GITHUB_SHA}" --format='value(image_summary.digest)')"
+          export WEB_IMAGE="${base}-web@$(gcloud artifacts docker images describe "${base}-web:${GITHUB_SHA}" --format='value(image_summary.digest)')"
+          node pilot/deploy/prepare-config.mjs > /tmp/release.json
+          node pilot/deploy/render.mjs /tmp/release.json > /tmp/release-manifest.json
+      - name: Roll out and record readiness at the expected source revision
+        run: |
+          set -euo pipefail
+          ns=$(node -p "JSON.parse(require('fs').readFileSync('/tmp/release.json')).namespace")
+          kubectl -n "$ns" apply -f /tmp/release-manifest.json
+          kubectl -n "$ns" rollout status statefulset/postgres --timeout=5m
+          kubectl -n "$ns" rollout status deployment/api --timeout=5m
+          kubectl -n "$ns" rollout status deployment/web --timeout=5m
+          kubectl -n "$ns" exec deployment/api -- node -e "fetch('http://127.0.0.1:8080/readyz').then(async r=>{const b=await r.json();if(!r.ok||b.sourceCommit!==process.env.SOURCE_COMMIT)process.exit(1);console.log(JSON.stringify(b))})"
+          kubectl -n "$ns" get deployment,statefulset,pvc -o wide > /tmp/rollout.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: deployment-${{ github.sha }}
+          path: |
+            /tmp/release*.json
+            /tmp/rollout.txt
+          if-no-files-found: error
+# No WebTransport, live provider, Memory, or indexing stage in R1.
+# Green readiness is not the hosted two-user acceptance test; record that separately.

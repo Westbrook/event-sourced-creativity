@@ -21,7 +21,7 @@ import { operationJournal, digest, type WriteJournal } from './operation-journal
 export type Session = {
   user: { userId: string; displayName: string; role: string }; policy: { accepted: boolean; retentionDays: number };
   provider: { configured?: boolean; plannerConfigured?: boolean; videoConfigured?: boolean; audioConfigured?: boolean; model3dConfigured?: boolean };
-  creation?:{enabled:boolean}; permissionEpoch?: string; impersonation?: unknown;
+  creation?:{enabled:boolean;manualOnly?:boolean}; permissionEpoch?: string; impersonation?: unknown;
   projectContext?: { projectId: string; projectAccessId: string; organizationId: string; permissions: string[] };
   projects?: { organizationId: string; projectAccessId: string; projectId: string; projectName: string; role: string }[];
 };

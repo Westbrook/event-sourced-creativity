@@ -1,3 +1,5 @@
+import '../still/idea-body-editor.ts';
+import {decodeIdeaBody,ideaBodyText,type IdeaBodyV1} from '../model/idea-body.ts';
 import { html, nothing, type TemplateResult } from "lit";
 import { navigateInApp, type CommandDeparture } from "./command-departure";
 import { cache } from "lit/directives/cache.js";
@@ -59,6 +61,10 @@ export class ContextBlock extends FormaElement {
   #savingDraft: object | null = null;
   #controlFocus: ContextControlFocus | null = null;
   #draft = "";
+  #richDraft:IdeaBodyV1|null=null;
+  #richBase:IdeaBodyV1|null=null;
+  #richBaseText="";
+  #richUnavailable=false;
   #draftComposing=false;
   #imageLabel = "";
   #imagePalette: string[] = [];
@@ -114,6 +120,15 @@ export class ContextBlock extends FormaElement {
         if (await this.store.saveOutputInput(this.block.id, submitted, `${this.surface}-output-input-editor`)) complete();
         return;
       }
+      if(this.#richDraft&&this.#richBase){
+        const changes:EventInput[]=[
+          {type:'BlockPropertyEdited',payload:{project_id:this.block.projectId,document_id:this.block.documentId,block_id:this.block.id,property_path:'rich_text_body',old_value:this.#richBase,new_value:this.#richDraft}},
+          {type:'BlockPropertyEdited',payload:{project_id:this.block.projectId,document_id:this.block.documentId,block_id:this.block.id,property_path:'text',old_value:this.#richBaseText,new_value:ideaBodyText(this.#richDraft)}}
+        ];
+        const saved=await this.store.appendBatchWithReceipt(changes);
+        if(saved.publication==='published'&&saved.acknowledgment.outcome==='observed'&&!saved.acknowledgment.rejectedIndices.length&&saved.appended.length===changes.length)complete();
+        return;
+      }
       const previous = String(this.block.properties.text ?? this.block.properties.label ?? "");
       const derived = Boolean(this.block.properties.source_output_id || this.block.properties.source_artifact_item_id);
       const next = derived ? this.#draft : this.#draft.trim();
@@ -141,6 +156,11 @@ export class ContextBlock extends FormaElement {
     this.#draftInitialized = true;
     this.#draftRevision++;
     this.#draftChanged = false;
+    this.#richDraft=null;this.#richBase=null;this.#richUnavailable=false;
+    if(Object.hasOwn(this.block.properties,'rich_text_body')){
+      try{this.#richBase=decodeIdeaBody(this.block.properties.rich_text_body);
+      this.#richDraft=structuredClone(this.#richBase);this.#richBaseText=String(this.block.properties.text??'');}catch{this.#richUnavailable=true;}
+    }
     this.#draft = String(this.block.properties.text ?? this.block.properties.label ?? "");
     this.#imageLabel = String(this.block.properties.label ?? "");
     this.#imagePalette = Array.isArray(this.block.properties.output_palette) ? this.block.properties.output_palette.map(String) : [];
@@ -323,6 +343,8 @@ export class ContextBlock extends FormaElement {
     const editHelp = this.#savingDraft
       ? this.i18n.t("context.controls.saveRequestedHelp", "A save was already requested and may still finish. Discarding these local edits does not cancel it.")
       : this.#calmSurface() ? this.i18n.t("context.controls.shortcut", "⌘/Ctrl + Enter to save · Esc to close controls") : this.i18n.system("⌘/Ctrl + Enter to save · Esc to cancel");
+    if(this.#richUnavailable)return html`<p role="status">${this.i18n.system("Open this Idea in Still to preserve its rich body and references.")}</p>`;
+    if(this.#richDraft)return html`<form class="block-editor" @submit=${(event:SubmitEvent)=>{event.preventDefault();void this.#saveEdit();}} @keydown=${this.#editorKeys}><still-idea-body-editor .body=${this.#richDraft} .blocks=${this.store.projection.get().libraryBlocks} .projectId=${this.block.projectId} .blockId=${this.block.id} .disabled=${Boolean(this.#savingDraft)} @idea-body-change=${(event:CustomEvent<IdeaBodyV1>)=>{this.#richDraft=event.detail;this.#draft=ideaBodyText(event.detail);this.#markDraftChanged();}}></still-idea-body-editor><div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save</button></div></form>`;
     if (outputInputDraft(this.block)) return html`<form class="block-editor output-derived-block-editor" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.#saveEdit(); }} @keydown=${this.#editorKeys}><forma-output-input-editor .block=${this.block} .source=${this.surface} .shortcutHelp=${this.#calmSurface()?this.i18n.t("context.controls.shortcutHelp","Command or Control plus Enter saves; Escape closes controls and keeps unsaved edits."):""} @output-input-change=${this.#markStructuredDraftChanged}></forma-output-input-editor><div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save input</button></div></form>`;
     if (properties.source_output_id || properties.source_artifact_item_id) return html`<form class="block-editor output-derived-block-editor" @submit=${(event: SubmitEvent) => { event.preventDefault(); void this.#saveEdit(); }} @keydown=${this.#editorKeys}>${properties.source_output_id ? html`<label>Image title<input .value=${this.#imageLabel} @input=${(event: InputEvent) => { this.#imageLabel = (event.target as HTMLInputElement).value; this.#markDraftChanged(); }}></label>` : nothing}<forma-ui-rich-text .label=${properties.source_artifact_item_id ? properties.source_artifact_kind==="video"?this.i18n.system("Scene {value} direction", { value: String(properties.video_scene_index??properties.narrative_order??"") }):this.i18n.system("Frame {value} shot direction", { value: String(properties.storyboard_frame_index ?? "") }) : this.i18n.system("Image description and creative direction")} .value=${this.#draft} .rows=${5} .help=${this.#calmSurface()?this.i18n.t("context.controls.shortcutHelp","Command or Control plus Enter saves; Escape closes controls and keeps unsaved edits."):this.i18n.system("Command or Control plus Enter saves; Escape cancels.")} @forma-input=${(event: CustomEvent<{ value: string }>) => { this.#draft = event.detail.value; this.#markDraftChanged(); }}></forma-ui-rich-text>${properties.source_output_id&&this.#imagePalette.length?html`<fieldset class="output-input-image-palette"><legend>Creative image palette</legend>${this.#imagePalette.map((color,index)=>html`<label>Palette color ${index+1}<input .value=${color} @input=${(event:InputEvent)=>{this.#imagePalette=this.#imagePalette.map((value,position)=>position===index?(event.target as HTMLInputElement).value:value);this.#markDraftChanged();}}></label>`)}</fieldset>`:nothing}<div><small>${editHelp}</small><button type="button" class="button ghost" @click=${this.#cancelEdit}>${cancelLabel}</button><button type="submit" class="button primary" ?disabled=${Boolean(this.#savingDraft)}>Save input</button></div></form>`;
     return html`<form class="block-editor" @submit=${(event:SubmitEvent)=>{event.preventDefault();void this.#saveEdit();}}><label for=${`block-copy-${this.block.id}`}>Edit ${this.block.type} content</label><textarea id=${`block-copy-${this.block.id}`} rows="3" .value=${this.#draft} placeholder=${String(properties.placeholder??"Describe a direction…")} @compositionstart=${()=>{this.#draftComposing=true;this.querySelector<MemoryFieldCompletion>("forma-memory-field-completion")?.retire();this.requestUpdate();}} @compositionend=${()=>{this.#draftComposing=false;this.requestUpdate();}} @input=${(event:InputEvent)=>{this.#draft=(event.target as HTMLTextAreaElement).value;this.#markDraftChanged();this.requestUpdate();}} @keydown=${(event:KeyboardEvent)=>{if(event.key==="Escape"&&!event.isComposing){event.preventDefault();event.stopPropagation();if(this.#calmSurface())this.#closeControls();else this.#cancelEdit();}else if(event.key==="Enter"&&!event.isComposing&&(event.metaKey||event.ctrlKey)){event.preventDefault();(event.currentTarget as HTMLTextAreaElement).form?.requestSubmit();}}}></textarea><forma-memory-field-completion .block=${this.block} .draft=${this.#draft} .composing=${this.#draftComposing} .disabled=${Boolean(this.#savingDraft)}

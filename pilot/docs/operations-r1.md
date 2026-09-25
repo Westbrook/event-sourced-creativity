@@ -1,0 +1,48 @@
+# R1 operate, redeploy and clean up
+
+## Establish the target
+
+Complete the actions in `infrastructure-request.md`. Use only the allocated prototron namespace/context, never a current production context. The namespace is provisioned by the supported Reve onboarding process; platform-owned IAP, routing, namespace quota, private bucket and NetworkPolicy permission must be ready before app deployment.
+
+Copy `deploy/release.example.json` outside source control and fill the actual values. `spendCeiling` is a string such as `10 USD` only after an owner approves that amount; the example intentionally leaves it unset. `expiresAt` is an ISO UTC timestamp. This is a test-lifetime access fence and owner cleanup deadline, not billing enforcement. The pinned PostgreSQL 17.9 Alpine image matches tested schema behavior; no pgvector is required.
+
+Create `accounts.json` containing the two actual admitted IAP addresses and their `creator` or `viewer` admission role. Example shape: `[{"email":"ACTUAL_ACCOUNT","role":"creator"}, ...]`. The initializer updates admissions on each rollout. It never auto-accepts product consent. Do not use the local synthetic accounts for hosted acceptance.
+
+Generate fresh credentials without printing them:
+
+```sh
+node pilot/deploy/make-secrets.mjs /PRIVATE/NEW_DIRECTORY
+kubectl --context=APPROVED_PROTOTRON_CONTEXT -n ALLOCATED_NAMESPACE create secret generic still-core-secrets \
+  --from-file=database-admin-password=/PRIVATE/NEW_DIRECTORY/database-admin-password \
+  --from-file=database-runtime-password=/PRIVATE/NEW_DIRECTORY/database-runtime-password \
+  --from-file=encryption-root=/PRIVATE/NEW_DIRECTORY/encryption-root
+kubectl --context=APPROVED_PROTOTRON_CONTEXT -n ALLOCATED_NAMESPACE create configmap still-core-admissions --from-file=accounts.json=/PRIVATE/accounts.json
+```
+
+Store credentials under the approved secret-management process and remove temporary files. Do not regenerate the content root for an existing PVC. Root loss makes existing encrypted content unreadable; there is no production recovery claim. No secrets belong in GitHub repository variables, logs, reports or source.
+
+## Release through GitHub
+
+Transfer the candidate to the allocated app repository and establish `development` protection and repository-scoped GitHub OIDC. Configure `REVE_APP_NAME`, `REVE_APP_ORIGIN`, `REVE_DEPLOY_SERVICE_ACCOUNT`, and `STILL_CORE_RELEASE_CONFIG` (non-secret JSON from the completed release configuration). Set `REVE_DEPLOYMENT_ENABLED=true` only when allocation and billing authority are established.
+
+The workflow runs the existing app verification suite plus R1 integration tests, builds the native frontend and both containers, pushes SHA-tagged images, resolves immutable digests, renders the candidate, and serializes deployment. Fresh schema initialization uses the bootstrap account; the running API gets a separate role without DDL privileges. Startup never imports Sites data. Save the workflow deployment artifact containing revision/image refs and rollout output.
+
+The platform route directs `/api` to `api` and all allowed frontend routes to `frontend`. Both must be protected by IAP. Direct unauthenticated API requests and forged unsigned forwarded headers must fail. The API validates official ES256 IAP assertions and the exact audience. The runtime cannot select local keys or synthetic identity.
+
+## Hosted acceptance
+
+1. Sign in with each admitted account and explicitly complete native product consent. Check an unadmitted account is denied.
+2. Create Project → Document → Idea through Still. Review/approve, reload, and record their IDs and revision.
+3. Open that document in Forma using the test controls. Edit its native rich body, including an existing Idea reference. Save, return to Still and reload. Verify same IDs/reference targets/prose.
+4. Make overlapping edits; verify the stale writer is rejected and can retain/review their draft. Do not overwrite a newer value merely by refreshing its head.
+5. Share to the second principal as viewer (write denied), then editor. Revoke and verify reads/writes fail after reload. Use exact admitted email, never a caller-supplied actor ID.
+6. Try deleting a referenced Idea (denied), delete its referencing source, then delete the original. Verify current private events/drafts/receipts are erased. Upload and derived-storage tests are excluded because those types are unavailable.
+7. Restart only the test API pod, reload both deep links, and verify data persists. Deploy the same revision again through the workflow, then record its image/commit receipts and repeat a read/edit.
+
+Readiness and local JWT tests do not substitute for this real two-account acceptance. Record actual hosted URLs only after the test passes.
+
+## Recovery and cleanup
+
+Compatible redeploys retain the fresh PVC, root and admissions. Revert to an earlier **R1-compatible** image pair by completing a release config with its exact digests and applying the rendered manifest to the same namespace. Keep the current schema and authoritative revocations/deletions. Do not roll back to the pre-R1 API or restore an old database snapshot containing deleted sources. If no compatible candidate exists, stop API access and diagnose; do not reset data automatically.
+
+At expiry the API denies access, but pods/disks still incur infrastructure charges. The named cleanup owner must disable deployment, remove only this release’s route/admission/IAM grants and workloads, and deliberately delete its PVC, empty private bucket, secrets and retained image/log artifacts under the approved retention rules. Storage deletion is irreversible; preserve any user-requested export only under separate authorization. Check the billing allocation is no longer accruing resource charges. No scheduled cleanup has been created in this task.

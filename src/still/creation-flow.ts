@@ -67,7 +67,7 @@ export class StillCreationFlow extends LitElement {
   disconnectedCallback(){super.disconnectedCallback();window.removeEventListener('beforeunload',this.beforeUnload);window.removeEventListener('keydown',this.helpSaveShortcut,true);this.flow?.dispose();this.clearEditor();}
   protected firstUpdated(){
     const session=this.client.session;if(!session)return;
-    this.flow=new CreationController({entryKind:this.entryKind,scope:{actorUserId:session.user.userId,projectId:this.entryKind==='project'?null:this.client.position.projectId||null,documentId:this.entryKind==='idea'?this.client.position.documentId||null:null,custodyKey:session.projectContext?.organizationId??'personal',permissionEpoch:session.permissionEpoch??''},request:this.client.creationRequest.bind(this.client),onChange:()=>this.requestUpdate()});
+    this.flow=new CreationController({manualOnly:session.creation?.manualOnly,entryKind:this.entryKind,scope:{actorUserId:session.user.userId,projectId:this.entryKind==='project'?null:this.client.position.projectId||null,documentId:this.entryKind==='idea'?this.client.position.documentId||null:null,custodyKey:session.projectContext?.organizationId??'personal',permissionEpoch:session.permissionEpoch??''},request:this.client.creationRequest.bind(this.client),onChange:()=>this.requestUpdate()});
     void this.flow.start();
   }
   protected updated(){

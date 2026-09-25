@@ -1,0 +1,14 @@
+{
+  "namespace": "still-platform-pilot",
+  "origin": "https://still-platform-pilot.p.reve-dev.com",
+  "runtimeServiceAccount": "still-platform-pilot",
+  "iapAudience": null,
+  "owner": null,
+  "spendCeiling": null,
+  "expiresAt": null,
+  "bucket": null,
+  "postgresImage": "postgres@sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609",
+  "revision": null,
+  "apiImage": null,
+  "webImage": null
+}

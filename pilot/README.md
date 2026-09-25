@@ -1,53 +1,44 @@
-# Still / Forma isolated GKE preparation
+# Still / Forma R1 test release
 
-Local candidate on `codex/still-gke-pilot`, based on `ed16305a` / runtime `d190ed41`, retaining historical v550 `c28af5fe`. Starter pattern source: `7c0e4ca8`. Nothing is published or deployed. Production Sites and its native Memory schema are unchanged.
+The v3 candidate on `codex/still-gke-pilot` reuses the actual Still creation editor and Forma document interface over one PostgreSQL event store. **The native workflow is verified locally; no GKE release has been deployed.** The earlier A preview and local Memory mechanics proof are retained independently.
 
-**A is a synthetic local visual preview. B is incomplete. C has a local pgvector mechanics proof.** These are separate review checkpoints; no user review/acceptance is inferred.
+## Supported slice
 
-## Run the visual preview
+- Verified, signed IAP identity mapped to fresh, explicitly admitted test principals; native consent and scoped role checks.
+- Manual Project, Document and Idea creation, private autosaved drafts, native review/compiler, stable IDs and retry receipts.
+- The same document and rich Idea body in Still and Forma; reference identities retained, stale edits rejected.
+- Named Project sharing as viewer/editor, revocation, owner-only Idea/Project deletion, and a reference guard before deleting an Idea.
+- Encrypted private event/draft/operation bodies, shared PostgreSQL transactions, persistent test PVC. A fresh root is required.
 
-From the repository root, Node 24.16.0 with the application's pinned pnpm dependencies installed:
+Paid models, uploads, public sharing, semantic search, Memory, Canvas, tools/admin, generated outputs and broader Forma actions are unavailable. A dedicated private bucket is an infrastructure allocation for the shared environment; R1 exposes no upload/object routes. R2 worker/indexing and R3 hosted Memory qualification follow R1. Existing Sites accounts/data and migration are excluded.
+
+## Run the local native release
+
+With pinned root dependencies and `npm ci --prefix pilot --ignore-scripts` installed:
 
 ```sh
-npm ci --prefix pilot --ignore-scripts
-node node_modules/vite/bin/vite.js build --config pilot/vite.config.ts
-node --import tsx pilot/src/preview.mjs
+PILOT_RELEASE=core node node_modules/vite/bin/vite.js build --config pilot/vite.config.ts
+PILOT_DATABASE_URL=postgresql://USER@127.0.0.1:55527/postgres node --import tsx pilot/src/core-local.mjs
 ```
 
-Open `http://127.0.0.1:5207/still/action/new-project?progress-report` and the existing independent report at `http://127.0.0.1:4187/`. This uses actual Still source and its actual creation editor with native Worker domain handling and **disposable in-memory SQLite**, simulated identity, disabled providers and a process-level network refusal. No PostgreSQL identity or durability claim. Restart resets fixtures and invalidates saved synthetic draft URLs. The existing separate previews on 5174/5175 are not used or changed.
+Open `http://127.0.0.1:5230/still?progress-report`. This separate, clearly labeled harness uses signed synthetic identities and persistent local PostgreSQL. It never qualifies live IAP. Its persisted encryption root is under ignored `pilot/.local`; deleting the root makes existing local content unreadable. The production API image explicitly excludes this harness and the SQLite preview.
 
-Use a title to create a Project/Document. For an Idea description, choose **Complete one Idea manually**, supply title/type, present then approve each review stage and approve final save. Provider organization is intentionally unavailable. A reload can recover the draft; the first manual-review transition was observed retaining disabled input controls until refresh and is recorded for further qualification.
+Create a Project with a short title, create a Document, then add an Idea. Descriptions enter manual review directly. Supply its title/type, present and approve review stages, then approve final save. Open the document’s **Test release · access and navigation** controls to switch to Forma. Select the Idea, open its controls, edit and save. Switch back and reload to see the same data. The controls also offer named Project access and deletion. Document-only deletion is unavailable.
 
-## Local adapter checks
+The existing 5207 disposable A preview remains separate. The report is independent at `http://127.0.0.1:4187/`.
 
-`pilot/package-lock.json` isolates pg, jose and GCS dependencies. Tests use fresh synthetic principals/records and no frozen qualification packets. Provide only isolated test database URLs:
+## Verification and deployment
 
 ```sh
 PILOT_DATABASE_URL=postgresql://USER@127.0.0.1:55527/postgres \
-PILOT_MEMORY_DATABASE_URL=postgresql://postgres@127.0.0.1:55528/postgres \
-PILOT_PREVIEW_URL=http://127.0.0.1:5207 \
-node --import tsx --test --test-concurrency=1 pilot/tests/*.test.mjs
+  node --import tsx --test --test-concurrency=1 pilot/tests/core-*.test.mjs \
+  pilot/tests/identity.test.mjs pilot/tests/routes.test.mjs
 ```
 
-Missing database URLs cause integration tests to skip; skipped tests are not evidence. The recorded local run used real PostgreSQL 17.9 and pgvector 0.8.2 in a pinned, disposable local container. JWT tests use local signing keys. Object tests inject a controlled test double: live GCS IAM, generations/soft-delete/retention and erasure are **not qualified**.
+A missing database URL skips the HTTP integration test and does not qualify it. The integration test drives native CreationController requests through signed synthetic IAP and real PostgreSQL, including reference review/refresh, two principals, conflicts, deletion and idempotency. Native browser evidence separately verifies actual Still creation → acknowledged Forma save → Still same-ID content and persistence through Node restart.
 
-`src/repository.mjs` reuses native `compileCreationPlan`, `creationReviewHashes`, `authorityFromCreationProjection`, canonical event shapes and shared IDs. It proves atomic event/receipt/draft publication and concurrency fences in PostgreSQL, without a SQL string-rewriting D1 emulator. Its limited membership/consent scaffold is **not equivalent to the whole native authorization/custody model** and must remain outside hosted product use until ported.
+See `docs/operations-r1.md` for the deployment procedure and `docs/infrastructure-request.md` for exact external dependencies. `.github/workflows/still-core.yml` retains application checks and uses Reve’s GitHub OIDC → prototron deployment pattern, protected environment, serialized rollout and digest-pinned images. Deployment runs only on verified main with explicit enablement and validated target configuration. WebTransport and unqualified background/Memory stages are absent.
 
-`src/api.mjs` is a fail-closed signed-IAP host boundary: readiness is false and native application HTTP routes are unported. It does not silently route to production or run fixture handlers. `src/memory-service.mjs` provides private machine-authenticated upsert/query/delete mechanics; native intent reconciliation remains unavailable. `src/jobs.mjs cleanup` is a bounded internal CLI; `src/worker.mjs` repeats cleanup without browser sessions. Index execution/uncertain-attempt native integration remains outstanding. Leases, original reservation records and generation fences have local repository tests; real browser-independent hosted recovery is untested.
+`deploy/render.mjs` generates runnable R1 workloads once actual target values are supplied. It includes a fresh 5Gi PostgreSQL PVC, password-authenticated bootstrap/runtime roles, schema initialization, web/API services and PostgreSQL network isolation. The legacy `deploy/workloads.yaml` and `deploy/verify.yml` are v2 references, not the R1 deployment entry points.
 
-## Artifacts
-
-- `docs/infrastructure-request.md`: exact real frontend routes, one shared resource set, proposed quota and unresolved owners/accounts/cost/expiry.
-- `docs/qualification.md`: fixed gates, route exclusions, mandatory B/Forma journey, C contract and later-work inventory.
-- `deploy/`: NGINX/containers, suspended/zero-replica Kubernetes proposal, batch RBAC and verification-only workflow. No WebTransport. These are **templates**, not an authorized runnable deployment packet: platform resources, immutable web/API digests and native B integration remain required.
-- `evidence/receipt.json`: final local checks and limitations; raw `.log` files remain local and ignored.
-
-Required B work remains in the active report denominator; it is not deferred into full Forma qualification. Infrastructure inputs are pending. The hosted sequence, real user journey, live storage, closed-tab wakes/redeploy, restore, rollback, cost receipts and A/B/C acceptance are not complete.
-
-## Continue this local candidate
-
-Workspace: `/private/tmp/still-gke-pilot`. Preserve the local branch before clearing temporary directories. The visual adapter and evidence viewer are independent of test database processes. Start the evidence viewer with `node pilot/src/evidence-server.mjs`; it serves only allowlisted documentation and metadata receipts at `http://127.0.0.1:5208/`. The canonical Progress Report remains separately owned on port 4187.
-
-The synthetic PostgreSQL cluster is `pilot/.local/postgres`, initialized with local trust authentication, bound only to loopback port 55527. Start it with `/opt/homebrew/opt/postgresql@17/bin/pg_ctl -D pilot/.local/postgres -l pilot/evidence/postgres.log -o '-h 127.0.0.1 -p 55527' start`. The disposable pgvector container is `still-pilot-memory-local`, bound only to loopback port 55528; restart it with `docker start still-pilot-memory-local`. These test services have been stopped after verification; do not reuse their authentication configuration in hosted environments.
-
-The next implementation step is native session/creation and generic-event repository integration with the complete native role/custody/encryption model, followed by the required real Forma edit/conflict journey. Infrastructure authorization does not substitute for that missing code. Do not treat the API image's successful import check as application readiness.
+Receipts: `evidence/core-receipt.json` (R1), `evidence/receipt.json` (historical A/B/C local proofs). Raw logs are ignored. No user review or acceptance is inferred from tests.

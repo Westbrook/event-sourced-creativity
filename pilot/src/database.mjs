@@ -1,9 +1,10 @@
 import pg from 'pg';
+import {readFileSync} from 'node:fs';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 export const poolFromEnvironment=()=>{
- if(!process.env.PILOT_DATABASE_URL)throw Error('pilot_database_required');
- return new pg.Pool({connectionString:process.env.PILOT_DATABASE_URL,max:5,statement_timeout:15000,connectionTimeoutMillis:5000});
+ if(!process.env.PILOT_DATABASE_URL&&!(process.env.PGHOST&&process.env.PGDATABASE&&process.env.PGUSER&&process.env.PILOT_DATABASE_PASSWORD_FILE))throw Error('pilot_database_required');
+ return new pg.Pool({connectionString:process.env.PILOT_DATABASE_URL,...(process.env.PILOT_DATABASE_PASSWORD_FILE?{password:readFileSync(process.env.PILOT_DATABASE_PASSWORD_FILE,'utf8').trim()}:{}),max:5,statement_timeout:15000,connectionTimeoutMillis:5000});
 };
 export async function transaction(pool,fn){const c=await pool.connect();try{await c.query('BEGIN');const result=await fn(c);await c.query('COMMIT');return result;}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}}
 export async function migrate(pool,migrations=[new URL('../sql/001-platform.sql',import.meta.url)]){

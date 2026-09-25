@@ -10,7 +10,7 @@ export function iapVerifier({audience,keys=googleKeys}){
   const {payload}=await jwtVerify(token,keys,{issuer,audience,algorithms:['ES256'],requiredClaims:['sub','iat','exp'],clockTolerance:30,maxTokenAge:660});
   const now=Date.now()/1000;
   if(typeof payload.sub!=='string'||!payload.sub||typeof payload.iat!=='number'||typeof payload.exp!=='number'||payload.iat>now+30||payload.exp-payload.iat>660)throw Error('invalid_iap_claims');
-  return {issuer,subject:payload.sub};
+  return {issuer,subject:payload.sub,...(typeof payload.email==='string'?{email:payload.email}: {})};
  };
 }
 export async function resolvePrincipal(db,verified){

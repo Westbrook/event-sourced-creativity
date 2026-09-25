@@ -1077,7 +1077,7 @@ test("lost generation capability still allows free retained human-authoring revi
 });
 
 test("a read-only containing surface cannot grant its author actor generation or human-authoring controls", async () => {
-  const f = fixture(); f.state.route = libraryBlockEditorRoute("decision-0"); activeFixture = f; f.host = new FormaLibrary(); f.draw();
+  const f = fixture(); f.state.route = libraryFocusRoute("block", "decision-0"); activeFixture = f; f.host = new FormaLibrary(); f.draw();
   await f.toggle("decision-0");
   const intelligence = f.renderer.component("forma-context-intelligence", "decision-0"); assert.equal(intelligence.readOnly, true);
   const preview = savedContextReview(); f.state.replies.push({ status: "not-applied", preview }); await inspectSavedReview(f, intelligence);
@@ -2346,4 +2346,17 @@ for(const change of ['unchanged','focal-changed-before-publish'])test('Document 
  if(change==='focal-changed-before-publish'){const focal=extracted.at(-1);f.state.events=[...f.state.events,{...focal,eventId:'changed-focal-field',sequence:focal.sequence+1,payload:{...focal.payload,focal_point:{...focal.payload.focal_point,x:.8}}}];f.draw();}
  resume(true);for(let i=0;i<6;i++)await Promise.resolve();assert.equal(seen.length,Number(change==='unchanged'));
  if(seen.length){assert.deepEqual(seen[0].payload.source_event_ids,ids);assert.doesNotMatch(JSON.stringify(seen),/PRIVATE_EXTRACTED_COLOR|focal_point/);}
+});
+
+test('Forma rich Idea editing retains reference identity and the original conflict base', async () => {
+  const f=fixture(), created=f.state.events.find(e=>e.type==='BlockCreated'&&e.payload.block_id==='decision-0');
+  const body={schemaVersion:1,document:{type:'en-rich-text',version:1,doc:{type:'doc',content:[{type:'paragraph',content:[{type:'token',attrs:{run:{kind:'token',id:'retained-reference',type:'still-idea-reference',text:'@Audience',label:'Audience',data:{schemaVersion:1,kind:'idea-reference',projectId:'project-a',blockId:'decision-1'}}}},{type:'text',text:' original wording'}]}]}}};
+  created.payload.properties={...created.payload.properties,rich_text_body:body,text:'@Audience original wording'};f.draw();await f.select('decision-0');await f.toggle('decision-0');const block=f.block('decision-0');
+  const updated=structuredClone(body);updated.document.doc.content[0].content[1].text=' revised wording';
+  await f.renderer.handler(block,'still-idea-body-editor',()=>true,'idea-body-change')({detail:updated});f.draw();
+  // A competing publication must not silently replace the edit's captured CAS base.
+  await f.store.append({type:'BlockPropertyEdited',payload:{block_id:'decision-0',property_path:'text',old_value:'@Audience original wording',new_value:'Competing wording'}});f.draw();
+  let submitted;f.store.appendBatchWithReceipt=async inputs=>{submitted=structuredClone(inputs);return {publication:'withheld',acknowledgment:{outcome:'unconfirmed',rejectedIndices:[]}};};
+  await f.renderer.handler(block,'form',node=>node.attributes.class==='block-editor','submit')();f.draw();
+  assert.equal(submitted[1].payload.old_value,'@Audience original wording');assert.equal(submitted[1].payload.new_value,'@Audience revised wording');assert.deepEqual(submitted[0].payload.old_value,body);assert.deepEqual(submitted[0].payload.new_value.document.doc.content[0].content[0],body.document.doc.content[0].content[0]);assert.equal(f.renderer.ownNodes(block,'still-idea-body-editor')[0].properties.body.document.doc.content[0].content[1].text,' revised wording','unconfirmed saves retain the local draft');
 });

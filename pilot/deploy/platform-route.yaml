@@ -1,0 +1,18 @@
+# Platform-owned companion to proto onboard; replace the proposed namespace/hostname if allocated differently.
+# Submit in reve-infra only with communication authorization. IAP protection/admitted identities must cover BOTH backends.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: still-platform-pilot-reve-dev
+  namespace: still-platform-pilot
+  labels: {app.kubernetes.io/managed-by: reve-dev-gateway, app.kubernetes.io/part-of: reve-dev-gateway}
+spec:
+  parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: reve-dev, namespace: reve-system}]
+  hostnames: [still-platform-pilot.p.reve-dev.com]
+  rules:
+  - matches: [{path: {type: PathPrefix, value: /api}}]
+    backendRefs: [{group: '', kind: Service, name: api, port: 80, weight: 1}]
+    timeouts: {request: 30s}
+  - matches: [{path: {type: PathPrefix, value: /}}]
+    backendRefs: [{group: '', kind: Service, name: frontend, port: 80, weight: 1}]
+    timeouts: {request: 30s}

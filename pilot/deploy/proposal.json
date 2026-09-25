@@ -1,21 +1,56 @@
 {
- "status":"local-proposal-not-authorized-or-provisioned",
- "repository":"reve-ai/still-platform-pilot",
- "namespace":"still-platform-pilot",
- "hostname":"still-platform-pilot.p.reve-dev.com",
- "routes":{"still":"/still","stillDocument":"/still/project/:projectId/document/:documentId","forma":"/projects","formaDocument":"/document/:documentId/:optional-slug"},
- "owners":{"engineering":null,"billing":null,"operations":null,"cleanup":null},
- "iapAccounts":[null,null],
- "iapAudience":null,
- "billingAccount":null,
- "budgetUSD":null,
- "quotedCostUSD":null,
- "expiresAt":null,
- "proposedLimits":{"requestsCPU":"750m","limitsCPU":"3","requestsMemory":"1536Mi","limitsMemory":"4Gi","pvc":"5Gi","bucketBytes":1073741824,"pods":10,"jobLimit":10,"providersUSD":0},
- "resources":{"applicationDatabase":null,"memoryRole":null,"bucket":null,"backupBucket":null,"runtimeServiceAccount":null,"deployServiceAccount":null,"artifactRegistry":null,"alertDestination":null},
- "deploymentEnabled":false,
- "providersEnabled":false,
- "nativeHttpPortQualified":false,
- "sharedFrontendJourneyQualified":false,
- "webTransport":false
+  "status": "r1-native-local-verified-infrastructure-unresolved",
+  "repository": "reve-ai/still-platform-pilot",
+  "namespace": "still-platform-pilot",
+  "hostname": "still-platform-pilot.p.reve-dev.com",
+  "routes": {
+    "still": "/still",
+    "stillDocument": "/still/project/:projectId/document/:documentId",
+    "forma": "/projects",
+    "formaDocument": "/document/:documentId/:optional-slug"
+  },
+  "owners": {
+    "engineering": null,
+    "billing": null,
+    "operations": null,
+    "cleanup": null
+  },
+  "iapAccounts": [
+    null,
+    null
+  ],
+  "iapAudience": null,
+  "billingAccount": null,
+  "budgetUSD": null,
+  "quotedCostUSD": null,
+  "expiresAt": null,
+  "proposedLimits": {
+    "requestsCPU": "225m",
+    "limitsCPU": "4",
+    "requestsMemory": "544Mi",
+    "limitsMemory": "3Gi",
+    "pvc": "5Gi",
+    "bucketBytes": 1073741824,
+    "pods": 6,
+    "providersUSD": 0
+  },
+  "resources": {
+    "applicationDatabase": null,
+    "bucket": null,
+    "runtimeServiceAccount": null,
+    "deployServiceAccount": null,
+    "artifactRegistry": null,
+    "alertDestination": null
+  },
+  "deploymentEnabled": false,
+  "providersEnabled": false,
+  "nativeHttpPortQualified": true,
+  "sharedFrontendJourneyQualified": true,
+  "webTransport": false,
+  "scopeVersion": 3,
+  "hostedQualified": false,
+  "laterReleases": [
+    "R2 workers/indexing/cleanup",
+    "R3 hosted Memory qualification"
+  ]
 }
