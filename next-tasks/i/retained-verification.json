@@ -1,0 +1,192 @@
+{
+  "schemaVersion": "i-constraint-trace-v1",
+  "originalBundle": {
+    "bytes": 141715,
+    "sha256": "fab30b08fc03a8d1c792c4784c9b8b8d6868f7a48ff93b567b18b7963b276a00"
+  },
+  "deleteNoLaterThan": "2026-10-23T22:57:45.985Z",
+  "checkedAt": "2026-09-25T00:03:31.718Z",
+  "noNewRawCopy": true,
+  "recordsVerified": 12,
+  "requestBodiesVerified": 4,
+  "facts": [
+    {
+      "index": 0,
+      "classification": "authored requirement in admitted record; not fresh source authority",
+      "text": {
+        "bytes": 159,
+        "sha256": "f144103f8679c7e510359a52914e9e79570bc7f7e24f64d9a8b6961ee2339c22"
+      },
+      "intent": "include",
+      "effect": "shape_or_include",
+      "authority": "authored",
+      "weight": 0.8,
+      "scope": {
+        "schema_version": 1,
+        "kind": "document",
+        "coordinate_space": "document-normalized",
+        "feather": 0,
+        "falloff": "hard",
+        "polarity": "inside"
+      },
+      "plannerEquals": true,
+      "compilerEquals": true
+    },
+    {
+      "index": 1,
+      "classification": "authored requirement in admitted record; not fresh source authority",
+      "text": {
+        "bytes": 105,
+        "sha256": "5e1001a0ead141ef09f4ca4bc035a5846263ad4ed41a19bbaa0b21a077de2425"
+      },
+      "intent": "include",
+      "effect": "shape_or_include",
+      "authority": "authored",
+      "weight": 0.8,
+      "scope": {
+        "schema_version": 1,
+        "kind": "document",
+        "coordinate_space": "document-normalized",
+        "feather": 0,
+        "falloff": "hard",
+        "polarity": "inside"
+      },
+      "plannerEquals": true,
+      "compilerEquals": true
+    },
+    {
+      "index": 2,
+      "classification": "authored requirement in admitted record; not fresh source authority",
+      "text": {
+        "bytes": 70,
+        "sha256": "4eb0cd4fab896dc4285c87cb83b02aa2b08a07f16e8d166ea647540fed013030"
+      },
+      "intent": "include",
+      "effect": "shape_or_include",
+      "authority": "authored",
+      "weight": 0.8,
+      "scope": {
+        "schema_version": 1,
+        "kind": "document",
+        "coordinate_space": "document-normalized",
+        "feather": 0,
+        "falloff": "hard",
+        "polarity": "inside"
+      },
+      "plannerEquals": true,
+      "compilerEquals": true
+    },
+    {
+      "index": 3,
+      "classification": "authored requirement in admitted record; not fresh source authority",
+      "text": {
+        "bytes": 48,
+        "sha256": "23a02e239f74fd99086e94e0b8e442e8d04879968d89cae447515992405356aa"
+      },
+      "intent": "include",
+      "effect": "shape_or_include",
+      "authority": "authored",
+      "weight": 0.8,
+      "scope": {
+        "schema_version": 1,
+        "kind": "document",
+        "coordinate_space": "document-normalized",
+        "feather": 0,
+        "falloff": "hard",
+        "polarity": "inside"
+      },
+      "plannerEquals": true,
+      "compilerEquals": true
+    },
+    {
+      "index": 4,
+      "classification": "authored requirement in admitted record; not fresh source authority",
+      "text": {
+        "bytes": 99,
+        "sha256": "9e7f6a6e649d3727cd6d82fd5f1d503c4a89d606147d2abf8ecf69faae0b3dcb"
+      },
+      "intent": "include",
+      "effect": "shape_or_include",
+      "authority": "authored",
+      "weight": 0.8,
+      "scope": {
+        "schema_version": 1,
+        "kind": "document",
+        "coordinate_space": "document-normalized",
+        "feather": 0,
+        "falloff": "hard",
+        "polarity": "inside"
+      },
+      "plannerEquals": true,
+      "compilerEquals": true
+    },
+    {
+      "index": 5,
+      "classification": "authored requirement in admitted record; not fresh source authority",
+      "text": {
+        "bytes": 61,
+        "sha256": "5a8fb7c372e4d00b8392701e9a221697956184289cea54c6433daef3ca07f3aa"
+      },
+      "intent": "include",
+      "effect": "shape_or_include",
+      "authority": "authored",
+      "weight": 0.8,
+      "scope": {
+        "schema_version": 1,
+        "kind": "document",
+        "coordinate_space": "document-normalized",
+        "feather": 0,
+        "falloff": "hard",
+        "polarity": "inside"
+      },
+      "plannerEquals": true,
+      "compilerEquals": true
+    }
+  ],
+  "currentCompiler": {
+    "bytes": 7147,
+    "sha256": "27d602f9f456f19ada43dcbf59a176ec8120ebea604033c897b941a1a3ba9aca",
+    "identical": true,
+    "compacted": false
+  },
+  "currentPlanner": {
+    "requestDiff": [
+      "instructions"
+    ],
+    "baseline": {
+      "bytes": 7402,
+      "sha256": "548967ffb65bde68af9bc0ab136bf088b27ffa20d95c90be00d96bc13f7177bd"
+    },
+    "current": {
+      "bytes": 7867,
+      "sha256": "7b0b33fb6692574f677e472bf58ecb3c5741f0bccc70adb5ea45f4e70510780d"
+    },
+    "instructionsOnly": true,
+    "addedInstructionSuffix": " Format Ideas with explicit output_preference are soft medium preferences, never exclusive Document types or instructions to start generation. The user's explicitly selected Output kind governs this request even when it differs from those preferences. Preserve unrelated framing and content constraints; surface genuine incompatibilities instead of erasing them. Recommendations may use preferences as context but must not treat them as current generation requests."
+  },
+  "direction": {
+    "bytes": 1351,
+    "sha256": "7f508bafb3fb104cc999ede5cfb411b9454913e5cf7a3dbbb22976eaf5c3a70c"
+  },
+  "specificSpans": {
+    "authoredMain": {
+      "offset": 1491,
+      "bytes": 159,
+      "sha256": "f144103f8679c7e510359a52914e9e79570bc7f7e24f64d9a8b6961ee2339c22"
+    },
+    "plannerScene": {
+      "offset": 257,
+      "bytes": 701,
+      "sha256": "77ca04f5b710f88da6cac704d4f0607a65a6e86c7b32ec89e1dafb994ec75584"
+    },
+    "plannerNextMove": {
+      "offset": 1168,
+      "bytes": 88,
+      "sha256": "deac7aaa7fda07f80b21ff7f321553f949eb61d475698a8532096d2474840c25"
+    }
+  },
+  "sectionsPreserved": true,
+  "typographyUnchanged": true,
+  "observationsAuthority": "N4 result.md dated recorded observation; no image reinspection",
+  "acceptance": "unrecorded"
+}

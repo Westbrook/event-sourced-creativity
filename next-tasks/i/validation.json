@@ -1,0 +1,60 @@
+{
+  "status": "local-pass-no-runtime-change",
+  "tests": 52,
+  "passed": 52,
+  "failed": 0,
+  "focusedTests": 5,
+  "regressionTests": 47,
+  "command": "node --import tsx --test tests/generation-i-constraints.test.mjs tests/prompt-policy.test.mjs tests/prompt-structures.test.mjs tests/combined-context.test.mjs tests/generation-outcome-evidence.test.mjs",
+  "retainedVerification": "node --import tsx next-tasks/i/verify-retained.mjs",
+  "baseCommit": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "providerCalls": 0,
+  "newPreflights": 0,
+  "runtimeChanges": false,
+  "workerRebuilt": false,
+  "workerQualificationClaim": false,
+  "userAcceptance": "unrecorded",
+  "freshOpenFeedback": [],
+  "artifacts": {
+    "profile.mjs": {
+      "bytes": 1411,
+      "sha256": "4ce9c0bf77972a0eaac5569d71f0aef7e7f89686a958bf26a90fc6654d9db570"
+    },
+    "fixture.mjs": {
+      "bytes": 1977,
+      "sha256": "9350824ab3db25642c6079caea4e5fe1e5c0398b715cb954733f823a4c9596a2"
+    },
+    "verify-retained.mjs": {
+      "bytes": 9721,
+      "sha256": "6912e3687658648df2ba5d676afb642d8ec8682593d13a0236298c1faa6f4821"
+    },
+    "retained-verification.json": {
+      "bytes": 6049,
+      "sha256": "4ac313b2d5db1d03ce8f4ac08c4d475c30cf0f1d27ec16b51419d5582fde3d79"
+    },
+    "comparison-candidate.json": {
+      "bytes": 5945,
+      "sha256": "bc1bf6455254d26f28601c5a454ae41f2e6ab71708e1cba969b2644c06ce636d"
+    },
+    "synthetic-request-capture.json": {
+      "bytes": 28258,
+      "sha256": "731e0b4912fdf6e299cf846f3f2f2ba9807c292792f1babc34f8aea5cdcb409c"
+    },
+    "validation.log": {
+      "bytes": 5112,
+      "sha256": "17b928831bf18d0b06a21babcc21e9b6e7cb37574d2c735a229d7eb79f5cc3c1"
+    },
+    "result.md": {
+      "bytes": 15301,
+      "sha256": "ea41fa764911c90c1bb8b70960dcfa48fd3beb0039934661e6eff4280c4f726c"
+    },
+    "ledger-addendum.md": {
+      "bytes": 2788,
+      "sha256": "f940cada4f5db271607efc04f0a58908c9e76d9b3efd23ced0bc110eaee63a8e"
+    },
+    "index.html": {
+      "bytes": 4157,
+      "sha256": "a51ad04f25ef850acbed1ec7ddff9cd4bccc28082877e9e9a6cf21d8df7ecd48"
+    }
+  }
+}
