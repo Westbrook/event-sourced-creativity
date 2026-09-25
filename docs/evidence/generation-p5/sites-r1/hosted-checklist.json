@@ -1,0 +1,67 @@
+{
+  "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "items": [
+    {
+      "assertion": "trusted edge identity and spoof/origin/project/impersonation denials",
+      "owner": "Hosting operator",
+      "status": "unqualified",
+      "evidence": null
+    },
+    {
+      "assertion": "physical DB/MEDIA identity, region and isolation",
+      "owner": "Hosting operator",
+      "status": "unqualified",
+      "evidence": null
+    },
+    {
+      "assertion": "actual query/batch/transaction/request CPU/memory limits and costs",
+      "owner": "Hosting operator / resource payer",
+      "status": "unqualified",
+      "evidence": null
+    },
+    {
+      "assertion": "full schema and applied-migration coexistence receipt",
+      "owner": "Database operator",
+      "status": "unqualified",
+      "evidence": null
+    },
+    {
+      "assertion": "atomic rollback at approval/reservation/intent boundaries",
+      "owner": "Database operator",
+      "status": "unqualified",
+      "evidence": null
+    },
+    {
+      "assertion": "duplicate/concurrent commit, lost acknowledgement and restart durability",
+      "owner": "P5 on approved disposable fixture",
+      "status": "unqualified",
+      "evidence": null
+    },
+    {
+      "assertion": "revocation, expiry, default-off and no-provider egress",
+      "owner": "P5 on approved disposable fixture",
+      "status": "unqualified",
+      "evidence": null
+    },
+    {
+      "assertion": "original R2 custody/read/deletion and separate provider/backup guarantees",
+      "owner": "Storage/deletion operator",
+      "status": "unqualified",
+      "evidence": null
+    },
+    {
+      "assertion": "actual principal/payer/key-project binding, issuers/model/rates",
+      "owner": "Account administrator",
+      "status": "unqualified",
+      "evidence": null
+    },
+    {
+      "assertion": "financial-mode choice, original-charge verifier and funded retention dates",
+      "owner": "Payer / verifier",
+      "status": "unqualified",
+      "evidence": null
+    }
+  ],
+  "fixtureProviderPosts": "intercepted only; zero actual provider calls",
+  "authority": "requires exact resource/deploy/schema authorization before action"
+}

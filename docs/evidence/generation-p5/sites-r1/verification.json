@@ -1,0 +1,138 @@
+{
+  "version": "p5-sites-r1",
+  "classification": "local synthetic verification only",
+  "tests": [
+    {
+      "log": "sites-tests.log",
+      "passed": 26,
+      "failed": 0
+    },
+    {
+      "log": "p4-p2-f3-tests.log",
+      "passed": 196,
+      "failed": 0
+    },
+    {
+      "log": "c2-native-tests.log",
+      "passed": 44,
+      "failed": 0
+    }
+  ],
+  "totalPass": 266,
+  "build": "pass; existing large-chunk warnings",
+  "typecheck": "pass",
+  "lint": "pass; affected files",
+  "schemas": "P2 supplied/P4 exact; 49-object additive coexistence and SQLite rollback",
+  "builtWorker": {
+    "check": "built Worker local workerd empty configuration with both flags off and on",
+    "checks": [
+      {
+        "enabled": false,
+        "route": "approval",
+        "status": 200,
+        "result": "disabled"
+      },
+      {
+        "enabled": false,
+        "route": "execute",
+        "status": 200,
+        "result": "disabled"
+      },
+      {
+        "enabled": false,
+        "route": "observe",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": false,
+        "route": "recover",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": false,
+        "route": "reconcile",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": false,
+        "route": "stop",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": false,
+        "route": "cleanup",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": false,
+        "route": "cleanup-proposal",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": true,
+        "route": "approval",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": true,
+        "route": "execute",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": true,
+        "route": "observe",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": true,
+        "route": "recover",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": true,
+        "route": "reconcile",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": true,
+        "route": "stop",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": true,
+        "route": "cleanup",
+        "status": 503,
+        "result": "unconfigured"
+      },
+      {
+        "enabled": true,
+        "route": "cleanup-proposal",
+        "status": 503,
+        "result": "unconfigured"
+      }
+    ],
+    "dbBindingAbsent": true,
+    "storageBindingAbsent": true,
+    "providerCalls": 0,
+    "managedSitesQualified": false,
+    "requestedCompatibilityDate": "2026-05-22"
+  },
+  "managedSitesQualified": false,
+  "realProviderCalls": 0,
+  "published": false,
+  "realSchemaInstalled": false,
+  "actualAuthorityCreated": false,
+  "testDisclosure": "Fixtures exercise actual-classification parser with explicitly synthetic private terms/issuers. No fixture ID/decision is deployable authority."
+}

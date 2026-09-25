@@ -1,0 +1,34 @@
+✔ actual Worker empty configuration: approval (13.175042ms)
+✔ actual Worker empty configuration: execute (0.684916ms)
+✔ actual Worker empty configuration: observe (0.32375ms)
+✔ actual Worker empty configuration: recover (0.222833ms)
+✔ actual Worker empty configuration: reconcile (0.556459ms)
+✔ actual Worker empty configuration: stop (0.384917ms)
+✔ actual Worker empty configuration: cleanup (0.453708ms)
+✔ actual Worker empty configuration: cleanup-proposal (0.387208ms)
+✔ flags alone cannot enable shipped Worker (0.540167ms)
+✔ Sites selectors preserve full pair, original receipts and human boundary: accepted-estimate (5616.18325ms)
+✔ Sites selectors preserve full pair, original receipts and human boundary: bounded-proof (6213.506083ms)
+✔ configured route denies identity/scope/origin before dispatch: {"origin":"https://evil.test"} (478.416167ms)
+✔ configured route denies identity/scope/origin before dispatch: {"oai-authenticated-user-id":"other"} (466.806ms)
+✔ configured route denies identity/scope/origin before dispatch: {"cookie":"forma_impersonation=other"} (485.798833ms)
+✔ configured route denies identity/scope/origin before dispatch: {"cookie":"forma_project_context=other"} (471.260875ms)
+✔ HTTP cannot introduce authority {"arm":"baseline","policy":{}} (58.842958ms)
+✔ HTTP cannot introduce authority {"arm":"baseline","grantId":"fake"} (59.856167ms)
+✔ HTTP cannot introduce authority {"arm":"third"} (59.692292ms)
+✔ HTTP cannot introduce authority {"arm":"baseline","evidence":[]} (65.1685ms)
+✔ HTTP cannot introduce authority {"arm":"baseline","resume":true} (68.777917ms)
+✔ changed binding fails before purchase: OPENAI_API_KEY (454.79825ms)
+✔ changed binding fails before purchase: OPENAI_PROJECT (471.234ms)
+✔ synthetic config never promoted by production wrapper (58.042042ms)
+✔ expired proposal cleanup preserves accounting and unrelated private content; committed=false (157.607708ms)
+✔ expired proposal cleanup preserves accounting and unrelated private content; committed=true (505.285ms)
+✔ operation cleanup after disabled switches retains original charges, policies, holds and intent (2601.726333ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 26
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 19819.285375

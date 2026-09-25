@@ -25,7 +25,7 @@ export function validateAdvisoryWire(request){
 }
 /** Exact wire body, one fetch, no SDK retry and no status/result fallback. Called only after durable intent. */
 export async function submitStudyStage(env,request,stage,{signal,checkpoint}){
-  const response=await fetch('https://api.openai.com'+request.endpoint,{method:'POST',redirect:'error',signal,headers:{authorization:`Bearer ${env.OPENAI_API_KEY}`,'content-type':'application/json'},body:request.body});
+  const response=await fetch('https://api.openai.com'+request.endpoint,{method:'POST',redirect:'error',signal,headers:{authorization:`Bearer ${env.OPENAI_API_KEY}`,'content-type':'application/json',...(env.OPENAI_PROJECT?{'OpenAI-Project':env.OPENAI_PROJECT}:{})},body:request.body});
   const headerId=response.headers.get('x-request-id');
   const requestId=typeof headerId==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(headerId)?headerId:null;
   // Request identity survives a lost/oversized/malformed body before private custody.
