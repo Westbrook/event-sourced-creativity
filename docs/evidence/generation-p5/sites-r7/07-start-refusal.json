@@ -1,0 +1,23 @@
+{
+  "ok": false,
+  "error": "Error: schema_mismatch",
+  "instance": "fd13d041-3343-431c-b7e5-91a674c4d5bc",
+  "metrics": {
+    "action": "start",
+    "step": "",
+    "statements": 2,
+    "attemptedStatements": 2,
+    "bindingCalls": 2,
+    "failedBatches": 0,
+    "reads": 583,
+    "writes": 0,
+    "databaseBytes": 815104,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    }
+  }
+}

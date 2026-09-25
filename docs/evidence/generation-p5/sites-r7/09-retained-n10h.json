@@ -1,0 +1,39 @@
+{
+  "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "binding_name": "DB",
+  "table_name": "n10h_run",
+  "columns": [
+    "id",
+    "owner",
+    "phase",
+    "next",
+    "started",
+    "cleanup",
+    "reads",
+    "writes",
+    "report"
+  ],
+  "rows": [
+    {
+      "id": 1,
+      "owner": "t5vP6WYCI7u0qKN3pdNyERILk7JCjfzvlAZ3XaAb3ZOKN4uztBdNlj",
+      "phase": "disabled",
+      "next": 205,
+      "started": 1790286130834,
+      "cleanup": 205,
+      "reads": 38967813,
+      "writes": 494894,
+      "report": null
+    }
+  ],
+  "limit": 1,
+  "offset": 0,
+  "has_more": false,
+  "model_projection": {
+    "truncated": false,
+    "truncated_values": 0,
+    "omitted_columns": 0,
+    "omitted_rows": 0,
+    "next_offset": null
+  }
+}
