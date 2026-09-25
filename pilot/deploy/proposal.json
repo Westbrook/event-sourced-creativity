@@ -11,9 +11,9 @@
   },
   "owners": {
     "engineering": null,
-    "billing": null,
+    "billing": "westbrook.johnson@reve.art",
     "operations": null,
-    "cleanup": null
+    "cleanup": "westbrook.johnson@reve.art"
   },
   "iapAccounts": [
     null,
@@ -21,7 +21,7 @@
   ],
   "iapAudience": "/projects/55499293561/global/backendServices/234778523344085902",
   "billingAccount": null,
-  "budgetUSD": null,
+  "budgetUSD": 200,
   "quotedCostUSD": null,
   "expiresAt": null,
   "proposedLimits": {
@@ -52,5 +52,11 @@
   "laterReleases": [
     "R2 workers/indexing/cleanup",
     "R3 hosted Memory qualification"
-  ]
+  ],
+  "budgetScope": "Total infrastructure ceiling for this test; expiry pending",
+  "infrastructurePR": "https://github.com/reve-ai/reve-infra/pull/1253",
+  "secondAccountCandidate": {
+    "email": "westbrook.johnson+test@reve.art",
+    "status": "Requires distinct Google identity; an alias does not qualify"
+  }
 }

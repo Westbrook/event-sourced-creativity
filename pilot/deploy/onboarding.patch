@@ -1,3 +1,70 @@
+diff --git a/docs/still-prototron.md b/docs/still-prototron.md
+new file mode 100644
+index 0000000..8330845
+--- /dev/null
++++ b/docs/still-prototron.md
+@@ -0,0 +1,61 @@
++# Still core test release
++
++This onboards `still-platform-pilot` on Prototron using the supported
++`proto onboard still-platform-pilot reve-ai/still-platform-pilot --disable-debug-agent`
++flow. The application repository remains to be created.
++
++The selected release serves the native Still interface and a selected Forma
++document workflow from one application backend with fresh test data. Paid models,
++uploads, background indexing and Memory are disabled for the first release.
++
++## Infrastructure in this change
++
++- Namespace, Kubernetes service account and namespace-scoped CI `edit` binding.
++- Standard prototype Google service account, repository-specific GitHub workload
++  identity binding, KSA binding, cluster viewer and registry writer permissions.
++- Restricted Pod Security and resource quota: six pods, one 5Gi PVC, 1 requested
++  CPU / 2Gi requested memory, 4 CPU / 3Gi memory limits.
++- Custom route for `still-platform-pilot.p.reve-dev.com`: `/api` to `api:80`,
++  other paths to `frontend:80`, through the shared IAP-protected gateway.
++- Default deny, with the inherited namespace network allowances restricted to
++  `app=api` and `app=web`. PostgreSQL receives no inherited ingress allowance;
++  the application deployment supplies its API-only port-5432 policy. This avoids
++  additive network policies reopening the database to the gateway or web pod.
++
++This follows the current prototype convention of a shared workload/CI Google
++identity. It does not create application workloads, passwords, object storage,
++admissions, or a working application URL. It does not change shared IAP access.
++
++## Release prerequisites
++
++The user authorized a **$200 total infrastructure spending ceiling** for this
++test. Resource quotas are capacity limits, not a billing cap. Billing/cleanup
++owner is `westbrook.johnson@reve.art`. Expiry and the admitted test accounts are
++still unresolved. Record those values and a cost-control procedure before
++deploying billable workloads.
++The second account is for real sharing/revocation acceptance; it is not needed
++to review this onboarding change.
++
++After infrastructure review/merge, a maintainer applies
++`terraform/reve-prototyping` through the normal process. Create the private app
++repository and protected deployment environment, fresh credentials and private
++bucket, then enable the verified-main GitHub-to-GKE workflow. Retain the secrets
++and PVC across ordinary redeploys. The app validates signed IAP assertions and
++its own named admissions, roles and consent; it rejects access after the release
++expiry. An operator must remove the resources to stop their ongoing charges.
++
++The test requires actual hosted verification of sign-in, persistence, the same
++document edited in Still and Forma, sharing/revocation, deletion, pod restart
++and an ordinary redeploy. A redirect to shared Google sign-in alone does not
++prove that the application is deployed.
++
++## Validation
++
++```sh
++kubectl kustomize k8s/prototron/user-namespaces/still-platform-pilot
++terraform fmt -check terraform/reve-prototyping/user-namespaces.tf
++python3 -m unittest discover -s experiments/proto/tests -q
++git diff --check
++```
++
++No Terraform plan/apply or cluster mutation was performed while preparing this PR.
 diff --git a/k8s/prototron/user-namespaces/kustomization.yaml b/k8s/prototron/user-namespaces/kustomization.yaml
 index 991ae92..cd4b8b2 100644
 --- a/k8s/prototron/user-namespaces/kustomization.yaml
@@ -10,48 +77,6 @@ index 991ae92..cd4b8b2 100644
    - agentobservability
    - bloom
    - soc-ai-detection
-diff --git a/terraform/reve-prototyping/user-namespaces.tf b/terraform/reve-prototyping/user-namespaces.tf
-index 5f07050..a751fee 100644
---- a/terraform/reve-prototyping/user-namespaces.tf
-+++ b/terraform/reve-prototyping/user-namespaces.tf
-@@ -277,3 +277,37 @@ resource "google_project_iam_member" "agentobservability_registry_writer" {
-   role    = "roles/artifactregistry.writer"
-   member  = "serviceAccount:${google_service_account.agentobservability.email}"
- }
-+
-+# still-platform-pilot -- https://github.com/reve-ai/still-platform-pilot
-+resource "google_service_account" "still_platform_pilot" {
-+  project      = var.project_id
-+  account_id   = "still-platform-pilot"
-+  display_name = "still-platform-pilot prototype workload + CI identity"
-+}
-+
-+resource "google_service_account_iam_member" "still_platform_pilot_wif" {
-+  service_account_id = google_service_account.still_platform_pilot.id
-+  role               = "roles/iam.workloadIdentityUser"
-+  member             = "principalSet://iam.googleapis.com/${var.github_identity_pool_id}/attribute.repository/reve-ai/still-platform-pilot"
-+}
-+
-+# Lets pods using the namespace's KSA (manifests.yaml) actually mint
-+# tokens as this GSA -- the binding above only covers GitHub's CI
-+# identity, not the in-cluster Workload Identity direction.
-+resource "google_service_account_iam_member" "still_platform_pilot_ksa_wif" {
-+  service_account_id = google_service_account.still_platform_pilot.id
-+  role               = "roles/iam.workloadIdentityUser"
-+  member             = "serviceAccount:${var.project_id}.svc.id.goog[still-platform-pilot/still-platform-pilot]"
-+}
-+
-+resource "google_project_iam_member" "still_platform_pilot_cluster_viewer" {
-+  project = var.project_id
-+  role    = "roles/container.clusterViewer"
-+  member  = "serviceAccount:${google_service_account.still_platform_pilot.email}"
-+}
-+
-+resource "google_project_iam_member" "still_platform_pilot_registry_writer" {
-+  project = var.project_id
-+  role    = "roles/artifactregistry.writer"
-+  member  = "serviceAccount:${google_service_account.still_platform_pilot.email}"
-+}
 diff --git a/k8s/prototron/user-namespaces/still-platform-pilot/deny-all.yaml b/k8s/prototron/user-namespaces/still-platform-pilot/deny-all.yaml
 new file mode 100644
 index 0000000..04efe06
@@ -150,12 +175,12 @@ index 0000000..a924161
 +    persistentvolumeclaims: "1"
 diff --git a/k8s/prototron/user-namespaces/still-platform-pilot/route.yaml b/k8s/prototron/user-namespaces/still-platform-pilot/route.yaml
 new file mode 100644
-index 0000000..e60c589
+index 0000000..6a9bfb4
 --- /dev/null
 +++ b/k8s/prototron/user-namespaces/still-platform-pilot/route.yaml
 @@ -0,0 +1,18 @@
-+# Platform-owned companion to proto onboard; replace the proposed namespace/hostname if allocated differently.
-+# Submit in reve-infra only with communication authorization. IAP protection/admitted identities must cover BOTH backends.
++# Both application backends use the shared IAP-protected gateway.
++# A custom route is required because the namespace contains dashes.
 +apiVersion: gateway.networking.k8s.io/v1
 +kind: HTTPRoute
 +metadata:
@@ -172,3 +197,45 @@ index 0000000..e60c589
 +  - matches: [{path: {type: PathPrefix, value: /}}]
 +    backendRefs: [{group: '', kind: Service, name: frontend, port: 80, weight: 1}]
 +    timeouts: {request: 30s}
+diff --git a/terraform/reve-prototyping/user-namespaces.tf b/terraform/reve-prototyping/user-namespaces.tf
+index 5f07050..a751fee 100644
+--- a/terraform/reve-prototyping/user-namespaces.tf
++++ b/terraform/reve-prototyping/user-namespaces.tf
+@@ -277,3 +277,37 @@ resource "google_project_iam_member" "agentobservability_registry_writer" {
+   role    = "roles/artifactregistry.writer"
+   member  = "serviceAccount:${google_service_account.agentobservability.email}"
+ }
++
++# still-platform-pilot -- https://github.com/reve-ai/still-platform-pilot
++resource "google_service_account" "still_platform_pilot" {
++  project      = var.project_id
++  account_id   = "still-platform-pilot"
++  display_name = "still-platform-pilot prototype workload + CI identity"
++}
++
++resource "google_service_account_iam_member" "still_platform_pilot_wif" {
++  service_account_id = google_service_account.still_platform_pilot.id
++  role               = "roles/iam.workloadIdentityUser"
++  member             = "principalSet://iam.googleapis.com/${var.github_identity_pool_id}/attribute.repository/reve-ai/still-platform-pilot"
++}
++
++# Lets pods using the namespace's KSA (manifests.yaml) actually mint
++# tokens as this GSA -- the binding above only covers GitHub's CI
++# identity, not the in-cluster Workload Identity direction.
++resource "google_service_account_iam_member" "still_platform_pilot_ksa_wif" {
++  service_account_id = google_service_account.still_platform_pilot.id
++  role               = "roles/iam.workloadIdentityUser"
++  member             = "serviceAccount:${var.project_id}.svc.id.goog[still-platform-pilot/still-platform-pilot]"
++}
++
++resource "google_project_iam_member" "still_platform_pilot_cluster_viewer" {
++  project = var.project_id
++  role    = "roles/container.clusterViewer"
++  member  = "serviceAccount:${google_service_account.still_platform_pilot.email}"
++}
++
++resource "google_project_iam_member" "still_platform_pilot_registry_writer" {
++  project = var.project_id
++  role    = "roles/artifactregistry.writer"
++  member  = "serviceAccount:${google_service_account.still_platform_pilot.email}"
++}
