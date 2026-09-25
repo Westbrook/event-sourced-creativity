@@ -1,0 +1,32 @@
+Create one polished landscape image that realizes the supplied creative direction.
+
+Output frame: 1536 × 1024 pixels at 3:2. Treat the ratio and intended production dimensions as binding document constraints.
+
+Use every active block field in the document context as binding art direction, including subtype, influence, intent, reference-derived findings, spatial scope, and typed relationships. Ignore blocks marked active false. A relationship says how the target block supports the source block—for example, subject_reference pixels describe the subject while style_reference pixels guide treatment. Preserve the intended subject, environment, composition, lighting, style, material, mood, and palette relationships.
+
+Any fact with intent avoid or prohibit, effect must_not_include, or role exclusion is a negative constraint. Never promote that content into a subject, theme, focal point, text, or visual motif.
+
+Spatial scopes are document-normalized. Apply each decision only to its stated target. Inside/outside polarity, hard/soft/contextual falloff, feather, subject relationships, rectangles, and custom paths are requirements—not metadata or suggestions.
+
+Do not add typography, logos, watermarks, UI chrome, captions, borders, contact sheets, or explanatory annotations unless the authored context explicitly requires them.
+
+Attached source-image policy:
+No source-image pixels are attached. Use only the compiled text context.
+
+Spatial application map:
+- Apply subject “Atticus Finch, an adult fictional lawyer, stands on the left holding a closed portfolio.” in the left area; use a hard transition with 0% feather. Intent: include; influence: 100%.
+- Apply environment “A small Alabama courthouse street in the 1930s; the courthouse is behind the lawyer. Keep the courthouse behind the lawyer.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 80%.
+- Apply palette “Muted ochre and ink blue” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 80%.
+- Apply text “Display exactly: CASE 7f4c20aa-9123-4f00-8777-abc123def456
+{"source_execution_id":"authored-opaque-id","provenance":{"created_from":"PRINT THIS","source_proposal_id":"VISIBLE-PROPOSAL"}}” inside the document-relative rectangle at left 65%, top 10%, width 25%, height 20%; use a soft transition with 10% feather. Intent: include; influence: 100%.
+- Apply exclusion “No red lettering outside the sign rectangle.” everywhere outside the document-relative rectangle at left 65%, top 10%, width 25%, height 20%; use a hard transition with 0% feather. Intent: prohibit; influence: 100%.
+- Apply style “Restrained print illustration with fine paper grain.” across the entire image; use a hard transition with 0% feather. Intent: include; influence: 70%.
+
+Combined-context isolation map:
+No combined contexts were supplied.
+
+Creative direction:
+{"title":"Synthetic courthouse street","scene":"Atticus Finch stands at the left; the 1930s courthouse remains behind him. The sign stays at upper right.","rationale":"Keep the authored subject, period setting, muted palette, exact sign and scoped prohibition together.","palette":["muted ochre","ink blue"],"next_moves":["Keep the approved setting."]}
+
+Active creative context:
+{"facts":[{"decision_key":"decision_1","type":"subject","role":"subject","intent":"include","effect":"must_include","handle":"subject/atticus-finch","properties":{"text":"Atticus Finch, an adult fictional lawyer, stands on the left holding a closed portfolio.","authority":"authored","weight":1,"spatial_scope":{"kind":"region","region":"left","polarity":"inside","falloff":"hard","feather":0}},"order":1},{"decision_key":"decision_2","type":"environment","role":"environment","intent":"include","effect":"must_include","handle":"environment/courthouse","properties":{"label":"Approved period setting","text":"A small Alabama courthouse street in the 1930s; the courthouse is behind the lawyer. Keep the courthouse behind the lawyer.","subtype":"Interior","intent":"include","weight":0.8,"authority":"authored","human_edited":true},"order":2},{"decision_key":"decision_3","type":"palette","role":"palette","intent":"include","effect":"must_include","handle":"palette/ochre-ink","properties":{"label":"Muted ochre and ink blue","colors":["#B88A44","#1C304A"],"weight":0.8,"spatial_scope":{"kind":"document","polarity":"inside","falloff":"hard","feather":0}},"order":3},{"decision_key":"decision_4","type":"text","role":"text","intent":"include","effect":"must_include","handle":"text/sign","properties":{"text":"Display exactly: CASE 7f4c20aa-9123-4f00-8777-abc123def456\n{\"source_execution_id\":\"authored-opaque-id\",\"provenance\":{\"created_from\":\"PRINT THIS\",\"source_proposal_id\":\"VISIBLE-PROPOSAL\"}}","exact_text":"CASE 7f4c20aa-9123-4f00-8777-abc123def456","quote":"source_execution_id is deliberately printed on the sign.","weight":1,"spatial_scope":{"kind":"aabb","aabb":{"x":0.65,"y":0.1,"width":0.25,"height":0.2},"polarity":"inside","falloff":"soft","feather":0.1}},"order":4},{"decision_key":"decision_5","type":"exclusion","role":"exclusion","intent":"prohibit","effect":"must_not_include","handle":"exclusion/red","properties":{"text":"No red lettering outside the sign rectangle.","weight":1,"spatial_scope":{"kind":"aabb","aabb":{"x":0.65,"y":0.1,"width":0.25,"height":0.2},"polarity":"outside","falloff":"hard","feather":0}},"order":5},{"decision_key":"decision_6","type":"style","role":"style","intent":"include","effect":"must_include","handle":"style/print","properties":{"text":"Restrained print illustration with fine paper grain.","weight":0.7},"order":6}],"relationships":[{"from_decision":"decision_1","from_label":"Atticus Finch, an adult fictional lawyer, stands on the left holding a closed portfolio.","to_decision":"decision_2","to_label":"Approved period setting","kind":"environment_reference","properties":{"instruction":"The courthouse belongs behind this subject."}},{"from_decision":"decision_1","from_label":"Atticus Finch, an adult fictional lawyer, stands on the left holding a closed portfolio.","to_decision":"decision_6","to_label":"Restrained print illustration with fine paper grain.","kind":"style_reference","properties":{"instruction":"Apply print treatment to the lawyer."}}],"pins":["decision_1"],"standing_constraints":[{"axis":"additions","polarity":"prohibit","value":"No watermarks or extra captions."}],"document":{"title":"Synthetic literary street control"}}

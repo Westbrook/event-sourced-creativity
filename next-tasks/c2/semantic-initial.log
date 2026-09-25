@@ -1,0 +1,88 @@
+✔ action blocks expose meaningful scene subtypes and validated participant references (1.119834ms)
+✔ decomposition extracts only source-grounded realities and rejects invented context (2.892625ms)
+✔ user-added context creates independently grounded addendum suggestions (0.158291ms)
+✔ decomposition cannot invent participant handles, labels, or subtype context (0.12525ms)
+✔ research ranks current-document context above existing same-project decisions (0.457708ms)
+✔ learned suggestions are new and only expose safe licensed-image hosts (0.292916ms)
+✔ provider contexts preserve participant meaning without leaking durable participant identities (0.6915ms)
+✔ Action participant edits invalidate exact-source approvals for both affected blocks (8.805167ms)
+✔ authored Action decisions reach video without incorrectly recurring across every scene (5.253666ms)
+✔ human context plan copies exact complete dependencies, preserves properties, and excludes removed relationships (1.518167ms)
+✔ human context plan never silently skips protected dependencies or unresolved participants (1.465583ms)
+✔ human context plan reuses in-scope decisions and discloses every relationship instead of copying them (0.483ms)
+✔ human context dialog has uniquely named fields and server-owned preview/confirm/retrieval, never client append (8.219084ms)
+✔ human context edited Actions require explicitly reviewed matching participants, including renamed proposals and type changes (1.155125ms)
+✔ human context repeated addendum retrieval preserves reviewed edits and deselection while distinct identities remain independent (0.540458ms)
+✔ human context server review recovery restores the same selection and original-versus-human edits without generation (0.390834ms)
+✔ human context touch fields keep a 44px minimum through the last matching cascade rule (0.553541ms)
+✔ human context participant comparison supports composed and decomposed names without rewriting text or hiding ambiguity (1.375459ms)
+✔ human context participant role options resolve explicit messages in all four runtime catalogs (325.348084ms)
+✔ human context learned Research Actions use full participant identities and the same Unicode comparison (0.652042ms)
+✔ Phase3E context research copies renew every Output identity after the complete dependency map is known (3.66525ms)
+✔ Phase3E context research partial Output copies preserve unknown complete source coverage instead of narrowing it (0.810958ms)
+✔ Phase3E context research keeps future Output schemas opaque and non-executable without copying fulfillment (0.36975ms)
+✔ Phase3E context research retains the original locked, licensed and cross-project copy protections for Outputs (0.343541ms)
+✔ approved context copies preserve only native negative Memory authorship through repeated copies (0.779417ms)
+✔ a reviewed learned title is persisted with its source and immutable factual content (0.252333ms)
+✖ approved excerpt is semantic only when selected into text; later reviewed edits do not resurrect grounding copy (6.359875ms)
+✔ actual copy producer preserves nested authored strings and same-named quoted keys while bookkeeping stays private (0.839042ms)
+✔ v2 retains every old anchor and scoped positive/negative meaning; missing semantic text still fails coverage (6.314209ms)
+✔ actual image adapter sends all semantic carriers to exact moderation and renderer without E2a bookkeeping (38.441125ms)
+✔ explicit medium preferences are soft while actual framing and contradictory constraints remain visible (2.343875ms)
+✔ draft originals, provenance excerpts, removed wording and rich identity payloads never become provider instructions (0.177958ms)
+✔ authored text-only audio direction remains usable while private or opted-out references stay local (1.519459ms)
+✔ provider-facing rendering retains complete authored slide outlines, exact quotes, numerical precision, and protected product vocabulary (0.610583ms)
+✔ a realistic managed 23-slide outline survives every authored section and active block without arbitrary truncation (0.4695ms)
+✔ trusted source aliases preserve authorized block, group, and claim grounding without leaking restricted identifiers (3.296167ms)
+✔ malformed, ambiguous, foreign, and authored-forged source aliases fail closed (0.45725ms)
+✔ block-only source snapshots retain authorized claims while excluding foreign tenant blocks (0.170875ms)
+✔ legacy rendering prompts remain byte-compatible without explicit source contracts (0.327875ms)
+✔ rich composed decisions preserve full authored text while compacting redundant provider labels (0.399042ms)
+✔ output prompt preserves negative Memory authorship without private source identities (0.159417ms)
+✔ only four typed provenance fields change; all source/direction inputs stay immutable (6.03325ms)
+✔ authored opaque strings, quotations and serialized nested sign copy survive byte-for-byte (4.20025ms)
+✔ E2a private projection leaves unbound properties intact before provider metadata filtering (0.7465ms)
+✔ approved research, subject, palette, scopes, exclusions, relationship and planner rationale remain (2.90375ms)
+✔ off is byte-identical to production compiler for all formats and high/low compatibility fixtures (7.865166ms)
+✔ reference roles and order preserved in compatibility fixture without changing no-ref study (3.435875ms)
+✔ later edits or reordered facts reject stale typed bindings; a new capture gets new identity (4.8615ms)
+✔ changed producer types, missing fields, disabled facts, duplicate bindings and wrong versions fail closed (1.154042ms)
+✔ compaction is refused as a second treatment while flag-off behavior stays unchanged (1.412625ms)
+✔ sealed capture freezes ordered inputs, exact UTF-8 diff and B identities (2.166959ms)
+✔ private payload labels and missing requirement mappings cannot be admitted via caller booleans (1.584125ms)
+✔ checked-in candidate is reproduced exactly by the current compiler (4.1775ms)
+✔ exact upper-byte boundary remains an estimate with no admission or invented charge (1.65375ms)
+✔ counts exact UTF-8, preserving authored bytes and invalidating changed identities (1.52825ms)
+✔ rejects every excluded cell and changed wire presence (1.864625ms)
+✔ stage identity, exact prompt captures and evidence expiry fail closed (1.339125ms)
+✔ all-uncached observation estimate needs no invented cache split and never settles a charge (0.469083ms)
+✔ unknown F2 bounds cannot enter F exposure ledger, regardless of allowance or finite attempt count (0.377417ms)
+✔ real shared adapter preserves frozen prompt bytes, moderation omission and the two-call stage inventory (36.998458ms)
+✔ real moderation unknown/flagged outcomes stop before the paid image call (2.20925ms)
+✔ real shared image submission never retries uncertain, server-error or post-purchase storage failures (6.677667ms)
+ℹ tests 62
+ℹ suites 0
+ℹ pass 61
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1148.290708
+
+✖ failing tests:
+
+test at tests/generation-c2-semantic-carriers.test.mjs:26:1
+✖ approved excerpt is semantic only when selected into text; later reviewed edits do not resurrect grounding copy (6.359875ms)
+  AssertionError [ERR_ASSERTION]: false == true
+      at TestContext.<anonymous> (file:///private/tmp/forma-c2-semantic-coverage/tests/generation-c2-semantic-carriers.test.mjs:41:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1306:25)
+      at Test.start (node:internal/test_runner/test:1177:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

@@ -1,0 +1,87 @@
+{
+  "base": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "productionDiff": false,
+  "fixtureInputs": "unchanged original synthetic v1; no private input",
+  "promptComparisons": [
+    {
+      "quality": "high",
+      "technique": "prose",
+      "sha256": "735dce3b84c446d13bdab2566831bd4f636cc1e876e952ae89ceef8c6e2d38f8",
+      "bytes": 6394,
+      "identical": true
+    },
+    {
+      "quality": "high",
+      "technique": "bullets",
+      "sha256": "4956093ee74a5cf00c03d0073c8ba08190ce56e1d41d2f89212f76cc694bea27",
+      "bytes": 4248,
+      "identical": true
+    },
+    {
+      "quality": "high",
+      "technique": "json",
+      "sha256": "8e21b571a840e4f978a89b20abff784aaaea8e12a10a7acd1bef2651f98887e4",
+      "bytes": 6821,
+      "identical": true
+    },
+    {
+      "quality": "high",
+      "technique": "xml",
+      "sha256": "652d19f847df192030fb91462bf0adfd352a8bd50c45013474a62ac0094cc1e0",
+      "bytes": 9108,
+      "identical": true
+    },
+    {
+      "quality": "low",
+      "technique": "prose",
+      "sha256": "735dce3b84c446d13bdab2566831bd4f636cc1e876e952ae89ceef8c6e2d38f8",
+      "bytes": 6394,
+      "identical": true
+    },
+    {
+      "quality": "low",
+      "technique": "bullets",
+      "sha256": "4956093ee74a5cf00c03d0073c8ba08190ce56e1d41d2f89212f76cc694bea27",
+      "bytes": 4248,
+      "identical": true
+    },
+    {
+      "quality": "low",
+      "technique": "json",
+      "sha256": "8e21b571a840e4f978a89b20abff784aaaea8e12a10a7acd1bef2651f98887e4",
+      "bytes": 6821,
+      "identical": true
+    },
+    {
+      "quality": "low",
+      "technique": "xml",
+      "sha256": "652d19f847df192030fb91462bf0adfd352a8bd50c45013474a62ac0094cc1e0",
+      "bytes": 9108,
+      "identical": true
+    }
+  ],
+  "exactWire": [
+    {
+      "url": "https://api.openai.com/v1/moderations",
+      "bodySha256": "0430ec406c42ac694cd602847b3c87e249e5fcfbd3a11769e35de7cb5581f08c",
+      "bytes": 6944,
+      "identical": true
+    },
+    {
+      "url": "https://api.openai.com/v1/images/generations",
+      "bodySha256": "1a7511bc5501370068c611c82f204cb7109927278a20d9755d45ef20e6ab0652",
+      "bytes": 7032,
+      "identical": true
+    }
+  ],
+  "sourceHashes": {
+    "src/model/context-intelligence.ts": "b78530dfd5c35443d43788e3d7d2b9ceab9e821f3fc00d7c90ab5085c114026f",
+    "src/model/context-proposal-application.ts": "567056bfcde6c128cb7e6c36d0fee47782f788c8bde448a4084c36ed3f13de0b",
+    "src/model/prompt-policy.ts": "f41ecf5069c63340fdd079c343f0107ae40d4188cbb255c4373127f27d4d1053",
+    "src/model/prompt-structures.ts": "2e6ec1059b0b80718dba61939f90983ca3b45858dc5e9c1b824ff802527d3570",
+    "src/model/prompt-provenance-e2a.ts": "2c6a9ccbe43b7f79c5a2d8be9ac1e155f38c13bb8f0e55a85c8b478e89b577b7",
+    "worker/openai-adapter.ts": "0e768aa8928c11f6c576c3e03c29fa2215a9964416d3551a716551f66d2893d3",
+    "worker/openai-moderation.ts": "a6e2340de61d0fc263cf4109036e274c3e02accfae25ccdf4dd9f9f43e175f13"
+  },
+  "providerCalls": 0
+}
