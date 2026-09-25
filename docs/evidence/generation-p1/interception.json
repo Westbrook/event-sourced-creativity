@@ -1,0 +1,367 @@
+{
+  "schema": "p1-offline-interception-v1",
+  "evidenceClass": "synthetic-plumbing-only",
+  "liveProviderCalls": 0,
+  "empiricalQualityEvidence": false,
+  "checks": [
+    {
+      "name": "supplied-input integrity, expiry/revocation and unchanged historical refusal"
+    },
+    {
+      "name": "source advisory covers complete supplied snapshot plus one fact",
+      "inputItems": 2
+    },
+    {
+      "name": "renderer: actual invocation, exact wire hashes, non-treatment preservation, full moderation and distinct identities",
+      "logicalCounts": {
+        "planner": 0,
+        "image": 2,
+        "moderation": 4
+      },
+      "attemptsPerOperation": 1
+    },
+    {
+      "name": "pipeline: actual invocation, exact wire hashes, non-treatment preservation, full moderation and distinct identities",
+      "logicalCounts": {
+        "planner": 2,
+        "image": 2,
+        "moderation": 4
+      },
+      "attemptsPerOperation": 1
+    },
+    {
+      "name": "stop and failure composition is test-only; durable admission/settlement integration remains missing"
+    },
+    {
+      "name": "H one-attempt transport preserves exact supported wire; no H authority claimed"
+    },
+    {
+      "name": "synthetic private file permissions, hash, pre-read expiry denial and cleanup; no production retention proof"
+    }
+  ],
+  "scenarios": [
+    {
+      "fault": "refusal",
+      "stage": "advisory",
+      "calls": [
+        "advisory"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "source_advisory_review_stop"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "refusal",
+      "stage": "exact",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "safety_preflight_flagged"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "refusal",
+      "stage": "planner",
+      "calls": [
+        "advisory",
+        "planner"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "provider_planner_refusal"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "refusal",
+      "stage": "image",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact",
+        "image"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "moderation_blocked"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "error",
+      "stage": "planner",
+      "calls": [
+        "advisory",
+        "planner"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "server_error"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "error",
+      "stage": "image",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact",
+        "image"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "server_error"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "error",
+      "stage": "exact",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "server_error"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "invalid",
+      "stage": "exact",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "moderation_response_invalid"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "invalid",
+      "stage": "planner",
+      "calls": [
+        "advisory",
+        "planner"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "provider_usage_receipt_missing"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "uncertain",
+      "stage": "planner",
+      "calls": [
+        "advisory",
+        "planner"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "provider_network_failed"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "uncertain",
+      "stage": "image",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact",
+        "image"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "provider_network_failed"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "missing-usage",
+      "stage": "planner",
+      "calls": [
+        "advisory",
+        "planner"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "provider_usage_receipt_missing"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "missing-usage",
+      "stage": "image",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact",
+        "image"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "provider_usage_receipt_missing"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "custody",
+      "stage": "image",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact",
+        "image"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "mock_private_custody_failed"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "advisory-custody",
+      "stage": "advisory",
+      "calls": [
+        "advisory"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "comparison_advisory_capture_missing"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "fault": "settlement",
+      "stage": "image",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact",
+        "image"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "comparison_original_settlement_hold"
+        }
+      ],
+      "liveCalls": 0
+    },
+    {
+      "stop": "before-advisory",
+      "calls": [],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "explicit_stop"
+        }
+      ]
+    },
+    {
+      "stop": "after-advisory",
+      "calls": [
+        "advisory"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "explicit_stop"
+        }
+      ]
+    },
+    {
+      "stop": "before-image",
+      "calls": [
+        "advisory",
+        "planner"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "explicit_stop"
+        }
+      ]
+    },
+    {
+      "stop": "after-exact",
+      "calls": [
+        "advisory",
+        "planner",
+        "exact"
+      ],
+      "outcomes": [
+        {
+          "arm": "baseline",
+          "outcome": "stopped",
+          "code": "explicit_stop"
+        }
+      ]
+    }
+  ],
+  "id": "p1-interception:69932055d3c9295d99258a282d7cd1d4f235172697d29c64fe52dcb830ea53fc"
+}

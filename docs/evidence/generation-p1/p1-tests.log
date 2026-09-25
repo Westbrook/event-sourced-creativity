@@ -1,0 +1,27 @@
+✔ I selected factor: exact unchanged profile on new supplied inputs; actual renderer invocation (30.223417ms)
+▶ P1 exact actual-adapter bytes, bounded contract and stops; no live capability
+  ✔ refusal at advisory stops both arms (0.42075ms)
+  ✔ refusal at exact stops both arms (0.929541ms)
+  ✔ refusal at planner stops both arms (0.553333ms)
+  ✔ refusal at image stops both arms (2.404542ms)
+  ✔ error at planner stops both arms (1.181084ms)
+  ✔ error at image stops both arms (1.519709ms)
+  ✔ error at exact stops both arms (0.877667ms)
+  ✔ invalid at exact stops both arms (0.729375ms)
+  ✔ invalid at planner stops both arms (0.571084ms)
+  ✔ uncertain at planner stops both arms (0.400625ms)
+  ✔ uncertain at image stops both arms (1.439416ms)
+  ✔ missing-usage at planner stops both arms (0.822208ms)
+  ✔ missing-usage at image stops both arms (1.214667ms)
+  ✔ custody at image stops both arms (1.181917ms)
+  ✔ advisory-custody at advisory stops both arms (0.345041ms)
+  ✔ settlement at image stops both arms (1.117208ms)
+✔ P1 exact actual-adapter bytes, bounded contract and stops; no live capability (29.248834ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 789.421209

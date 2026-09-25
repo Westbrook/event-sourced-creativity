@@ -1,0 +1,161 @@
+{
+  "version": "p1-offline-v1",
+  "verifiedAt": "2026-09-25T00:09:05.594975+00:00",
+  "baseCommit": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "ready": false,
+  "P1Tests": {
+    "passed": 18,
+    "failed": 0
+  },
+  "reusedContracts": {
+    "passed": 105,
+    "failed": 4,
+    "failure": "semantic_coverage_missing:approved-excerpt,nested-authored-opaque",
+    "baselineAttribution": "All imported pre-existing source and test files unchanged from current-main base; no new P1 files imported by these suites"
+  },
+  "lint": "passes new P1 files",
+  "gitDiffCheck": "passes",
+  "packetId": "p1-pilot:5fafe5ed7f5a0fdfff4ce7111ff0d7363bb545fa924e4aebfa4eb3a2c59961e2",
+  "interceptionId": "p1-interception:69932055d3c9295d99258a282d7cd1d4f235172697d29c64fe52dcb830ea53fc",
+  "reviewed": false,
+  "providerCalls": 0,
+  "newLivePreflights": 0,
+  "sourceWrites": 0,
+  "activation": false,
+  "publication": false,
+  "sourceHashes": [
+    {
+      "path": "worker/openai-adapter.ts",
+      "sha256": "0e768aa8928c11f6c576c3e03c29fa2215a9964416d3551a716551f66d2893d3",
+      "matchesBase": true
+    },
+    {
+      "path": "worker/image-adapter.ts",
+      "sha256": "5643d42110d8421cbaa1ec02d6c9ca2a811c77de711a784de169339c926dddc5",
+      "matchesBase": true
+    },
+    {
+      "path": "worker/openai-moderation.ts",
+      "sha256": "a6e2340de61d0fc263cf4109036e274c3e02accfae25ccdf4dd9f9f43e175f13",
+      "matchesBase": true
+    },
+    {
+      "path": "worker/openai-image-route-contract.ts",
+      "sha256": "aa943885dd8e5f1334f7207645f7d4cdd49c4a8a22366f0c61ff828053296b3e",
+      "matchesBase": true
+    },
+    {
+      "path": "worker/document-jobs-api.ts",
+      "sha256": "73682c8d6aa6b5da6c9011d3cbff42b6b00d1f33b02d4c9906ce0b5279865154",
+      "matchesBase": true
+    },
+    {
+      "path": "worker/events-api.ts",
+      "sha256": "f5c704a462654f9ee47ab38b34ed5bb82f30fbea9b4f20ef9a35eda91106c7fb",
+      "matchesBase": true
+    },
+    {
+      "path": "worker/generation-readiness.ts",
+      "sha256": "73d6f5adb011f0c4f3932d2ab92f027ff7a1c21dc640a9abf7af169a2a2f9407",
+      "matchesBase": true
+    },
+    {
+      "path": "worker/generation-evidence.ts",
+      "sha256": "df87369153b229d0579b6ea09c4735a245257f38911b17b48fdc51b197d5cf16",
+      "matchesBase": true
+    },
+    {
+      "path": "worker/generation-evidence-read.ts",
+      "sha256": "43c364ab4b3a074b2ed54d1d452bf22378feaa1bdb8a25e88bd873351ace24d7",
+      "matchesBase": true
+    },
+    {
+      "path": "src/model/prompt-structures.ts",
+      "sha256": "2e6ec1059b0b80718dba61939f90983ca3b45858dc5e9c1b824ff802527d3570",
+      "matchesBase": true
+    },
+    {
+      "path": "src/model/prompt-policy.ts",
+      "sha256": "f41ecf5069c63340fdd079c343f0107ae40d4188cbb255c4373127f27d4d1053",
+      "matchesBase": true
+    },
+    {
+      "path": "evals/generation-reliability/core.mjs",
+      "sha256": "f7357d8d8932eef98ca449bbf0837721d40542d5434b76e7c0488d7625aaaa35",
+      "matchesBase": true
+    },
+    {
+      "path": "evals/generation-reliability/execution-plan.mjs",
+      "sha256": "2cd7f130d3e6e986877eaa0d4c658693430f7e08aa1d19766a1c42c1d5dff066",
+      "matchesBase": true
+    },
+    {
+      "path": "evals/generation-reliability/native-host/host.mjs",
+      "sha256": "5c92aac93a3229cf01e2a02b928705ff599a959b06611a7a9323d653289a9693",
+      "matchesBase": true
+    },
+    {
+      "path": "evals/generation-reliability/native-host/authority.mjs",
+      "sha256": "854e5fc0839e23951bfb762bd6164e22e3fd988ce59d6bcdc41ee0945bbf5085",
+      "matchesBase": true
+    },
+    {
+      "path": "evals/generation-reliability/native-host/transport.mjs",
+      "sha256": "01c3dca958f037d822d52d17ca43897e16e3ab3e3b1c88e09b100af996cea61f",
+      "matchesBase": true
+    },
+    {
+      "path": "evals/generation-reliability/native-host/financial-policy.mjs",
+      "sha256": "d4a87d1b0865d64fcfe7d4995aaac0cb00f59f83fa3c170793531d38f5ec84ae",
+      "matchesBase": true
+    },
+    {
+      "path": "evals/generation-reliability/preparation/contract.mjs",
+      "sha256": "ab72b305dacfe52e6bf79390b4a77da3769788dfcd730424f41114465dcb3823",
+      "matchesBase": true
+    },
+    {
+      "path": "evals/generation-reliability/preparation/native-host.mjs",
+      "sha256": "a64257836442ae10095997f8d1dadb07ed71f1fed0c8b125eb7f6b220f649e90",
+      "matchesBase": true
+    },
+    {
+      "path": "evals/generation-reliability/e2a/capture.mjs",
+      "sha256": "f7a392144976a14f4626e6b21e2e2885bfb1748998b83b95390cf3be161b8700",
+      "matchesBase": true
+    },
+    {
+      "path": "tests/generation-study-native.test.mjs",
+      "sha256": "e2726f72fb4314e80c95aa1223881b2fcd1deb4f7ea554c859aa9306b234b8d1",
+      "matchesBase": true
+    },
+    {
+      "path": "tests/generation-execution-bridge.test.mjs",
+      "sha256": "7cb8e40f6462aa908ba229b1ba1c612e844601f7eb87cd4adfbf5c6328cfa4d2",
+      "matchesBase": true
+    },
+    {
+      "path": "tests/generation-financial-policy.test.mjs",
+      "sha256": "c8526b6f8bed1a54535bdabb982c9a6ca8875a5d0c99d876e4a098831d6ec3d0",
+      "matchesBase": true
+    },
+    {
+      "path": "tests/advisory-moderation-boundary.test.mjs",
+      "sha256": "107ee8ba56b6e7aee05ae9501b96c38fcd5dfe3315789468704c77f6d26f0368",
+      "matchesBase": true
+    }
+  ],
+  "artifactHashes": {
+    "contract-regressions.log": "3ebe0939abdc02bc07f610e5d205eec9b0f6587f0ae048506f9713004a7bec27",
+    "demo-envelopes.json": "533d69dbcffd435cfe9d856939159c368283d6d4450842d4701174210b172f4e",
+    "i-candidate.json": "bc1bf6455254d26f28601c5a454ae41f2e6ab71708e1cba969b2644c06ce636d",
+    "i-profile.mjs": "4ce9c0bf77972a0eaac5569d71f0aef7e7f89686a958bf26a90fc6654d9db570",
+    "index.html": "6059de30802dde60c20a4f83a9c88cb741c7fb466bbcf6faa7abb2bc6e1447e0",
+    "interception.json": "2a310af63a0a6d6cf1b09079d91c43f545409093f6eed991f41bf7006958ac4d",
+    "ledger-addendum.md": "2d7b1fb9d5ead93bf15701ed62a35e1f18e8f615cd97b859a457eacef1adfac8",
+    "p1-tests.log": "3a1a400e7ae0100edf7b274c7e776628906ed5ef2f6307a66bdf432b8b12bbd8",
+    "pilot-packet.json": "6cb8b79499cd09ae45c08101dfbe044326725f5be4d66254916d699717c87412",
+    "result.md": "0604876160f8d2a032b037722b81d9428a6e993efd2d1f8d513a6e6c1e52a118"
+  },
+  "inputClaims": "agent-proposed supplied snapshot and intentionally conflicting frozen direction; neither historical nor observed provider output"
+}
