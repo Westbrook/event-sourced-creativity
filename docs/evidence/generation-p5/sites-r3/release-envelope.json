@@ -1,0 +1,132 @@
+{
+  "id": "p5-sites-rehearsal:6bbe27e5ec34e8ab235f1e619ae846b9a728996d57a9a64a9701d19f18a8500c",
+  "version": "p5-sites-rehearsal-r3",
+  "sourceBaseCommit": "22ce552f2c7b51aa378d1806740056c07596ca3b",
+  "target": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "scope": "local-only successor preparation; full P5 unfinished",
+  "sourceTreeSha256": "375bf438fd14dc640f98e0297e2a1b1abb08964daa5f3631a7974878b9aa714e",
+  "sourceArchive": {
+    "path": "/private/tmp/forma-p5-sites-source-r3.tar.gz",
+    "bytes": 442155,
+    "sha256": "4b02b41c8113a3d808517b490dfc8226aab0087c1d7197bb0f21b69c0eb4b5e2"
+  },
+  "archive": {
+    "path": "/private/tmp/forma-p5-sites-rehearsal-r3.tar.gz",
+    "sha256": "8cd9282dfe1dbebf053cffcc87f8d767cafb19e4c163d8133f5c19768425f3ff",
+    "bytes": 351694,
+    "files": 9,
+    "migrations": [
+      "dist/.openai/drizzle/0000_hesitant_red_skull.sql",
+      "dist/.openai/drizzle/0001_p5_minimum.sql"
+    ]
+  },
+  "workerSha256": "3a7113802528c8efe9a340000793b25cb4a470e219ed435b9bb2e584f747a1c0",
+  "datasetId": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a",
+  "verification": {
+    "focusedChecks": 29,
+    "historicalR1R2FilesUnchanged": 30,
+    "unchangedApplicationRepoInputs": 640,
+    "originalR1ArchiveUnchanged": true,
+    "packageFilesMatched": 9,
+    "prior266TestsRerun": false,
+    "realProviderCalls": 0,
+    "hostedActions": 0,
+    "forcedRestart": false,
+    "managedQualified": false,
+    "userReviewed": false
+  },
+  "files": [
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/cases.md",
+      "sha256": "846b1826579d740c7ef6a1e74cecf16ca1b6c876c5d31d105be2565c184fea03"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/decision.md",
+      "sha256": "49108df1af64eaadf267f2d3f88dd773e1eb2d6054f027f345f40bf8e2e23219"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/failure-validation.json",
+      "sha256": "0ba2a32d2827e8a7f30b01e0cca5156ee2e81dd4e3a98b1a9f2112e9e52004cf"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/forma-checks.md",
+      "sha256": "88071824a6f6998328c0997880d23965695f60777ddd766643bb99d87f7396a5"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/index.html",
+      "sha256": "74280f2cb26de32526f20d746731b85119fa4884dda49e9b9ee10585fa997616"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/local-validation.json",
+      "sha256": "81e64aa4192e48c723001c4f932082709292b4728677bddb92625b133f3b02c6"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/migration-metadata.json",
+      "sha256": "8afd08f6e0aa3a0315c5427c4fb79f1aadb58ab98b0484c7e32cec8de18a9215"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/packaging-validation.json",
+      "sha256": "561000dc91a7543d829744b5318b2408965c9206e558145366bd5b763a59f145"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/resource-inventory.json",
+      "sha256": "dc4455612d499744cdf846d0a2c94c3f9093129e1fa71b9f26522a24a0bff206"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/resources.md",
+      "sha256": "a4a5b8c56d89e0a322838955db6abf360a41f17f50534c048790e7ac7fc1b018"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/runbook.md",
+      "sha256": "67722d1246e1ac350e83e1da246a4a985b07088c96cd97ea0d3aebdcffb4fb16"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/schema-closure.json",
+      "sha256": "290ba04241bbf98c4e1296465c6c4f2efef84ea1173e490e88d430fe89442073"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/schema.md",
+      "sha256": "17b3f357557623b425df8919495b5affb7dbb8bab87d34731cf6a5afce48d96a"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r3/source-manifest.json",
+      "sha256": "046737f77043008935e3b1334853434ef2ec6911778ddc3cf222accb598ddf5f"
+    },
+    {
+      "path": "scripts/prepare-generation-p5-rehearsal.mjs",
+      "sha256": "8a68bac374f2b6003eaa2171bd2299174b0f32373c9ba837baac640bab8da205"
+    },
+    {
+      "path": "scripts/freeze-generation-p5-application.mjs",
+      "sha256": "4f9eb246906cd7b4791afb4c20ddbb9650d69a66fa4090732bd4055da798e7d7"
+    },
+    {
+      "path": "scripts/metadata-generation-p5-rehearsal.mjs",
+      "sha256": "a2d8d64d594986207e32332003cf564dcdc6494c3377d5bb6403ad0545330c64"
+    },
+    {
+      "path": "scripts/check-generation-p5-rehearsal.mjs",
+      "sha256": "81cf1b433060c00597a216021b7c84b4ab19e947b7834277bab7c4584960b4dc"
+    },
+    {
+      "path": "scripts/check-generation-p5-rehearsal-failures.mjs",
+      "sha256": "599f803e7e7a52ab97cc7034ca61bb30851be8027ab5925ee6ab19c0970e7a96"
+    },
+    {
+      "path": "scripts/inventory-generation-p5-rehearsal.mjs",
+      "sha256": "e6dd298bfe925c846fe537800dd237161d15092ed1d61c99558b26bdd1830153"
+    },
+    {
+      "path": "scripts/seal-generation-p5-rehearsal.mjs",
+      "sha256": "45a76f074867fe5c7fc7618efe4a67b9b8f8246da029f8bc4ea9c968944fa886"
+    },
+    {
+      "path": "scripts/package-generation-p5-rehearsal-local.mjs",
+      "sha256": "1094f1788fe2d7c83f893db0701e243d24ff52e841786697c6e1a98e07a95b0d"
+    },
+    {
+      "path": "docs/generation-cross-media-transfer-e2.md",
+      "sha256": "dc7f99c576cc7989dddb4f9b712d00202a056887cb21c2a3aec4d1dda7b8b5b9"
+    }
+  ]
+}

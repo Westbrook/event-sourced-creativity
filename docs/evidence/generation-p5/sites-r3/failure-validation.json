@@ -1,0 +1,176 @@
+{
+  "workerSha256": "3a7113802528c8efe9a340000793b25cb4a470e219ed435b9bb2e584f747a1c0",
+  "checks": [
+    {
+      "name": "real credential-shaped binding rejected before application access",
+      "result": {
+        "ok": false,
+        "error": "Error: isolated_bindings_required",
+        "instance": "e419cb88-cdb6-4792-b536-84436bf0ac7c",
+        "metrics": {
+          "action": "",
+          "step": "",
+          "statements": 0,
+          "attemptedStatements": 0,
+          "bindingCalls": 0,
+          "failedBatches": 0,
+          "reads": 0,
+          "writes": 0,
+          "databaseBytes": 0,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong canonical schema refuses importer",
+      "result": {
+        "ok": false,
+        "error": "Error: schema_mismatch",
+        "instance": "42223ee3-68a1-429c-9345-62379f13d1bb",
+        "metrics": {
+          "action": "start",
+          "step": "",
+          "statements": 2,
+          "attemptedStatements": 2,
+          "bindingCalls": 2,
+          "failedBatches": 0,
+          "reads": 575,
+          "writes": 0,
+          "databaseBytes": 790528,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong persistent dataset refuses continuation",
+      "result": {
+        "ok": false,
+        "error": "Error: owner_or_dataset_changed",
+        "instance": "c74b252b-ceca-405d-a89a-46702f93b38f",
+        "metrics": {
+          "action": "step",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 1,
+          "bindingCalls": 1,
+          "failedBatches": 0,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 811008,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "expired one-hour run cannot resume or renew",
+      "result": {
+        "ok": false,
+        "error": "Error: step_or_expiry",
+        "instance": "8caefad6-cac0-4af7-9be6-2e7d3e277fa8",
+        "metrics": {
+          "action": "step",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 1,
+          "bindingCalls": 1,
+          "failedBatches": 0,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 811008,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      },
+      "cleanupAfterExpiry": true,
+      "clockWasNotChanged": true
+    },
+    {
+      "name": "stop before purchase; orphaned successful put with lost acknowledgement is found by compiled key cleanup",
+      "fixture": "Local harness seeded original compiled key to model put-ack loss; no caller fault field or hosted fault injection",
+      "stop": {
+        "ok": false,
+        "error": "Error: D1_ERROR: CHECK constraint failed: ok=1: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)",
+        "instance": "065a96b4-5b5a-4f4e-9e3c-0ae9d74b3dbb",
+        "metrics": {
+          "action": "step",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 4,
+          "bindingCalls": 2,
+          "failedBatches": 1,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 811008,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      },
+      "cleanup": {
+        "disabled": true,
+        "deleted": [
+          {
+            "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/531156a4bee0f82afcbb5bf1eb8116ccb4c0e4ea95e6d5b8c786c9d20c9316aa.png",
+            "existed": true,
+            "readNull": true
+          },
+          {
+            "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/7794846fbd3d203028b8716c3b97b7a19baa8d26d9f4084aa974774250b2cda4.png",
+            "existed": false,
+            "readNull": true
+          }
+        ],
+        "privateBodiesRemaining": 0,
+        "residual": [
+          {
+            "table": "users",
+            "rows": 1
+          },
+          {
+            "table": "authoring_study_configurations",
+            "rows": 1
+          },
+          {
+            "table": "authoring_study_evidence",
+            "rows": 12
+          }
+        ],
+        "proof": {
+          "schemaHash": "545da96d5a212a3d9e0e915e0269be697ca733e7a586f90e9a88ac73cabaee6f",
+          "retiredTombstoneHash": "2d81ce6aff30b32b995bd1b569b83e90ef6843f6a9aed4a6295cbbcf3415c8e8"
+        },
+        "retained": "Synthetic immutable original intent/accounting plus empty schema, compiled source and old/new tombstones. No production records."
+      }
+    }
+  ],
+  "networkAttempts": 0,
+  "hosted": false,
+  "forcedRestart": false
+}

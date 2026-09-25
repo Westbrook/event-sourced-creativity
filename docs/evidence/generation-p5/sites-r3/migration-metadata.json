@@ -1,0 +1,11 @@
+{
+  "generator": "Exact canonical catalog custom Drizzle migration; structural snapshot validated by drizzle-kit 0.31.10 generateSQLiteMigration(snapshot,snapshot)",
+  "tables": 52,
+  "views": 1,
+  "oldSnapshotUnchanged": true,
+  "snapshotId": "a4b951fc-7936-4bdb-8000-2dbd0a18ea4d",
+  "prevId": "f2df9929-7471-40a4-873c-0f93fd1a26c7",
+  "schemaOnly": true,
+  "autoRewriteAllowed": false,
+  "explanation": "Default Drizzle SQL reformatting cannot replace the exact P2/P4 catalog contracts. Custom migration preserves canonical table/index/view/trigger definitions. Full canonical-schema.json owns triggers and exact SQL, which ORM snapshots do not represent."
+}

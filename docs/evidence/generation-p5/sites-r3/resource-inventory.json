@@ -1,0 +1,185 @@
+{
+  "archive": {
+    "path": "/private/tmp/forma-p5-sites-rehearsal-r3.tar.gz",
+    "sha256": "8cd9282dfe1dbebf053cffcc87f8d767cafb19e4c163d8133f5c19768425f3ff",
+    "bytes": 351694,
+    "files": 9,
+    "migrations": [
+      "dist/.openai/drizzle/0000_hesitant_red_skull.sql",
+      "dist/.openai/drizzle/0001_p5_minimum.sql"
+    ]
+  },
+  "datasetId": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a",
+  "worker": {
+    "workerSha256": "3a7113802528c8efe9a340000793b25cb4a470e219ed435b9bb2e584f747a1c0",
+    "bytes": 2011166,
+    "source": [
+      {
+        "path": "src/application.mjs",
+        "sha256": "e46ba1a19a7461654707945ec90fce6fb9f2fa10535625642ce735ef6716d89d"
+      },
+      {
+        "path": "src/dataset.json",
+        "sha256": "db054ae51a60cdd4f5031d4c0888cfb0a29d610643e1691ae95cf69a004732cd"
+      },
+      {
+        "path": "src/worker.mjs",
+        "sha256": "9b510ad7387c3134782efecb9f18c763bafcec65eb994f9faab27b9da4a63790"
+      }
+    ],
+    "sourceTreeSha256": "ce2ab0f8e710f12d294545d427cbb5c0ee43a1bb3bbeb68df91167e9ecd83cdd",
+    "schema": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a",
+    "realNetwork": false
+  },
+  "schema": {
+    "retainedObjects": 28,
+    "addedApplicationObjects": 142,
+    "newControlObjects": 2,
+    "totalObjects": 172,
+    "tables": 52,
+    "views": 1,
+    "migrationSha256": "a75be5f296cdcbdbd67bf5691b64e58613e845fc393ff2394c94046496f2edc3",
+    "originalMigrationSha256": "01cd656c8ba8bdf396e6bda2cdbfa2a483c12cf075a3f62920c69dcfd5fc4556"
+  },
+  "import": {
+    "rows": 26,
+    "encodedBytes": 18538,
+    "callerSuppliedRows": false
+  },
+  "r2": {
+    "delta": "Create one Sites-managed R2 resource and logical MEDIA binding on existing D1-only private Site; no physical identifier assumed",
+    "maximumObjects": 2,
+    "bytesPerObject": 6190,
+    "maximumObjectBytes": 12380,
+    "sha256": "08c04ddee6610589fccaf694ee06dac80e8b6506c2ca07f57b0acbf7eaaa3c89",
+    "observed": {
+      "statements": 8926,
+      "reads": 2308867,
+      "writes": 6764,
+      "r2Put": 2,
+      "r2Get": 5,
+      "r2Delete": 2
+    }
+  },
+  "residual": [
+    {
+      "table": "authoring_study_commits",
+      "rows": 1,
+      "serializedBytes": 6717
+    },
+    {
+      "table": "authoring_study_configurations",
+      "rows": 1,
+      "serializedBytes": 255
+    },
+    {
+      "table": "authoring_study_evidence",
+      "rows": 12,
+      "serializedBytes": 6131
+    },
+    {
+      "table": "budget_counters",
+      "rows": 2,
+      "serializedBytes": 334
+    },
+    {
+      "table": "budget_reservations",
+      "rows": 2,
+      "serializedBytes": 1063
+    },
+    {
+      "table": "cost_budget_counters",
+      "rows": 2,
+      "serializedBytes": 358
+    },
+    {
+      "table": "cost_budget_reservations",
+      "rows": 4,
+      "serializedBytes": 2089
+    },
+    {
+      "table": "generation_study_charges",
+      "rows": 2,
+      "serializedBytes": 1016
+    },
+    {
+      "table": "generation_study_evidence",
+      "rows": 18,
+      "serializedBytes": 5017
+    },
+    {
+      "table": "generation_study_financial_grants",
+      "rows": 2,
+      "serializedBytes": 5587
+    },
+    {
+      "table": "generation_study_grants",
+      "rows": 1,
+      "serializedBytes": 779
+    },
+    {
+      "table": "generation_study_operations",
+      "rows": 2,
+      "serializedBytes": 3013
+    },
+    {
+      "table": "generation_study_reconciliations",
+      "rows": 2,
+      "serializedBytes": 1778
+    },
+    {
+      "table": "generation_study_stages",
+      "rows": 8,
+      "serializedBytes": 2373
+    },
+    {
+      "table": "generation_study_supplied_observations",
+      "rows": 1,
+      "serializedBytes": 669
+    },
+    {
+      "table": "generation_study_supplied_reviews",
+      "rows": 1,
+      "serializedBytes": 1649
+    },
+    {
+      "table": "n10h_run",
+      "rows": 1,
+      "serializedBytes": 137
+    },
+    {
+      "table": "p5_rehearsal_run",
+      "rows": 1,
+      "serializedBytes": 321
+    },
+    {
+      "table": "users",
+      "rows": 1,
+      "serializedBytes": 277
+    }
+  ],
+  "serializedResidualBytes": 39563,
+  "allocatedLocalDatabaseBytes": 1060864,
+  "freeLocalPages": 58,
+  "limits": {
+    "successfulSubmittedStatementsPerRequest": 6000,
+    "attemptedBindingCallsPerRequest": 950,
+    "observedRowsReadPerRequest": 10000000,
+    "observedRowsWrittenPerRequest": 20000,
+    "reportedDatabaseBytes": 16000000,
+    "normalMutatingRequests": 80,
+    "maximumStepWallMs": 120000,
+    "newStepWindowMs": 3600000,
+    "proposalExpiry": "2026-10-01T00:00:00.000Z"
+  },
+  "cost": {
+    "observedCharges": null,
+    "hostingUnitPrices": null,
+    "acceptedLiability": false,
+    "acceptedMonetaryBudget": null,
+    "proposedSpendCondition": "Zero real-provider spend. Proposed incremental managed-services budget $1 total for the finite rehearsal and 7-day review window, subject to actual Sites terms and explicit user decision; not enforced, accepted or proven sufficient. Ongoing empty resource/source/schema retention is separately unresolved.",
+    "hardMoneyCap": false,
+    "failedBatchMetering": "Failed D1 batches expose no per-statement usage result here; returned meta totals are observed lower bounds, not billed usage."
+  },
+  "hostedActionsPerformed": false
+}

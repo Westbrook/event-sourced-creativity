@@ -1,0 +1,24 @@
+{
+  "method": "Installed Sites 0.1.71 packager previously produced and validated this exact nine-file layout. Its cache disappeared before final repack. Local fallback preserves every filename and every non-Worker byte; replaces only the tested Worker to correct streamed UTF-8 byte accounting.",
+  "referenceArchiveSha256": "75479175655b25fa6ebc66c463f2c9a7e57b55641c138043ead8ebb10e0464e3",
+  "referenceWorkerSha256": "737e8938bd8fb085aca91d51ffc9cfdb71002035e804f96aebc0a16801feb8e8",
+  "finalArchiveSha256": "8cd9282dfe1dbebf053cffcc87f8d767cafb19e4c163d8133f5c19768425f3ff",
+  "finalWorkerSha256": "3a7113802528c8efe9a340000793b25cb4a470e219ed435b9bb2e584f747a1c0",
+  "files": [
+    "dist/.openai/drizzle/0000_hesitant_red_skull.sql",
+    "dist/.openai/drizzle/0001_p5_minimum.sql",
+    "dist/.openai/drizzle/meta/0000_snapshot.json",
+    "dist/.openai/drizzle/meta/0001_snapshot.json",
+    "dist/.openai/drizzle/meta/_journal.json",
+    "dist/.openai/hosting.json",
+    "dist/client/robots.txt",
+    "dist/server/index.js",
+    "dist/server/wrangler.json"
+  ],
+  "contentChanges": [
+    "dist/server/index.js"
+  ],
+  "nativeValidationBypassed": false,
+  "nativeSaveAttempted": false,
+  "laterRequirement": "Restore/discover supported Sites workflow and pass native archive validation before any hosted save/deploy. Local layout verification is not native admission."
+}

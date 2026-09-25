@@ -1,0 +1,1388 @@
+{
+  "validation": "local compiled proposed Worker in workerd, D1 and R2 emulators",
+  "checks": [
+    "missing native identity",
+    "wrong owner",
+    "cross origin",
+    "arbitrary SQL field",
+    "bounded input",
+    "exact schema preflight and bounded atomic 26-row import; retired tombstone retained",
+    "owner pinned across requests",
+    "one run duplicate start",
+    "fixed case 0 rollback",
+    "concurrent exact approval claim single winner",
+    "fixed case 2 baseline",
+    "discarded baseline response; separate status request retains cursor and receipt",
+    "duplicate baseline step cannot repeat dispatch",
+    "fixed case 3 recover-original",
+    "fixed case 4 settle-baseline",
+    "fixed case 5 observe",
+    "fixed case 6 treatment",
+    "fixed case 7 settle-treatment",
+    "fixed case 8 expiry-revocation",
+    "fixed case 9 terminal-stop",
+    "original byte hashes; two R2 deletes and read-null; private body deletion; durable disabled tombstone",
+    "disabled rerun",
+    "disabled step",
+    "old N10H state unchanged; zero outbound network"
+  ],
+  "requests": 24,
+  "sourceArtifact": {
+    "workerSha256": "3a7113802528c8efe9a340000793b25cb4a470e219ed435b9bb2e584f747a1c0",
+    "bytes": 2011166,
+    "source": [
+      {
+        "path": "src/application.mjs",
+        "sha256": "e46ba1a19a7461654707945ec90fce6fb9f2fa10535625642ce735ef6716d89d"
+      },
+      {
+        "path": "src/dataset.json",
+        "sha256": "db054ae51a60cdd4f5031d4c0888cfb0a29d610643e1691ae95cf69a004732cd"
+      },
+      {
+        "path": "src/worker.mjs",
+        "sha256": "9b510ad7387c3134782efecb9f18c763bafcec65eb994f9faab27b9da4a63790"
+      }
+    ],
+    "sourceTreeSha256": "ce2ab0f8e710f12d294545d427cbb5c0ee43a1bb3bbeb68df91167e9ecd83cdd",
+    "schema": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a",
+    "realNetwork": false
+  },
+  "schemaDeltaObjects": 144,
+  "syntheticResponses": 6,
+  "networkAttempts": 0,
+  "totals": {
+    "statements": 8926,
+    "reads": 2308867,
+    "writes": 6764,
+    "r2Put": 2,
+    "r2Get": 5,
+    "r2Delete": 2
+  },
+  "maxClientWallMs": 523.506417,
+  "maxRequestBindingCalls": 842,
+  "maxRequestAttemptedStatements": 3276,
+  "failedBatches": 4,
+  "maxRequestStatements": 3276,
+  "peakReportedDBBytes": 1060864,
+  "residual": {
+    "budget_counters": 2,
+    "users": 1,
+    "cost_budget_counters": 2,
+    "budget_reservations": 2,
+    "cost_budget_reservations": 4,
+    "generation_study_grants": 1,
+    "generation_study_operations": 2,
+    "generation_study_evidence": 18,
+    "generation_study_charges": 2,
+    "generation_study_financial_grants": 2,
+    "generation_study_reconciliations": 2,
+    "generation_study_stages": 8,
+    "generation_study_supplied_reviews": 1,
+    "generation_study_supplied_observations": 1,
+    "authoring_study_configurations": 1,
+    "authoring_study_evidence": 12,
+    "authoring_study_commits": 1
+  },
+  "cleanup": {
+    "disabled": true,
+    "deleted": [
+      {
+        "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/531156a4bee0f82afcbb5bf1eb8116ccb4c0e4ea95e6d5b8c786c9d20c9316aa.png",
+        "existed": true,
+        "readNull": true
+      },
+      {
+        "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/7794846fbd3d203028b8716c3b97b7a19baa8d26d9f4084aa974774250b2cda4.png",
+        "existed": true,
+        "readNull": true
+      }
+    ],
+    "privateBodiesRemaining": 0,
+    "residual": [
+      {
+        "table": "budget_counters",
+        "rows": 2
+      },
+      {
+        "table": "users",
+        "rows": 1
+      },
+      {
+        "table": "cost_budget_counters",
+        "rows": 2
+      },
+      {
+        "table": "budget_reservations",
+        "rows": 2
+      },
+      {
+        "table": "cost_budget_reservations",
+        "rows": 4
+      },
+      {
+        "table": "generation_study_grants",
+        "rows": 1
+      },
+      {
+        "table": "generation_study_operations",
+        "rows": 2
+      },
+      {
+        "table": "generation_study_evidence",
+        "rows": 18
+      },
+      {
+        "table": "generation_study_charges",
+        "rows": 2
+      },
+      {
+        "table": "generation_study_financial_grants",
+        "rows": 2
+      },
+      {
+        "table": "generation_study_reconciliations",
+        "rows": 2
+      },
+      {
+        "table": "generation_study_stages",
+        "rows": 8
+      },
+      {
+        "table": "generation_study_supplied_reviews",
+        "rows": 1
+      },
+      {
+        "table": "generation_study_supplied_observations",
+        "rows": 1
+      },
+      {
+        "table": "authoring_study_configurations",
+        "rows": 1
+      },
+      {
+        "table": "authoring_study_evidence",
+        "rows": 12
+      },
+      {
+        "table": "authoring_study_commits",
+        "rows": 1
+      }
+    ],
+    "proof": {
+      "schemaHash": "545da96d5a212a3d9e0e915e0269be697ca733e7a586f90e9a88ac73cabaee6f",
+      "retiredTombstoneHash": "2d81ce6aff30b32b995bd1b569b83e90ef6843f6a9aed4a6295cbbcf3415c8e8"
+    },
+    "retained": "Synthetic immutable original intent/accounting plus empty schema, compiled source and old/new tombstones. No production records."
+  },
+  "forcedRestart": false,
+  "hostedQualification": false,
+  "realFinancialAuthority": false,
+  "localDirectory": "/private/tmp/p5-r3-workerd-OfmgYR",
+  "responses": [
+    {
+      "input": {
+        "action": "start"
+      },
+      "status": 409,
+      "clientWallMs": 4.934791000000018,
+      "result": {
+        "ok": false,
+        "error": "Error: native_owner_required",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "",
+          "step": "",
+          "statements": 0,
+          "attemptedStatements": 0,
+          "bindingCalls": 0,
+          "failedBatches": 0,
+          "reads": 0,
+          "writes": 0,
+          "databaseBytes": 0,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "action": "start"
+      },
+      "status": 409,
+      "clientWallMs": 1.162417000000005,
+      "result": {
+        "ok": false,
+        "error": "Error: native_owner_required",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "",
+          "step": "",
+          "statements": 0,
+          "attemptedStatements": 0,
+          "bindingCalls": 0,
+          "failedBatches": 0,
+          "reads": 0,
+          "writes": 0,
+          "databaseBytes": 0,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "action": "start"
+      },
+      "status": 409,
+      "clientWallMs": 0.9986659999999574,
+      "result": {
+        "ok": false,
+        "error": "Error: same_origin_json_required",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "",
+          "step": "",
+          "statements": 0,
+          "attemptedStatements": 0,
+          "bindingCalls": 0,
+          "failedBatches": 0,
+          "reads": 0,
+          "writes": 0,
+          "databaseBytes": 0,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "action": "start",
+        "sql": "DROP TABLE users"
+      },
+      "status": 409,
+      "clientWallMs": 0.9612500000000637,
+      "result": {
+        "ok": false,
+        "error": "Error: fixed_fields_required",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "start",
+          "step": "",
+          "statements": 0,
+          "attemptedStatements": 0,
+          "bindingCalls": 0,
+          "failedBatches": 0,
+          "reads": 0,
+          "writes": 0,
+          "databaseBytes": 0,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "status": 409,
+      "clientWallMs": 2.1077080000000024,
+      "result": {
+        "ok": false,
+        "error": "Error: body_bound",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "",
+          "step": "",
+          "statements": 0,
+          "attemptedStatements": 0,
+          "bindingCalls": 0,
+          "failedBatches": 0,
+          "reads": 0,
+          "writes": 0,
+          "databaseBytes": 0,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "action": "start"
+      },
+      "status": 200,
+      "clientWallMs": 18.954332999999906,
+      "result": {
+        "ok": true,
+        "action": "start",
+        "result": {
+          "imported": 26,
+          "proof": {
+            "schemaHash": "545da96d5a212a3d9e0e915e0269be697ca733e7a586f90e9a88ac73cabaee6f",
+            "retiredTombstoneHash": "2d81ce6aff30b32b995bd1b569b83e90ef6843f6a9aed4a6295cbbcf3415c8e8"
+          },
+          "dataset": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a"
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 0,
+          "requests": 1,
+          "report": null,
+          "reads": 592,
+          "writes": 91
+        },
+        "metrics": {
+          "action": "start",
+          "step": "",
+          "statements": 80,
+          "attemptedStatements": 80,
+          "bindingCalls": 54,
+          "failedBatches": 0,
+          "reads": 594,
+          "writes": 92,
+          "databaseBytes": 811008,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "status"
+      },
+      "status": 409,
+      "clientWallMs": 1.6212090000000217,
+      "result": {
+        "ok": false,
+        "error": "Error: owner_or_dataset_changed",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "status",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 1,
+          "bindingCalls": 1,
+          "failedBatches": 0,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 811008,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "action": "start"
+      },
+      "status": 409,
+      "clientWallMs": 1.439834000000019,
+      "result": {
+        "ok": false,
+        "error": "Error: run_consumed_or_expired",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "start",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 1,
+          "bindingCalls": 1,
+          "failedBatches": 0,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 811008,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 0
+      },
+      "status": 200,
+      "clientWallMs": 67.23695899999996,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "rollback": true,
+          "commits": 0,
+          "grants": 0
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 1,
+          "requests": 2,
+          "report": "{\"step\":\"rollback\",\"resultHash\":\"01efb41605e602b1536339d5552410af5a4d2096f59bcbfcba2afa5055175d74\"}",
+          "reads": 53584,
+          "writes": 285
+        },
+        "metrics": {
+          "action": "step",
+          "step": "rollback",
+          "statements": 270,
+          "attemptedStatements": 320,
+          "bindingCalls": 84,
+          "failedBatches": 1,
+          "reads": 52994,
+          "writes": 195,
+          "databaseBytes": 880640,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          },
+          "rollback": true,
+          "rollbackInjected": true,
+          "databaseError": "Error: D1_ERROR: CHECK constraint failed: ok=1: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)"
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 1
+      },
+      "status": 200,
+      "clientWallMs": 94.3007090000001,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "status": "committed",
+          "receiptHash": "745d2094f78bd19fd6b579e1ccb7635bad2e8f240dd83467b02983e70cbe7769"
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 2,
+          "requests": 3,
+          "report": "{\"step\":\"approve\",\"resultHash\":\"901c349ac45e453bbbaa5554ed1897918a30216b3f7fe43c068274299284fa29\"}",
+          "reads": 234851,
+          "writes": 794
+        },
+        "metrics": {
+          "action": "step",
+          "step": "approve",
+          "statements": 599,
+          "attemptedStatements": 599,
+          "bindingCalls": 153,
+          "failedBatches": 0,
+          "reads": 181269,
+          "writes": 510,
+          "databaseBytes": 897024,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          },
+          "rollback": false
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 1
+      },
+      "status": 409,
+      "clientWallMs": 94.7119580000001,
+      "result": {
+        "ok": false,
+        "error": "Error: D1_ERROR: CHECK constraint failed: ok=1: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "step",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 4,
+          "bindingCalls": 2,
+          "failedBatches": 1,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 897024,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 2
+      },
+      "status": 200,
+      "clientWallMs": 523.506417,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "result": {
+            "action": "hold",
+            "newPurchases": 1,
+            "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "reason": "original_charge_unreconciled",
+            "contentOutcome": "usable",
+            "accountingState": "unknown",
+            "uncachedEstimateMicrousd": 650,
+            "measuredMicrousd": null
+          },
+          "intent": [
+            {
+              "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+              "providerStage": "moderation",
+              "beforeResponse": true
+            },
+            {
+              "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+              "providerStage": "moderation",
+              "beforeResponse": true
+            },
+            {
+              "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+              "providerStage": "image",
+              "beforeResponse": true
+            }
+          ],
+          "syntheticResponses": 3
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 3,
+          "requests": 4,
+          "report": "{\"step\":\"baseline\",\"resultHash\":\"bdfb98b2c9267ca1f23c9bd8a706b3c397fc7e9b28920e146234c9e8d544e4b2\"}",
+          "reads": 1133759,
+          "writes": 3233
+        },
+        "metrics": {
+          "action": "step",
+          "step": "baseline",
+          "statements": 3228,
+          "attemptedStatements": 3228,
+          "bindingCalls": 838,
+          "failedBatches": 0,
+          "reads": 898910,
+          "writes": 2440,
+          "databaseBytes": 974848,
+          "providers": 3,
+          "intent": [
+            {
+              "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+              "providerStage": "moderation",
+              "beforeResponse": true
+            },
+            {
+              "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+              "providerStage": "moderation",
+              "beforeResponse": true
+            },
+            {
+              "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+              "providerStage": "image",
+              "beforeResponse": true
+            }
+          ],
+          "r2": {
+            "put": 1,
+            "get": 0,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "status"
+      },
+      "status": 200,
+      "clientWallMs": 1.4519169999998667,
+      "result": {
+        "ok": true,
+        "action": "status",
+        "result": {
+          "steps": [
+            "rollback",
+            "approve",
+            "baseline",
+            "recover-original",
+            "settle-baseline",
+            "observe",
+            "treatment",
+            "settle-treatment",
+            "expiry-revocation",
+            "terminal-stop"
+          ],
+          "dataset": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a",
+          "limits": {
+            "statements": 6000,
+            "reads": 10000000,
+            "writes": 20000,
+            "databaseBytes": 16000000,
+            "requests": 80,
+            "objectBytes": 6190,
+            "objects": 2,
+            "providerResponses": 6
+          },
+          "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 3,
+          "requests": 4,
+          "report": "{\"step\":\"baseline\",\"resultHash\":\"bdfb98b2c9267ca1f23c9bd8a706b3c397fc7e9b28920e146234c9e8d544e4b2\"}",
+          "reads": 1133759,
+          "writes": 3233
+        },
+        "metrics": {
+          "action": "status",
+          "step": "",
+          "statements": 2,
+          "attemptedStatements": 2,
+          "bindingCalls": 2,
+          "failedBatches": 0,
+          "reads": 2,
+          "writes": 0,
+          "databaseBytes": 974848,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 2
+      },
+      "status": 409,
+      "clientWallMs": 1.1947909999998956,
+      "result": {
+        "ok": false,
+        "error": "Error: D1_ERROR: CHECK constraint failed: ok=1: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "step",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 4,
+          "bindingCalls": 2,
+          "failedBatches": 1,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 974848,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 3
+      },
+      "status": 200,
+      "clientWallMs": 95.8298749999999,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "duplicate": {
+            "action": "hold",
+            "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "reason": "original_purchase_only",
+            "newPurchases": 0
+          },
+          "originalOperation": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "recovered": {
+            "bytes": 6190,
+            "sha256": "08c04ddee6610589fccaf694ee06dac80e8b6506c2ca07f57b0acbf7eaaa3c89"
+          },
+          "lostAcknowledgement": "Previous committed result intentionally discarded by driver; cross-request original recovery; no forced restart"
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 4,
+          "requests": 5,
+          "report": "{\"step\":\"recover-original\",\"resultHash\":\"118c8e8c02a751ce800346bdd6d3ca0387a5dbe6a4c892cb08536fca05a3ea03\"}",
+          "reads": 1307845,
+          "writes": 3690
+        },
+        "metrics": {
+          "action": "step",
+          "step": "recover-original",
+          "statements": 682,
+          "attemptedStatements": 682,
+          "bindingCalls": 191,
+          "failedBatches": 0,
+          "reads": 174088,
+          "writes": 458,
+          "databaseBytes": 974848,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 1,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 4
+      },
+      "status": 200,
+      "clientWallMs": 10.00366699999995,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "action": "completed",
+          "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+          "measuredMicrousd": 650,
+          "newPurchases": 0,
+          "financial": {
+            "providerSettled": true,
+            "lifecycleFunded": true,
+            "nextPurchaseEligible": true,
+            "evidenceId": "baseline-P5",
+            "originalResidualMicrousd": null,
+            "remainingUncertaintyMicrousd": 0,
+            "incurredMicrousd": 650,
+            "incurredTokens": 30,
+            "reason": null,
+            "lifecycle": {
+              "evidence_id": "baseline-P5",
+              "operation_id": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+              "sequence": 1,
+              "previous_id": null,
+              "original_charge_hash": "71de501e74b5b67857786a7c1e5b4b6218ab4402227649ad65bf0b8791670222",
+              "policy_id": "financial-policy:d677d0f33128722f31c9b1d5ba27b2edb74125f6d6b5e2bf04b70528563a4390",
+              "evidence_kind": "verified-incurred-charge",
+              "authority_version": "P5-SYNTHETIC-verifier",
+              "evidence_ref": "P5-SYNTHETIC-billing",
+              "recorded_at": "2026-09-25T18:37:10.937Z",
+              "provider_settled": 1,
+              "incurred_microusd": 650,
+              "incurred_tokens": 30,
+              "remaining_uncertainty_microusd": 0,
+              "lifecycle_microusd": 800,
+              "lifecycle_scope": "exact-study-inventory-including-financial-retention",
+              "liability_owner": "mock-owner",
+              "lifecycle_through": "2026-10-02T00:00:00.000Z",
+              "lifecycle_evidence_ref": "P5-SYNTHETIC-lifecycle",
+              "lifecycle_closed": 0,
+              "lifecycle_incurred_microusd": null
+            }
+          },
+          "artifactState": "retained",
+          "nextPurchaseEligible": true
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 5,
+          "requests": 6,
+          "report": "{\"step\":\"settle-baseline\",\"resultHash\":\"08a7e2e2d6aa2902ac0be295159e7cb2673f788bb4811a539ff1e4d4b8f0daab\"}",
+          "reads": 1308772,
+          "writes": 3767
+        },
+        "metrics": {
+          "action": "step",
+          "step": "settle-baseline",
+          "statements": 99,
+          "attemptedStatements": 99,
+          "bindingCalls": 36,
+          "failedBatches": 0,
+          "reads": 929,
+          "writes": 78,
+          "databaseBytes": 974848,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 5
+      },
+      "status": 200,
+      "clientWallMs": 51.69183300000009,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "blocked": {
+            "status": "denied",
+            "error": "study_pair_paused_or_stopped",
+            "dispatchState": "inspect_original_operation"
+          },
+          "observation": {
+            "action": "observation_recorded",
+            "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+            "requiresSettlement": true,
+            "newPurchases": 0
+          },
+          "syntheticHumanSimulation": true
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 6,
+          "requests": 7,
+          "report": "{\"step\":\"observe\",\"resultHash\":\"e8c304896cb6c84211292358d37a0029e11d3a4be2e5d85ae2f05203b71aa7b3\"}",
+          "reads": 1398088,
+          "writes": 4019
+        },
+        "metrics": {
+          "action": "step",
+          "step": "observe",
+          "statements": 374,
+          "attemptedStatements": 374,
+          "bindingCalls": 106,
+          "failedBatches": 0,
+          "reads": 89318,
+          "writes": 253,
+          "databaseBytes": 974848,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 6
+      },
+      "status": 200,
+      "clientWallMs": 511.71474999999987,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "result": {
+            "action": "hold",
+            "newPurchases": 1,
+            "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+            "reason": "original_charge_unreconciled",
+            "contentOutcome": "usable",
+            "accountingState": "unknown",
+            "uncachedEstimateMicrousd": 650,
+            "measuredMicrousd": null
+          },
+          "intent": [
+            {
+              "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+              "providerStage": "moderation",
+              "beforeResponse": true
+            },
+            {
+              "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+              "providerStage": "moderation",
+              "beforeResponse": true
+            },
+            {
+              "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+              "providerStage": "image",
+              "beforeResponse": true
+            }
+          ],
+          "syntheticResponses": 3
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 7,
+          "requests": 8,
+          "report": "{\"step\":\"treatment\",\"resultHash\":\"53c44ebdc805ef23ecf46d7045e0ed7af9a8dbf7b0c8084c46c076f6eb021591\"}",
+          "reads": 2298273,
+          "writes": 6530
+        },
+        "metrics": {
+          "action": "step",
+          "step": "treatment",
+          "statements": 3276,
+          "attemptedStatements": 3276,
+          "bindingCalls": 842,
+          "failedBatches": 0,
+          "reads": 900187,
+          "writes": 2512,
+          "databaseBytes": 1060864,
+          "providers": 3,
+          "intent": [
+            {
+              "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+              "providerStage": "moderation",
+              "beforeResponse": true
+            },
+            {
+              "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+              "providerStage": "moderation",
+              "beforeResponse": true
+            },
+            {
+              "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+              "providerStage": "image",
+              "beforeResponse": true
+            }
+          ],
+          "r2": {
+            "put": 1,
+            "get": 0,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 7
+      },
+      "status": 200,
+      "clientWallMs": 8.944417000000158,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "action": "completed",
+          "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+          "measuredMicrousd": 650,
+          "newPurchases": 0,
+          "financial": {
+            "providerSettled": true,
+            "lifecycleFunded": true,
+            "nextPurchaseEligible": true,
+            "evidenceId": "treatment-P5",
+            "originalResidualMicrousd": null,
+            "remainingUncertaintyMicrousd": 0,
+            "incurredMicrousd": 650,
+            "incurredTokens": 30,
+            "reason": null,
+            "lifecycle": {
+              "evidence_id": "treatment-P5",
+              "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+              "sequence": 1,
+              "previous_id": null,
+              "original_charge_hash": "9774494e1e952876c030effd5a3903a29a87e2eb662d9523fa8c413f4058e80d",
+              "policy_id": "financial-policy:14ad6cfda9138e63b2f163791f1a977abdec32010efaf0f608e3d601b7e923a1",
+              "evidence_kind": "verified-incurred-charge",
+              "authority_version": "P5-SYNTHETIC-verifier",
+              "evidence_ref": "P5-SYNTHETIC-billing",
+              "recorded_at": "2026-09-25T18:37:11.511Z",
+              "provider_settled": 1,
+              "incurred_microusd": 650,
+              "incurred_tokens": 30,
+              "remaining_uncertainty_microusd": 0,
+              "lifecycle_microusd": 800,
+              "lifecycle_scope": "exact-study-inventory-including-financial-retention",
+              "liability_owner": "mock-owner",
+              "lifecycle_through": "2026-10-02T00:00:00.000Z",
+              "lifecycle_evidence_ref": "P5-SYNTHETIC-lifecycle",
+              "lifecycle_closed": 0,
+              "lifecycle_incurred_microusd": null
+            }
+          },
+          "artifactState": "retained",
+          "nextPurchaseEligible": true
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 8,
+          "requests": 9,
+          "report": "{\"step\":\"settle-treatment\",\"resultHash\":\"064cf9bcb31e138b4322408dac0182da33e650b44c810e908241a04af132fe27\"}",
+          "reads": 2299201,
+          "writes": 6607
+        },
+        "metrics": {
+          "action": "step",
+          "step": "settle-treatment",
+          "statements": 99,
+          "attemptedStatements": 99,
+          "bindingCalls": 36,
+          "failedBatches": 0,
+          "reads": 930,
+          "writes": 78,
+          "databaseBytes": 1060864,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 8
+      },
+      "status": 200,
+      "clientWallMs": 8.974041000000398,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "immutableProposalExpiry": true,
+          "expiredPrivateEvidence": {
+            "status": "denied",
+            "error": "authoring_study_evidence_unavailable",
+            "dispatchState": "inspect_original_operation"
+          },
+          "revoked": {
+            "status": "denied",
+            "error": "authoring_study_configuration_unavailable",
+            "newPurchases": 0
+          },
+          "renewal": false
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 9,
+          "requests": 10,
+          "report": "{\"step\":\"expiry-revocation\",\"resultHash\":\"d37f78a2a931a2f0173fc275891efbc6e24d8dc54a8d91a7de79ddcee50173cc\"}",
+          "reads": 2302370,
+          "writes": 6651
+        },
+        "metrics": {
+          "action": "step",
+          "step": "expiry-revocation",
+          "statements": 64,
+          "attemptedStatements": 65,
+          "bindingCalls": 25,
+          "failedBatches": 1,
+          "reads": 3171,
+          "writes": 45,
+          "databaseBytes": 1060864,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 9
+      },
+      "status": 200,
+      "clientWallMs": 10.289416999999958,
+      "result": {
+        "ok": true,
+        "action": "step",
+        "result": {
+          "stopped": {
+            "status": "denied",
+            "error": "authoring_study_evidence_unavailable",
+            "newPurchases": 0
+          },
+          "denied": {
+            "status": "denied",
+            "error": "authoring_study_evidence_unavailable",
+            "dispatchState": "inspect_original_operation"
+          }
+        },
+        "state": {
+          "phase": "ready",
+          "cursor": 10,
+          "requests": 11,
+          "report": "{\"step\":\"terminal-stop\",\"resultHash\":\"7bba97a8097a587737fdab4df552b2a9de4435c145e56c217c48ad2a92d7048b\"}",
+          "reads": 2308164,
+          "writes": 6713
+        },
+        "metrics": {
+          "action": "step",
+          "step": "terminal-stop",
+          "statements": 97,
+          "attemptedStatements": 97,
+          "bindingCalls": 33,
+          "failedBatches": 0,
+          "reads": 5796,
+          "writes": 63,
+          "databaseBytes": 1060864,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "cleanup"
+      },
+      "status": 200,
+      "clientWallMs": 11.564624999999978,
+      "result": {
+        "ok": true,
+        "action": "cleanup",
+        "result": {
+          "disabled": true,
+          "deleted": [
+            {
+              "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/531156a4bee0f82afcbb5bf1eb8116ccb4c0e4ea95e6d5b8c786c9d20c9316aa.png",
+              "existed": true,
+              "readNull": true
+            },
+            {
+              "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/7794846fbd3d203028b8716c3b97b7a19baa8d26d9f4084aa974774250b2cda4.png",
+              "existed": true,
+              "readNull": true
+            }
+          ],
+          "privateBodiesRemaining": 0,
+          "residual": [
+            {
+              "table": "budget_counters",
+              "rows": 2
+            },
+            {
+              "table": "users",
+              "rows": 1
+            },
+            {
+              "table": "cost_budget_counters",
+              "rows": 2
+            },
+            {
+              "table": "budget_reservations",
+              "rows": 2
+            },
+            {
+              "table": "cost_budget_reservations",
+              "rows": 4
+            },
+            {
+              "table": "generation_study_grants",
+              "rows": 1
+            },
+            {
+              "table": "generation_study_operations",
+              "rows": 2
+            },
+            {
+              "table": "generation_study_evidence",
+              "rows": 18
+            },
+            {
+              "table": "generation_study_charges",
+              "rows": 2
+            },
+            {
+              "table": "generation_study_financial_grants",
+              "rows": 2
+            },
+            {
+              "table": "generation_study_reconciliations",
+              "rows": 2
+            },
+            {
+              "table": "generation_study_stages",
+              "rows": 8
+            },
+            {
+              "table": "generation_study_supplied_reviews",
+              "rows": 1
+            },
+            {
+              "table": "generation_study_supplied_observations",
+              "rows": 1
+            },
+            {
+              "table": "authoring_study_configurations",
+              "rows": 1
+            },
+            {
+              "table": "authoring_study_evidence",
+              "rows": 12
+            },
+            {
+              "table": "authoring_study_commits",
+              "rows": 1
+            }
+          ],
+          "proof": {
+            "schemaHash": "545da96d5a212a3d9e0e915e0269be697ca733e7a586f90e9a88ac73cabaee6f",
+            "retiredTombstoneHash": "2d81ce6aff30b32b995bd1b569b83e90ef6843f6a9aed4a6295cbbcf3415c8e8"
+          },
+          "retained": "Synthetic immutable original intent/accounting plus empty schema, compiled source and old/new tombstones. No production records."
+        },
+        "state": {
+          "phase": "disabled",
+          "cursor": 10,
+          "requests": 11,
+          "report": null,
+          "reads": 2308841,
+          "writes": 6752
+        },
+        "metrics": {
+          "action": "cleanup",
+          "step": "",
+          "statements": 56,
+          "attemptedStatements": 56,
+          "bindingCalls": 51,
+          "failedBatches": 0,
+          "reads": 679,
+          "writes": 40,
+          "databaseBytes": 1060864,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 4,
+            "delete": 2
+          }
+        },
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a"
+      }
+    },
+    {
+      "input": {
+        "action": "start"
+      },
+      "status": 409,
+      "clientWallMs": 1.112833000000137,
+      "result": {
+        "ok": false,
+        "error": "Error: run_consumed_or_expired",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "start",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 1,
+          "bindingCalls": 1,
+          "failedBatches": 0,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 823296,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "input": {
+        "action": "step",
+        "index": 0
+      },
+      "status": 409,
+      "clientWallMs": 0.8238340000002609,
+      "result": {
+        "ok": false,
+        "error": "Error: run_disabled_or_absent",
+        "instance": "39673b9c-0b03-48f5-8892-cbc01e31229a",
+        "metrics": {
+          "action": "step",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 1,
+          "bindingCalls": 1,
+          "failedBatches": 0,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 823296,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    }
+  ]
+}
