@@ -1,0 +1,25 @@
+{
+  "version": "p5-sites-capability-assessment-r2",
+  "predecessor": "38062b07d3456979885a373eef9970d1c2a78a9b",
+  "releaseSource": "38062b07d3456979885a373eef9970d1c2a78a9b",
+  "releaseArchiveSha256": "0ab8425b3a81dca051e2cc3cc07891a1dc9eac52228b8fe84728288889275969",
+  "applicationRuntimeChanged": false,
+  "historicalArtifactsPreserved": 97,
+  "publicationAuthorized": false,
+  "managedQualified": false,
+  "paidAuthorized": false,
+  "artifacts": {
+    "docs/evidence/generation-p5/sites-r2/capability-assessment.md": "3a1bcf8a3e2cc9f99477bdea39d6cf493eff0bdb97683e9badbbb66e3972ed01",
+    "docs/evidence/generation-p5/sites-r2/current-deployment.json": "fce6ba2a6ee55da28d0f8546c6c7eb037d9c062c08b8f7c22fe52c49f254b79b",
+    "docs/evidence/generation-p5/sites-r2/decision.md": "f9a32633cb234a0042a71b2ab4f94c6b49015724d80c3b7c07ab0b8ef4508901",
+    "docs/evidence/generation-p5/sites-r2/index.html": "2d7af763c6aa199e82f5e5eefcd7bdd97e637b8b01e3ad5a800726743892a352",
+    "docs/evidence/generation-p5/sites-r2/local-assessment.json": "8742174e3ff07f516cd1042dc414af0b1573fa1298445b7474faa2513e8f8fbd",
+    "docs/evidence/generation-p5/sites-r2/platform-capability-request.md": "bbfee63a8bb0bd4f74c8f1f0f15ac71e67b8225454c70d65eff19821723f28f7",
+    "docs/evidence/generation-p5/sites-r2/platform-receipts.json": "1891322eb5e40711c0176850386de303ff942e2f41172df34460d702827453de",
+    "docs/evidence/generation-p5/sites-r2/publication-sequence.md": "4d6bb312250430b65e20181db077ca89d56054fc9dd377419da67367fb83cd38",
+    "docs/generation-cross-media-transfer-e2.md": "b2f1e7af9e32f8ade4f23a6149e2a8fe3a2501750d8360b9c87ed809e6dcf551",
+    "scripts/assess-generation-p5-sites.mjs": "74b620a41bce5ec564a3c3de66303407b4f471a9a286d95a63e93b361f3de0da",
+    "scripts/seal-generation-p5-sites-assessment.mjs": "03d14c4bb67d050826270db006d981970a7f4c29f8277da7de89f0bce0ab0da5"
+  },
+  "id": "p5-sites-assessment:23ef79a60aea1e6a7acff29359c8b092f41b3f88d78d768d6a8f88f317ec903e"
+}

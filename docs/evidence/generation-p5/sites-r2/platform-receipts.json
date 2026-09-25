@@ -1,0 +1,209 @@
+{
+  "checkedAt": "2026-09-25T17:21:17.293Z",
+  "selected": {
+    "projectId": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version": 550,
+    "status": "active",
+    "access": "workspace_all",
+    "role": "owner",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "sourceCommit": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+    "versionId": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8",
+    "deploymentId": "appgdep_6ab573499a108191a2691a137672b93e",
+    "storedArchive": {
+      "format": "tar",
+      "sha256": "sha256:a629abf35cdb357f0affa0c309ebfc0591cfe235249404c97b7ce19ee813be7f",
+      "bytes": 44523520,
+      "files": 622
+    },
+    "environment": {
+      "revision": 16,
+      "updatedAt": "2026-09-22T01:39:20.975432+00:00",
+      "keys": [
+        {
+          "key": "FAL_IMAGE_EDIT_MODEL",
+          "secret": false
+        },
+        {
+          "key": "FAL_IMAGE_MODEL",
+          "secret": false
+        },
+        {
+          "key": "FAL_IMAGE_PREVIEW_MODEL",
+          "secret": false
+        },
+        {
+          "key": "FAL_KEY",
+          "secret": true
+        },
+        {
+          "key": "FAL_REFERENCE_VIDEO_MODEL",
+          "secret": false
+        },
+        {
+          "key": "FAL_VIDEO_MODEL",
+          "secret": false
+        },
+        {
+          "key": "FORMA_IMAGE_PROVIDER",
+          "secret": false
+        },
+        {
+          "key": "FORMA_RETENTION_DAYS",
+          "secret": false
+        },
+        {
+          "key": "FORMA_USER_TOKEN_LIMIT",
+          "secret": false
+        },
+        {
+          "key": "FORMA_VIDEO_PROVIDER",
+          "secret": false
+        },
+        {
+          "key": "FORMA_WORKSPACE_TOKEN_LIMIT",
+          "secret": false
+        },
+        {
+          "key": "JEV_API_KEY",
+          "secret": true
+        },
+        {
+          "key": "OPENAI_API_KEY",
+          "secret": true
+        },
+        {
+          "key": "OPENAI_IMAGE_MODEL",
+          "secret": false
+        },
+        {
+          "key": "OPENAI_MODEL",
+          "secret": false
+        },
+        {
+          "key": "OPENAI_PROJECT",
+          "secret": false
+        }
+      ]
+    },
+    "overview": {
+      "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+      "bindings": [
+        "DB"
+      ],
+      "selected_binding_name": "DB",
+      "tables": [
+        "__forma_event_save_repair_receipts",
+        "__forma_memory_schema_repair_receipts",
+        "artifact_revisions",
+        "assistant_action_commits",
+        "assistant_action_proposals",
+        "assistant_billing_reconciliations",
+        "assistant_specialist_tasks",
+        "assistant_turns",
+        "authoring_commits",
+        "budget_counters",
+        "budget_hold_dispositions",
+        "budget_reservations",
+        "budget_scope_policies",
+        "canvas_governance_requirements",
+        "capability_grants",
+        "consequential_execution_steps",
+        "consequential_executions",
+        "cost_budget_counters",
+        "cost_budget_reservations",
+        "delivery_decisions",
+        "document_jobs",
+        "event_client_receipts",
+        "event_private_payloads",
+        "event_write_stage",
+        "events",
+        "external_content",
+        "generation_preflights",
+        "impersonation_sessions",
+        "managed_video_reconciliations",
+        "memory_authored_image_receipts",
+        "memory_derivation_asset_edges",
+        "memory_derivation_completion_cursors",
+        "memory_derivation_completions",
+        "memory_derivation_consumer_contents",
+        "memory_derivation_consumer_parents",
+        "memory_derivation_consumer_sources",
+        "memory_derivation_consumers",
+        "memory_derivation_contexts",
+        "memory_derivation_cursors",
+        "memory_derivation_finance",
+        "memory_derivation_grants",
+        "memory_derivation_index_intents",
+        "memory_derivation_job_finance",
+        "memory_derivation_job_sources",
+        "memory_derivation_jobs",
+        "memory_derivation_month_caps",
+        "memory_derivation_no_dispatch",
+        "memory_derivation_observation_controls",
+        "memory_derivation_producer_cursors",
+        "memory_derivation_producer_jobs"
+      ],
+      "model_projection": {
+        "truncated": false,
+        "omitted_project_id": false,
+        "omitted_selected_binding": false,
+        "omitted_bindings": 0,
+        "omitted_tables": 0
+      }
+    }
+  },
+  "retired": {
+    "projectId": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "version": 1,
+    "access": "custom",
+    "role": "owner",
+    "url": "https://forma-n10h-synthetic-20260924.reve-ai-0869.chatgpt.site",
+    "overview": {
+      "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+      "bindings": [
+        "DB"
+      ],
+      "selected_binding_name": "DB",
+      "tables": [
+        "event_private_payloads",
+        "events",
+        "n10h_guard",
+        "n10h_run",
+        "organization_projects",
+        "pilot_cohorts",
+        "pilot_participants",
+        "project_event_scopes",
+        "project_resource_scopes"
+      ],
+      "model_projection": {
+        "truncated": false,
+        "omitted_project_id": false,
+        "omitted_selected_binding": false,
+        "omitted_bindings": 0,
+        "omitted_tables": 0
+      }
+    },
+    "tombstone": [
+      {
+        "phase": "disabled",
+        "reportRemoved": true,
+        "importCursor": 205,
+        "cleanupCursor": 205
+      }
+    ],
+    "environment": {
+      "revision": 0,
+      "entryCount": 0
+    },
+    "accessSummary": {
+      "mode": "custom",
+      "ownerUsers": 1,
+      "externalUsers": 0,
+      "groups": 0,
+      "editors": 0
+    }
+  },
+  "changesMade": [],
+  "credentialValuesRead": false
+}

@@ -1,0 +1,182 @@
+{
+  "version": "p5-sites-r2-local-assessment",
+  "sourceCommit": "38062b07d3456979885a373eef9970d1c2a78a9b",
+  "main": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "sourceHashesMatched": 2193,
+  "archiveHash": "0ab8425b3a81dca051e2cc3cc07891a1dc9eac52228b8fe84728288889275969",
+  "archiveFilesMatched": 622,
+  "heldMigrations": 41,
+  "sourceMigrationFiles": 72,
+  "studySchemaPackaged": false,
+  "runtimeChanged": false,
+  "oldTestsRerun": false,
+  "retiredN10H": {
+    "schemaHash": "01cd656c8ba8bdf396e6bda2cdbfa2a483c12cf075a3f62920c69dcfd5fc4556",
+    "objects": 28,
+    "tables": 9,
+    "commonObjects": [
+      {
+        "name": "event_private_payloads",
+        "type": "table",
+        "sqlIdentical": true,
+        "columns": true
+      },
+      {
+        "name": "events",
+        "type": "table",
+        "sqlIdentical": true,
+        "columns": true
+      },
+      {
+        "name": "idx_event_private_payloads_owner_scope",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_events_correlation",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_events_nonphantom_stream_sequence",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_events_stream_actor",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_events_stream_sequence",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_events_stream_type",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_events_type_occurred_stream",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_organization_projects_organization",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_organization_projects_owner",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_organization_projects_owner_project",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_pilot_cohorts_active_organization",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_pilot_cohorts_organization_status",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_pilot_participants_cohort_email",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_pilot_participants_cohort_user",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_pilot_participants_organization_status",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_project_event_scopes_owner",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_project_event_scopes_sequence",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_project_resource_scopes_owner_kind_actor",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "idx_project_resource_scopes_resource",
+        "type": "index",
+        "sqlIdentical": true,
+        "columns": null
+      },
+      {
+        "name": "organization_projects",
+        "type": "table",
+        "sqlIdentical": true,
+        "columns": true
+      },
+      {
+        "name": "pilot_cohorts",
+        "type": "table",
+        "sqlIdentical": true,
+        "columns": true
+      },
+      {
+        "name": "pilot_participants",
+        "type": "table",
+        "sqlIdentical": true,
+        "columns": true
+      },
+      {
+        "name": "project_event_scopes",
+        "type": "table",
+        "sqlIdentical": true,
+        "columns": true
+      },
+      {
+        "name": "project_resource_scopes",
+        "type": "table",
+        "sqlIdentical": true,
+        "columns": true
+      }
+    ],
+    "additionalP5Objects": 766,
+    "originalOnlyObjects": [
+      "n10h_guard",
+      "n10h_run"
+    ],
+    "note": "Local historical schema comparison, not current managed schema attestation or an installation plan. Preserve tombstone; never replay original importer."
+  }
+}
