@@ -1,0 +1,15 @@
+{
+  "checkedAt": "2026-09-26T00:28:55.934Z",
+  "sitesTools": [],
+  "discoveryTools": [],
+  "totalTools": 56,
+  "scope": "Current functions tool registry only; no claim that hosted Sites service is unavailable",
+  "requiredMissingCapabilities": [
+    "native Sites get_site and environment/source/version/audience preflight",
+    "native source credential without publish-on-push",
+    "native archive save/admission",
+    "native private deploy and deployment status, including saved-version2 restoration"
+  ],
+  "hostedCalls": 0,
+  "pluginChanged": false
+}

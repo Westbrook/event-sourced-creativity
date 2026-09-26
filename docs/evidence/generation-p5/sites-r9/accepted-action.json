@@ -1,0 +1,22 @@
+{
+  "acceptedAt": "2026-09-26T00:29:32.741888+00:00",
+  "source": "User explicitly approved exact R8 decision and envelope in this P5 chat, with @Sites invocation",
+  "accepted": true,
+  "envelope": "p5-sites-catalog:daef3e10f1bdb5bcc5046127d83e8451ca900f3b7a7c60614dad3b6797ab0d2e",
+  "decision": "../sites-r8/decision.md",
+  "target": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "action": "Publish exact sealed R8 privately; invoke Read catalog once; preserve raw receipt and exact offline diff; restore exact saved version2; no further changed hosted action.",
+  "restoreVersionId": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_f5f7f474cb8c8191a85efe1c9de0f370",
+  "normalAdditionalReservationsMaximum": 16,
+  "restorationRecoveryReservationsMaximum": 2,
+  "chargedBefore": 9,
+  "chargedNow": 9,
+  "unused": 28,
+  "normalStop": 25,
+  "recoveryReserve": 12,
+  "cleanupLimit": 5,
+  "cleanupAttempts": 0,
+  "initialOptionBAndRetentionRemainAccepted": true,
+  "repeatApprovalRequiredForUnchangedAction": false,
+  "publicationPerformed": false
+}

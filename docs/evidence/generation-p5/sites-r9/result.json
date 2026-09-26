@@ -1,0 +1,33 @@
+{
+  "status": "approved-diagnostic-blocked-native-tools-unavailable",
+  "checkedAt": "2026-09-26T00:29:32.741888+00:00",
+  "baseCommit": "d91a6fee71349a2e566414afe9078ab0387706e9",
+  "approvalAccepted": true,
+  "envelope": "p5-sites-catalog:daef3e10f1bdb5bcc5046127d83e8451ca900f3b7a7c60614dad3b6797ab0d2e",
+  "archiveHashesReverified": true,
+  "sourceArchiveFilesVerified": 231,
+  "deploymentArchiveFilesVerified": 9,
+  "hostedRequestsThisContinuation": 0,
+  "nativePreflightPerformed": false,
+  "published": false,
+  "catalogRead": false,
+  "restorationAttempted": false,
+  "restorationApplicable": false,
+  "restorationReason": "No diagnostic deployment was sent; no change to restore. Last retained deployment receipt is version2, not freshly reverified.",
+  "actualHostedDifferenceKnown": false,
+  "chargedReservations": 9,
+  "unusedReservations": 28,
+  "priorAuthenticationAndInternalHTTP": "Unknown, not reset; conservative reservations are not exact HTTP counts.",
+  "sourceChanged": false,
+  "pluginChanged": false,
+  "unmanagedCredentialsUsed": false,
+  "p5Complete": false,
+  "next": "Expose the supported native Sites connector tools in this existing P5 chat. On a later continuation when available, execute the accepted exact R8 plan without renewed approval, within unchanged expiry, reservation limits and drift checks. Do not substitute unmanaged credentials, patch/reinstall plugin or retry Start.",
+  "preserved": [
+    "October1 2026 00UTC expiry without renewal",
+    "accepted OptionB and indefinite private retention from2026-09-25T21:04:00Z",
+    "N10H original disabled state; no P5 run/fixture and no futile cleanup",
+    "P2 gates,847/six exclusions and actual-Forma identity/schema/holds/custody/financial qualification",
+    "cross-media diagnostic lessons do not establish generation quality"
+  ]
+}
