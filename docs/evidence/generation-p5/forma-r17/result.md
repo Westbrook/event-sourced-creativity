@@ -1,0 +1,37 @@
+# P5 R17 — package path established; migration provenance still open
+
+**Outcome (b): no Stage B publication approval request yet.** Local work established the supported exact-payload packaging path. Retained evidence does not establish that all 41 packaged migrations will be skipped with zero hosted schema changes. The missing native capability is identified in [the focused platform request](native-read-request.md); no new native request was made.
+
+## Evidence and its limits
+
+R16 already connects actual Forma `appgprj_6a7a020e334881919ed8aea0363cb98f`, saved v550 `appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8`, source `c28af5fea0fc3ec2b37b878a544ec59c52a64daf`, successful deployment `appgdep_6ab573499a108191a2691a137672b93e`, environment 16 and `workspace_all`/access revision 7. These receipts are preserved, not repeated.
+
+| Question | Retained/local evidence | Conclusion |
+|---|---|---|
+| Same intended migration inputs? | Current source hosting, release policy/code, journal and all 41 SQL bytes match the source attached to v550. R17 rechecked every packaged SQL byte against that Git object. | Yes at source level. |
+| Exact v550 admitted migration payload? | Native archive format tar, hash `sha256:a629abf35cdb357f0affa0c309ebfc0591cfe235249404c97b7ce19ee813be7f`, 44,523,520 bytes, 622 files. No retained bytes or per-file manifest authenticated to this archive hash. R1 and R15 local archives are other artifacts. | Unknown. Equal file counts cannot identify file contents. |
+| Applied migration history and replay behavior? | Supported Sites persistence guidance says migrations are applied and recorded individually before Worker upload and applied SQL/metadata must remain immutable. It also warns that partial application survives failure. Successful v550 publication therefore supports completed processing of **its actual admitted payload**. | Missing payload provenance prevents identifying that processed set as these exact 41 files. Guidance does not expose a version-bound applied history or exact runner skip key/byte-validation contract. Do not infer a zero-DDL redeploy guarantee. |
+| Can existing table tools close this? | Retained actual-Forma overview returns 50 alphabetical user tables, beginning `__forma_event_save_repair_receipts`, with omission counters zero. It exposes no migration ledger. The current overview contract has no table pagination input/cursor. Rows require an exact table name returned by overview. | No supported ledger-row call can be formed from that receipt. Zero projection omissions is not proof of a complete database inventory. Do not guess `__appgarden_migrations`, read unrelated repair/user tables, or transfer private R12 metadata. |
+| Can existing version tools export the saved archive? | `sites_get_site_version` returns archive metadata and opaque `sediment_file_id`, not archive bytes, signed retrieval URL or per-file hashes. No callable archive export/file-content reader is exposed in this session. | Repeating it would repeat metadata, not resolve the gap. Do not turn its file ID into an invented URL or unmanaged download. |
+
+The private R12 catalog really did contain `__appgarden_migrations` and `_cf_KV`; it is evidence for that other project only. The actual-Forma route's hypothetical recognized runner inspection is not evidence that this production DB has the same table or that its names certify applied bytes.
+
+## Supported local packaging completed
+
+Used the restored, unmodified Sites 0.1.71 `scripts/package-site.mjs` and its `package-site.sh` / `prepare-site-build.cjs`. Extracted the sealed R15 compiled preservation archive into a temporary stage and supplied the unchanged root hosting manifest. The stage has **no root `drizzle` directory**; the reviewed 41-file built migration set remains in `dist/.openai/drizzle`. Running the convenience publishing workflow against the full source tree would overlay all 72 source migrations and is unsuitable for this held-migration release. No plugin edit or validation bypass was used.
+
+The first local tar contained macOS AppleDouble sidecars, with zero missing or changed payloads; exact comparison refused it. Its digest and full diff are retained. A second local packaging pass set the standard tar environment `COPYFILE_DISABLE=1` to suppress those archive metadata sidecars. No payload/source/build change was made. The resulting [native package](native-package.tar.gz) has **622 regular files, every path and byte identical to R15**, and no extra file. All 41 SQL files match the retained native source; all 31 held source migrations and optional study SQL remain outside the package. This is archive representation only: the sealed release/local-package identities remain unchanged.
+
+Archive SHA-256: `130377a70b50a81e7111c71445bf2c15bd8bea2c992abe25eaf2d607c1407360`; 23,320,272 bytes. [Checks and plugin hashes](packaging-result.json). Both R15 preservation archive hashes and all R15/R16 evidence-manifest members were checked. Existing 33 focused / 10 compiled checks remain applicable; zero builds or repeated application tests.
+
+Unchanged release: `p5-forma-qualification:4cb06e6aeecfa77da573f754b3e951189590719cda4fd3b9fbb324931aca6e92`. Unchanged local package envelope: `p5-forma-local-package:164dcc1c29d8fe5a6f0b36045661d5d5abef3dfa31bf4b2c70c4d49f780dc803`.
+
+After prerequisite closure and separate Stage B approval, the callable path is ordinary non-force source successor push with publish-on-push disabled/no active automatic window → `sites_save_site_version(project_id, commit_sha, archive)` using this exact local archive from matching source → verify returned project/source/version/archive admission → `sites_deploy_site_version` preserving workspace audience → terminal verification. The future SHA/version must come from that authorized operation; neither is invented here. Native normalization can change archive container hash, so retain the upload digest plus the native admission receipt and source binding. Native refusal or unverifiable binding stops before deployment. No remote build fallback, automatic-publish bypass or full-source migration overlay. **Local packaging is not native admission.**
+
+## Scope held
+
+Stage A remains complete at 7/8, spare non-transferable. Stage B's 20 normal / 6 recovery and Stage C remain unapproved. R17 uses zero hosted reservations. Private R14 remains disabled with settled original cleanup, accepted Option B/indefinite retention and its ledger untouched. No fixture, custody write, financial grant or provider call occurred.
+
+Expiry remains **2026-10-01T00:00:00Z**. No deadline change is required for this local result or proposed bounded read before that time. The existing proposed Sep30 22:00 UTC mutation/cleanup cutoff remains; readiness is not promised to fit. If the capability arrives too late, stop and present exact new dates separately—no implicit renewal.
+
+Infrastructure readiness: packaging path closed, migration provenance/native admission/application qualification open. Prompt adherence: **zero real comparison images**. Moderation: **no new finding**. The agreed next evidence objective remains a separately authorized real two-image pair with exact request/provider evidence, six POSTs, concurrency one, no retries; P2 human-resume/original-settlement gates, 847/six exclusions and actual-Forma authority remain. Catalog and package provenance methods transfer across media; they do not establish generation quality. P5 stays open.

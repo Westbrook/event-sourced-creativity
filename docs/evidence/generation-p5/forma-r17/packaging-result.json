@@ -1,0 +1,94 @@
+{
+  "status": "local-supported-packaging-passed-native-admission-unobserved",
+  "release": "p5-forma-qualification:4cb06e6aeecfa77da573f754b3e951189590719cda4fd3b9fbb324931aca6e92",
+  "localPackage": "p5-forma-local-package:164dcc1c29d8fe5a6f0b36045661d5d5abef3dfa31bf4b2c70c4d49f780dc803",
+  "archive": "/private/tmp/forma-p5-live-comparison/docs/evidence/generation-p5/forma-r17/native-package.tar.gz",
+  "archiveSha256": "130377a70b50a81e7111c71445bf2c15bd8bea2c992abe25eaf2d607c1407360",
+  "archiveBytes": 23320272,
+  "regularFiles": 622,
+  "unpackedPathsAndBytesExactlyMatchR15": true,
+  "preservationArchivesVerified": true,
+  "sourceCommitCompared": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "packagedMigrationBytesMatchSource": 41,
+  "sourceMigrations": 72,
+  "heldMigrations": [
+    "0043_memory_derivation_purpose_grants.sql",
+    "0044_memory_derivation_reference_jobs.sql",
+    "0045_memory_derivation_finance.sql",
+    "0046_memory_derivation_recovery_cursor.sql",
+    "0047_memory_derivation_results.sql",
+    "0048_memory_derivation_user_controls.sql",
+    "0049_memory_derivation_completion.sql",
+    "0050_memory_derivation_lifecycle.sql",
+    "0051_memory_derivation_split.sql",
+    "0052_memory_derivation_history_privacy.sql",
+    "0053_memory_derivation_producers.sql",
+    "0054_memory_derivation_index_intents.sql",
+    "0055_memory_derivation_relation_lifecycle.sql",
+    "0056_memory_derivation_reuse_lifecycle.sql",
+    "0057_memory_derivation_observation_controls.sql",
+    "0058_project_containment.sql",
+    "0059_memory_recall_boundaries.sql",
+    "0060_memory_derivation_contexts.sql",
+    "0061_memory_derivation_consumers.sql",
+    "0062_memory_derivation_consumer_sources.sql",
+    "0063_memory_derivation_consumer_parents.sql",
+    "0064_memory_derivation_asset_edges.sql",
+    "0065_memory_recall_organization_ranges.sql",
+    "0066_organization_project_nesting.sql",
+    "0067_memory_resource_enrollments.sql",
+    "0068_memory_derivation_profile_contexts.sql",
+    "0069_memory_resource_openings.sql",
+    "0070_memory_resource_contexts.sql",
+    "0071_memory_resource_assistant_runs.sql",
+    "0072_memory_scope_profiles.sql",
+    "0073_memory_authored_images.sql"
+  ],
+  "optionalStudySQLIncluded": false,
+  "stagedRootDrizzlePresent": false,
+  "packagerEnvironment": {
+    "COPYFILE_DISABLE": "1"
+  },
+  "originalPackagerAttempt": "Rejected locally: macOS AppleDouble sidecars only; zero missing/changed payloads; see first-packager-diff.json. Native call count zero.",
+  "nativeAdmission": false,
+  "builds": 0,
+  "nativeRequests": 0,
+  "providerRequests": 0,
+  "pluginRoot": "/Users/westbrook/.codex/plugins/cache/openai-curated-remote/sites/0.1.71",
+  "unmodifiedPluginInputs": [
+    {
+      "path": "scripts/package-site.mjs",
+      "sha256": "c478f3060d464edf075afb1f0cdb699979bfc7913a1e64114bfbd653a1352bcd"
+    },
+    {
+      "path": "scripts/workflow-metrics.mjs",
+      "sha256": "33ddaf60a96ab73c9c9673b5acf7015b2e84025454544d5869554b2b3e94ee17"
+    },
+    {
+      "path": "skills/sites-hosting/scripts/package-site.sh",
+      "sha256": "dc2fe55adac180885d0b9469fd09d5ea7b1824fcea9019fea27ccfda241968e7"
+    },
+    {
+      "path": "skills/sites-hosting/scripts/prepare-site-build.cjs",
+      "sha256": "32496143dcc6f7e7c5410444e319469e2525c1d2eda0d2ed7c65e7c67995dbe3"
+    },
+    {
+      "path": "skills/sites-hosting/SKILL.md",
+      "sha256": "26318ee23cf1927a8687ae4f74cd6d11ca2c7eb8e52b2c4801c3059a479d5721"
+    },
+    {
+      "path": "skills/sites-building/references/persistence-and-storage.md",
+      "sha256": "64ee58edbc690f4ea63ca58655ff82e0c3910264708cd23b184056d68b0fbf94"
+    }
+  ],
+  "preservedEvidenceManifests": [
+    {
+      "path": "docs/evidence/generation-p5/forma-r15/evidence-manifest.json",
+      "sha256": "9038ba438dddb90b03a94129ca67eee941df414a536b744682e3d4fb446228e0"
+    },
+    {
+      "path": "docs/evidence/generation-p5/forma-r16/evidence-manifest.json",
+      "sha256": "a4f070283ff7856dd6e6e9130c7352e59033af20069e7a9f597582ee02f62073"
+    }
+  ]
+}

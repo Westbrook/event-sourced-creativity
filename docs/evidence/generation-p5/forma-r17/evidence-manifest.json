@@ -1,0 +1,16 @@
+{
+  "classification": "local-only packaging/prerequisite capability assessment; native calls zero",
+  "files": {
+    "first-packager-attempt.json": "508a23ab56d8a38edbe4b33654f69ff90ee9d20ddadc620d5e89af69a1729b81",
+    "first-packager-diff.json": "0251bcca4797c8f54b072a3191024490750a183956b6b4daae20f8da71d56fc4",
+    "handoff.md": "b49b7821ed82651cf94927353140b88bf658c0b7c68d4b5986f2cb9cf5bd6f22",
+    "index.html": "f10ffbe0d68c01870830fe5c47b966caa5e9de8f3d5ae3179d47292ce74d57a0",
+    "native-contracts.json": "af9232e4e7c761fba541c4f7687042c01b2932c2a42b421013d6c3e48dab1f65",
+    "native-package.tar.gz": "130377a70b50a81e7111c71445bf2c15bd8bea2c992abe25eaf2d607c1407360",
+    "native-read-request.md": "503376e57bdd54a3e43e2e94ac75019484e35a7dc535a450777657b65e543bb0",
+    "packager.log": "665b192483ad7c130ff685de6786fd5e7eb2adfd4979887df543b50e78b1bf69",
+    "packaging-check.executed.py": "5f1c27a02ee42c0443ba506080e906bc54136dd0eba7d53d9cf4d31923915e95",
+    "packaging-result.json": "fce00380dd95f22bc4ed29f16b681a02b6d17faf7b672175e9be3328bd16c3ae",
+    "result.md": "986ca313fad4e02de0d0f2bdf3cc893c69b827fdbdac5924ae8730afba49f52c"
+  }
+}
