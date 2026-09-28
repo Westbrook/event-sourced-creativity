@@ -1,0 +1,14 @@
+{
+  "requestedUrl": "https://forma-creative-studio.reve-ai-0869.chatgpt.site/",
+  "tabId": "7",
+  "visible": true,
+  "observed": "Forma workspace rendered with account control; no Google sign-in prompt appeared",
+  "signInCompletedByAgent": false,
+  "credentialsEntered": false,
+  "accountInspected": false,
+  "qualificationRead": false,
+  "applicationPrincipalQualified": false,
+  "documentBodyNotRetained": true,
+  "ordinaryPageLoadHttpUnknown": true,
+  "hostedDeploymentPerformed": false
+}

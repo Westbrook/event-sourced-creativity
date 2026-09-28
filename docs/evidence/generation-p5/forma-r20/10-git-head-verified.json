@@ -1,0 +1,8 @@
+{
+  "action": "git-head-verified",
+  "exitCode": 0,
+  "stdout": "d147817ff14b502a8fc116a74fa5388f9fe7ad62\trefs/heads/main\n",
+  "stderr": "",
+  "credentialPersisted": false,
+  "underlyingHttpUnknown": true
+}

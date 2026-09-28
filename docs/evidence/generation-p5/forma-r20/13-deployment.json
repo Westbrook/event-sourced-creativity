@@ -1,0 +1,24 @@
+{
+  "action": "deploy_site_version",
+  "args": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+  },
+  "capturedAt": "2026-09-28T21:16:28.269Z",
+  "isError": false,
+  "data": {
+    "id": "appgdep_6abad91d0efc8191a5196edc4edaf4b3",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-09-28T21:16:27.316962+00:00"
+  }
+}

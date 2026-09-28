@@ -1,0 +1,5 @@
+# P5 R20 — requested page open
+
+User explicitly approved actual-Forma Google sign-in flow and asked to open the page. Actual Forma opened in visible IAB tab7 and rendered its existing workspace with account control; no Google prompt appeared. No credentials/account contents inspected, no qualification GET or redeployment. Do not treat ordinary workspace rendering as proof of exact qualification-route principal/admin/consent or schema/holds. Page load background HTTP is unknown; existing document bodies not retained in evidence.
+
+Carry forward R19 18charged; reservation19 is second authorized browser-access slot. Totals16/22normal +3/6recovery,6normal/3recovery unused. Browser cap2/2 and original deployment/restoration caps consumed. Next is exact remaining-call resumption for already admitted saved551, not a source/build/push/save or repeated cost/retention intake. Authentication permission is now accepted; do not ask it again unchanged. User sees actual app; report should not steal foreground. StageB read qualification remains incomplete, native550 remains last verified live, saved551 retained. Expiry and all P2/paid/custody boundaries unchanged. P5open.

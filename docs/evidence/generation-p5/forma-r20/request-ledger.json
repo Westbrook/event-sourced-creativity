@@ -1,0 +1,322 @@
+{
+  "stage": "R20 user-authorized authentication page only; R19 counters retained",
+  "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "accepted": true,
+  "limits": {
+    "normal": 22,
+    "recovery": 6
+  },
+  "normal": 16,
+  "recovery": 3,
+  "issued": 19,
+  "entries": [
+    {
+      "sequence": 1,
+      "reservedAt": "2026-09-28T21:03:08.323793+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "01-site.json",
+      "receiptSha256": "79ef45fd2b051ee76efab87ce411c2ffc29c888290cbf2cc93080208c08385eb",
+      "completedAt": "2026-09-28T21:03:10.260896+00:00"
+    },
+    {
+      "sequence": 2,
+      "reservedAt": "2026-09-28T21:03:16.869797+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "02-environment.json",
+      "receiptSha256": "6e1bc9fa46ff642b2ec5fcf29eac49dd64d7ce59e3abc001fb964b6d9b3db942",
+      "completedAt": "2026-09-28T21:03:17.738720+00:00"
+    },
+    {
+      "sequence": 3,
+      "reservedAt": "2026-09-28T21:03:17.896886+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "03-predecessor-version.json",
+      "receiptSha256": "0cd13c78b1df8d9dee68891d3ab5a8dca4c11f4a0c1447c38c979eab55a5a978",
+      "completedAt": "2026-09-28T21:03:19.012008+00:00"
+    },
+    {
+      "sequence": 4,
+      "reservedAt": "2026-09-28T21:04:56.444127+00:00",
+      "state": "receipt-preserved",
+      "group": "credential",
+      "action": "create_source_repository_write_credential",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "publish_on_push": null
+      },
+      "receipt": "04-source-credential-redacted.json",
+      "receiptSha256": "bd935c68bf39373f1bbfada022ee3793322c1b9725defbf6023dd448ee36f9b3",
+      "completedAt": "2026-09-28T21:05:03.668125+00:00"
+    },
+    {
+      "sequence": 5,
+      "reservedAt": "2026-09-28T21:05:03.851786+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-head-before",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "05-git-head-before.json",
+      "receiptSha256": "d60f1cc952c8ff1b2526321f9661c831c042e6a5d8627aca29fe4871c9a6bea4",
+      "completedAt": "2026-09-28T21:05:14.362858+00:00"
+    },
+    {
+      "sequence": 6,
+      "reservedAt": "2026-09-28T21:05:14.363828+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-fetch",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "06-git-fetch-failed.json",
+      "receiptSha256": "50572159343604ebd8c51e8b2669c6f688b6e20e6b67e32e0a4b56368d8a5e94",
+      "completedAt": "2026-09-28T21:05:19.767503+00:00"
+    },
+    {
+      "sequence": 7,
+      "reservedAt": "2026-09-28T21:14:34.167835+00:00",
+      "state": "receipt-preserved",
+      "group": "credential",
+      "action": "create_source_repository_write_credential",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "publish_on_push": null
+      },
+      "receipt": "07-source-credential-redacted.json",
+      "receiptSha256": "be52b79396948c96b0b6d9cc06562d0c3dd2b24b722e34abef98052ad54f617b",
+      "completedAt": "2026-09-28T21:14:38.346361+00:00"
+    },
+    {
+      "sequence": 8,
+      "reservedAt": "2026-09-28T21:14:38.460597+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-head-resume",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "08-git-head-resume.json",
+      "receiptSha256": "9a79fad8f88f47d6b9156774ce5daea2eadd25652af865e58a1154e582b99603",
+      "completedAt": "2026-09-28T21:14:40.841172+00:00"
+    },
+    {
+      "sequence": 9,
+      "reservedAt": "2026-09-28T21:14:40.842096+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-push",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "09-git-push.json",
+      "receiptSha256": "cb49c7027f90d03cbffc13d599721e6c90bb228224a5cb266b71fd8b1bf7c75f",
+      "completedAt": "2026-09-28T21:14:43.592539+00:00"
+    },
+    {
+      "sequence": 10,
+      "reservedAt": "2026-09-28T21:14:43.593373+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-head-verified",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "10-git-head-verified.json",
+      "receiptSha256": "a86f56e42ee7addfe432844c22e20a008329727c6b7123c75e026f290be92800",
+      "completedAt": "2026-09-28T21:14:45.144264+00:00"
+    },
+    {
+      "sequence": 11,
+      "reservedAt": "2026-09-28T21:15:07.942086+00:00",
+      "state": "receipt-preserved",
+      "group": "save",
+      "action": "save_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "commit_sha": "d147817ff14b502a8fc116a74fa5388f9fe7ad62",
+        "archive": "/private/tmp/forma-p5-live-comparison/docs/evidence/generation-p5/forma-r17/native-package.tar.gz"
+      },
+      "receipt": "11-saved-version.json",
+      "receiptSha256": "1c0ca50ac8c25b7dbdcff7a65c31f158e9eae4bc90b1f9176372c2c4c58119ac",
+      "completedAt": "2026-09-28T21:15:41.254233+00:00"
+    },
+    {
+      "sequence": 12,
+      "reservedAt": "2026-09-28T21:15:56.259691+00:00",
+      "state": "receipt-preserved",
+      "group": "admission",
+      "action": "get_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+      },
+      "receipt": "12-admission-verified.json",
+      "receiptSha256": "7aa842f633ba668cf499842a70b2ab5490463d73af2a3db74ca48faf83d13370",
+      "completedAt": "2026-09-28T21:15:57.199484+00:00"
+    },
+    {
+      "sequence": 13,
+      "reservedAt": "2026-09-28T21:16:05.839998+00:00",
+      "state": "receipt-preserved",
+      "group": "deploy",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+      },
+      "receipt": "13-deployment.json",
+      "receiptSha256": "269e6bfd8640cdf7b34a687a328a7e29ecb61d805ea4aa0e920ec291fdc00ff0",
+      "completedAt": "2026-09-28T21:16:28.455717+00:00"
+    },
+    {
+      "sequence": 14,
+      "reservedAt": "2026-09-28T21:16:46.204566+00:00",
+      "state": "receipt-preserved",
+      "group": "browser",
+      "action": "open-signed-in-browser-tab",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "url": "about:blank",
+        "purpose": "Use existing in-app browser authentication for the fixed qualification route"
+      },
+      "receipt": "14-browser-access.json",
+      "receiptSha256": "523e19d204c4b200ba4bc44c76870d47a7f3aa3b85cc4742fd1cf02009c034cf",
+      "completedAt": "2026-09-28T21:17:04.172413+00:00"
+    },
+    {
+      "sequence": 15,
+      "reservedAt": "2026-09-28T21:17:04.228283+00:00",
+      "state": "receipt-preserved",
+      "group": "qualification",
+      "action": "fixed-qualification-get-1",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "method": "GET",
+        "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site/api/internal/generation-study/qualification"
+      },
+      "receipt": "15-qualification-authentication-stop.json",
+      "receiptSha256": "4dc85bc9d7148575d761c6351766027eac7ba93272a32e4e772ba5759e612eb9",
+      "completedAt": "2026-09-28T21:17:56.023379+00:00"
+    },
+    {
+      "sequence": 16,
+      "reservedAt": "2026-09-28T21:17:56.220880+00:00",
+      "state": "receipt-preserved",
+      "group": "restore",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "16-restoration.json",
+      "receiptSha256": "3a67b6e0789cc999daa5dd15df0059b452c50d7fa2f1b754fc8ac882180f6769",
+      "completedAt": "2026-09-28T21:18:27.272794+00:00"
+    },
+    {
+      "sequence": 17,
+      "reservedAt": "2026-09-28T21:18:42.613116+00:00",
+      "state": "receipt-preserved",
+      "group": "restore-final",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "17-site-final.json",
+      "receiptSha256": "692527b90bd8b4c474bbc150bb8b13e9a92458e5c3609affab62f39c1db48fd1",
+      "completedAt": "2026-09-28T21:18:44.712307+00:00"
+    },
+    {
+      "sequence": 18,
+      "reservedAt": "2026-09-28T21:18:44.840227+00:00",
+      "state": "receipt-preserved",
+      "group": "restore-final",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "18-environment-final.json",
+      "receiptSha256": "47c353f59897c86f0d14265c1abfb7c3ba067efa64ca8d1c89b4fc305a0ee5c3",
+      "completedAt": "2026-09-28T21:18:46.021296+00:00"
+    },
+    {
+      "sequence": 19,
+      "reservedAt": "2026-09-28T23:43:02.670907+00:00",
+      "state": "receipt-preserved",
+      "group": "browser",
+      "action": "user-authorized-forma-sign-in-page",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site/",
+        "scope": "Open sign-in page; credentials and security checks handled by user"
+      },
+      "receipt": "19-sign-in-page-opened.json",
+      "receiptSha256": "508502b0776f64f1e5315630db42a668d6b5905a02e1d1cf3ef7af06616304ed",
+      "completedAt": "2026-09-28T23:44:06.623943+00:00"
+    }
+  ],
+  "stop": "Authorized authentication-page opening complete; Forma workspace visible without sign-in prompt. No saved551 redeployment or qualification retry authorized by this page-opening request.",
+  "expiry": "2026-10-01T00:00:00Z",
+  "mutationRecoveryMargin": "2026-09-30T22:00:00Z",
+  "decisionSha256": "5980d0b14541caa76fe1c2fddf3362d2988a33f355e6daf410925d05dc454070",
+  "unit": "operator reservations, hidden native/browser/authentication HTTP and hosting costs unknown",
+  "otherLedgersUnchanged": {
+    "stageA": "7/8 complete; spare not transferable",
+    "private": "60/71; normalStop59 exhausted"
+  },
+  "retention": {
+    "owner": "westbrook.johnson@reve.art",
+    "duration": "indefinite until separately reviewed deletion",
+    "sourceVersionHistory": "existing Site access",
+    "receipts": "redacted restricted P5 evidence/Git"
+  },
+  "replacedPrerequisite": "User accepts no new/changed migration files on source/package equality and supported Sites contract; zero hosted DDL and exact prior archive bytes not independently proved",
+  "previousLedgerSha256": "0e4a4aa7cf63e80334aaaba814aa2715c0b256c8a32e9b72ce26c10ed74b74ae",
+  "previousLedger": "../forma-r19/request-ledger.json",
+  "stopHistory": [
+    {
+      "reason": "Source operation stopped: Git exit 128: fatal: git fetch-pack: expected shallow list\n",
+      "resolvedBy": "User approved exact R18 transport resumption; no fetch retry"
+    },
+    {
+      "reason": "Authentication expansion at first qualification navigation; auto-review blocked Google account inspection. No second qualification GET; authorized predecessor restoration only.",
+      "resumption": "User explicitly authorized actual-Forma Google sign-in flow and asked to open page; browser access only, no deployment or qualification GET resumption."
+    }
+  ],
+  "amendment": {
+    "accepted": true,
+    "acceptedAt": "2026-09-28T21:13:54.039613+00:00",
+    "decisionSha256": "37ef471438fb65635874358f31fbbba52d640486018bffd417b0a94fff1071f8",
+    "additionalNormal": 2,
+    "credentialCap": 2,
+    "sourceCap": 5,
+    "noCounterReset": true
+  },
+  "authenticationApproval": {
+    "accepted": true,
+    "scope": "Open actual Forma sign-in page; user completes credentials/security checks; no redeployment or qualification retry",
+    "at": "2026-09-28T23:43:02.618443+00:00"
+  }
+}

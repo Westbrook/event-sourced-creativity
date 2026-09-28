@@ -1,0 +1,84 @@
+{
+  "action": "get_site",
+  "args": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+  },
+  "capturedAt": "2026-09-28T21:18:44.621Z",
+  "isError": false,
+  "data": {
+    "id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "slug": "forma-creative-studio",
+    "status": "active",
+    "current_live_url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "expected_url": null,
+    "latest_version_number": 551,
+    "current_user_role": "owner",
+    "access_mode": "workspace_all",
+    "access_policy": {
+      "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+      "access_mode": "workspace_all",
+      "allowed_account_user_ids": [
+        "bfd7e025-62d1-411d-864c-77a2670671cb",
+        "204af930-be1e-494c-af25-6ed243cbf91b",
+        "1929d5e9-502b-4a9d-bf38-61efadfd91ee",
+        "22895dde-1af0-4de4-ac45-8dc9373933ba",
+        "8e245d7a-5d9b-4f78-b05e-7b18a8aa7625",
+        "03de51b6-fe8a-4df0-bbaa-6ed0ccd37312"
+      ],
+      "external_visitor_count": 0,
+      "allowed_users": [
+        {
+          "account_user_id": "bfd7e025-62d1-411d-864c-77a2670671cb",
+          "email": "westbrook.johnson@reve.art",
+          "name": "Westbrook Johnson",
+          "avatar_url": null,
+          "role": "owner"
+        },
+        {
+          "account_user_id": "204af930-be1e-494c-af25-6ed243cbf91b",
+          "email": "hunter.loftis@reve.art",
+          "name": "Hunter Loftis",
+          "avatar_url": null,
+          "role": "viewer"
+        },
+        {
+          "account_user_id": "1929d5e9-502b-4a9d-bf38-61efadfd91ee",
+          "email": "narciso.jaramillo@reve.art",
+          "name": "Narciso Jaramillo",
+          "avatar_url": null,
+          "role": "viewer"
+        },
+        {
+          "account_user_id": "22895dde-1af0-4de4-ac45-8dc9373933ba",
+          "email": "david.xu@reve.art",
+          "name": "David Xu",
+          "avatar_url": null,
+          "role": "viewer"
+        },
+        {
+          "account_user_id": "8e245d7a-5d9b-4f78-b05e-7b18a8aa7625",
+          "email": "ryan.precious@reve.art",
+          "name": "Ryan Precious",
+          "avatar_url": null,
+          "role": "viewer"
+        },
+        {
+          "account_user_id": "03de51b6-fe8a-4df0-bbaa-6ed0ccd37312",
+          "email": "ben.mcgraw@reve.art",
+          "name": "Ben McGraw",
+          "avatar_url": null,
+          "role": "viewer"
+        }
+      ],
+      "allowed_groups": [],
+      "allowed_workspace_group_ids": [],
+      "allowed_tenant_group_ids": [],
+      "revision": 7,
+      "updated_at": "2026-08-25T23:53:45.934374+00:00",
+      "allowed_editors": []
+    },
+    "updated_at": "2026-09-28T21:18:26.028025+00:00",
+    "disabled_by": null
+  }
+}

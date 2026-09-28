@@ -1,0 +1,12 @@
+{
+  "action": "fixed-qualification-get-1",
+  "requestedUrl": "https://forma-creative-studio.reve-ai-0869.chatgpt.site/api/internal/generation-study/qualification",
+  "navigationReturnedNoBody": true,
+  "qualificationReceiptObtained": false,
+  "workerInvocationEstablished": false,
+  "authenticationBoundary": "accounts.google.com",
+  "reviewOutcome": "Automatic approval review denied page inspection: external authentication/private-account origin not authorized by existing-session Stage B scope",
+  "googleAccountInspected": false,
+  "replayed": false,
+  "underlyingRedirectAuthenticationHttpUnknown": true
+}
