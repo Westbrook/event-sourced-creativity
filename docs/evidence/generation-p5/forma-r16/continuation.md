@@ -1,0 +1,11 @@
+# Next gate after completed Stage A
+
+Stage A is accepted and executed,7charged/1unused/8ceiling. Do not repeat it or transfer the spare slot. Both local handling pauses were repaired from existing local evidence without another native request or expanded authority; their history is retained. A draft resumption request prepared during the first pause was unnecessary and was withdrawn before any user decision was requested.
+
+The next hosted action is the separately reviewed R15 **Stage B publication/read plan**, which remains unapproved. Current target/source/version/environment/audience relationships are now fresh and match its historical source basis. No source rebase is currently indicated by that metadata. The41packaged migration bytes and release policy match the native version's locally retained source commit, but neither a source match nor a622-file count is proof of hosted applied-history or exact archive contents.
+
+Before Stage B publication, resolve its unchanged-migration and supported-packaging conditions using retained local evidence and available native contract/receipts. Do not install any missing migration merely to publish a diagnostic. If a further native migration-history/table/archive read is needed outside Stage B's specified calls, prepare that exact read and an explicit allowance amendment before dispatch; do not reuse Stage A's spare or ask for SQL-console/Cloudflare credentials. Native admission follows any separately approved source push/save and must succeed before deploy. Publish-on-push must not bypass it.
+
+R15's Stage B20normal+6recovery and Stage C15normal+12recovery are proposed ceilings, **not accepted here**. No source write credential, push/save/deploy, custody flag, probe or financial input issuance is authorized by “Approved” to Stage A. Publication/production probe exposure and residue retention remain distinct from already accepted private rehearsal OptionB/indefinite retention. Do not reopen the private questionnaire.
+
+Continue in existing P5/worktree, read its current handoff and unresolved feedback, preserve sealed R15 artifacts and all R14 history. October1 2026 00UTC expiry remains; stop if required work cannot fit rather than renewing implicitly. Real principal/schema/holds/custody/financial qualification and the paid comparison remain separate gates. P5 is open.

@@ -1,0 +1,101 @@
+{
+  "action": "list_site_versions",
+  "args": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "limit": 5
+  },
+  "capturedAt": "2026-09-28T20:16:48.532Z",
+  "isError": false,
+  "data": {
+    "items": [
+      {
+        "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8",
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_number": 550,
+        "source": {
+          "commit_sha": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf"
+        },
+        "archive_storage": {
+          "archive_format": "tar",
+          "sediment_file_id": "file_00000000fd6c8208a3030e5382cc45d2",
+          "content_hash": "sha256:a629abf35cdb357f0affa0c309ebfc0591cfe235249404c97b7ce19ee813be7f",
+          "size_bytes": 44523520,
+          "file_count": 622
+        },
+        "deployment_id": "appgdep_6ab573499a108191a2691a137672b93e"
+      },
+      {
+        "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_2f6ab6002cd08191b3ec34552f257605",
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_number": 549,
+        "source": {
+          "commit_sha": "6ed02adcb357e1386070a6e3ed9cfda047c24983"
+        },
+        "archive_storage": {
+          "archive_format": "tar",
+          "sediment_file_id": "file_000000003ba08211aa49290e8c941642",
+          "content_hash": "sha256:b816005cdaba311f3e4213edc649d4868c80d38fad40c7bd438065aa9979c3dd",
+          "size_bytes": 44523520,
+          "file_count": 622
+        },
+        "deployment_id": "appgdep_6ab5720f97188191be71255ccfe352b5"
+      },
+      {
+        "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_7f6e99f7fd888191bc84a56895723b95",
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_number": 548,
+        "source": {
+          "commit_sha": "f25888a9832d31e1e867bddb82f4f8b651c5e9d2"
+        },
+        "archive_storage": {
+          "archive_format": "tar",
+          "sediment_file_id": "file_000000008cec81f9b38a86604a1b9e6e",
+          "content_hash": "sha256:c757caee06556723665f0089f3b948785116dc6fa6633b57ae03f3bb8a9d6451",
+          "size_bytes": 44441600,
+          "file_count": 622
+        },
+        "deployment_id": "appgdep_6ab52a520cc48191903de118814a62ea"
+      },
+      {
+        "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_63f80a3d55ac819189c7dd337ff59408",
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_number": 547,
+        "source": {
+          "commit_sha": "4c1dcc58328e57f5277b4314bb1d0d2905e4be1d"
+        },
+        "archive_storage": {
+          "archive_format": "tar",
+          "sediment_file_id": "file_00000000033881f8b3ce0c0f3cd29712",
+          "content_hash": "sha256:ab8b5cfa885e77b4525b2e3e194de963a8539c4f075392fbbf2220de241e81e7",
+          "size_bytes": 67686400,
+          "file_count": 727
+        },
+        "deployment_id": null
+      },
+      {
+        "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_c9d1b5cd63d0819198d0ce96e64094ec",
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_number": 546,
+        "source": {
+          "commit_sha": "e56390576d8fe878c066a0faeaecfefd3062bc91"
+        },
+        "archive_storage": {
+          "archive_format": "tar",
+          "sediment_file_id": "file_0000000075ec821191b1e6fb9202823c",
+          "content_hash": "sha256:e3c32397f4d3fa4269905cae551005bfa82844f74249cecae7c3dafcd27ab9f5",
+          "size_bytes": 44400640,
+          "file_count": 622
+        },
+        "deployment_id": "appgdep_6ab519cb515481918b81575ccf48c7eb"
+      }
+    ],
+    "cursorPresent": true
+  },
+  "recoveredLocally": {
+    "eventId": "exec-9910bb62-90c1-4c59-b4b0-d4ed59d3890b",
+    "eventTimestamp": "2026-09-28T20:16:48.532Z",
+    "originalEventSha256": "24c70856bdf7e2c7bf7112595e15ec77b33f7a953b6e7b67171bc0ea5b2f5cf5",
+    "reason": "structuredClone unavailable after native response; exact completed native event recovered from existing durable local task history without another native call",
+    "omitted": "signed screenshot URLs and unused pagination token"
+  }
+}

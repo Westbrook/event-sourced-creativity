@@ -1,0 +1,127 @@
+{
+  "stage": "R15 A, executed in R16",
+  "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "approval": "User: Approved. In response to Stage A only: up to8 fresh read-only native metadata reservations.",
+  "decisionSha256": "9468f201fd3c6cbd518f3c923e38aafa9d0eda934db2f5dd97c529db09a6d2ef",
+  "limit": 8,
+  "issued": 7,
+  "unused": 1,
+  "entries": [
+    {
+      "sequence": 1,
+      "reservedAt": "2026-09-28T20:13:56.879217+00:00",
+      "state": "unexpected-secret-stop",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "01-site.json",
+      "receiptSha256": "87f6771d659d7e792d56bf32eb04372720649ee18cc98ead1662f3cc573e175e",
+      "completedAt": "2026-09-28T20:14:00.058667+00:00"
+    },
+    {
+      "sequence": 2,
+      "reservedAt": "2026-09-28T20:16:39.774005+00:00",
+      "state": "receipt-preserved",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "02-environment.json",
+      "receiptSha256": "2bc97d4129a630cf3efe84ae5ab0c8a36640ab441ffacaa2ab9d8ac8b6d122e2",
+      "completedAt": "2026-09-28T20:16:42.367543+00:00"
+    },
+    {
+      "sequence": 3,
+      "reservedAt": "2026-09-28T20:16:47.604775+00:00",
+      "state": "receipt-recovered-from-durable-local-history",
+      "action": "list_site_versions",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "limit": 5
+      },
+      "receipt": "03-versions.json",
+      "receiptSha256": "0b7220ca82a9b07b527e4fa6492cb70bc71f5698dafcc4934f506db78fadaf5c",
+      "completedAt": "2026-09-28T20:18:29.393018+00:00"
+    },
+    {
+      "sequence": 4,
+      "reservedAt": "2026-09-28T20:18:43.580404+00:00",
+      "state": "receipt-preserved",
+      "action": "get_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "04-version.json",
+      "receiptSha256": "8f73fe34c8c205ffaaf0edd2750b0fc5e6380f67272211946b5ed3271c247d4a",
+      "completedAt": "2026-09-28T20:18:46.504394+00:00"
+    },
+    {
+      "sequence": 5,
+      "reservedAt": "2026-09-28T20:18:54.317001+00:00",
+      "state": "receipt-preserved",
+      "action": "get_deployment_status",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "deployment_id": "appgdep_6ab573499a108191a2691a137672b93e"
+      },
+      "receipt": "05-deployment.json",
+      "receiptSha256": "e43aa46998fbc199c63b15d4b26cd18e13b50790a0adf7f1f6a7620d26cc10d2",
+      "completedAt": "2026-09-28T20:18:58.059145+00:00"
+    },
+    {
+      "sequence": 6,
+      "reservedAt": "2026-09-28T20:19:07.269946+00:00",
+      "state": "receipt-preserved",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "06-site-final.json",
+      "receiptSha256": "7e4fa764053837416ab8c53beb54a111302072273d60bd87b635c19b9e3deefd",
+      "completedAt": "2026-09-28T20:19:11.273683+00:00"
+    },
+    {
+      "sequence": 7,
+      "reservedAt": "2026-09-28T20:19:18.328283+00:00",
+      "state": "receipt-preserved",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "07-environment-final.json",
+      "receiptSha256": "c5e190dfad901291178dc84b5880182b7b7af7d5a28920342533bc9f65a032e1",
+      "completedAt": "2026-09-28T20:19:20.985985+00:00"
+    }
+  ],
+  "stop": "Stage A complete; no further native dispatch authorized by this executed stage",
+  "expiry": "2026-10-01T00:00:00Z",
+  "unit": "one conservative native tool reservation; internal HTTP/prices unknown",
+  "privateLedgerUnchanged": {
+    "issued": 60,
+    "unused": 11,
+    "limit": 71,
+    "normalStop": 59
+  },
+  "otherStagesAuthorized": false,
+  "localStopHistory": [
+    {
+      "stop": "Unexpected credential-bearing get_site response field; omitted without use. Conservative stop based on field presence; retained projection does not establish which credential field or whether source credential metadata contained a usable token. No retry or further native reads.",
+      "resolvedAt": "2026-09-28T20:16:31.445475+00:00",
+      "resolution": "Local projection false-positive possibility: field presence is not a native refusal/material drift or confirmed unexpected plaintext. Corrected projection never accesses either credential field. Remaining unchanged Stage A reads remain authorized; no retry, new allowance or hosted scope."
+    },
+    {
+      "stop": "Reservation3 list_site_versions dispatched; local response handling failed before receipt persistence because structuredClone is unavailable in functions runtime. Do not repeat native request. Preserve charged entry and inspect only local retained evidence.",
+      "resolvedAt": "2026-09-28T20:18:29.398883+00:00",
+      "resolution": "Exact native event recovered locally and receipt fsynced before any further native action. No request replay. Local helper replaced unsupported structuredClone; no source/Worker/hosted scope change."
+    }
+  ],
+  "completion": {
+    "status": "stage-a-complete",
+    "at": "2026-09-28T20:20:43.232620+00:00",
+    "normalWorkClosed": true,
+    "unusedSlotDisposition": "Not transferable to Stage B/C or another action; optional second status poll not needed",
+    "verification": "verification.json"
+  }
+}

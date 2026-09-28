@@ -1,0 +1,6 @@
+{
+  "localOnly": true,
+  "reservationsSavedBeforeSimulatedActions": 8,
+  "overLimitRefused": true,
+  "realStageIssued": 0
+}

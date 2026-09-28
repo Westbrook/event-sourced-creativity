@@ -1,0 +1,28 @@
+async function(action,args,file){
+ const q=s=>"'"+s.replace(/'/g,"'\\''")+"'";
+ const base="python3 docs/evidence/generation-p5/forma-r16/ledger.py ";
+ const opts={workdir:"/private/tmp/forma-p5-live-comparison",max_output_tokens:1200};
+ const r=await tools.exec_command({...opts,cmd:base+"reserve "+q(JSON.stringify({action,args}))});
+ if(r.exit_code!==0)throw Error("Reservation persistence failed: stop");
+ const saved=JSON.parse(r.output);if(saved.savedAndReadBack!==true)throw Error("Reservation not confirmed");
+ notify({reserved:saved.sequence,action,savedAndReadBack:true});
+ let native;try{native=await tools["mcp__codex_apps__sites_"+action](saved.args);}catch{const state={sequence:saved.sequence,file,receipt:{error:"Native invocation failed; no retry; exact remote state unknown"},state:"native-refusal-or-uncertain"};text(await tools.exec_command({...opts,cmd:base+"receipt "+q(JSON.stringify(state))}));throw Error("Native refusal or uncertain request: stop");}
+ let data=native.structuredContent;
+ if(!data){for(const item of native.content??[]){if(item.type==="text"){try{const v=JSON.parse(item.text);if(v&&typeof v==="object"){data=v;break;}}catch{}}}}
+ if(!data){text(await tools.exec_command({...opts,cmd:base+"receipt "+q(JSON.stringify({sequence:saved.sequence,file,receipt:{isError:!!native.isError,unparsedNativeResponse:true},state:"unparsed-refusal"}))}));throw Error("Native response unavailable: stop");}
+ let safe,unexpectedSecret=false;
+ if(action==="get_environment_variables"){
+  const control=new Set(["FORMA_GENERATION_STUDY_ENABLED","FORMA_GENERATION_STUDY_APPROVAL_ENABLED","FORMA_GENERATION_CUSTODY_PROBE_ENABLED","FORMA_GENERATION_STUDY_ORIGIN","FORMA_PILOT_COHORT_ID","FORMA_ADMIN_EMAILS"]);
+  safe={project_id:data.project_id,revision:data.revision,updated_at:data.updated_at,entries:(data.entries??[]).map(e=>{if(e.is_secret===true&&e.value!==null&&e.value!==undefined)unexpectedSecret=true;return {key:e.key,type:e.type,is_secret:e.is_secret,valuePresent:e.value!==null&&e.value!==undefined,...(e.is_secret===false&&control.has(e.key)?{value:e.value}:{})};}),redaction:"Secret values and non-allowlisted values never printed or retained",unexpectedSecret};
+ }else if(action==="get_site"){
+  const fields=["id","title","slug","status","current_live_url","expected_url","latest_version_number","current_user_role","access_mode","access_policy","updated_at","disabled_by"];
+  safe=Object.fromEntries(fields.filter(k=>k in data).map(k=>[k,data[k]]));
+  safe.omittedCredentialFields=["siwc_bypass_bearer_token","source_repository_credential"].filter(k=>Object.prototype.hasOwnProperty.call(data,k));
+ }else{safe=Object.fromEntries(Object.entries(data).filter(([k])=>!["screenshot_url","screenshot_asset_pointer"].includes(k)));}
+ const receipt={action,args:saved.args,capturedAt:new Date().toISOString(),isError:!!native.isError,data:safe};
+ const persisted=await tools.exec_command({...opts,cmd:base+"receipt "+q(JSON.stringify({sequence:saved.sequence,file,receipt,state:unexpectedSecret?"unexpected-secret-stop":native.isError?"native-refusal":"receipt-preserved"}))});
+ if(persisted.exit_code!==0)throw Error("Receipt persistence failed: stop");
+ store(file,safe);text(receipt);
+ if(unexpectedSecret||native.isError)throw Error("Native refusal/unexpected secret: stop");
+ return safe;
+}

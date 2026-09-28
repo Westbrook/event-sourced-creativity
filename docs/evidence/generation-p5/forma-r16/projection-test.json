@@ -1,0 +1,8 @@
+{
+  "localOnly": true,
+  "credentialGettersNeverAccessed": true,
+  "credentialFieldsNotSerialized": true,
+  "nonAllowlistedFieldsExcluded": true,
+  "changesHostedScope": false,
+  "workerOrReleaseChanged": false
+}
