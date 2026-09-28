@@ -1,0 +1,174 @@
+{
+  "status": "private-finite-rehearsal-complete-original-cleanup-disabled",
+  "p5Complete": false,
+  "envelope": "p5-sites-remedy-release:77eb7d7fd34290dd1ca5cea36de3c5f39427d5e6ed30e4fa78f958cfe4baebcc",
+  "preparedCommit": "224a840f044fb34ef5a372112d4ca8ab8f406dfd",
+  "sourceCommit": "958b0b023808b9861905d29709afb9f41ec5ed50",
+  "version": {
+    "id": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_9379f9a9ead0819189c197c0f9b8bd6a",
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "version_number": 4,
+    "source": {
+      "commit_sha": "958b0b023808b9861905d29709afb9f41ec5ed50"
+    },
+    "archive_storage": {
+      "archive_format": "tar",
+      "sediment_file_id": "file_000000007ee08230928b0d05ff5d21b1",
+      "content_hash": "sha256:e0dda5e38ab211d9301db3c9d3a43db14b6803b11a20eb9b95e10e9a7582dda2",
+      "size_bytes": 2283520,
+      "file_count": 9
+    },
+    "screenshot_url": null,
+    "deployment_id": null
+  },
+  "deployment": {
+    "id": "appgdep_6abab92fa77881918953ca751663b799",
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "title": "Forma N10H synthetic rehearsal",
+    "version_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_9379f9a9ead0819189c197c0f9b8bd6a",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-n10h-synthetic-20260924.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6ab5929a74288191bf37ed429f7a7e20",
+    "failure_message": null,
+    "env_set_revision": 0,
+    "updated_at": "2026-09-28T19:00:12.427014+00:00"
+  },
+  "imported": 26,
+  "fixedCasesPassed": 10,
+  "cleanupSettled": true,
+  "permanentlyDisabled": true,
+  "state": {
+    "phase": "disabled",
+    "cursor": 10,
+    "requests": 12,
+    "report": null,
+    "reads": 2338379,
+    "writes": 6755
+  },
+  "retainedApplicationRows": 62,
+  "retainedApplicationRowsByTable": [
+    {
+      "table": "budget_counters",
+      "rows": 2
+    },
+    {
+      "table": "users",
+      "rows": 1
+    },
+    {
+      "table": "cost_budget_counters",
+      "rows": 2
+    },
+    {
+      "table": "budget_reservations",
+      "rows": 2
+    },
+    {
+      "table": "cost_budget_reservations",
+      "rows": 4
+    },
+    {
+      "table": "generation_study_grants",
+      "rows": 1
+    },
+    {
+      "table": "generation_study_operations",
+      "rows": 2
+    },
+    {
+      "table": "generation_study_evidence",
+      "rows": 18
+    },
+    {
+      "table": "generation_study_charges",
+      "rows": 2
+    },
+    {
+      "table": "generation_study_financial_grants",
+      "rows": 2
+    },
+    {
+      "table": "generation_study_reconciliations",
+      "rows": 2
+    },
+    {
+      "table": "generation_study_stages",
+      "rows": 8
+    },
+    {
+      "table": "generation_study_supplied_reviews",
+      "rows": 1
+    },
+    {
+      "table": "generation_study_supplied_observations",
+      "rows": 1
+    },
+    {
+      "table": "authoring_study_configurations",
+      "rows": 1
+    },
+    {
+      "table": "authoring_study_evidence",
+      "rows": 12
+    },
+    {
+      "table": "authoring_study_commits",
+      "rows": 1
+    }
+  ],
+  "oldAndNewTombstones": 2,
+  "retainedSchema": "172application/control explicit definitions plus platform metadata; Start/Cleanup guarded catalog hash identical",
+  "emptyMediaResourceRetained": true,
+  "twoFixedKeysDeletedAndReadNull": [
+    {
+      "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/531156a4bee0f82afcbb5bf1eb8116ccb4c0e4ea95e6d5b8c786c9d20c9316aa.png",
+      "existed": true,
+      "readNull": true
+    },
+    {
+      "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/7794846fbd3d203028b8716c3b97b7a19baa8d26d9f4084aa974774250b2cda4.png",
+      "existed": true,
+      "readNull": true
+    }
+  ],
+  "privateBodiesRemaining": 0,
+  "sourceVersionHistoryRetained": true,
+  "finalD1SizeMetricBytes": 843776,
+  "peakObservedD1SizeMetricBytes": 1081344,
+  "physicalHostedAllocationUnknown": true,
+  "acceptedCostBasis": "Option B finite-resource exposure at unknown hosting prices; no monetary guarantee",
+  "retention": {
+    "duration": "indefinite",
+    "starts": "2026-09-25T21:04:00Z",
+    "owner": "westbrook.johnson@reve.art",
+    "disposition": "retain privately until separately reviewed change or deletion; no automatic removal"
+  },
+  "accounting": {
+    "charged": 60,
+    "unused": 11,
+    "limit": 71,
+    "normalStop": 59,
+    "newNormal": 26,
+    "newRecovery": 3,
+    "cleanupAttempts": 1,
+    "cleanupLimit": 5,
+    "underlyingHttpCount": null,
+    "priorUnknownTrafficAndLateR10EntriesPreserved": true
+  },
+  "expiry": "2026-10-01T00:00:00Z",
+  "renewal": false,
+  "realProviderCalls": 0,
+  "productionFormaChanged": false,
+  "next": "Separate non-purchase actual-Forma identity/version/schema/holds/custody and authentic financial qualification before any paid comparison. Existing P5 remains open; no new run, rearm or provider action authorized.",
+  "preserved": [
+    "P2 gates",
+    "847/six exclusions",
+    "original N10H disabled state",
+    "original image-provider rejection unresolved",
+    "cross-media deployment lesson only; no generation-quality claim"
+  ],
+  "validation": "execution-validation.json"
+}

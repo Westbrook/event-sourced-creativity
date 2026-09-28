@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "action": "step",
+  "result": {
+    "rollback": true,
+    "commits": 0,
+    "grants": 0
+  },
+  "state": {
+    "phase": "ready",
+    "cursor": 1,
+    "requests": 2,
+    "report": "{\"step\":\"rollback\",\"resultHash\":\"01efb41605e602b1536339d5552410af5a4d2096f59bcbfcba2afa5055175d74\"}",
+    "reads": 54267,
+    "writes": 285
+  },
+  "metrics": {
+    "action": "step",
+    "step": "rollback",
+    "statements": 270,
+    "attemptedStatements": 320,
+    "bindingCalls": 84,
+    "failedBatches": 1,
+    "reads": 53672,
+    "writes": 195,
+    "databaseBytes": 901120,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    },
+    "rollback": true,
+    "rollbackInjected": true,
+    "databaseError": "Error: D1_ERROR: CHECK constraint failed: ok=1: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)"
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

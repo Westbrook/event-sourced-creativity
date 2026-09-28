@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "action": "step",
+  "result": {
+    "immutableProposalExpiry": true,
+    "expiredPrivateEvidence": {
+      "status": "denied",
+      "error": "authoring_study_evidence_unavailable",
+      "dispatchState": "inspect_original_operation"
+    },
+    "revoked": {
+      "status": "denied",
+      "error": "authoring_study_configuration_unavailable",
+      "newPurchases": 0
+    },
+    "renewal": false
+  },
+  "state": {
+    "phase": "ready",
+    "cursor": 9,
+    "requests": 10,
+    "report": "{\"step\":\"expiry-revocation\",\"resultHash\":\"d37f78a2a931a2f0173fc275891efbc6e24d8dc54a8d91a7de79ddcee50173cc\"}",
+    "reads": 2331829,
+    "writes": 6651
+  },
+  "metrics": {
+    "action": "step",
+    "step": "expiry-revocation",
+    "statements": 64,
+    "attemptedStatements": 65,
+    "bindingCalls": 25,
+    "failedBatches": 1,
+    "reads": 3210,
+    "writes": 45,
+    "databaseBytes": 1081344,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    }
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

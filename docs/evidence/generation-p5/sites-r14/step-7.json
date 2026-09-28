@@ -1,0 +1,73 @@
+{
+  "ok": true,
+  "action": "step",
+  "result": {
+    "action": "completed",
+    "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+    "measuredMicrousd": 650,
+    "newPurchases": 0,
+    "financial": {
+      "providerSettled": true,
+      "lifecycleFunded": true,
+      "nextPurchaseEligible": true,
+      "evidenceId": "treatment-P5",
+      "originalResidualMicrousd": null,
+      "remainingUncertaintyMicrousd": 0,
+      "incurredMicrousd": 650,
+      "incurredTokens": 30,
+      "reason": null,
+      "lifecycle": {
+        "evidence_id": "treatment-P5",
+        "operation_id": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "sequence": 1,
+        "previous_id": null,
+        "original_charge_hash": "f2cfe51bba91f5d14668a5ba3daab1bc3846442502196aeb6793b94f58783d86",
+        "policy_id": "financial-policy:14ad6cfda9138e63b2f163791f1a977abdec32010efaf0f608e3d601b7e923a1",
+        "evidence_kind": "verified-incurred-charge",
+        "authority_version": "P5-SYNTHETIC-verifier",
+        "evidence_ref": "P5-SYNTHETIC-billing",
+        "recorded_at": "2026-09-28T19:08:04.223Z",
+        "provider_settled": 1,
+        "incurred_microusd": 650,
+        "incurred_tokens": 30,
+        "remaining_uncertainty_microusd": 0,
+        "lifecycle_microusd": 800,
+        "lifecycle_scope": "exact-study-inventory-including-financial-retention",
+        "liability_owner": "mock-owner",
+        "lifecycle_through": "2026-10-02T00:00:00.000Z",
+        "lifecycle_evidence_ref": "P5-SYNTHETIC-lifecycle",
+        "lifecycle_closed": 0,
+        "lifecycle_incurred_microusd": null
+      }
+    },
+    "artifactState": "retained",
+    "nextPurchaseEligible": true
+  },
+  "state": {
+    "phase": "ready",
+    "cursor": 8,
+    "requests": 9,
+    "report": "{\"step\":\"settle-treatment\",\"resultHash\":\"c8492f310794c18cf2f7a403341f067301a64deb78fa5bd6539bebde6560aefc\"}",
+    "reads": 2328621,
+    "writes": 6607
+  },
+  "metrics": {
+    "action": "step",
+    "step": "settle-treatment",
+    "statements": 99,
+    "attemptedStatements": 99,
+    "bindingCalls": 36,
+    "failedBatches": 0,
+    "reads": 939,
+    "writes": 78,
+    "databaseBytes": 1081344,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    }
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

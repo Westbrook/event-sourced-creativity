@@ -1,0 +1,6 @@
+{
+  "baselineIssuedOnce": true,
+  "lastVisibleAcknowledgement": "approve, cursor2",
+  "noReplay": true,
+  "note": "Visible previous receipt remains while baseline request is pending; this is not a baseline result."
+}

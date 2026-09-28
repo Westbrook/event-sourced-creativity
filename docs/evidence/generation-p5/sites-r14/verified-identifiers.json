@@ -1,0 +1,82 @@
+{
+  "project": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "diagnosticVersion": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_70ee050810888191b4a8a866bbbf8d82",
+  "parent": "530960b85f85756b0eee97746090d690fd00aa95",
+  "restoreVersion": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_f5f7f474cb8c8191a85efe1c9de0f370",
+  "restoration": {
+    "id": "appgdep_6abaa72f090c8191924c2774033ceca5",
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "title": "Forma N10H synthetic rehearsal",
+    "version_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_f5f7f474cb8c8191a85efe1c9de0f370",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-n10h-synthetic-20260924.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6ab5929a74288191bf37ed429f7a7e20",
+    "failure_message": null,
+    "env_set_revision": 0,
+    "updated_at": "2026-09-28T17:43:20.842032+00:00"
+  },
+  "envelope": {
+    "id": "p5-sites-remedy-release:77eb7d7fd34290dd1ca5cea36de3c5f39427d5e6ed30e4fa78f958cfe4baebcc",
+    "version": "p5-sites-remedy-r13",
+    "identity": {
+      "target": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+      "nativeParent": "530960b85f85756b0eee97746090d690fd00aa95",
+      "sourceTreeSha256": "84a4c1cc157a4d11bc034c4d6d2c1273e62b7545b22451f8107332b8233af83b",
+      "sourceArchiveSha256": "382e3ef4aab196f60a9c21176ffe8228c987f2926a567f372e1c2450ecc9f325",
+      "deploymentArchiveSha256": "f34d15d3d76b161ca24f8d2bbc7d7f683c9a2e9fb56b9df81bd9362e7963c715",
+      "compiledWorkerSha256": "b32ebed95d493d5f645f60869ec31e99b62f0e8272da55789345968585ab68f5",
+      "sourceWorkerSha256": "4c172a29d7f9d051f1e66e3be46807e0e12c7eb8e3d04260665e73c226a283fc",
+      "expiry": "2026-10-01T00:00:00Z"
+    },
+    "identityHashScope": "Exact source, archives, Worker and expiry; validation evidence separately hashed in evidence-manifest.json",
+    "sourceArchive": {
+      "path": "/private/tmp/forma-p5-live-comparison/docs/evidence/generation-p5/sites-r13/source.tar.gz",
+      "sha256": "382e3ef4aab196f60a9c21176ffe8228c987f2926a567f372e1c2450ecc9f325",
+      "bytes": 2333271,
+      "files": 230
+    },
+    "archive": {
+      "path": "/private/tmp/forma-p5-live-comparison/docs/evidence/generation-p5/sites-r13/sites-archive.tar.gz",
+      "sha256": "f34d15d3d76b161ca24f8d2bbc7d7f683c9a2e9fb56b9df81bd9362e7963c715",
+      "bytes": 354880,
+      "files": 9
+    },
+    "sourceDeltaFromNativeParent": [
+      {
+        "path": "artifact.json",
+        "change": "changed"
+      },
+      {
+        "path": "src/catalog.mjs",
+        "change": "deleted"
+      },
+      {
+        "path": "src/worker.mjs",
+        "change": "changed"
+      }
+    ],
+    "runtimeChange": "R12 exact-pin equality expression; temporary R8 diagnostic removed to restore v2surface",
+    "validation": {
+      "compiledLifecycleChecks": 28,
+      "failureScenarios": 10,
+      "forcedRuntimeRestart": true,
+      "networkAttempts": 0,
+      "packagedWorkerEqualsTested": true,
+      "metadataFixture": "Exact observedDDL seeded only in disposable offline localSQLite; not in shipped migrations; _cf_METADATA is emulator-local and remains excluded"
+    },
+    "nativeAdmission": false,
+    "hostedReleaseAuthorized": false,
+    "rehearsalAuthorized": false,
+    "retention": "Accepted OptionB unknown-price finite-resource exposure and indefinite private retention from2026-09-25T21:04:00Z unchanged; new source/version/receipts retained",
+    "priorUsage": {
+      "charged": 31,
+      "unused": 6,
+      "normalStop": 30,
+      "limit": 37
+    },
+    "p5Complete": false
+  }
+}

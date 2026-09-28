@@ -1,0 +1,13 @@
+{
+  "sandboxFailure": "DNS resolution failed before reaching native Git host; exit128; no source write",
+  "supportedNetworkPermissionUsed": true,
+  "gitNetworkCommandsBudget": 5,
+  "sequence": [
+    "sandbox ls-remote failed DNS",
+    "supported ls-remote",
+    "supported fetch",
+    "planned non-force push",
+    "planned verify ls-remote"
+  ],
+  "hiddenHttpCount": null
+}

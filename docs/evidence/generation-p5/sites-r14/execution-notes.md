@@ -1,0 +1,13 @@
+# P5 R14 execution notes
+
+The user accepted the exact R13 decision and sealed release envelope at commit224a840f044fb34ef5a372112d4ca8ab8f406dfd. R13 evidence remains immutable; acceptance and execution are recorded here.
+
+- All230 source files and nine payloads matched before publication. The supported native source workflow created a normal successor958b0b023808b9861905d29709afb9f41ec5ed50 of530960b85f85756b0eee97746090d690fd00aa95. Only artifact.json, src/worker.mjs and removal of src/catalog.mjs differ from the parent. No migrations, fixture, audience, bindings or authentication changed.
+- Source credential metadata confirmed publish-on-push false and no live publication window. Credential was held only in session memory/stdin, then discarded. No credential or bypass token is retained in evidence.
+- Initial sandbox Git DNS failure occurred before reaching the repository. The supported workflow was then run with network permission. Five reserved Git operations cover failed ls-remote, successful ls-remote/fetch, non-force push and final ls-remote. This is a disclosed transport recovery, not a source/application retry or an expansion of the allowance. Native internal HTTP remains unmeasured.
+- Native archive admission returned the exact expected normalized-tar hash, size2283520 and9files; no payload changed. Saved private version4 deployed terminally with environment revision0. No extra deployment polling was needed.
+- Browser control uses supported Playwright locators against the authenticated page. Receipt JSON is copied from visible output, preserving all displayed data and SQL/proof strings; it is not a raw HTTP wire capture. The page retains the prior receipt while an action is pending. Older visible output was never used to advance a case; Start and each fixed step are issued only once.
+- The fixed recover-original case contains a canned lostAcknowledgement description. In this hosted execution the baseline acknowledgement was retained; no additional lost-ack fault injection or forced runtime restart was performed. The case does establish recovery of the original bytes with no new dispatch.
+- Financial fields, grants, charges, observations and provider responses are synthetic fixture behavior. They supply no genuine financial authority, real human review or hosting-price proof.
+
+Prior unknown authentication traffic and the two late-recorded R10 entries remain disclosed in the carried ledger. Current reservations are atomically written, fsynced and read back before dispatch; the recording helper was tested locally for durable save, stage refusal and cleanup-attempt ceiling before hosted work.

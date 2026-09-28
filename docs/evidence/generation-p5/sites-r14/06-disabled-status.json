@@ -1,0 +1,57 @@
+{
+  "ok": true,
+  "action": "status",
+  "result": {
+    "steps": [
+      "rollback",
+      "approve",
+      "baseline",
+      "recover-original",
+      "settle-baseline",
+      "observe",
+      "treatment",
+      "settle-treatment",
+      "expiry-revocation",
+      "terminal-stop"
+    ],
+    "dataset": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a",
+    "limits": {
+      "statements": 6000,
+      "reads": 10000000,
+      "writes": 20000,
+      "databaseBytes": 16000000,
+      "requests": 80,
+      "objectBytes": 6190,
+      "objects": 2,
+      "providerResponses": 6
+    },
+    "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+  },
+  "state": {
+    "phase": "disabled",
+    "cursor": 10,
+    "requests": 12,
+    "report": null,
+    "reads": 2338379,
+    "writes": 6755
+  },
+  "metrics": {
+    "action": "status",
+    "step": "",
+    "statements": 2,
+    "attemptedStatements": 2,
+    "bindingCalls": 2,
+    "failedBatches": 0,
+    "reads": 2,
+    "writes": 0,
+    "databaseBytes": 843776,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    }
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

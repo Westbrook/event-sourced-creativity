@@ -1,0 +1,36 @@
+{
+  "ok": true,
+  "action": "step",
+  "result": {
+    "status": "committed",
+    "receiptHash": "745d2094f78bd19fd6b579e1ccb7635bad2e8f240dd83467b02983e70cbe7769"
+  },
+  "state": {
+    "phase": "ready",
+    "cursor": 2,
+    "requests": 3,
+    "report": "{\"step\":\"approve\",\"resultHash\":\"901c349ac45e453bbbaa5554ed1897918a30216b3f7fe43c068274299284fa29\"}",
+    "reads": 237856,
+    "writes": 794
+  },
+  "metrics": {
+    "action": "step",
+    "step": "approve",
+    "statements": 599,
+    "attemptedStatements": 599,
+    "bindingCalls": 153,
+    "failedBatches": 0,
+    "reads": 183591,
+    "writes": 510,
+    "databaseBytes": 917504,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    },
+    "rollback": false
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

@@ -1,0 +1,77 @@
+{
+  "ok": true,
+  "action": "step",
+  "result": {
+    "result": {
+      "action": "hold",
+      "newPurchases": 1,
+      "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+      "reason": "original_charge_unreconciled",
+      "contentOutcome": "usable",
+      "accountingState": "unknown",
+      "uncachedEstimateMicrousd": 650,
+      "measuredMicrousd": null
+    },
+    "intent": [
+      {
+        "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "providerStage": "moderation",
+        "beforeResponse": true
+      },
+      {
+        "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "providerStage": "moderation",
+        "beforeResponse": true
+      },
+      {
+        "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "providerStage": "image",
+        "beforeResponse": true
+      }
+    ],
+    "syntheticResponses": 3
+  },
+  "state": {
+    "phase": "ready",
+    "cursor": 7,
+    "requests": 8,
+    "report": "{\"step\":\"treatment\",\"resultHash\":\"53c44ebdc805ef23ecf46d7045e0ed7af9a8dbf7b0c8084c46c076f6eb021591\"}",
+    "reads": 2327684,
+    "writes": 6530
+  },
+  "metrics": {
+    "action": "step",
+    "step": "treatment",
+    "statements": 3276,
+    "attemptedStatements": 3276,
+    "bindingCalls": 842,
+    "failedBatches": 0,
+    "reads": 911701,
+    "writes": 2512,
+    "databaseBytes": 1081344,
+    "providers": 3,
+    "intent": [
+      {
+        "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "providerStage": "moderation",
+        "beforeResponse": true
+      },
+      {
+        "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "providerStage": "moderation",
+        "beforeResponse": true
+      },
+      {
+        "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "providerStage": "image",
+        "beforeResponse": true
+      }
+    ],
+    "r2": {
+      "put": 1,
+      "get": 0,
+      "delete": 0
+    }
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

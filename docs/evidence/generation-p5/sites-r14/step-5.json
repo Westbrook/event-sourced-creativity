@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "action": "step",
+  "result": {
+    "blocked": {
+      "status": "denied",
+      "error": "study_pair_paused_or_stopped",
+      "dispatchState": "inspect_original_operation"
+    },
+    "observation": {
+      "action": "observation_recorded",
+      "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+      "requiresSettlement": true,
+      "newPurchases": 0
+    },
+    "syntheticHumanSimulation": true
+  },
+  "state": {
+    "phase": "ready",
+    "cursor": 6,
+    "requests": 7,
+    "report": "{\"step\":\"observe\",\"resultHash\":\"e8c304896cb6c84211292358d37a0029e11d3a4be2e5d85ae2f05203b71aa7b3\"}",
+    "reads": 1415985,
+    "writes": 4019
+  },
+  "metrics": {
+    "action": "step",
+    "step": "observe",
+    "statements": 374,
+    "attemptedStatements": 374,
+    "bindingCalls": 106,
+    "failedBatches": 0,
+    "reads": 90461,
+    "writes": 253,
+    "databaseBytes": 995328,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    }
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

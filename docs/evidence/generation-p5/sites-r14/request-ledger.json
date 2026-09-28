@@ -1,0 +1,783 @@
+{
+  "acceptedAt": "2026-09-25T22:06:48.638974+00:00",
+  "authorization": "User approved 37 additional HTTP requests; normal stop at25,12 reserved for stop/cleanup/verification; at most5 cleanup attempts. Prior authentication HTTP remains unknown. Exact R3/private version2/optionB/indefinite retention unchanged.",
+  "limit": 71,
+  "normalStop": 59,
+  "reservedRecovery": 12,
+  "issued": 60,
+  "cleanupAttempts": 1,
+  "entries": [
+    {
+      "sequence": 1,
+      "utc": "2026-09-25T22:06:48.757607+00:00",
+      "action": "status",
+      "requests": 1,
+      "cumulative": 1,
+      "state": "Status control invoked; no displayed receipt, no matching recent Worker event observed",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "unit": "conservative one-request reservation, retained even if no request was emitted"
+    },
+    {
+      "sequence": 2,
+      "utc": "2026-09-25T22:08:04.059778+00:00",
+      "action": "status-semantic-diagnostic",
+      "requests": 1,
+      "cumulative": 2,
+      "state": "Status control invoked; no displayed receipt, no matching recent Worker event observed",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "unit": "conservative one-request reservation, retained even if no request was emitted"
+    },
+    {
+      "sequence": 3,
+      "utc": "2026-09-25T22:08:39.191271+00:00",
+      "action": "native-read-worker-errors",
+      "requests": 1,
+      "cumulative": 3,
+      "state": "read-only native call completed",
+      "recovery": false,
+      "unit": "one native connector call reservation; backend internal HTTP not measured"
+    },
+    {
+      "sequence": 4,
+      "utc": "2026-09-25T22:08:39.224045+00:00",
+      "action": "native-read-run-state",
+      "requests": 1,
+      "cumulative": 4,
+      "state": "read-only native call completed",
+      "recovery": false,
+      "unit": "one native connector call reservation; backend internal HTTP not measured"
+    },
+    {
+      "sequence": 5,
+      "utc": "2026-09-25T22:08:48.410300+00:00",
+      "action": "native-read-request-trace",
+      "requests": 1,
+      "cumulative": 5,
+      "state": "read-only native call completed",
+      "recovery": false,
+      "unit": "one native connector call reservation; backend internal HTTP not measured"
+    },
+    {
+      "sequence": 6,
+      "utc": "2026-09-25T22:09:36.352828+00:00",
+      "action": "user-status-diagnostic",
+      "requests": 1,
+      "cumulative": 6,
+      "state": "completed; user-provided Status receipt independently observed in existing tab",
+      "recovery": false,
+      "actualHttpRequests": 1,
+      "receipt": "06-status.json"
+    },
+    {
+      "sequence": 7,
+      "utc": "2026-09-25T22:29:06.620536+00:00",
+      "action": "start",
+      "requests": 1,
+      "cumulative": 7,
+      "state": "refused before import: schema_mismatch",
+      "recovery": false,
+      "actualHttpRequests": 1,
+      "receipt": "07-start-refusal.json"
+    },
+    {
+      "sequence": 8,
+      "utc": "2026-09-25T22:29:52.875491+00:00",
+      "action": "verify-status",
+      "requests": 1,
+      "cumulative": 8,
+      "state": "completed; no P5 state in status",
+      "recovery": true,
+      "actualHttpRequests": 1,
+      "receipt": "08-status-after-refusal.json"
+    },
+    {
+      "sequence": 9,
+      "utc": "2026-09-25T22:30:37.992247+00:00",
+      "action": "verify-original-N10H-tombstone",
+      "requests": 1,
+      "cumulative": 9,
+      "state": "native read completed; original tombstone unchanged",
+      "recovery": true,
+      "unit": "one native read-only connector reservation; internal HTTP not measured",
+      "receipt": "09-retained-n10h.json"
+    },
+    {
+      "sequence": 10,
+      "utc": "2026-09-28T16:20:50.071799+00:00",
+      "action": "native-preflight-site",
+      "requests": 1,
+      "cumulative": 10,
+      "state": "completed; recorded after call because preceding ledger initialization failed",
+      "recovery": false,
+      "unit": "native control call reservation; underlying HTTP unmeasured"
+    },
+    {
+      "sequence": 11,
+      "utc": "2026-09-28T16:20:50.071872+00:00",
+      "action": "native-preflight-environment",
+      "requests": 1,
+      "cumulative": 11,
+      "state": "completed; recorded after call because preceding ledger initialization failed",
+      "recovery": false,
+      "unit": "native control call reservation; underlying HTTP unmeasured"
+    },
+    {
+      "sequence": 12,
+      "utc": "2026-09-28T16:21:23.810446+00:00",
+      "action": "native-source-credential-no-auto-publish",
+      "requests": 1,
+      "cumulative": 12,
+      "state": "completed; ephemeral credential; publish-on-push disabled",
+      "recovery": false
+    },
+    {
+      "sequence": 13,
+      "utc": "2026-09-28T16:21:42.928500+00:00",
+      "action": "supported-source-open-and-push",
+      "requests": 5,
+      "cumulative": 17,
+      "state": "completed; exact 231-file source pushed; no force or automatic publication",
+      "recovery": false
+    },
+    {
+      "sequence": 14,
+      "utc": "2026-09-28T16:23:58.152078+00:00",
+      "action": "native-save-admit-sealed-archive",
+      "requests": 1,
+      "cumulative": 18,
+      "state": "completed; version 3 saved and exact nine-file archive admitted",
+      "recovery": false
+    },
+    {
+      "sequence": 15,
+      "utc": "2026-09-28T16:25:00.877754+00:00",
+      "action": "native-private-deploy-diagnostic-v3",
+      "requests": 1,
+      "cumulative": 19,
+      "state": "native invalid-project-id refusal before deployment",
+      "recovery": false
+    },
+    {
+      "sequence": 16,
+      "utc": "2026-09-28T16:25:44.998819+00:00",
+      "action": "recovery-restore-saved-v2",
+      "requests": 1,
+      "cumulative": 20,
+      "state": "completed; version 2 restoration returned terminal succeeded",
+      "recovery": true,
+      "receipt": "restoration.json"
+    },
+    {
+      "sequence": 17,
+      "utc": "2026-09-28T17:26:21.670849+00:00",
+      "action": "native-preflight-site",
+      "requests": 1,
+      "cumulative": 21,
+      "state": "completed; reservation durably saved and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 18,
+      "utc": "2026-09-28T17:26:39.563030+00:00",
+      "action": "native-preflight-environment",
+      "requests": 1,
+      "cumulative": 22,
+      "state": "completed; reservation durably saved and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 19,
+      "utc": "2026-09-28T17:26:52.868106+00:00",
+      "action": "deploy-saved-diagnostic-v3",
+      "requests": 1,
+      "cumulative": 23,
+      "state": "completed; reservation durably saved and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 20,
+      "utc": "2026-09-28T17:27:18.984196+00:00",
+      "action": "authenticated-browser-navigation",
+      "requests": 1,
+      "cumulative": 24,
+      "state": "completed: login gate shown; no signin link clicked, no catalog read",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 21,
+      "utc": "2026-09-28T17:27:44.662086+00:00",
+      "action": "restore-saved-v2",
+      "requests": 1,
+      "cumulative": 25,
+      "state": "completed; reservation durably saved and read back before action",
+      "recovery": true,
+      "actualHttpRequests": null,
+      "receipt": "restoration.json"
+    },
+    {
+      "sequence": 22,
+      "utc": "2026-09-28T17:40:50.281460+00:00",
+      "action": "native-preflight-site",
+      "requests": 1,
+      "cumulative": 26,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 23,
+      "utc": "2026-09-28T17:41:09.521375+00:00",
+      "action": "native-preflight-environment",
+      "requests": 1,
+      "cumulative": 27,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 24,
+      "utc": "2026-09-28T17:41:23.730425+00:00",
+      "action": "deploy-saved-v3",
+      "requests": 1,
+      "cumulative": 28,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 25,
+      "utc": "2026-09-28T17:41:58.121938+00:00",
+      "action": "browser-navigation",
+      "requests": 1,
+      "cumulative": 29,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 26,
+      "utc": "2026-09-28T17:42:15.309055+00:00",
+      "action": "single-read-catalog",
+      "requests": 1,
+      "cumulative": 30,
+      "state": "single UI invocation; successful catalog response observed; no retry",
+      "recovery": false,
+      "actualHttpRequests": 1,
+      "receipt": "catalog-receipt.json"
+    },
+    {
+      "sequence": 27,
+      "utc": "2026-09-28T17:43:08.902222+00:00",
+      "action": "restore-saved-v2",
+      "requests": 1,
+      "cumulative": 31,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": true,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 28,
+      "utc": "2026-09-28T18:54:20.130208+00:00",
+      "action": "fresh-site-audience",
+      "requests": 1,
+      "cumulative": 32,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 0,
+      "receipt": "preflight.json"
+    },
+    {
+      "sequence": 29,
+      "utc": "2026-09-28T18:54:38.116428+00:00",
+      "action": "fresh-environment",
+      "requests": 1,
+      "cumulative": 33,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 0,
+      "receipt": "preflight.json"
+    },
+    {
+      "sequence": 30,
+      "utc": "2026-09-28T18:54:38.814369+00:00",
+      "action": "fresh-saved-version-provenance",
+      "requests": 1,
+      "cumulative": 34,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 0,
+      "receipt": "preflight.json"
+    },
+    {
+      "sequence": 31,
+      "utc": "2026-09-28T18:55:24.673298+00:00",
+      "action": "owner-browser-readiness",
+      "requests": 1,
+      "cumulative": 35,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 1,
+      "receipt": "execution-notes.md"
+    },
+    {
+      "sequence": 32,
+      "utc": "2026-09-28T18:56:04.081628+00:00",
+      "action": "ephemeral-source-credential-no-auto-publish",
+      "requests": 1,
+      "cumulative": 36,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 2,
+      "receipt": "credential-metadata.json"
+    },
+    {
+      "sequence": 33,
+      "utc": "2026-09-28T18:56:25.431805+00:00",
+      "action": "supported-source-open-verify-nonforce-push",
+      "requests": 5,
+      "cumulative": 41,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 3,
+      "receipt": "source-push.json"
+    },
+    {
+      "sequence": 34,
+      "utc": "2026-09-28T18:59:32.529176+00:00",
+      "action": "save-exact-sealed-archive-native-admission",
+      "requests": 1,
+      "cumulative": 42,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 4,
+      "receipt": "native-saved-version.json"
+    },
+    {
+      "sequence": 35,
+      "utc": "2026-09-28T18:59:57.607525+00:00",
+      "action": "deploy-admitted-private-version4",
+      "requests": 1,
+      "cumulative": 43,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 5,
+      "receipt": "deployment.json"
+    },
+    {
+      "sequence": 36,
+      "utc": "2026-09-28T19:00:22.319065+00:00",
+      "action": "corrected-worker-postdeploy-page-load",
+      "requests": 1,
+      "cumulative": 44,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 1,
+      "receipt": "execution-notes.md"
+    },
+    {
+      "sequence": 37,
+      "utc": "2026-09-28T19:00:35.351063+00:00",
+      "action": "preimport-status",
+      "requests": 1,
+      "cumulative": 45,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 7,
+      "receipt": "01-preimport-status.json"
+    },
+    {
+      "sequence": 38,
+      "utc": "2026-09-28T19:01:08.028807+00:00",
+      "action": "single-atomic-start",
+      "requests": 1,
+      "cumulative": 46,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 8,
+      "receipt": "02-start.json"
+    },
+    {
+      "sequence": 39,
+      "utc": "2026-09-28T19:01:42.076711+00:00",
+      "action": "fixed-step-0",
+      "requests": 1,
+      "cumulative": 47,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-0.json"
+    },
+    {
+      "sequence": 40,
+      "utc": "2026-09-28T19:02:05.501810+00:00",
+      "action": "fixed-step-1",
+      "requests": 1,
+      "cumulative": 48,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-1.json"
+    },
+    {
+      "sequence": 41,
+      "utc": "2026-09-28T19:02:24.126878+00:00",
+      "action": "fixed-step-2",
+      "requests": 1,
+      "cumulative": 49,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-2.json"
+    },
+    {
+      "sequence": 42,
+      "utc": "2026-09-28T19:04:20.216922+00:00",
+      "action": "fixed-step-3",
+      "requests": 1,
+      "cumulative": 50,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-3.json"
+    },
+    {
+      "sequence": 43,
+      "utc": "2026-09-28T19:05:18.036914+00:00",
+      "action": "fixed-step-4",
+      "requests": 1,
+      "cumulative": 51,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-4.json"
+    },
+    {
+      "sequence": 44,
+      "utc": "2026-09-28T19:05:45.598315+00:00",
+      "action": "fixed-step-5",
+      "requests": 1,
+      "cumulative": 52,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-5.json"
+    },
+    {
+      "sequence": 45,
+      "utc": "2026-09-28T19:06:34.831025+00:00",
+      "action": "fixed-step-6",
+      "requests": 1,
+      "cumulative": 53,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-6.json"
+    },
+    {
+      "sequence": 46,
+      "utc": "2026-09-28T19:07:59.676362+00:00",
+      "action": "fixed-step-7",
+      "requests": 1,
+      "cumulative": 54,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-7.json"
+    },
+    {
+      "sequence": 47,
+      "utc": "2026-09-28T19:08:16.584471+00:00",
+      "action": "fixed-step-8",
+      "requests": 1,
+      "cumulative": 55,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-8.json"
+    },
+    {
+      "sequence": 48,
+      "utc": "2026-09-28T19:08:28.545697+00:00",
+      "action": "fixed-step-9",
+      "requests": 1,
+      "cumulative": 56,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 9,
+      "receipt": "step-9.json"
+    },
+    {
+      "sequence": 49,
+      "utc": "2026-09-28T19:08:48.340487+00:00",
+      "action": "terminal-cursor-status",
+      "requests": 1,
+      "cumulative": 57,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "r14Stage": 10,
+      "receipt": "03-terminal-status.json"
+    },
+    {
+      "sequence": 50,
+      "utc": "2026-09-28T19:09:03.674555+00:00",
+      "action": "original-controller-stop",
+      "requests": 1,
+      "cumulative": 58,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": true,
+      "actualHttpRequests": null,
+      "r14Stage": 0,
+      "receipt": "04-stop.json"
+    },
+    {
+      "sequence": 51,
+      "utc": "2026-09-28T19:09:16.498151+00:00",
+      "action": "original-cleanup-attempt1",
+      "requests": 1,
+      "cumulative": 59,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": true,
+      "actualHttpRequests": null,
+      "r14Stage": 1,
+      "receipt": "05-cleanup.json"
+    },
+    {
+      "sequence": 52,
+      "utc": "2026-09-28T19:09:32.259670+00:00",
+      "action": "permanent-disabled-status-verification",
+      "requests": 1,
+      "cumulative": 60,
+      "state": "completed; durable pre-dispatch reservation retained",
+      "recovery": true,
+      "actualHttpRequests": null,
+      "r14Stage": 2,
+      "receipt": "06-disabled-status.json"
+    }
+  ],
+  "priorAccounting": "../sites-r5/request-ledger.json; unknown, not reset or represented within original80",
+  "applicationRunStarted": false,
+  "exactTotalHttpVerified": false,
+  "accounting": "31conservative reservations charged/6unused. R12 consumed5normal+1recovery; all saved/fsynced/read back before dispatch. Original two late R10 entries retained. Native internal/browser navigation HTTP and user-driven authentication remain unmeasured. No counter reset.",
+  "continuationOf": "../sites-r11/request-ledger.json",
+  "normalWorkStopped": true,
+  "approvedEnvelope": "p5-sites-catalog:daef3e10f1bdb5bcc5046127d83e8451ca900f3b7a7c60614dad3b6797ab0d2e",
+  "normalThisAction": 19,
+  "recoveryThisAction": 3,
+  "accountingDeviation": "Local ledger initialization had a Python syntax error; the two already planned preflight calls ran before durable recording. Reconciled exactly2nativecalls to11total before further requests. No claim that these entries were durably reserved before sending.",
+  "stopReason": "Authorized finite lifecycle complete; no further normal issuance. Permanent disabled state verified.",
+  "unused": 11,
+  "resumeNormal": 5,
+  "resumeRecovery": 1,
+  "recoveryActionMaximum": 5,
+  "recoveryFurtherMaximum": 3,
+  "resumption": "User approved normalStop30, at most5 further normal plus3 further recovery within total37; source/version unchanged; one catalog read. Counters25carryforward; cumulative action normal14+5=19 and recovery2+3=5.",
+  "normalActionMaximum": 19,
+  "priorNormalStops": [
+    25
+  ],
+  "recoveryAllocationNote": "Original12-slot designation retained as history; explicit amendment permits normal work through30, leaving7overall slots at that point. This turn at most3recovery, totalmax33, at least4unused.",
+  "r14Normal": 26,
+  "r14Recovery": 3,
+  "r14Stages": {
+    "normal": [
+      {
+        "stage": "fresh target/audience, environment, saved-version provenance",
+        "maximum": 3,
+        "used": 3
+      },
+      {
+        "stage": "owner browser readiness and one post-deploy page load",
+        "maximum": 2,
+        "used": 2
+      },
+      {
+        "stage": "ephemeral source credential; publish-on-push disabled",
+        "maximum": 1,
+        "used": 1
+      },
+      {
+        "stage": "supported source verification/non-force successor push",
+        "maximum": 5,
+        "used": 5
+      },
+      {
+        "stage": "save exact archive; mandatory native admission",
+        "maximum": 1,
+        "used": 1
+      },
+      {
+        "stage": "private deployment",
+        "maximum": 1,
+        "used": 1
+      },
+      {
+        "stage": "terminal deployment checks, only if needed",
+        "maximum": 2,
+        "used": 0
+      },
+      {
+        "stage": "pre-import Status",
+        "maximum": 1,
+        "used": 1
+      },
+      {
+        "stage": "one atomic Start",
+        "maximum": 1,
+        "used": 1
+      },
+      {
+        "stage": "ten fixed steps, serial and receipt-driven",
+        "maximum": 10,
+        "used": 10
+      },
+      {
+        "stage": "terminal cursor/phase Status",
+        "maximum": 1,
+        "used": 1
+      }
+    ],
+    "recovery": [
+      {
+        "stage": "Stop if a run exists and state permits",
+        "maximum": 1,
+        "used": 1
+      },
+      {
+        "stage": "original cleanup attempts, including first planned cleanup",
+        "maximum": 5,
+        "used": 1
+      },
+      {
+        "stage": "status/lost-ack/disabled verification",
+        "maximum": 3,
+        "used": 1
+      },
+      {
+        "stage": "saved-v2 restoration and up to two terminal checks, only if no import or cleanup already complete",
+        "maximum": 3,
+        "used": 0
+      }
+    ]
+  },
+  "r14Accepted": {
+    "accepted": true,
+    "envelope": "p5-sites-remedy-release:77eb7d7fd34290dd1ca5cea36de3c5f39427d5e6ed30e4fa78f958cfe4baebcc",
+    "priorCharged": 31,
+    "priorLimit": 37,
+    "priorUnused": 6,
+    "priorNormalStop": 30,
+    "proposedAdditionalNormal": 28,
+    "proposedRecoveryAllocation": 12,
+    "proposedMaximumFurtherReservations": 40,
+    "proposedCumulativeNormalStop": 59,
+    "proposedCumulativeLimit": 71,
+    "increaseAboveExisting37": 34,
+    "reuseExistingUnusedTowardRecovery": 6,
+    "newNormalSlots": 28,
+    "newRecoverySlots": 6,
+    "cleanupAttemptLimit": 5,
+    "normalStages": [
+      {
+        "stage": "fresh target/audience, environment, saved-version provenance",
+        "maximum": 3
+      },
+      {
+        "stage": "owner browser readiness and one post-deploy page load",
+        "maximum": 2
+      },
+      {
+        "stage": "ephemeral source credential; publish-on-push disabled",
+        "maximum": 1
+      },
+      {
+        "stage": "supported source verification/non-force successor push",
+        "maximum": 5
+      },
+      {
+        "stage": "save exact archive; mandatory native admission",
+        "maximum": 1
+      },
+      {
+        "stage": "private deployment",
+        "maximum": 1
+      },
+      {
+        "stage": "terminal deployment checks, only if needed",
+        "maximum": 2
+      },
+      {
+        "stage": "pre-import Status",
+        "maximum": 1
+      },
+      {
+        "stage": "one atomic Start",
+        "maximum": 1
+      },
+      {
+        "stage": "ten fixed steps, serial and receipt-driven",
+        "maximum": 10
+      },
+      {
+        "stage": "terminal cursor/phase Status",
+        "maximum": 1
+      }
+    ],
+    "recoveryStages": [
+      {
+        "stage": "Stop if a run exists and state permits",
+        "maximum": 1
+      },
+      {
+        "stage": "original cleanup attempts, including first planned cleanup",
+        "maximum": 5
+      },
+      {
+        "stage": "status/lost-ack/disabled verification",
+        "maximum": 3
+      },
+      {
+        "stage": "saved-v2 restoration and up to two terminal checks, only if no import or cleanup already complete",
+        "maximum": 3
+      }
+    ],
+    "unit": "Conservative operator reservation; native internal/browser/auth HTTP not fully measured. Original80 HTTP bound not proven by these units; no reset of unknown prior traffic.",
+    "expiry": "2026-10-01T00:00:00Z",
+    "latestStart": "2026-09-30T22:00:00Z",
+    "changedReleaseAndFullRehearsalRequestedTogether": true,
+    "hostedActionAuthorizedNow": true,
+    "acceptedAt": "2026-09-28T18:53:48.137935+00:00",
+    "approvalSource": "Current user message: exact R13 decision and release envelope accepted, 34 added without resetting31 prior charges"
+  },
+  "r14FinishedAt": "2026-09-28T19:11:06.948756+00:00",
+  "remainingNormalUnderCumulativeStop": 0,
+  "remainingRecoveryStageCapacity": 9,
+  "remainingRecoveryNotAutomaticAuthority": true
+}

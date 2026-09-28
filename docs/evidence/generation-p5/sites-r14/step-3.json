@@ -1,0 +1,45 @@
+{
+  "ok": true,
+  "action": "step",
+  "result": {
+    "duplicate": {
+      "action": "hold",
+      "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+      "reason": "original_purchase_only",
+      "newPurchases": 0
+    },
+    "originalOperation": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+    "recovered": {
+      "bytes": 6190,
+      "sha256": "08c04ddee6610589fccaf694ee06dac80e8b6506c2ca07f57b0acbf7eaaa3c89"
+    },
+    "lostAcknowledgement": "Previous committed result intentionally discarded by driver; cross-request original recovery; no forced restart"
+  },
+  "state": {
+    "phase": "ready",
+    "cursor": 4,
+    "requests": 5,
+    "report": "{\"step\":\"recover-original\",\"resultHash\":\"118c8e8c02a751ce800346bdd6d3ca0387a5dbe6a4c892cb08536fca05a3ea03\"}",
+    "reads": 1324590,
+    "writes": 3690
+  },
+  "metrics": {
+    "action": "step",
+    "step": "recover-original",
+    "statements": 682,
+    "attemptedStatements": 682,
+    "bindingCalls": 191,
+    "failedBatches": 0,
+    "reads": 176314,
+    "writes": 458,
+    "databaseBytes": 995328,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 1,
+      "delete": 0
+    }
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

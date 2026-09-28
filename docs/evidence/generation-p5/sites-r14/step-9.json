@@ -1,0 +1,43 @@
+{
+  "ok": true,
+  "action": "step",
+  "result": {
+    "stopped": {
+      "status": "denied",
+      "error": "authoring_study_evidence_unavailable",
+      "newPurchases": 0
+    },
+    "denied": {
+      "status": "denied",
+      "error": "authoring_study_evidence_unavailable",
+      "dispatchState": "inspect_original_operation"
+    }
+  },
+  "state": {
+    "phase": "ready",
+    "cursor": 10,
+    "requests": 11,
+    "report": "{\"step\":\"terminal-stop\",\"resultHash\":\"7bba97a8097a587737fdab4df552b2a9de4435c145e56c217c48ad2a92d7048b\"}",
+    "reads": 2337695,
+    "writes": 6713
+  },
+  "metrics": {
+    "action": "step",
+    "step": "terminal-stop",
+    "statements": 97,
+    "attemptedStatements": 97,
+    "bindingCalls": 33,
+    "failedBatches": 0,
+    "reads": 5868,
+    "writes": 63,
+    "databaseBytes": 1081344,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    }
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

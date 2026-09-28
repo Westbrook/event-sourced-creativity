@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "action": "start",
+  "result": {
+    "imported": 26,
+    "proof": {
+      "schemaHash": "577d71dec6a4b4d3362a4312e4a0683be24a6152888850b6890b3326058da998",
+      "retiredTombstoneHash": "8000d540314d37dfb3020fc72c600c0fabbc8a6508f88bf37e1c01c630b44358"
+    },
+    "dataset": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a"
+  },
+  "state": {
+    "phase": "ready",
+    "cursor": 0,
+    "requests": 1,
+    "report": null,
+    "reads": 597,
+    "writes": 91
+  },
+  "metrics": {
+    "action": "start",
+    "step": "",
+    "statements": 80,
+    "attemptedStatements": 80,
+    "bindingCalls": 54,
+    "failedBatches": 0,
+    "reads": 599,
+    "writes": 92,
+    "databaseBytes": 831488,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    }
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}

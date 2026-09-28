@@ -1,0 +1,122 @@
+{
+  "ok": true,
+  "action": "cleanup",
+  "result": {
+    "disabled": true,
+    "deleted": [
+      {
+        "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/531156a4bee0f82afcbb5bf1eb8116ccb4c0e4ea95e6d5b8c786c9d20c9316aa.png",
+        "existed": true,
+        "readNull": true
+      },
+      {
+        "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/7794846fbd3d203028b8716c3b97b7a19baa8d26d9f4084aa974774250b2cda4.png",
+        "existed": true,
+        "readNull": true
+      }
+    ],
+    "privateBodiesRemaining": 0,
+    "residual": [
+      {
+        "table": "budget_counters",
+        "rows": 2
+      },
+      {
+        "table": "users",
+        "rows": 1
+      },
+      {
+        "table": "cost_budget_counters",
+        "rows": 2
+      },
+      {
+        "table": "budget_reservations",
+        "rows": 2
+      },
+      {
+        "table": "cost_budget_reservations",
+        "rows": 4
+      },
+      {
+        "table": "generation_study_grants",
+        "rows": 1
+      },
+      {
+        "table": "generation_study_operations",
+        "rows": 2
+      },
+      {
+        "table": "generation_study_evidence",
+        "rows": 18
+      },
+      {
+        "table": "generation_study_charges",
+        "rows": 2
+      },
+      {
+        "table": "generation_study_financial_grants",
+        "rows": 2
+      },
+      {
+        "table": "generation_study_reconciliations",
+        "rows": 2
+      },
+      {
+        "table": "generation_study_stages",
+        "rows": 8
+      },
+      {
+        "table": "generation_study_supplied_reviews",
+        "rows": 1
+      },
+      {
+        "table": "generation_study_supplied_observations",
+        "rows": 1
+      },
+      {
+        "table": "authoring_study_configurations",
+        "rows": 1
+      },
+      {
+        "table": "authoring_study_evidence",
+        "rows": 12
+      },
+      {
+        "table": "authoring_study_commits",
+        "rows": 1
+      }
+    ],
+    "proof": {
+      "schemaHash": "577d71dec6a4b4d3362a4312e4a0683be24a6152888850b6890b3326058da998",
+      "retiredTombstoneHash": "8000d540314d37dfb3020fc72c600c0fabbc8a6508f88bf37e1c01c630b44358"
+    },
+    "retained": "Synthetic immutable original intent/accounting plus empty schema, compiled source and old/new tombstones. No production records."
+  },
+  "state": {
+    "phase": "disabled",
+    "cursor": 10,
+    "requests": 12,
+    "report": null,
+    "reads": 2338379,
+    "writes": 6755
+  },
+  "metrics": {
+    "action": "cleanup",
+    "step": "",
+    "statements": 56,
+    "attemptedStatements": 56,
+    "bindingCalls": 51,
+    "failedBatches": 0,
+    "reads": 684,
+    "writes": 40,
+    "databaseBytes": 1081344,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 4,
+      "delete": 2
+    }
+  },
+  "instance": "07b782e9-9763-4676-9200-56bfdc52bcf7"
+}
