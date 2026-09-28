@@ -15,3 +15,7 @@ Evidence: `docs/evidence/generation-p5/sites-r8/`. The diagnostic is locally pre
 Exact R8 source and all nine payloads passed native admission as version 3. Native tar metadata normalization was independently reproduced without changing payload bytes or the sealed archive. Compare source/payload hashes separately from container metadata; do not use this as a reason to normalize SQL semantics.
 
 An agent transcription error in the target ID caused a pre-deployment native refusal. Copy opaque identifiers from verified receipts and validate their equality locally before dispatch. Record reservations successfully before issuing dependent calls; a failed local recording step must stop dispatch. Normal work stopped and exact version 2 restoration returned terminal succeeded. Saved history persists. No catalog was read, so Drizzle bookkeeping remains a local hypothesis. These deployment lessons apply across media and do not establish generation quality. Evidence: `docs/evidence/generation-p5/sites-r10/`.
+
+## R11 authentication prerequisite
+
+Private native deployment succeeded, while ordinary browser access showed a login gate. Native owner authorization and browser authentication are distinct. The agent did not continue authentication or invoke the catalog, and restored version 2 with a terminal native receipt. Check owner browser readiness before a later bounded diagnostic attempt, without substituting a bypass token. No catalog difference or quality conclusion follows from successful deployment. Evidence: `docs/evidence/generation-p5/sites-r11/`.

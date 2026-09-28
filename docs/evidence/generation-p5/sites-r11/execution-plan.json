@@ -1,0 +1,19 @@
+{
+  "normal": [
+    "get_site: target/latest saved version3/sole owner audience; reuse immutable admitted source receipt",
+    "get_environment_variables: revision0/no entries",
+    "deploy_private_site_version: exact saved3; nonterminal triggers restoration, no normal status poll",
+    "one authenticated Site navigation; stop on authentication flow or unexpected fan-out",
+    "one Read catalog; no retry"
+  ],
+  "recovery": [
+    "restore exact saved2",
+    "status only if nonterminal",
+    "status only if still nonterminal"
+  ],
+  "countersBefore": 20,
+  "maximumAfter": 28,
+  "nativeInternalHttp": "unmeasured",
+  "browserHttp": "navigation may cause platform internal/auth/favicon traffic; not exact HTTP proof; stop on new unbounded authentication",
+  "sourceCheck": "Local exact immutable saved version/source/archive relationship; fresh latest version check confirms no later saved version. No source credential/push/save."
+}

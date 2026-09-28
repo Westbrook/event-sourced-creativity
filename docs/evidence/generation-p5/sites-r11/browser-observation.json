@@ -1,0 +1,13 @@
+{
+  "observedAt": "2026-09-28T17:29:30.890167+00:00",
+  "tabId": "3",
+  "url": "https://forma-n10h-synthetic-20260924.reve-ai-0869.chatgpt.site/",
+  "title": "Forma N10H synthetic rehearsal",
+  "visibleHeading": "Log in to access",
+  "visibleLink": "Continue with ChatGPT",
+  "signInClicked": false,
+  "catalogReadAttempted": false,
+  "nativeDeploymentAtObservation": 3,
+  "restoredVersionAfterObservation": 2,
+  "traffic": "One navigation reservation; underlying HTTP not fully measured. No authentication continuation or retry."
+}

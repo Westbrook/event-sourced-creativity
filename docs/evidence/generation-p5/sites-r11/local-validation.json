@@ -1,0 +1,19 @@
+{
+  "identifierRelationshipValidated": true,
+  "identifiersCopiedFrom": "../sites-r10/native-saved-version.json and restoration.json",
+  "immutableSourceCommit": "530960b85f85756b0eee97746090d690fd00aa95",
+  "sourceCheckLimitation": "No fresh get-version or source fetch. Immutable native-admitted receipt revalidated locally; fresh get-site latest_version_number remains3.",
+  "durableLedgerTest": {
+    "atomicReplace": true,
+    "fileAndDirectoryFsync": true,
+    "readBackEquality": true,
+    "fiveNormalLimitTest": true,
+    "threeRecoveryLimitTest": true,
+    "overflowRejectionsTested": true,
+    "realLedgerUnchangedByTest": 20
+  },
+  "sourceRebuilt": false,
+  "sourcePushed": false,
+  "versionSaved": false,
+  "priorTestsRepeated": false
+}
