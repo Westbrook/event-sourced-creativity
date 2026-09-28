@@ -1,8 +1,0 @@
-{
-  "manifest_version": 3,
-  "name": "Forma isolated accessibility test zoom",
-  "version": "1.0.0",
-  "description": "Test-only browser zoom controller. Never included in the Forma application build.",
-  "permissions": ["tabs"],
-  "background": { "service_worker": "background.js" }
-}

@@ -1,0 +1,8 @@
+file:///private/tmp/forma-c2-semantic-coverage/evals/generation-reliability/native-host/envelope.mjs:32
+ else{const saved=JSON.parse(await readFile(target,'utf8'));verifySeal(kind,saved);if(canonical(saved)!==canonical(value))throw Error('Relevant source changed: mint a NEW version; never rewrite the archived envelope.');}
+                                                                                                                                ^
+
+Error: Relevant source changed: mint a NEW version; never rewrite the archived envelope.
+    at file:///private/tmp/forma-c2-semantic-coverage/evals/generation-reliability/native-host/envelope.mjs:32:129
+
+Node.js v24.16.0

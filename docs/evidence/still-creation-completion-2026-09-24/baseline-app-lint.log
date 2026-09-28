@@ -1,9 +1,0 @@
-
-/private/tmp/still-creation-completion-20260924/src/still/.creation-baseline-app.ts
-  241:89   error  Empty block statement  no-empty
-  271:178  error  Empty block statement  no-empty
-  354:67   error  Empty block statement  no-empty
-  355:62   error  Empty block statement  no-empty
-
-✖ 4 problems (4 errors, 0 warnings)
-

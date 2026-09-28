@@ -2,6 +2,7 @@ import { requireExistingHoldAdministrator, privateContentScopeGuard, configuredP
 import { nativeMemoryAnswerExclusion } from '../../../worker/memory-native-boundary.ts';
 import { PRINCIPAL_WITH_ACCESS_SQL } from '../../../worker/access-policy.ts';
 import { digest } from './transport.mjs';
+import { schemaRows as suppliedSchemaRows } from './supplied-schema-contract.mjs';
 import { schemaRows } from './schema-contract.mjs';
 const deny=code=>{throw Error(code);};
 export const joinGuards=(...guards)=>({sql:guards.map(g=>`(${g.sql})`).join(' AND '),bindings:guards.flatMap(g=>g.bindings??[])});
@@ -13,13 +14,14 @@ export async function checkedBatch(env,guards,statements){
   return result.slice(guards.length,-1);
 }
 /** Exact optional schema; presence alone, another DB and request-provided authority never qualify. */
-export async function schemaGuard(env){
+export async function schemaGuard(env,{supplied=false}={}){
+  const expected=supplied?suppliedSchemaRows:schemaRows;
   const query="SELECT type,name,tbl_name,sql FROM main.sqlite_schema WHERE name GLOB 'generation_study_*' ORDER BY name";
   const rows=await env.DB.prepare(query).all();
-  if(rows.success!==true||JSON.stringify(rows.results)!==JSON.stringify(schemaRows))deny('study_schema_unavailable');
-  return {sql:`(SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql',sql)) FROM (${query}))=?`,bindings:[JSON.stringify(schemaRows)]};
+  if(rows.success!==true||JSON.stringify(rows.results)!==JSON.stringify(expected))deny('study_schema_unavailable');
+  return {sql:`(SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql',sql)) FROM (${query}))=?`,bindings:[JSON.stringify(expected)]};
 }
-export async function authenticateStudy(request,env,{recovery=false}={}){
+export async function authenticateStudy(request,env,{recovery=false,supplied=false}={}){
   if(!recovery&&env.FORMA_GENERATION_STUDY_ENABLED!=='1')deny('study_disabled');
   const url=new URL(request.url);
   if(url.protocol!=='https:'||url.origin!==env.FORMA_GENERATION_STUDY_ORIGIN||url.search||url.hash||request.method!=='POST'||request.headers.get('origin')!==url.origin||request.headers.get('sec-fetch-site')==='cross-site')deny('study_host_boundary');
@@ -32,7 +34,7 @@ export async function authenticateStudy(request,env,{recovery=false}={}){
   const fields=['user_id','email','role','consent_version','updated_at','permission_epoch','grants_json','organizations_json','projects_json','identity_policies_json','approved_canvas_requirements'];
   const current={sql:`EXISTS(SELECT 1 FROM (${PRINCIPAL_WITH_ACCESS_SQL}) WHERE ${fields.map(f=>`${f} IS ?`).join(' AND ')})`,bindings:[user.userId,...fields.map(f=>row[f]??null)]};
   const noPilot={sql:"NOT EXISTS(SELECT 1 FROM pilot_participants p JOIN pilot_cohorts c ON c.cohort_id=p.cohort_id WHERE p.user_id=? AND p.status='active' AND p.revoked_at IS NULL AND c.status IN('active','paused','closed'))",bindings:[user.userId]};
-  const schema=await schemaGuard(env);
+  const schema=await schemaGuard(env,{supplied});
   if(env.DB!==db)deny('study_database_changed');
   return {user,db,guard:joinGuards(current,configuredPilotAdmissionGuard(env,user),noPilot,schema)};
 }

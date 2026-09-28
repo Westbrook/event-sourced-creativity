@@ -1,0 +1,10 @@
+import {createRequire} from 'node:module';
+import {readFileSync,writeFileSync,mkdirSync,cpSync} from 'node:fs';
+import {dirname,resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createHash} from 'node:crypto';
+const req=createRequire(import.meta.resolve('wrangler/package.json'));const {build}=req('esbuild');const root=dirname(fileURLToPath(import.meta.url));
+const b=await build({absWorkingDir:root,entryPoints:[root+'/src/worker.mjs'],bundle:true,write:false,metafile:true,format:'esm',platform:'browser',target:'es2022',external:['node:*']});
+for(const d of ['server','client','.openai'])mkdirSync(root+'/dist/'+d,{recursive:true});writeFileSync(root+'/dist/server/index.js',b.outputFiles[0].contents);writeFileSync(root+'/dist/client/robots.txt','User-agent: *\nDisallow: /\n');cpSync(root+'/.openai/hosting.json',root+'/dist/.openai/hosting.json');cpSync(root+'/drizzle',root+'/dist/.openai/drizzle',{recursive:true});
+const config={name:'forma-p5-synthetic-successor',main:'index.js',compatibility_date:'2026-05-15',compatibility_flags:['nodejs_compat'],assets:{directory:'../client',binding:'ASSETS',run_worker_first:true},d1_databases:[{binding:'DB',database_name:'site-creator-d1',database_id:'00000000-0000-4000-8000-000000000000'}],r2_buckets:[{binding:'MEDIA',bucket_name:'site-creator-r2'}]};writeFileSync(root+'/dist/server/wrangler.json',JSON.stringify(config,null,2)+'\n');
+const sha=b=>createHash('sha256').update(b).digest('hex');const source=Object.keys(b.metafile.inputs).sort().map(path=>({path,sha256:sha(readFileSync(resolve(root,path)))}));const artifact={workerSha256:sha(b.outputFiles[0].contents),bytes:b.outputFiles[0].contents.length,source,sourceTreeSha256:sha(JSON.stringify(source)),schema:JSON.parse(readFileSync(root+'/src/dataset.json')).datasetId,realNetwork:false};writeFileSync(root+'/artifact.json',JSON.stringify(artifact,null,2)+'\n');console.log({bytes:artifact.bytes,workerSha256:artifact.workerSha256,inputs:source.length});

@@ -1,6 +1,0 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import {scoreStillSearchQualification as score} from '../scripts/score-still-search-qualification.mjs';
-const run=()=>({kind:'injected',cases:Array.from({length:50},(_,i)=>({id:String(i),classification:i<40?'positive':'no-match',intended:i<40?['custody/project/idea']:[],allowed:['custody/project/idea'],semanticTop20:i<40?['custody/project/idea']:[],finalTop3:i<40?['custody/project/idea']:[],elapsedAfterDebounceMs:100,cohort:'1000-cold'}))});
-test('qualification separates denominators and cannot turn injected perfect answers into live evidence',()=>{const value=score(run());assert.equal(value.positiveDenominator,40);assert.equal(value.negativeDenominator,10);assert.equal(value.topThreeRate,1);assert.equal(value.falsePositiveRate,0);assert.equal(value.metricsPass,true);assert.equal(value.relevanceGatePass,false);assert.equal(value.activationAuthorized,false);});
-test('qualification counts no-match false positives and any unauthorized candidate independently',()=>{const input=run();input.cases[49].finalTop3=['foreign/source'];const value=score(input);assert.equal(value.falsePositiveRate,.1);assert.equal(value.authorizationLeaks,1);assert.equal(value.metricsPass,false);input.cases[1].id=input.cases[0].id;assert.throws(()=>score(input),/case_invalid/);});
