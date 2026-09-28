@@ -1,0 +1,112 @@
+{
+  "stage": "R15 revised Stage B executed in R18",
+  "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "accepted": true,
+  "limits": {
+    "normal": 20,
+    "recovery": 6
+  },
+  "normal": 6,
+  "recovery": 0,
+  "issued": 6,
+  "entries": [
+    {
+      "sequence": 1,
+      "reservedAt": "2026-09-28T21:03:08.323793+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "01-site.json",
+      "receiptSha256": "79ef45fd2b051ee76efab87ce411c2ffc29c888290cbf2cc93080208c08385eb",
+      "completedAt": "2026-09-28T21:03:10.260896+00:00"
+    },
+    {
+      "sequence": 2,
+      "reservedAt": "2026-09-28T21:03:16.869797+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "02-environment.json",
+      "receiptSha256": "6e1bc9fa46ff642b2ec5fcf29eac49dd64d7ce59e3abc001fb964b6d9b3db942",
+      "completedAt": "2026-09-28T21:03:17.738720+00:00"
+    },
+    {
+      "sequence": 3,
+      "reservedAt": "2026-09-28T21:03:17.896886+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "03-predecessor-version.json",
+      "receiptSha256": "0cd13c78b1df8d9dee68891d3ab5a8dca4c11f4a0c1447c38c979eab55a5a978",
+      "completedAt": "2026-09-28T21:03:19.012008+00:00"
+    },
+    {
+      "sequence": 4,
+      "reservedAt": "2026-09-28T21:04:56.444127+00:00",
+      "state": "receipt-preserved",
+      "group": "credential",
+      "action": "create_source_repository_write_credential",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "publish_on_push": null
+      },
+      "receipt": "04-source-credential-redacted.json",
+      "receiptSha256": "bd935c68bf39373f1bbfada022ee3793322c1b9725defbf6023dd448ee36f9b3",
+      "completedAt": "2026-09-28T21:05:03.668125+00:00"
+    },
+    {
+      "sequence": 5,
+      "reservedAt": "2026-09-28T21:05:03.851786+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-head-before",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "05-git-head-before.json",
+      "receiptSha256": "d60f1cc952c8ff1b2526321f9661c831c042e6a5d8627aca29fe4871c9a6bea4",
+      "completedAt": "2026-09-28T21:05:14.362858+00:00"
+    },
+    {
+      "sequence": 6,
+      "reservedAt": "2026-09-28T21:05:14.363828+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-fetch",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "06-git-fetch-failed.json",
+      "receiptSha256": "50572159343604ebd8c51e8b2669c6f688b6e20e6b67e32e0a4b56368d8a5e94",
+      "completedAt": "2026-09-28T21:05:19.767503+00:00"
+    }
+  ],
+  "stop": "Source operation stopped: Git exit 128: fatal: git fetch-pack: expected shallow list\n",
+  "expiry": "2026-10-01T00:00:00Z",
+  "mutationRecoveryMargin": "2026-09-30T22:00:00Z",
+  "decisionSha256": "5980d0b14541caa76fe1c2fddf3362d2988a33f355e6daf410925d05dc454070",
+  "unit": "operator reservations, hidden native/browser/authentication HTTP and hosting costs unknown",
+  "otherLedgersUnchanged": {
+    "stageA": "7/8 complete; spare not transferable",
+    "private": "60/71; normalStop59 exhausted"
+  },
+  "retention": {
+    "owner": "westbrook.johnson@reve.art",
+    "duration": "indefinite until separately reviewed deletion",
+    "sourceVersionHistory": "existing Site access",
+    "receipts": "redacted restricted P5 evidence/Git"
+  },
+  "replacedPrerequisite": "User accepts no new/changed migration files on source/package equality and supported Sites contract; zero hosted DDL and exact prior archive bytes not independently proved"
+}

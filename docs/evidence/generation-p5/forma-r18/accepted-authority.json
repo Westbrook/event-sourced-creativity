@@ -1,0 +1,17 @@
+{
+  "accepted": true,
+  "basis": "User explicitly approved revised Stage B decision and stated exact source, package, exposure, retention and20normal/6recovery limits.",
+  "oldProofPrerequisiteReplaced": true,
+  "noNewOrChangedMigrationFiles": true,
+  "zeroHostedDDLIndependentlyProven": false,
+  "normalLimit": 20,
+  "recoveryLimit": 6,
+  "retention": {
+    "owner": "westbrook.johnson@reve.art",
+    "duration": "indefinite until separately reviewed deletion",
+    "sourceVersionHistory": "existing Site access",
+    "receipts": "redacted restricted P5 evidence/Git"
+  },
+  "expiry": "2026-10-01T00:00:00Z",
+  "newResumptionAmendmentAccepted": false
+}

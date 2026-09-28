@@ -1,0 +1,24 @@
+{
+  "classification": "accepted Stage B stopped on Git transport refusal before source push; local exact successor prepared",
+  "files": {
+    "01-site.json": "79ef45fd2b051ee76efab87ce411c2ffc29c888290cbf2cc93080208c08385eb",
+    "02-environment.json": "6e1bc9fa46ff642b2ec5fcf29eac49dd64d7ce59e3abc001fb964b6d9b3db942",
+    "03-predecessor-version.json": "0cd13c78b1df8d9dee68891d3ab5a8dca4c11f4a0c1447c38c979eab55a5a978",
+    "04-source-credential-redacted.json": "bd935c68bf39373f1bbfada022ee3793322c1b9725defbf6023dd448ee36f9b3",
+    "05-git-head-before.json": "d60f1cc952c8ff1b2526321f9661c831c042e6a5d8627aca29fe4871c9a6bea4",
+    "06-git-fetch-failed.json": "50572159343604ebd8c51e8b2669c6f688b6e20e6b67e32e0a4b56368d8a5e94",
+    "accepted-authority.json": "65619f1d9ec62654a5b15f71af158184e2bbfe9a1c720244643b2c1045c01e31",
+    "accepted-decision.md": "5980d0b14541caa76fe1c2fddf3362d2988a33f355e6daf410925d05dc454070",
+    "execution-validation.json": "942db76262e09fae515b2ef7cf9901676d2ff12dcf0fe1ef451ed423db532598",
+    "handoff.md": "87fd65aa39c8aadb3e995232678d233a545b1409e7ee01518f25923539efc105",
+    "index.html": "d68024a1987df2773e21ee193d565250e46b6f98922733226e85096aa7d5b8c3",
+    "ledger.py": "6522278a54831aade1aa6304494b077cbd25b68e751e044a9c181cece50b6256",
+    "local-successor.json": "fe50d52e6d2c67164e73647232bf39fdcb7de5849f952837ad29a35f54ae28fb",
+    "prepare-source-locally.py": "5537a53c795c9741de652839f014ae65d8f6f20c0041a7f9935a503a8eef88c5",
+    "request-ledger.json": "fb3af2ee7d2a7b0f7acc00af8a39c93e3024827424cc5db4cb0645cbe9d432e1",
+    "result.md": "6812769f3008f0deed93cb0597640d14ac95be1a4a20bae69d2ecaaf42359ef0",
+    "resumption-decision.md": "37ef471438fb65635874358f31fbbba52d640486018bffd417b0a94fff1071f8",
+    "source-operation.py": "f28f8daf1024ad762b8837b1780c0561974ed36b80f20b920c9660df47047720",
+    "verified-inputs.json": "4f97258e1a08fff907e9385f81f69e045bfd8406b7bbe72888dc0d74b11c57e0"
+  }
+}
