@@ -1,0 +1,9 @@
+{
+  "nativeAdmissionSucceeded": true,
+  "version": 3,
+  "nativeSha256": "f4a12e49bfdbe079abceb0ec5ddc5e16ed55f4803e27c1f63b66dcf1be507dba",
+  "nativeBytes": 2283520,
+  "fileCount": 9,
+  "canonicalization": "Native stored tar exactly matches an in-memory sorted,regular-files-only tar with original nine payload bytes and normalized metadata; original sealed gzip unchanged. Directory/PAX metadata removal only, no source/runtime payload normalization.",
+  "sealedArchiveSha256": "9a548d7680227a24b630c2ba9b89c08fa7f4706022e5a3cd298cd1ba5d5d5d6e"
+}

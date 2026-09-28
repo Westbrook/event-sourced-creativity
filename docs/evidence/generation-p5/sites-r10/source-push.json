@@ -1,0 +1,12 @@
+{
+  "sourceCommit": "530960b85f85756b0eee97746090d690fd00aa95",
+  "nativeParent": "1565d8ac8a568bd0b9b7bde789eadc450e384364",
+  "exactSourceFiles": 231,
+  "archiveFiles": 9,
+  "workflowArchivePayloadsEqualSealed": true,
+  "sealedArchiveUnchanged": true,
+  "publishOnPush": false,
+  "sourceCredentialPersisted": false,
+  "actualUnderlyingGitHTTP": null,
+  "reservedGitRequests": 5
+}

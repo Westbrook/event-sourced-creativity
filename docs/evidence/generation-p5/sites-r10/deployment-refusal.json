@@ -1,0 +1,16 @@
+{
+  "result": {
+    "error": "SitesConnectorError: Invalid Sites project id",
+    "error_code": "INVALID_ARGUMENT",
+    "error_data": {
+      "type": "invalid_project_id",
+      "message": "Invalid Sites project id",
+      "code": 400
+    }
+  },
+  "classification": "Agent supplied malformed project_id; native connector INVALID_ARGUMENT before diagnostic deployment. No retry under stop-on-refusal instruction.",
+  "intendedProjectId": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "submittedProjectId": "appgprj_6ab5929a742881bf37ed429f7a7e20",
+  "diagnosticVersionId": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_70ee050810888191b4a8a866bbbf8d82",
+  "catalogReadAttempted": false
+}

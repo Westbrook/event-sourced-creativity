@@ -9,3 +9,9 @@ These findings apply to image, video, audio, document and other generation adapt
 - Native admission, deployed identity/runtime, actual application schema/holds/custody, financial authority and media quality are distinct evidence. Keep each qualification separate.
 
 Evidence: `docs/evidence/generation-p5/sites-r8/`. The diagnostic is locally prepared and not published. Preserve original 847/six exclusions, P2 gates and expiry; no paid-provider or production-Forma qualification follows.
+
+## R10 native admission and restoration
+
+Exact R8 source and all nine payloads passed native admission as version 3. Native tar metadata normalization was independently reproduced without changing payload bytes or the sealed archive. Compare source/payload hashes separately from container metadata; do not use this as a reason to normalize SQL semantics.
+
+An agent transcription error in the target ID caused a pre-deployment native refusal. Copy opaque identifiers from verified receipts and validate their equality locally before dispatch. Record reservations successfully before issuing dependent calls; a failed local recording step must stop dispatch. Normal work stopped and exact version 2 restoration returned terminal succeeded. Saved history persists. No catalog was read, so Drizzle bookkeeping remains a local hypothesis. These deployment lessons apply across media and do not establish generation quality. Evidence: `docs/evidence/generation-p5/sites-r10/`.

@@ -1,0 +1,67 @@
+{
+  "status": "diagnostic-admitted-deployment-input-refused-v2-restored",
+  "at": "2026-09-28T16:30:23.591599+00:00",
+  "envelope": "p5-sites-catalog:daef3e10f1bdb5bcc5046127d83e8451ca900f3b7a7c60614dad3b6797ab0d2e",
+  "approvalAccepted": true,
+  "nativeToolsAvailable": true,
+  "target": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "sourceCommit": "530960b85f85756b0eee97746090d690fd00aa95",
+  "activeSourceCommit": "1565d8ac8a568bd0b9b7bde789eadc450e384364",
+  "savedDiagnosticVersion": {
+    "id": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_70ee050810888191b4a8a866bbbf8d82",
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "version_number": 3,
+    "source": {
+      "commit_sha": "530960b85f85756b0eee97746090d690fd00aa95"
+    },
+    "archive_storage": {
+      "archive_format": "tar",
+      "sediment_file_id": "file_00000000ac8c8210b52f247bebdc8bf1",
+      "content_hash": "sha256:f4a12e49bfdbe079abceb0ec5ddc5e16ed55f4803e27c1f63b66dcf1be507dba",
+      "size_bytes": 2283520,
+      "file_count": 9
+    },
+    "screenshot_url": null,
+    "deployment_id": null
+  },
+  "nativeAdmissionSucceeded": true,
+  "diagnosticDeployed": false,
+  "catalogReadAttempted": false,
+  "actualHostedDifferenceKnown": false,
+  "restoration": {
+    "id": "appgdep_6aba950b47808191a3a8bfb493876068",
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "title": "Forma N10H synthetic rehearsal",
+    "version_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_f5f7f474cb8c8191a85efe1c9de0f370",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-n10h-synthetic-20260924.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6ab5929a74288191bf37ed429f7a7e20",
+    "failure_message": null,
+    "env_set_revision": 0,
+    "updated_at": "2026-09-28T16:25:57.725066+00:00"
+  },
+  "activeVersion": 2,
+  "chargedReservations": 20,
+  "unusedReservations": 17,
+  "normalThisAction": 10,
+  "normalActionMaximum": 16,
+  "recoveryThisAction": 1,
+  "recoveryActionMaximum": 2,
+  "normalWorkStopped": true,
+  "stopReason": "Native deployment INVALID_ARGUMENT from agent malformed project ID; no diagnostic retry. Recovery restoration only.",
+  "accountingDeviation": "Local ledger initialization had a Python syntax error; the two already planned preflight calls ran before durable recording. Reconciled exactly2nativecalls to11total before further requests. No claim that these entries were durably reserved before sending.",
+  "exactUnderlyingHttpKnown": false,
+  "cleanupAttempts": 0,
+  "p5Complete": false,
+  "next": "Stop here under the accepted native-refusal rule. A later explicitly resumed continuation can reuse saved/admitted version 3 without source push/save, after bounded drift checks and cumulative accounting; do not reset the 10/16 normal or 1/2 recovery consumption. No catalog read retry is involved because none was sent. No automatic retry, scope expansion or expiry renewal.",
+  "preserved": [
+    "Option B finite-resource exposure at unknown hosting prices",
+    "Indefinite owner-private retention from 2026-09-25T21:04:00Z, westbrook.johnson@reve.art",
+    "October 1, 2026 00:00 UTC expiry without renewal",
+    "Original N10H disabled state and future cleanup obligations; no P5 run/fixture created",
+    "P2 gates; original 847/six exclusions; separate actual-Forma identity/schema/holds/custody/financial qualification; no media-quality claim"
+  ]
+}
