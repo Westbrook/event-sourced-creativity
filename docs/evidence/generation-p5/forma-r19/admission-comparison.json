@@ -1,0 +1,19 @@
+{
+  "uploadSha256": "130377a70b50a81e7111c71445bf2c15bd8bea2c992abe25eaf2d607c1407360",
+  "uploadBytes": 23320272,
+  "decompressedTarSha256": "8430559099059cf9e140e6f5783a9c70e37dbaf2eca311bff6791c230e6e5e0d",
+  "decompressedTarBytes": 45504512,
+  "nativeArchive": {
+    "archive_format": "tar",
+    "sediment_file_id": "file_000000007570820da474e0f47e2cb189",
+    "content_hash": "sha256:79c7f2c618e5cbe68ad454e27d5649bb24e33cf129bc0947638247af7eb50aa2",
+    "size_bytes": 44728320,
+    "file_count": 622
+  },
+  "nativeMatchesExactDecompressedTar": false,
+  "source": {
+    "commit_sha": "d147817ff14b502a8fc116a74fa5388f9fe7ad62"
+  },
+  "version": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a",
+  "normalizationLimit": "Native metadata is admission evidence; no native per-file output requested. Byte comparison here is against the retained local uncompressed upload, not an export of prior v550."
+}

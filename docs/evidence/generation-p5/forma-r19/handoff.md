@@ -1,0 +1,11 @@
+# R19 handoff
+
+Read result.md and request-ledger.json. User approved R18 transport resumption; cumulative22normal/6recovery with six old charged carried forward. R19 completed exact normal successor push, R17archive save/native admission/version read, deploymentv551 terminal success/env16. No fetch or rebuild. Publish-on-pushfalse/window null. Existing release/localpackage seals and all41migrations unchanged,31held/optionalSQLexcluded. Accepted prior-history evidence revision and StageB exposure/retention remain in force; do not reopen them.
+
+One fixed GET attempt charged15 reached external authentication boundary; no JSON/HTTPstatus or Worker invocation evidence. Auto-review denied Google account inspection because scope allowed existing session only. No credential/account inspection/bypass/secondGET. Agent tab6 closed safely. Never recover ephemeral source credentials from logs/history.
+
+Authorized recovery restoredactualFormav550 terminalsuccess; finalsite/env accesspolicy unchanged workspace_all/rev7/env16. Active restorationdeploymentappgdep_6abad98990588191895146ad482623a6; latest savedversion551 is retained, not live. Version551idappgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a, sourced147817ff14b502a8fc116a74fa5388f9fe7ad62. Sourcebranch stilld147; no rollback of sourcehistory/DBeffects claimed.
+
+Ledgerstopactive. Totals15normal+3recovery=18charged,7normal/3recoveryunused. Normaldeploy1/1, qualification1/2,browser1/2,restore1/1,restore-final2/2; no polls/logs. These sublimits cannot silently reset. Next is authorization for actualFormaGoogle sign-in with user handling credentials/security checks; then exact minimal savedv551 read-resumption/accounting review. No sourcepush/save/build is needed. Do not use a bypass token/unmanaged credential or inspectGoogle before permission. Original renewed-source and publicationalreadydone, no retry.
+
+StageB technicalpublication verified but actualqualification incomplete. Source/version/receiptretention acceptedindefinite ownerwestbrook.johnson@reve.art; expiryOct1 00UTC/marginSep30 22UTC notrenewed. PreserveR14disabled/cleanup/retention/ledger,StageAspare,P2humanresume/originalsettlement, sixPOST/twoimages/concurrency1/no retries,847/six exclusions. No realcomparison/newmoderationfinding/providergrant/custodywrite/fixture. P5open.

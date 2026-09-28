@@ -1,0 +1,33 @@
+{
+  "classification": "accepted Stage B publication/admission; authentication stop; authorized predecessor restoration verified",
+  "files": {
+    "01-site.json": "79ef45fd2b051ee76efab87ce411c2ffc29c888290cbf2cc93080208c08385eb",
+    "02-environment.json": "6e1bc9fa46ff642b2ec5fcf29eac49dd64d7ce59e3abc001fb964b6d9b3db942",
+    "03-predecessor-version.json": "0cd13c78b1df8d9dee68891d3ab5a8dca4c11f4a0c1447c38c979eab55a5a978",
+    "04-source-credential-redacted.json": "bd935c68bf39373f1bbfada022ee3793322c1b9725defbf6023dd448ee36f9b3",
+    "05-git-head-before.json": "d60f1cc952c8ff1b2526321f9661c831c042e6a5d8627aca29fe4871c9a6bea4",
+    "06-git-fetch-failed.json": "50572159343604ebd8c51e8b2669c6f688b6e20e6b67e32e0a4b56368d8a5e94",
+    "07-source-credential-redacted.json": "be52b79396948c96b0b6d9cc06562d0c3dd2b24b722e34abef98052ad54f617b",
+    "08-git-head-resume.json": "9a79fad8f88f47d6b9156774ce5daea2eadd25652af865e58a1154e582b99603",
+    "09-git-push.json": "cb49c7027f90d03cbffc13d599721e6c90bb228224a5cb266b71fd8b1bf7c75f",
+    "10-git-head-verified.json": "a86f56e42ee7addfe432844c22e20a008329727c6b7123c75e026f290be92800",
+    "11-saved-version.json": "1c0ca50ac8c25b7dbdcff7a65c31f158e9eae4bc90b1f9176372c2c4c58119ac",
+    "12-admission-verified.json": "7aa842f633ba668cf499842a70b2ab5490463d73af2a3db74ca48faf83d13370",
+    "13-deployment.json": "269e6bfd8640cdf7b34a687a328a7e29ecb61d805ea4aa0e920ec291fdc00ff0",
+    "14-browser-access.json": "523e19d204c4b200ba4bc44c76870d47a7f3aa3b85cc4742fd1cf02009c034cf",
+    "15-qualification-authentication-stop.json": "4dc85bc9d7148575d761c6351766027eac7ba93272a32e4e772ba5759e612eb9",
+    "16-restoration.json": "3a67b6e0789cc999daa5dd15df0059b452c50d7fa2f1b754fc8ac882180f6769",
+    "17-site-final.json": "692527b90bd8b4c474bbc150bb8b13e9a92458e5c3609affab62f39c1db48fd1",
+    "18-environment-final.json": "47c353f59897c86f0d14265c1abfb7c3ba067efa64ca8d1c89b4fc305a0ee5c3",
+    "accepted-resumption.md": "37ef471438fb65635874358f31fbbba52d640486018bffd417b0a94fff1071f8",
+    "admission-comparison.json": "bd0a415a833cc6e1a65296c20ec604565c05164b0a826fdda7c903bee496ad43",
+    "execution-validation.json": "cfca583bb75fcb70139015ddae847e8a1a6f020b9ea1176b6c6d80fad8961835",
+    "handoff.md": "9d1c3f263164522c16c572f1ab394bd88a79798b0b4758fe8805e548ceb6e607",
+    "index.html": "58969215a0c74b9f402e529da46c111be31152f8e37631ff032e9ba5b3b35ee4",
+    "ledger.py": "bbe40948c56792029efe2754e126230601d18acbc26dd7061125dbb046d512bd",
+    "request-ledger.json": "0e4a4aa7cf63e80334aaaba814aa2715c0b256c8a32e9b72ce26c10ed74b74ae",
+    "result.md": "c147217cc9d9346ea9b4becba7e59998f24f6be4521af28eac8b32fec9a1f57d",
+    "source-result.json": "033565d828a3a42134959f06fa6f59ca79da0f7c7bf6b47c76fea3b507309038",
+    "source-resume.py": "bf41c6217e40e74c551b7e4f282a4b7f22ca183f858e4f9a25b99bbff424ee0d"
+  }
+}
