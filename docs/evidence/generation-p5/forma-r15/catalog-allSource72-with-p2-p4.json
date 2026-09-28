@@ -1,0 +1,4760 @@
+[
+  {
+    "type": "table",
+    "name": "artifact_revisions",
+    "table": "artifact_revisions",
+    "sqlSha256": "28b7781f9ad25c8edefe8ecfca71807dbffc874f3cfa8590726d9c2136353f10"
+  },
+  {
+    "type": "table",
+    "name": "assistant_action_commits",
+    "table": "assistant_action_commits",
+    "sqlSha256": "233605574c0c7dd8d2896d69f171dcbbc20824c9a704845f0b4e6cbf88728ae2"
+  },
+  {
+    "type": "table",
+    "name": "assistant_action_proposals",
+    "table": "assistant_action_proposals",
+    "sqlSha256": "7bb8f7163ff12e106b12307d1ec2bcb7c1a7a873b09bc51fd06a466849c3634f"
+  },
+  {
+    "type": "trigger",
+    "name": "assistant_billing_reconciliation_block_delete",
+    "table": "assistant_billing_reconciliations",
+    "sqlSha256": "b6146ce91ef62376d7c715e03c236efa90b52e1aa4c5e111d16ab740b5f34982"
+  },
+  {
+    "type": "trigger",
+    "name": "assistant_billing_reconciliation_block_update",
+    "table": "assistant_billing_reconciliations",
+    "sqlSha256": "70e09cce51e0409dd85426bee86cbc9015045448be72d90d5d8f91d37c846e55"
+  },
+  {
+    "type": "table",
+    "name": "assistant_billing_reconciliations",
+    "table": "assistant_billing_reconciliations",
+    "sqlSha256": "ad55050d71e55670c61583ee72d5ab2e3cea0b79aeb002a6afc18f10d5fae44f"
+  },
+  {
+    "type": "table",
+    "name": "assistant_specialist_tasks",
+    "table": "assistant_specialist_tasks",
+    "sqlSha256": "4693df953e26a1a3ae84c0c96dddb905c249fdb185834a8ac0550d8c4a680082"
+  },
+  {
+    "type": "table",
+    "name": "assistant_turns",
+    "table": "assistant_turns",
+    "sqlSha256": "a82b426b31c7576c0edd271537c14c29cb74d7252a0a387a30da9509c179b8c7"
+  },
+  {
+    "type": "table",
+    "name": "authoring_commits",
+    "table": "authoring_commits",
+    "sqlSha256": "ce2a8670960b41fc4db7fe2a1e93cabeda587f5b0562962fd4c9dd3b2ab2785c"
+  },
+  {
+    "type": "trigger",
+    "name": "authoring_study_commit_no_delete",
+    "table": "authoring_study_commits",
+    "sqlSha256": "a40ee615cd6578c5329f80c0cb7fc8f9eebbacef4f9e8b392cc8eb86992785fd"
+  },
+  {
+    "type": "trigger",
+    "name": "authoring_study_commit_no_update",
+    "table": "authoring_study_commits",
+    "sqlSha256": "79b37b25f31231adfad8d35a3660925e33f83fc70d84f6124ac0839d65b923cf"
+  },
+  {
+    "type": "table",
+    "name": "authoring_study_commits",
+    "table": "authoring_study_commits",
+    "sqlSha256": "d7a757df238707fa456e313014ef647c776dc2160407c1057b735eaa6422d85c"
+  },
+  {
+    "type": "trigger",
+    "name": "authoring_study_configuration_identity",
+    "table": "authoring_study_configurations",
+    "sqlSha256": "37ed96c0ef4f9916d99ef78a5b986762f42dc20808fdd98b00c6190abf6bccc4"
+  },
+  {
+    "type": "trigger",
+    "name": "authoring_study_configuration_no_delete",
+    "table": "authoring_study_configurations",
+    "sqlSha256": "e576526fa7b44b055c95765842492040f79ef35e523adb73164b973562c16621"
+  },
+  {
+    "type": "table",
+    "name": "authoring_study_configurations",
+    "table": "authoring_study_configurations",
+    "sqlSha256": "becd53d725f9680bc20ae365c3af42ba02143e6f683111f3be6de8399fd72992"
+  },
+  {
+    "type": "table",
+    "name": "authoring_study_evidence",
+    "table": "authoring_study_evidence",
+    "sqlSha256": "3bbfce51acea60d0adfecbf4b461f5a26f006216835b183bd639ba1b82c51d5b"
+  },
+  {
+    "type": "trigger",
+    "name": "authoring_study_evidence_identity",
+    "table": "authoring_study_evidence",
+    "sqlSha256": "d466d31a8b3fd21cb70f0734810a4a939ee3483aad9abc2762e2f3aec38c73b0"
+  },
+  {
+    "type": "trigger",
+    "name": "authoring_study_evidence_no_delete",
+    "table": "authoring_study_evidence",
+    "sqlSha256": "fe3e0061760579aa5e00feb69bb673d34070bbd86c23c0696a7dc874a74ee842"
+  },
+  {
+    "type": "table",
+    "name": "budget_counters",
+    "table": "budget_counters",
+    "sqlSha256": "47ff057bbd3fd744f347e94e6d0d2e470aa31c9c194b5e23099f01435a4aae1f"
+  },
+  {
+    "type": "table",
+    "name": "budget_hold_dispositions",
+    "table": "budget_hold_dispositions",
+    "sqlSha256": "4ca18429617fc464a96f4ee8e460b3a16f02bcb4dc0a26db479d42c272078f51"
+  },
+  {
+    "type": "index",
+    "name": "budget_hold_dispositions_cost_reservation_id_unique",
+    "table": "budget_hold_dispositions",
+    "sqlSha256": "d5f11599fca35d40d3f7e5d9dd906c50b6fc1809c8812e35d6d1e36610788311"
+  },
+  {
+    "type": "index",
+    "name": "budget_hold_dispositions_event_id_unique",
+    "table": "budget_hold_dispositions",
+    "sqlSha256": "25a893801946f08863b2046560eb85cac26776aee4d55bc380b99a2d16b44c0b"
+  },
+  {
+    "type": "trigger",
+    "name": "budget_hold_dispositions_no_delete",
+    "table": "budget_hold_dispositions",
+    "sqlSha256": "d6124cc3c8a1bb8f763c2f5249f7886c3c9a032c4c96af4d94eb4094f685fd1b"
+  },
+  {
+    "type": "trigger",
+    "name": "budget_hold_dispositions_no_replace",
+    "table": "budget_hold_dispositions",
+    "sqlSha256": "58a523dc675ce662e597cad46ca74b45bf21dff961ef72ab4b054677dd338ea2"
+  },
+  {
+    "type": "trigger",
+    "name": "budget_hold_dispositions_no_update",
+    "table": "budget_hold_dispositions",
+    "sqlSha256": "e33bb69481b274e5b8e161090cb749eae2d67a3e2f85dad11dd3a26fad18cdc9"
+  },
+  {
+    "type": "index",
+    "name": "budget_hold_dispositions_token_reservation_id_unique",
+    "table": "budget_hold_dispositions",
+    "sqlSha256": "99fd7a075f2f34d1b2e72c801e4e9dcc9aa6a7333837859e4a3457bab0eedd0a"
+  },
+  {
+    "type": "table",
+    "name": "budget_reservations",
+    "table": "budget_reservations",
+    "sqlSha256": "c29d9fb87a973a405689333724f139e77fa5c9782f8d44032335bd5382311848"
+  },
+  {
+    "type": "trigger",
+    "name": "budget_reservations_disposition_no_delete",
+    "table": "budget_reservations",
+    "sqlSha256": "0d2068fa8089655b414bd8990d874499f1f769790e825a38e087439a669fc7aa"
+  },
+  {
+    "type": "trigger",
+    "name": "budget_reservations_disposition_no_insert",
+    "table": "budget_reservations",
+    "sqlSha256": "b8d2bbb3d6e4543e5b9f200309d414fed3cb92997c46d3e188f0ca1f314b101d"
+  },
+  {
+    "type": "trigger",
+    "name": "budget_reservations_disposition_no_update",
+    "table": "budget_reservations",
+    "sqlSha256": "3a4003c64f77d7f637d5b0db02d32230554ab260e53723dbe91a99ce80d6f4a3"
+  },
+  {
+    "type": "trigger",
+    "name": "budget_reservations_video_reconciliation_no_delete",
+    "table": "budget_reservations",
+    "sqlSha256": "586f7536458e73d9673ba2e934cf5dff356830914cdc0c15da31345269ba3444"
+  },
+  {
+    "type": "trigger",
+    "name": "budget_reservations_video_reconciliation_no_insert",
+    "table": "budget_reservations",
+    "sqlSha256": "4244427f767f59a1612edcbf56afa246743693761801f24c850ad27aaf65a754"
+  },
+  {
+    "type": "trigger",
+    "name": "budget_reservations_video_reconciliation_no_update",
+    "table": "budget_reservations",
+    "sqlSha256": "a1ce0b9f0c9aa6810a8854ba219ca7850b62b5099866fd5484547eba4c6919c4"
+  },
+  {
+    "type": "table",
+    "name": "budget_scope_policies",
+    "table": "budget_scope_policies",
+    "sqlSha256": "3880c5aaa2ce1a4689c9db6b1818c55b0093ce37db7db7904623643e556f7e27"
+  },
+  {
+    "type": "table",
+    "name": "canvas_governance_requirements",
+    "table": "canvas_governance_requirements",
+    "sqlSha256": "f787617a479962591716692d57c91afb8ef0b73f50bc02f32948bea90028a14d"
+  },
+  {
+    "type": "table",
+    "name": "capability_grants",
+    "table": "capability_grants",
+    "sqlSha256": "990e4a17b81f54f15734c57eb6719bb9a00838c3269640811d0c83c3979bf97b"
+  },
+  {
+    "type": "table",
+    "name": "consequential_execution_steps",
+    "table": "consequential_execution_steps",
+    "sqlSha256": "49b7df8b67e83711ef3700cfe84f8202048d37d0c442e750eccc48a3e4fb63e0"
+  },
+  {
+    "type": "table",
+    "name": "consequential_executions",
+    "table": "consequential_executions",
+    "sqlSha256": "acb84c344b6f016d3e865b330a742d30d1b0034496ad6680450fb735ceb92100"
+  },
+  {
+    "type": "table",
+    "name": "cost_budget_counters",
+    "table": "cost_budget_counters",
+    "sqlSha256": "26d315dc1f987de8644a2a9c182d08447b1bd9095390fc142f8457e7c0795465"
+  },
+  {
+    "type": "table",
+    "name": "cost_budget_reservations",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "2ecc476eb2cebb4b3c51ccce1041206a9d0ad02eac278652c5aa16e819f41ae8"
+  },
+  {
+    "type": "trigger",
+    "name": "cost_budget_reservations_disposition_no_delete",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "f8340645bd207eaa71c07029e01fcf631711886b933561025dcf5d57e31815fc"
+  },
+  {
+    "type": "trigger",
+    "name": "cost_budget_reservations_disposition_no_insert",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "2717674cccc429929344b51656de6c9be495daf2cdddbd8e2bffc9767563de01"
+  },
+  {
+    "type": "trigger",
+    "name": "cost_budget_reservations_disposition_no_update",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "5ed7df2ccf7d919e4e840eb5a95defbe8d3ad77988638c0031d89134b902678e"
+  },
+  {
+    "type": "trigger",
+    "name": "cost_budget_reservations_video_reconciliation_no_delete",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "e6133a851f183393e13862a0281c604062a356a7b77e385e8ad1a78865299a67"
+  },
+  {
+    "type": "trigger",
+    "name": "cost_budget_reservations_video_reconciliation_no_insert",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "7c44ef31e2b5834bc713988bd109988a7654852d6c9f427ba9490f997ba3a86e"
+  },
+  {
+    "type": "trigger",
+    "name": "cost_budget_reservations_video_reconciliation_no_update",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "bf45b135c6ce72adbee0bd0ab4db5837fcd05c091653176d49395204a56783d5"
+  },
+  {
+    "type": "table",
+    "name": "delivery_decisions",
+    "table": "delivery_decisions",
+    "sqlSha256": "844ba093652217d55b381e5ac26531823924258d793a5c925b1f9bc89183a24c"
+  },
+  {
+    "type": "table",
+    "name": "document_jobs",
+    "table": "document_jobs",
+    "sqlSha256": "9afa69aaf80898f4819945d0222f6287a05facee886790c871c13cb68184e170"
+  },
+  {
+    "type": "table",
+    "name": "event_client_receipts",
+    "table": "event_client_receipts",
+    "sqlSha256": "91405853e1912566836375b4c9ae0a7c9e192491a86599246f1aa307a66fa6a3"
+  },
+  {
+    "type": "table",
+    "name": "event_private_payloads",
+    "table": "event_private_payloads",
+    "sqlSha256": "f028b511245941dd50434ba15dd93c5ca867ad192899d1dd1dfe09a0b9d7fa1b"
+  },
+  {
+    "type": "table",
+    "name": "event_write_stage",
+    "table": "event_write_stage",
+    "sqlSha256": "3d544f8046975d0357db62f23c5df7cb482e8fb13acbb432d0b3a6238969fca8"
+  },
+  {
+    "type": "table",
+    "name": "events",
+    "table": "events",
+    "sqlSha256": "52ccb433dce6f2073c089003a76c8895a40e6bbfe71a2ff76f9461f2531b47ae"
+  },
+  {
+    "type": "trigger",
+    "name": "events_block_delete",
+    "table": "events",
+    "sqlSha256": "5d44b046d7780f8471a392efe3f11a986a854bafd9289a3dafb5c7249a4e3895"
+  },
+  {
+    "type": "trigger",
+    "name": "events_block_update",
+    "table": "events",
+    "sqlSha256": "7f944d47239e3b5b12b99eee7db15037efe8b7f363e176bd660dcdb2b2003519"
+  },
+  {
+    "type": "table",
+    "name": "external_content",
+    "table": "external_content",
+    "sqlSha256": "0179e8ca9dddd6c0b76fa2d5976f6edb685005851482d52ffe3c652200ae8d3e"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_assertions",
+    "table": "generation_study_assertions",
+    "sqlSha256": "c57c48432f61a136919783556652deedc161ce24cbf75dbbab476619faf5aa93"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_charge_no_delete",
+    "table": "generation_study_charges",
+    "sqlSha256": "70e49e0b2819c5bfd6a8889478260b4018dfec99d4d70cb3b5892429babf006b"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_charge_no_update",
+    "table": "generation_study_charges",
+    "sqlSha256": "8548afb991fff0780a00448087a8d76c22378ba3c23a575ddbbcc7fa24f38282"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_charges",
+    "table": "generation_study_charges",
+    "sqlSha256": "ad32c2a577ac051e6cae62af576c2e1bf38a68aae1dc74781437e6db5459c988"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_cost_no_delete",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "1176047f3b17754c17e560d348b0fdd3a7d022ac51868f7a1d2f9bcb512116b6"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_cost_settlement",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "a31ecee8dd3c4fb20e1270932ed1be8ab1887be1a84cb72ea720d56a6c159573"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_evidence",
+    "table": "generation_study_evidence",
+    "sqlSha256": "4df9c4fab2dd9a562c3b7fdd9cf666812264da14bf42e109241281200898710c"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_external_cost",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "7c62d8e590bd56eb40a1ed241b3adea2102c9147889542a1ea5a11c2f0148c94"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_external_tokens",
+    "table": "budget_reservations",
+    "sqlSha256": "ac93c477aa41568f2e149c8542d8b036aa720fbb3cc759de718efefd7927a292"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_financial_grant_identity",
+    "table": "generation_study_financial_grants",
+    "sqlSha256": "e1d37dce96771d7e80c0257caea0f3f5d9b63c65e50797b110e33a322f0971bf"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_financial_grant_no_delete",
+    "table": "generation_study_financial_grants",
+    "sqlSha256": "e0b0187457692d195d701e2244499f34453302ca5d9c8996badc597bb11439c6"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_financial_grants",
+    "table": "generation_study_financial_grants",
+    "sqlSha256": "159810389c21ec32b14464342fae3fd92ca799d51fa496d05b83ee624753330d"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_grant_identity",
+    "table": "generation_study_grants",
+    "sqlSha256": "10fa605b2391b5381c21099d91d29dfce919bb11de345c04132c02669452ae08"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_grants",
+    "table": "generation_study_grants",
+    "sqlSha256": "6194df90ef43b6db49ac961a40428117f19af911e513f66bf9894fbab7dd4b53"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_lifecycle_cost_hold",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "941bb6354d1b41bd83261c10d22d708ac9855e5ed059175bc749fbb2654a0ab9"
+  },
+  {
+    "type": "view",
+    "name": "generation_study_lifecycle_holds",
+    "table": "generation_study_lifecycle_holds",
+    "sqlSha256": "a0a4a264bbca844636436d93644cc90281ce70af931ef0e22fbfdcd60120573a"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_lifecycle_no_delete",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "66d4d68cdd811dd7837875d36a5b8333de2a5b756cdcee22b71202c1fa907f7e"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_lifecycle_settlement",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "20211f04c0ee2ca610cf0629dfd273fa3368890059d3d0c22f6e341b6390e106"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_lifecycle_token_hold",
+    "table": "budget_reservations",
+    "sqlSha256": "da1b0ebddcbeb93918c51063dd6dc63bec8a53f4fc887a0949936233e7500846"
+  },
+  {
+    "type": "index",
+    "name": "generation_study_one_outstanding",
+    "table": "generation_study_operations",
+    "sqlSha256": "84f28f7896e92b9c2d139d6658371c7942a7a1865bf620a2c64ceddc3f55a5fb"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_operation_identity",
+    "table": "generation_study_operations",
+    "sqlSha256": "1e9763996813a26f65b718c255441e38bcca70d4b6a90b05506c00d28c4c3529"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_operation_no_delete",
+    "table": "generation_study_operations",
+    "sqlSha256": "5ae95079e2dc51d17beacb0d4690a4850e56979e2e9eaa02a3fc9bce65e0ef0c"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_operations",
+    "table": "generation_study_operations",
+    "sqlSha256": "9113372f1c7243253ddc1b659ca933ba7a6aea68eaa8a78c356294dca7059336"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_reconciliation_chain",
+    "table": "generation_study_reconciliations",
+    "sqlSha256": "b3fd3de5c9fc80805162e22d94b3e6aa03df44a061226eb83bb4fd9fb4bb0d17"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_reconciliation_finality",
+    "table": "generation_study_reconciliations",
+    "sqlSha256": "85c8a6649cf98f698443b677893e755991cfa4af111df1a69415aec72f46ea86"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_reconciliation_no_delete",
+    "table": "generation_study_reconciliations",
+    "sqlSha256": "02379907c989dc135ddd5d32fdfb6333d0cace50a5f6850784c52854c1e332e8"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_reconciliation_no_update",
+    "table": "generation_study_reconciliations",
+    "sqlSha256": "0d3c1dbf386b408f717afa140b4c4d7e9fba08bfd6bbe641098e9fe59da98454"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_reconciliations",
+    "table": "generation_study_reconciliations",
+    "sqlSha256": "8b29f3f50f43bf4c6a63133a8e6a41f5886afc843aef835e14f31ea6c3b5bee2"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_stages",
+    "table": "generation_study_stages",
+    "sqlSha256": "f6ca40b6e050156db461d3318fd02c24655db86c5f95e98cc5d67e50253b7ed5"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_supplied_grant_revocation",
+    "table": "generation_study_grants",
+    "sqlSha256": "fafd6f8334f14dcddb3e7a34c748f7b9c825f6252abf16b02393a0dd856a964d"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_supplied_observation_no_delete",
+    "table": "generation_study_supplied_observations",
+    "sqlSha256": "e10e95b0d419f17f7d28b6fe3349f8f94a55302164a09c41d0a9f72dcbe35f2d"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_supplied_observation_no_update",
+    "table": "generation_study_supplied_observations",
+    "sqlSha256": "826767c3b91393e1d3bf91cdb0d17b460d040e80a07af6ca180a0b60479a39e4"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_supplied_observations",
+    "table": "generation_study_supplied_observations",
+    "sqlSha256": "ec6d76b48637e2b6fe016565adda4159177ab8aeef1bd89b1c8f71793442c833"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_supplied_review_identity",
+    "table": "generation_study_supplied_reviews",
+    "sqlSha256": "d5eb0aad187749710b56e9004b7ddc89dee4ee6e14556c91a6e1ffc19d1d88fa"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_supplied_review_no_delete",
+    "table": "generation_study_supplied_reviews",
+    "sqlSha256": "3fa661f01908c6d33d71ed0a5a5fb7d066f0465467d74109300a22680d8d8317"
+  },
+  {
+    "type": "table",
+    "name": "generation_study_supplied_reviews",
+    "table": "generation_study_supplied_reviews",
+    "sqlSha256": "b26501b6424cbb8d168be3dc3110f9893be77572b09d71aeecc883cb214ac571"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_supplied_stage_identity",
+    "table": "generation_study_stages",
+    "sqlSha256": "6a8b25916dde79b9c6bbf1655da74643f634b76db2ddaa0feea7ac917afba8aa"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_supplied_stage_no_delete",
+    "table": "generation_study_stages",
+    "sqlSha256": "915c54c99bfc619b92e3adbea66d0a29d7d2a924bf51cc19ce58dd189a26a930"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_token_no_delete",
+    "table": "budget_reservations",
+    "sqlSha256": "65695cf403cc889a05b583e61dc57cec70a2a417f2a23b2cebacacb1ea122cc0"
+  },
+  {
+    "type": "trigger",
+    "name": "generation_study_token_settlement",
+    "table": "budget_reservations",
+    "sqlSha256": "d7e607795e3e9d890818513a2c5275299351275b8c3de75bfb8385526d49fb94"
+  },
+  {
+    "type": "index",
+    "name": "idx_artifact_revisions_expiry",
+    "table": "artifact_revisions",
+    "sqlSha256": "5fb07c7853f6540dcab7f80f06b785db7ede037b8c18e5adc3a90950f4e60130"
+  },
+  {
+    "type": "index",
+    "name": "idx_artifact_revisions_owner_artifact_revision",
+    "table": "artifact_revisions",
+    "sqlSha256": "c6138da5bf59d9f67a83e99de6c6f93925dde02ebf5430b48c0cdf898cfa0623"
+  },
+  {
+    "type": "index",
+    "name": "idx_artifact_revisions_project_artifact",
+    "table": "artifact_revisions",
+    "sqlSha256": "a1e6cba1fbc9732effe3b48b9e367cc360a6d9d6bcf47576091779ee98727431"
+  },
+  {
+    "type": "index",
+    "name": "idx_assistant_billing_reconciliations_actor_scope",
+    "table": "assistant_billing_reconciliations",
+    "sqlSha256": "c45d005489a09ba9288bdcd23a4fdd4ba19a6493afb8da45e31c4f8eacfecdb6"
+  },
+  {
+    "type": "index",
+    "name": "idx_assistant_proposals_actor_scope",
+    "table": "assistant_action_proposals",
+    "sqlSha256": "a89513b48c5aff6b0d1e6c5a53f446d311f8902fe8e3d76c52e6d282d00d4ebf"
+  },
+  {
+    "type": "index",
+    "name": "idx_assistant_single_consented_turn",
+    "table": "assistant_specialist_tasks",
+    "sqlSha256": "d6dd4b52c698c7fcec6eeacb985792fa6adb0235655bfb4d710a42ae5fcb4b25"
+  },
+  {
+    "type": "index",
+    "name": "idx_assistant_tasks_actor_scope",
+    "table": "assistant_specialist_tasks",
+    "sqlSha256": "f1e910bedf84294bb1dce277d65d50e57079d788bd59714c4be0cd9e1044393d"
+  },
+  {
+    "type": "index",
+    "name": "idx_assistant_turns_actor_scope",
+    "table": "assistant_turns",
+    "sqlSha256": "789608de94c34a3b40408281ee2f74ef3e402ae92600098dcad0781daa29f181"
+  },
+  {
+    "type": "index",
+    "name": "idx_authoring_commits_actor_document",
+    "table": "authoring_commits",
+    "sqlSha256": "e7d650ce6ba2da3d58945bdf35792d22be01ce8f730e6b9095cbc4741d364bea"
+  },
+  {
+    "type": "index",
+    "name": "idx_budget_reservations_correlation",
+    "table": "budget_reservations",
+    "sqlSha256": "480442a27a42198571a464f88e4a218398288d16b62b6d847409373ac69fbb17"
+  },
+  {
+    "type": "index",
+    "name": "idx_budget_reservations_owner_status",
+    "table": "budget_reservations",
+    "sqlSha256": "b0e10e3d4def1818f311882854094da397e1a2b521c309803a984c1cd86b87a6"
+  },
+  {
+    "type": "index",
+    "name": "idx_budget_scope_policies_organization",
+    "table": "budget_scope_policies",
+    "sqlSha256": "1d1f419455896f1f78196dc348089f3a66bbd7938cfd6efcc8d747083b25fffd"
+  },
+  {
+    "type": "index",
+    "name": "idx_capability_grants_organization",
+    "table": "capability_grants",
+    "sqlSha256": "b43adf973c9826f860ef61032a87469eef80d91e6d21d81cf9e7716c6f5c6f25"
+  },
+  {
+    "type": "index",
+    "name": "idx_capability_grants_user_status",
+    "table": "capability_grants",
+    "sqlSha256": "9bfb733b2411e8a71a1e03f146bbc9289b3f19c52c1ed5cab6cacadfb2b6aa90"
+  },
+  {
+    "type": "index",
+    "name": "idx_consequential_executions_actor_scope",
+    "table": "consequential_executions",
+    "sqlSha256": "77c2748748e51b6361213374e6f72601daf4d2ae0e60454fccac3010c157f769"
+  },
+  {
+    "type": "index",
+    "name": "idx_cost_budget_reservations_owner_correlation",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "2e8079e59bfcf7a8505b70306288b7befb9edd913d8366c017cd457d9714f0eb"
+  },
+  {
+    "type": "index",
+    "name": "idx_cost_budget_reservations_owner_status_period",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "94b24be3627706c39cc4a78e24099f9fecf261c031f55adf6e86aba8eaecedd3"
+  },
+  {
+    "type": "index",
+    "name": "idx_cost_budget_reservations_workspace_period_status",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "79eb373bbd131ce6f3f9dc73b98414cd39e5f653d3e3ae7599732e2eee6cb340"
+  },
+  {
+    "type": "index",
+    "name": "idx_delivery_decisions_owner",
+    "table": "delivery_decisions",
+    "sqlSha256": "070a6263403338fb8d29985f2d7e0617ae05f29f2f0f88e6ca020f49a65e62be"
+  },
+  {
+    "type": "index",
+    "name": "idx_delivery_decisions_status_updated",
+    "table": "delivery_decisions",
+    "sqlSha256": "12d61987cef489a9f83ecad4f1ff11e99f5cd623b24728941b05ea34e9e1f041"
+  },
+  {
+    "type": "index",
+    "name": "idx_document_jobs_owner_status",
+    "table": "document_jobs",
+    "sqlSha256": "40e79d4844904993b5f9e901ae1d3f3096a9309097a712093321d59ba7e4af9a"
+  },
+  {
+    "type": "index",
+    "name": "idx_document_jobs_stream_correlation",
+    "table": "document_jobs",
+    "sqlSha256": "0ec88596ba57fd4adda1acda6bdbe6ccaad94fe247b15891dbb14cdaaf5f2514"
+  },
+  {
+    "type": "index",
+    "name": "idx_document_jobs_stream_document",
+    "table": "document_jobs",
+    "sqlSha256": "0b16030521164505c627d3ee2b8b61a8cb1a67cc83713dd9870cf426ea20b7ab"
+  },
+  {
+    "type": "index",
+    "name": "idx_document_jobs_stream_status_requested",
+    "table": "document_jobs",
+    "sqlSha256": "c56d6c09e5f5b777f04b082b57e96b3a0db7b08e2f9f4e0cca9226c61784f607"
+  },
+  {
+    "type": "index",
+    "name": "idx_document_profile_grants_actor",
+    "table": "memory_document_profile_grants",
+    "sqlSha256": "4722ec144ca77efd5f46cde8ec6a2bb13eefdd0d5d7f4293acf0fbcb5b47123c"
+  },
+  {
+    "type": "index",
+    "name": "idx_document_profile_grants_enrollment",
+    "table": "memory_document_profile_grants",
+    "sqlSha256": "9822bc8bbfdc6f244d8677ca9b5ca88c96720fbe5fdff09bbdb5f2837ce45fbb"
+  },
+  {
+    "type": "index",
+    "name": "idx_document_profile_grants_organization",
+    "table": "memory_document_profile_grants",
+    "sqlSha256": "140f7d8eda416202af2ae3d80a9f4a56a78fc47974f5cda01fac0b0c65651790"
+  },
+  {
+    "type": "index",
+    "name": "idx_event_client_receipts_event",
+    "table": "event_client_receipts",
+    "sqlSha256": "88aa08f40732b18904cc8f68ecaefff40294b88c8c94878ee9f5e46e47a37741"
+  },
+  {
+    "type": "index",
+    "name": "idx_event_private_payloads_owner_scope",
+    "table": "event_private_payloads",
+    "sqlSha256": "1d49683a9f5b89c7f0f575b721bbaddd73eb393445648b060285ee12efd6ff5c"
+  },
+  {
+    "type": "index",
+    "name": "idx_events_correlation",
+    "table": "events",
+    "sqlSha256": "dcdfe3d7881e70e902615be89387d51bcde806f7d428bf22b731fee8fc3a175e"
+  },
+  {
+    "type": "index",
+    "name": "idx_events_nonphantom_stream_sequence",
+    "table": "events",
+    "sqlSha256": "eb20e1404d6c553c3532463989b57dfd9f7f9d44fcc8fbd5b64c2f226e96ad15"
+  },
+  {
+    "type": "index",
+    "name": "idx_events_stream_actor",
+    "table": "events",
+    "sqlSha256": "910ca9648ab676de74a833a7518b27c9a31e9dbd30893ada596c8f763525af3f"
+  },
+  {
+    "type": "index",
+    "name": "idx_events_stream_sequence",
+    "table": "events",
+    "sqlSha256": "818ad6dd75edddd36c538b170da29692e440f02abab8a8753337790b67d8eb37"
+  },
+  {
+    "type": "index",
+    "name": "idx_events_stream_type",
+    "table": "events",
+    "sqlSha256": "f9e4bd733352f69b565ed1ccbdcd7f7008606c54994a369161b61c292f75169e"
+  },
+  {
+    "type": "index",
+    "name": "idx_events_type_occurred_stream",
+    "table": "events",
+    "sqlSha256": "d3ba14469a705f7f0a91aa167d4e962b03c4a066fac38be1a712b2a3210f850e"
+  },
+  {
+    "type": "index",
+    "name": "idx_external_content_owner",
+    "table": "external_content",
+    "sqlSha256": "ab1818dfe3bf4d3259f0405cd2da0a153f910c5ad91bb685db8b7855a375be01"
+  },
+  {
+    "type": "index",
+    "name": "idx_hold_dispositions_job_attempt",
+    "table": "budget_hold_dispositions",
+    "sqlSha256": "25d0ffc1532a95cfbadfecaf3264c88ecc1644b84e1ad3373382fdd2952f6d7a"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_asset_expiry",
+    "table": "memory_derivation_asset_edges",
+    "sqlSha256": "d2324b24bd38f396a49a5b55067bc5497ee80781750caafc5a556a74918896b6"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_asset_owner",
+    "table": "memory_derivation_asset_edges",
+    "sqlSha256": "dd3b66b94e168de0dbab70391a7c688ee1327ded91d377be845dd1db6825ef57"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_asset_target",
+    "table": "memory_derivation_asset_edges",
+    "sqlSha256": "e336beae74aed10d9fbb17a46ca397dba18dd1bb26862441faddce4f35164c10"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_consumer_content_origin",
+    "table": "memory_derivation_consumer_contents",
+    "sqlSha256": "83abf76e9116b3a2e79d25f674c677bb9c28341a678e071e891cd8c568c8c030"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_consumer_context",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "52d627b4d88a0f5d8591f2e64cee38f67b97a45462dfd1e8e70fd18b98cfaa70"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_consumer_execution",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "37783b2ce1db0b9bb3716e7ff228afd9a689c109e0f617917a19746a8e0b70f7"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_consumer_original_answer",
+    "table": "memory_derivation_consumer_sources",
+    "sqlSha256": "1503739c475b6a71ac7dcd0744a9eab5bf44a236f5d6b7a981c5414ab77e1343"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_consumer_original_turn",
+    "table": "memory_derivation_consumer_sources",
+    "sqlSha256": "f77e05ee05a0102694d62d4874ddba4dc8690da658666d7ed11ee2eb540856a4"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_consumer_original_user",
+    "table": "memory_derivation_consumer_sources",
+    "sqlSha256": "ebbcbb1b345a89be08b2caa43f9112d127add859053cde3e5f3c16ab77844a52"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_consumer_parent",
+    "table": "memory_derivation_consumer_parents",
+    "sqlSha256": "f499100c9692f656ac1d5eea83ec2274932cc6d2c2c973e401271e4685c0cc0b"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_consumer_source",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "e7a65c844a28016bd44c56302e90516e22c79b9a003cf5486c9f20573707bdc5"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_consumer_turn",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "d9fdfb5c648c783a07055ae0359e1f182069e739dd0587851c5bbe1c3e6e4bff"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_contexts_source",
+    "table": "memory_derivation_contexts",
+    "sqlSha256": "1554316f55fb2cd7ba425e86ffae36861235b6abfcb5a3241c1e81e130d7685e"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_cursor_expiry",
+    "table": "memory_derivation_cursors",
+    "sqlSha256": "127b201e634ea8bebb5200b64e36ad1661d6952e01afda3647dac4cf96714d76"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_finance_payer_month",
+    "table": "memory_derivation_finance",
+    "sqlSha256": "8918d1b6ffa4267b7c549265771d345ab5ca42cdd8a8d203b7e39b3da0616cd5"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_finance_workspace",
+    "table": "memory_derivation_finance",
+    "sqlSha256": "ba802609a474c7e8b57325decbbece84479bba8129dbd1e0a89e614bd6e249a2"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_grant_active",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "735f9dfa7f9e921acd6ccc8ff60b810f9ea13a760776f2e79e0db80e2936f4a0"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_grant_actor",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "08e1a3433b0ae482f34d54b2a0a7c59fa7a662237feca491d6e159733b62ba75"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_grant_organization",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "e0c00361d3d710ebbe63d984fc6e4dc62fb202e1c57d0250e7a27a7afceeafa5"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_grant_parent",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "58025bcde4342e5e926b1c1f1ae3d377b46f0aaebaafba19f6daad40e681dc00"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_index_pending",
+    "table": "memory_derivation_index_intents",
+    "sqlSha256": "9bbb77f315fc7a08c920ba6aaa45a2844dffd45079196e86023e0d24983c3b26"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_job_consent",
+    "table": "memory_derivation_jobs",
+    "sqlSha256": "364b5787a4248399ca08b62274e18514e440d15f52c4686bf8a12efc256c10a5"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_job_due",
+    "table": "memory_derivation_jobs",
+    "sqlSha256": "067d3cab8ccedb42307746f631c47c5a2e2f06775bb307d14d571b86cdf52289"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_job_interval",
+    "table": "memory_derivation_jobs",
+    "sqlSha256": "9b9652a3a22dedc5caa4ce646d40d69b078e5e31d8d589aa4856defed4a412d6"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_observation_control_expiry",
+    "table": "memory_derivation_observation_controls",
+    "sqlSha256": "8c38e1b6265e63bd111b4663e57cbe376a7880cf35178116a68a5cbd2c8c54f2"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_observation_control_lineage",
+    "table": "memory_derivation_observation_controls",
+    "sqlSha256": "17811e02a1041773127c6166055fc3ababaa8324011a45f250a2cc7ede47f4e5"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_observation_control_source",
+    "table": "memory_derivation_observation_controls",
+    "sqlSha256": "b8d1fe87cfbaad60d8123c4a982d3f2808ff57140e594af2dee06712a02d16ea"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_profile_context_job",
+    "table": "memory_derivation_profile_contexts",
+    "sqlSha256": "bf1892174693c8fccc0673660c0ce05bad207e6070baf4cb6deb71283891b4ec"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_qualification_current",
+    "table": "memory_derivation_qualifications",
+    "sqlSha256": "c303c5aa5d74b3a59260e0032423d70158d7a9b575b844dbdacc7f71d4f47b96"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_result_expiry",
+    "table": "memory_derivation_results",
+    "sqlSha256": "74fc96d67928baf23c97bad8cf66a5ae2341c349f6ac171cf39ddd71fcb3e268"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_result_inverse",
+    "table": "memory_derivation_result_dependencies",
+    "sqlSha256": "6846b3394125cbaa0e500f730bebafe3c8d60b2c5ab7ed944aef66040be8d2ed"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_source_inverse",
+    "table": "memory_derivation_job_sources",
+    "sqlSha256": "16249d48b22446fb1f589cb5e75f50f725ae1b656eb3f66462b5183e1f1913d8"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_source_sequence",
+    "table": "memory_derivation_job_sources",
+    "sqlSha256": "4558e0af5a51d7787df2180c5c7660914275607f2485c7226b9b419bf416aa08"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_user_control_expiry",
+    "table": "memory_derivation_user_controls",
+    "sqlSha256": "a5a7bc432d4883dd7d25b3757a28cea6e3ea807a9eafd7813ea6347659f81f5e"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_user_control_lineage",
+    "table": "memory_derivation_user_controls",
+    "sqlSha256": "56111808c35195b9516b1995b0a00f09e613bb2dc86bb3ba019a61f7b1c065ba"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_derivation_user_control_source",
+    "table": "memory_derivation_user_controls",
+    "sqlSha256": "547af0f303f687efa7e8ec617d28bf20a218e570e5ee6130146875de46a30812"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_actor",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "287f9bbbdfd4aa1ac2f6c66718a808b6f27e2c492a496bf65e7f348c988d6255"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_answer_content_id",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "ccad2e679c25f4a412142bb39cb6f3c29c6325968f127d05f15a20912a89bc5e"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_answer_event_id",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "e75f5756ece9c5e76a21d7ac4a1e7c6473b0a10904b9990492d92e01451e68c7"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_dependency",
+    "table": "memory_document_job_origin_dependencies",
+    "sqlSha256": "61076631d9f0959a18dd1e14757dfa017f07604f49963f71348d9e64d0cf228f"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_enrollment",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "c1020a892e5ef54e427952b19044b09d1031dac38f1f798cff44060bf70bec6a"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_expiry",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "6ccf891fc6ec7164cf857d6b9ba3226b66382bd25bc8da966ee26f8dec76a4c3"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_job_id",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "26b0568bfc1c0d5f3d536ab3793655b3502d780322209e7d97724db345d459b4"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_manifest_content_ref",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "806aa4c56303aa0707312022727c15f99649ae5197f44b41e00b4adbf5688efe"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_scope",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "f4162e460a85aef7ac4eb6365ef93bd75c4014defc218a18b3f015e2d532c0ed"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_turn",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "cefcb2efc9c3b0b0d3c36313b9b3b05685d22ec94694acace429c50d03a3ba95"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_user_content_id",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "1767842ae9c71ea1ba8f8d49a5a07ce672dd99d06045e80bfbb1e69443fd34d3"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_document_job_origin_user_event_id",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "b51ef1828e6ee528e93782b72c4caeb31d5eb07a63bb4bee9902823b4bec67ca"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_live_actor",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "ffac6e10cdbfe03729c5386164d4bb75f6b8d2081c35ee9bc2169fb2b2f6bf92"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_live_checkpoint_expiry",
+    "table": "memory_live_change_checkpoints",
+    "sqlSha256": "3bcd866139f6e5ca982b30b4b53c4ca51d20fab6dddf2326f6e12bd4eec647ae"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_live_conversation_page",
+    "table": "memory_live_conversation_segments",
+    "sqlSha256": "56683600184e4f10b2c7718fa9977ca3eeb7951633d19bbe961102baabf46146"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_live_due",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "7536ebc078ba08c9598529c33a1c858e5dc902feffd7898a04ebad0bc0f277e0"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_live_expiry",
+    "table": "memory_live_sources",
+    "sqlSha256": "f89f0cd49d120c1088854b051ad49b5fff61cb093a5a6689b6c836ed9648a72e"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_live_organization",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "3b0c692424be0fbb9197a7596e530116d55d1547f6654ad16ccf4abbb76b177a"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_live_runs_started",
+    "table": "memory_live_runs",
+    "sqlSha256": "39ebfa8cc1f14f2c51e4f0060e87d62353073c89d1a723c1e462ca680e06b4ff"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_live_source_page",
+    "table": "memory_live_sources",
+    "sqlSha256": "4dcdd3b9fa772806cb73905034e82016964ed81cd0241f6afb11a0ce671d2aba"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_native_origin_actor",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "354d8e21b24b20b264d52b1c3e2bdeb6c3e77a2eeaf026eb470dac931b8e1cbe"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_native_origin_answer_content",
+    "table": "memory_native_answer_dependencies",
+    "sqlSha256": "a0755c54e04855116d6f38172e253bca0a5bbdfcdce25f68af09a3baf13a23d5"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_native_origin_enrollment",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "4c5bef97d0fd843aa8a0d43d26563464dae21f72938ac3ef1c1fe1f93eb9edb3"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_native_origin_source",
+    "table": "memory_native_answer_dependencies",
+    "sqlSha256": "0515089ef38f07d8285ebeef47cba5a12f4d26441ea49716255acad3e5c4b0be"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_native_origin_user_content",
+    "table": "memory_native_answer_dependencies",
+    "sqlSha256": "f278e1067d746a389c4c459dd0d125f84f37d73d4e66c69ed0ddd71e7815c1ff"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_resource_assistant_context",
+    "table": "memory_resource_assistant_runs",
+    "sqlSha256": "1509a74b689197f1ce47b2193dcb9d2a602c9d2a62750c9dcf98b672bac578ea"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_resource_context_active",
+    "table": "memory_resource_contexts",
+    "sqlSha256": "f6a80652641f7864b3ebde8eeffde7ca75c9ef18840bc0fc5392f456e2d10758"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_resource_context_expiry",
+    "table": "memory_resource_contexts",
+    "sqlSha256": "76ac7108b5505efdd2df3cc87eedfa7d94b0736250c046458a00487972173bfd"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_resource_due",
+    "table": "memory_resource_enrollments",
+    "sqlSha256": "77a3ca4e83a4eb75498cce25e4242b10820dddc352de4ba76b081084f1c11d44"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_resource_history_expiry",
+    "table": "memory_resource_history",
+    "sqlSha256": "30b72bf22b9364d3f947060b7817d8ff8da0b96ee86ad2457dd145fec31b2c2a"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_resource_openings_expiry",
+    "table": "memory_resource_openings",
+    "sqlSha256": "59f4d778bf1b00ee016a57a370bcf42db787f147141a91529678e9f298ac0be9"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_scope_profile_expiry",
+    "table": "memory_scope_profile_snapshots",
+    "sqlSha256": "46f918b48668eab8a720a8da050ea324cf42cf3e7982a7f16f91a208dc04a1f3"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_scope_profile_target",
+    "table": "memory_scope_profile_snapshots",
+    "sqlSha256": "a3ec9e51435e577f2fcd8c308b456b5f4103d82715533cdf19ffe9eb0ad5c940"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_heads_cleanup",
+    "table": "memory_structured_conversation_heads",
+    "sqlSha256": "442bced01375f84ac41f2fff46b689159e50fe1006bedce193ef81f9f0fc7879"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_heads_enrollment",
+    "table": "memory_structured_conversation_heads",
+    "sqlSha256": "3a856b220b21ba583da0e0ad76f5905f3c2fe70b05a7ea819fe577959e1eae63"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_heads_organization",
+    "table": "memory_structured_conversation_heads",
+    "sqlSha256": "265c021baacbe41acff65b76d475ed9e53cf2d6f6d468538612d59a3940ef755"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_heads_personal",
+    "table": "memory_structured_conversation_heads",
+    "sqlSha256": "c25b92eb0b0b865cfb981d12c00a5c390a26ad87ca4e8fb1f8933fd5e68e9133"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_heads_shared",
+    "table": "memory_structured_conversation_heads",
+    "sqlSha256": "2a0f5beb1474c5012e7892e938d7c0d4a33c017f875024c8991c6bf88c543313"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_actor",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "dcfbba39dba95aca62a153476d2463be748d6610ed1c7a8d3988b23ca6c5d66e"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_answer_content",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "58c37bb371f740b20b0cb4b1ef987704f22648d88010b6ca144d845e378ba225"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_answer_event",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "2728e95c0c42b51f2e746638d07edc6f7bcd100bb79a853e8fd3d400da6ddc81"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_enrollment",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "20c67d279fc0156dedcef51e475c00d35cccf95f3b244e3ae9ec73359c6f1aea"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_ledger",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "812c1eaef3f6d37297c0d96b177730db6a56cb46358db08909945b82760419ff"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_manifest",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "174da4d9e80329d2a1233456295aee452d06c2e882194c4d860a5b01b87d7f7d"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_revision",
+    "table": "memory_structured_answer_ledger_revisions",
+    "sqlSha256": "4a65d0999ed5f59d9f3114bc2f6e8891dc04e37de91068f3f15b010cfc8713a7"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_revision_body",
+    "table": "memory_structured_answer_ledger_revisions",
+    "sqlSha256": "210ac20006727bd572cd18ba97fdfa0f40ca99e8a839084e04d76756548dffb1"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_revision_content",
+    "table": "memory_structured_answer_ledger_revisions",
+    "sqlSha256": "3595715ee1dec16ace68c009970521afeb47d0bdb3c76f738007089c6fcb2b7f"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_revision_ledger",
+    "table": "memory_structured_answer_ledger_revisions",
+    "sqlSha256": "2bab82ce6446159e090dc90b583bf70c5b55ea4edb8ac7243249cce8dd18a172"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_turn",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "ed4cfc855cee188b7c591962f6f2a3d08190a9b2ce376506a2fc07c620f092b5"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_user_content",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "00f82488763039154b90c0a55a665872d68115756a9ea2f9bd027efcd8e4209a"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_origin_user_event",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "17247a0d42f04c1238104f47c816be7a1a703ca56958265f1061b1385068a307"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_original_body",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "0a6ae989f7244a5c6b1c4b3f21f7cf0224bc7520d9cca75e7a2b710558c3f861"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_original_content",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "96a80bd60ac4cb68753576ddba1bccf5a35eabbdbdebb6bd346c285ddb5712d0"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_original_event",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "818bc4f4576fafd98fd452ed4d551b51792c0c748a38c2c27afd38d84e5309c4"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_original_sequence",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "94a5d81e18d54cbf168d67ea16eadf0291bdc0644552a3bbb48fef5986adb6ae"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_original_source",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "783e01354e0250665b213b14a4e8a0be300f24a658aca910b790a4273a2c9cbe"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_original_turn_role",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "61182d454cf5fe091e36943116d9de833df06ef5dd0e451d6ee678658960e34b"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_revisions_body",
+    "table": "memory_structured_conversation_revisions",
+    "sqlSha256": "9d24fcb7f056386e5bf9099d01f22660ee9572c5af9ebc056e7d267252312b01"
+  },
+  {
+    "type": "index",
+    "name": "idx_memory_structured_revisions_expiry",
+    "table": "memory_structured_conversation_revisions",
+    "sqlSha256": "d5d6e1ede3901cabd3b0e3f25df0c52a6ccff9c04ad6afdc0928404e022580e3"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_context_package_contents_scope",
+    "table": "organization_context_package_contents",
+    "sqlSha256": "7d113a4bf1136183a779fc8eff89a9aa2edd1a282e87d6e79efcccb262052712"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_context_package_version",
+    "table": "organization_context_package_versions",
+    "sqlSha256": "2c08be7ae5723c7ba0d85ee4e24a0a4889a89ac587210f4ad69080fb47cc557a"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_context_packages_scope",
+    "table": "organization_context_packages",
+    "sqlSha256": "15d17ec856339883cef194c79636b423cbfc2f47606456015651a054539e0c26"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_context_sources_scope",
+    "table": "organization_context_package_sources",
+    "sqlSha256": "0942229eb4f631a723c2c0e7f59a403c20722c2a61281492e1467503b4fc18bf"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_context_versions_scope",
+    "table": "organization_context_package_versions",
+    "sqlSha256": "8a56a8e351f61f88050bd985ea4db767ad29b7832762ec3864e3be9ffc98388b"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_custody_transfer_scope",
+    "table": "organization_custody_transfers",
+    "sqlSha256": "2cd9134679fcf6b325f86877a040bf3076b0774a1fd9da8f08c804d9e5c2fc8a"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_deletion_items_status",
+    "table": "organization_deletion_items",
+    "sqlSha256": "1638e23f24b1cecc522f55248390ff6173e88654d61cc389f6b35c00c4926f7d"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_deletion_jobs_scope",
+    "table": "organization_deletion_jobs",
+    "sqlSha256": "7ee62c27477168ab4d439e501aa01f86015c4745202086fe34407684f750b308"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_identity_binding_subject",
+    "table": "organization_identity_bindings",
+    "sqlSha256": "00820132ed57a4140c0faee1b6ff21050170433484638489b8076a259d42bc7a"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_identity_binding_user",
+    "table": "organization_identity_bindings",
+    "sqlSha256": "4dfa7bebb880faaa7a122eed2bdf5ed95b7d2071b97750fe0c592778d0e50d21"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_identity_group_external",
+    "table": "organization_identity_groups",
+    "sqlSha256": "e40916b4744a21e40da611383443abac7a8e11684d9b8e46d011777bddb19355"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_identity_group_members_user",
+    "table": "organization_identity_group_members",
+    "sqlSha256": "d7ca771a0173f101c05c4b1c98a6f6bcc2284d0a0604d0f2ea338e3bd5fdb802"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_key_active",
+    "table": "organization_key_versions",
+    "sqlSha256": "9eb2cbb16c2ab9f2256af69e04e0f16d5b8fc2fc1e4e6599f3576f465ef14591"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_key_one_active",
+    "table": "organization_key_versions",
+    "sqlSha256": "b08192e991e26940755feab77395540ca723430e15a006d11e3971f4994fd9e4"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_key_version",
+    "table": "organization_key_versions",
+    "sqlSha256": "6769cd422a6d816e26e5d3e27bfab7a49eee44a0767805660872f23d4107327e"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_legal_holds_scope",
+    "table": "organization_legal_holds",
+    "sqlSha256": "728e2a9a807869b9894c3add7d45d854cf4b4d898b16fbf9fb240ce1c94ed36b"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_provisioning_scope",
+    "table": "organization_provisioning_credentials",
+    "sqlSha256": "926c3d2d7fa4640bb14ce619d8546689f8320da780ebc1e3c5e9cacc98223ceb"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_provisioning_token_hash",
+    "table": "organization_provisioning_credentials",
+    "sqlSha256": "c99980ebd07d2f782c818d57a02f546fc24285ce37b13170c01ca99980e34daa"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_recovery_drills_scope",
+    "table": "organization_recovery_drills",
+    "sqlSha256": "4686feb798368c2e92aef203291290f56980a1c919e8a1f8073b616ba5760285"
+  },
+  {
+    "type": "index",
+    "name": "idx_org_recovery_snapshots_scope",
+    "table": "organization_recovery_snapshots",
+    "sqlSha256": "4f1b03142c166585854bf982efe224a5b87012d61a4f114c6722bfe545d8a8be"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_audit_scope_time",
+    "table": "organization_audit_events",
+    "sqlSha256": "bf035f1a95a451c8349167892f768da221b586705375c2d2d3eaf953d7e338b0"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_invitations_email_status",
+    "table": "organization_invitations",
+    "sqlSha256": "8f84ddf6a9beabb50fb4566bee6f17ffb6b687b67a92d21c6d4e65b755389efc"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_invitations_organization",
+    "table": "organization_invitations",
+    "sqlSha256": "4e88b26152316f8d8b2e568b3f3b6fb1716c3e10df1ce00b8213d92699742984"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_invitations_token",
+    "table": "organization_invitations",
+    "sqlSha256": "6ab54a3f6073d0bdb972bd9d6a641f0de905c7222d6b4ea4a4542bd8421f1c82"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_memberships_org_user",
+    "table": "organization_memberships",
+    "sqlSha256": "3f31bb8f004f392b5444ca477dd6eae0867a7c6d715e8ca45117762f55dc1123"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_memberships_user_status",
+    "table": "organization_memberships",
+    "sqlSha256": "916399b78d528bc67de41518357b265142e8c84ebbff39bee498413ee3f0c552"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_project_nesting_org",
+    "table": "organization_project_nesting",
+    "sqlSha256": "ecf212f1029ea9a6062286b4f2d45906e91cefb09b1cf8ad405a7a91b59ecd76"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_projects_organization",
+    "table": "organization_projects",
+    "sqlSha256": "ef7272ac21c5a6995c717a8f2e0d24f4eda151c3cdd8c20099cf0ca30d4aaec9"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_projects_owner",
+    "table": "organization_projects",
+    "sqlSha256": "c12b8cdeb0809594cec41be964fe3dfa381f9d8274f53ec7e659a247b5c03157"
+  },
+  {
+    "type": "index",
+    "name": "idx_organization_projects_owner_project",
+    "table": "organization_projects",
+    "sqlSha256": "9929dd4ee9c525abf748ab8dea1632cc32ecf1825e03bdf84a105248593dc921"
+  },
+  {
+    "type": "index",
+    "name": "idx_organizations_owner",
+    "table": "organizations",
+    "sqlSha256": "88d76ad2bd377cfe609d9c0758ded7fde904047e3611f12eb0c4ff9d633fa2cc"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_asset_storage_writes_unique_1",
+    "table": "output_asset_storage_writes",
+    "sqlSha256": "c41d9c518e7a392c52528af4029e7ad94c6f46bf6a463760db1d8158f7d6ca8c"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_asset_storage_writes_unique_2",
+    "table": "output_asset_storage_writes",
+    "sqlSha256": "3f6dc011be2f13c9df401f0c56b2e36997709cf8ec512506c9c1bb5e64e3cd43"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_assets_unique_1",
+    "table": "output_assets",
+    "sqlSha256": "71444b377788861c975c6faa16978e5d2caebfcc9fef794c89f644bff0af4523"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_execution_grants_unique_1",
+    "table": "output_execution_grants",
+    "sqlSha256": "331579ba1f8421a5fba712fa047a528882876a49962c5d50017b19efa4321db3"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_native_storage_writes_unique_1",
+    "table": "output_native_storage_writes",
+    "sqlSha256": "f809de3b086dd838a481432fd9b6d6dd73e80f46140bb2aa8fe3435b85c35d31"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_operation_slots_unique_1",
+    "table": "output_operation_slots",
+    "sqlSha256": "51f57fb98a6049883b651f9e4eeb7848329908d17ad66b5bfce30e85738df671"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_operation_slots_unique_2",
+    "table": "output_operation_slots",
+    "sqlSha256": "9e6b287279ce8f5eac7b55fe5cfb1d449cfec8cd46d7bcf7722af988862488e4"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_operation_slots_unique_3",
+    "table": "output_operation_slots",
+    "sqlSha256": "0a2ced389ef73e0f7b890955e2b2f13b9bd9518e03b8e41eba12a6c3152d0d5c"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_operation_slots_unique_4",
+    "table": "output_operation_slots",
+    "sqlSha256": "628e182894e6c46c666be1fcb7ccd745fb225d527382e16250faf87302107b26"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_operation_slots_unique_5",
+    "table": "output_operation_slots",
+    "sqlSha256": "d8bec68a9e6b07832764d55697bbd2f52c067c125b48e554105169a48839c800"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_plan_revisions_unique_1",
+    "table": "output_plan_revisions",
+    "sqlSha256": "47a3c664e6eb0c5edce9eacb663a669ba58d8a0570e3c7ccef354a42486e0a8e"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_plans_document",
+    "table": "output_plan_revisions",
+    "sqlSha256": "b0ed3c377410809325d15c6fa5d7f01e516e20e98f8adb95d4dcc59ff4eb120f"
+  },
+  {
+    "type": "index",
+    "name": "idx_output_provider_calls_unique_1",
+    "table": "output_provider_calls",
+    "sqlSha256": "104949619bc2b2484b77cbd5b4d6c4be5325102b6be1554dd6f4a9ac6bf59c0f"
+  },
+  {
+    "type": "index",
+    "name": "idx_pilot_cohorts_active_organization",
+    "table": "pilot_cohorts",
+    "sqlSha256": "2d4c303cbbfe6d66778bc5d279a38f2b4a8c2d41a3cef8382129f5e5ad319e28"
+  },
+  {
+    "type": "index",
+    "name": "idx_pilot_cohorts_organization_status",
+    "table": "pilot_cohorts",
+    "sqlSha256": "7aba6ea722eba33f06ede60f49da9c02332eedc7f7555ecba0287d58f04d165b"
+  },
+  {
+    "type": "index",
+    "name": "idx_pilot_cost_reservation_cohort_actor",
+    "table": "pilot_cost_reservation_scopes",
+    "sqlSha256": "985076eef778a983519d3e5ead95527eef82705a7d79c90cd4d4c47d5a2fc7aa"
+  },
+  {
+    "type": "index",
+    "name": "idx_pilot_participants_cohort_email",
+    "table": "pilot_participants",
+    "sqlSha256": "4931d9f1fa6a06683c5f2112c3ce65ba3fc64d8306fe1016292cf55b5bd82bb7"
+  },
+  {
+    "type": "index",
+    "name": "idx_pilot_participants_cohort_user",
+    "table": "pilot_participants",
+    "sqlSha256": "9420b0c5e3329078c50a9dab01a2f387622ebdf334fcd09466e5498b9be10b0a"
+  },
+  {
+    "type": "index",
+    "name": "idx_pilot_participants_organization_status",
+    "table": "pilot_participants",
+    "sqlSha256": "c593c3ce8da594c6d88dd4afc9701dafe70df4417ef97678302034135d011cbc"
+  },
+  {
+    "type": "index",
+    "name": "idx_private_content_owner_expiry",
+    "table": "private_content",
+    "sqlSha256": "5002b9b8ccf1495859418e91488ad0f787d921cf71a18065914b543bb2434309"
+  },
+  {
+    "type": "index",
+    "name": "idx_private_content_pending_expiry",
+    "table": "private_content",
+    "sqlSha256": "6cdf4f0ea97a6fd407fcc9090ab970e5df11a085c16edcca68a72bde141f34fc"
+  },
+  {
+    "type": "index",
+    "name": "idx_private_content_retention_organization_expiry",
+    "table": "private_content_retention_scopes",
+    "sqlSha256": "fadadc8506d8575d52862e69dd1da1deb2475b595e8a6446d3af24bcbae6379c"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_automation_outbox_idempotency",
+    "table": "project_automation_outbox",
+    "sqlSha256": "1b66c88806e1338dff62ab96adfa690bc472152d36264f1f38e8e226f1f0ad55"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_automation_outbox_pending",
+    "table": "project_automation_outbox",
+    "sqlSha256": "e5d5a76eeac217adbc3abdfbb873488194da96329c4d7a12d2bf64b1f14ef7aa"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_automation_policy_org",
+    "table": "project_automation_policies",
+    "sqlSha256": "a22161b3d3038b0fab513282009526dfc0b35aaab28a4268a2b6cf51f54175a3"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_automation_run_event_rule",
+    "table": "project_automation_runs",
+    "sqlSha256": "16899f67ea0f2f3a8f1aaa9814eeab91fd8ddc4228ae433e7953c0fc923b7031"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_automation_runs_scope",
+    "table": "project_automation_runs",
+    "sqlSha256": "1e7500ccbd13eeb853619a0a82f1d1cec135de712b94b550c9e1e67f37d726d9"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_budget_scope_organization",
+    "table": "project_budget_reservation_scopes",
+    "sqlSha256": "9d8642ab036fff3b27d71259769e90cda46aa2ec9809d8c0f776c53c227765c4"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_containment_parent",
+    "table": "project_containment",
+    "sqlSha256": "417cd5efd4a80f5d89c58d458b35fcde97af8de306e1a482f6dc9cd371ad5744"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_context_binding_document_package",
+    "table": "project_context_package_bindings",
+    "sqlSha256": "fee666fa13f0f4ae5a6d1b0b0a63f01257d58340e4fdc13cc2f28ab9f3bf7aa5"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_context_binding_package",
+    "table": "project_context_package_bindings",
+    "sqlSha256": "060002a9e08a45db9b34db3397b3eed22132ce51f26af210772e708d7b9caef1"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_context_member_target",
+    "table": "project_context_package_members",
+    "sqlSha256": "7a3e25cd96e8cb3836138c28b58cc4a07218c00bb78d9d5a89c4e32d12aab6e7"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_context_principal_scope",
+    "table": "project_context_sessions",
+    "sqlSha256": "458838e9d6bdb6d870595f621d16f051abb9dfcffea65c36e8091e91643552f5"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_event_scopes_owner",
+    "table": "project_event_scopes",
+    "sqlSha256": "4cab487a3913061d08065d5fe627063be2c3ddb5b20d4510031666fa3d00430b"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_event_scopes_sequence",
+    "table": "project_event_scopes",
+    "sqlSha256": "a753452731e7735cf4e87eaf7dd1e7606fa06390a73b3191e432376a9a9411c2"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_memberships_access_user",
+    "table": "project_memberships",
+    "sqlSha256": "6bbac494d8d4977ab4930659d7729d496e9f6c0ad0c57950a1e7a821026142e7"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_memberships_user_status",
+    "table": "project_memberships",
+    "sqlSha256": "435e51f2876e42abc172b0c3732241ac484a9df1fa8c8d7132134190496d064e"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_migration_organization_status",
+    "table": "project_migration_states",
+    "sqlSha256": "8f079d59c5dfcb098fbd6aa668216a3c4ed356a2bbcc285077b4a59b1aca820f"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_notifications_recipient_event",
+    "table": "project_notifications",
+    "sqlSha256": "5d708e7273c607a578c38c27e3847f884890ffccee3044885bcf03e0f54ad216"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_notifications_recipient_time",
+    "table": "project_notifications",
+    "sqlSha256": "09d6da6a966b6cb838e1374fc0f8b42e15c5b337f7f1cb370800564fd89e8fce"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_resource_scopes_owner_kind_actor",
+    "table": "project_resource_scopes",
+    "sqlSha256": "ef5a13775ccc034ec36b45c35bf12e59609a32a6862848516457e53a38e0b63d"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_resource_scopes_resource",
+    "table": "project_resource_scopes",
+    "sqlSha256": "34c2829b677836f26c62db6633672219601393741a5911ed6ba930f8d15eed11"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_review_task_event_assignee",
+    "table": "project_review_tasks",
+    "sqlSha256": "fa1e028f2cd9b5d76a153c4c5d6aeb8dae0fcb037760df6de22e1cc0f80ddd52"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_review_tasks_artifact",
+    "table": "project_review_tasks",
+    "sqlSha256": "a66bad8e184bf980f2d6776c54c038448d12652e001a75e4f9ffae6840eda088"
+  },
+  {
+    "type": "index",
+    "name": "idx_project_review_tasks_assigned",
+    "table": "project_review_tasks",
+    "sqlSha256": "2c8a8c68f8adc10e424acd8ad83c8b6f0db630e3fbc61a45e2147018597848a6"
+  },
+  {
+    "type": "index",
+    "name": "idx_replay_approvals_owner_expiry",
+    "table": "replay_approvals",
+    "sqlSha256": "333d889a57a22f5605b06899c1c1286f60b08ced47003f5a4309f1ed31ae4ca9"
+  },
+  {
+    "type": "index",
+    "name": "idx_replay_sessions_owner_created",
+    "table": "replay_sessions",
+    "sqlSha256": "dba3fe0dbaddc90cbeda3ce8440ffc8dadd1441e8c12e585207aec046717a4db"
+  },
+  {
+    "type": "index",
+    "name": "idx_retention_sweep_runs_started",
+    "table": "retention_sweep_runs",
+    "sqlSha256": "c064e9131e500ee51cdbffc7250a267b8f6e843afb7b9eb9b7114db866bc97ff"
+  },
+  {
+    "type": "index",
+    "name": "idx_route_performance_recorded_at",
+    "table": "route_performance_samples",
+    "sqlSha256": "7fd3287f6b213c30aaf9b7ef81567cf4c34682b6b7bad145c00bfa25cf5bea7a"
+  },
+  {
+    "type": "index",
+    "name": "idx_route_performance_surface_time",
+    "table": "route_performance_samples",
+    "sqlSha256": "eca0e78c1e32f1594204983ac972aec142ce1c293669a6c7798ba56a263cba71"
+  },
+  {
+    "type": "index",
+    "name": "idx_share_scopes_owner_resource",
+    "table": "share_scopes",
+    "sqlSha256": "da6d4e21253df6ee3828b7e78f30d08714f72df8ee0eec2d6eb8036e6757bb02"
+  },
+  {
+    "type": "index",
+    "name": "idx_shares_owner",
+    "table": "shares",
+    "sqlSha256": "35ec76f0d60ff54c36439f54423781442455c07511aabd5e755e0189b7b9a224"
+  },
+  {
+    "type": "index",
+    "name": "idx_shares_token_hash",
+    "table": "shares",
+    "sqlSha256": "c3f710f6316d8953bd21741a7fffac5b01e15126fe5d1716f7afc27bc7f84d63"
+  },
+  {
+    "type": "index",
+    "name": "idx_still_decision_cache_expiry",
+    "table": "still_decision_cache",
+    "sqlSha256": "ff35f54fc2c1286d4399e6cdbd39ed3e8f5e8d10b208a6af27dbfcebb9770abb"
+  },
+  {
+    "type": "index",
+    "name": "idx_still_decision_cache_owner",
+    "table": "still_decision_cache",
+    "sqlSha256": "51567568060fc97b996612ea30d94249ff64485263be7c9639d65f0f6c74be4c"
+  },
+  {
+    "type": "index",
+    "name": "idx_still_history_cache_expiry",
+    "table": "still_history_cache",
+    "sqlSha256": "6be3ba180b9e5554a5826e4bd8f2e38edbe0049b4cd24aec0d193193a702fadd"
+  },
+  {
+    "type": "index",
+    "name": "idx_still_history_cache_owner",
+    "table": "still_history_cache",
+    "sqlSha256": "a178c8182e9ce0771c36552e60252b243e0a763416c40d4110061158580ac3a3"
+  },
+  {
+    "type": "index",
+    "name": "idx_still_panel_commands",
+    "table": "still_panel_commands",
+    "sqlSha256": "019cf92a74a7b8a4d91c39e8e0022bbc1903d888428de65b70fe5026d631d492"
+  },
+  {
+    "type": "index",
+    "name": "idx_still_panel_expiry",
+    "table": "still_panel_sessions",
+    "sqlSha256": "5e81dac5fc1497fc514df56aade7b9dfa5206c8523472c03911b77459b4a6f4f"
+  },
+  {
+    "type": "index",
+    "name": "idx_still_panel_owner",
+    "table": "still_panel_sessions",
+    "sqlSha256": "302b47236c195e73375bc89cbb5cdfb971da163adb055edfd2ac1bf1bdc40a1b"
+  },
+  {
+    "type": "index",
+    "name": "idx_users_email",
+    "table": "users",
+    "sqlSha256": "05edc43db237e83e7c6cd1a31caa31eec4db7558bce08c6907d3a429973ba845"
+  },
+  {
+    "type": "index",
+    "name": "idx_users_role",
+    "table": "users",
+    "sqlSha256": "8a20af10d8916b8acf808d01a4dee590dd7fd285173aef245546721f89a4c04b"
+  },
+  {
+    "type": "index",
+    "name": "idx_video_reconciliations_job_attempt",
+    "table": "managed_video_reconciliations",
+    "sqlSha256": "5572c625abf7053584ce8b47e561587b0932c286703d6b0e2a81930890312043"
+  },
+  {
+    "type": "table",
+    "name": "managed_video_reconciliations",
+    "table": "managed_video_reconciliations",
+    "sqlSha256": "4b18e52ad65d0063d8682893b4a696d038957405c2274739efc9eaad8135847d"
+  },
+  {
+    "type": "index",
+    "name": "managed_video_reconciliations_cost_reservation_id_unique",
+    "table": "managed_video_reconciliations",
+    "sqlSha256": "a5f130fa6108eb98351f564e5ba490e2715dd271860fcc1af91c156306bd9833"
+  },
+  {
+    "type": "trigger",
+    "name": "managed_video_reconciliations_no_delete",
+    "table": "managed_video_reconciliations",
+    "sqlSha256": "82bbdcbdeed3942f3637d1bce6865235f7c722c378a92036ea867bed1207d41d"
+  },
+  {
+    "type": "trigger",
+    "name": "managed_video_reconciliations_no_replace",
+    "table": "managed_video_reconciliations",
+    "sqlSha256": "df6dfc25f0603eeeee6831e6fe61e3c912937ec9a1621773e4dc724978f561e1"
+  },
+  {
+    "type": "trigger",
+    "name": "managed_video_reconciliations_no_update",
+    "table": "managed_video_reconciliations",
+    "sqlSha256": "271932ff0044877647af2030337377c39d8ff12acfeecceba8d96c4a23a9dff3"
+  },
+  {
+    "type": "index",
+    "name": "managed_video_reconciliations_token_reservation_id_unique",
+    "table": "managed_video_reconciliations",
+    "sqlSha256": "e45d8d127b122f8f927c666ad4e088d61a57c6dfa45cd748dcad7ae734aa91a5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_authored_image_body_delete",
+    "table": "private_content",
+    "sqlSha256": "87c8a4622fd9316b9a87322e8a8c0633d90a615e504f3ee3d00d58392fc3da4f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_authored_image_body_insert",
+    "table": "private_content",
+    "sqlSha256": "157e82ae6a701e0f69c7423f3bde73054d86c7d2986fb9bb801d3130707b12a7"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_authored_image_body_retire",
+    "table": "private_content",
+    "sqlSha256": "c5f45ef6a9f354649fe45fd93862960bd671ca685c91d5807dd216e66c2f28cb"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_authored_image_body_update",
+    "table": "private_content",
+    "sqlSha256": "c5d6d3ac82ebe0885e845d42d10e9789f6b869a6b484675f7ae4db6e956d3d93"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_authored_image_event_delete",
+    "table": "event_private_payloads",
+    "sqlSha256": "079e48b1ab19e65ed2e86ce4f5aae7afe0c4379738be7eaffdbb86a8ebb02297"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_authored_image_event_retire",
+    "table": "event_private_payloads",
+    "sqlSha256": "cc63bd35f0bb52f3f2b202a4092e069b118c157ea1450b8d19fb467139533866"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_authored_image_receipt_delete",
+    "table": "memory_authored_image_receipts",
+    "sqlSha256": "6294705f251c593ce215985d38d00c2baa5b213e3cfd5eeb7dc4b812bd42bea7"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_authored_image_receipt_insert",
+    "table": "memory_authored_image_receipts",
+    "sqlSha256": "8d401df2abf8f8c26b0eb6789324144b6b77d696739934e3486b0c66a143e445"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_authored_image_receipt_update",
+    "table": "memory_authored_image_receipts",
+    "sqlSha256": "85388ae9002a86ad3c1332f9b283fe2aa1e4b072c81cf1d4714e494cbca09d18"
+  },
+  {
+    "type": "table",
+    "name": "memory_authored_image_receipts",
+    "table": "memory_authored_image_receipts",
+    "sqlSha256": "30e6e38f6770cb2ba4dc3a307ee59521e0f0f3a45ef5e1b1670028c73d583f23"
+  },
+  {
+    "type": "index",
+    "name": "memory_authored_image_receipts_event_id_unique",
+    "table": "memory_authored_image_receipts",
+    "sqlSha256": "6800dead10f4c9f90e424967e4c3f6019431fbd5610ad24155f0f5d51ea91da3"
+  },
+  {
+    "type": "index",
+    "name": "memory_authored_image_receipts_media_key_unique",
+    "table": "memory_authored_image_receipts",
+    "sqlSha256": "e74ec75165892830ec1f570d7ce9ec2c673d7727da0f369666f61467ff2bed60"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_consumer_content",
+    "table": "memory_derivation_consumer_contents",
+    "sqlSha256": "d41b156c7c4ebc627a61f267c50892996102e0f92e4bb2729d559503944b3673"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_consumer_retired",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "947dce790a0f8bb2edfd027f5894b654dfbdcea56a39a576838f9756dc6df000"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_content_changed",
+    "table": "private_content",
+    "sqlSha256": "e3e558373ca1afc9127824f9af74ad069b597ff77efad251be3190d00ae2cf24"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_content_expiry",
+    "table": "memory_derivation_asset_edges",
+    "sqlSha256": "df96ff9b423cec019749ce2309c86c049d54da1585be6db49f2629891bb6567a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_content_reinsert",
+    "table": "private_content",
+    "sqlSha256": "6245d43acc703feac87ec5d01f4b611817cd980e93dee7a73ac9af48800c5bdf"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_content_removed",
+    "table": "private_content",
+    "sqlSha256": "dc10c76b3d51e3f1f005eb0eda39df0164c57c6958ecbd5af6857102e83a7145"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_content_restore",
+    "table": "private_content",
+    "sqlSha256": "ee41f25eba505738c843e40b672855db4e753216764cf773d49b47f5dc0e413f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_delete",
+    "table": "memory_derivation_asset_edges",
+    "sqlSha256": "e46e82f6d89caab020476f9a8904d404af2fd6e4ee92cbd0191f288ab05728be"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_asset_edges",
+    "table": "memory_derivation_asset_edges",
+    "sqlSha256": "f064216736e097bb193af08c4d692cbe427e04928fec581b99270b924c5d42be"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_event_changed",
+    "table": "events",
+    "sqlSha256": "c1b86eb45bc6b0dd2d269cfaa633e9842e79331253b62ddfa25b0e5a0d14a41f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_event_immutable",
+    "table": "events",
+    "sqlSha256": "8fcb27dea1ec5594bcbcab0947a92766816f5b77e09f54f08e6559d05d4a7171"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_event_inheritance",
+    "table": "event_private_payloads",
+    "sqlSha256": "6105d91c9b17aa3446b00d14adecaf2c539cbe6e8c2749c1028ffa2a7beb932e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_event_reinsert",
+    "table": "events",
+    "sqlSha256": "a5ffbdb05253ba83c90ac52a19abfa8b7236f907e1a87079f02d75cec2570125"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_event_removed",
+    "table": "events",
+    "sqlSha256": "bbd97afb6301729f6bfe3acf8df8ae570796e7594e477ac9c467d7625be049eb"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_insert",
+    "table": "memory_derivation_asset_edges",
+    "sqlSha256": "fccfab06e77a265f316c0422159b09340052c5e851f7c977aa822fd575945fef"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_payload_changed",
+    "table": "event_private_payloads",
+    "sqlSha256": "b47c702bd70a7114362ecc011c74c2763978e5017f436a5616bbf7536414735d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_payload_reinsert",
+    "table": "event_private_payloads",
+    "sqlSha256": "fb49cb0e5354e399ee544483cccc403f3980879a8284e91b197410245219ccb1"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_payload_removed",
+    "table": "event_private_payloads",
+    "sqlSha256": "1650060eab16cc7434d65f11623bce57d918c1d357f457e248cfa3ab5328ac29"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_payload_restore",
+    "table": "event_private_payloads",
+    "sqlSha256": "228d2b35733cc8785dd1589b916b7da68ef0e05752e4663802bfdf1891c7a5ee"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_retired",
+    "table": "memory_derivation_asset_edges",
+    "sqlSha256": "2b5aa3a4fe88309834c46f49860f46baa225de19a0fc342f478b093aa546aed1"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_asset_update",
+    "table": "memory_derivation_asset_edges",
+    "sqlSha256": "3ab8772cedad15d40805a51184b365b354b28ae7feee921815e55a3796463ea0"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_completion_cursor_delete",
+    "table": "memory_derivation_completion_cursors",
+    "sqlSha256": "c7cf5d46f1e528f8ff0d5bdd0974106f64327f8d65825bcd8d9ea2dcd7e7f7bc"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_completion_cursor_insert",
+    "table": "memory_derivation_completion_cursors",
+    "sqlSha256": "c725b4948a76bbe69fab0103d88736865cc11e5fc7ec5657b939772867d1caa5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_completion_cursor_update",
+    "table": "memory_derivation_completion_cursors",
+    "sqlSha256": "f98abe413caddf4acdd8cd6e9332eeb601b8f698bf987e597f13af7775f38005"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_completion_cursors",
+    "table": "memory_derivation_completion_cursors",
+    "sqlSha256": "2186cc681c145d49634a858e1ebf72761f41befbf37084e34ba79795bc0deef8"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_completion_delete",
+    "table": "memory_derivation_completions",
+    "sqlSha256": "23dd5ca7cd18c7fa53ab0c5eae861ac76648ccda0690d59593044dc68448969d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_completion_insert",
+    "table": "memory_derivation_completions",
+    "sqlSha256": "487fc5140e080e1803b261a9756bafc059fcfcb8f0bb8d3582385a54b79b7a02"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_completion_update",
+    "table": "memory_derivation_completions",
+    "sqlSha256": "5f404c59df5eb363c6ad95611148ce05515e689fe7bed7f1cdad2240edb09fea"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_completions",
+    "table": "memory_derivation_completions",
+    "sqlSha256": "3fa979696d8feb85013dc439cefbebca063f6186aa2d931e57ca3e6fbeceaa43"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_content_delete",
+    "table": "memory_derivation_consumer_contents",
+    "sqlSha256": "2ed604e9ba29af5029ad0f5a0fa3c7b76bff81089d50c92b0d35e4d9500035c5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_content_expiry",
+    "table": "memory_derivation_consumer_contents",
+    "sqlSha256": "d40e2e795d3ab0c8af187a0828d70e5d552cecf12582823d3c7caa497f40021e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_content_insert",
+    "table": "memory_derivation_consumer_contents",
+    "sqlSha256": "e726fced8e11eaf55a8be5edc70d6e5df7e59d43dbf6290fdd9dd2c923ccc64c"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_content_update",
+    "table": "memory_derivation_consumer_contents",
+    "sqlSha256": "d2c44e677d269232913cb4b7c4f44c1d1df09cb3e63f338324d51a8c7c544012"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_consumer_contents",
+    "table": "memory_derivation_consumer_contents",
+    "sqlSha256": "52777470602f690140e461954e5b9a139a91d7f0ef51ceb32d432af346fe816e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_context_delete",
+    "table": "memory_derivation_contexts",
+    "sqlSha256": "b3e549a29dc97fab5eec77ed21f8484e276cb6aae7743a5dc09db10c6d2a7d31"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_context_update",
+    "table": "memory_derivation_contexts",
+    "sqlSha256": "936adc826eb0ba5836e3f05c4e1244eacbdac5b9ee578cec55d109fbb847676e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_delete",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "860f640a190a292f413e24acc71bd4defbe570518508f62e5ed8272b1a3543d2"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_insert",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "2cb6ed8afd84cd014d7398913f95c29a9189b1019174748beced804e8137154c"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_parent_delete",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "f3c4a37a8f48b0838a83427c55898995f2a04aa8f945987e4ee63970c3a9c970"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_parent_update",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "7002bfa43a8a5679d954f43103db9e3d49643e81ada5787a395a8c9bdceda42a"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_consumer_parents",
+    "table": "memory_derivation_consumer_parents",
+    "sqlSha256": "007d6edbe3800bc10f6b1e52a42559f1c4cecbda1140c4b4cdb79e466a845db3"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_parents_delete",
+    "table": "memory_derivation_consumer_parents",
+    "sqlSha256": "445f898aed1b193a7f801db53d55e4029ea7ce56007eb34164b00b5529b07674"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_parents_insert",
+    "table": "memory_derivation_consumer_parents",
+    "sqlSha256": "e65a518e90547f5c9cfffa875adb91d7f333bc37f287afe9717d96326e7c30b2"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_parents_retired",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "943d9fa9d47b7c48227097b68822ebe15f3b89ec9ad2ae61f0005abbbda10459"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_parents_seed",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "2e9fffedd870abd4dd81f8db63f365f432063ae111a6ed7f70cf9a3409b0be42"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_parents_update",
+    "table": "memory_derivation_consumer_parents",
+    "sqlSha256": "db2fbf680b48493d4909d6b9fccc4ae569c8b5e51534d73bbb5222c044d3a76d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_result_delete",
+    "table": "memory_derivation_results",
+    "sqlSha256": "ebce51d4f7a893090042b4b2b421ea283e676fab8ef3b897785b6fa243f8977f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_result_update",
+    "table": "memory_derivation_results",
+    "sqlSha256": "91749fe86fc0c5076ba8d26ee4f1482077645dab5b0842f09450e3cb4938fbd0"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_retired",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "cca7d5538f69863edbd8d7c302d5578eeddcab32163c518efc9eaca1cd40956f"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_consumer_sources",
+    "table": "memory_derivation_consumer_sources",
+    "sqlSha256": "5cb6252c367171fa6d02d74eea9884bd095f9db72c1a9a94bf4062c201815ca2"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_sources_delete",
+    "table": "memory_derivation_consumer_sources",
+    "sqlSha256": "7cefd56b3e8ae32f2cd8f1821df1da330a38e9158487de7c9ce8024353c61419"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_sources_insert",
+    "table": "memory_derivation_consumer_sources",
+    "sqlSha256": "3b576dbd4e6e3b9fb876ba5a77089046548bafac07bc67669880a3ff9c1c1023"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_sources_private_delete",
+    "table": "private_content",
+    "sqlSha256": "d7ed66bda6fb41fcb65fec1032b5e8acfe7a3489946a938deda3f96d90250d11"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_sources_private_update",
+    "table": "private_content",
+    "sqlSha256": "039ff43be1d78d8af09ea80182693783d4a8feba152e4e055ad8bc6274b0185d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_sources_seed",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "e1c7aa5cfe106474055a5037428b8f7c82fe78e9a80fda0e3350ea525265c4ca"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_sources_turn_delete",
+    "table": "assistant_turns",
+    "sqlSha256": "9dc834f4e6162bd85b2cec199293b0962e7f74513b767620323bb32eb95a5342"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_sources_turn_update",
+    "table": "assistant_turns",
+    "sqlSha256": "19304d4f0d0aca4651746aa616eee1a40b40a74d6be3db5bd045d5d42bf7cc2c"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_sources_update",
+    "table": "memory_derivation_consumer_sources",
+    "sqlSha256": "4ddd18908436ebab36d143738e368175aa5d20bd4771589d15d66d8abd140242"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_consumer_update",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "6e46ad0c279770645999e4d15d16504b916a9744f60c2998f0f8b924be224700"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_consumers",
+    "table": "memory_derivation_consumers",
+    "sqlSha256": "36c93c530918e16059a2b44f1b3acd83b35124f9739352fb9874183f6bd93366"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_contexts",
+    "table": "memory_derivation_contexts",
+    "sqlSha256": "6a953f5720734ee9daa45bd855f34a8abcc8a0d4f35ff930c54350e695234e42"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cost_counter_identity",
+    "table": "cost_budget_counters",
+    "sqlSha256": "e4a3929cd662ea975f69fc377f7ff22157f2d3c42bc34358d1e9fc57619be443"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cost_counter_no_delete",
+    "table": "cost_budget_counters",
+    "sqlSha256": "ccfd67d3d9fcd631dcfbb89ebe5ffbd9c07b6566a36085d20b1628ab42636683"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cost_counter_no_replace",
+    "table": "cost_budget_counters",
+    "sqlSha256": "88fcd532ab1348af5bf69406af8391cc1f591d07aa0b1a890970c2484e75ed44"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cost_hold_incoming_identity",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "c674528f29958aa91d4812183a0429f15bf7e3162309acff18a6ef4598262dc3"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cost_hold_insert",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "2509ad4c7e134434b9cb1a1d24403383b64838e5397b038cbb78c73df4d23ced"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cost_hold_no_delete",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "a04eacfd1bde049f226f88824d3e0482ddc991f7e95bb9e83048e09d6d2cb844"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cost_hold_update",
+    "table": "cost_budget_reservations",
+    "sqlSha256": "f6cc7c236bcec8438aea7f5a5c4d21824456ccc9ddcf3c5aeb229072be463c14"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cursor_delete",
+    "table": "memory_derivation_cursors",
+    "sqlSha256": "7106b14b263a43f6d36f8e61be77417d298e2e1cdcee6b4dd42b53e347cd8412"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cursor_insert",
+    "table": "memory_derivation_cursors",
+    "sqlSha256": "feb7837eaf923e2096e7ad62689790f5a77b21cb617b85fa7dd5928b55fa71f6"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_cursor_update",
+    "table": "memory_derivation_cursors",
+    "sqlSha256": "c2a0b20fd6c28194a90eeeba90369c61d4f83b0e2aea1f2e929470df3adf973e"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_cursors",
+    "table": "memory_derivation_cursors",
+    "sqlSha256": "3b0a30716e4e3a9f7e98b83280acf67d859da345a6519f198fe5c4e8db311b37"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_dependency_deleted",
+    "table": "memory_derivation_job_sources",
+    "sqlSha256": "a760957262163944138fc74a31e1ac4051e6f45f37256b6f394918360da1ed2b"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_finance",
+    "table": "memory_derivation_finance",
+    "sqlSha256": "1d5a6bdd7cc322be26c5f78c8208e5109edc1ef440a3b33014986c5ced12d182"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_finance_admit",
+    "table": "memory_derivation_finance",
+    "sqlSha256": "ddbdda0cb31336928163991977e9619882ca968514df19424f85116b2489025b"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_finance_dispatch",
+    "table": "memory_derivation_finance",
+    "sqlSha256": "3058a970927aee1f5f44eceb93ecb8f19173f2f16ea869daabed5c07bc335a2e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_finance_immutable",
+    "table": "memory_derivation_finance",
+    "sqlSha256": "bb316d686c01d0420eea8812a119213399ff1bc6bd48ccc12a69f165e5078221"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_finance_no_delete",
+    "table": "memory_derivation_finance",
+    "sqlSha256": "be3c7475c00087e54226efc2023bbb72326cbca8d84e520d0dbbdc66850fdb35"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_finance_no_replace",
+    "table": "memory_derivation_finance",
+    "sqlSha256": "ea094c4cafe76045a20651992a645cfe516b8ad784d8956f8ee11447044de5e3"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_grant_cap_floor",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "338577f203807ac145191fb56d3c32c9c0487b876900bf345d73534e4690f56c"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_grant_cap_retire",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "ada591816e7a2f97d6bf7e123c882d5cc8555219cb115936c7fb880dbacb8c41"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_grant_immutable",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "a19765136decf0414d3692c3bb3fbdbbfb6e21620af15eb24bb9b91a24b81020"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_grant_no_replace",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "2ffddb5f7cc0fba1566538aa960c94504d4a935800178c3302c04546cb8907b7"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_grant_parent_changed",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "bde16ea78a3fea4e19772c75a999a37dde4ee5aa827f67a2ae820cc09093da17"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_grant_qualification_withdrawn",
+    "table": "memory_derivation_qualifications",
+    "sqlSha256": "f0a13c2bb28b214f5372aa52f99bc13cfe1fe52696a009e649844f3827a5e327"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_grants",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "333862dff412db1c1b4decf095a15305ef660c36ac7516221445a0a3a8158174"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_history_source_delete",
+    "table": "memory_live_sources",
+    "sqlSha256": "ac97ac4a2ac627bb7599fa59d8b835c68c9b322216db0a858a03bc830dba1a4c"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_history_source_replace",
+    "table": "memory_live_sources",
+    "sqlSha256": "5fc8b01af3692d5a13cbbeae38d5e8d0c8dd5c3066b606d5edfa8f93c1a88bd0"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_history_source_update",
+    "table": "memory_live_sources",
+    "sqlSha256": "09ee4825d8230ec14d80ca6734ab24132aabf1f384d17a705a0166716050007f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_index_delete",
+    "table": "memory_derivation_index_intents",
+    "sqlSha256": "118a2dbcb7cf24ded147a26f7d76b5f2ecabb9c1aa38bc9f6c9ae84881c0507a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_index_erased",
+    "table": "memory_derivation_results",
+    "sqlSha256": "4e6b9eb46ce4a5a66b0624caf95ad0fe95e9d7c1dfed92943f328c53dda2a379"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_index_insert",
+    "table": "memory_derivation_index_intents",
+    "sqlSha256": "8836709600407578c68dbeabf27e20c2cfe50f974e34b9e1e26dd86eff19f40b"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_index_intents",
+    "table": "memory_derivation_index_intents",
+    "sqlSha256": "7513b9f8dc580b836480fc893b1d9822dcf9d0e0809972b4aa56953aa441c2f5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_index_published",
+    "table": "memory_derivation_results",
+    "sqlSha256": "73f0ef8b7b62ee1a3c93d8321000c53eac6581aff8ead861ec2964172f25f655"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_index_retired",
+    "table": "memory_derivation_results",
+    "sqlSha256": "93f98f8df3e4eeb10a8a0fff2da996e10f68c5028383b01c51e845a5c386fd8d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_index_update",
+    "table": "memory_derivation_index_intents",
+    "sqlSha256": "a1d835e6de7a582c4b2163d7d64a46588932629ab018cec0524da9f75d74689f"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_job_finance",
+    "table": "memory_derivation_job_finance",
+    "sqlSha256": "45ae751a0dd6a640236ce45115ad3270a2d71568761e949182815260a3876241"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_job_finance_fence",
+    "table": "memory_derivation_job_finance",
+    "sqlSha256": "000290ba642a5b717bc4b1fb01f4560815f101ca6417ba71e89075cd89f8b495"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_job_finance_no_replace",
+    "table": "memory_derivation_job_finance",
+    "sqlSha256": "34795eb015ca72fdad4c0abc683a2858722c403c43170bf218027beb9feeab86"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_job_finance_no_update",
+    "table": "memory_derivation_job_finance",
+    "sqlSha256": "f8c0511c1de9f232f56b1ebfaf2f2a4fd1c2010ad5623fff223359bf971457cf"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_job_finance_proof",
+    "table": "memory_derivation_job_finance",
+    "sqlSha256": "48c272b60fae2771d6388729f06ed22b0c990d4c517b79b48bb517fb706af240"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_job_insert",
+    "table": "memory_derivation_jobs",
+    "sqlSha256": "9e9a085ff0ae421077d0b118750572c7576edd33269e83dcd62919cf182286b9"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_job_sources",
+    "table": "memory_derivation_job_sources",
+    "sqlSha256": "24a38cba03fc4e69b28b40cd05cbd2defbe5394f5ccbc46ba4207402e1089dc8"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_job_update",
+    "table": "memory_derivation_jobs",
+    "sqlSha256": "2ec767e819096cdc46e7db7cc4d6ebaec085a8593a1598db55b4f5f112d7d36a"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_jobs",
+    "table": "memory_derivation_jobs",
+    "sqlSha256": "6a268d484b04a5f5f506de8f5812d87961d5f4ec77acb2961fa18f546179acb8"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_jobs_revoked",
+    "table": "memory_derivation_grants",
+    "sqlSha256": "4411033f8cef0cb4d5ea5545d4fe31d680d8807550766d14e06dc89d54532835"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_lifecycle_event_insert",
+    "table": "events",
+    "sqlSha256": "b6e1b2d3cc4748b258cc2677c99a8dd42d8d4788c041d3c522c26ba20799ce7c"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_lifecycle_resource_delete",
+    "table": "project_resource_scopes",
+    "sqlSha256": "3e3f68e716219f3fe1ce28237ddba286c13198e5c2f7cae6a5c63b35330ef864"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_lifecycle_resource_insert",
+    "table": "project_resource_scopes",
+    "sqlSha256": "d8637ae70a0931d7e4c6d669ec2ac1843a78bca39c6b6ad563d96bea07f23cd0"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_lifecycle_resource_update",
+    "table": "project_resource_scopes",
+    "sqlSha256": "323b98703442ee69ce25785bd875325e76bea2446e1d68baa09060c60b2031f4"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_month_cap_no_delete",
+    "table": "memory_derivation_month_caps",
+    "sqlSha256": "e3d5aa99d9c8ea6fbbf62e7491fb02b7a9efe013f372cf741c61b8c86eef636b"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_month_cap_no_increase",
+    "table": "memory_derivation_month_caps",
+    "sqlSha256": "a538c761624df4bee4f280c3ad73dd7d36e34691179d4a3ddf5e736329bd4b49"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_month_cap_no_replace",
+    "table": "memory_derivation_month_caps",
+    "sqlSha256": "aea747d7c7582de4c43c538465625aafb05393da37de3373e010fc617652ce92"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_month_caps",
+    "table": "memory_derivation_month_caps",
+    "sqlSha256": "3f174e511a565c02dde4f55495bb8221e60df54bb5ff3ca239372225315c6e1e"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_no_dispatch",
+    "table": "memory_derivation_no_dispatch",
+    "sqlSha256": "e0b516c4178241d29240ab83e41d74475dcacae2782b350f69a08e1707c09d89"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_no_dispatch_no_delete",
+    "table": "memory_derivation_no_dispatch",
+    "sqlSha256": "6069641e7b424831fa02589ac06bde19856469dc07148785acb2c03e793608b3"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_no_dispatch_no_replace",
+    "table": "memory_derivation_no_dispatch",
+    "sqlSha256": "abaa3fdfdaeaebbd3f9e7052ed08d474a736f72806038acbb1495cae0464ef61"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_no_dispatch_no_update",
+    "table": "memory_derivation_no_dispatch",
+    "sqlSha256": "d12f276234c8140365b38da4253ee2c8f5935757f7079bc5d30c351e3007812f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_no_dispatch_proof",
+    "table": "memory_derivation_no_dispatch",
+    "sqlSha256": "e9bd77dbecabf8c8771bf80915307846c60af83a5109d2873f6ea0bf6eceb9bb"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_compensated",
+    "table": "events",
+    "sqlSha256": "4e47f33e4b1cb66719fcea1e22f583c0464ab9c0c08a87ea9a7094ab36e52964"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_custody_delete",
+    "table": "project_event_scopes",
+    "sqlSha256": "89fb7d21811951d527fb78ac1a0b62c49f1d886381643693ee70c74ea6dfcf2d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_custody_insert",
+    "table": "project_event_scopes",
+    "sqlSha256": "73b5bcad5116a211a717296e5bfce6fda22c98db912db4312c728e8699183318"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_custody_update",
+    "table": "project_event_scopes",
+    "sqlSha256": "4479f97e0c39ece55d69e17dd4637b1cbbc491a0fd8bca2f0d61cf5ac112407a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_delete_results",
+    "table": "memory_derivation_observation_controls",
+    "sqlSha256": "bb5f9ae281d982d65504955e298db54786b2192482904a880e42c5a820b17837"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_insert",
+    "table": "memory_derivation_observation_controls",
+    "sqlSha256": "d2b52d6248c507f832d969d4c4ccb2962d64812c725235a8e8a03efe172e0a3a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_insert_results",
+    "table": "memory_derivation_observation_controls",
+    "sqlSha256": "194786b34f8fdf70bf71a629f20c7b8af3f1ec31925168e279194a3302ac46be"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_parent_update",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "89cfc1796b7218f5221fcbb807b214cfcfe03d57fdf4d2081b76acfefc9552b0"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_private_delete",
+    "table": "event_private_payloads",
+    "sqlSha256": "822c56716ea0c94c8df2c87352e3bd9ae27920528e455a91f2441d3987abe887"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_private_update",
+    "table": "event_private_payloads",
+    "sqlSha256": "3fcbb9a7978952f313a50f9498e98732d73c69afddb1a04a351294af24f62429"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_remembered_delete",
+    "table": "memory_live_sources",
+    "sqlSha256": "d30d6e870008ab6462b9dd60d7b7bd896355f052d263edfc7b0b315f96d677fc"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_remembered_update",
+    "table": "memory_live_sources",
+    "sqlSha256": "22c92ab66de690653a8c76e6e374a1d448e94c8742a94e78633182bcb295bfe2"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_source_update",
+    "table": "events",
+    "sqlSha256": "e76d9c72043b1678beba182009e004d63c6b267d5daeb7631dc26e27d1209c60"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_update",
+    "table": "memory_derivation_observation_controls",
+    "sqlSha256": "0c7abb5562a67342e52658077a49f084a6065abd592e28dfd439e87ec1597437"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_observation_control_update_results",
+    "table": "memory_derivation_observation_controls",
+    "sqlSha256": "66b9609e5dda3d8412b6ca07c36c70a490c3d341402e02f8eef6fec9c757bb0e"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_observation_controls",
+    "table": "memory_derivation_observation_controls",
+    "sqlSha256": "9a092b42e0ac028b7fdfe83f496bd21b44abfbb43991504eded45a85dd6f5a9e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_pilot_sidecar_insert",
+    "table": "pilot_cost_reservation_scopes",
+    "sqlSha256": "d721eca9bb390a4078f138e58a6eb969221e928b9cdfb2449d88052e0d0d2be7"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_pilot_sidecar_no_delete",
+    "table": "pilot_cost_reservation_scopes",
+    "sqlSha256": "9f1108c5e6656843713c5dc2bd3818165f555e3bf993033bc73ff62d6bf1570d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_pilot_sidecar_no_update",
+    "table": "pilot_cost_reservation_scopes",
+    "sqlSha256": "d474294719272e2bfafd7462da9197230a46eeb8cc6ed325f8151e0d27c8467e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_producer_cursor_delete",
+    "table": "memory_derivation_producer_cursors",
+    "sqlSha256": "c0311f1342cbc7671dcfbcc7573886200b02f1e23468711b3eecd067d224d528"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_producer_cursor_insert",
+    "table": "memory_derivation_producer_cursors",
+    "sqlSha256": "df79806ab6d8f639ec6b0ec5407f21acaa1901261728994bab7e7ffd08b4b727"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_producer_cursor_update",
+    "table": "memory_derivation_producer_cursors",
+    "sqlSha256": "e1d0c33027de06621b5f90b9c83fc88924ceccdc7d29e640bf82559e33ed4a4d"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_producer_cursors",
+    "table": "memory_derivation_producer_cursors",
+    "sqlSha256": "86d6c455f652a59979ae8b46a0d0e28d0f40021fae4145098e5ce8e743f5289a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_producer_job_delete",
+    "table": "memory_derivation_producer_jobs",
+    "sqlSha256": "659f4e50e5ad6df89fbd44ef384076076ce742220bc5802b7d86ba5382a48eec"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_producer_job_insert",
+    "table": "memory_derivation_producer_jobs",
+    "sqlSha256": "18c49f9416b2ef7ab335c0152ffc7cc7fd48f81dc1fb334434ae973af14cf9ea"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_producer_job_update",
+    "table": "memory_derivation_producer_jobs",
+    "sqlSha256": "dbf69335359c8a08b11a8428b7543b61b2af9ed35ce9aaaac8cdb0ba7c905a05"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_producer_jobs",
+    "table": "memory_derivation_producer_jobs",
+    "sqlSha256": "506160b552c3af2e03bf4a903e20e6fcbb4afaacc8f31be21db4cdafcec9342a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_producer_split",
+    "table": "memory_derivation_split_commands",
+    "sqlSha256": "1fca14ee60319fe1a104fc93d0b8d6802c58f28834b1e5715019e6201c7831d6"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_profile_context_boundary_delete",
+    "table": "memory_recall_boundaries",
+    "sqlSha256": "898fb9ae67929dfc7136c556510b621987c4890514b75cf525612ba16408c842"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_profile_context_boundary_update",
+    "table": "memory_recall_boundaries",
+    "sqlSha256": "ca6b9f3ddb0eeced5642ce0c3dce010fbb57ddf7df753c39cc489ba9e1e1bce4"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_profile_context_delete",
+    "table": "memory_derivation_profile_contexts",
+    "sqlSha256": "da7d76951a8e013fc8b512627644fbe9117467418fcf33c674258e621df772d6"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_profile_context_enrollment_update",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "f75e4df12ae31c332bfa398ab9cad1830a65bdd715f4111a327206db14253b7e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_profile_context_insert",
+    "table": "memory_derivation_profile_contexts",
+    "sqlSha256": "9cd3b7cfb69e580b2c5cf3fa1f909e594d5fc7ef2d446704cd168126d7515c2d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_profile_context_replaced",
+    "table": "memory_derivation_contexts",
+    "sqlSha256": "be951370ba40c47a3c570ef465fc223c57130729d227b7a442db15ac384f8ea5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_profile_context_result_delete",
+    "table": "memory_derivation_results",
+    "sqlSha256": "6a9390dfbb79aab0aa5b7f42f6a14859b3b9b2a52aae4b74a30345cdf4e63217"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_profile_context_result_update",
+    "table": "memory_derivation_results",
+    "sqlSha256": "c00db7a320659f687bcadb2c68ab0b0ea5f62f27c10fb86a0ddcb694b1637396"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_profile_context_update",
+    "table": "memory_derivation_profile_contexts",
+    "sqlSha256": "7846125c1d445f8c84858e323c09166e99d565f1e200821f5efd566a06f07e0b"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_profile_contexts",
+    "table": "memory_derivation_profile_contexts",
+    "sqlSha256": "a1b1ae7eedc6909c86af14ce5a38e6497ff50200efba1de271250443265d42d8"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_project_sidecar_insert",
+    "table": "project_budget_reservation_scopes",
+    "sqlSha256": "1b179340bce9ef59957658d7240d39a63ac9fcd1a32a27f34724c3e49d5719f3"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_project_sidecar_no_delete",
+    "table": "project_budget_reservation_scopes",
+    "sqlSha256": "e73d66204eb10fdb9685fdd3d99331de2580a4452c814294dd21a5cbd11500c1"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_project_sidecar_no_update",
+    "table": "project_budget_reservation_scopes",
+    "sqlSha256": "4e1ee00c893b1b8d061f0a4bffc5f03ac9c804a637d7533fac338441ad6067f3"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_qualification_immutable",
+    "table": "memory_derivation_qualifications",
+    "sqlSha256": "628f65cc8119f1a02d6f9c8316b80fb90a1f1be43eadc680146fec4af8edcc6f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_qualification_no_replace",
+    "table": "memory_derivation_qualifications",
+    "sqlSha256": "91e70d98ceea3088b0634b7e955b480b11410d6f72351f908564486ec920c149"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_qualifications",
+    "table": "memory_derivation_qualifications",
+    "sqlSha256": "1bcd32a39d06a028fa823b1cf1ac8f63abe71662e6eedea5c588d069efd8b36d"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_recovery_cursor",
+    "table": "memory_derivation_recovery_cursor",
+    "sqlSha256": "cf314502d243021d1a838a75cdafebc195de8624390db91b061d088dd57ded73"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_recovery_delete",
+    "table": "memory_derivation_recovery_cursor",
+    "sqlSha256": "80398e110217b9af1d68ee34909f92bc38f0870a4748c409aa449388fa8a3519"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_recovery_insert",
+    "table": "memory_derivation_recovery_cursor",
+    "sqlSha256": "b3b044be7436b704db09ca52dd15b9406dd6a2444c86bdb86ecda4c1780c8bb4"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_recovery_update",
+    "table": "memory_derivation_recovery_cursor",
+    "sqlSha256": "32bc63089cea519a1133a517a40d731633b230c3ac7ba4b0fa040adcd613bf4a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_relation_event_insert",
+    "table": "events",
+    "sqlSha256": "73e60d5bd2aae6d4cc4a6b9689334d856de1d38f0b90006685be786ac454a186"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_relation_resource_delete",
+    "table": "project_resource_scopes",
+    "sqlSha256": "135e59d3a34a33935eda73dafb86635e840aeec375b0ca1cc9a25cac6d235172"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_relation_resource_insert",
+    "table": "project_resource_scopes",
+    "sqlSha256": "d9bac24960cc10ad370657d8459c79c5be13ed37f85eaaa0993f5a4348188c9a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_relation_resource_update",
+    "table": "project_resource_scopes",
+    "sqlSha256": "d4bf6848c28a0c3ef2136d8abb2646112bfe65665431209e03289abc25a6738f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_assistant_specialist_tasks_delete",
+    "table": "assistant_specialist_tasks",
+    "sqlSha256": "b3321e9e300d19d4427355733a191cf5a1762a6b2781ebe8913c7b7fd200a302"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_assistant_specialist_tasks_insert",
+    "table": "assistant_specialist_tasks",
+    "sqlSha256": "61a297d8dd3aa3ec39b71510bcb6822ce7114b7138fcc80c5109f8dcaeae9f2d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_assistant_specialist_tasks_update",
+    "table": "assistant_specialist_tasks",
+    "sqlSha256": "62ad1a74b51c53684f8b0d09736396e54762cfadccd4baea08ea03f17cb00ecb"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_assistant_turns_delete",
+    "table": "assistant_turns",
+    "sqlSha256": "398a72705e7825e310c816b9e0286270c3acd35689d30414bc3f8a2e55d8e2dd"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_assistant_turns_insert",
+    "table": "assistant_turns",
+    "sqlSha256": "a9f3ec1fe6e13c3b12f0c43c753683927d82e466fc0a6d9ecca434582c6fb90e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_assistant_turns_update",
+    "table": "assistant_turns",
+    "sqlSha256": "d088ac68d5dbdf6d53f696ed983c163046597a1a1f0c979d32cc1b75ec28dd5b"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_consequential_executions_delete",
+    "table": "consequential_executions",
+    "sqlSha256": "937ca9290ca034447a7f96faf34b4e02e80d9402c976c324cf17d219026ae821"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_consequential_executions_insert",
+    "table": "consequential_executions",
+    "sqlSha256": "28f1e278110fbfdf2e83b492adeeb1370ceeb8866c84d06913c21c41f75d5b82"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_consequential_executions_update",
+    "table": "consequential_executions",
+    "sqlSha256": "d832f2e10f41674a439a78fe59c433d1c0bee6209bd1c8d6bb9986f65ddb1760"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_delete",
+    "table": "memory_derivation_results",
+    "sqlSha256": "6af66b894ca1fcdc6409d3b5aa7f645952af03a3992bc148f257cc808c3147a6"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_result_dependencies",
+    "table": "memory_derivation_result_dependencies",
+    "sqlSha256": "418043c724f8793dcb6db5fa2786a8c7bc191cb8d6373886057aa5d891a5f62e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_dependency_delete",
+    "table": "memory_derivation_result_dependencies",
+    "sqlSha256": "e60960aa926c6d77671fb4b5eed385b1f28ea452297bec1362aee9321e2c0f77"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_dependency_insert",
+    "table": "memory_derivation_result_dependencies",
+    "sqlSha256": "8ba140adf49147e1d77a951285696ede0bd7633067cdd2e4a5c30e74893afee7"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_dependency_update",
+    "table": "memory_derivation_result_dependencies",
+    "sqlSha256": "4a8d3cb4e5007fd1cd6090ca2ba64a889789b8ce1cda65f7b84ac77a0719156d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_event_private_payloads_delete",
+    "table": "event_private_payloads",
+    "sqlSha256": "7b8fc9264f038b3df3c663ad7bef52b8a0f985faca4cfdcb9cbad65630d2ca34"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_event_private_payloads_insert",
+    "table": "event_private_payloads",
+    "sqlSha256": "4c11da798b6236bc19e793aa6189830fb64502af6b1aad3f4faab11e08aed875"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_event_private_payloads_update",
+    "table": "event_private_payloads",
+    "sqlSha256": "34db7dc6cb8b894ac6139e1a4701efcd82a1eceb012d0099d3f0794be267af55"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_events_delete",
+    "table": "events",
+    "sqlSha256": "e646a28f72fbcfc879592f8ceb0f29e8838da64e7d42388988d48b554522fd65"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_events_insert",
+    "table": "events",
+    "sqlSha256": "2818056118d0ad14214a9a70db50660e5bc13dcbaa0ddecf2c5820cdccb521ab"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_events_update",
+    "table": "events",
+    "sqlSha256": "a19edbaee9b6852c4d608ed8b5474d55652872b0b2db6448fd56e9bbbf43b640"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_insert",
+    "table": "memory_derivation_results",
+    "sqlSha256": "d6105b7bad6dbdd38c3eed4791ef3b01696bf93b16da77510eceaabaed307fb0"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_private_content_delete",
+    "table": "private_content",
+    "sqlSha256": "ce2abe390b87c0c614e6e07d003ae42d2389dc82ca85dfaf6ee12f1f60724317"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_private_content_insert",
+    "table": "private_content",
+    "sqlSha256": "5e16d8f1900b5a34b0b2c125ff15b35ff4b27aa0b98151c87e3b14ce367d62c9"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_private_content_retention_scopes_delete",
+    "table": "private_content_retention_scopes",
+    "sqlSha256": "39351bdc12d6a37c1e67e5be7304c3b1f8f63c7d25491d8c6132d1c33a346125"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_private_content_retention_scopes_insert",
+    "table": "private_content_retention_scopes",
+    "sqlSha256": "b9c86d858a791816b38d9df8edc1dc687eb7f496814c088e3474e7cbbe38ade4"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_private_content_retention_scopes_update",
+    "table": "private_content_retention_scopes",
+    "sqlSha256": "33f0f26465f2aed0b724b33089e08acb6892b7a672d179e7ed0efa6548fc6240"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_private_content_update",
+    "table": "private_content",
+    "sqlSha256": "4bcd26d4a844558c29271ee1491da702364c0fffee6b06695e1780e6751c23bb"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_project_event_scopes_delete",
+    "table": "project_event_scopes",
+    "sqlSha256": "e4d2f61f3c9da82a9a360f97e831ae654b3adef7d6b874bcd640217a731d1141"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_project_event_scopes_insert",
+    "table": "project_event_scopes",
+    "sqlSha256": "3f98ad6673058921770e24b3f38acbfdbfeaabd6028e811183e86807a8bc5ddc"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_project_event_scopes_update",
+    "table": "project_event_scopes",
+    "sqlSha256": "6d91f0a491e5871542bf4c4ec75d323a210f3ef46c4bb6a673fcbc7c3d268df7"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_project_resource_scopes_delete",
+    "table": "project_resource_scopes",
+    "sqlSha256": "2cf0477e15c4642d366fa6dc743cd6e3dadfd10031471a05fd60659a790dd739"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_project_resource_scopes_insert",
+    "table": "project_resource_scopes",
+    "sqlSha256": "8ecfbd15867b6d80be033cbbedc2c612b4b0dc952599b42c574394eb5b78423e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_project_resource_scopes_update",
+    "table": "project_resource_scopes",
+    "sqlSha256": "3e4d865814bbcc518389acd1e8f893f2c6ed07e7bec9026f8513639da8b2209d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_retired",
+    "table": "memory_derivation_results",
+    "sqlSha256": "c18e59421e5d372594b4e90612ff628ca9dff0911caff2d20ff26789b8e71f21"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_result_update",
+    "table": "memory_derivation_results",
+    "sqlSha256": "352e6cd9718470cdfeab09826ad18611f27c4fa0a3cf966c2a92cd125c9e3585"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_results",
+    "table": "memory_derivation_results",
+    "sqlSha256": "8e69265e40dc886a29ebeed1b581b245fc260cb0fa168227b03879e60a9005f3"
+  },
+  {
+    "type": "index",
+    "name": "memory_derivation_results_finance_id_unique",
+    "table": "memory_derivation_results",
+    "sqlSha256": "57bce439253a4b4f4a535d088c614cc31c1e43afd4625ef925a828c14e653ee8"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_reuse_receipt_delete",
+    "table": "authoring_commits",
+    "sqlSha256": "ad1d9ade0053d0b54c78bcfc34a7386f02d8b1af8231816ef0520d77bc17b5f6"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_reuse_receipt_insert",
+    "table": "authoring_commits",
+    "sqlSha256": "eba52dfee76044b045098e03a65bd40f3da33530d6bef4bf077b6d719cee4bcd"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_reuse_receipt_update",
+    "table": "authoring_commits",
+    "sqlSha256": "0ec5ab87469b5a2b569f9d3c76544faa74e9ff2f05294cedd3a4a226332377a8"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_source_changed",
+    "table": "memory_live_sources",
+    "sqlSha256": "e9ed30aae60af32c8c6dec4b69a252863fa744f221a70dade2445f27e31b31a5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_source_delete",
+    "table": "memory_live_sources",
+    "sqlSha256": "014f17ec2d7f22845dcbee389625981b4aa80a9d307363b6d128f0b83aee2c76"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_source_immutable",
+    "table": "memory_derivation_job_sources",
+    "sqlSha256": "a6387322a791d6673120cfe73f07d57585b9d79ac8ea2e081b2ca7e76342cab6"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_source_insert",
+    "table": "memory_derivation_job_sources",
+    "sqlSha256": "79095b73bde0fce0ea0bf725acf78c7649838eb198e2b437a4fa2e7b10f7d064"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_split_apply",
+    "table": "memory_derivation_split_commands",
+    "sqlSha256": "e8fd043ab23aac66431ce62177b9abe24bb9761ef92b154f11d686d94ddb3674"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_split_commands",
+    "table": "memory_derivation_split_commands",
+    "sqlSha256": "c256f6921fff5cd1261b78a5a768c969fb2854fc1705050ad6d06026cbc033c9"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_split_insert",
+    "table": "memory_derivation_split_commands",
+    "sqlSha256": "9550c19d556fa3a35c019672e3bd84f710ea4c43de987ce6f0a52c2e7efeeaad"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_split_update",
+    "table": "memory_derivation_split_commands",
+    "sqlSha256": "15f6f4b1e6654ce45a9adc6c9ec2ebdc9c7920afbf97a20c036b496588c647ef"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_token_counter_identity",
+    "table": "budget_counters",
+    "sqlSha256": "5d35e367c735756413bb052a917fd3163e29abd54eec1fcff6a6976e507de429"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_token_counter_no_delete",
+    "table": "budget_counters",
+    "sqlSha256": "648ea1841abf7394d26d657b7fdbca750a476dc0bb21dddb1dcc6a888cd11229"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_token_counter_no_replace",
+    "table": "budget_counters",
+    "sqlSha256": "9a8044c2d0bbaf538abee0883768b3ce1a49525aad5c664a316649dfe14c3b74"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_token_hold_incoming_identity",
+    "table": "budget_reservations",
+    "sqlSha256": "ce14507530376b9cc2b7c37fca41b20dfc8f71e919b0682b41f84c6607732fb6"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_token_hold_insert",
+    "table": "budget_reservations",
+    "sqlSha256": "d9ce5c43658239d50bdbc85d4f7032a580dff262049cbe41c018cf15d2dfc71f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_token_hold_no_delete",
+    "table": "budget_reservations",
+    "sqlSha256": "de219b385f80a764821017332e9b5a18171411e72f1f4f51360ef124ea6f2af4"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_token_hold_update",
+    "table": "budget_reservations",
+    "sqlSha256": "fc3fa8179cd203b3fe92c8c0721691bafd4053c7fe4767b1f5b2fb46eb5d0831"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_usage",
+    "table": "memory_derivation_usage",
+    "sqlSha256": "212c04b13ea29e068b768f96944474ddd4d7af6ad4106d83f050b42c11a8d7df"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_usage_no_delete",
+    "table": "memory_derivation_usage",
+    "sqlSha256": "0768995c92efef6de8c9bde07355b20267cb4b5c925f0c5a10fa9f62f16eb225"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_usage_no_replace",
+    "table": "memory_derivation_usage",
+    "sqlSha256": "3438fbb61fb0353a55709023d5cb1d1b6f29cac02831244c332e260b0f06693e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_usage_no_update",
+    "table": "memory_derivation_usage",
+    "sqlSha256": "a7335555eaddece6eee2530d6a450360e130717aaa849a308aa6f9974a92e99b"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_usage_proof",
+    "table": "memory_derivation_usage",
+    "sqlSha256": "8d0b7a5534af55e8fd1a70b1ad6706fa6e40caa379eb1da98aaa87aa445ad43d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_user_control_delete_results",
+    "table": "memory_derivation_user_controls",
+    "sqlSha256": "02ed44608414f40c50969b572e6833bf7bfe077b96cf050b769f9c4008253359"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_user_control_insert",
+    "table": "memory_derivation_user_controls",
+    "sqlSha256": "a07675cf9a84ff318958caf0dbf7550bca97530e18b1aa425aef638a0fab7d87"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_user_control_insert_results",
+    "table": "memory_derivation_user_controls",
+    "sqlSha256": "f8fb2684a7e23634cb065b6fbf3a8c63e02b1b9d27e65bba1a1d759e08ab90d4"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_user_control_parent_update",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "1e65972d2ab42e3d83527af66cd6292c4f9542bb30d7f3d46f31e9a22759a2a2"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_user_control_source_update",
+    "table": "private_content",
+    "sqlSha256": "a98826e96eb9fdd5631e87022312d3d811178c9613ffc03eac181f1bc42aafcb"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_user_control_update",
+    "table": "memory_derivation_user_controls",
+    "sqlSha256": "b77d537029df5c1564e48f37a286a2c29e83f558c369ca767de0cefadae873ff"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_derivation_user_control_update_results",
+    "table": "memory_derivation_user_controls",
+    "sqlSha256": "4fabd287346ca10574b94498ff13d3f966309686ab57b96409a79da26e9bd484"
+  },
+  {
+    "type": "table",
+    "name": "memory_derivation_user_controls",
+    "table": "memory_derivation_user_controls",
+    "sqlSha256": "0af34cbc14ca5e46af63652a23cc4c89d1bc6e9272f9450161d1d85cb050636d"
+  },
+  {
+    "type": "table",
+    "name": "memory_document_job_answer_origins",
+    "table": "memory_document_job_answer_origins",
+    "sqlSha256": "eb02d98a4f33fe9da2f007f38b9f24850ca41dc98449cc550c6e82f70fa44d74"
+  },
+  {
+    "type": "table",
+    "name": "memory_document_job_origin_dependencies",
+    "table": "memory_document_job_origin_dependencies",
+    "sqlSha256": "e0a0798e9dc0e16a15e85a4153bd2e5a55112d2fb8bc21462851e3cb9944f14b"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_document_job_origin_retirement_delete",
+    "table": "memory_document_job_origin_retirement_progress",
+    "sqlSha256": "03e76d5c10e47f5913aa50c8e40e664a0ec1e9b8554a20437e416db391a5ce20"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_document_job_origin_retirement_insert",
+    "table": "memory_document_job_origin_retirement_progress",
+    "sqlSha256": "f00bddf615a20a5a2c21f5904a756f5823ba0b17672d0d5330a4a43fa710c7e7"
+  },
+  {
+    "type": "table",
+    "name": "memory_document_job_origin_retirement_progress",
+    "table": "memory_document_job_origin_retirement_progress",
+    "sqlSha256": "57223de0f6127ed04d7b3ad42f1c38ba36898f8a4e010bdba41bf51e100347ff"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_document_job_origin_retirement_update",
+    "table": "memory_document_job_origin_retirement_progress",
+    "sqlSha256": "cfa4f57612f18cf34608e48e282edb52c2dde77849aa3d68d847d0af0bec8755"
+  },
+  {
+    "type": "table",
+    "name": "memory_document_profile_grants",
+    "table": "memory_document_profile_grants",
+    "sqlSha256": "51fbd450adf6db768560d7c9799ba6ae18a191fbad66936479ca1f1790d40b0a"
+  },
+  {
+    "type": "table",
+    "name": "memory_document_profile_suppressions",
+    "table": "memory_document_profile_suppressions",
+    "sqlSha256": "d140beb48a0f72e51b3feced784c105cd776470bcfa70b75158cb2b3023fcbc3"
+  },
+  {
+    "type": "table",
+    "name": "memory_live_change_checkpoints",
+    "table": "memory_live_change_checkpoints",
+    "sqlSha256": "a0e5c374fe5ed15cf32fc5652b5317bc72aaccf60a33ac59cfbb162760576e44"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_live_checkpoint_enrollment_changed",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "a62b4a53136958563c87591d39f050e2ad3bf0a75ecdf773badeddc44e226106"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_live_checkpoint_source_changed",
+    "table": "memory_live_sources",
+    "sqlSha256": "45bf65d63405afb69cb8b10e60df0c2c88eb434585dbde94cb9797100c39008e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_live_checkpoint_source_deleted",
+    "table": "memory_live_sources",
+    "sqlSha256": "eaaed157fe5cdb59c5d1374a225bc431981f5e0d39066dd755fd270cdb429130"
+  },
+  {
+    "type": "table",
+    "name": "memory_live_conversation_segments",
+    "table": "memory_live_conversation_segments",
+    "sqlSha256": "9182eadb24154931071573aa1a8bbfdbd23e975f970314fe790e441b67c35c4d"
+  },
+  {
+    "type": "table",
+    "name": "memory_live_enrollments",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "998df2a238b79861784ebb0d4cc5b382d5ff5734c28c8fb0d7cf07d8ed4a421c"
+  },
+  {
+    "type": "table",
+    "name": "memory_live_runs",
+    "table": "memory_live_runs",
+    "sqlSha256": "c1f46e82bef2047a5892f65fce251edc7c727d03f0cef401b6ef28fba40b9b9f"
+  },
+  {
+    "type": "table",
+    "name": "memory_live_sources",
+    "table": "memory_live_sources",
+    "sqlSha256": "ab101bc87d9c8d2e8093a4c9b6c990a31b0dda03f8e72539188c3b6ae94a22e1"
+  },
+  {
+    "type": "table",
+    "name": "memory_native_answer_dependencies",
+    "table": "memory_native_answer_dependencies",
+    "sqlSha256": "5282b1d592d6b650cde3127c84a1620ebeedc49b0c41ab8fed4f9a6fadb6794f"
+  },
+  {
+    "type": "index",
+    "name": "memory_native_answer_dependencies_origin_id_event_id_unique",
+    "table": "memory_native_answer_dependencies",
+    "sqlSha256": "49aabc08ff48f2540b20e8fd6dcefe220f7853441b0925e1b81baeb18fc24304"
+  },
+  {
+    "type": "index",
+    "name": "memory_native_answer_dependencies_origin_id_source_sequence_unique",
+    "table": "memory_native_answer_dependencies",
+    "sqlSha256": "9b52aebfdbc5f60ccc37ffb2156e841e8951f2acc4626f1e2882a9dcc0e8b6c5"
+  },
+  {
+    "type": "table",
+    "name": "memory_native_answer_origins",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "8bf855ad40c32009dce37440aba152ae81dcbcb55401ea5c26dc3a65f7f97d67"
+  },
+  {
+    "type": "index",
+    "name": "memory_native_answer_origins_actor_user_id_scope_key_turn_id_unique",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "1609cc2771ece8859ff9e528df6cc7db79dbdaaea5044640f1804cde2ed774ee"
+  },
+  {
+    "type": "index",
+    "name": "memory_native_answer_origins_answer_content_id_unique",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "85a6a0f54842a9544e24179b9b35ae5090b55fab5971a440d27b97a66edf815e"
+  },
+  {
+    "type": "index",
+    "name": "memory_native_answer_origins_answer_event_id_unique",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "73f7b282480dd21280bccc77201b503691f5e0713ae346d26150f74c8b9af732"
+  },
+  {
+    "type": "index",
+    "name": "memory_native_answer_origins_user_content_id_unique",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "e34cc3259f7ae056fe01f7bb4eb6eb38a7f528528ae4415ab396a8b37e1ad7d2"
+  },
+  {
+    "type": "index",
+    "name": "memory_native_answer_origins_user_event_id_unique",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "316153f0f11dfb3e91988b6e896d5f8becf4cada229d15e5ef89d31d60f1195d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_native_dependency_delete_active",
+    "table": "memory_native_answer_dependencies",
+    "sqlSha256": "29f620479a2245612d7a7305fd0d86a9e5598ab1b8c4141c79a98f2343012892"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_native_dependency_immutable",
+    "table": "memory_native_answer_dependencies",
+    "sqlSha256": "4306c7aa1874087879ee24b901394f4111d7e02faf2baef3770c83e6973ddb62"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_native_origin_delete_active",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "7df7397e3688abcc7c4f6227d741a9945cbef58bd4a85deed7221d81f5b38247"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_native_origin_immutable",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "cc8d4655ef61ed6fae56f0a388e093c523a6b755918c55f4d72da27e4bb90508"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_native_origin_user_immutable",
+    "table": "memory_native_answer_origins",
+    "sqlSha256": "f957320ff086cbde1247a038a09be64af8360c82e8a8dc5db0c6b65ab94d8377"
+  },
+  {
+    "type": "table",
+    "name": "memory_recall_boundaries",
+    "table": "memory_recall_boundaries",
+    "sqlSha256": "43e64e4cbd5b5d0abd9f3249e83cd637328605e94702084902acb03885bc8bad"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_recall_boundaries_parent_change",
+    "table": "memory_live_enrollments",
+    "sqlSha256": "d34f87b3ffe2a3be77b26a25dd329b31d70612645c91a21401585cf63451128b"
+  },
+  {
+    "type": "table",
+    "name": "memory_recall_organization_ranges",
+    "table": "memory_recall_organization_ranges",
+    "sqlSha256": "c59170f97f0c2f67d060564f9a84ed2e8546dd76c518d12305ddd4d11d94ce0d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_recall_organization_ranges_boundary",
+    "table": "memory_recall_boundaries",
+    "sqlSha256": "7db3e3a6e7fbe67d96fe4517ee97ac2e28389ecd5316111bd190d83b37d0e8c5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_recall_organization_ranges_immutable",
+    "table": "memory_recall_organization_ranges",
+    "sqlSha256": "06a5cdb94d1bd4567ce1aa3f99efa949183d68e0a9adc26c1603436911948e36"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_recall_organization_ranges_insert",
+    "table": "memory_recall_organization_ranges",
+    "sqlSha256": "79354f3eed28279eedc60de6228a6cd6fbc36db70037d035a5aab27a31e6a372"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_recall_organization_ranges_retire",
+    "table": "memory_recall_organization_ranges",
+    "sqlSha256": "5bae2a0ba2dc16931cb94443f5fbf2a918d66267bf36a851895bfb6ef5846a70"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_content_immutable",
+    "table": "memory_resource_assistant_contents",
+    "sqlSha256": "4e27f6ad61b4157ddc76c0023ac7b40e6bfb3706d28f9256670db534f8734c87"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_content_insert",
+    "table": "memory_resource_assistant_contents",
+    "sqlSha256": "535db27609cd2bb758fe328897de5d9d4242aa2a9176bbc91dde8c03648eb57b"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_content_reinsert",
+    "table": "private_content",
+    "sqlSha256": "bc4f28e2bc2fb39331e9587ecb647bd03db860b7a2a4ee2b012e4e7c4ec1ec5e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_content_restore",
+    "table": "private_content",
+    "sqlSha256": "031660e2252b1c220771b7d0e5effa2c0dddc8a1f91e54e354efbdeb5713ad43"
+  },
+  {
+    "type": "table",
+    "name": "memory_resource_assistant_contents",
+    "table": "memory_resource_assistant_contents",
+    "sqlSha256": "fb797fb043d8e65a51f45de4560f0bdca05d4c22b0cdb4a7def2cead3e5ffc04"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_context_deletion",
+    "table": "memory_resource_contexts",
+    "sqlSha256": "58afc602613bddab91c1d00c6105a772d8cf4eb1c5173869dde61cd098c79c4b"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_context_retirement",
+    "table": "memory_resource_contexts",
+    "sqlSha256": "080e00c04dec25542a87751fd61d707b72153024eedda5a25853b60e29388268"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_run_deletion",
+    "table": "memory_resource_assistant_runs",
+    "sqlSha256": "c89b7843b1fe315b97aedc21bdd3a7d21ab070060dab1db131d21eb51783393d"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_run_immutable",
+    "table": "memory_resource_assistant_runs",
+    "sqlSha256": "e309bf7b861fca4f48e344f48185be1d93dce51defa67ea8149d6a4a0f143116"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_run_insert",
+    "table": "memory_resource_assistant_runs",
+    "sqlSha256": "c6a7699a211d155368370c98c0e940dca3fb5a8e6e646f1a0771ada266343cd5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_assistant_run_retirement",
+    "table": "memory_resource_assistant_runs",
+    "sqlSha256": "496afb3e36008458dd301fcac6664d52c03c861203a4e7ec8b32384ea550bcb6"
+  },
+  {
+    "type": "table",
+    "name": "memory_resource_assistant_runs",
+    "table": "memory_resource_assistant_runs",
+    "sqlSha256": "031e670ead38d7d37a5a9cc8607b8961e7feb215fbc7cff9f77360ab248b38a3"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_context_history_retirement",
+    "table": "memory_resource_history",
+    "sqlSha256": "be7b7a4d520da91adf91e52dac33bdf62a0c74f3333bf459787fdc81d0e83e7e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_context_immutable",
+    "table": "memory_resource_contexts",
+    "sqlSha256": "cd3dae8047fb42013c6212da124a8516bfb99e94598c3cf62ca813e46eb9698e"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_context_no_replace",
+    "table": "memory_resource_contexts",
+    "sqlSha256": "c5b437817ba4b703c8af01cd873c2a8b00401d9bfbbb67b6feab66eb97452e8b"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_context_opening_retirement",
+    "table": "memory_resource_openings",
+    "sqlSha256": "a76e8118a5b6eff6d963eeb443f8ab61330f140b3702d69b556370f7569fcb6f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_context_settings_retirement",
+    "table": "memory_resource_enrollments",
+    "sqlSha256": "e98c171fb097561699bf6ae9c87acd2bc944813c71a63f8f0d854643cb2391bd"
+  },
+  {
+    "type": "table",
+    "name": "memory_resource_contexts",
+    "table": "memory_resource_contexts",
+    "sqlSha256": "4a2991e9d44d8054838b37dbc77b36ba63e04b51a8dea9b63b4c235992a66fc8"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_enrollment_identity",
+    "table": "memory_resource_enrollments",
+    "sqlSha256": "971ee0d6dd54231ba52188659185313eb571f5c5629a55ae8f4030689768b8e0"
+  },
+  {
+    "type": "table",
+    "name": "memory_resource_enrollments",
+    "table": "memory_resource_enrollments",
+    "sqlSha256": "e6d061f96a4e5c70356888c087afff8f2d5924eb1032c822ffd00682034e613b"
+  },
+  {
+    "type": "table",
+    "name": "memory_resource_history",
+    "table": "memory_resource_history",
+    "sqlSha256": "cf35aa1a015cf0beac89fd145162adcd0a327767029e7dea9722ef8eef741bba"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_history_immutable",
+    "table": "memory_resource_history",
+    "sqlSha256": "0c6aa680efd9a9b7c12575d67cbcfd7273331a0b152fae68d37e8343de5ffce7"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_history_settings_retirement",
+    "table": "memory_resource_enrollments",
+    "sqlSha256": "5873ed649f2e610ccbb44e79fba9457b38b905b5ef412f9f7d350b9abd41ae2a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_history_source_deletion",
+    "table": "event_private_payloads",
+    "sqlSha256": "882a910293abe4e61d23f009863dd9b35255cf914fe62cd1881c343b64aba17a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_history_source_retirement",
+    "table": "event_private_payloads",
+    "sqlSha256": "e9584e7a99ac9cdc6f5a4b6e0637e8caf843a6ad2d67af66399ed81638d97e5e"
+  },
+  {
+    "type": "table",
+    "name": "memory_resource_openings",
+    "table": "memory_resource_openings",
+    "sqlSha256": "d285284ae114e9308b3370ac4e775fa46c33ea093b01b47e8d640e870455de2c"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_openings_immutable",
+    "table": "memory_resource_openings",
+    "sqlSha256": "b7c537ae8eadee369043c227e4b91795c380b758d5fa488f42f435618865076a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_openings_settings_retirement",
+    "table": "memory_resource_enrollments",
+    "sqlSha256": "001bf0ef7b47cf8399839b4ade42ba5df61a37e37c73aa48d46868add07436ec"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_resource_retired_source_immutable",
+    "table": "memory_resource_retired_sources",
+    "sqlSha256": "cf80262fa73e276dbe4023ab2b49884325de4acd5854c70f798188077c7ed1fa"
+  },
+  {
+    "type": "table",
+    "name": "memory_resource_retired_sources",
+    "table": "memory_resource_retired_sources",
+    "sqlSha256": "02d8610dbd0bc9cac8980882fae9ff25162a1214bf0285b0ecbbb727e5f463b2"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_scope_profile_checkpoint_identity",
+    "table": "memory_scope_profile_checkpoints",
+    "sqlSha256": "c897a57f1f9213b9965910d59a64d1008c98d7b9de2221ae2ba45828a472e7b0"
+  },
+  {
+    "type": "table",
+    "name": "memory_scope_profile_checkpoints",
+    "table": "memory_scope_profile_checkpoints",
+    "sqlSha256": "e0bd2002a7438f7be95d9c7596db61a20960efddac81db93cbf9901f265f56f5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_scope_profile_snapshot_immutable",
+    "table": "memory_scope_profile_snapshots",
+    "sqlSha256": "c6bd2e5e541f85fcad159ce54bc59f84da0f29aaff79d3ddf5baa0b1c417ac9a"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_scope_profile_snapshot_no_replace",
+    "table": "memory_scope_profile_snapshots",
+    "sqlSha256": "cc27732e0e170badd8f6b1c694ee45f34f17c76b8f1288b0a967883262906ca9"
+  },
+  {
+    "type": "table",
+    "name": "memory_scope_profile_snapshots",
+    "table": "memory_scope_profile_snapshots",
+    "sqlSha256": "2de2bc07f8a979ca0f4ad8a74c6b5255ff221ffc1b44c3f51abda09c1ad45124"
+  },
+  {
+    "type": "table",
+    "name": "memory_structured_answer_ledger_revisions",
+    "table": "memory_structured_answer_ledger_revisions",
+    "sqlSha256": "f49c6592d7bad7c01932595b8e2a388f5b91a8338782c6b9de7e1e6db1464cd3"
+  },
+  {
+    "type": "table",
+    "name": "memory_structured_answer_originals",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "31ad5648a3d9f660ba5bcc10510f9d4f9baea9cc2cdbc5edf256d1726b563d24"
+  },
+  {
+    "type": "table",
+    "name": "memory_structured_answer_origins",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "8cbcc269e78d41bc152c00cc7d9a1f32967d32dc77b222ba21e558ac422b6981"
+  },
+  {
+    "type": "table",
+    "name": "memory_structured_conversation_heads",
+    "table": "memory_structured_conversation_heads",
+    "sqlSha256": "a8939a80b7300b0012d814275269733b4c97f77a7435b732b6dfedadd9a2bd33"
+  },
+  {
+    "type": "table",
+    "name": "memory_structured_conversation_revisions",
+    "table": "memory_structured_conversation_revisions",
+    "sqlSha256": "34d520a51fcbb2e1279563342ade241e90cc93c79bf6ce69ebcc2f0f27f3f709"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_structured_origin_immutable",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "6cbd791461cf86110c30055a52c2b6a9d2623c2897f30a1e38de178c00e06450"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_structured_origin_insert",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "9daae2855bc9c0b437cf4627c31d876733d134d4eb50e15da6d7dc8ebdc9a9cb"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_structured_origin_no_delete",
+    "table": "memory_structured_answer_origins",
+    "sqlSha256": "46e5f3a492b9222225844a7314f600072de2ee634fe821d532c0318f8e8fbe1f"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_structured_origin_revision_immutable",
+    "table": "memory_structured_answer_ledger_revisions",
+    "sqlSha256": "4dca329ca854dbcc973fbda06624c5e6b1396fc97f50545d2d8d666da7d666b5"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_structured_origin_revision_insert",
+    "table": "memory_structured_answer_ledger_revisions",
+    "sqlSha256": "422c1f91d1f24ca9a85248bcb2e4710e4539aa59e3371e510b33f1618df38fb6"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_structured_origin_revision_withdrawn_delete",
+    "table": "memory_structured_answer_ledger_revisions",
+    "sqlSha256": "19dc94901a0fb5fbf7bd2af06815c99937e7ba9003f0e28c06906f38a2674e61"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_structured_original_immutable",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "7c5ac2927d6b490019231cc6a4aaa8a85d71a1acaf589b2af6ef1fe7f70be0f6"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_structured_original_insert",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "4ce950e221d7c1547a91c437a462d5662776dca9bfdecbdcbb281d6f2ab38bb1"
+  },
+  {
+    "type": "trigger",
+    "name": "memory_structured_original_withdrawn_delete",
+    "table": "memory_structured_answer_originals",
+    "sqlSha256": "c2d23b669d56f513b4afb9edefe3b05d941fed060587e2885e1d1b17c4297d85"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_audit_block_delete",
+    "table": "organization_audit_events",
+    "sqlSha256": "ada3618b24f31383cc1ce665d980fd410bd83801aec208f337a7b06da6909db8"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_audit_block_update",
+    "table": "organization_audit_events",
+    "sqlSha256": "b486e3bb4dac34a278868b4a9987bebc6f6295b615cd46b7de48df961656aa9e"
+  },
+  {
+    "type": "table",
+    "name": "organization_audit_events",
+    "table": "organization_audit_events",
+    "sqlSha256": "6345dcd43e4bd5e4b437e0c31a2eb4040368c1a7d0250271eee37cf8e2d325f6"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_context_package_content_immutable",
+    "table": "organization_context_package_contents",
+    "sqlSha256": "48ca10e2a5b5caac104aac85d121e5b836cd2df561afb4fe9fb1644cfe44b80f"
+  },
+  {
+    "type": "table",
+    "name": "organization_context_package_contents",
+    "table": "organization_context_package_contents",
+    "sqlSha256": "30d3d412659c6bced9f50d36382d46bdc245b82f21928f78bc3252e87c65d52f"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_context_package_source_delete_guard",
+    "table": "organization_context_package_sources",
+    "sqlSha256": "8881c4a9290bee10653466f381ed67d0454bbc68cc229bd834b7fcbbac0ac1c2"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_context_package_source_immutable",
+    "table": "organization_context_package_sources",
+    "sqlSha256": "4ad8ea0eacf2592d06c3ef4535cb575ffeb63f88bd5a69d1f300e870c84ffd65"
+  },
+  {
+    "type": "table",
+    "name": "organization_context_package_sources",
+    "table": "organization_context_package_sources",
+    "sqlSha256": "ada2feb1cc18e7360802de83c559ad116cbb76978229c84112cf1afa5993d01f"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_context_package_version_delete_guard",
+    "table": "organization_context_package_versions",
+    "sqlSha256": "6e450514c2eed129e413522e13d77dcd895de9938b625a0687b170313db937dc"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_context_package_version_immutable",
+    "table": "organization_context_package_versions",
+    "sqlSha256": "455b1fa50f7ef619aa2abb8bf4fe052825874c488c9f9b57069fe9c1f4279169"
+  },
+  {
+    "type": "table",
+    "name": "organization_context_package_versions",
+    "table": "organization_context_package_versions",
+    "sqlSha256": "719c80b53c3c54f85b60118b8439d331445575c55f696c5a8f5c4c9ffb2d9b83"
+  },
+  {
+    "type": "table",
+    "name": "organization_context_packages",
+    "table": "organization_context_packages",
+    "sqlSha256": "90d056c98b9a28be02835ce4916309881bdfef874f1d3fa9807525e3f0a286dd"
+  },
+  {
+    "type": "table",
+    "name": "organization_custody_transfers",
+    "table": "organization_custody_transfers",
+    "sqlSha256": "b645f4b4f033c3055ad01bc70cb16d9456ad6fcda3cfab2bb520a59d92a7de1d"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_deletion_active_hold_guard",
+    "table": "organization_deletion_jobs",
+    "sqlSha256": "21174c8d52828770dc9eaea69e4548f79d2ff316229cb72b39f65c407b308d17"
+  },
+  {
+    "type": "table",
+    "name": "organization_deletion_items",
+    "table": "organization_deletion_items",
+    "sqlSha256": "c00c1b670b6d460afcfafe08ebef5b9fa3eae000bd2c7b9974c7e5053777676c"
+  },
+  {
+    "type": "table",
+    "name": "organization_deletion_jobs",
+    "table": "organization_deletion_jobs",
+    "sqlSha256": "354e57d3b3fc90aecfc793ce67f72f61cefa0208ecaed546fa0bfc487d0122f4"
+  },
+  {
+    "type": "table",
+    "name": "organization_identity_bindings",
+    "table": "organization_identity_bindings",
+    "sqlSha256": "38755bbac085c61ea9fc4bb404e9c1094ac8dfb2a78c47672f925f9478775224"
+  },
+  {
+    "type": "table",
+    "name": "organization_identity_group_members",
+    "table": "organization_identity_group_members",
+    "sqlSha256": "fe4e679fdb9f8a5810e672b08805b6ef90818b60b5a047b44d338ee9bd481136"
+  },
+  {
+    "type": "table",
+    "name": "organization_identity_groups",
+    "table": "organization_identity_groups",
+    "sqlSha256": "350aecf4229a80f10cf1a63637618d8adc1e693937e18e82a375079f478bcd95"
+  },
+  {
+    "type": "table",
+    "name": "organization_invitations",
+    "table": "organization_invitations",
+    "sqlSha256": "455b67961f43e370e512a8b6d9ba07f2bc35e2d776eaeb34956dcf7dcbecbe08"
+  },
+  {
+    "type": "table",
+    "name": "organization_key_versions",
+    "table": "organization_key_versions",
+    "sqlSha256": "c124c59f8438f918e4962c61b4b6e547957fd694ab81f5f00db02d5309935ade"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_legal_hold_during_deletion_guard",
+    "table": "organization_legal_holds",
+    "sqlSha256": "ba9a2c20c70a5289d8086fa6e54b9965089df5ea67eca9126b0d6d649c71eb97"
+  },
+  {
+    "type": "table",
+    "name": "organization_legal_holds",
+    "table": "organization_legal_holds",
+    "sqlSha256": "6d5a65b5e7546f575bea1240b7256a4c39b3509ae4a22f17f1bb2d61c54ee900"
+  },
+  {
+    "type": "table",
+    "name": "organization_memberships",
+    "table": "organization_memberships",
+    "sqlSha256": "290305d436664ce084f4523c9c1b9e43eb6f69e40b57b90cd545045b42fc0ffc"
+  },
+  {
+    "type": "table",
+    "name": "organization_project_nesting",
+    "table": "organization_project_nesting",
+    "sqlSha256": "062a73c0a31f15b1468495e9d06d18d1fc3c69d1d7c6ae61dab76b720b51e3ea"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_compensation",
+    "table": "events",
+    "sqlSha256": "bff0122d554e069f0929855aaa6d729a82d6b519904abcf9134f9e04616ef54f"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_custody_delete",
+    "table": "organization_projects",
+    "sqlSha256": "e4fedd1df670ccfd1eb6e700c90a86dcea2abc13d3a6d7997663e0a6b93215be"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_custody_insert",
+    "table": "organization_projects",
+    "sqlSha256": "02f9f541b05fbd105dd03692c5fd0e144d263a50df34bdfb7ef9fa63c9750589"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_custody_update",
+    "table": "organization_projects",
+    "sqlSha256": "1c8ff47b2e8dfcbaa229feecee61a3bc646dce2003e11fcefc74ed369b9170ac"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_declaration",
+    "table": "events",
+    "sqlSha256": "866edf98bf9bf2a69c835b661a595c3f5ff2f9ae4649d9caff76dba22ccc7095"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_immutable",
+    "table": "organization_project_nesting",
+    "sqlSha256": "734233f62e5c39e2d7cd6e0c5d8ffd04699b0c574ab4aaf56adea66f70cef780"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_insert",
+    "table": "organization_project_nesting",
+    "sqlSha256": "aab4f47b7cdaad8179ba4b1d4ab52fe9db57f43bb9d30dfd661afc84324dfc49"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_local_delete",
+    "table": "project_containment",
+    "sqlSha256": "396c6295f50636db71b9df105900abe9bcdab50acbdad6b24ca64ef98c0b62e4"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_local_insert",
+    "table": "project_containment",
+    "sqlSha256": "91f9a86804ebd50779d22f06693cf81b67d57a92923a04c8a708b2d34a0eca27"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_local_update",
+    "table": "project_containment",
+    "sqlSha256": "f68d2ca0821fbef10dd913d5b850b15c37054f8e6eadc5e232f9b565a0ef45ad"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_migration_delete",
+    "table": "project_migration_states",
+    "sqlSha256": "97fc6a74622c0ec9011083a7530ac9a99c17dcefdf6824d2bdcb702aab1f1f69"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_migration_update",
+    "table": "project_migration_states",
+    "sqlSha256": "ccc5d17b82d3e0ba946e11067cf91f409bfc3bc23098ea4ab587826d8566869c"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_project_nesting_retire",
+    "table": "organization_project_nesting",
+    "sqlSha256": "1b2592787a5ff531d122d7355f89932dc8aeb397f8f7f10fcd22f1fc19f950f4"
+  },
+  {
+    "type": "table",
+    "name": "organization_projects",
+    "table": "organization_projects",
+    "sqlSha256": "3e73cfc1e71afabbf367e00e4b3bc3701d0a64957763b618c2d9891bf57f4a05"
+  },
+  {
+    "type": "table",
+    "name": "organization_provisioning_credentials",
+    "table": "organization_provisioning_credentials",
+    "sqlSha256": "4d94c0ebcf245accf8de5edcb6aead37c74d0d5854dcffc41b7f46b520085b26"
+  },
+  {
+    "type": "table",
+    "name": "organization_recovery_drills",
+    "table": "organization_recovery_drills",
+    "sqlSha256": "4d1b0c4f028b3e48754180f8cf5644cb3db8825bd7c7b4e7b4e8dcde12444562"
+  },
+  {
+    "type": "table",
+    "name": "organization_recovery_snapshots",
+    "table": "organization_recovery_snapshots",
+    "sqlSha256": "4c0091e13c1fb286542de8acaf9753bdbbe13d52ca8859da503efb5861a7ad1b"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_retention_hold_during_deletion_guard",
+    "table": "organization_retention_policies",
+    "sqlSha256": "ae58a306d99c81ad243abe80836b160c8ebd466c04a2877780754f16afa66593"
+  },
+  {
+    "type": "trigger",
+    "name": "organization_retention_hold_insert_during_deletion_guard",
+    "table": "organization_retention_policies",
+    "sqlSha256": "891b47933f7b5f1d11475668d97a9998a428c9b80bf5a7ebac2d18ae379f8b51"
+  },
+  {
+    "type": "table",
+    "name": "organization_retention_policies",
+    "table": "organization_retention_policies",
+    "sqlSha256": "b12df453a7f9d4abecb94e6e8b963e69786f3be02083d84624c9fb4396942556"
+  },
+  {
+    "type": "table",
+    "name": "organization_security_policies",
+    "table": "organization_security_policies",
+    "sqlSha256": "038bed08db6233d71d2fd039d62c50043d7bd4497bfaf591fa3282508ecc998d"
+  },
+  {
+    "type": "table",
+    "name": "organizations",
+    "table": "organizations",
+    "sqlSha256": "cdbcaed0ac887e3fd26fee8f4aa04d4c5c3d949cc453441fe80295d260769822"
+  },
+  {
+    "type": "table",
+    "name": "output_asset_storage_writes",
+    "table": "output_asset_storage_writes",
+    "sqlSha256": "dd5ebf4889b0a551c100c7e7428ea4fc01c1b2afba1f95b36e0be4b06b5ac97c"
+  },
+  {
+    "type": "table",
+    "name": "output_assets",
+    "table": "output_assets",
+    "sqlSha256": "33e5c97b6553bada5e5c64297fcaed8fbe17d32a3b81fd5ff34db8be56165a3e"
+  },
+  {
+    "type": "table",
+    "name": "output_atomic_assertions",
+    "table": "output_atomic_assertions",
+    "sqlSha256": "44e76d921736f336eef9ab5584151bc93de2f90de43a8d53ad7e2a69fa978c0d"
+  },
+  {
+    "type": "table",
+    "name": "output_commands",
+    "table": "output_commands",
+    "sqlSha256": "81e65a9d7cb06e671d585cd1240ed97210c446edf7da9886145867d83d36fa84"
+  },
+  {
+    "type": "table",
+    "name": "output_delivery_manifests",
+    "table": "output_delivery_manifests",
+    "sqlSha256": "1e3cdedefce30eeffee821fe98baa6f71699f69e5fc232680c2f404985de5693"
+  },
+  {
+    "type": "table",
+    "name": "output_execution_grants",
+    "table": "output_execution_grants",
+    "sqlSha256": "7478932f86194d368df9f78347c1d40e0c3c0b4d041c54c1f152ab8d71fedd91"
+  },
+  {
+    "type": "table",
+    "name": "output_native_storage_writes",
+    "table": "output_native_storage_writes",
+    "sqlSha256": "49413c352a89894da737a2648d94a5821a1cf323d845b6bf2eeacd4810692056"
+  },
+  {
+    "type": "table",
+    "name": "output_operation_routes",
+    "table": "output_operation_routes",
+    "sqlSha256": "17ed5ef4cb909cda1c904baa38e9ca4a26e4d6d2c28dffd0cbc9264d7d867b4f"
+  },
+  {
+    "type": "table",
+    "name": "output_operation_slots",
+    "table": "output_operation_slots",
+    "sqlSha256": "70de4a982f05615dba378aff2e4d92527be260f5c277af8b25dbedf4cb4df15e"
+  },
+  {
+    "type": "table",
+    "name": "output_plan_fulfillments",
+    "table": "output_plan_fulfillments",
+    "sqlSha256": "634a9b97a53f938a34e7c4b62a3e4c42099d818f183a2dfe93b541f67ead3422"
+  },
+  {
+    "type": "table",
+    "name": "output_plan_revisions",
+    "table": "output_plan_revisions",
+    "sqlSha256": "0b809b01f1aca9aeedb3411523418d2840a385665b1a39151b49824d763a3362"
+  },
+  {
+    "type": "table",
+    "name": "output_plan_targets",
+    "table": "output_plan_targets",
+    "sqlSha256": "454b3c9dc8a27960becc88da557a597f88c87718811caac0817601678bd70e85"
+  },
+  {
+    "type": "table",
+    "name": "output_preflights",
+    "table": "output_preflights",
+    "sqlSha256": "08ab1da6256d5f923c49ccfc9db30be45f56e0cd4d61ef05a0a6dacee02ef702"
+  },
+  {
+    "type": "table",
+    "name": "output_provider_calls",
+    "table": "output_provider_calls",
+    "sqlSha256": "a6c407503b405cf4650e8e389353fa177b638261f27940dcd5f3caed26a74db1"
+  },
+  {
+    "type": "table",
+    "name": "output_results",
+    "table": "output_results",
+    "sqlSha256": "d6504acf1da96f90cbb60eea4ea2a53c64ef6e9fd5a092e6bdeaeeec7d60c3e1"
+  },
+  {
+    "type": "table",
+    "name": "output_target_acceptances",
+    "table": "output_target_acceptances",
+    "sqlSha256": "72801e373c38d6315ea1f2b9b2f7a536925c5bef9f0dbe2748c3d0a77510cbc6"
+  },
+  {
+    "type": "trigger",
+    "name": "pilot_active_cohort_deletion_guard",
+    "table": "pilot_cohorts",
+    "sqlSha256": "f28db4fcb6ae8cd87ec920aab98c37b7fb5c74a0421bb953696460f0518a60a9"
+  },
+  {
+    "type": "table",
+    "name": "pilot_cohorts",
+    "table": "pilot_cohorts",
+    "sqlSha256": "a6a61d7bf3e4b3603da3f7ff05cf058dad02312f8da37c0511f137582a504910"
+  },
+  {
+    "type": "table",
+    "name": "pilot_cost_reservation_scopes",
+    "table": "pilot_cost_reservation_scopes",
+    "sqlSha256": "4b2cb88c7d99256cd846bdbc6e65ba08eb30920016d28e91c4942e05d2c40823"
+  },
+  {
+    "type": "table",
+    "name": "pilot_participants",
+    "table": "pilot_participants",
+    "sqlSha256": "45d57d4ab81f1fb2308cfe472602684b9a20a0330af3ec0609bbf5110a412815"
+  },
+  {
+    "type": "trigger",
+    "name": "pilot_project_owner_membership_deletion_guard",
+    "table": "organization_memberships",
+    "sqlSha256": "67dcd5788498acf0af7372204333f425d5ce30eafca902dda0de0feddd715a52"
+  },
+  {
+    "type": "trigger",
+    "name": "pilot_project_owner_membership_guard",
+    "table": "organization_memberships",
+    "sqlSha256": "2b81418f092cb0fe83e647fd4fd1c7dbf47fb76a8cbd10b7e98bce763508433e"
+  },
+  {
+    "type": "trigger",
+    "name": "pilot_project_owner_participant_deletion_guard",
+    "table": "pilot_participants",
+    "sqlSha256": "ca5912778656217e5c8739e9f38fe9086b6f7337e770479d779908d23e4b2773"
+  },
+  {
+    "type": "trigger",
+    "name": "pilot_project_owner_participant_guard",
+    "table": "pilot_participants",
+    "sqlSha256": "7ece23d4ccfe525e025aa3a88acf7217480cc2f91bf1ab3effdfe976780daa34"
+  },
+  {
+    "type": "table",
+    "name": "private_content",
+    "table": "private_content",
+    "sqlSha256": "3d88390c87cb7081e14e2d21df8bd71a054fceae943d951d119f112e30ff91d5"
+  },
+  {
+    "type": "table",
+    "name": "private_content_retention_scopes",
+    "table": "private_content_retention_scopes",
+    "sqlSha256": "223f8aa1d9461311fde9ad9140d87ae10071f604e7b722ecbf2b6ec5c7fbc81e"
+  },
+  {
+    "type": "table",
+    "name": "project_automation_outbox",
+    "table": "project_automation_outbox",
+    "sqlSha256": "b9b23d66e0d774e81992c5ee5b2491bfc328a6ee45412d26d7c5333c7d50c4ff"
+  },
+  {
+    "type": "table",
+    "name": "project_automation_policies",
+    "table": "project_automation_policies",
+    "sqlSha256": "5023f937071c63d7c0f7f338ad37f4a05c8043bdb3cd0274f2b5051c3fa687e7"
+  },
+  {
+    "type": "table",
+    "name": "project_automation_runs",
+    "table": "project_automation_runs",
+    "sqlSha256": "f6cfe13c4b503782ff06367a83a6481a66b30ffca258788cd9c54e5b61468fda"
+  },
+  {
+    "type": "table",
+    "name": "project_budget_reservation_scopes",
+    "table": "project_budget_reservation_scopes",
+    "sqlSha256": "dcbc3c7c62ae4da3e6371c4121efd8573e9fe97053d19a6c22ebd5684e92a200"
+  },
+  {
+    "type": "table",
+    "name": "project_containment",
+    "table": "project_containment",
+    "sqlSha256": "6ded6321353e7f8360e91d802db529f3c033e44bcdeb453c3ce3e5f623059739"
+  },
+  {
+    "type": "trigger",
+    "name": "project_containment_compensation",
+    "table": "events",
+    "sqlSha256": "836eeacfceea10ae9b381e59a72db91d48b68c71df31df33c8b1d7c7d3a56f47"
+  },
+  {
+    "type": "trigger",
+    "name": "project_containment_custody_delete",
+    "table": "organization_projects",
+    "sqlSha256": "7ee5c389296c79c9f1284236e526f02c44cf62cc2f0dfeec3013d933648109ca"
+  },
+  {
+    "type": "trigger",
+    "name": "project_containment_custody_insert",
+    "table": "organization_projects",
+    "sqlSha256": "84a88be9db4f7e10a11e06802c008d2d3d38818fff168bc96c265211a998c341"
+  },
+  {
+    "type": "trigger",
+    "name": "project_containment_custody_update",
+    "table": "organization_projects",
+    "sqlSha256": "460e81ef8f777cccf7661e52529ffae183707fdd9d9bdf24a4c866fb9738b542"
+  },
+  {
+    "type": "trigger",
+    "name": "project_containment_declaration_update",
+    "table": "events",
+    "sqlSha256": "f093cd75227082d3186bcaccc82be72f3b2fe99ef1ba4496d85bee57d9a8d6c2"
+  },
+  {
+    "type": "trigger",
+    "name": "project_containment_insert",
+    "table": "project_containment",
+    "sqlSha256": "bd89c486094be06a6e731c84b5ad18776b386e9e4f0317687d98117aed0088fc"
+  },
+  {
+    "type": "trigger",
+    "name": "project_containment_update",
+    "table": "project_containment",
+    "sqlSha256": "0927e1a388194bb47f065273e15d0e9a0e8736353e6bc0a1df8cc2f544a7a99c"
+  },
+  {
+    "type": "table",
+    "name": "project_context_package_bindings",
+    "table": "project_context_package_bindings",
+    "sqlSha256": "bc340abf931cc56e8d6326f4a0e3ab7eb64daa67a6620372799b96493a756b85"
+  },
+  {
+    "type": "table",
+    "name": "project_context_package_members",
+    "table": "project_context_package_members",
+    "sqlSha256": "fd5cac34f19a412183a7f2700c9eff8299c5eab1162dbc44f1b9e29d12572ae1"
+  },
+  {
+    "type": "table",
+    "name": "project_context_sessions",
+    "table": "project_context_sessions",
+    "sqlSha256": "2caae24df1a26639ba2e94cf77c334e6c3545253815fc54334699959ae55a9d5"
+  },
+  {
+    "type": "table",
+    "name": "project_event_scopes",
+    "table": "project_event_scopes",
+    "sqlSha256": "c208d965c63d3f2dda8c55ca8abf43220575f7035c3c1532afc7b3577c84f1a3"
+  },
+  {
+    "type": "table",
+    "name": "project_memberships",
+    "table": "project_memberships",
+    "sqlSha256": "1795b43b7b653e48fa239e8b5414a7ad1cc7f85cf46e78456444e6fda5f96516"
+  },
+  {
+    "type": "table",
+    "name": "project_migration_states",
+    "table": "project_migration_states",
+    "sqlSha256": "b37b6ab69752b82315e66cd4f59fe517a2431f3e81d6e0b94d45539266fa6006"
+  },
+  {
+    "type": "table",
+    "name": "project_notifications",
+    "table": "project_notifications",
+    "sqlSha256": "7b72d4712c3838243ceb9f5e214d6948a7b2dbfa1900b08fc217f3a2a6654ea4"
+  },
+  {
+    "type": "table",
+    "name": "project_resource_scopes",
+    "table": "project_resource_scopes",
+    "sqlSha256": "bef1ccbf5b87f57b37098059891e48ade01f35f76375d8a50bd252ee4198fbf4"
+  },
+  {
+    "type": "table",
+    "name": "project_review_tasks",
+    "table": "project_review_tasks",
+    "sqlSha256": "ba78ee4472170a6572f357dd834a25eceba9c97a4cf235f504ae402462da135a"
+  },
+  {
+    "type": "table",
+    "name": "replay_approvals",
+    "table": "replay_approvals",
+    "sqlSha256": "d3a4c8243ea3c520def46371bb2f893e9447b503238b500fb76960bfed17d8e4"
+  },
+  {
+    "type": "table",
+    "name": "replay_cost_authorizations",
+    "table": "replay_cost_authorizations",
+    "sqlSha256": "5b104f45d1f325282a81a075902251ac201fd9f8498ef9f3135a9fb1346be85b"
+  },
+  {
+    "type": "table",
+    "name": "replay_sessions",
+    "table": "replay_sessions",
+    "sqlSha256": "199464caa8a7077ee84c195dcd68ed5dfe27faa41077a7b8568e2f035a0088aa"
+  },
+  {
+    "type": "table",
+    "name": "retention_sweep_runs",
+    "table": "retention_sweep_runs",
+    "sqlSha256": "bbef8a8385bd371e0b184c55a39bc501daeba09f97ee1ebd08a7303aadfd2a51"
+  },
+  {
+    "type": "table",
+    "name": "route_performance_samples",
+    "table": "route_performance_samples",
+    "sqlSha256": "b292325490ec646c1f859211c0da22874ae6ccadd05ac75b0b8932839d7afb3f"
+  },
+  {
+    "type": "table",
+    "name": "scene_source_epoch",
+    "table": "scene_source_epoch",
+    "sqlSha256": "421bb84baf7154f6a05740a2fb1c286c4c7af7a572f06749adf0be4482c39190"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_epoch_delete_guard",
+    "table": "scene_source_epoch",
+    "sqlSha256": "1ef51ec105f3d45821d28bf09eb77d011b3aa4c484cbabe9c1853bc0cdf577ef"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_epoch_insert_guard",
+    "table": "scene_source_epoch",
+    "sqlSha256": "a686740d729e4f75544349851dbd216144612f67eab1864607fa2da3c2238543"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_epoch_update_guard",
+    "table": "scene_source_epoch",
+    "sqlSha256": "aa0bf1b9a201928916e77a186f11cb6fa426c267d42f40740675671330afc969"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_event_private_payloads_delete",
+    "table": "event_private_payloads",
+    "sqlSha256": "3e63559043d36015e3b6b29c8963393bc7a68eee4dad9aef8ae6fb3c0e432a18"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_event_private_payloads_insert",
+    "table": "event_private_payloads",
+    "sqlSha256": "075e199adadff06526b43fb94f5c90cf902e2ffab01dabbf8765df1c845f8e1f"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_event_private_payloads_update",
+    "table": "event_private_payloads",
+    "sqlSha256": "3c2e25a638b1a76b38ac1705add53578ab05e60e39aac776e301abc259999db4"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_events_delete",
+    "table": "events",
+    "sqlSha256": "fe324022ca4cd20a0d726d80b7593972aa7326d47f0cc92adf731bc163bd5b50"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_events_insert",
+    "table": "events",
+    "sqlSha256": "a1e6a071c03c40eb6922d87721126bb7e2cdf98e295cd09be312641c14671bb1"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_events_update",
+    "table": "events",
+    "sqlSha256": "ecc4838b7763288529535b7ea5a24e476dc2dc8de950004ccbd82c5abcfb2982"
+  },
+  {
+    "type": "table",
+    "name": "scene_source_generations",
+    "table": "scene_source_generations",
+    "sqlSha256": "54bda1fe5597c7d32d8344ffbbcb7861b9f06c1d06bf4a778e1d4c00a01bee35"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_generations_delete_guard",
+    "table": "scene_source_generations",
+    "sqlSha256": "24fc7a1ca4ed06e98e5d70ca74b25d47d62b7e960ff39904eba5b29fb69f2588"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_generations_insert_guard",
+    "table": "scene_source_generations",
+    "sqlSha256": "bdb37c19ea302adb5df4f8d8187a4e8e941f13592e268933fb472868fc25c291"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_generations_update_guard",
+    "table": "scene_source_generations",
+    "sqlSha256": "cee4b07a504834d29b30ff95c5121cfb495711e9c5ff4e5c258f0ca9944fd094"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_project_event_scopes_delete",
+    "table": "project_event_scopes",
+    "sqlSha256": "aa9e720165c5a63b77d148a0ccf73f1bf0031ded45893534f55389c49f19d2cd"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_project_event_scopes_insert",
+    "table": "project_event_scopes",
+    "sqlSha256": "884ee58ab4217abaf244873d11550bdc9ef5f24cc9876386a8decb11ca0978c4"
+  },
+  {
+    "type": "trigger",
+    "name": "scene_source_project_event_scopes_update",
+    "table": "project_event_scopes",
+    "sqlSha256": "2f2e4b5dc9b08ee4978b723c343f35e97bf1aa9535350087c335b6a73e01c0a2"
+  },
+  {
+    "type": "trigger",
+    "name": "selected_output_share_immutable",
+    "table": "selected_output_shares",
+    "sqlSha256": "46ab8bb723c40e378105bb96cf24370c7c110d910230028ef22d69af22257848"
+  },
+  {
+    "type": "trigger",
+    "name": "selected_output_share_no_delete",
+    "table": "selected_output_shares",
+    "sqlSha256": "b9fba0d9901430e9ecca7a4edaf338fcc47fdab448eee60ca76e06b6cba99d2a"
+  },
+  {
+    "type": "trigger",
+    "name": "selected_output_share_no_replace",
+    "table": "selected_output_shares",
+    "sqlSha256": "42eb7e2733f0914a93c52ed3f2b060a6840b71896e4bfcaf22f63547b8352260"
+  },
+  {
+    "type": "table",
+    "name": "selected_output_shares",
+    "table": "selected_output_shares",
+    "sqlSha256": "4d764a69b14ecc6f83f02468993b02022d6d7af25d6dde05bba89569801c7620"
+  },
+  {
+    "type": "index",
+    "name": "selected_output_shares_owner",
+    "table": "selected_output_shares",
+    "sqlSha256": "eb0618fab03eacfccabfdbf54caae01528f7fbfc06f8ce3937bdade9920f921b"
+  },
+  {
+    "type": "table",
+    "name": "share_scopes",
+    "table": "share_scopes",
+    "sqlSha256": "9df9f0aa562e2caba266c25139a13137aa6e7cd33f7bf58b9dfea5e490408947"
+  },
+  {
+    "type": "table",
+    "name": "shares",
+    "table": "shares",
+    "sqlSha256": "1a22c388bbfc34041776e39f0458ff20fd2b8f2e829e13b6fa9827abd52e96bf"
+  },
+  {
+    "type": "table",
+    "name": "sqlite_sequence",
+    "table": "sqlite_sequence",
+    "sqlSha256": "3f401c6e63202d04f814d5b8b23cb5d1966ed2a8f1b279ee6fd1b0799efc937d"
+  },
+  {
+    "type": "table",
+    "name": "still_decision_cache",
+    "table": "still_decision_cache",
+    "sqlSha256": "d8fc2487a20f4e1e61c0a1ffb6514daa5ff70e851ecd5d60245a568fbed79f89"
+  },
+  {
+    "type": "table",
+    "name": "still_history_cache",
+    "table": "still_history_cache",
+    "sqlSha256": "d3a431cd2b94d7d065be12e22127560788687d91566fe1b12495fffdef597b0a"
+  },
+  {
+    "type": "table",
+    "name": "still_panel_commands",
+    "table": "still_panel_commands",
+    "sqlSha256": "8c05ad4ec5e5af052da4ac091d02e2cd587ebb3ed8ac92a0dd410e047171b1c3"
+  },
+  {
+    "type": "table",
+    "name": "still_panel_sessions",
+    "table": "still_panel_sessions",
+    "sqlSha256": "12d8fe63871b9501bb047da0108e47600c34d88af1fb7ae68b4001c64a6f35b6"
+  },
+  {
+    "type": "table",
+    "name": "users",
+    "table": "users",
+    "sqlSha256": "d37ec95faa3627c9a96e77fcc220362112a09eab9e3dae451c3c5c25d6830309"
+  }
+]

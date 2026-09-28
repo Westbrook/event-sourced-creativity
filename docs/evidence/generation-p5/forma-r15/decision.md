@@ -1,0 +1,58 @@
+# P5 R15 — staged actual-Forma non-purchase proposal
+
+**Local preparation complete; all stages below are unapproved.** No hosted action occurred in R15. The next decision is **Stage A only**. Stages B/C are concrete later actions with prerequisites, not implied authority. No paid generation, evidence issuance, grant, migration, fixture import, hold mutation, new resource or access change belongs to any stage.
+
+Selected target: `appgprj_6a7a020e334881919ed8aea0363cb98f`; `https://forma-creative-studio.reve-ai-0869.chatgpt.site`. Preserve its fresh audience, historically `workspace_all`; do not use private-Site deployment to change that audience. Historical source `c28af5fea0fc3ec2b37b878a544ec59c52a64daf`/v550/env16 is a comparison point, not current proof.
+
+Candidate release: `p5-forma-qualification:4cb06e6aeecfa77da573f754b3e951189590719cda4fd3b9fbb324931aca6e92`. [Full source/compiled identity](artifact-manifest.json) · [matrix](qualification-matrix.md) · [validation](validation.md). Only two fixed internal routes and their release identifier are new relative to the local baseline; existing P2/P4 adapter changes relative to historical production are separately listed in [source delta](source-delta.json). No silent replacement of a newer app is permitted.
+
+## Stage A — fresh read-only native metadata (the next proposed action)
+
+Authorize **up to8new normal operator reservations**, no recovery mutations, expiring2026-10-01T00:00Z. No use of the private ledger's remainder. Exact allocation:
+
+1. `get_site` once: target/origin/status/current role/access revision and audience. Do not request credentials or bypass settings.
+2. `get_environment_variables` once: revision and secret key/type/presence only; preserve only allowlisted non-secret control values. No secret-value export/read/provisioning. The documented secret flag must redact stored secrets; if unexpected plaintext appears, do not print/persist/use it and stop.
+3. `list_site_versions(limit:5)` once, no pagination; distinguish saved and deployed candidates.
+4. `get_site_version` once for the exact returned candidate selected from native deployment evidence.
+5. `get_deployment_status` up to twice total for that exact deployment, only if second is needed to resolve a nonterminal result. No invented IDs or blind polling.
+6. Final `get_site` and `get_environment_variables` once each: confirm unchanged target/audience/env revision.
+
+This is8maximum, not8mandatory calls. If the live version cannot be established from the bounded response, stop with that exact gap. No database table/content read, browser login traffic, source write credential, push/save/deploy, environment/access mutation or provider call. No general SQL/Cloudflare request. Existing local commit objects can be compared offline to returned source SHA; unknown/newer source requires a separately scoped supported source-read/reconciliation, not an overwrite.
+
+Retain redacted native metadata and local comparisons in P5's private local evidence/history; no new hosted source/body is created. Unknown native internal HTTP and existing managed prices remain unknown; no monetary cap is claimed. This stage accepts only its bounded read exposure, not the later production probe or a paid comparison. Native refusal/material drift stops; no retry/allowance expansion.
+
+**Decision text:** “Approve P5 R15 Stage A only: at most8new read-only native metadata reservations for the exact actual-Forma target, with the stated secret-redaction, evidence retention, drift/refusal and expiry limits. No publication or custody write.” Declining leaves the sealed local candidate intact.
+
+## Stage B — exact default-off-purchase publication and two bounded reads (later review)
+
+Prerequisites: Stage A identifies a current source/active saved version/environment/audience chain; candidate preserves the actual current app. If source differs, reconcile locally, build/test/reseal and present the new exact identity before asking to publish. Full [schema review](schema-coexistence.md) must show41packaged migrations already applied without changed history; if supported receipts cannot establish this, stop and resolve that read-only capability gap before deployment. No implicit migration authority.
+
+Candidate adds GET `/api/internal/generation-study/qualification` and the **default-off** custody route. Purchase configuration remains empty, both existing purchase switches remain off, historical migrations/bindings/ordinary routes unchanged. Preflight itself is available only to the compiled named owner with existing real admin/consent/personal guards. Native audience remains unchanged; this is not a Site made owner-private.
+
+Proposed new allowance: **20normal +6recovery =26operator reservations** for this stage only. Normal allocation: fresh site/env/version reads3; supported source credential1 with publish-on-push explicitly false/no active automatic window; remote-head/fetch/normal non-force push/remote-head verification4; save with exact archive1; saved-version/admission verification1; deployment1; terminal status checks≤2; signed-in browser access≤2; fixed authenticated preflight GETs2; bounded Worker-log read1; final site/env checks2. Total20. Reuse terminal responses instead of spending unused polls. No auth bypass token or credential extraction; stop if the supported browser access cannot fit.
+
+Use supported Sites packaging guidance when available. Listed0.1.71 cache was absent during local preparation while native tools remained callable. Retained deterministic archives preserve the exact source and build; they do **not** assert native admission. Do not patch/reinstall internals or permit a fallback that packages all72migrations. Successful native archive admission matching payload/migration hashes must follow approved source push/save and precede deploy; publish-on-push must not bypass it. A changed payload requires resealing/review; equivalent compression alone does not change source. No combined save/deploy that skips admission review.
+
+Expected receipts: current target/source relationships, exact successor source/native admission, terminal deployment and environment revision, two owner-only source-free qualification JSON receipts and exact offline missing/extra/changed catalog hash comparison, fixed log window if available, no DBwrites/provider/R2 activity. No qualification request dispatches ordinary app/session navigation; use the fixed JSON route. Raw schema SQL is not returned; a changed fingerprint establishes difference, not its plaintext cause. Do not normalize or automatically admit unknown platform objects.
+
+Recovery≤6: restore the freshly verified **actual-Forma pre-publication saved version** once, ≤2terminal status checks, site/env verification2, one spare read for exact state (no new deployment). No private version2. Restoration is allowed because Stage B creates no object/run; it cannot erase source/version/receipts. Failure/nonterminal outcome reports exact known version and remaining restricted route exposure. Expiry disables qualification even if history remains. Separate acceptance of production source/version-history retention and unknown-price publication/read exposure is required with this later Stage B action; private Option B is not transferred.
+
+## Stage C — separate custody write and original cleanup (later review)
+
+Prerequisites: B's exact deployment/principal/source/schema observations accepted for this narrow probe; genuine outstanding holds are retained, not cleared. Existing MEDIA must already be bound, no new resource. Owner must accept [fixed key/69bytes/metadata and exclusive-key concurrency limitation](custody.md), unknown-price finite production-probe exposure and explicit probe residue/retention ownership. This is a **write phase**, not a read-only proof.
+
+Proposed **15normal +12recovery =27reservations**: fresh site/env2; set only custody flag to1 (1); redeploy exact saved B version1; ≤2terminal checks; one bounded browser page access1; single conditional Put1; separate Read1; planned original Delete/read-null1; set flagoff1; redeploy same saved version1; ≤2terminal checks; fixed disabled response1. Total15. Environment revisions must be checked against deploy receipts; secret values and other controls remain unchanged. Skip unused polls; never borrow from recovery for normal work.
+
+Recovery12maximum: at most4additional original cleanup attempts (five total including planned), one uncertain-original read, flagoff1, redeploy1, ≤2terminal checks, final site/env2, one disabled verification. No replayed Put. Attempt counts are ceilings, not permission for deterministic retries. If metadata/hash changes, stop and prepare an exact recovery decision; do not delete an unknown object or weaken matching. Keep the cleanup-capable candidate until original cleanup is settled. Only after verified null may a separately accepted restoration of the actual preflight predecessor be considered; no private version2. No automatic deletion or scheduled expiry cleanup.
+
+Proposed Stage C owner terms, still blank until accepted: named cost/retention owner; acceptance of unknown-price operation/storage exposure; in-session object deletion beforeSep30 22UTC; indefinite private receipt/source/version metadata retention until separately reviewed deletion; explicit disposition if original cleanup fails. Suggested owner is westbrook.johnson@reve.art, **not an agent-filled acceptance**. No provider backup-erasure guarantee or paid-image funding follows.
+
+## Accounting, expiry and preserved prior state
+
+A/B/C combined proposed ceilings are8+26+27=61new reservations, only if each applicable stage is accepted; none issued. If all accepted in order, new-ledger boundaries are A1–8, B9–34 (normal9–28/recovery29–34), C35–61 (normal35–49/recovery50–61). Unused slots do not authorize another stage or wider work. Keep stage ceilings even when earlier calls are skipped. Persist/fdatasync and read back each uniquely numbered reservation **before dispatch**, then append exact receipt/outcome; uncertain calls remain charged. No second action after ledger persistence failure. Authentication/native internal HTTP and money remain unverified; these are conservative operator bounds only.
+
+Private R14 ledger stays60charged/11unused/71ceiling/normalStop59 exhausted. R13 is executed/retired, not a pending approval. Private v4 stays permanently disabled with62synthetic application rows/two tombstones/schema/platform metadata/emptyMEDIA/source history and zero private bodies. Accepted private Option B and indefinite retention since2026-09-25T21:04Z by westbrook.johnson@reve.art remain unchanged.
+
+No expiry renewal. A/B/C and any enabled probe cleanup must finish before **2026-10-01T00:00UTC**; propose finishing mutations/cleanup by **Sep30 22UTC**, retaining a two-hour recovery margin. At preparation time Sep28, this can fit only if fresh lineage, supported packaging and owner decisions resolve promptly. It is not an ETA or promise that actual financial qualification/paid comparison will fit. If readiness/recovery cannot fit, stop before publication/put and present a separate exact deadline-change proposal; none is requested or accepted here.
+
+P5 stays open. Authentic financial/lifecycle inputs are [explicitly inventoried](financial-inputs.md) for a later paid gate; no future-charge receipt requested early. P2 human review/original settlement between arms, sixPOST/twoimages/concurrency1/no retries,847/six exclusions and original image rejection unknowns remain. These operational methods transfer across media; no generation-quality improvement is claimed.

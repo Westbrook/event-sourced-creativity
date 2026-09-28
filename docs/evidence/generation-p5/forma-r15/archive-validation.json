@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "source archive exact files/hash pass",
+    "compiled archive exact files/hash pass",
+    "exact41 packaged migrations; no optional study or held31"
+  ],
+  "nativeAdmission": false,
+  "hostedActions": 0,
+  "qualificationRelease": "p5-forma-qualification:4cb06e6aeecfa77da573f754b3e951189590719cda4fd3b9fbb324931aca6e92",
+  "localPackage": "p5-forma-local-package:164dcc1c29d8fe5a6f0b36045661d5d5abef3dfa31bf4b2c70c4d49f780dc803",
+  "sourceFileCount": 2542,
+  "compiledFileCount": 622
+}

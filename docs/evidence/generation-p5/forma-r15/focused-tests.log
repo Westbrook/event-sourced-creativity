@@ -1,0 +1,41 @@
+✔ read-only candidate reuses actual principal guards, exact optional contracts and full catalog; no raw fields (86.55025ms)
+✔ missing optional study schema is unavailable, never silently installed or treated as clear holds (48.107917ms)
+✔ refuse anonymous (37.610417ms)
+✔ refuse other-account (38.212375ms)
+✔ refuse forged-cf-only (38.115458ms)
+✔ refuse cross-origin (37.638041ms)
+✔ refuse cross-site (37.291875ms)
+✔ refuse impersonation (37.315666ms)
+✔ refuse project-context (38.169916ms)
+✔ refuse post (37.69875ms)
+✔ no caller-selected query /api/internal/generation-study/qualification?sql=DELETE (38.165458ms)
+✔ no caller-selected query /api/internal/generation-study/qualification?table=users (37.715583ms)
+✔ no principal bootstrap: UPDATE users SET role='creator' (39.253416ms)
+✔ no principal bootstrap: UPDATE users SET consent_version='old' (37.326875ms)
+✔ no principal bootstrap: DELETE FROM users (39.018667ms)
+✔ fixed inventory preserves active/unknown reservations and reports original holds (55.963625ms)
+✔ changed trigger definition is detected without normalization (53.049334ms)
+✔ catalog overflow fails closed without partial result (50.606625ms)
+✔ reservation inventory overflow fails closed (59.09975ms)
+✔ principal drift across read is refused (47.63425ms)
+✔ read capability rejects writes, batches, exec and excessive reads (0.299ms)
+✔ actual Worker route avoids retention sweeps, assets, provider and writes; default-off paid actions remain (50.469417ms)
+✔ custody disabled by default even with malformed command and poisonous storage (37.489875ms)
+✔ separate custody phase: one fixed conditional put, cross-request verify, original-only delete/read-null (45.456583ms)
+✔ custody rejects caller key (37.297625ms)
+✔ custody rejects caller bytes (37.752125ms)
+✔ custody rejects caller sql (36.731292ms)
+✔ custody rejects caller owner (37.682959ms)
+✔ custody refuses corrupt original bytes (40.423458ms)
+✔ custody refuses corrupt original metadata (39.651875ms)
+✔ absolute expiry refuses observation and custody without renewal (38.411083ms)
+✔ exact 41-file packaged baseline is inspectable without installing held or study migrations (28.385625ms)
+✔ authenticated fixed custody page has no automatic request or storage access (40.410875ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 33
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2810.1005

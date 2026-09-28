@@ -1,3 +1,5 @@
+import {handleStudyCustodyProbe,CUSTODY_PROBE_PATH} from './generation-study-custody-probe.ts';
+import {handleStudyQualification,QUALIFICATION_PATH} from './generation-study-qualification.ts';
 import {createSitesStudyApi,SITES_STUDY_PREFIX} from './generation-study-api.ts';
 import {SITES_STUDY_CONFIGURATION} from './generation-study-configuration.ts';
 const handleSitesStudy=createSitesStudyApi(SITES_STUDY_CONFIGURATION);
@@ -140,6 +142,8 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
+    if(url.pathname===CUSTODY_PROBE_PATH)return handleStudyCustodyProbe(request,env);
+    if(url.pathname===QUALIFICATION_PATH)return handleStudyQualification(request,env);
     if(url.pathname.startsWith(SITES_STUDY_PREFIX))return handleSitesStudy(request,env);
     if(url.pathname.startsWith("/api/internal/ordinary-images/"))return handleOrdinaryImageQueue(request,env);
     if(url.pathname===SOURCE_ELIGIBILITY_PATH)return handleSourceEligibilityRead(request,env);

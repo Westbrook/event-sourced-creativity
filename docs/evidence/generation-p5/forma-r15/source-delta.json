@@ -1,0 +1,202 @@
+{
+  "historicalSource": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "historicalOnly": true,
+  "localStartingCommit": "6db3510c36a22c499eddb2facc4e944c83661b90",
+  "historicalProductionInputDelta": [
+    {
+      "path": "db/authoring-study-approval.pending.sql",
+      "historicalSha256": null,
+      "candidateSha256": "d8def4713f0dfcec6292161a5a0e6dba785d59b7250ff8a4c71aad1ceb94360e"
+    },
+    {
+      "path": "db/generation-study-supplied-v2.pending.sql",
+      "historicalSha256": null,
+      "candidateSha256": "d1acdc198bb35608b2b407b6b0c833fd383e7c57fde2c36bdae970178bf62594"
+    },
+    {
+      "path": "evals/generation-reliability/bridge-artifacts/v6-c2/first-study.json",
+      "historicalSha256": null,
+      "candidateSha256": "015a92358a294e4601b8675c724f9e5ef4a05c65ab12043a5a9f956ee6fc3402"
+    },
+    {
+      "path": "evals/generation-reliability/e2a/artifacts/v2/capture.json",
+      "historicalSha256": null,
+      "candidateSha256": "63cda4f91dbe4af902b7995b9ac0a7e2d1c5a7ecf962cd8529c0578ccf9aae98"
+    },
+    {
+      "path": "evals/generation-reliability/e2a/artifacts/v2/exact-diff.json",
+      "historicalSha256": null,
+      "candidateSha256": "85ef06930f3c67a67636d5eaaec48e180ee4f367b9cd9bfa93fb5ca3385d2cda"
+    },
+    {
+      "path": "evals/generation-reliability/e2a/artifacts/v2/semantic-ledger.json",
+      "historicalSha256": null,
+      "candidateSha256": "9628b8a9fbbfa15fa635ecfb52fda8fdfb71c7720b8cad5b9d9f10391c27320b"
+    },
+    {
+      "path": "evals/generation-reliability/e2a/fixture.mjs",
+      "historicalSha256": "4bada6d4672ea167dfa1796c39fe98e32355e737d1b6363645093da1df0937b2",
+      "candidateSha256": "9cb28a9244e7debdc1788d2edcd490e7cc055b9b3b0004b774cac9fb0c9eebf3"
+    },
+    {
+      "path": "evals/generation-reliability/first-compiler-study.mjs",
+      "historicalSha256": "9d36229be825e5bfdabc78eb4d6ce5830c77890f648257b7156b51a2ec3aec1d",
+      "candidateSha256": "5ae6c0e2f2dee63b3ee9695d22eacbf02752ea59bd538a1def6e7818fa661e04"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/authority.mjs",
+      "historicalSha256": "854e5fc0839e23951bfb762bd6164e22e3fd988ce59d6bcdc41ee0945bbf5085",
+      "candidateSha256": "843ce56cd7022fd995dadbddadeaffe66519acb6ea669921b3cc70b3ba26b0ed"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/check-schema.mjs",
+      "historicalSha256": "c5428eba0405afdf7e6a9500f692b6aa6d12e75ccb34cd42f4f3718175263fd1",
+      "candidateSha256": "10ac6d721735eb8a7bfdd46b837fb773fa12ee1ea47a76896f09a29fa11d4324"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/financial-policy.mjs",
+      "historicalSha256": "d4a87d1b0865d64fcfe7d4995aaac0cb00f59f83fa3c170793531d38f5ec84ae",
+      "candidateSha256": "e59f2bd57080b238964f0ab72217cf19f3e596ca5b5760c35cc63fbf447df561"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/host.mjs",
+      "historicalSha256": "5c92aac93a3229cf01e2a02b928705ff599a959b06611a7a9323d653289a9693",
+      "candidateSha256": "95c088c43d0bd5b36626fc77b149b81d97038afe2270de81211bf473cb0e50f9"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+      "historicalSha256": null,
+      "candidateSha256": "3b72361202a23513bb88fb36186234ca91720cc7ee76057ff134b314c50fdc6e"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+      "historicalSha256": null,
+      "candidateSha256": "4143cad55780e7eb05c8d05c01ad5f6da335a50bb5d5e69479f892a5c54130d3"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/transport.mjs",
+      "historicalSha256": "01c3dca958f037d822d52d17ca43897e16e3ab3e3b1c88e09b100af996cea61f",
+      "candidateSha256": "de2323da5e828979a963d5fe35585bc5c30fdd90f7ac174f0b0e1f0880dc31e2"
+    },
+    {
+      "path": "evals/generation-reliability/p1/demo-fixture.mjs",
+      "historicalSha256": null,
+      "candidateSha256": "60d248c3c7a7d38c9cec57015992b00835c2d73aa31f6b2e056607bdf76ad03d"
+    },
+    {
+      "path": "evals/generation-reliability/p1/input-contract.mjs",
+      "historicalSha256": null,
+      "candidateSha256": "f849148680163c222d2c0ffc7f3b59fd0d08b024bc8d838b2b83b9faafa1e4fe"
+    },
+    {
+      "path": "evals/generation-reliability/p2/contract.mjs",
+      "historicalSha256": null,
+      "candidateSha256": "b7bf0cabcabce1ddfcd83e885ffae1b01c7cbce8d4bba44f47386eb860284012"
+    },
+    {
+      "path": "evals/generation-reliability/p4/entry.mjs",
+      "historicalSha256": null,
+      "candidateSha256": "59c194be707a7868b3710e16314ab1af46ea392a600c2def2bb780c39e3e6f73"
+    },
+    {
+      "path": "worker/authoring-commits.ts",
+      "historicalSha256": "dc14df482af4898619782fb8a55064b1458cf67c4dff976004a256622d55e8fa",
+      "candidateSha256": "de3e7598fbccf188899ddf55661c361e55439e5df98b6bc29262f77b636eda2f"
+    },
+    {
+      "path": "worker/authoring-study-approval.ts",
+      "historicalSha256": null,
+      "candidateSha256": "15a82e6a4a27db46f1e1a72d0da8dc23959042c137afce0fbb19d560102bcc8f"
+    },
+    {
+      "path": "worker/authoring-study-finance.ts",
+      "historicalSha256": null,
+      "candidateSha256": "ef429042010cbb97505d723aae75689785cf59188e61a2d008482097927a0feb"
+    },
+    {
+      "path": "worker/authoring-study-proof.ts",
+      "historicalSha256": null,
+      "candidateSha256": "6238726561a7a86ba0748a1f3fa192fcb2ce589a17297c2ef73d79dc48f1d77a"
+    },
+    {
+      "path": "worker/authoring-study-schema.ts",
+      "historicalSha256": null,
+      "candidateSha256": "5c3c06cc1e9bc81a3fc11e1af86f950ce6b9c47c232b4520facd1a253704ad89"
+    },
+    {
+      "path": "worker/authoring-study-types.ts",
+      "historicalSha256": null,
+      "candidateSha256": "54aff30323f25549902287035c2394154bb8c59f4e3d22f8860261d06d126024"
+    },
+    {
+      "path": "worker/generation-study-api.ts",
+      "historicalSha256": null,
+      "candidateSha256": "ac6b81815d0d111f755c8ffb1683d6ebeffb2fc866cdf7ba1c8e2ae07de99bec"
+    },
+    {
+      "path": "worker/generation-study-cleanup.ts",
+      "historicalSha256": null,
+      "candidateSha256": "7bc82077ba372a4b5553d84280abf2adc98a0bfca86918eb025c41851de15da7"
+    },
+    {
+      "path": "worker/generation-study-configuration.ts",
+      "historicalSha256": null,
+      "candidateSha256": "7ab7e00bc4ee587733955bc659f1e8c84783770ea3410ee50155e11a4ad2f4da"
+    },
+    {
+      "path": "worker/generation-study-custody-probe.ts",
+      "historicalSha256": null,
+      "candidateSha256": "d1d385f3ae39a475044072a09e1abc8da54ca55a49b31a5e7765d01168114c4d"
+    },
+    {
+      "path": "worker/generation-study-qualification.ts",
+      "historicalSha256": null,
+      "candidateSha256": "d318755b9bfb4b7cae87d35290ee10d8a244844461f55043367f88bd07c9f345"
+    },
+    {
+      "path": "worker/index.ts",
+      "historicalSha256": "fbed144021eefc709e0a49f0c47ecd460b163ddfd9866fa4912f94721101b1db",
+      "candidateSha256": "dbe6ce041c022fc4588d73e2e8dac298e3d1a010034b4697ff993a26a1d519ae"
+    },
+    {
+      "path": "worker/runtime.ts",
+      "historicalSha256": "fae4e0e89676882ab76e0958cd0aca183748e65fd8fb1b5021034693055b9e8a",
+      "candidateSha256": "8b4f08481fe0ad9a945f89d12f756fc9edc4d65cd361c5ff781ac5ff63b809ea"
+    },
+    {
+      "path": "worker/generation-study-qualification-release.json",
+      "historicalSha256": null,
+      "candidateSha256": "8f39ea320b0efbd7e07b8d5aaaeb0a52388e706cdcac401f920838f2d1d3867f"
+    }
+  ],
+  "sinceR1SealedInputDelta": [
+    {
+      "path": "worker/generation-study-custody-probe.ts",
+      "r1Sha256": null,
+      "candidateSha256": "d1d385f3ae39a475044072a09e1abc8da54ca55a49b31a5e7765d01168114c4d"
+    },
+    {
+      "path": "worker/generation-study-qualification.ts",
+      "r1Sha256": null,
+      "candidateSha256": "d318755b9bfb4b7cae87d35290ee10d8a244844461f55043367f88bd07c9f345"
+    },
+    {
+      "path": "worker/index.ts",
+      "r1Sha256": "2b082e9dce8cbba99e5dc41fdea627c10fd21d3db4b52a9251e052ccc14d07d7",
+      "candidateSha256": "dbe6ce041c022fc4588d73e2e8dac298e3d1a010034b4697ff993a26a1d519ae"
+    },
+    {
+      "path": "worker/generation-study-qualification-release.json",
+      "r1Sha256": null,
+      "candidateSha256": "8f39ea320b0efbd7e07b8d5aaaeb0a52388e706cdcac401f920838f2d1d3867f"
+    }
+  ],
+  "note": "Tracked candidate inputs plus new release metadata. No claim of parity with current hosted source; stop on fresh source drift. R1 comparison distinguishes existing P2/P4 implementation from new preflight.",
+  "r1ManifestCoverageGaps": [
+    {
+      "path": "cloudflare.d.ts",
+      "r1Sha256": null,
+      "candidateSha256": "81955a762ecdcff8b2090eb82e60367dcbe526994e0be45671823c324d617eff"
+    }
+  ]
+}
