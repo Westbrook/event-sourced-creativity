@@ -1,0 +1,131 @@
+{
+  "kind": "Complete R13 release, review and validation evidence hashes",
+  "files": [
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/artifact.json",
+      "bytes": 712,
+      "sha256": "176a52440c9201740835a018f066573b7937a8a1e9b1f79d07f6e13a01e51c1a"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/decision.md",
+      "bytes": 11061,
+      "sha256": "a4d6a422a2f4d8ca51c1d9dc6a4150fe63e29884a7b21cfdbb86bc4d66c97b14"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/failure-validation.json",
+      "bytes": 11783,
+      "sha256": "ed74029677bd71dabb8a693d1e7f5575d1d38d9d530440161d56540b4c2fea65"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/historical-hashes.json",
+      "bytes": 20604,
+      "sha256": "445b58e2d19d6676e9bc318e3975ee29b441dadff110176073eba861768351ba"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/historical-integrity.json",
+      "bytes": 85,
+      "sha256": "ee38e340a3ccd9c7422cec176a97f534e2f79ed341d09dfd1e4f340bcb9445d5"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/index.html",
+      "bytes": 2414,
+      "sha256": "57d6c9109150e5387f09792f54ccff18a02a6b4f3d41950f4b158727e4a8222c"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/local-validation.json",
+      "bytes": 45082,
+      "sha256": "f8715c6423e4e8f7989a92dba87b8fd8e0460f9b61854deaad376cb84f88c70c"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/native-parent-worker.diff",
+      "bytes": 6843,
+      "sha256": "7ced30be61624a5884e1bffd5477c287815a92e5f2d275c0ee612dd6d9a45d9d"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/packaging-validation.json",
+      "bytes": 2206,
+      "sha256": "55c0c56af447d9e22e2d456d546a8fa24c3bf3839841329d36b247d007912f91"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/preparation.json",
+      "bytes": 454,
+      "sha256": "22ac81c806aeb965fd3efc2072e423849b28abb3ee17e33ff63e809f780593a9"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/proposed-request-allocation.json",
+      "bytes": 2389,
+      "sha256": "88bcfab5b626beddf2c089eccc5e07fbaeff3a0d2e019e9caa64a09e16248445"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/release-envelope.json",
+      "bytes": 2543,
+      "sha256": "bb563accec6ca973bac76f678351e107e45d4402f2741a2884148e4f38cf3993"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/request-ledger.json",
+      "bytes": 11138,
+      "sha256": "ba8dbbfb7a27622c536b96847e74bd9fc89f6c229e8487960a7c264b43877207"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/result.json",
+      "bytes": 7174,
+      "sha256": "59663709fb07742ff8afb16a398397eb848dea2495b437bb17d207045917f400"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/result.md",
+      "bytes": 6106,
+      "sha256": "c1249df780da58c0cbd52f7498d457bf39cd3dc3a541dee304b598e0274f8955"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/retained-state.json",
+      "bytes": 2123,
+      "sha256": "4fcc039fdd8ca9e4fa7bafeb9392a0659b1a20a92f6954cc20820db5a2225c8b"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/sites-archive.tar.gz",
+      "bytes": 354880,
+      "sha256": "f34d15d3d76b161ca24f8d2bbc7d7f683c9a2e9fb56b9df81bd9362e7963c715"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/source-manifest.json",
+      "bytes": 35819,
+      "sha256": "24f6b5b330d8b405377d9ee78b88efe05cb7405c8fc98e5a3b634f3fce4038ab"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/source.tar.gz",
+      "bytes": 2333271,
+      "sha256": "382e3ef4aab196f60a9c21176ffe8228c987f2926a567f372e1c2450ecc9f325"
+    },
+    {
+      "path": "docs/evidence/generation-p5/sites-r13/worker.diff",
+      "bytes": 1801,
+      "sha256": "08c55b97eb76ea806c4cf7b5c0e10e8d2dc85ac72c050e3e0bfb053c026e45ae"
+    },
+    {
+      "path": "scripts/prepare-generation-p5-remedy-release.mjs",
+      "bytes": 2248,
+      "sha256": "08df3be5b71c80a79f7644fa63a0a78c8e827c59cf405908d7445ecead0b0e98"
+    },
+    {
+      "path": "scripts/check-generation-p5-rehearsal.mjs",
+      "bytes": 8140,
+      "sha256": "06b9e99b430336a7271317abbc6edbfeae05d7e58da7f49bac88c4764a872d6d"
+    },
+    {
+      "path": "scripts/check-generation-p5-rehearsal-failures.mjs",
+      "bytes": 8528,
+      "sha256": "c74f97d7930db1ba055663051f13e997460b4a4ded8f8902e0cdfacf5573213a"
+    },
+    {
+      "path": "scripts/p5-hosted-metadata-fixture.mjs",
+      "bytes": 1257,
+      "sha256": "df5fd346260d116dd9e54d80fcc581488fc78630611a16198c4849b7bc15640e"
+    },
+    {
+      "path": "scripts/seal-generation-p5-remedy-release.py",
+      "bytes": 7013,
+      "sha256": "09229614f9690d7f00e38483536cc059e91ca5cd9e7724cc12016228c36ad92f"
+    }
+  ],
+  "selfExcluded": true
+}

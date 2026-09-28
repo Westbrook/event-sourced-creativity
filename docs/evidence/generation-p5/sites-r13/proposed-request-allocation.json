@@ -1,0 +1,87 @@
+{
+  "accepted": false,
+  "envelope": "p5-sites-remedy-release:77eb7d7fd34290dd1ca5cea36de3c5f39427d5e6ed30e4fa78f958cfe4baebcc",
+  "priorCharged": 31,
+  "priorLimit": 37,
+  "priorUnused": 6,
+  "priorNormalStop": 30,
+  "proposedAdditionalNormal": 28,
+  "proposedRecoveryAllocation": 12,
+  "proposedMaximumFurtherReservations": 40,
+  "proposedCumulativeNormalStop": 59,
+  "proposedCumulativeLimit": 71,
+  "increaseAboveExisting37": 34,
+  "reuseExistingUnusedTowardRecovery": 6,
+  "newNormalSlots": 28,
+  "newRecoverySlots": 6,
+  "cleanupAttemptLimit": 5,
+  "normalStages": [
+    {
+      "stage": "fresh target/audience, environment, saved-version provenance",
+      "maximum": 3
+    },
+    {
+      "stage": "owner browser readiness and one post-deploy page load",
+      "maximum": 2
+    },
+    {
+      "stage": "ephemeral source credential; publish-on-push disabled",
+      "maximum": 1
+    },
+    {
+      "stage": "supported source verification/non-force successor push",
+      "maximum": 5
+    },
+    {
+      "stage": "save exact archive; mandatory native admission",
+      "maximum": 1
+    },
+    {
+      "stage": "private deployment",
+      "maximum": 1
+    },
+    {
+      "stage": "terminal deployment checks, only if needed",
+      "maximum": 2
+    },
+    {
+      "stage": "pre-import Status",
+      "maximum": 1
+    },
+    {
+      "stage": "one atomic Start",
+      "maximum": 1
+    },
+    {
+      "stage": "ten fixed steps, serial and receipt-driven",
+      "maximum": 10
+    },
+    {
+      "stage": "terminal cursor/phase Status",
+      "maximum": 1
+    }
+  ],
+  "recoveryStages": [
+    {
+      "stage": "Stop if a run exists and state permits",
+      "maximum": 1
+    },
+    {
+      "stage": "original cleanup attempts, including first planned cleanup",
+      "maximum": 5
+    },
+    {
+      "stage": "status/lost-ack/disabled verification",
+      "maximum": 3
+    },
+    {
+      "stage": "saved-v2 restoration and up to two terminal checks, only if no import or cleanup already complete",
+      "maximum": 3
+    }
+  ],
+  "unit": "Conservative operator reservation; native internal/browser/auth HTTP not fully measured. Original80 HTTP bound not proven by these units; no reset of unknown prior traffic.",
+  "expiry": "2026-10-01T00:00:00Z",
+  "latestStart": "2026-09-30T22:00:00Z",
+  "changedReleaseAndFullRehearsalRequestedTogether": true,
+  "hostedActionAuthorizedNow": false
+}

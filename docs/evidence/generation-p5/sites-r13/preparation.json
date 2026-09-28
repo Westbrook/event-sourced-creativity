@@ -1,0 +1,8 @@
+{
+  "stage": "/private/tmp/forma-p5-sites-remedy-r13",
+  "version2Base": "1565d8ac8a568bd0b9b7bde789eadc450e384364",
+  "expectedNativeParent": "530960b85f85756b0eee97746090d690fd00aa95",
+  "diagnosticReconciliation": "New non-force successor of native parent530960b; restore v2 Worker surface plus exact metadata pin, remove src/catalog.mjs, regenerate artifact. Never reset remote to older v2 commit.",
+  "noSourceSync": true,
+  "noHostedCalls": true
+}

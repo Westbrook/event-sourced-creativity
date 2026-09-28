@@ -1,0 +1,401 @@
+{
+  "workerSha256": "b32ebed95d493d5f645f60869ec31e99b62f0e8272da55789345968585ab68f5",
+  "checks": [
+    {
+      "name": "real credential-shaped binding rejected before application access",
+      "result": {
+        "ok": false,
+        "error": "Error: isolated_bindings_required",
+        "instance": "123090e2-d989-445e-ab79-a2be58bae0cd",
+        "metrics": {
+          "action": "",
+          "step": "",
+          "statements": 0,
+          "attemptedStatements": 0,
+          "bindingCalls": 0,
+          "failedBatches": 0,
+          "reads": 0,
+          "writes": 0,
+          "databaseBytes": 0,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong canonical schema refuses importer",
+      "result": {
+        "ok": false,
+        "error": "Error: schema_mismatch",
+        "instance": "14f32ab0-d591-421b-ac5e-c6afae8fa647",
+        "metrics": {
+          "action": "start",
+          "step": "",
+          "statements": 2,
+          "attemptedStatements": 2,
+          "bindingCalls": 2,
+          "failedBatches": 0,
+          "reads": 582,
+          "writes": 0,
+          "databaseBytes": 811008,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "wrong persistent dataset refuses continuation",
+      "result": {
+        "ok": false,
+        "error": "Error: owner_or_dataset_changed",
+        "instance": "1d9c37fe-783c-4409-ad40-480f977be158",
+        "metrics": {
+          "action": "step",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 1,
+          "bindingCalls": 1,
+          "failedBatches": 0,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 831488,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "expired one-hour run cannot resume or renew",
+      "result": {
+        "ok": false,
+        "error": "Error: step_or_expiry",
+        "instance": "e001cdcb-b75a-41be-a14e-8dace2439350",
+        "metrics": {
+          "action": "step",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 1,
+          "bindingCalls": 1,
+          "failedBatches": 0,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 831488,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      },
+      "cleanupAfterExpiry": true,
+      "clockWasNotChanged": true
+    },
+    {
+      "name": "stop before purchase; orphaned successful put with lost acknowledgement is found by compiled key cleanup",
+      "fixture": "Local harness seeded original compiled key to model put-ack loss; no caller fault field or hosted fault injection",
+      "stop": {
+        "ok": false,
+        "error": "Error: D1_ERROR: CHECK constraint failed: ok=1: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)",
+        "instance": "9590c237-b7dd-4fca-99f6-d0cbd354d17e",
+        "metrics": {
+          "action": "step",
+          "step": "",
+          "statements": 1,
+          "attemptedStatements": 4,
+          "bindingCalls": 2,
+          "failedBatches": 1,
+          "reads": 1,
+          "writes": 0,
+          "databaseBytes": 831488,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      },
+      "cleanup": {
+        "disabled": true,
+        "deleted": [
+          {
+            "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/531156a4bee0f82afcbb5bf1eb8116ccb4c0e4ea95e6d5b8c786c9d20c9316aa.png",
+            "existed": true,
+            "readNull": true
+          },
+          {
+            "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/7794846fbd3d203028b8716c3b97b7a19baa8d26d9f4084aa974774250b2cda4.png",
+            "existed": false,
+            "readNull": true
+          }
+        ],
+        "privateBodiesRemaining": 0,
+        "residual": [
+          {
+            "table": "users",
+            "rows": 1
+          },
+          {
+            "table": "authoring_study_configurations",
+            "rows": 1
+          },
+          {
+            "table": "authoring_study_evidence",
+            "rows": 12
+          }
+        ],
+        "proof": {
+          "schemaHash": "577d71dec6a4b4d3362a4312e4a0683be24a6152888850b6890b3326058da998",
+          "retiredTombstoneHash": "2d81ce6aff30b32b995bd1b569b83e90ef6843f6a9aed4a6295cbbcf3415c8e8"
+        },
+        "retained": "Synthetic immutable original intent/accounting plus empty schema, compiled source and old/new tombstones. No production records."
+      }
+    },
+    {
+      "name": "missing observed metadata refuses Start",
+      "result": {
+        "ok": false,
+        "error": "Error: schema_mismatch",
+        "instance": "a7813a68-bf74-41e5-a44a-6ac96751d897",
+        "metrics": {
+          "action": "start",
+          "step": "",
+          "statements": 2,
+          "attemptedStatements": 2,
+          "bindingCalls": 2,
+          "failedBatches": 0,
+          "reads": 581,
+          "writes": 0,
+          "databaseBytes": 806912,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "extra definition refuses Start",
+      "result": {
+        "ok": false,
+        "error": "Error: schema_mismatch",
+        "instance": "6819ffc8-b539-4442-8ec0-abf86106be15",
+        "metrics": {
+          "action": "start",
+          "step": "",
+          "statements": 2,
+          "attemptedStatements": 2,
+          "bindingCalls": 2,
+          "failedBatches": 0,
+          "reads": 588,
+          "writes": 0,
+          "databaseBytes": 819200,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "changed metadata uniqueness refuses Start",
+      "result": {
+        "ok": false,
+        "error": "Error: schema_mismatch",
+        "instance": "8dfb9fcb-fe01-4390-af72-e42538c69655",
+        "metrics": {
+          "action": "start",
+          "step": "",
+          "statements": 2,
+          "attemptedStatements": 2,
+          "bindingCalls": 2,
+          "failedBatches": 0,
+          "reads": 584,
+          "writes": 0,
+          "databaseBytes": 811008,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 0,
+            "delete": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "D1 atomic import batch rolls back all26rows and run on final constraint fault",
+      "localFault": "Extra failing CHECK only in harness batch, never in shipped source; companion full suite executes compiled Start and checks all26rows.",
+      "rolledBackRows": 26,
+      "rolledBackRun": true
+    },
+    {
+      "name": "metadata drift refuses shared cleanup preflight; explicit recovery needed before disablement",
+      "refusedCleanup": {
+        "ok": false,
+        "error": "Error: schema_mismatch",
+        "instance": "ef2d424d-ae47-4657-8c64-cca85a4c4dfa",
+        "metrics": {
+          "action": "cleanup",
+          "step": "",
+          "statements": 50,
+          "attemptedStatements": 50,
+          "bindingCalls": 47,
+          "failedBatches": 0,
+          "reads": 650,
+          "writes": 27,
+          "databaseBytes": 991232,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 4,
+            "delete": 2
+          }
+        }
+      },
+      "stateAfterRefusal": {
+        "phase": "cleaning"
+      },
+      "recoveredCleanup": {
+        "ok": true,
+        "action": "cleanup",
+        "result": {
+          "disabled": true,
+          "deleted": [
+            {
+              "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/531156a4bee0f82afcbb5bf1eb8116ccb4c0e4ea95e6d5b8c786c9d20c9316aa.png",
+              "existed": false,
+              "readNull": true
+            },
+            {
+              "key": "generation-study/b866504f342113df97681059983baa9050b4111ac5582de292af8b2d4b907adb/7794846fbd3d203028b8716c3b97b7a19baa8d26d9f4084aa974774250b2cda4.png",
+              "existed": false,
+              "readNull": true
+            }
+          ],
+          "privateBodiesRemaining": 0,
+          "residual": [
+            {
+              "table": "budget_counters",
+              "rows": 2
+            },
+            {
+              "table": "users",
+              "rows": 1
+            },
+            {
+              "table": "cost_budget_counters",
+              "rows": 2
+            },
+            {
+              "table": "budget_reservations",
+              "rows": 1
+            },
+            {
+              "table": "cost_budget_reservations",
+              "rows": 2
+            },
+            {
+              "table": "generation_study_grants",
+              "rows": 1
+            },
+            {
+              "table": "generation_study_operations",
+              "rows": 1
+            },
+            {
+              "table": "generation_study_evidence",
+              "rows": 9
+            },
+            {
+              "table": "generation_study_financial_grants",
+              "rows": 2
+            },
+            {
+              "table": "generation_study_stages",
+              "rows": 4
+            },
+            {
+              "table": "generation_study_supplied_reviews",
+              "rows": 1
+            },
+            {
+              "table": "authoring_study_configurations",
+              "rows": 1
+            },
+            {
+              "table": "authoring_study_evidence",
+              "rows": 12
+            },
+            {
+              "table": "authoring_study_commits",
+              "rows": 1
+            }
+          ],
+          "proof": {
+            "schemaHash": "577d71dec6a4b4d3362a4312e4a0683be24a6152888850b6890b3326058da998",
+            "retiredTombstoneHash": "2d81ce6aff30b32b995bd1b569b83e90ef6843f6a9aed4a6295cbbcf3415c8e8"
+          },
+          "retained": "Synthetic immutable original intent/accounting plus empty schema, compiled source and old/new tombstones. No production records."
+        },
+        "state": {
+          "phase": "disabled",
+          "cursor": 3,
+          "requests": 5,
+          "report": null,
+          "reads": 1153749,
+          "writes": 3242
+        },
+        "metrics": {
+          "action": "cleanup",
+          "step": "",
+          "statements": 56,
+          "attemptedStatements": 56,
+          "bindingCalls": 51,
+          "failedBatches": 0,
+          "reads": 631,
+          "writes": 7,
+          "databaseBytes": 835584,
+          "providers": 0,
+          "intent": [],
+          "r2": {
+            "put": 0,
+            "get": 4,
+            "delete": 2
+          }
+        },
+        "instance": "ef2d424d-ae47-4657-8c64-cca85a4c4dfa"
+      },
+      "obligation": "Byte/private-body cleanup may precede metadata refusal. No successful disablement claim until exact schema restored under separate review and original cleanup finishes. Saved-version restoration is not cleanup.",
+      "localMetadataRepairOnly": true
+    }
+  ],
+  "networkAttempts": 0,
+  "hosted": false,
+  "forcedRestart": false
+}

@@ -1,0 +1,21 @@
+{
+  "workerSha256": "b32ebed95d493d5f645f60869ec31e99b62f0e8272da55789345968585ab68f5",
+  "bytes": 2011486,
+  "source": [
+    {
+      "path": "src/application.mjs",
+      "sha256": "e46ba1a19a7461654707945ec90fce6fb9f2fa10535625642ce735ef6716d89d"
+    },
+    {
+      "path": "src/dataset.json",
+      "sha256": "db054ae51a60cdd4f5031d4c0888cfb0a29d610643e1691ae95cf69a004732cd"
+    },
+    {
+      "path": "src/worker.mjs",
+      "sha256": "4c172a29d7f9d051f1e66e3be46807e0e12c7eb8e3d04260665e73c226a283fc"
+    }
+  ],
+  "sourceTreeSha256": "a43c5812dba97c5527e2d1777585d3d88792cc5d0fce05cd587bdfffb3ebf948",
+  "schema": "58ec51a722ad2fc5a0b55523b6731bf1929843c6db6d064ce3168d0a4fe5802a",
+  "realNetwork": false
+}

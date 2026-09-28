@@ -1,0 +1,61 @@
+{
+  "method": "Unmodified installed Sites0.1.71 package-site.mjs with COPYFILE_DISABLE=1; no native call",
+  "archiveSha256": "f34d15d3d76b161ca24f8d2bbc7d7f683c9a2e9fb56b9df81bd9362e7963c715",
+  "archiveBytes": 354880,
+  "rawTarSha256": "069b21499b61c0c1d6d5864638278090ec39dd22da19a34cd00e5b9b3c85e35d",
+  "nativeMetadataNormalizedReferenceSha256": "e0dda5e38ab211d9301db3c9d3a43db14b6803b11a20eb9b95e10e9a7582dda2",
+  "nativeMetadataNormalizedReferenceBytes": 2283520,
+  "payloads": [
+    {
+      "path": "dist/.openai/drizzle/0000_hesitant_red_skull.sql",
+      "sha256": "01cd656c8ba8bdf396e6bda2cdbfa2a483c12cf075a3f62920c69dcfd5fc4556",
+      "bytes": 6677
+    },
+    {
+      "path": "dist/.openai/drizzle/0001_p5_minimum.sql",
+      "sha256": "a75be5f296cdcbdbd67bf5691b64e58613e845fc393ff2394c94046496f2edc3",
+      "bytes": 50758
+    },
+    {
+      "path": "dist/.openai/drizzle/meta/0000_snapshot.json",
+      "sha256": "3357794439142f0c31e6d8198d71fc45728002f71ecbdf2e1e238e36fae9430e",
+      "bytes": 28395
+    },
+    {
+      "path": "dist/.openai/drizzle/meta/0001_snapshot.json",
+      "sha256": "7ba015e2239e2a725fc619536bdc554dada56f8b7f881f55ae31b9ce7c0b5787",
+      "bytes": 170670
+    },
+    {
+      "path": "dist/.openai/drizzle/meta/_journal.json",
+      "sha256": "ec8817a12e284d8f72e7a32707b4d0b2ccfa7a92c0a9fed3962f93c2296d4289",
+      "bytes": 347
+    },
+    {
+      "path": "dist/.openai/hosting.json",
+      "sha256": "d0a602c7e6242190dc1c09c5a364ac72763e5fba8d2a9cba7d5d532435dd8dda",
+      "bytes": 94
+    },
+    {
+      "path": "dist/client/robots.txt",
+      "sha256": "331ea9090db0c9f6f597bd9840fd5b171830f6e0b3ba1cb24dfa91f0c95aedc1",
+      "bytes": 26
+    },
+    {
+      "path": "dist/server/index.js",
+      "sha256": "b32ebed95d493d5f645f60869ec31e99b62f0e8272da55789345968585ab68f5",
+      "bytes": 2011486
+    },
+    {
+      "path": "dist/server/wrangler.json",
+      "sha256": "3f2577bd6acca56043e5c250b4b6e1d3ec93ea252419ab093efd93080f3eafc9",
+      "bytes": 522
+    }
+  ],
+  "compiledWorkerTestedAndPackagedIdentical": true,
+  "onlyArchiveDeltaFromVersion2": [
+    "dist/server/index.js"
+  ],
+  "migrationsAndMetadataIdentical": true,
+  "nativeAdmission": false
+}

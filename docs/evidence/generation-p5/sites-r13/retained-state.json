@@ -1,0 +1,68 @@
+{
+  "applicationRows": 62,
+  "applicationRowsByTable": {
+    "budget_counters": 2,
+    "users": 1,
+    "cost_budget_counters": 2,
+    "budget_reservations": 2,
+    "cost_budget_reservations": 4,
+    "generation_study_grants": 1,
+    "generation_study_operations": 2,
+    "generation_study_evidence": 18,
+    "generation_study_charges": 2,
+    "generation_study_financial_grants": 2,
+    "generation_study_reconciliations": 2,
+    "generation_study_stages": 8,
+    "generation_study_supplied_reviews": 1,
+    "generation_study_supplied_observations": 1,
+    "authoring_study_configurations": 1,
+    "authoring_study_evidence": 12,
+    "authoring_study_commits": 1
+  },
+  "tombstones": [
+    [
+      1,
+      "disabled"
+    ],
+    [
+      1,
+      "disabled"
+    ]
+  ],
+  "explicitLocalSchemaObjects": 175,
+  "platformMetadata": [
+    {
+      "type": "table",
+      "name": "__appgarden_migrations",
+      "tbl_name": "__appgarden_migrations",
+      "sql": "CREATE TABLE \"__appgarden_migrations\"(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT UNIQUE,applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "_cf_KV",
+      "tbl_name": "_cf_KV",
+      "sql": "CREATE TABLE _cf_KV (\n        key TEXT PRIMARY KEY,\n        value BLOB\n      ) WITHOUT ROWID"
+    },
+    {
+      "type": "table",
+      "name": "_cf_METADATA",
+      "tbl_name": "_cf_METADATA",
+      "sql": "CREATE TABLE _cf_METADATA (\n        key INTEGER PRIMARY KEY,\n        value BLOB\n      )"
+    }
+  ],
+  "hostedCatalogExpectedObjects": 174,
+  "localOnlyExtra": "_cf_METADATA supplied by emulator, already excluded by unchanged guard",
+  "emptyR2": true,
+  "privateBodiesRemaining": 0,
+  "sourceSyntheticBytesRetained": true,
+  "metadataAndN10HIntact": true,
+  "databaseSizeExplanation": {
+    "localFileBytes": 1081344,
+    "sqlitePageSize": 4096,
+    "sqlitePageCount": 264,
+    "sqliteFreelistPages": 58,
+    "peakD1MetricBytes": 1081344,
+    "finalD1MetricBytes": 843776,
+    "note": "D1 size_after metric and physical file allocation differ; neither proves managed billing or byte erasure."
+  }
+}

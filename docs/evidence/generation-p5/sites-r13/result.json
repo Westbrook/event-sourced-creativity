@@ -1,0 +1,212 @@
+{
+  "status": "corrected-release-compiled-lifecycle-passed-hosted-decision-pending",
+  "at": "2026-09-28T18:27:14.930855+00:00",
+  "baseCommit": "e6d0469a194b3d474d639fcc61de5304966d8957",
+  "envelope": "p5-sites-remedy-release:77eb7d7fd34290dd1ca5cea36de3c5f39427d5e6ed30e4fa78f958cfe4baebcc",
+  "stage": "/private/tmp/forma-p5-sites-remedy-r13",
+  "candidateReleaseReadyLocally": true,
+  "nativeAdmission": false,
+  "hostedAuthorized": false,
+  "compiledChecks": 28,
+  "failureScenarios": 10,
+  "localHttpCallsMainSuite": 27,
+  "syntheticProviderResponses": 6,
+  "realNetworkAttempts": 0,
+  "packagedWorkerEqualsTested": true,
+  "sourceDefectBeyondR12Pin": false,
+  "metadataDdlShipped": false,
+  "diagnosticRouteRemoved": true,
+  "nativeParent": "530960b85f85756b0eee97746090d690fd00aa95",
+  "sourceChangesFromNativeParent": [
+    {
+      "path": "artifact.json",
+      "change": "changed"
+    },
+    {
+      "path": "src/catalog.mjs",
+      "change": "deleted"
+    },
+    {
+      "path": "src/worker.mjs",
+      "change": "changed"
+    }
+  ],
+  "historicalReceiptsUnchanged": true,
+  "forcedRuntimeRestart": true,
+  "cleanupDriftBehavior": "Original cleanup may remove bytes/private bodies then fail exact schema preflight; phase cleaning retained; no disablement until separately reviewed exact-metadata recovery and original cleanup succeeds.",
+  "retained": {
+    "applicationRows": 62,
+    "applicationRowsByTable": {
+      "budget_counters": 2,
+      "users": 1,
+      "cost_budget_counters": 2,
+      "budget_reservations": 2,
+      "cost_budget_reservations": 4,
+      "generation_study_grants": 1,
+      "generation_study_operations": 2,
+      "generation_study_evidence": 18,
+      "generation_study_charges": 2,
+      "generation_study_financial_grants": 2,
+      "generation_study_reconciliations": 2,
+      "generation_study_stages": 8,
+      "generation_study_supplied_reviews": 1,
+      "generation_study_supplied_observations": 1,
+      "authoring_study_configurations": 1,
+      "authoring_study_evidence": 12,
+      "authoring_study_commits": 1
+    },
+    "tombstones": [
+      [
+        1,
+        "disabled"
+      ],
+      [
+        1,
+        "disabled"
+      ]
+    ],
+    "explicitLocalSchemaObjects": 175,
+    "platformMetadata": [
+      {
+        "type": "table",
+        "name": "__appgarden_migrations",
+        "tbl_name": "__appgarden_migrations",
+        "sql": "CREATE TABLE \"__appgarden_migrations\"(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT UNIQUE,applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+      },
+      {
+        "type": "table",
+        "name": "_cf_KV",
+        "tbl_name": "_cf_KV",
+        "sql": "CREATE TABLE _cf_KV (\n        key TEXT PRIMARY KEY,\n        value BLOB\n      ) WITHOUT ROWID"
+      },
+      {
+        "type": "table",
+        "name": "_cf_METADATA",
+        "tbl_name": "_cf_METADATA",
+        "sql": "CREATE TABLE _cf_METADATA (\n        key INTEGER PRIMARY KEY,\n        value BLOB\n      )"
+      }
+    ],
+    "hostedCatalogExpectedObjects": 174,
+    "localOnlyExtra": "_cf_METADATA supplied by emulator, already excluded by unchanged guard",
+    "emptyR2": true,
+    "privateBodiesRemaining": 0,
+    "sourceSyntheticBytesRetained": true,
+    "metadataAndN10HIntact": true,
+    "databaseSizeExplanation": {
+      "localFileBytes": 1081344,
+      "sqlitePageSize": 4096,
+      "sqlitePageCount": 264,
+      "sqliteFreelistPages": 58,
+      "peakD1MetricBytes": 1081344,
+      "finalD1MetricBytes": 843776,
+      "note": "D1 size_after metric and physical file allocation differ; neither proves managed billing or byte erasure."
+    }
+  },
+  "actualLedger": {
+    "issued": 31,
+    "unused": 6,
+    "normalStop": 30,
+    "limit": 37,
+    "hostedCallsThisContinuation": 0
+  },
+  "proposedAllowance": {
+    "accepted": false,
+    "envelope": "p5-sites-remedy-release:77eb7d7fd34290dd1ca5cea36de3c5f39427d5e6ed30e4fa78f958cfe4baebcc",
+    "priorCharged": 31,
+    "priorLimit": 37,
+    "priorUnused": 6,
+    "priorNormalStop": 30,
+    "proposedAdditionalNormal": 28,
+    "proposedRecoveryAllocation": 12,
+    "proposedMaximumFurtherReservations": 40,
+    "proposedCumulativeNormalStop": 59,
+    "proposedCumulativeLimit": 71,
+    "increaseAboveExisting37": 34,
+    "reuseExistingUnusedTowardRecovery": 6,
+    "newNormalSlots": 28,
+    "newRecoverySlots": 6,
+    "cleanupAttemptLimit": 5,
+    "normalStages": [
+      {
+        "stage": "fresh target/audience, environment, saved-version provenance",
+        "maximum": 3
+      },
+      {
+        "stage": "owner browser readiness and one post-deploy page load",
+        "maximum": 2
+      },
+      {
+        "stage": "ephemeral source credential; publish-on-push disabled",
+        "maximum": 1
+      },
+      {
+        "stage": "supported source verification/non-force successor push",
+        "maximum": 5
+      },
+      {
+        "stage": "save exact archive; mandatory native admission",
+        "maximum": 1
+      },
+      {
+        "stage": "private deployment",
+        "maximum": 1
+      },
+      {
+        "stage": "terminal deployment checks, only if needed",
+        "maximum": 2
+      },
+      {
+        "stage": "pre-import Status",
+        "maximum": 1
+      },
+      {
+        "stage": "one atomic Start",
+        "maximum": 1
+      },
+      {
+        "stage": "ten fixed steps, serial and receipt-driven",
+        "maximum": 10
+      },
+      {
+        "stage": "terminal cursor/phase Status",
+        "maximum": 1
+      }
+    ],
+    "recoveryStages": [
+      {
+        "stage": "Stop if a run exists and state permits",
+        "maximum": 1
+      },
+      {
+        "stage": "original cleanup attempts, including first planned cleanup",
+        "maximum": 5
+      },
+      {
+        "stage": "status/lost-ack/disabled verification",
+        "maximum": 3
+      },
+      {
+        "stage": "saved-v2 restoration and up to two terminal checks, only if no import or cleanup already complete",
+        "maximum": 3
+      }
+    ],
+    "unit": "Conservative operator reservation; native internal/browser/auth HTTP not fully measured. Original80 HTTP bound not proven by these units; no reset of unknown prior traffic.",
+    "expiry": "2026-10-01T00:00:00Z",
+    "latestStart": "2026-09-30T22:00:00Z",
+    "changedReleaseAndFullRehearsalRequestedTogether": true,
+    "hostedActionAuthorizedNow": false
+  },
+  "expiry": "2026-10-01T00:00:00Z",
+  "latestProposedStart": "2026-09-30T22:00:00Z",
+  "proposalExpiresUnchanged": true,
+  "p5Complete": false,
+  "next": "User accept/decline ONE exact corrected private release/full finite rehearsal/original cleanup decision. Only after acceptance execute native admission and bounded lifecycle without repeated unchanged-action intake. Until then no hosted request.",
+  "preserved": [
+    "OptionB unknown-price finite-resource exposure",
+    "indefinite private retention since2026-09-25T21:04Z, owner westbrook.johnson@reve.art",
+    "N10H disabled tombstone and original cleanup obligations",
+    "P2 gates,847/six exclusions",
+    "actual-Forma identity/schema/holds/custody/financial qualification",
+    "cross-media catalog lesson only; original image-provider rejection unresolved"
+  ]
+}
