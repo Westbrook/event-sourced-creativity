@@ -1,0 +1,66 @@
+{
+  "predecessor": {
+    "stageAComplete": true,
+    "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version": 550,
+    "versionId": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8",
+    "source": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+    "deploymentId": "appgdep_6ab573499a108191a2691a137672b93e",
+    "deploymentStatus": "succeeded",
+    "environmentRevision": 16,
+    "audience": "workspace_all",
+    "accessRevision": 7,
+    "connectorRole": "owner",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "siteDrift": false,
+    "environmentDrift": false,
+    "issued": 7,
+    "unused": 1,
+    "limit": 8,
+    "replayedRequests": 0,
+    "mutations": 0,
+    "historicalSourceFilesMatch": {
+      ".openai/hosting.json": true,
+      "build/memory-migration-release.json": true,
+      "build/release-migrations.ts": true,
+      "drizzle/meta/_journal.json": true
+    },
+    "packaged41MigrationBytesMatchNativeSource": true,
+    "hostedAppliedHistoryInspected": false,
+    "actualAppQualification": false,
+    "localHandlingDeviations": [
+      "Conservative credential-field presence check paused locally; corrected projection never accesses excluded credential fields; no new hosted scope.",
+      "Reservation3 native response recovered from durable local tool history after unavailable structuredClone caused receipt projection failure; no request replay; late evidence-file persistence disclosed."
+    ],
+    "next": "Stage B remains unapproved. Fresh current saved/live source relationship established. Native migration applied-history/archive payload and supported packaging conditions must resolve before publication; no schema change permitted."
+  },
+  "sourceArchive": "docs/evidence/generation-p5/forma-r15/source-preservation.tar.gz",
+  "sourceArchiveSha256": "c2dd042374a27f7b472366deef0c2e5bff051b479ee25af8b45e24329cf3a4ae",
+  "sourceFiles": 2542,
+  "archive": "/private/tmp/forma-p5-live-comparison/docs/evidence/generation-p5/forma-r17/native-package.tar.gz",
+  "archiveSha256": "130377a70b50a81e7111c71445bf2c15bd8bea2c992abe25eaf2d607c1407360",
+  "payloadFiles": 622,
+  "sourceFieldsExample": [
+    {
+      "path": ".agents/skills/adversarial-product-research/SKILL.md",
+      "bytes": 8600,
+      "sha256": "cadbeebd3e3a9d975a39351ea2b51cc460272e33466c6931a24ace0d465759f9"
+    },
+    {
+      "path": ".agents/skills/adversarial-product-research/agents/openai.yaml",
+      "bytes": 336,
+      "sha256": "aaef128afaed7b9db5ead361a482b85d4fcc1d92c33c567bd0ccb6914813432f"
+    }
+  ],
+  "sealedRelease": {
+    "id": "p5-forma-qualification:4cb06e6aeecfa77da573f754b3e951189590719cda4fd3b9fbb324931aca6e92",
+    "contract": "forma-p5-nonpurchase-r15",
+    "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "expiry": "2026-10-01T00:00:00Z",
+    "sourceInputSha256": "1c6e327ebe5720f6ef40f3bd604fc99d8cb26cba29ff6b84300f9d69b17ba45a",
+    "sourceFileCount": 1873,
+    "migrationPolicySha256": "81590ac50237ba74856202dc72f83fdf9b052330c12b6afdfc084ce652239a64",
+    "purchaseConfigurationSha256": "7ab7e00bc4ee587733955bc659f1e8c84783770ea3410ee50155e11a4ad2f4da"
+  },
+  "rebuild": false
+}

@@ -1,0 +1,6 @@
+{
+  "action": "git-head-before",
+  "stdout": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf\trefs/heads/main",
+  "credentialPersisted": false,
+  "hiddenHttpUnknown": true
+}

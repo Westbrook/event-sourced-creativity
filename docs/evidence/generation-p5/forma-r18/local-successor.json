@@ -1,0 +1,17 @@
+{
+  "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "checkout": "/private/tmp/forma-p5-b-local-successor-offjoaqu",
+  "parent": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "commit_sha": "d147817ff14b502a8fc116a74fa5388f9fe7ad62",
+  "tree": "8ffad0e2ecdd8370d5e55c3285ef07e78ad3cb57",
+  "sourceFiles": 2542,
+  "sealedSourceBytesMatch": true,
+  "localObjectStore": "/Users/westbrook/Documents/repos/codex/.git/objects",
+  "remoteRequests": 0,
+  "remoteConfigured": false,
+  "sourcePushed": false,
+  "built": false,
+  "sourceChanged": false,
+  "nativeAdmission": false,
+  "method": "Retained local exact parent Git object; temporary publication checkout via local object alternates. No retry of remote shallow fetch."
+}

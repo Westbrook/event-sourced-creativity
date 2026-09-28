@@ -1,0 +1,9 @@
+# R18 handoff — Stage B accepted, source fetch stopped before publication
+
+Read result.md, accepted-decision.md, request-ledger.json, local-successor.json and the unaccepted resumption-decision.md. Current user explicitly replaced R17's stronger archive/history prerequisite and accepted Stage B20normal/6recovery plus actual-Forma production exposure/retention. Do not reopen that evidence decision or cost/retention intake.
+
+Six normal reservations charged: native site/env/version all match R16; ephemeral credential publish-on-pushfalse/no window; remotehead exact c28; shallowfetch failed expected shallow list. Ledger stop active, no retry. Token discarded, do not recover from logs. No push/save/admission/deploy/read/provider/DB operation. No restoration necessary. Fresh receipts are observations at their timestamps, not perpetual guarantees.
+
+Local source successor d147817ff14b502a8fc116a74fa5388f9fe7ad62 in /private/tmp/forma-p5-b-local-successor-offjoaqu, parentc28, exact2542sealedfiles. Local object alternates point to existing repo Git objects; preserve until resumed push. R17archive130377… exact622files unchanged, no build/sourcecodechange. Do not rerun failed source-operation.py; it is retained executed evidence. Use the local successor directly only after the exact resumption amendment is accepted. Amendment proposes +2normal(total22), credentiallimit2/Gitsourcelimit5, unchanged6recovery. No remotefetchneeded.
+
+Last known actualForma livev550/sourcec28/env16/workspace_all; no new hosted version. StageB unfinished. StageC/paidunapproved; realcomparisonimages0/no newmoderationfinding. ExpiryOct1 00UTC andSep30 22UTC marginunchanged. PreserveR14disabled/cleanup/retention/ledger, StageAspare, P2humanresume/originalsettlement, sixPOST/twoimages/concurrency1/no retries,847/six exclusions andremaining actualqualification. KeepP5open and canonical unresolvedfeedback unchanged.

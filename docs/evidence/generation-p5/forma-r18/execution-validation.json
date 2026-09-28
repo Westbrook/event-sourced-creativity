@@ -1,0 +1,21 @@
+{
+  "reservations": 6,
+  "normalUsed": 6,
+  "normalRemaining": 14,
+  "recoveryUsed": 0,
+  "recoveryRemaining": 6,
+  "durableBeforeDispatch": true,
+  "allReceiptHashesChecked": true,
+  "lateEntries": 0,
+  "sourcePushes": 0,
+  "nativeAdmission": false,
+  "deployments": 0,
+  "qualificationReads": 0,
+  "providerCalls": 0,
+  "newDBActions": 0,
+  "localSuccessorMatchesSealedFiles": 2542,
+  "archiveMatchesSealedFiles": 622,
+  "restorationNeeded": false,
+  "hiddenHttpUnknown": true,
+  "noSourceRebuild": true
+}
