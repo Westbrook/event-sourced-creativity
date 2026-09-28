@@ -1,0 +1,20 @@
+{
+  "normal": [
+    "fresh get_site latest3/target/audience",
+    "fresh get_environment_variables revision0/empty",
+    "deploy exact saved3; require terminal success or restore",
+    "one browser navigation with existing authenticated profile; stop if login gate",
+    "single Read catalog POST; no retry"
+  ],
+  "recovery": [
+    "restore exact saved2",
+    "status if nonterminal",
+    "status if still nonterminal"
+  ],
+  "before": 25,
+  "normalStop": 30,
+  "overallLimit": 37,
+  "maximumAfter": 33,
+  "source": "Reuse exact immutable R10 saved3/source/archive receipt; check locally, native latest3 confirms no later saved version. No source push/build/save.",
+  "auth": "Prior existing tab showed authenticated P5 controls. User then closed Site tab; same in-app profile will be reused. New owner login traffic was user-driven and remains unmeasured. No automatic login flow authorized here."
+}

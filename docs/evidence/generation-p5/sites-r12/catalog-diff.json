@@ -1,0 +1,43 @@
+{
+  "receipt": "docs/evidence/generation-p5/sites-r12/catalog-receipt.json",
+  "raw": {
+    "missing": [],
+    "extra": [
+      {
+        "type": "table",
+        "name": "__appgarden_migrations",
+        "tbl_name": "__appgarden_migrations",
+        "sql": "CREATE TABLE \"__appgarden_migrations\"(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT UNIQUE,applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+      },
+      {
+        "type": "table",
+        "name": "_cf_KV",
+        "tbl_name": "_cf_KV",
+        "sql": "CREATE TABLE _cf_KV (\n        key TEXT PRIMARY KEY,\n        value BLOB\n      ) WITHOUT ROWID"
+      }
+    ],
+    "changed": []
+  },
+  "existingGuard": {
+    "missing": [],
+    "extra": [
+      {
+        "type": "table",
+        "name": "__appgarden_migrations",
+        "tbl_name": "__appgarden_migrations",
+        "sql": "CREATE TABLE \"__appgarden_migrations\"(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT UNIQUE,applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+      }
+    ],
+    "changed": []
+  },
+  "excludedByUnchangedGuard": [
+    {
+      "type": "table",
+      "name": "_cf_KV",
+      "tbl_name": "_cf_KV",
+      "sql": "CREATE TABLE _cf_KV (\n        key TEXT PRIMARY KEY,\n        value BLOB\n      ) WITHOUT ROWID"
+    }
+  ],
+  "normalizationApplied": false,
+  "executionAuthorized": false
+}

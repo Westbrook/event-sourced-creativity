@@ -19,3 +19,9 @@ An agent transcription error in the target ID caused a pre-deployment native ref
 ## R11 authentication prerequisite
 
 Private native deployment succeeded, while ordinary browser access showed a login gate. Native owner authorization and browser authentication are distinct. The agent did not continue authentication or invoke the catalog, and restored version 2 with a terminal native receipt. Check owner browser readiness before a later bounded diagnostic attempt, without substituting a bypass token. No catalog difference or quality conclusion follows from successful deployment. Evidence: `docs/evidence/generation-p5/sites-r11/`.
+
+## R12 confirmed hosted catalog
+
+The owner-only read returned174 explicit definitions: all172 expected definitions match raw type/name/table/SQL, plus `__appgarden_migrations` and the already excluded `_cf_KV`. The actual guard mismatch is the former. `__drizzle_migrations` was absent, so the local migration hypothesis did not identify the hosted cause. The two formerly unlisted trailing tables are present. No pagination/absence inference survives the complete receipt.
+
+A locally tested one-expression remedy pins the exact observed metadata definition alongside all172 unchanged expected definitions, preserving equality and rejecting metadata or application drift. No SQL canonicalization or new ignored-table pattern is required. The patch is sealed as a local proposal, not a deployable release. Reconstructing exact packaged migrations plus observed metadata DDL matches the complete hosted catalog. A D1 read metric (409) differs from the object count (174). One read and successful saved-version restoration establish catalog/deployment evidence only; no run, paid provider request, actual-Forma qualification or media-quality claim. Evidence: `docs/evidence/generation-p5/sites-r12/`.

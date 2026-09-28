@@ -1,0 +1,24 @@
+{
+  "checks": [
+    "original preflight rejects exact hosted receipt before tombstone read",
+    "candidate preflight accepts exact observed173object guard catalog and preserves tombstone/hash check",
+    "pinned bookkeeping definition is required, not ignored",
+    "each of173required objects rejects removal or raw SQL/type/table/name change before tombstone read",
+    "extra and duplicate definitions fail closed",
+    "CHECK/nullability/unique-index/trigger-body changes still rejected",
+    "original disabled tombstone requirements still fail closed",
+    "only equality expected-catalog expression changes; auth,route,limits,expiry,fixture,cleanup,query and all other source unchanged"
+  ],
+  "count": 8,
+  "rejectionCases": 874,
+  "actualPreflightBodiesTested": true,
+  "canonicalAndHash": "Unchanged application exports",
+  "dbAdapter": "Fixed metadata rows from preserved hosted receipt plus local synthetic tombstone; no live DB, no Worker Start invocation",
+  "localSQLiteReconstruction": "Exact both packaged migrations plus observed metadata DDL reproduces all174hosted raw definitions; catalog-analysis.json",
+  "candidateWorkerSha256": "4c172a29d7f9d051f1e66e3be46807e0e12c7eb8e3d04260665e73c226a283fc",
+  "compiledWorkerTested": false,
+  "localOnly": true,
+  "hostedRemedyAuthorized": false,
+  "networkCalls": 0,
+  "prior29Or266Rerun": false
+}

@@ -1,0 +1,88 @@
+{
+  "status": "catalog-difference-confirmed-v2-restored-local-remedy-prepared",
+  "at": "2026-09-28T17:47:04.826464+00:00",
+  "baseCommit": "990ccb006d7f7560d4aba13f36c0935c09ff08fa",
+  "acceptedAllocation": {
+    "normalStop": 30,
+    "normalFurtherMaximum": 5,
+    "recoveryFurtherMaximum": 3,
+    "total": 37
+  },
+  "diagnosticDeployed": true,
+  "catalogReadInvocations": 1,
+  "catalogDefinitions": 174,
+  "missing": 0,
+  "changed": 0,
+  "rawExtra": [
+    "__appgarden_migrations",
+    "_cf_KV"
+  ],
+  "existingGuardExtra": [
+    "__appgarden_migrations"
+  ],
+  "all172ExpectedDefinitionsExact": true,
+  "actualHostedDifferenceKnown": true,
+  "drizzleHypothesisConfirmed": false,
+  "restoration": {
+    "id": "appgdep_6abaa72f090c8191924c2774033ceca5",
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "title": "Forma N10H synthetic rehearsal",
+    "version_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20~appgver_f5f7f474cb8c8191a85efe1c9de0f370",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-n10h-synthetic-20260924.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6ab5929a74288191bf37ed429f7a7e20",
+    "failure_message": null,
+    "env_set_revision": 0,
+    "updated_at": "2026-09-28T17:43:20.842032+00:00"
+  },
+  "activeVersion": 2,
+  "diagnosticCurrentlyServed": false,
+  "chargedReservations": 31,
+  "unusedReservations": 6,
+  "normalThisContinuation": 5,
+  "recoveryThisContinuation": 1,
+  "normalCapacityRemaining": 0,
+  "recoveryRemainingThisAllocation": 2,
+  "hostedWorkStopped": true,
+  "metrics": {
+    "action": "catalog",
+    "step": "",
+    "statements": 1,
+    "attemptedStatements": 1,
+    "bindingCalls": 1,
+    "failedBatches": 0,
+    "reads": 409,
+    "writes": 0,
+    "databaseBytes": 815104,
+    "providers": 0,
+    "intent": [],
+    "r2": {
+      "put": 0,
+      "get": 0,
+      "delete": 0
+    }
+  },
+  "remedyEnvelope": "p5-sites-schema-remedy-local:f982407170f706a864d59fdabdfbc554d0a3b8f82ab8d677859763c38588afde",
+  "remedy": "Exact-pin the one observed migration metadata definition alongside all172unchangedexpecteddefinitions; no blanket ignore or SQL normalization. Local patch only, not deployed/rebuilt/saved.",
+  "next": "Review local fix. Before any hosted remedy, prepare a fully rebuilt/resealed release from this exact source and obtain separate changed-hosted-action authority. No Start or further live call now.",
+  "p5Complete": false,
+  "sourcePushed": false,
+  "newVersionSaved": false,
+  "schemaMigrated": false,
+  "fixtureImported": false,
+  "providerRequests": 0,
+  "cleanupAttempts": 0,
+  "retention": "Accepted OptionB finite-resource exposure at unknown prices; indefinite owner-private retention from2026-09-25T21:04:00Z by westbrook.johnson@reve.art. Catalog receipt, source/version history and existing resources retained; no automatic deletion.",
+  "expiry": "2026-10-01T00:00:00Z",
+  "preserved": [
+    "original disabled N10H and future cleanup obligations",
+    "P2 gates",
+    "847/six exclusions",
+    "separate actual-Forma identity/schema/holds/custody/financial qualification",
+    "cross-media findings are deployment evidence, no generation-quality claim"
+  ],
+  "accountingDeviation": "Local ledger initialization had a Python syntax error; the two already planned preflight calls ran before durable recording. Reconciled exactly2nativecalls to11total before further requests. No claim that these entries were durably reserved before sending."
+}

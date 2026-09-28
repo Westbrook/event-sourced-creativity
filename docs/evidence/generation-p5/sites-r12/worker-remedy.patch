@@ -1,0 +1,11 @@
+--- a/src/worker.mjs
++++ b/src/worker.mjs
+@@ -152,7 +152,7 @@
+     }
+     fail('step_out_of_range');
+ }
+-async function preflight(db) { const schema = await all(db, "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name NOT IN('d1_migrations','_cf_KV','_cf_METADATA') ORDER BY name"); check(canonical(schema) === canonical(D.schema), 'schema_mismatch'); const old = await one(db, 'SELECT * FROM n10h_run WHERE id=1'); check(old?.phase === 'disabled' && old.report === null && old.next === 205 && old.cleanup === 205, 'retired_tombstone_changed'); return { schemaHash: hash(schema), retiredTombstoneHash: hash(old) }; }
++async function preflight(db) { const schema = await all(db, "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND name NOT IN('d1_migrations','_cf_KV','_cf_METADATA') ORDER BY name"); check(canonical(schema) === canonical([...D.schema, {"type":"table","name":"__appgarden_migrations","tbl_name":"__appgarden_migrations","sql":"CREATE TABLE \"__appgarden_migrations\"(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT UNIQUE,applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"}].sort((a,b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)), 'schema_mismatch'); const old = await one(db, 'SELECT * FROM n10h_run WHERE id=1'); check(old?.phase === 'disabled' && old.report === null && old.next === 205 && old.cleanup === 205, 'retired_tombstone_changed'); return { schemaHash: hash(schema), retiredTombstoneHash: hash(old) }; }
+ async function cleanup(bindings) {
+     const db = bindings.DB, state = await one(db, 'SELECT * FROM p5_rehearsal_run WHERE id=1');
+     check(state.phase !== 'busy' || Date.now() - state.started > life, 'active_step_cleanup_denied');

@@ -1,0 +1,8 @@
+{
+  "identifiersCopiedAndValidated": true,
+  "ledgerAtomicFsyncReadbackTest": true,
+  "fiveNormalAndThreeRecoveryCeilingsTested": true,
+  "overflowRejections": true,
+  "realLedgerUnchangedAt25": true,
+  "priorR10DeviationPreserved": true
+}

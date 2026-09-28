@@ -1,0 +1,40 @@
+{
+  "site": {
+    "id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "status": "active",
+    "latest_version_number": 3,
+    "current_live_url": "https://forma-n10h-synthetic-20260924.reve-ai-0869.chatgpt.site",
+    "current_user_role": "owner",
+    "access_mode": "custom",
+    "access_policy": {
+      "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+      "access_mode": "custom",
+      "allowed_account_user_ids": [
+        "bfd7e025-62d1-411d-864c-77a2670671cb"
+      ],
+      "external_visitor_count": 0,
+      "allowed_users": [
+        {
+          "account_user_id": "bfd7e025-62d1-411d-864c-77a2670671cb",
+          "email": "westbrook.johnson@reve.art",
+          "name": "Westbrook Johnson",
+          "avatar_url": null,
+          "role": "owner"
+        }
+      ],
+      "allowed_groups": [],
+      "allowed_workspace_group_ids": [],
+      "allowed_tenant_group_ids": [],
+      "revision": 1,
+      "updated_at": "2026-09-24T21:14:06.126431+00:00",
+      "allowed_editors": []
+    },
+    "updated_at": "2026-09-28T17:27:56.273887+00:00"
+  },
+  "environment": {
+    "project_id": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+    "entries": [],
+    "revision": 0,
+    "updated_at": null
+  }
+}

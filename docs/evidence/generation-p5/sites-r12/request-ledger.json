@@ -1,0 +1,307 @@
+{
+  "acceptedAt": "2026-09-25T22:06:48.638974+00:00",
+  "authorization": "User approved 37 additional HTTP requests; normal stop at25,12 reserved for stop/cleanup/verification; at most5 cleanup attempts. Prior authentication HTTP remains unknown. Exact R3/private version2/optionB/indefinite retention unchanged.",
+  "limit": 37,
+  "normalStop": 30,
+  "reservedRecovery": 12,
+  "issued": 31,
+  "cleanupAttempts": 0,
+  "entries": [
+    {
+      "sequence": 1,
+      "utc": "2026-09-25T22:06:48.757607+00:00",
+      "action": "status",
+      "requests": 1,
+      "cumulative": 1,
+      "state": "Status control invoked; no displayed receipt, no matching recent Worker event observed",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "unit": "conservative one-request reservation, retained even if no request was emitted"
+    },
+    {
+      "sequence": 2,
+      "utc": "2026-09-25T22:08:04.059778+00:00",
+      "action": "status-semantic-diagnostic",
+      "requests": 1,
+      "cumulative": 2,
+      "state": "Status control invoked; no displayed receipt, no matching recent Worker event observed",
+      "recovery": false,
+      "actualHttpRequests": null,
+      "unit": "conservative one-request reservation, retained even if no request was emitted"
+    },
+    {
+      "sequence": 3,
+      "utc": "2026-09-25T22:08:39.191271+00:00",
+      "action": "native-read-worker-errors",
+      "requests": 1,
+      "cumulative": 3,
+      "state": "read-only native call completed",
+      "recovery": false,
+      "unit": "one native connector call reservation; backend internal HTTP not measured"
+    },
+    {
+      "sequence": 4,
+      "utc": "2026-09-25T22:08:39.224045+00:00",
+      "action": "native-read-run-state",
+      "requests": 1,
+      "cumulative": 4,
+      "state": "read-only native call completed",
+      "recovery": false,
+      "unit": "one native connector call reservation; backend internal HTTP not measured"
+    },
+    {
+      "sequence": 5,
+      "utc": "2026-09-25T22:08:48.410300+00:00",
+      "action": "native-read-request-trace",
+      "requests": 1,
+      "cumulative": 5,
+      "state": "read-only native call completed",
+      "recovery": false,
+      "unit": "one native connector call reservation; backend internal HTTP not measured"
+    },
+    {
+      "sequence": 6,
+      "utc": "2026-09-25T22:09:36.352828+00:00",
+      "action": "user-status-diagnostic",
+      "requests": 1,
+      "cumulative": 6,
+      "state": "completed; user-provided Status receipt independently observed in existing tab",
+      "recovery": false,
+      "actualHttpRequests": 1,
+      "receipt": "06-status.json"
+    },
+    {
+      "sequence": 7,
+      "utc": "2026-09-25T22:29:06.620536+00:00",
+      "action": "start",
+      "requests": 1,
+      "cumulative": 7,
+      "state": "refused before import: schema_mismatch",
+      "recovery": false,
+      "actualHttpRequests": 1,
+      "receipt": "07-start-refusal.json"
+    },
+    {
+      "sequence": 8,
+      "utc": "2026-09-25T22:29:52.875491+00:00",
+      "action": "verify-status",
+      "requests": 1,
+      "cumulative": 8,
+      "state": "completed; no P5 state in status",
+      "recovery": true,
+      "actualHttpRequests": 1,
+      "receipt": "08-status-after-refusal.json"
+    },
+    {
+      "sequence": 9,
+      "utc": "2026-09-25T22:30:37.992247+00:00",
+      "action": "verify-original-N10H-tombstone",
+      "requests": 1,
+      "cumulative": 9,
+      "state": "native read completed; original tombstone unchanged",
+      "recovery": true,
+      "unit": "one native read-only connector reservation; internal HTTP not measured",
+      "receipt": "09-retained-n10h.json"
+    },
+    {
+      "sequence": 10,
+      "utc": "2026-09-28T16:20:50.071799+00:00",
+      "action": "native-preflight-site",
+      "requests": 1,
+      "cumulative": 10,
+      "state": "completed; recorded after call because preceding ledger initialization failed",
+      "recovery": false,
+      "unit": "native control call reservation; underlying HTTP unmeasured"
+    },
+    {
+      "sequence": 11,
+      "utc": "2026-09-28T16:20:50.071872+00:00",
+      "action": "native-preflight-environment",
+      "requests": 1,
+      "cumulative": 11,
+      "state": "completed; recorded after call because preceding ledger initialization failed",
+      "recovery": false,
+      "unit": "native control call reservation; underlying HTTP unmeasured"
+    },
+    {
+      "sequence": 12,
+      "utc": "2026-09-28T16:21:23.810446+00:00",
+      "action": "native-source-credential-no-auto-publish",
+      "requests": 1,
+      "cumulative": 12,
+      "state": "completed; ephemeral credential; publish-on-push disabled",
+      "recovery": false
+    },
+    {
+      "sequence": 13,
+      "utc": "2026-09-28T16:21:42.928500+00:00",
+      "action": "supported-source-open-and-push",
+      "requests": 5,
+      "cumulative": 17,
+      "state": "completed; exact 231-file source pushed; no force or automatic publication",
+      "recovery": false
+    },
+    {
+      "sequence": 14,
+      "utc": "2026-09-28T16:23:58.152078+00:00",
+      "action": "native-save-admit-sealed-archive",
+      "requests": 1,
+      "cumulative": 18,
+      "state": "completed; version 3 saved and exact nine-file archive admitted",
+      "recovery": false
+    },
+    {
+      "sequence": 15,
+      "utc": "2026-09-28T16:25:00.877754+00:00",
+      "action": "native-private-deploy-diagnostic-v3",
+      "requests": 1,
+      "cumulative": 19,
+      "state": "native invalid-project-id refusal before deployment",
+      "recovery": false
+    },
+    {
+      "sequence": 16,
+      "utc": "2026-09-28T16:25:44.998819+00:00",
+      "action": "recovery-restore-saved-v2",
+      "requests": 1,
+      "cumulative": 20,
+      "state": "completed; version 2 restoration returned terminal succeeded",
+      "recovery": true,
+      "receipt": "restoration.json"
+    },
+    {
+      "sequence": 17,
+      "utc": "2026-09-28T17:26:21.670849+00:00",
+      "action": "native-preflight-site",
+      "requests": 1,
+      "cumulative": 21,
+      "state": "completed; reservation durably saved and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 18,
+      "utc": "2026-09-28T17:26:39.563030+00:00",
+      "action": "native-preflight-environment",
+      "requests": 1,
+      "cumulative": 22,
+      "state": "completed; reservation durably saved and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 19,
+      "utc": "2026-09-28T17:26:52.868106+00:00",
+      "action": "deploy-saved-diagnostic-v3",
+      "requests": 1,
+      "cumulative": 23,
+      "state": "completed; reservation durably saved and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 20,
+      "utc": "2026-09-28T17:27:18.984196+00:00",
+      "action": "authenticated-browser-navigation",
+      "requests": 1,
+      "cumulative": 24,
+      "state": "completed: login gate shown; no signin link clicked, no catalog read",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 21,
+      "utc": "2026-09-28T17:27:44.662086+00:00",
+      "action": "restore-saved-v2",
+      "requests": 1,
+      "cumulative": 25,
+      "state": "completed; reservation durably saved and read back before action",
+      "recovery": true,
+      "actualHttpRequests": null,
+      "receipt": "restoration.json"
+    },
+    {
+      "sequence": 22,
+      "utc": "2026-09-28T17:40:50.281460+00:00",
+      "action": "native-preflight-site",
+      "requests": 1,
+      "cumulative": 26,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 23,
+      "utc": "2026-09-28T17:41:09.521375+00:00",
+      "action": "native-preflight-environment",
+      "requests": 1,
+      "cumulative": 27,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 24,
+      "utc": "2026-09-28T17:41:23.730425+00:00",
+      "action": "deploy-saved-v3",
+      "requests": 1,
+      "cumulative": 28,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 25,
+      "utc": "2026-09-28T17:41:58.121938+00:00",
+      "action": "browser-navigation",
+      "requests": 1,
+      "cumulative": 29,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": false,
+      "actualHttpRequests": null
+    },
+    {
+      "sequence": 26,
+      "utc": "2026-09-28T17:42:15.309055+00:00",
+      "action": "single-read-catalog",
+      "requests": 1,
+      "cumulative": 30,
+      "state": "single UI invocation; successful catalog response observed; no retry",
+      "recovery": false,
+      "actualHttpRequests": 1,
+      "receipt": "catalog-receipt.json"
+    },
+    {
+      "sequence": 27,
+      "utc": "2026-09-28T17:43:08.902222+00:00",
+      "action": "restore-saved-v2",
+      "requests": 1,
+      "cumulative": 31,
+      "state": "completed; reservation durably recorded and read back before action",
+      "recovery": true,
+      "actualHttpRequests": null
+    }
+  ],
+  "priorAccounting": "../sites-r5/request-ledger.json; unknown, not reset or represented within original80",
+  "applicationRunStarted": false,
+  "exactTotalHttpVerified": false,
+  "accounting": "31conservative reservations charged/6unused. R12 consumed5normal+1recovery; all saved/fsynced/read back before dispatch. Original two late R10 entries retained. Native internal/browser navigation HTTP and user-driven authentication remain unmeasured. No counter reset.",
+  "continuationOf": "../sites-r11/request-ledger.json",
+  "normalWorkStopped": true,
+  "approvedEnvelope": "p5-sites-catalog:daef3e10f1bdb5bcc5046127d83e8451ca900f3b7a7c60614dad3b6797ab0d2e",
+  "normalThisAction": 19,
+  "recoveryThisAction": 3,
+  "accountingDeviation": "Local ledger initialization had a Python syntax error; the two already planned preflight calls ran before durable recording. Reconciled exactly2nativecalls to11total before further requests. No claim that these entries were durably reserved before sending.",
+  "stopReason": "Single catalog read completed and version2 restored; further hosted remedy outside authority.",
+  "unused": 6,
+  "resumeNormal": 5,
+  "resumeRecovery": 1,
+  "recoveryActionMaximum": 5,
+  "recoveryFurtherMaximum": 3,
+  "resumption": "User approved normalStop30, at most5 further normal plus3 further recovery within total37; source/version unchanged; one catalog read. Counters25carryforward; cumulative action normal14+5=19 and recovery2+3=5.",
+  "normalActionMaximum": 19,
+  "priorNormalStops": [
+    25
+  ],
+  "recoveryAllocationNote": "Original12-slot designation retained as history; explicit amendment permits normal work through30, leaving7overall slots at that point. This turn at most3recovery, totalmax33, at least4unused."
+}

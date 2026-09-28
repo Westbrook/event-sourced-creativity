@@ -1,0 +1,27 @@
+{
+  "kind": "local-source-remedy-proposal-not-deployable-release",
+  "target": "appgprj_6ab5929a74288191bf37ed429f7a7e20",
+  "basedOnSavedVersion": 2,
+  "baseNativeSource": "1565d8ac8a568bd0b9b7bde789eadc450e384364",
+  "diagnosticSource": "530960b85f85756b0eee97746090d690fd00aa95",
+  "sourceDelta": [
+    "src/worker.mjs"
+  ],
+  "change": "Keep original query/exclusions and exact equality; require all172D.schema definitions plus exact observed __appgarden_migrations definition, sorted by name. No normalization or additional ignored names.",
+  "receiptSha256": "c53d34152ae99312bd29a8c02c57669176c9bceaa92ab0e9f948ee9556026115",
+  "candidateWorkerSha256": "4c172a29d7f9d051f1e66e3be46807e0e12c7eb8e3d04260665e73c226a283fc",
+  "patchSha256": "a0a42567c5aacdc4cd8af760c443653e8cc70c2d99a140f68ccc114ca345fe97",
+  "sourceManifestSha256": "7d451005db958871cd27337d2df595a47ebc6f59fceb19eccf9fdc859d07412c",
+  "validationSha256": "9bd50385107a5beeeb299f4aadd8b0b4b4e06a0311e4d2fbf45d18dcf9dd0126",
+  "testScriptSha256": "74163dd309168cea383c3c0bb9472cc676966d4e0c31172062308b83d7a92574",
+  "sourceFileCount": 230,
+  "historicalMigrationsRewritten": false,
+  "fixtureChanged": false,
+  "authAudienceBindingsExpiryChanged": false,
+  "generatedArchive": null,
+  "nativeAdmission": false,
+  "hostedActionAuthorized": false,
+  "next": "Review local fix. Before any hosted remedy, prepare a fully rebuilt/resealed release from this exact source and obtain separate changed-hosted-action authority. No Start or further live call now.",
+  "expiry": "2026-10-01T00:00:00Z",
+  "id": "p5-sites-schema-remedy-local:f982407170f706a864d59fdabdfbc554d0a3b8f82ab8d677859763c38588afde"
+}
