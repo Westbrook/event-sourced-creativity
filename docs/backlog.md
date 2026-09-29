@@ -28,7 +28,7 @@ TODO. Ongoing work in other branches must be reconciled before reimplementing it
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| VP-001 | Done — local semantic correction; integration proposed | Fix video reference provenance; H/C/E integration owners | Review and independently integrate the [local patch and offline evidence](video-reference-provenance-correction.md). Keep P5 `cc23f13d` source/envelopes untouched; no deployment or activation in this task. | Unsupported origin/keyword identity inference removed; exact intercepted request and historical-recovery checks pass. Local checks do not establish live quality, moderation benefit or acceptance. |
+| VP-001 | Published554; user acceptance pending | Video reference provenance; P7 release owner | Focused source `49893648` deployed over verified553, preserving552 toolbar and Idea note. [Release receipt](http://127.0.0.1:4193/next-tasks/video-reference-provenance/published-554/). No further implementation required for this bounded correction. | 89 scoped tests, TypeScript/lint/build and held41 migration/archive checks pass. Ten exact baseline failures reproduce unchanged553 and candidate. Audience/environment and disabled controls preserved. Quality/moderation effects remain unknown; no historical image-rejection explanation. |
 
 ## P5 pilot evidence feasibility
 
