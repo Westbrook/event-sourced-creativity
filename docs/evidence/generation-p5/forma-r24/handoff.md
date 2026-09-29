@@ -1,0 +1,7 @@
+# R24 — requested saved551 loading; exact capacity amendment pending
+
+User requests load551,then take diagnostic approval,then queue manual steps if failure. Publication intent accepted; no hosted action yet because existing recovery6/6exhausted and earlier instructions explicitly require sufficient reviewed recovery allocation. Read decision.md: propose+4normal/+4recovery ceilings (26normal/10recovery,total36),allowing7furthernormal/4recovery from19normal+6recovery charged. Preserve all25charges. This is the sole amendment question,not renewed cost/retention/auth intake.
+
+Freshgetsite/env/version551=3normal;deploy1;conditionalstatus1;afterterminalsuccess ask user before one fixed qualification goto1;if clientfailure immediate one5minute/100event native logread1. Restore5501recovery,conditionalstatus1,finalsite/env2. No transfers/retries. Approvalcapacity does not substitute for user's requested postdeployment diagnostic go-ahead. If not obtained while active,restore rather than leave551 indefinitely. Sep30 22UTCmargin/Oct1expiry unchanged.
+
+Manual checklist queued in manual-test.md. After automatedfailure restore550; manualattempt must wait for a separately bounded/recovery-funded551deployment and readyconfirmation. No automatic seconddeploy or browser bypass. Exactsealed551source/admission unchanged;no rebuild/push/save/schema/custody/provider request. KeepP5open and accepted terms/P2gates/847six/privateR14state preserved.

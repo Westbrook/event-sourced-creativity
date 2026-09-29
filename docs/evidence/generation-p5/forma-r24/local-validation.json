@@ -1,0 +1,31 @@
+{
+  "normalCharged": 19,
+  "recoveryCharged": 6,
+  "normalCeilingCurrent": 22,
+  "recoveryCeilingCurrent": 6,
+  "normalAmendmentProposed": 4,
+  "recoveryAmendmentProposed": 4,
+  "normalCeilingProposed": 26,
+  "recoveryCeilingProposed": 10,
+  "furtherNormalMaximum": 7,
+  "furtherRecoveryMaximum": 4,
+  "priorCharges": 25,
+  "totalProposedMaximum": 36,
+  "normalStages": [
+    3,
+    1,
+    1,
+    1,
+    1
+  ],
+  "recoveryStages": [
+    1,
+    1,
+    2
+  ],
+  "identifiersMatchRetainedReceipts": true,
+  "nativeCalls": 0,
+  "sourceChanges": 0,
+  "amendmentAccepted": false,
+  "diagnosticGoAheadAfterDeployment": true
+}
