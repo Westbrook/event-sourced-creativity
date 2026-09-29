@@ -1,0 +1,133 @@
+{
+  "method": "compiled full Worker with disposable local D1/R2; 41 released SQL files applied directly to synthetic local fixture; no native migration machinery or hosted fit certification",
+  "checks": [
+    "full compiled hold route default off before any schema/principal",
+    "real local D1 metrics with fixed redacted aggregation; no identifiers, money or finality",
+    "caller query and absent identity refuse",
+    "paid/custody controls off; old qualification route retired",
+    "ordinary asset route intact",
+    "catalog/holds unchanged; empty local R2",
+    "zero outbound attempts"
+  ],
+  "requests": 8,
+  "networkAttempts": 0,
+  "workerSha256": "b79d690c3bb3383352288fe2b969baabd0bf16b628d6716da0b0bb1e13c99393",
+  "firstReadMetrics": {
+    "statements": 15,
+    "reads": 242,
+    "writes": 0,
+    "resultBytes": 6587,
+    "databaseBytes": 1957888
+  },
+  "actualFormaQualified": false,
+  "receipts": [
+    {
+      "route": "/api/internal/generation-study/hold-classification",
+      "status": 200,
+      "result": {
+        "status": "disabled",
+        "newPurchases": 0
+      }
+    },
+    {
+      "route": "/api/internal/generation-study/hold-classification",
+      "status": 200,
+      "result": {
+        "contract": "forma-p5-hold-classification-v1",
+        "status": "observed-not-cleared",
+        "observedAt": "2026-09-29T20:56:30.806Z",
+        "groups": {
+          "token": {
+            "reservationCount": 0,
+            "groups": []
+          },
+          "cost": {
+            "reservationCount": 1,
+            "groups": [
+              {
+                "reservationState": "active",
+                "operationClass": "other-or-unknown",
+                "ageBucket": "1-to-7-days",
+                "documentMatchesCapped2": 0,
+                "outputCandidate": 0,
+                "consequentialCandidate": 0,
+                "count": 1
+              }
+            ]
+          }
+        },
+        "completeWithinBound": true,
+        "uniqueOperations": null,
+        "finality": "not-established",
+        "newPurchases": 0,
+        "metrics": {
+          "statements": 15,
+          "reads": 242,
+          "writes": 0,
+          "resultBytes": 6587,
+          "databaseBytes": 1957888
+        },
+        "limits": {
+          "statements": 32,
+          "rowsPerQuery": 101,
+          "queryBytes": 100000,
+          "resultBytes": 65536,
+          "outputBytes": 32768,
+          "reads": 1000000,
+          "deadlineMs": 20000
+        }
+      }
+    },
+    {
+      "route": "/api/internal/generation-study/hold-classification?sql=DROP",
+      "status": 409,
+      "result": {
+        "status": "unavailable",
+        "reason": "hold_classification_unavailable",
+        "completeWithinBound": false,
+        "newPurchases": 0
+      }
+    },
+    {
+      "route": "/api/internal/generation-study/hold-classification",
+      "status": 409,
+      "result": {
+        "status": "unavailable",
+        "reason": "hold_classification_unavailable",
+        "completeWithinBound": false,
+        "newPurchases": 0
+      }
+    },
+    {
+      "route": "/api/internal/generation-study/approval",
+      "status": 200,
+      "result": {
+        "status": "disabled",
+        "newPurchases": 0
+      }
+    },
+    {
+      "route": "/api/internal/generation-study/execute",
+      "status": 200,
+      "result": {
+        "status": "disabled",
+        "newPurchases": 0
+      }
+    },
+    {
+      "route": "/api/internal/generation-study/qualification/custody",
+      "status": 200,
+      "result": {
+        "status": "disabled",
+        "storageOperations": 0
+      }
+    },
+    {
+      "route": "/api/internal/generation-study/qualification",
+      "status": 404,
+      "result": {
+        "status": "not-found"
+      }
+    }
+  ]
+}

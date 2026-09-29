@@ -1,3 +1,4 @@
+import {ToolbarMotion} from './motion/coordinator.ts';
 import './source-advisory-inspector.ts';
 import './idea-body-editor.ts';
 import { decodeIdeaBody, ideaBodyText, plainTextIdeaBody, type IdeaBodyV1 } from '../model/idea-body.ts';
@@ -54,6 +55,7 @@ import './vendor/elements/define/badge.js';
 import './vendor/elements/define/toolbar.js';
 import './vendor/elements/define/textarea.js';
 import './style.css';
+import './motion/motion.css';
 import './context-flow.ts';
 import './use-in-flow.ts';
 import type { StillUseInFlow } from './use-in-flow.ts';
@@ -83,6 +85,22 @@ const safeMedia = (url: string | null | undefined) => url?.startsWith('/api/medi
 
 export class StillApp extends LitElement {
   private client = new StillClient();
+  private toolbarMotion?:ToolbarMotion;
+  private toolbarDecisionPending=false;
+  private toolbarContextWaiting=false;
+  private toolbarContextPending(){return ['generation','rejection','results'].includes(this.client.position.view)&&!this.client.jobsLoaded&&!this.client.jobsError||!!this.missingWriting()&&!this.contentRead?.error;}
+  private toolbarDecisionSettled=false;
+  private toolbarDecisionAbort?:AbortController;
+  private toolbarWorkflow(){return this.querySelector<StillContextFlow|StillUseInFlow|StillCreationFlow>('still-context-flow,still-use-in-flow,still-creation-flow')?.toolbar;}
+  private toolbarReady(){return !this.loading&&!this.busy&&!this.directGeneration&&!this.toolbarContextPending()&&!this.toolbarDecisionPending&&!this.toolbarWorkflow()?.pending&&!!this.querySelector('.toolbar-motion-live .action-dock en-toolbar > en-button');}
+  private expireToolbarDecision(){
+    if(!this.toolbarDecisionPending)return;
+    this.toolbarDecisionSettled=true;this.toolbarDecisionPending=false;++this.decisionTicket;
+    clearTimeout(this.decisionTimer);this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.decisionMemory.clear();
+    this.onboardingDecisionPending=false;this.ideaRequestPending=false;this.developerPending=false;
+    this.changed();
+  }
+
   private writeRecovery?:{key:string;correlationId:string};
   private attention?:StillAttentionObserver;
   private decisionMemory=new DecisionMemo<DecisionResponse>({
@@ -104,8 +122,8 @@ export class StillApp extends LitElement {
   }
   private decisionPosition():Position {const generation=['generation','rejection'].includes(this.client.position.view)?generationDecisionContext(this.selectedGeneration()):undefined;return {...this.client.position,...(generation?{generation:{...generation,canStartNew:generation.canStartNew&&!this.client.pendingGeneration&&!this.client.hasUnconfirmedWrite}}:{})};}
   private decisionBody(extra:Record<string,unknown>={}){return {...this.decisionPosition(),...extra,...(this.developer?{developer:true}:{})};}
-  private async requestDecision(body:Record<string,unknown>,bypass=false,timeout?:number,onInitial?:(value:DecisionResponse)=>void){
-    const result=await this.decisionMemory.run(this.decisionKey(body),()=>fetchDecision({...body,...(bypass?{cacheBypass:true}:{})},onInitial,timeout),bypass);
+  private async requestDecision(body:Record<string,unknown>,bypass=false,timeout?:number,onInitial?:(value:DecisionResponse)=>void,signal?:AbortSignal){
+    const result=await this.decisionMemory.run(this.decisionKey(body),()=>fetchDecision({...body,...(bypass?{cacheBypass:true}:{})},onInitial,timeout,signal),bypass);
     return result.cache.status==='hit'||result.cache.status==='shared'?{...result.value,cache:{...result.cache,layer:'browser' as const}}:result.value;
   }
   private ideaAssessment?:IdeaAssessment;
@@ -222,7 +240,7 @@ export class StillApp extends LitElement {
     if(!this.listOptions().some(a=>a.id===id))return false;
     if(id==='ui:previous-page')this.turnPage(this.page-1);
     else if(id==='ui:next-page')this.turnPage(this.page+1);
-    else {this.listDisplay.set(id==='ui:show-all');this.page=0;this.moreOpen=false;++this.toolbarHelpEpoch;this.writeRoute(true);this.changed();this.focusContent();}
+    else {this.toolbarDecisionSettled=false;this.toolbarMotion?.begin('list-display');this.listDisplay.set(id==='ui:show-all');this.page=0;this.moreOpen=false;++this.toolbarHelpEpoch;this.writeRoute(true);this.changed();this.focusContent();this.decide();}
     return true;
   }
   private setRememberLists=(e:CustomEvent<{value:boolean}>)=>{this.listKind();this.listDisplay.setRemember(e.detail.value===true);this.changed();};
@@ -238,7 +256,7 @@ export class StillApp extends LitElement {
   private nextBest?:NextBestAnswer;
   private setNextBest=(e:CustomEvent<{value:boolean}>)=>{
     this.nextBestEnabled=e.detail.value===true;
-    try{localStorage.setItem('still:flag:next-best',String(this.nextBestEnabled));}catch{}
+    try{localStorage.setItem('still:flag:next-best',String(this.nextBestEnabled));}catch{/* Storage may be unavailable in private browsing. */}
     this.moreOpen=false;this.changed();
   };
   private nextBestAssessment(){
@@ -250,7 +268,8 @@ export class StillApp extends LitElement {
   private preferredSuggestions(){
     const ordered=nextBestOrder(this.suggestions,this.rankedActions,this.nextBestAssessment());
     const start=this.emptyProject()?this.candidates().find(a=>a.id==='new-document'):undefined;
-    return start?[start,...ordered.filter(a=>a.id!==start.id)]:ordered;
+    const fallback=!ordered.length?this.candidates().find(a=>a.id===(this.client.position.view==='projects'?'new-project':'projects')):undefined;
+    return start?[start,...ordered.filter(a=>a.id!==start.id)]:fallback?[fallback]:ordered;
   }
   private onboarding=false;
   private onboardingDecisionPending=false;
@@ -268,7 +287,7 @@ export class StillApp extends LitElement {
       recentActions:pos.recentActions,historyComplete:this.client.historyComplete,
     };
   }
-  private setOnboarding=(e:CustomEvent<{value:boolean}>)=>{this.onboarding=e.detail.value===true;try{localStorage.setItem('still:flag:onboarding',String(this.onboarding));}catch{}const url=new URL(location.href);url.searchParams.delete('onboarding');url.searchParams.delete('onbaording');history.replaceState(history.state,'',url);this.activeAddress=this.address();this.changed();};
+  private setOnboarding=(e:CustomEvent<{value:boolean}>)=>{this.onboarding=e.detail.value===true;try{localStorage.setItem('still:flag:onboarding',String(this.onboarding));}catch{/* Storage may be unavailable in private browsing. */}const url=new URL(location.href);url.searchParams.delete('onboarding');url.searchParams.delete('onbaording');history.replaceState(history.state,'',url);this.activeAddress=this.address();this.changed();};
   private help(id:string,label:string){
     // Lit can reuse a toolbar slot for another action or the same action on a new page.
     // Retire the previous help instance so its open state and delayed work cannot follow it.
@@ -337,6 +356,7 @@ export class StillApp extends LitElement {
       else history.pushState({...history.state,stillIndex:this.historyIndex},'',this.activeAddress);
       this.error='Finish or close this step before leaving.';this.changed();return;
     }
+    this.toolbarDecisionSettled=false;this.toolbarMotion?.begin('history');
     this.historyIndex=index??0;this.readRoute();this.changed();this.decide();this.focusContent();
   };
   // Update only the header decoration; scrolling must not rerender actions or request Jev.
@@ -344,6 +364,8 @@ export class StillApp extends LitElement {
   createRenderRoot() { return this; }
   connectedCallback() {
     super.connectedCallback(); this.disposed = false;
+    this.toolbarMotion=new ToolbarMotion(this,{ready:()=>this.toolbarReady(),timeout:()=>this.expireToolbarDecision(),recovery:()=>!!this.error||!!this.contentRead?.error||!!this.client.jobsError||!!this.toolbarWorkflow()?.recovery||this.startupFailed||!!this.routeError,state:()=>this.error?'error':this.moreOpen?'page2':'page1',settled:()=>{this.toolbarDecisionSettled=true;this.scheduleDockFit();}});
+    this.toolbarMotion.begin('initial');
     this.updatePageTitle();
     this.updateHeaderScroll();
     window.addEventListener('scroll', this.updateHeaderScroll, { passive: true });
@@ -351,8 +373,8 @@ export class StillApp extends LitElement {
       const inspector=this.querySelector<StillDeveloperConsole>('still-developer-console');
       if(inspector?.context)inspector.context={...inspector.context,attention:snapshot};
     });
-    try{this.nextBestEnabled=readNextBestFlag(localStorage);}catch{}
-    try{this.listDisplay=new ListDisplay(localStorage);}catch{}
+    try{this.nextBestEnabled=readNextBestFlag(localStorage);}catch{/* Storage may be unavailable in private browsing. */}
+    try{this.listDisplay=new ListDisplay(localStorage);}catch{/* Storage may be unavailable in private browsing. */}
     try{this.onboarding=readOnboardingFlag(location.href,localStorage);}catch{this.onboarding=new URL(location.href).searchParams.has('onboarding');}
     this.client.onChange = () => { this.retireChangedDecisions(); if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
     this.desktop.addEventListener('change', this.developerViewportChanged);
@@ -363,7 +385,7 @@ export class StillApp extends LitElement {
     document.addEventListener('visibilitychange', this.resumeSync);
     void this.run(() => this.loadWorkspace());
   }
-  disconnectedCallback() { super.disconnectedCallback(); window.removeEventListener('scroll', this.updateHeaderScroll); this.onboardingHelp.dispose(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect();cancelAnimationFrame(this.dockFitFrame); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
+  disconnectedCallback() { super.disconnectedCallback(); this.toolbarMotion?.dispose();this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort(); window.removeEventListener('scroll', this.updateHeaderScroll); this.onboardingHelp.dispose(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect();cancelAnimationFrame(this.dockFitFrame); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.richBodyDraft,this.preferenceDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount,g?.settings]);}
   private preventsRouteChange(unloading=false){return this.busy&&!this.loading||this.composing||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange||!!this.querySelector<StillCreationFlow>('still-creation-flow')?.[unloading?'preventsUnload':'preventsRouteChange'];}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange(true)) { e.preventDefault(); e.returnValue = ''; } };
@@ -373,6 +395,9 @@ export class StillApp extends LitElement {
     if(document.title!==title)document.title=title;
   }
   protected updated() {
+    this.toolbarMotion?.attach();
+    if(this.toolbarContextWaiting&&!this.toolbarContextPending()){this.toolbarContextWaiting=false;this.decide();}
+    if(!this.loading&&!this.startupFailed&&this.client.session&&!this.client.session.policy.accepted)this.toolbarMotion?.suspend();
     this.updatePageTitle();
     this.reconcileGenerationNotices();
     this.reconcileGeneration();
@@ -419,6 +444,7 @@ export class StillApp extends LitElement {
   private focusContent() { void this.updateComplete.then(() => { const target = this.querySelector('en-textarea, en-text-field, en-select, main h1') as HTMLElement | null; if(target) { if(target.tagName === 'H1') target.tabIndex = -1; target.focus(); } }); }
   private async run(work: () => Promise<void>) {
     if (this.busy || this.composing) return;
+    this.toolbarDecisionSettled=false;this.toolbarMotion?.ensure();
     this.busy = true; this.error = ''; this.changed();
     try { await work(); } catch (error) { if(!(error instanceof IdeaEditCanceled)){this.error = error instanceof Error ? error.message : 'Could not complete this step.';this.errorCode=error instanceof ApiError?String(error.body.error??''):'';} }
     finally { this.busy = false; this.loading = false; this.changed(); }
@@ -449,7 +475,7 @@ export class StillApp extends LitElement {
       .finally(()=>{if(this.contentRead===read){if(!read.error)this.contentRead=null;this.changed();}});
   }
   private renderWritingLoad() {
-    return html`<section class="quiet-state"><h1>${this.contentRead?.error ? 'Writing unavailable' : 'Loading writing…'}</h1>${this.contentRead?.error ? html`<p role="alert">${this.contentRead.error}</p>${this.button('Try again',()=>{this.contentRead=null;this.changed();})}` : nothing}</section>`;
+    return html`<section class="quiet-state"><h1>${this.contentRead?.error ? 'Writing unavailable' : 'Loading writing…'}</h1>${this.contentRead?.error ? html`<p role="alert">${this.contentRead.error}</p>${this.button('Retry loading writing',()=>{this.toolbarMotion?.ensure();this.contentRead=null;this.changed();})}` : nothing}</section>`;
   }
   private readRoute() {
     const q = new URL(location.href).searchParams, route=parseStillRoute(location.href);
@@ -492,6 +518,7 @@ export class StillApp extends LitElement {
     const job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===c.position.documentId);
     const id=job?generationResult(job,c.projection,c.events):'';
     if(!id)return;
+    this.toolbarDecisionSettled=false;this.toolbarMotion?.ensure();
     c.position={...c.position,view:'artifact',outputId:id};this.writeRoute(true);this.changed();this.decide();
   }
   private writeRoute(replace=false){
@@ -503,8 +530,9 @@ export class StillApp extends LitElement {
     this.activeAddress=url;
     this.updatePageTitle();
   }
-  private resetStep(){this.ideaRequestPending=false;this.ideaAssessment=undefined;this.ideaAssessmentTrace=undefined;this.listDisplay.leave();this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationDrafts.clear();this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
+  private resetStep(){this.toolbarContextWaiting=false;this.toolbarDecisionSettled=false;this.toolbarDecisionPending=false;this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.ideaRequestPending=false;this.ideaAssessment=undefined;this.ideaAssessmentTrace=undefined;this.listDisplay.leave();this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationDrafts.clear();this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
+    if(this.busy)this.toolbarMotion?.ensure();else this.toolbarMotion?.begin('navigate');
     this.resetStep();this.page = 0; this.itemIndex = 0; this.error = '';this.routeError='';this.notice='';
     const changedDocument = ids.documentId !== undefined && ids.documentId !== this.client.position.documentId || ids.projectId !== undefined && ids.projectId !== this.client.position.projectId;
     this.client.position = { ...this.client.position, ...(changedDocument ? { intent:'', recentActions:[] } : {recentActions:this.client.position.recentActions.filter(a=>!a.startsWith('completed:'))}), blockId: '', outputId: '', ...ids, view };
@@ -522,20 +550,25 @@ export class StillApp extends LitElement {
     if(this.preventsRouteChange()){event.preventDefault();this.error='Finish or close this step before leaving.';this.changed();return;}
     this.follow(event,'projects',{projectId:'',documentId:''});
   };
-  private turnPage(page:number){if(this.listKind()&&this.listDisplay.all)return;this.dockTouched=false;this.page=Math.max(0,page);this.writeRoute();this.changed();this.decide();}
-  private turnItem(item:number){this.dockTouched=false;this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
+  private turnPage(page:number){if(this.listKind()&&this.listDisplay.all)return;this.toolbarDecisionSettled=false;this.toolbarMotion?.begin('page');this.dockTouched=false;this.page=Math.max(0,page);this.writeRoute();this.changed();this.decide();}
+  private turnItem(item:number){this.toolbarDecisionSettled=false;this.toolbarMotion?.begin('item');this.dockTouched=false;this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
   private candidates() { return eligibleActions(this.client.projection, this.decisionPosition(), this.client.abilities); }
   private decide(bypass=false) {
+    if(this.toolbarDecisionSettled&&!bypass)return;
+    this.toolbarMotion?.ensure();
     this.ideaRequestPending=false;
     this.onboardingDecisionPending=false;
+    if(this.toolbarContextPending()){this.toolbarContextWaiting=true;return;}
     if(this.client.position.view==='generation'&&!this.mode&&(this.isInlineGeneration()||this.canAcknowledgeSafety(this.selectedGeneration()))){clearTimeout(this.decisionTimer);++this.decisionTicket;this.developerPending=false;this.developerReceived=undefined;this.developerApplied=this.developer?this.localDiagnostics('Required generation review supplies deterministic controls; Jev cannot authorize submission.'):undefined;return;}
     if(this.currentRouteProblem(this.client.projection))return;
     if(this.mode){clearTimeout(this.decisionTimer);if(this.mode==='generate'&&!this.generation){++this.decisionTicket;this.suggestFormats(bypass);}return;}
-    clearTimeout(this.decisionTimer); const ticket = ++this.decisionTicket;
+    clearTimeout(this.decisionTimer);this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.toolbarDecisionAbort=new AbortController();
+    const signal=this.toolbarDecisionAbort.signal;this.toolbarDecisionPending=true;this.toolbarDecisionSettled=false;
+    const ticket = ++this.decisionTicket;
     this.lastGenerationDecision=JSON.stringify(this.decisionPosition().generation);
-    const candidates = this.candidates(); if(this.dockTouched)return;this.suggestions = selectActions(candidates, this.decisionPosition(),{},this.client.projection);this.rankedActions=evaluateActions(candidates,this.decisionPosition(),{},this.client.projection).ranked;this.moreOpen=false;this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.nextBest=undefined; this.decisionSource = 'fallback'; this.changed();
+    const candidates = this.candidates(); this.suggestions = selectActions(candidates, this.decisionPosition(),{},this.client.projection);this.rankedActions=evaluateActions(candidates,this.decisionPosition(),{},this.client.projection).ranked;this.moreOpen=false;this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.nextBest=undefined; this.decisionSource = 'fallback'; this.changed();
     if(this.developer){this.developerScope=this.diagnosticScope();this.developerApplied=this.localDiagnostics('Local policy');this.developerReceived=undefined;this.developerPending=false;}
-    if (!this.client.session?.policy.accepted || this.mode) return;
+    if (!this.client.session?.policy.accepted || this.mode){this.toolbarDecisionPending=false;return;}
     this.onboardingDecisionPending=true;
     this.decisionTimer = window.setTimeout(async () => {
       const snapshot = JSON.stringify(this.decisionPosition()), head = this.client.head, scope=this.interactionScope(), diagnosticScope=this.diagnosticScope();
@@ -544,25 +577,33 @@ export class StillApp extends LitElement {
       try {
         let firstResponseMs:number|undefined;
         const applyResult=(result:DecisionResponse)=>{
+        this.toolbarMotion?.sync();
+        if(ticket!==this.decisionTicket||this.toolbarDecisionSettled)return;
+        if(result.delivery?.stage==='initial')throw new Error('Final toolbar actions unavailable');
         firstResponseMs??=Math.max(0,performance.now()-started);
         if(ticket===this.decisionTicket&&scope===this.interactionScope()&&result.policy===POLICY_VERSION&&snapshot===JSON.stringify(this.decisionPosition())&&!this.mode&&matchingIdeaAssessment(result.opportunities,this.decisionPosition(),this.client.head)){
           this.ideaAssessment=cachedIdeaAssessment(result.opportunities,result.cache?.status==='hit');this.ideaAssessmentTrace=result.diagnostics;
           if(result.delivery?.enrichment==='interrupted'&&this.ideaAssessment?.phase==='pending')this.ideaAssessment={...this.ideaAssessment,phase:'complete',complete:false,actions:Object.fromEntries(Object.entries(this.ideaAssessment.actions).map(([id,a])=>[id,a.status==='Pending'?{...a,status:'Failed',reason:'Assessment stream interrupted'}:a]))};
           this.changed();
         }
-        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.decisionPosition())||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:this.dockTouched||!!this.querySelector('.action-dock')?.contains(document.activeElement)});
+        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.decisionPosition())||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:false});
         this.recordDecision(result,disposition,diagnosticScope,started,firstResponseMs);
         if(disposition==='Applied'){this.nextBest=result.nextBest;const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
-        // Start help from the first usable ranking while optional connection enrichment continues.
+        // Help starts only after the final action set has been selected.
         if(ticket===this.decisionTicket){this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}
         };
-        const result=await this.requestDecision(this.decisionBody(),bypass,undefined,applyResult);
+        const result=await this.requestDecision(this.decisionBody(),bypass,0,partial=>{
+          if(ticket===this.decisionTicket)this.recordDecision(partial,'Pending: waiting for final actions',diagnosticScope,started);
+        },signal);
         applyResult(result);
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local controls',diagnosticScope,started); }
-      finally {if(ticket===this.decisionTicket){this.ideaRequestPending=false;this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}}
+      finally {if(ticket===this.decisionTicket){this.toolbarDecisionPending=false;this.toolbarDecisionSettled=true;this.ideaRequestPending=false;this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}}
     }, 0);
   }
   private suggestFormats(bypass=false) {
+    if(this.toolbarDecisionSettled&&!bypass)return;
+    this.toolbarMotion?.ensure();this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.toolbarDecisionAbort=new AbortController();
+    const signal=this.toolbarDecisionAbort.signal;this.toolbarDecisionPending=true;
     const ticket = this.decisionTicket, snapshot = JSON.stringify(this.client.position), head = this.client.head, scope = this.interactionScope();
     if(this.developer){this.developerApplied=this.localDiagnostics('No automatic format choice',true);this.developerReceived=undefined;}
     this.onboardingDecisionPending=true;
@@ -571,7 +612,8 @@ export class StillApp extends LitElement {
       try {
         if (ticket !== this.decisionTicket || this.mode !== 'generate' || this.generation || this.formatTouched || scope!==this.interactionScope()) return;
         this.developerPending=this.developer;this.changed();
-        const result = await this.requestDecision(this.decisionBody({view:'choose-format'}),bypass);
+        const result = await this.requestDecision(this.decisionBody({view:'choose-format'}),bypass,0,undefined,signal);
+        this.toolbarMotion?.sync();if(ticket!==this.decisionTicket||this.toolbarDecisionSettled)return;
         const disposition=responseDisposition(result,{formats:true,head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||this.mode!=='generate'||!!this.generation||this.disposed||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position),touched:this.formatTouched});
         this.recordDecision(result,disposition,diagnosticScope,started);
         if (disposition==='Applied') {
@@ -579,7 +621,7 @@ export class StillApp extends LitElement {
           this.nextBest=result.nextBest;this.formatSuggestions = [...new Set(result.rankedFormats ?? result.formats!)].filter(id=>allowed.has(id));this.formatEmphasis=result.presentation??presentActions(this.formatSuggestions); this.changed();
         }
       } catch(error) { this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Kept local format order',diagnosticScope,started); }
-      finally {if(ticket===this.decisionTicket){this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}}
+      finally {if(ticket===this.decisionTicket){this.toolbarDecisionPending=false;this.toolbarDecisionSettled=true;this.onboardingDecisionPending=false;this.developerPending=false;this.changed();}}
     }, 0);
   }
   private lastGenerationDecision = '';
@@ -587,13 +629,17 @@ export class StillApp extends LitElement {
     if (this.syncPending || this.disposed || this.loading || this.busy || document.hidden || !this.client.session?.policy.accepted) return;
     const now = Date.now(), work: Promise<void>[] = [];
     this.syncPending = true;
+    const completionPosition=JSON.stringify([this.client.position.view,this.client.position.outputId]);
+    const completed=new Set(this.client.jobs.filter(j=>j.documentId===this.client.position.documentId&&!generationActive(j)).map(j=>j.jobId));
     try {
       // Keep collaborator edits current independently of whether this page has jobs.
       if (force || now - this.lastHistoryPoll >= 30000) { this.lastHistoryPoll = now; work.push(this.client.refresh()); }
       const interval = this.client.generationActivity.hasActive || this.client.jobs.some(j => activeJobs.has(j.status)) ? 2000 : 60000;
       if (force || now - this.lastJobsPoll >= interval) { this.lastJobsPoll = now; work.push(this.client.pollJobs()); }
       await Promise.allSettled(work);
-      if(['generation','rejection'].includes(this.client.position.view)){const signature=JSON.stringify(this.decisionPosition().generation);if(signature!==this.lastGenerationDecision){this.lastGenerationDecision=signature;this.decide();}}
+      if(!this.mode&&completionPosition===JSON.stringify([this.client.position.view,this.client.position.outputId])&&this.client.jobs.some(j=>j.documentId===this.client.position.documentId&&!generationActive(j)&&!completed.has(j.jobId))){
+        this.toolbarDecisionSettled=false;this.dockTouched=false;this.toolbarMotion?.ensure();this.decide();
+      }
     } finally { this.syncPending = false; }
   }
   private poll() {
@@ -618,6 +664,11 @@ export class StillApp extends LitElement {
     void this.replaceToolbar(true,event);
   }
   private async replaceToolbar(more:boolean,event?:MouseEvent){
+    if(this.toolbarMotion){
+      ++this.toolbarHelpEpoch;
+      await this.toolbarMotion.page(async()=>{this.moreOpen=more;this.changed();await this.updateComplete;},more?'more':'back',event?.detail===0);
+      return;
+    }
     const keyboard=event?.detail===0;
     const scope=this.interactionScope();
     const parkFocus=()=>{
@@ -715,10 +766,11 @@ export class StillApp extends LitElement {
   }
   private button(label: string, action: (event:MouseEvent) => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${this.dockId(helpId)} data-action-id=${actionId} data-action-source=${source} form=${!this.measuringDock&&actionId==='workflow:save'&&this.isCreationMode()?'still-create-form':nothing} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
   private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { if(rows===1)return html`<en-text-field label=${label} .value=${live(value)} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.changed();}}></en-text-field>`; return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
-  private closeMode() { if (this.mode === 'generate') this.client.position.intent = ''; this.resetStep();this.error='';this.writeRoute();this.decide();this.focusContent(); }
+  private closeMode() { this.toolbarMotion?.ensure();if (this.mode === 'generate') this.client.position.intent = ''; this.resetStep();this.error='';this.writeRoute();this.decide();this.focusContent(); }
   private begin(mode: string, updateURL=true) {
     if(mode==='surprise')mode='add-context'; // Legacy entry points use the ordinary idea form.
     if(mode==='actions'){this.routeMode='actions';this.openFinder();if(updateURL)this.writeRoute();return;}
+    this.toolbarDecisionSettled=false;this.toolbarDecisionPending=false;this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.toolbarMotion?.ensure();
     this.moreOpen=false;
     this.developerPending=false;
     this.pendingBlock = null; this.mode = mode;this.routeMode=mode; ++this.decisionTicket; clearTimeout(this.decisionTimer); this.error = ''; this.choice = ''; this.titleDraft = ''; this.bodyDraft = ''; this.kindDraft = 'direction';
@@ -731,6 +783,7 @@ export class StillApp extends LitElement {
   }
   private choose(id: string) {
     if (this.busy || this.composing) return;
+    this.toolbarDecisionSettled=false;
     if(!id.startsWith('ui:')&&!this.candidates().some(a=>a.id===id)){this.error='Action changed. Choose another step.';this.dockTouched=false;this.decide();return;}
     if(id==='use-in')this.useInTarget=this.suggestionTargets[id]??'';
     if(id==='ui:developer'){this.closeMode();this.setDeveloper(true);return;}
@@ -790,6 +843,7 @@ export class StillApp extends LitElement {
   }
   private chooseFormat(format: string) {
     if (this.busy || this.composing || this.generation?.attempted) return;
+    this.toolbarDecisionPending=false;this.toolbarDecisionSettled=false;this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.toolbarMotion?.ensure();
     try {
       if(this.generation)this.generationDrafts.set(this.generation.format,this.generation);
       const fresh=format?this.client.prepareGeneration(format):null;
@@ -1024,7 +1078,7 @@ export class StillApp extends LitElement {
     if(this.toolbarLimit<3)return this.compactDock(this.moreOpen?[...actions.filter(a=>a.id!=='ui:palette').slice(Math.max(0,this.firstDockLimit-1)).map(a=>({...a,variant:'secondary' as const})),{id:'ui:back',label:'Back',variant:'ghost',run:()=>void this.replaceToolbar(false)},actions[actions.length-1]]:actions,'More actions',status);
     const choices=actions.filter(a=>a.id!=='ui:palette'),visible=choices.slice(0,(this.moreOpen?this.firstDockLimit:this.toolbarLimit)-1),remaining=choices.slice(visible.length,this.toolbarLimit-2+visible.length);
     const controls=this.moreOpen
-      ? [...remaining.map(a=>this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,'secondary')),this.button('Back',event=>void this.replaceToolbar(false,event)),this.paletteButton('more')]
+      ? [...remaining.map(a=>this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,'secondary')),this.button('Back',event=>void this.replaceToolbar(false,event),false,false,'ui:back'),this.paletteButton('more')]
       : [...visible.map(a=>this.button(a.label,a.run,false,'disabled' in a&&a.disabled,a.id,a.variant)),this.button('More actions',event=>this.openMore(event),false,false,'ui:more')];
     return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()}>${this.toolbarStatus(status)}<en-toolbar label="Your next step" keyboard-navigation="tab">${controls}</en-toolbar></footer>`;
   }
@@ -1035,7 +1089,7 @@ export class StillApp extends LitElement {
   }
   private renderGeneration() {
     const c=this.client,p=c.projection,job=c.jobs.find(j=>j.jobId===c.position.outputId&&j.documentId===p.documentId);
-    if(!job||!generationFormat(job))return html`<section class="quiet-state"><h1>${c.jobsError?'Couldn’t load generation':c.jobsLoaded?'Generation unavailable':'Loading generation…'}</h1>${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
+    if(!job||!generationFormat(job))return html`<section class="quiet-state"><h1>${c.jobsError?'Couldn’t load generation':c.jobsLoaded?'Generation unavailable':'Loading generation…'}</h1>${c.jobsError?this.button('Retry loading generations',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     const active=generationActive(job),kind=generationFormat(job),preview=generationPreview(job,p,c.events),outcome=generationOutcome(job);
     if(active&&kind==='image'){const partial=imageGenerationProgress(job,p.documentId);return stillImageStage(preview.title,preview,partial?.mediaUrl||undefined,true);}
     return html`<section class="generation-stage"><span class="eyebrow">${FORMATS[kind]??kind}</span><h1>${preview.title}</h1>${preview.width&&preview.height?html`<p class="caption">${preview.width} × ${preview.height}</p>`:nothing}${job.status==='failed'&&!outcome.uncertain&&!outcome.recovery?html`<p class="caption">This attempt failed.</p>`:nothing}${active?nothing:html`<p role="status">${outcome.title}</p><p>${outcome.summary}</p>${outcome.facts.map(fact=>html`<p class="caption">${fact}</p>`)}<p>${outcome.next}</p>`}${active?html`<div class=${`generation-placeholder ${kind} ${preview.width?'known-size':''}`} style=${preview.width&&preview.height?`--generation-ratio:${preview.width/preview.height}`:nothing} aria-label="Generation in progress"><en-skeleton shape="rectangle"></en-skeleton></div>`:nothing}${this.canAcknowledgeSafety(job)?html`<p class="caption">Nothing is sent automatically. “Acknowledge & send” sends the reviewed request to the model and may incur usage. The provider can still decline it.</p>`:this.canGenerateAgain(job)?html`<p class="caption">A new generation uses your current document and allowance.</p>`:nothing}${this.generationCheck?.key===this.generationCheckKey()?html`<p class="caption" role="status" aria-live="polite">${this.generationCheck.message}</p>`:nothing}${typeof job.result?.previousAttemptId==='string'?html`<p class="caption"><a href=${this.viewURL('generation',{outputId:job.result.previousAttemptId})} @click=${(event:MouseEvent)=>this.follow(event,'generation',{outputId:String(job.result!.previousAttemptId)})}>View earlier attempt</a></p>`:nothing}${this.renderInlineGeneration()}</section>`;
@@ -1043,14 +1097,14 @@ export class StillApp extends LitElement {
   private renderCanvas() {
     const c = this.client, p = c.projection, pos = c.position;
     if (this.loading) return html`<section class="quiet-state"><div class="still-mark" aria-hidden="true"></div><h1>Loading…</h1></section>`;
-    if (this.startupFailed || !c.session) return html`<section class="quiet-state"><h1>Couldn’t load Still</h1>${this.button('Try again', () => void this.run(() => this.loadWorkspace()), true)}</section>`;
+    if (this.startupFailed || !c.session) return html`<section class="quiet-state"><h1>Couldn’t load Still</h1></section>`;
     if (!c.session.policy.accepted) return html`<section class="form-page"><h1>Before you begin</h1><p>Your context is processed by generation providers and TypeSafe. Forma’s access and retention rules apply.</p><en-checkbox class="check" label="I have permission to use this content." .checked=${this.ownership} @en-change=${(e: CustomEvent<{proposed:boolean}>) => { this.ownership = e.detail.proposed; this.changed(); }}></en-checkbox><en-checkbox class="check" label="I consent to private provider processing." .checked=${this.providerConsent} @en-change=${(e: CustomEvent<{proposed:boolean}>) => { this.providerConsent = e.detail.proposed; this.changed(); }}></en-checkbox>${this.button('Continue', () => void this.run(async () => { await c.acceptTerms(); this.readRoute(); this.decide(); }), true, !this.ownership || !this.providerConsent)}</section>`;
     const routeProblem=this.currentRouteProblem(p);
     if (routeProblem) return html`<section class="quiet-state"><h1>${routeProblem}</h1>${this.button('Projects',()=>this.navigate('projects',{projectId:'',documentId:''}))}</section>`;
     if (this.mode) return this.renderMode();
     if(pos.view==='ideas'){
       const ideas=p.libraryBlocks.filter(b=>!b.removed&&(!pos.blockId||b.id===pos.blockId));
-      return html`<article class="document-page"><span class="eyebrow">${p.projectName}</span><h1>${pos.blockId?ideas[0]?.handle??'Idea unavailable':'Ideas'}</h1>${this.renderList(ideas,(b,i)=>html`<a class="context-block" data-attention-id=${`block:${b.id}`} href=${this.viewURL('ideas',{documentId:'',blockId:pos.blockId?'':b.id})} @click=${(e:MouseEvent)=>this.follow(e,'ideas',{documentId:'',blockId:pos.blockId?'':b.id})}><span class="block-index">${String(i+1).padStart(2,'0')}</span><div><span class="block-label">${b.handle}${b.locked?' · locked':''}</span>${safeMedia(text(b.properties.media_url))&&b.type==='reference'&&(!b.properties.media_type||text(b.properties.media_type).startsWith('image/'))?stillImage(safeMedia(text(b.properties.media_url)),b.handle,b.properties,{className:'context-reference'}):nothing}<p>${text(b.properties.text)||text(b.properties.description)||text(b.properties.label)||(b.properties.media_url||b.properties.model_url?'File reference':'Empty idea')}</p><small>${ideaDocumentUses(b).filter(u=>p.documents.some(d=>d.id===u.documentId)).map(u=>p.documents.find(d=>d.id===u.documentId)?.title).join(' · ')||'Project idea'}</small></div></a>`,'context-blocks')}${!ideas.length?html`<p class="empty-copy">No ideas yet.</p>`:nothing}${pos.blockId?html`<p class="context-preview">Edits to this idea are shared wherever it is used.</p>`:nothing}</article>`;
+      return html`<article class="document-page"><span class="eyebrow">${p.projectName}</span><h1>${pos.blockId?ideas[0]?.handle??'Idea unavailable':'Ideas'}</h1>${this.renderList(ideas,(b,i)=>html`<a class="context-block" data-attention-id=${`block:${b.id}`} href=${this.viewURL('ideas',{documentId:'',blockId:pos.blockId?'':b.id})} @click=${(e:MouseEvent)=>this.follow(e,'ideas',{documentId:'',blockId:pos.blockId?'':b.id})}><span class="block-index">${String(i+1).padStart(2,'0')}</span><div><span class="block-label">${b.handle}${b.locked?' · locked':''}</span>${safeMedia(text(b.properties.media_url))&&b.type==='reference'&&(!b.properties.media_type||text(b.properties.media_type).startsWith('image/'))?stillImage(safeMedia(text(b.properties.media_url)),b.handle,b.properties,{className:'context-reference'}):nothing}<p>${text(b.properties.text)||text(b.properties.description)||text(b.properties.label)||(b.properties.media_url||b.properties.model_url?'File reference':'Empty idea')}</p><small>${ideaDocumentUses(b).filter(u=>p.documents.some(d=>d.id===u.documentId)).map(u=>p.documents.find(d=>d.id===u.documentId)?.title).join(' · ')||'Project idea'}</small></div></a>`,'context-blocks')}${!ideas.length?html`<p class="empty-copy">No ideas yet.</p>`:nothing}${pos.blockId?html`<p class="idea-sharing-note">Edits to this idea are shared wherever it is used.</p>`:nothing}</article>`;
     }
     if (pos.view === 'projects' || pos.view === 'documents') {
       const projects = pos.view === 'projects', items = projects ? p.projects.map(x => ({ id: x.id, title: x.name, detail: `${x.documentCount} ${x.documentCount === 1 ? 'document' : 'documents'}` })) : p.documents.filter(d => !d.removed).map(d => ({ id: d.id, title: d.title, detail: sharedIdeaOutputNotices(p,c.events).some(n=>n.documentId===d.id)?'Output out of date':'' }));
@@ -1058,7 +1112,7 @@ export class StillApp extends LitElement {
     }
     if (pos.view === 'results') {
       const results = stillResults(p,c.jobs,c.events);
-      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1>${this.renderList(results,r => html`<a data-attention-id=${`result:${r.id}`} class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${stillResultThumbnail(html`${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:r.kind==='video'&&safeMedia(r.url)?stillVideoCover(safeMedia(r.url),r.title):safeMedia(r.url) ? stillImage(safeMedia(r.url),r.title,r) : html`<div class="result-word">${FORMATS[r.kind]}</div>`}`,r.focalPoint)}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`,'result-grid')}${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Try again',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
+      return html`<section class="results-page"><span class="eyebrow">${p.documentTitle}</span><h1>Results</h1>${this.renderList(results,r => html`<a data-attention-id=${`result:${r.id}`} class="result" href=${this.viewURL(r.view,{outputId:r.id})} @click=${(e:MouseEvent)=>this.follow(e,r.view,{outputId:r.id})}>${stillResultThumbnail(html`${r.job?html`<div class="pending-thumbnail">${generationActive(r.job)?html`<en-skeleton shape="rectangle"></en-skeleton>`:nothing}<span>${FORMATS[r.kind]??r.kind}</span></div>`:r.kind==='video'&&safeMedia(r.url)?stillVideoCover(safeMedia(r.url),r.title):safeMedia(r.url) ? stillImage(safeMedia(r.url),r.title,r) : html`<div class="result-word">${FORMATS[r.kind]}</div>`}`,r.focalPoint)}<span>${r.title}${r.job?html`<small>${generationStatus(r.job)}</small>`:nothing}</span></a>`,'result-grid')}${!results.length ? html`<p>${c.jobsError?'Couldn’t load generations.':c.jobsLoaded?'No results yet.':'Loading generations…'}</p>`:nothing}${c.jobsError?this.button('Retry loading generations',()=>void this.run(()=>c.pollJobs())):nothing}</section>`;
     }
     if(pos.view==='rejection')return keyed(this.generationCheckKey(),html`<still-rejection-page .client=${c} .scope=${`${this.generationCheckKey()}/${this.selectedGeneration()?.updatedAt??''}/${this.selectedGeneration()?.status??''}`}></still-rejection-page>`);
     if(pos.view==='generation')return this.renderGeneration();
@@ -1161,13 +1215,17 @@ export class StillApp extends LitElement {
       else if(this.mode==='workspaces')toolbar={actions:[{id:'workflow:open',label:'Open',variant:'primary',run:()=>void this.run(async()=>{await this.client.switchWorkspace(this.client.session?.projects?.find(p=>p.projectAccessId===this.choice));this.navigate(this.client.position.view,this.client.position);})},back]};
       else toolbar={actions:[{id:'workflow:save',label:this.client.hasUnconfirmedWrite?'Check save':this.mode==='intent'?'Suggest actions':this.mode==='reuse'?'Use idea':'Save',variant:'primary',disabled:this.mode==='edit-block'&&!!this.richEditIssue||this.mode==='reuse'&&!this.choice&&!this.client.hasUnconfirmedWrite,run:()=>this.client.hasUnconfirmedWrite?void this.run(()=>this.checkSave()):this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},...(this.client.hasUnconfirmedWrite&&this.writeRecovery?.key===this.writeRecoveryKey()?[{id:'workflow:save-draft',label:'Save draft',variant:'secondary' as const,run:()=>void this.run(()=>this.saveUnconfirmedDraft())}]:[]),back]};
     }
+    toolbar={...toolbar,actions:toolbar.actions.map(action=>({...action,run:()=>{this.toolbarMotion?.ensure();action.run();}}))};
     if(!toolbar.actions.length&&!toolbar.status)return nothing;
     if(toolbar.actions.length>this.toolbarLimit)return this.compactDock(toolbar.actions,'More actions',toolbar.status);
     return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()}>${this.toolbarStatus(toolbar.status??'')}<en-toolbar label="Your next step" keyboard-navigation="tab">${toolbar.actions.map(action=>this.button(action.label,action.run,false,!!action.disabled,action.id,action.variant,'Workflow rule'))}</en-toolbar></footer>`;
   }
   private renderDock() {
     const c = this.client, p = c.projection, view = c.position.view;
-    if (this.loading || this.startupFailed || !c.session?.policy.accepted || this.currentRouteProblem(p)) return nothing;
+    if(this.loading)return nothing;
+    if(this.startupFailed)return html`<footer class=${this.dockClass}><en-toolbar label="Recovery" keyboard-navigation="tab">${this.button('Retry loading Still',()=>void this.run(()=>this.loadWorkspace()),true)}${this.button('View projects',()=>{history.replaceState(null,'','/still');void this.run(()=>this.loadWorkspace());})}</en-toolbar></footer>`;
+    if(!c.session?.policy.accepted)return nothing;
+    if(this.currentRouteProblem(p))return html`<footer class=${this.dockClass}><en-toolbar label="Recovery" keyboard-navigation="tab">${this.button('View projects',()=>this.navigate('projects',{projectId:'',documentId:''}))}</en-toolbar></footer>`;
     if(this.busy||this.directGeneration)return this.renderBusyDock();
     if(this.mode==='generate')return this.renderGenerationDock();
     if(this.mode)return this.renderWorkflowDock();
@@ -1203,7 +1261,7 @@ export class StillApp extends LitElement {
     if(slides)actions.unshift(this.button(a!.kind==='slides'?'Previous slide':'Previous frame',()=>this.turnItem(this.itemIndex-1),false,this.itemIndex===0,'','secondary'),this.button(a!.kind==='slides'?'Next slide':'Next frame',()=>this.turnItem(this.itemIndex+1),false,this.itemIndex>=a!.items.length-1,'','secondary'));
     actions.push(...pageControls.map(control=>this.button(control.label,control.run,false,false,control.id,'secondary')));
     actions.push(this.button('More actions',event=>this.openMore(event),false,false,'ui:more'));
-    if(this.moreOpen)actions=[...(toggle?[this.button(toggle.label,()=>this.runListAction(toggle.id),false,false,toggle.id,'secondary')]:[]),...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2-(toggle?1:0))),this.button('Back',event=>void this.replaceToolbar(false,event)),this.paletteButton('more')];
+    if(this.moreOpen)actions=[...(toggle?[this.button(toggle.label,()=>this.runListAction(toggle.id),false,false,toggle.id,'secondary')]:[]),...this.toolbarSuggestions(nextToolbarActions(this.rankedActions,visibleIds,eligible,limit-2-(toggle?1:0))),this.button('Back',event=>void this.replaceToolbar(false,event),false,false,'ui:back'),this.paletteButton('more')];
     return html`<footer class=${this.dockClass} @focusout=${()=>this.scheduleDockFit()} @pointerdown=${()=>{this.dockTouched=true;}} @focusin=${()=>{this.dockTouched=true;}}>${this.toolbarStatus(generationProgress)}<en-toolbar label="Your next step" keyboard-navigation="tab">${actions}</en-toolbar></footer>`;
   }
   private reviewContext(job?:DocumentJob) {
@@ -1296,7 +1354,7 @@ export class StillApp extends LitElement {
   render() {
     const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
     const failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId && j.jobId !== displayedGeneration);
-    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main><div class="dock-stack">${this.renderNotifications(failed)}${this.renderDock()}</div>${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-remember-lists=${this.setRememberLists} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-assess-ideas=${this.assessIdeasAgain} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report <en-icon name="arrow-right" aria-hidden="true"></en-icon></a>` : nothing}</div>`;
+    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main><div class="dock-stack">${this.renderNotifications(failed)}<div class="toolbar-motion-root"><div class="toolbar-motion-live">${this.renderDock()}</div><div class="toolbar-motion-visual" aria-hidden="true" inert></div><span class="toolbar-motion-status" role="status" aria-live="polite"></span></div></div>${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-remember-lists=${this.setRememberLists} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-assess-ideas=${this.assessIdeasAgain} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report <en-icon name="arrow-right" aria-hidden="true"></en-icon></a>` : nothing}</div>`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

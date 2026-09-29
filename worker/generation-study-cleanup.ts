@@ -9,10 +9,10 @@ import {authenticateStudy,checkedBatch} from '../evals/generation-reliability/na
  * Does not delete immutable evidence references, decisions, charges or holds.
  * Object/per-operation cleanup remains the existing one-attempt P2 operation. */
 export async function cleanupStudyProposal(request:Request,env:StudyApprovalEnv,p:StudyApprovalProposal){
- const a=await authenticateStudy(request,env,{recovery:true,supplied:true}) as {user:PilotUser;guard:StudySqlGuard};
+ const a=await authenticateStudy(request,env,{recovery:true,supplied:true,pair:p.version===2}) as {user:PilotUser;guard:StudySqlGuard};
  const expiry=p.plan.packet.input.expiresAt;
  if(a.user.userId!==p.ownerId||!studyDate(expiry)||Date.now()<Date.parse(expiry))studyFail('cleanup_not_due');
- const schema=await studySchemaGuard(env),scope=await studyPrivateGuard(env,p.ownerId);
+ const schema=await studySchemaGuard(env,p.version),scope=await studyPrivateGuard(env,p.ownerId);
  const b=p.plan.candidate.suppliedInputs;
  const statements=[env.DB.prepare(`DELETE FROM private_content WHERE owner_id=? AND expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now') AND ${scope.sql} AND (
   (kind='authoring-study-preview' AND json_valid(content) AND json_extract(content,'$.proposalId')=? AND json_extract(content,'$.ownerId')=?)

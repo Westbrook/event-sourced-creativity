@@ -1,3 +1,4 @@
+import {pendingPair,PAIR_AUTHORITY_VERSION} from './pair-policy.mjs';
 import {canonical,hash} from '../core.mjs';
 import {authoringStudyExecutionGuards} from '../../../worker/authoring-study-proof.ts';
 import {operationKey} from '../execution-plan.mjs';
@@ -14,14 +15,14 @@ export const reviewBinding=plan=>canonical({version:plan.version,planId:plan.id,
 export async function principalFingerprint(db,owner){return hash(await db.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(owner).first());}
 async function suppliedReview(request,env,grantId,plan,{recovery=false}={}){
  validateSuppliedPlan(plan);
- const a=await authenticateStudy(request,env,{recovery,supplied:true}),{db,user}=a,b=plan.candidate.suppliedInputs;
+ const a=await authenticateStudy(request,env,{recovery,supplied:true,pair:pendingPair(plan)}),{db,user}=a,b=plan.candidate.suppliedInputs;
  const principal=await principalFingerprint(db,user.userId),binding=reviewBinding(plan);
  const review={sql:"EXISTS(SELECT 1 FROM generation_study_supplied_reviews WHERE review_id=? AND grant_id=? AND owner_id=? AND principal_hash=? AND binding_json=? AND expires_at=? AND status='authorized' AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[b.reviewId,grantId,user.userId,principal,binding,b.expiresAt]};
  const grant=await db.prepare("SELECT * FROM generation_study_grants WHERE grant_id=? AND owner_id=? AND plan_id=? AND status='authorized' AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')").bind(grantId,user.userId,plan.id).first();
  if(!grant||grant.source_ref!==b.sourceRef||grant.direction_ref!==b.directionRef||grant.source_hash!==b.sourceSha256||grant.direction_hash!==b.directionSha256||grant.runtime_hash!==hash(plan.runtimeIdentity)||grant.authority_version!==b.authorityVersion||grant.expires_at!==b.expiresAt)fail('study_supplied_grant');
  const g={sql:"EXISTS(SELECT 1 FROM generation_study_grants WHERE grant_id=? AND owner_id=? AND plan_id=? AND authority_version=? AND status='authorized' AND expires_at=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[grantId,user.userId,plan.id,b.authorityVersion,b.expiresAt]};
  if(!await db.prepare(`SELECT 1 WHERE ${review.sql}`).bind(...review.bindings).first())fail('study_supplied_review_unavailable');
- const producer=b.authorityVersion==='authoring-study-v1'?await authoringStudyExecutionGuards(env,{owner:user.userId,grantId,planId:plan.id,reviewId:b.reviewId,principal}):[];
+ const producer=['authoring-study-v1',PAIR_AUTHORITY_VERSION].includes(b.authorityVersion)?await authoringStudyExecutionGuards(env,{owner:user.userId,grantId,planId:plan.id,reviewId:b.reviewId,principal,version:pendingPair(plan)?2:1}):[];
  return {...a,grant,principal,guards:[a.guard,g,review,...producer]};
 }
 /** Local trusted intake consumes existing review and financial authority. It creates private copies only,
@@ -75,6 +76,7 @@ export function pairGuard(plan,owner,grantId,trial){
  if(trial.id===plan.manifest.trials[1].id){
   guard.sql+=" AND EXISTS(SELECT 1 FROM generation_study_operations o JOIN generation_study_supplied_observations v USING(operation_id) JOIN generation_study_supplied_reviews r USING(review_id) WHERE o.operation_id=? AND o.plan_id=? AND o.status='completed' AND o.artifact_hash=v.artifact_hash AND o.receipt_hash=v.receipt_hash AND o.private_writes=9 AND v.review_id=? AND v.owner_id=? AND v.principal_hash=r.principal_hash AND v.safety='clear' AND v.fidelity IN('pass','expected-failure') AND v.protocol=? AND v.resume=1)";
   guard.bindings.push(first,plan.id,b.reviewId,owner,PROTOCOL);
+  if(pendingPair(plan)){guard.sql='('+guard.sql+') OR ('+"EXISTS(SELECT 1 FROM generation_study_supplied_reviews WHERE review_id=? AND grant_id=? AND hard_stop IS NULL) AND EXISTS(SELECT 1 FROM generation_study_pair_eligible WHERE baseline_id=? AND treatment_id=? AND owner_id=? AND grant_id=?)"+')';guard.bindings.push(b.reviewId,grantId,first,operationKey(owner,plan,trial),owner,grantId);}
  }
  return guard;
 }
@@ -86,11 +88,11 @@ export async function observeSuppliedArm(request,env,plan,{grantId,trialId,safet
  const a=await suppliedStudyInputs(request,env,grantId,plan,{recovery:true}),trial=plan.manifest.trials.find(t=>t.id===trialId);
  if(!trial||!['clear','unsafe'].includes(safety)||!['pass','expected-failure'].includes(fidelity)||(fidelity==='expected-failure'?!plan.packet.protocol.expectedFidelityFailures.includes(finding):finding!=='none')||typeof resume!=='boolean'||typeof evidenceRef!=='string'||!/^[A-Za-z0-9_.:-]{1,200}$/.test(evidenceRef))fail('study_observation_invalid');
  const id=operationKey(a.user.userId,plan,trial),op=await a.db.prepare('SELECT * FROM generation_study_operations WHERE operation_id=?').bind(id).first();
- if(!op?.artifact_hash||!op.receipt_hash||op.private_writes!==9)fail('study_observation_original_required');
+ if(!op?.artifact_hash||!op.receipt_hash||op.private_writes!==9||pendingPair(plan)&&op.pair_artifact_verified_hash!==op.artifact_hash)fail('study_observation_original_required');
  const guard={sql:'EXISTS(SELECT 1 FROM generation_study_operations WHERE operation_id=? AND artifact_hash=? AND receipt_hash=? AND private_writes=9)',bindings:[id,op.artifact_hash,op.receipt_hash]};
  const statements=[a.db.prepare("INSERT INTO generation_study_supplied_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))").bind(id,plan.candidate.suppliedInputs.reviewId,a.user.userId,a.principal,op.artifact_hash,op.receipt_hash,PROTOCOL,safety,fidelity,finding,evidenceRef,resume?1:0)];
  // Unknown safety/fidelity cannot be recorded as clear. A stop is terminal even after later settlement.
  if(safety==='unsafe'||!resume)statements.push(a.db.prepare('UPDATE generation_study_supplied_reviews SET hard_stop=COALESCE(hard_stop,?) WHERE review_id=?').bind(safety==='unsafe'?'unsafe_output':'explicit_user_stop',plan.candidate.suppliedInputs.reviewId));
  await checkedBatch(env,[...a.guards,guard],statements);
- return {action:safety==='clear'&&resume?'observation_recorded':'stopped',operationId:id,requiresSettlement:true,newPurchases:0};
+ return {action:safety==='clear'&&resume?'observation_recorded':'stopped',operationId:id,requiresSettlement:true,...(pendingPair(plan)?{nextArmGate:'independent-exact-pair-admission',originalLiability:'unsettled'}:{}),newPurchases:0};
 }

@@ -76,9 +76,9 @@ export class StillContextFlow extends LitElement {
   private done() { this.dispatchEvent(new CustomEvent('context-done',{bubbles:true})); }
   private back() { this.dispatchEvent(new CustomEvent('context-back',{bubbles:true})); }
   private command(label:string,run:()=>void,primary=false,disabled=false):WorkflowAction { return {id:`workflow:${this.phase}:${label.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`,label,run:()=>{if(!this.busy&&!this.composing&&!disabled)run();},variant:primary?'primary':'ghost',disabled:this.busy||this.composing||disabled}; }
-  get toolbar():WorkflowToolbar {return {actions:this.commands(),status:this.busy?'Working…':!this.flow&&!['compose','supply-reference'].includes(this.action)&&!['select-idea','rename-idea'].includes(this.phase)?'Loading…':''};}
+  get toolbar():WorkflowToolbar {return {actions:this.commands(),pending:this.busy||!this.flow&&!['compose','supply-reference'].includes(this.action)&&!['select-idea','rename-idea'].includes(this.phase),recovery:!!this.error,status:this.busy?'Working…':!this.flow&&!['compose','supply-reference'].includes(this.action)&&!['select-idea','rename-idea'].includes(this.phase)?'Loading…':''};}
   private commands():WorkflowAction[] {
-    const back=()=>this.command('Back',()=>this.back());
+    const back=()=>this.command(this.error?'Return to '+(this.client.position.blockId?'idea':'document'):'Back',()=>this.back());
     if(this.phase==='select-idea')return [this.command('Continue',()=>this.dispatchEvent(new CustomEvent('context-select',{bubbles:true,detail:this.selectedIdea})),true,!this.selectedIdea),back()];
     if(this.phase==='rename-idea')return [this.command(this.client.hasUnconfirmedWrite?'Check save':'Save name',()=>void this.run(async()=>{
       if(!this.client.hasUnconfirmedWrite){
@@ -103,7 +103,7 @@ export class StillContextFlow extends LitElement {
     if(this.phase==='start') {
       const checking=!!flow.quote&&flow.quote.status!=='quoted';
       const label=checking?'Check analysis':flow.kind==='decompose'?'Split idea':this.action==='find-references'?'Find reference':'Research idea';
-      return [this.command(label,()=>void this.run(()=>this.analyze()),true,!checking&&(this.query.length>140||flow.kind==='research'&&!this.query.trim())),back()];
+      return [this.command(this.error&&!checking?'Retry '+label.toLowerCase():label,()=>void this.run(()=>this.analyze()),true,!checking&&(this.query.length>140||flow.kind==='research'&&!this.query.trim())),back()];
     }
     if(this.phase==='intake'&&this.intake?.research)return [this.command(this.client.hasUnconfirmedWrite?'Check save':'Add reference',()=>void this.run(()=>this.file?this.supplyReference():this.importReference()),true,!this.rights||!this.file&&!this.intake?.research?.imageUrl),this.command('Back',()=>{this.phase='candidates';this.requestUpdate();},false,this.client.hasUnconfirmedWrite)];
     if(this.phase==='review'&&flow.preview)return [this.command(flow.status==='applying'?'Check save':'Apply',()=>void this.run(()=>this.apply()),true,flow.stale),...(flow.status!=='applying'?[this.command('Change selection',()=>void this.run(async()=>{await flow.dismiss();this.phase=flow.candidates.length?'candidates':'start';}))]:[]),this.command('Close',()=>this.back())];

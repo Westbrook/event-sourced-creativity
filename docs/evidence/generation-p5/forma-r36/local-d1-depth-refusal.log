@@ -1,0 +1,21 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: {"error":"D1_ERROR: Expression tree is too large (maximum depth 100): SQLITE_ERROR"}
++ actual - expected
+
++ undefined
+- 'original_charge_unreconciled'
+
+    at file:///private/tmp/forma-p5-live-comparison/scripts/check-generation-pair-d1.mjs:17:47
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: undefined,
+  expected: 'original_charge_unreconciled',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.16.0

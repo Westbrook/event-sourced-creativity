@@ -1,3 +1,4 @@
+import {PAIR_POLICY_VERSION,PAIR_ADVANCEMENT,pendingPair,validatePairExposure} from './pair-policy.mjs';
 import { canonical, hash, seal, verifySeal } from '../core.mjs';
 import { operationKey } from '../execution-plan.mjs';
 export const FINANCIAL_POLICY_VERSION='generation-financial-policy-v1';
@@ -8,12 +9,14 @@ export const sealFinancialPolicy=value=>seal('financial-policy',value);
 /** Integrity is not authority. Only the separately stored server grant can authorize this descriptor. */
 export function validateFinancialPolicy(p,scope,{now=Date.now()}={}) {
   verifySeal('financial-policy',p);
-  if(p.version!==FINANCIAL_POLICY_VERSION||canonical(p.scope)!==canonical(scope)||!['image','preparation'].includes(scope.kind)
+  const pair=p.version===PAIR_POLICY_VERSION;
+  if(pair)validatePairExposure(p.pair,scope,p);
+  if((pair?scope.kind!=='image':p.version!==FINANCIAL_POLICY_VERSION)||canonical(p.scope)!==canonical(scope)||!['image','preparation'].includes(scope.kind)
     ||!['operationId','planId','sourceHash','directionHash','requestHash','runtimeHash','inventoryHash','payerId','accountId','region'].every(k=>text(scope[k]))
     ||!amount(p.reservationMicrousd)||p.reservationMicrousd===0||!amount(p.lifecycleReserveMicrousd)
     ||!amount(p.reservationMicrousd+p.lifecycleReserveMicrousd)||p.inFlightLimit!==1
     ||p.stopBehavior!=='stop-before-next-stage-no-retry'||p.overrunPolicy!=='retain-and-hold'
-    ||p.nextPurchase!=='after-settlement-and-funded-lifecycle'||!Number.isFinite(Date.parse(p.expiresAt))||Date.parse(p.expiresAt)<=now)deny();
+    ||p.nextPurchase!==(pair?PAIR_ADVANCEMENT:'after-settlement-and-funded-lifecycle')||!Number.isFinite(Date.parse(p.expiresAt))||Date.parse(p.expiresAt)<=now)deny();
   const e=p.estimate,l=p.lifecycle;
   if(!e||!amount(e.microusd)||e.microusd>p.reservationMicrousd||!text(e.costBasis)||!text(e.evidenceRef)||!Array.isArray(e.assumptions)||!e.assumptions.length||!e.assumptions.every(text)
     ||!Number.isFinite(Date.parse(e.reviewExpiresAt))||Date.parse(e.reviewExpiresAt)<=now||Date.parse(p.expiresAt)>Date.parse(e.reviewExpiresAt)
@@ -30,12 +33,13 @@ export function validateFinancialPolicy(p,scope,{now=Date.now()}={}) {
 }
 export function imageFinancialScope(plan,trial,ownerId,account) {
   const c=plan.manifest.cells.find(c=>c.id===trial.cellId);
-  const inputs=plan.version==='generation-supplied-study-v2'?plan.candidate.suppliedInputs:plan.candidate.retainedInputs;
+  const inputs=(plan.version==='generation-supplied-study-v2'||pendingPair(plan))?plan.candidate.suppliedInputs:plan.candidate.retainedInputs;
   return {operationId:operationKey(ownerId,plan,trial),planId:plan.id,kind:'image',sourceHash:inputs.sourceSha256,directionHash:inputs.directionSha256,
     requestHash:hash(plan.requests[trial.cellId]),promptHash:c.promptHash,runtimeHash:hash(plan.runtimeIdentity),inventoryHash:hash(plan.inventory),payerId:ownerId,accountId:account?.accountId,region:account?.region};
 }
 export async function resolveFinancialPolicy(env,{policy,scope,grantId,ownerId}) {
   validateFinancialPolicy(policy,scope);
+  if(policy.version===PAIR_POLICY_VERSION&&policy.pair.grantId!==grantId)deny();
   if(scope.payerId!==ownerId)deny();
   const json=canonical(policy);
   const guard={sql:"EXISTS(SELECT 1 FROM generation_study_financial_grants WHERE grant_id=? AND operation_id=? AND owner_id=? AND policy_id=? AND policy_json=? AND status='authorized' AND expires_at=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[grantId,scope.operationId,ownerId,policy.id,json,policy.expiresAt]};

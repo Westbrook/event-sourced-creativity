@@ -35,18 +35,18 @@ const headers={'cache-control':'private, no-store',vary:'Cookie, oai-authenticat
 export const qualificationResponse=(v:unknown,status=200)=>Response.json(v,{status,headers});
 /** Capability-limited adapter. Only compiled SELECT statements reach D1; no exec,
  * batch or run capability is provided to inherited authentication code. */
-export function qualificationReadDb(original:D1Database){
- const metrics={statements:0,reads:0,writes:0,resultBytes:0,databaseBytes:0};const deadline=Date.now()+QUALIFICATION_LIMITS.deadlineMs;
+export function qualificationReadDb(original:D1Database,limits:typeof QUALIFICATION_LIMITS=QUALIFICATION_LIMITS){
+ const metrics={statements:0,reads:0,writes:0,resultBytes:0,databaseBytes:0};const deadline=Date.now()+limits.deadlineMs;
  const check=()=>{if(Date.now()>=deadline)fail();};
  const prepare=(sql:string,values:unknown[]=[]):D1PreparedStatement=>{
-  if(!/^\s*SELECT\b/i.test(sql)||sql.includes(';')||new TextEncoder().encode(sql).length>QUALIFICATION_LIMITS.queryBytes||values.length>100)fail();
+  if(!/^\s*SELECT\b/i.test(sql)||sql.includes(';')||new TextEncoder().encode(sql).length>limits.queryBytes||values.length>100)fail();
   const all=async()=>{
-   check();if(++metrics.statements>QUALIFICATION_LIMITS.statements)fail();
+   check();if(++metrics.statements>limits.statements)fail();
    const result=await original.prepare(sql).bind(...values).all();check();
-   if(!result.success||!Array.isArray(result.results)||result.results.length>QUALIFICATION_LIMITS.rowsPerQuery)fail();
+   if(!result.success||!Array.isArray(result.results)||result.results.length>limits.rowsPerQuery)fail();
    const m=result.meta;if(!m||typeof m.rows_read!=='number'||!Number.isSafeInteger(m.rows_read)||m.rows_read<0||typeof m.rows_written!=='number'||m.rows_written!==0||typeof m.size_after!=='number'||!Number.isSafeInteger(m.size_after))fail();
    metrics.reads+=m.rows_read;metrics.writes+=m.rows_written;metrics.databaseBytes=Math.max(metrics.databaseBytes,m.size_after);metrics.resultBytes+=byteLength(result.results);
-   if(metrics.reads>QUALIFICATION_LIMITS.reads||metrics.resultBytes>QUALIFICATION_LIMITS.resultBytes)fail();
+   if(metrics.reads>limits.reads||metrics.resultBytes>limits.resultBytes)fail();
    return result;
   };
   return {bind:(...v:unknown[])=>prepare(sql,v),all,first:async(column?:string)=>{const r=(await all()).results[0] as Record<string,unknown>|undefined;return column?r?.[column]??null:r??null;},run:async()=>fail(),raw:async()=>fail()} as unknown as D1PreparedStatement;

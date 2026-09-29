@@ -51,7 +51,7 @@ export function createSitesStudyApi(configuration:SitesStudyConfiguration){
    const expected=action==='observe'?['proposalId','arm','safety','fidelity','finding','evidenceRef','resume']:['stop','cleanup-proposal'].includes(action)?['proposalId']:['proposalId','arm'];
    if(!keys(body,expected)||!['stop','cleanup-proposal'].includes(action)&&!['baseline','treatment'].includes(String(body.arm)))studyFail('command_invalid');
    if(action==='cleanup-proposal')return response(await cleanupStudyProposal(request,env,p));
-   const a=await authenticateStudy(request,env,{recovery:true,supplied:true}) as {user:PilotUser};
+   const a=await authenticateStudy(request,env,{recovery:true,supplied:true,pair:p.version===2}) as {user:PilotUser};
    if(a.user.userId!==p.ownerId)studyFail('owner_mismatch');
    const trial=p.plan.manifest.trials.find(t=>t.id===body.arm);
    // Read only original policies; their seals and exact scopes are rechecked by P2 at I/O.

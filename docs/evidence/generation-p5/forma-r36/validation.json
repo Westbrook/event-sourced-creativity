@@ -1,0 +1,60 @@
+{
+  "status": "local-implementation-verified-default-off",
+  "at": "2026-09-29T21:00:47.067770+00:00",
+  "envelope": "p5-forma-pair-local:abfa36b3bdeea329e1364766cb9366cd82157d7847c49b2b0be777fdb8296e88",
+  "newAcceptanceChecks": 31,
+  "legacyRegressionChecks": 186,
+  "compiledWorkerChecks": 7,
+  "compiledReadMetrics": {
+    "statements": 15,
+    "reads": 242,
+    "writes": 0,
+    "resultBytes": 6587,
+    "databaseBytes": 1957888
+  },
+  "localD1Pair": {
+    "interceptedPosts": 6,
+    "realProviderCalls": 0,
+    "bothArmsUnsettled": true,
+    "baselineHoldsPreserved": true,
+    "duplicateTreatmentDispatches": 0,
+    "metadataHeads": 4,
+    "managedFitEstablished": false
+  },
+  "schemaObjects": 58,
+  "schemaTables": 14,
+  "baselineMigrations": 41,
+  "candidateMigrations": 42,
+  "heldExcluded": 31,
+  "productionConfigurationEntries": 0,
+  "historicalSourceMigrationsAndR34EvidenceUnchanged": true,
+  "typecheck": "passed direct installed tsc",
+  "lint": "passed affected files",
+  "build": "passed, existing large-chunk warning",
+  "pnpmRunnerLimitation": "pnpm tried dependency-status refresh/network and aborted module purge without TTY; no install performed. Used existing declared dependencies directly for scripts.",
+  "sandboxLimitation": "Miniflare required approved local loopback execution outside sandbox; no hosted call.",
+  "nativeAdmission": false,
+  "supportedPackagerRun": false,
+  "hostedCalls": 0,
+  "newCredentials": 0,
+  "realProviderCalls": 0,
+  "ledger": {
+    "normalCharged": 44,
+    "recoveryCharged": 18,
+    "totalCharged": 62,
+    "conditionalUnusedRecoveryR3NotTransferable": true
+  },
+  "expiry": "2026-10-01T00:00:00Z",
+  "recoveryMargin": "2026-09-30T22:00:00Z",
+  "renewed": false,
+  "findings": [
+    "new SQL conjunction depth exceeded local D1 100; balanced every existing predicate in new view",
+    "workerd refuses redirect:error; v3 alone uses manual with explicit 3xx stop"
+  ],
+  "limitations": [
+    "no native archive admission, hosting, schema installation, current-state read or price guarantee",
+    "actual17token/46cost inventory unclassified; no hold read or clearance",
+    "no real registrar/account/custody/finality evidence created",
+    "synthetic outputs do not establish prompt fidelity or moderation findings"
+  ]
+}

@@ -1,3 +1,4 @@
+import {pairExposure} from '../evals/generation-reliability/native-host/pair-policy.mjs';
 import {readFileSync} from 'node:fs';
 import {fixture as p2Fixture,packet,runtime} from './generation-p2-fixture.mjs';
 import {hash,canonical} from '../evals/generation-reliability/core.mjs';
@@ -11,15 +12,15 @@ const {consentHash}=await import('../worker/consequential-consent.ts');
 export {createAuthoringStudyApproval,consentHash};
 export async function fixture(t,options={}){
  const f=await p2Fixture(t,{noAuthority:true,noIntake:true,...options});
- f.sqlite.exec(readFileSync(new URL('../db/authoring-study-approval.pending.sql',import.meta.url),'utf8'));
+ if(!options.pairSchema)f.sqlite.exec(readFileSync(new URL('../db/authoring-study-approval.pending.sql',import.meta.url),'utf8'));
  const h=s=>hash('P4-SYNTHETIC-'+s),expiry=packet.input.expiresAt,through='2026-10-02T00:00:00.000Z',now='2026-09-24T12:00:00.000Z';
- const binding={reviewId:h('review'),authorityVersion:'authoring-study-v1',sourceRef:h('source'),directionRef:h('direction'),declaredAuthor:'agent-proposed-study-draft',approvedUse:PROTOCOL,expiresAt:expiry};
- const plan=makeSuppliedPlan({packet,user:safetyIdentifier('mock-owner'),runtimeIdentity:runtime,binding});
- const proposal={operation:'generation-supplied-study-approval',version:1,proposalId:h('proposal'),ownerId:'mock-owner',intentId:h('intent'),grantId:h('grant'),plan,runtimeIdentity:runtime,allowanceMicrousd:3000000,tokenAllowance:20000,classification:options.classification??'synthetic',arms:['baseline','treatment'].map(arm=>({arm,mode:options.mode??'accepted-estimate',reservationMicrousd:1000000,lifecycleReserveMicrousd:1000,evidence:[]}))};
+ const binding={reviewId:h('review'),authorityVersion:options.pairSchema?'authoring-study-v2':'authoring-study-v1',sourceRef:h('source'),directionRef:h('direction'),declaredAuthor:'agent-proposed-study-draft',approvedUse:PROTOCOL,expiresAt:expiry};
+ const plan=makeSuppliedPlan({packet,user:safetyIdentifier('mock-owner'),runtimeIdentity:runtime,binding,...(options.pairSchema?{version:'generation-supplied-study-v3'}:{})});
+ const proposal={operation:'generation-supplied-study-approval',version:options.pairSchema?2:1,proposalId:h('proposal'),ownerId:'mock-owner',intentId:h('intent'),grantId:h('grant'),plan,runtimeIdentity:runtime,allowanceMicrousd:3000000,tokenAllowance:20000,classification:options.classification??'synthetic',arms:['baseline','treatment'].map(arm=>({arm,mode:options.mode??'accepted-estimate',reservationMicrousd:1000000,lifecycleReserveMicrousd:1000,evidence:[]}))};
  const records=[];
  for(const arm of proposal.arms){
   const scopeHash=await studyEvidenceScope(proposal,arm);
-  const specifics={account:{accountId:h('account'),region:'us',credentialBinding:h('credential-binding'),projectHeader:null},rate:{costBasis:'reviewed-exact-inventory',estimateMicrousd:1000,reviewExpiresAt:expiry},liability:{liabilityOwner:'mock-owner',mode:arm.mode},settlement:{verifierId:h('settlement-verifier'),method:'original-request-final-incurred',evidenceRetentionThrough:through},lifecycle:{liabilityOwner:'mock-owner',maximumMicrousd:1000,fundedThrough:through,scope:'study-and-financial-retention',fundingRef:h('funding')},deletion:{operatorId:h('deletion-operator'),method:'verified-original-object-and-private-evidence',through},...(arm.mode==='bounded-proof'?{bound:{maximumCostMicrousd:2000,method:'substantiated-exact-inventory',proofRef:h('bound-proof')}}:{})};
+  const specifics={account:{accountId:h('account'),region:'us',credentialBinding:h('credential-binding'),projectHeader:null},rate:{costBasis:'reviewed-exact-inventory',estimateMicrousd:1000,reviewExpiresAt:expiry},liability:{liabilityOwner:'mock-owner',mode:arm.mode,...(options.pairSchema?{pairExposureId:pairExposure(proposal,{accountId:h('account'),region:'us'}).id,pairDecision:'ALLOW_EXACT_TREATMENT_WITH_BASELINE_UNSETTLED'}:{})},settlement:{verifierId:h('settlement-verifier'),method:'original-request-final-incurred',evidenceRetentionThrough:through},lifecycle:{liabilityOwner:'mock-owner',maximumMicrousd:1000,fundedThrough:through,scope:'study-and-financial-retention',fundingRef:h('funding')},deletion:{operatorId:h('deletion-operator'),method:'verified-original-object-and-private-evidence',through},...(arm.mode==='bounded-proof'?{bound:{maximumCostMicrousd:2000,method:'substantiated-exact-inventory',proofRef:h('bound-proof')}}:{})};
   for(const [kind,attributes] of Object.entries(specifics)){
    const body={version:1,classification:proposal.classification,kind,scopeHash,terms:'SYNTHETIC PRIVATE TERMS: SOURCE-CANARY-DO-NOT-RETAIN. No real funding, authority, deletion or risk acceptance. '+kind,...attributes};
    const ref={id:h(arm.arm+kind),kind,authorityId:h('trusted-fixture-'+kind),contentRef:h('content-'+arm.arm+kind),contentHash:await consentHash(body)};

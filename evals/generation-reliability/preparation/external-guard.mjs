@@ -13,8 +13,18 @@ export async function preparationGuards(db,owner){
  if(JSON.stringify(r.results)!==JSON.stringify(schemaRows))throw Error('preparation_schema_uninstalled');
  return {installed:true,identity:[{sql:`(SELECT json_group_array(json_object('type',type,'name',name,'tbl_name',tbl_name,'sql',sql)) FROM (${query}))=?`,bindings:[JSON.stringify(schemaRows)]}],holds:[{sql:'NOT EXISTS(SELECT 1 FROM generation_preparation_lifecycle_holds WHERE owner_id=?)',bindings:[owner]}]};
 }
-export async function externalGuard(db,owner){
- const guard=baseGuard(owner),prep=await preparationGuards(db,owner);
+export async function externalGuard(db,owner,pair=null,strict=false){
+ const guard=baseGuard(owner);
+ if(pair){
+  // Only a server-validated exact pair may name these operations. Admission also proves
+  // generation_study_pair_eligible in the same transaction; ordinary callers pass null.
+  const cost="SELECT cost_reservation_id FROM generation_study_operations WHERE owner_id=? AND operation_id IN(?,?) UNION SELECT lifecycle_reservation_id FROM generation_study_operations WHERE owner_id=? AND operation_id IN(?,?) AND lifecycle_reservation_id IS NOT NULL";
+  const token="SELECT token_reservation_id FROM generation_study_operations WHERE owner_id=? AND operation_id IN(?,?)";
+  guard.sql=guard.sql.replace("AND status IN('authorizing','active','executing')",`AND status IN('authorizing','active','executing') AND reservation_id NOT IN(${cost})`).replace("AND status IN('authorizing','active'))",`AND status IN('authorizing','active') AND reservation_id NOT IN(${token}))`);
+  guard.bindings=[owner,owner,...pair.ids,owner,...pair.ids,owner,owner,...pair.ids,owner,owner,owner];
+ }
+ if(strict)guard.sql=guard.sql.replace("status IN('authorizing','active','executing')","status NOT IN('settled','released')");
+ const prep=await preparationGuards(db,owner);
  if(prep.installed)guard.sql=guard.sql.replace("AND status='completed'))","AND status='completed' UNION SELECT lifecycle_reservation_id FROM generation_preparation_operations WHERE lifecycle_reservation_id IS NOT NULL AND status='completed'))");
  return guard;
 }

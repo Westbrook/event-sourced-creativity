@@ -1,3 +1,5 @@
+// @ts-expect-error Versioned pair descriptors are validated by their JS contract.
+import {pairExposure,PAIR_POLICY_VERSION,PAIR_ADVANCEMENT} from '../evals/generation-reliability/native-host/pair-policy.mjs';
 import {consentHash} from './consequential-consent.ts';
 import type {StudyApprovalProposal,StudyArmApproval,StudyEvidence} from './authoring-study-types.ts';
 import {opaque,studyAmount,studyDate,studyFail} from './authoring-study-proof.ts';
@@ -8,7 +10,7 @@ export function studyApprovalInventory(proposal:StudyApprovalProposal){
  return {version:1,providerPosts:0,privateReviewRecords:1,privateEvidenceRecords:proposal.arms.reduce((n,a)=>n+(a.mode==='bounded-proof'?7:6),0),privateCopyRecords:2,durableConfigurationRecords:1,durableEvidenceReferenceRecords:proposal.arms.reduce((n,a)=>n+(a.mode==='bounded-proof'?7:6),0),durableReceiptRecords:1,studyGrantRecords:1,suppliedReviewRecords:1,financialGrantRecords:2,materialCommitInserts:7,privateEvidenceMaximumBytesPerRecord:262144,privateCopiesMaximumBytesPerRecord:1048576,expiry:proposal.plan.packet.input.expiresAt,lifecycleScope:'study-and-financial-retention'};
 }
 export async function studyEvidenceScope(proposal:StudyApprovalProposal,arm:StudyArmApproval){
- return consentHash({proposalId:proposal.proposalId,owner:proposal.ownerId,planId:proposal.plan.id,runtime:proposal.runtimeIdentity,arm:arm.arm,mode:arm.mode,reservationMicrousd:arm.reservationMicrousd,lifecycleReserveMicrousd:arm.lifecycleReserveMicrousd,inventory:proposal.plan.inventory,approvalInventory:studyApprovalInventory(proposal)});
+ return consentHash({proposalId:proposal.proposalId,owner:proposal.ownerId,planId:proposal.plan.id,runtime:proposal.runtimeIdentity,arm:arm.arm,mode:arm.mode,reservationMicrousd:arm.reservationMicrousd,lifecycleReserveMicrousd:arm.lifecycleReserveMicrousd,inventory:proposal.plan.inventory,approvalInventory:studyApprovalInventory(proposal),...(proposal.version===2?{pairVersion:2,grantId:proposal.grantId,pairAllowanceMicrousd:proposal.allowanceMicrousd,pairTokenAllowance:proposal.tokenAllowance,arms:proposal.arms.map(a=>({arm:a.arm,reservationMicrousd:a.reservationMicrousd,lifecycleReserveMicrousd:a.lifecycleReserveMicrousd}))}:{})});
 }
 export async function compileStudyFinancialPolicy(proposal:StudyApprovalProposal,arm:StudyArmApproval,values:unknown[]):Promise<StudyFinancialPolicy>{
  const scopeHash=await studyEvidenceScope(proposal,arm),expiry=proposal.plan.packet.input.expiresAt;
@@ -24,6 +26,8 @@ export async function compileStudyFinancialPolicy(proposal:StudyApprovalProposal
  ||liability.liabilityOwner!==proposal.ownerId||liability.mode!==arm.mode||!opaque(settlement.verifierId)||settlement.method!=='original-request-final-incurred'||!studyDate(settlement.evidenceRetentionThrough)
  ||life.liabilityOwner!==proposal.ownerId||life.scope!=='study-and-financial-retention'||!opaque(life.fundingRef)||!studyAmount(life.maximumMicrousd)||!life.maximumMicrousd||life.maximumMicrousd>arm.lifecycleReserveMicrousd||!studyDate(life.fundedThrough)||life.fundedThrough<expiry||settlement.evidenceRetentionThrough>life.fundedThrough||settlement.evidenceRetentionThrough<expiry
  ||!opaque(deletion.operatorId)||deletion.method!=='verified-original-object-and-private-evidence'||!studyDate(deletion.through)||deletion.through<life.fundedThrough)studyFail('financial_evidence_invalid');
+ const pair=proposal.version===2?pairExposure(proposal,account):null;
+ if(pair&&(liability.pairExposureId!==pair.id||liability.pairDecision!=='ALLOW_EXACT_TREATMENT_WITH_BASELINE_UNSETTLED'))studyFail('pair_acceptance_required');
  const ref=(kind:StudyEvidence['kind'])=>arm.evidence.find(e=>e.kind===kind)!.id;
  let bound=null;
  if(arm.mode==='bounded-proof'){
@@ -32,11 +36,11 @@ export async function compileStudyFinancialPolicy(proposal:StudyApprovalProposal
   bound={maximumCostMicrousd:b.maximumCostMicrousd,evidenceRef:ref('bound'),scope:'exact-study-inventory-including-financial-retention'};
  }
  // No private terms or caller-supplied descriptions enter immortal financial JSON.
- const policy=sealFinancialPolicy({version:FINANCIAL_POLICY_VERSION,scope:imageFinancialScope(proposal.plan,proposal.plan.manifest.trials.find(t=>t.id===arm.arm),proposal.ownerId,account),
+ const policy=sealFinancialPolicy({version:pair?PAIR_POLICY_VERSION:FINANCIAL_POLICY_VERSION,...(pair?{pair,pairAcceptance:{decision:liability.pairDecision,pairId:pair.id,evidenceRef:ref('liability')}}:{}),scope:imageFinancialScope(proposal.plan,proposal.plan.manifest.trials.find(t=>t.id===arm.arm),proposal.ownerId,account),
   mode:arm.mode,reservationMicrousd:arm.reservationMicrousd,lifecycleReserveMicrousd:arm.lifecycleReserveMicrousd,
   estimate:{microusd:rate.estimateMicrousd,costBasis:'reviewed-exact-inventory',evidenceRef:ref('rate'),reviewExpiresAt:rate.reviewExpiresAt,assumptions:['two-supplied-copies','three-provider-stages-per-arm','nine-evidence-records-per-arm','original-only-recovery','funded-financial-retention-and-verified-deletion','one-private-authoring-review','six-typed-evidence-records-per-arm-plus-bound-if-applicable','one-configuration-and-one-receipt-plus-opaque-evidence-references']},bound,
   residualDecision:arm.mode==='accepted-estimate'?{accepted:true,unknownMaximumAccepted:true,decisionRef:ref('liability'),liabilityOwner:proposal.ownerId}:null,
-  maximumLossMicrousd:null,providerEnforcedChargeCap:false,expiresAt:expiry,inFlightLimit:1,stopBehavior:'stop-before-next-stage-no-retry',overrunPolicy:'retain-and-hold',nextPurchase:'after-settlement-and-funded-lifecycle',
+  maximumLossMicrousd:null,providerEnforcedChargeCap:false,expiresAt:expiry,inFlightLimit:1,stopBehavior:'stop-before-next-stage-no-retry',overrunPolicy:'retain-and-hold',nextPurchase:pair?PAIR_ADVANCEMENT:'after-settlement-and-funded-lifecycle',
   lifecycle:{scope:'exact-study-inventory-including-financial-retention',liabilityOwner:proposal.ownerId,evidenceRef:ref('lifecycle'),through:life.fundedThrough,maximumMicrousd:life.maximumMicrousd}}) as StudyFinancialPolicy;
  validateFinancialPolicy(policy,policy.scope);return policy;
 }

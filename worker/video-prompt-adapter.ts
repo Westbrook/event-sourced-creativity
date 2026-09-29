@@ -703,16 +703,12 @@ export function adaptVideoPrompt(prompt: string, options: VideoPromptOptions): V
   }));
 
   if (options.references.length) {
-    const generated = options.references.every((reference) => reference.sourceArtifactKind === "storyboard" || Boolean(reference.provider));
-    const ageEvidence = authoredAudioChannels.join(" ");
-    const depictsChild = /\b(?:child|children|minor|infant|baby|toddler|teen(?:ager)?|adolescent|(?:[1-9]|1[0-7])[\s-]+year[\s-]+old)\b/i.test(ageEvidence);
-    const depictsAdult = /\b(?:adult|grown(?:[\s-]+up)?)\b/i.test(ageEvidence) && !depictsChild;
+    // Asset origin is independent of subject identity and age. Keep authored
+    // subject facts in their existing scoped sections; never infer them here.
     sections.push({
       id: "reference-provenance",
       priority: "required",
-      content: generated
-        ? `REFERENCE PROVENANCE\nEvery attached image is an authorized, generated creative reference for this project. ${depictsAdult ? "Any intentionally depicted person is an adult fictional character." : "Any intentionally depicted character is fictional and synthetic."}`
-        : "REFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project.",
+      content: "REFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.",
     });
 
     for (const [index, reference] of options.references.entries()) {

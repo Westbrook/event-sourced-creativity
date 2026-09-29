@@ -40,3 +40,22 @@ export async function verifyReleaseMigrations(root:string,destination:string){
  await walk(destination);if(seen.length!==expected.size)fail();
  return {mode:policy.mode,baselineCommit:policy.baselineCommit,baselineVersion:policy.baselineVersion,migrations:policy.files.length,sourceJournalSha256:policy.sourceJournalSha256};
 }
+
+/** Explicit offline candidate selection, never called by the normal build.
+ * Requires independent hosted review before this 42-file directory can be used. */
+export async function copyStudyPairCandidateMigrations(root:string,destination:string){
+ const candidate=JSON.parse(await readFile(join(root,'build/study-pair-migration-candidate.json'),'utf8'));
+ const baseline=await releaseMigrationPolicy(root);
+ if(candidate.version!==1||candidate.mode!=='local-only-fresh-study-v3'||candidate.baselinePolicySha256!==hash(await readFile(join(root,'build/memory-migration-release.json')))||baseline.files.length!==41||candidate.source!=='db/generation-study-pair-v3.pending.sql'||candidate.path!=='0074_generation_study_pair_v3.sql'||baseline.files.some(f=>f.path===candidate.path))fail();
+ const sql=await readFile(join(root,candidate.source));if(hash(sql)!==candidate.sha256)fail();
+ await copyReleaseMigrations(root,destination);
+ const journal=JSON.parse(baseline.baselineJournal),last=journal.entries.at(-1);
+ if(candidate.entry.idx!==last.idx+1||candidate.entry.tag+'.sql'!==candidate.path||candidate.entry.version!==last.version||!Number.isSafeInteger(candidate.entry.when)||candidate.entry.when<=last.when||candidate.entry.breakpoints!==true)fail();
+ journal.entries.push(candidate.entry);
+ await writeFile(join(destination,candidate.path),sql);await writeFile(join(destination,'meta/_journal.json'),JSON.stringify(journal,null,2)+'\n');
+ const expected=new Map(baseline.files.map(f=>[f.path,f.sha256]));expected.set(candidate.path,candidate.sha256);
+ const names=(await readdir(destination)).filter(n=>n.endsWith('.sql'));
+ if(names.length!==42||names.some(n=>!expected.has(n)))fail();
+ for(const [name,sha] of expected)if(hash(await readFile(join(destination,name)))!==sha)fail();
+ return {mode:candidate.mode,migrations:42,unchangedBaseline:41,heldExcluded:31,additiveSchemaSha256:candidate.sha256,nativeAdmission:false,hostedExecutionAuthorized:false};
+}

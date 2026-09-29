@@ -1,0 +1,29 @@
+{
+  "candidate": "p5-forma-pair-local:abfa36b3bdeea329e1364766cb9366cd82157d7847c49b2b0be777fdb8296e88",
+  "files": {
+    "acceptance.log": "5640afe9da5c0cf0ec8108d09eaecfd18a3d8f8a70fe3717e06d9d784bdff9bf",
+    "activation-preservation.tar.gz": "8bd56c8397a0ed466a91d4fb7b4963c3822715480e0f56565ab06dca2fec8e50",
+    "approval-record.json": "61b542f4bb1bdcfee0ad28f3d5c7583eb730dbe1e3cd3bf8474e595e6783b607",
+    "build.log": "08b2db6a9c66075dfeb93c52d984bfd084416d1c166de2520f6560512fc4a755",
+    "candidate-manifest.json": "0c39ee6a0808fb3ebf6a49b2e94a92816ed1b0c2870ea8fbd143de5c05ee2fc1",
+    "compiled-validation.json": "087e7b7bc8ec9090617770e331c14967b53fd6196067e70f2e772963506cf8b3",
+    "compiled-workerd.log": "39d6f2add39258cc67f9c29d41e8a0c537b88a8e9dc4d860f5cce7a33c6bdbc6",
+    "decision.md": "772a65240647207c3ceb789702f6d8222b9bf2b951741e8fb9963f432831ff94",
+    "dependencies.json": "7d8924b5a416c75e702ec4cd6ac4739e6790b2312fde7a93abd0594795876414",
+    "handoff.md": "9c69d3f68f7977b6a5b174ff27a1c1d245ae1ee0fbdc605b393909bfef7fdcf0",
+    "implementation.md": "eec20314f799dc736eedc0e529ae5749b5f607d419f4bf325d31c53acc295c7f",
+    "index.html": "57d4634306c70daa3d4efc314d455ad172a51691972a2c3d7e037cb25deeb63b",
+    "legacy.log": "0425d131c54880c205ef66ab9cbc15e84c12dab6663c5796f7e8c4023afeb401",
+    "lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "local-d1-depth-refusal.log": "f7e6713c5b43c3a0db5068dc132fba227c276e1a55d9f511cafcdbad8675a171",
+    "local-d1-pair.json": "c19db52b21f1c4314737a571523cd808cf6fb8dcc6c46b357b8bacdb615c4055",
+    "local-d1.log": "2c78aaf60acace0b8c525cb369ff8e3614d455c176fd626ad123775de45d85c5",
+    "local-workerd-redirect-refusal.log": "b95ec7229ab3cc0d877509b8a2ee8b85b4fd579b90424034005f978de62620b7",
+    "packaging.log": "296ef74b6abfa9e7843124ff8b1cd5e281b682f57eb92e74005994d349219e00",
+    "result.md": "097db0f0b039897354e792f9cbff449298e706f2b52f431ee2cb2b8b0ed13bab",
+    "retained554-reconciliation.json": "8f6f6b334cfc07c9d9729fa0c26792e04fefb5d0390e233a0b75912d8a613db9",
+    "source-preservation.tar.gz": "8c36b07e21ae952662236793aaf58269ee1ec3838233ad155ac73ae8f5b49e19",
+    "typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "validation.json": "f1b77d90a354a246d8430d0ea9ce97a6d78a9e9ea208fbf1d1ce9fdbc5a60c42"
+  }
+}

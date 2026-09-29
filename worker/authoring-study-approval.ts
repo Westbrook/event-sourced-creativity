@@ -18,7 +18,7 @@ import {resolveFinancialPolicy} from '../evals/generation-reliability/native-hos
 
 const response=(value:unknown,status=200)=>Response.json(value,{status,headers:{'cache-control':'private, no-store'}});
 const exact=(body:Record<string,unknown>,keys:string[])=>canonicalConsent(Object.keys(body).sort())===canonicalConsent(keys.sort());
-const decision=(p:StudyApprovalProposal)=>p.arms.some(a=>a.mode==='accepted-estimate')?'APPROVE_STUDY_ACCEPT_UNKNOWN_EXPOSURE':'APPROVE_STUDY_BOUNDED_PROOF';
+const decision=(p:StudyApprovalProposal)=>p.version===2?'APPROVE_EXACT_PAIR_WITH_PENDING_BASELINE':p.arms.some(a=>a.mode==='accepted-estimate')?'APPROVE_STUDY_ACCEPT_UNKNOWN_EXPOSURE':'APPROVE_STUDY_BOUNDED_PROOF';
 const financialGuard=(p:StudyApprovalProposal,f:StudyFinancialPolicy):StudySqlGuard=>({sql:"EXISTS(SELECT 1 FROM generation_study_financial_grants WHERE grant_id=? AND operation_id=? AND owner_id=? AND policy_id=? AND policy_json=? AND expires_at=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND status='authorized')",bindings:[p.grantId,f.scope.operationId,p.ownerId,f.id,canonical(f),f.expiresAt]});
 
 /** Single finite authoring operation. No route registration, schema installer, evidence issuer or provider dispatch.
@@ -42,10 +42,10 @@ export function createAuthoringStudyApproval(configuration:StudyApprovalConfigur
    const command=body as StudyApprovalCommand;
    const matches=selected.proposals.filter(p=>p.proposalId===command.proposalId);if(matches.length!==1)studyFail('proposal_unavailable');
    const p=matches[0],plan=p.plan,b=plan.candidate.suppliedInputs,expiry=plan.packet.input.expiresAt;
-   const a=await authenticateStudy(request,env,{recovery:true,supplied:true}) as {user:PilotUser;guard:StudySqlGuard};current();
-   if(p.operation!==STUDY_APPROVAL_OPERATION||p.version!==1||p.ownerId!==a.user.userId||plan.user!==safetyIdentifier(p.ownerId)||b.authorityVersion!==STUDY_APPROVAL_VERSION||!['actual','synthetic'].includes(p.classification)||![p.proposalId,p.intentId,p.grantId,b.reviewId,b.sourceRef,b.directionRef].every(opaque)||!studyDate(expiry)||expiry<=new Date(Date.now()).toISOString()||canonical(p.runtimeIdentity)!==canonical(plan.runtimeIdentity)||!studyAmount(p.allowanceMicrousd)||!p.allowanceMicrousd||!studyAmount(p.tokenAllowance)||!p.tokenAllowance||canonical(p.arms.map(x=>x.arm))!==canonical(['baseline','treatment']))studyFail('proposal_scope');
+   const a=await authenticateStudy(request,env,{recovery:true,supplied:true,pair:p.version===2}) as {user:PilotUser;guard:StudySqlGuard};current();
+   if(p.operation!==STUDY_APPROVAL_OPERATION||![1,2].includes(p.version)||p.ownerId!==a.user.userId||plan.user!==safetyIdentifier(p.ownerId)||b.authorityVersion!==(p.version===2?'authoring-study-v2':STUDY_APPROVAL_VERSION)||plan.version!==(p.version===2?'generation-supplied-study-v3':'generation-supplied-study-v2')||!['actual','synthetic'].includes(p.classification)||![p.proposalId,p.intentId,p.grantId,b.reviewId,b.sourceRef,b.directionRef].every(opaque)||!studyDate(expiry)||expiry<=new Date(Date.now()).toISOString()||canonical(p.runtimeIdentity)!==canonical(plan.runtimeIdentity)||!studyAmount(p.allowanceMicrousd)||!p.allowanceMicrousd||!studyAmount(p.tokenAllowance)||!p.tokenAllowance||canonical(p.arms.map(x=>x.arm))!==canonical(['baseline','treatment']))studyFail('proposal_scope');
    validateSuppliedPlan(plan);
-   const schema=await studySchemaGuard(env),configurationHash=await consentHash(p),principal=await principalFingerprint(db,p.ownerId);current();
+   const schema=await studySchemaGuard(env,p.version),configurationHash=await consentHash(p),principal=await principalFingerprint(db,p.ownerId);current();
    const configGuard=studyConfigurationGuard(p.proposalId,p.ownerId,configurationHash,expiry);
    if(!await db.prepare('SELECT 1 AS valid WHERE '+configGuard.sql).bind(...configGuard.bindings).first())studyFail('configuration_unavailable');
    const guards:StudySqlGuard[]=[a.guard,schema,configGuard],policies:StudyFinancialPolicy[]=[],evidence:unknown[]=[],issues:string[]=[];
@@ -59,15 +59,15 @@ export function createAuthoringStudyApproval(configuration:StudyApprovalConfigur
    if(policies.length===2&&(policies[0].scope.accountId!==policies[1].scope.accountId||policies[0].scope.region!==policies[1].scope.region||policies.reduce((n,f)=>n+f.reservationMicrousd+f.lifecycleReserveMicrousd,0)>p.allowanceMicrousd))studyFail('financial_pair');
    const refs=p.arms.flatMap(arm=>arm.evidence),operationIds=plan.manifest.trials.map(t=>operationKey(p.ownerId,plan,t)) as string[];
    if(new Set(refs.map(e=>e.id)).size!==refs.length)studyFail('evidence_reuse');
-   const display={operation:p.operation,version:1,classification:p.classification,proposalId:p.proposalId,intentId:p.intentId,ownerId:p.ownerId,principalHash:principal,
+   const display={operation:p.operation,version:p.version,classification:p.classification,proposalId:p.proposalId,intentId:p.intentId,ownerId:p.ownerId,principalHash:principal,
     sourceBytes:JSON.stringify(plan.packet.suppliedSnapshot),directionBytes:JSON.stringify(plan.packet.direction.value),declaredAuthor:b.declaredAuthor,protocol:plan.packet.protocol,
     plan,configurationHash,operationIds,approvalInventory:studyApprovalInventory(p),evidence,financialPolicies:policies,
-    financialMeaning:'Proposed terms only until explicit authenticated commit. Reservation is not a provider cap. Accepted estimate means unknown maximum exposure; provider settlement and funded lifecycle still required.',
+    financialMeaning:p.version===2?'Exact-pair advancement before baseline settlement only under displayed independently accepted combined exposure, original result and human resume. Baseline liability/holds remain; genuine settlement and funded lifecycle still required.':'Proposed terms only until explicit authenticated commit. Reservation is not a provider cap. Accepted estimate means unknown maximum exposure; provider settlement and funded lifecycle still required.',
     approvalMeaning:'Approval creates no purchase. Execution is separately gated. Expected benign fidelity failure requires human review; safety/custody/authorization/invalid moderation/uncertain accounting stop. No retries or replacements.',
     expectedDecision:decision(p),expiresAt:expiry,committable:issues.length===0,issues};
    const content=canonicalConsent(display),displayHash=await consentHash(display),previewId=await consentHash({operation:p.operation,proposal:p.proposalId,configurationHash,principal}),scope=await studyPrivateGuard(env,p.ownerId);current();
    const previewGuard:StudySqlGuard={sql:`EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='authoring-study-preview' AND content=? AND expires_at=? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND redacted_at IS NULL AND ${scope.sql})`,bindings:[previewId,p.ownerId,content,expiry,...scope.bindings]};
-   const receipt={operation:p.operation,version:1,classification:p.classification,previewId,proposalId:p.proposalId,intentId:p.intentId,displayHash,configurationHash,principalHash:principal,planId:plan.id,grantId:p.grantId,reviewId:b.reviewId,operationIds,financialPolicyIds:policies.map(f=>f.id),expiresAt:expiry,newPurchases:0};
+   const receipt={operation:p.operation,version:p.version,classification:p.classification,previewId,proposalId:p.proposalId,intentId:p.intentId,displayHash,configurationHash,principalHash:principal,planId:plan.id,grantId:p.grantId,reviewId:b.reviewId,operationIds,financialPolicyIds:policies.map(f=>f.id),expiresAt:expiry,newPurchases:0};
    const receiptJson=canonicalConsent(receipt),refsJson=canonicalConsent(refs);
    const readOriginal=async()=>{
     current();const row=await db.prepare('SELECT receipt_json FROM authoring_study_commits WHERE proposal_id=? AND owner_id=?').bind(p.proposalId,p.ownerId).first<{receipt_json:string}>();
@@ -101,14 +101,14 @@ export function createAuthoringStudyApproval(configuration:StudyApprovalConfigur
     db.prepare('INSERT INTO generation_study_supplied_reviews VALUES(?,?,?,?,?,?,?,NULL)').bind(b.reviewId,p.grantId,p.ownerId,principal,binding,expiry,'authorized'),
     ...policies.map(f=>db.prepare('INSERT INTO generation_study_financial_grants VALUES(?,?,?,?,?,?,?)').bind(p.grantId,f.scope.operationId,p.ownerId,f.id,canonical(f),expiry,'authorized')),
     ...copies,
-    db.prepare(`INSERT INTO authoring_study_commits(${receiptColumns.join(',')},created_at) VALUES(${receiptColumns.map(()=>'?').join(',')},strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(previewId,p.proposalId,p.ownerId,p.intentId,p.operation,1,displayHash,configurationHash,principal,plan.id,p.grantId,b.reviewId,...operationIds,refsJson,receiptJson,expiry,1),
+    db.prepare(`INSERT INTO authoring_study_commits(${receiptColumns.join(',')},created_at) VALUES(${receiptColumns.map(()=>'?').join(',')},strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(previewId,p.proposalId,p.ownerId,p.intentId,p.operation,p.version,displayHash,configurationHash,principal,plan.id,p.grantId,b.reviewId,...operationIds,refsJson,receiptJson,expiry,1),
     ...[...guards,previewGuard,grantGuard,reviewGuard,...policies.map(f=>financialGuard(p,f)),receiptGuard].map(g=>assertion(db,g)),
    ];
    try{await checkedBatch(env,[...guards,previewGuard],statements);current();}
    catch(error){current();const original=await readOriginal();if(original)return response({status:'committed',reused:true,receipt:original,newPurchases:0});throw error;}
    const committed=await readOriginal();if(!committed)studyFail('receipt_unavailable');
    // Verifies the same producer guard reused later by every P2 I/O boundary.
-   await authoringStudyExecutionGuards(env,{owner:p.ownerId,grantId:p.grantId,planId:plan.id,reviewId:b.reviewId,principal});current();
+   await authoringStudyExecutionGuards(env,{owner:p.ownerId,grantId:p.grantId,planId:plan.id,reviewId:b.reviewId,principal,version:p.version});current();
    return response({status:'committed',reused:false,receipt:committed,newPurchases:0});
   }catch(error){
    const message=error instanceof Error?error.message:'';

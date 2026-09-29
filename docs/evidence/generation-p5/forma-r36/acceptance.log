@@ -1,0 +1,39 @@
+✔ v3: real producer/host reserves treatment without settling original baseline (4263.759083ms)
+✔ v3 denies human resume missing (2111.022583ms)
+✔ v3 denies original bytes not recovered (2713.726833ms)
+✔ v3 denies baseline token reservation is no longer active (2620.6005ms)
+✔ v3 denies original object lost (2603.678583ms)
+✔ v3 denies original metadata drift (2573.698583ms)
+✔ v3 denies private evidence redacted (2659.099875ms)
+✔ v3 denies stopped grant (2569.914625ms)
+✔ v3 denies expired review (2399.994667ms)
+✔ v3 denies insufficient combined cost headroom (2513.009166ms)
+✔ v3 denies insufficient combined token headroom (2675.334625ms)
+✔ v3 execution denies existing unclassified token reservations (494.461667ms)
+✔ v3 execution denies existing unclassified cost reservations (474.327166ms)
+✔ v3 execution denies existing unclassified cost-exceeded reservations (480.384792ms)
+✔ v3 rejects missing exact-pair acceptance without grants (97.496333ms)
+✔ v3 replay/parallel treatment emits at most the original three POSTs (4023.180375ms)
+✔ v3 no uncertain image resubmission or treatment advancement (1685.7035ms)
+✔ v3 half-transfer rolls back at every statement boundary and deferred FK (4889.369167ms)
+✔ v3 real settlement remains necessary and works after pair advancement (4645.452834ms)
+✔ v3 cross-period aggregate predicate sees original liability even with empty current counters (2511.031916ms)
+✔ v3 direct SQL denies a third operation and ordinary reservation while pair remains unsettled (4556.262042ms)
+✔ v3 expiry cleanup deletes private bytes once and keeps unresolved accounting (4217.221584ms)
+✔ v3 uses Worker-supported manual redirect refusal with one intent and no follow-up (853.123709ms)
+✔ hold read defaults off without database, storage or provider access (7.149125ms)
+✔ fixed hold classification works with 41 released migrations and no study schema (26.907416ms)
+✔ unknown holds are aggregated, actor scoped and retained without raw identifiers or money (37.241042ms)
+✔ hold metadata mismatch refuses without guessing query or modifying schema (56.863417ms)
+✔ hold overflow produces no partial report (38.608959ms)
+✔ Worker source route has no sweep, caller query or expiry renewal (37.317709ms)
+✔ explicit local candidate preserves all 41 inputs, excludes 31 held, appends only fresh study; default remains 41 (87.59575ms)
+✔ candidate refuses source drift before copying output (16.219208ms)
+ℹ tests 31
+ℹ suites 0
+ℹ pass 31
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 59027.25625

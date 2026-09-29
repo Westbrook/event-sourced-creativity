@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — R35 local pair recommendation ready | Existing P5 task | [R35 decision](evidence/generation-p5/forma-r35/decision.md):49exact schema objects; full proposed pending-pair contract reconciles policy/producer/guards/index/triggers/lifecycle.11current+21model+5query checks; no hosted action. R34 qualification/restoration closed. | Decide local implementation only.17token/46cost holds remain separate unclassified prerequisites; fixed redacted query prepared, not executed. No paid authority, schema activation or deadline renewal. Preserve P2,847/six,retention, newer source and expiry; no real pair/fidelity/moderation finding. |
+| GEN-P5 | In progress — R36 opt-in pair implemented locally | Existing P5 task | [R36 result](evidence/generation-p5/forma-r36/result.md): versioned producer/policy, exact atomic pair transfer and fresh schema; fixed owner hold read/default-off42-file candidate. Retained554 owner work preserved; R34 restoration closed. | [Next decision](evidence/generation-p5/forma-r36/decision.md): four new metadata-only reservations to reconcile current publication before any release/read scope.17 token/46 cost holds remain unclassified; authentic authority/custody and paid execution separate. No hosted action, renewal or empirical fidelity/moderation finding. |
 
 ## Memory
 

@@ -1,0 +1,2 @@
+{"mode":"local-only-fresh-study-v3","migrations":42,"unchangedBaseline":41,"heldExcluded":31,"additiveSchemaSha256":"7a5e34defea86ef4323cb2a2a5912f6eb112eea3c153b18bd524139e8cab5723","nativeAdmission":false,"hostedExecutionAuthorized":false}
+{"envelope": "p5-forma-pair-local:abfa36b3bdeea329e1364766cb9366cd82157d7847c49b2b0be777fdb8296e88", "sourceFiles": 2564, "candidateFiles": 624, "stage": "/private/tmp/forma-p5-r36-local-package", "nativeAdmission": false}

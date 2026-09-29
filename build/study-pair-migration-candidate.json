@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "mode": "local-only-fresh-study-v3",
+  "baselinePolicySha256": "81590ac50237ba74856202dc72f83fdf9b052330c12b6afdfc084ce652239a64",
+  "source": "db/generation-study-pair-v3.pending.sql",
+  "path": "0074_generation_study_pair_v3.sql",
+  "sha256": "7a5e34defea86ef4323cb2a2a5912f6eb112eea3c153b18bd524139e8cab5723",
+  "entry": {
+    "idx": 41,
+    "version": "6",
+    "when": 1790726400000,
+    "tag": "0074_generation_study_pair_v3",
+    "breakpoints": true
+  },
+  "requiresFreshNoStudyObjects": true,
+  "notAnUpgrade": true
+}

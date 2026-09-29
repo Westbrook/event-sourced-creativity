@@ -1,3 +1,5 @@
+import {pendingPair} from './pair-policy.mjs';
+import {pairAdmission,transferStatements,pairHeadroomGuards} from './pair-admission.mjs';
 import {nativeMemoryAnswerExclusion} from '../../../worker/memory-native-boundary.ts';
 import {supplied,validateSuppliedPlan,EVIDENCE_SLOTS} from '../p2/contract.mjs';
 import {suppliedStudyInputs,pairGuard,stopSuppliedPair,observeSuppliedArm} from './supplied-authority.mjs';
@@ -21,7 +23,7 @@ export function createNativeStudyHost(env,{plan:original,runtimeIdentity,financi
   const plan=freeze(structuredClone(original)),runtime=freeze(structuredClone(runtimeIdentity));
   const db=env.DB,policies=freeze(structuredClone(financialPolicies)),account=freeze(structuredClone(financialAccount));
   const isSupplied=supplied(plan), stages=isSupplied?['advisory','moderation','image']:['moderation','image'];
-  const authenticate=(request,recovery=true)=>authenticateStudy(request,env,{recovery,supplied:isSupplied});
+  const authenticate=(request,recovery=true)=>authenticateStudy(request,env,{recovery,supplied:isSupplied,pair:pendingPair(plan)});
   const unchanged=()=>{if(env.DB!==db)fail('study_database_changed');};
   async function access(request,grantId,recovery=false){
     unchanged();(isSupplied?validateSuppliedPlan:validateExecutionPlan)(plan);
@@ -39,7 +41,7 @@ export function createNativeStudyHost(env,{plan:original,runtimeIdentity,financi
     if(records.length!==9||EVIDENCE_SLOTS.some(slot=>!records.some(r=>r.slot===slot))||records.some(r=>digest(r.content)!==r.sha256)||!records.some(r=>r.slot==='plan'&&r.content===JSON.stringify(plan)))fail('study_original_evidence_unavailable');
     for(const r of records)a.guards.push({sql:"EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND content=? AND redacted_at IS NULL AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now'))",bindings:[r.content_id,a.user.userId,r.content]});
   }
-  async function admission(a,trial){
+  async function admission(a,trial,reserved=false){
     if(plan.preparation.required||plan.candidate.evidenceClass==='new-current-synthetic-control')fail('study_actual_inputs_required');
     verifySeal('f2-financial',plan.financial);
     const cell=plan.manifest.cells.find(c=>c.id===trial.cellId);
@@ -56,7 +58,12 @@ export function createNativeStudyHost(env,{plan:original,runtimeIdentity,financi
       if(!plan.financial.promptEvidence?.some(p=>p.sha256===cell.promptHash&&p.captureId===plan.candidate.id))fail('study_financial_prompt_mismatch');
       finance={reservationMicrousd:plan.financial.maximumCostMicrousd,lifecycleReserveMicrousd:0,policy:null};
     }
-    a.guards.push({sql:'NOT EXISTS(SELECT 1 FROM generation_study_lifecycle_holds WHERE owner_id=?)',bindings:[a.user.userId]});
+    finance.pending=pendingPair(plan)?await pairAdmission(env,a,plan,trial,policies,account):null;
+    a.guards.push(finance.pending?{sql:'NOT EXISTS(SELECT 1 FROM generation_study_lifecycle_holds WHERE owner_id=? AND operation_id!=?)',bindings:[a.user.userId,finance.pending.base.operation_id]}:{sql:'NOT EXISTS(SELECT 1 FROM generation_study_lifecycle_holds WHERE owner_id=?)',bindings:[a.user.userId]});
+    if(finance.pending)a.guards.push(await externalGuard(db,a.user.userId,finance.pending,pendingPair(plan)));
+    if(pendingPair(plan)&&reserved){
+      a.guards.push(...pairHeadroomGuards(a.user.userId,a.grant.grant_id,new Date().toISOString().slice(0,7),a.grant.allowance_microusd),await externalGuard(db,a.user.userId,finance.pending??{ids:plan.manifest.trials.map(t=>operationKey(a.user.userId,plan,t))},true));
+    }
     const total=finance.reservationMicrousd+finance.lifecycleReserveMicrousd;
     if(!integer(total)||total>a.grant.allowance_microusd||!integer(a.grant.allowance_microusd)||!integer(a.grant.token_allowance)||a.grant.token_allowance<1)fail('study_allowance_unavailable');
     if(isSupplied){
@@ -102,10 +109,12 @@ export function createNativeStudyHost(env,{plan:original,runtimeIdentity,financi
     unchanged();
     const stopped={sql:"EXISTS(SELECT 1 FROM generation_study_grants WHERE grant_id=? AND stopped=0) AND COALESCE((SELECT SUM(COALESCE(measured_microusd,0)+COALESCE((SELECT reserved_microusd FROM cost_budget_reservations WHERE reservation_id=generation_study_operations.lifecycle_reservation_id),0)) FROM generation_study_operations WHERE grant_id=?),0)+?<=?",bindings:[grantId,grantId,finance.reservationMicrousd+finance.lifecycleReserveMicrousd,a.grant.allowance_microusd]};
     // Native token and dollar preparation statements plus H state in one D1 batch. No independent SQLite journal.
-    const results=await checkedBatch(env,[...a.guards,await externalGuard(db,a.user.userId),stopped],[
+    const results=await checkedBatch(env,[...a.guards,await externalGuard(db,a.user.userId,finance.pending,pendingPair(plan)),...(pendingPair(plan)?[{sql:'EXISTS(SELECT 1 FROM generation_study_grants WHERE grant_id=? AND stopped=0)',bindings:[grantId]}]:[stopped])],[
+      ...await transferStatements(db,a,plan,finance.pending,period),
       db.prepare("INSERT INTO generation_study_operations(operation_id,owner_id,grant_id,plan_id,trial_id,request_hash,token_reservation_id,cost_reservation_id,status,created_at,expires_at,financial_policy_id,lifecycle_reservation_id) VALUES(?,?,?,?,?,?,?,?,'reserved',strftime('%Y-%m-%dT%H:%M:%fZ','now'),?,?,?)").bind(id,a.user.userId,grantId,plan.id,trial.id,digest(plan.requests[trial.cellId].image.body),tokenId,costId,a.expiresAt,finance.policy?.id??null,lifeId),
       ...tokens.statements,...cost.statements,...(life?.statements??[]),
       ...(lifeId?[assertion(db,{sql:"EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status='active' AND reserved_microusd=?)",bindings:[lifeId,a.user.userId,finance.lifecycleReserveMicrousd]})]:[]),
+      ...(pendingPair(plan)?pairHeadroomGuards(a.user.userId,grantId,period,a.grant.allowance_microusd).map(g=>assertion(db,g)):[]),
       assertion(db,{sql:"EXISTS(SELECT 1 FROM budget_reservations WHERE reservation_id=? AND owner_id=? AND status='active') AND EXISTS(SELECT 1 FROM cost_budget_reservations WHERE reservation_id=? AND owner_id=? AND status='active')",bindings:[tokenId,a.user.userId,costId,a.user.userId]})]);
     if(results[0]?.meta?.changes!==1)fail('study_reservation_not_acknowledged');
     return {a,id,prior:null};
@@ -140,12 +149,12 @@ export function createNativeStudyHost(env,{plan:original,runtimeIdentity,financi
       if(a.grant.stopped){await db.prepare("UPDATE generation_study_operations SET status='paused' WHERE operation_id=?").bind(id).run();return {action:'paused',operationId:id,newPurchases:0};}
       try{
         await evidence(request,grantId,id,trial,stage,'request');
-        a=await access(request,grantId);await admission(a,trial);
+        a=await access(request,grantId);await admission(a,trial,true);
         await checkedBatch(env,[...a.guards,{sql:"EXISTS(SELECT 1 FROM generation_study_grants WHERE grant_id=? AND stopped=0)",bindings:[grantId]}],[
           db.prepare("INSERT INTO generation_study_stages VALUES(?,?,'intent',?,NULL)").bind(id,stage,digest(plan.requests[trial.cellId][stage].body)),db.prepare("UPDATE generation_study_operations SET status='running' WHERE operation_id=?").bind(id)]);
         // Intent is irreversible even if the process dies before fetch. No lease-expiry replay.
         if(stage==='image')imageAttempts++;
-        const result=await submitStudyStage(env,plan.requests[trial.cellId][stage],stage,{signal,checkpoint:r=>checkpoint(id,stage,r)});
+        const result=await submitStudyStage(env,plan.requests[trial.cellId][stage],stage,{signal,manualRedirect:pendingPair(plan),checkpoint:r=>checkpoint(id,stage,r)});
         await evidence(request,grantId,id,trial,stage,'response',result);
         if(result.outcome!=='usable')return hold(id,stage!=='image'?stage+'_not_passed':'original_charge_unknown');
         if(stage!=='image'){
@@ -187,6 +196,7 @@ export function createNativeStudyHost(env,{plan:original,runtimeIdentity,financi
     if(!body||body.size>HOST_LIMITS.artifactBytes||body.customMetadata?.owner!==a.user.userId||body.customMetadata?.operation!==id)return hold(id,'original_artifact_unavailable');
     const bytes=new Uint8Array(await new Response(body.body).arrayBuffer());await access(request,grantId,true);
     if(bytes.byteLength>HOST_LIMITS.artifactBytes||digest(bytes)!==op.artifact_hash)return hold(id,'original_artifact_corrupt');
+    if(pendingPair(plan)){const a=await access(request,grantId,true);await checkedBatch(env,a.guards,[db.prepare('UPDATE generation_study_operations SET pair_artifact_verified_hash=? WHERE operation_id=? AND artifact_hash=?').bind(op.artifact_hash,id,op.artifact_hash)]);}
     return {action:op.status==='completed'?'reuse_completed':'retained_unsettled',operationId:id,newPurchases:0,accountingState:op.measured_microusd===null?'unknown':'measured',bytes};
   }
   /** Read a separately entered verified original billing receipt. No provider GET/POST, polling or replacement purchase. */

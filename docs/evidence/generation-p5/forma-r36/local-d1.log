@@ -1,0 +1,1 @@
+{"interceptedPosts":6,"operations":[{"trial_id":"baseline","status":"hold","measured_microusd":null,"pair_head_reads":4,"yielded":1},{"trial_id":"treatment","status":"hold","measured_microusd":null,"pair_head_reads":0,"yielded":0}],"realProviderCalls":0}

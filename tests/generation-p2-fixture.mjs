@@ -17,7 +17,7 @@ export async function fixture(t,options={}){
  const now='2026-09-24T12:00:00.000Z',expiry=packet.input.expiresAt,originalNow=Date.now;Date.now=()=>Date.parse(now);t.after(()=>{Date.now=originalNow;});
  f.sqlite.function('strftime',{varargs:true},format=>format==='%Y-%m'?now.slice(0,7):now);
  for(const file of readdirSync(new URL('../drizzle/',import.meta.url)).filter(f=>f.endsWith('.sql')).sort())f.sqlite.exec(readFileSync(new URL('../drizzle/'+file,import.meta.url),'utf8'));
- for(const file of ['generation-study.pending.sql','generation-study-supplied-v2.pending.sql'])f.sqlite.exec(readFileSync(new URL('../db/'+file,import.meta.url),'utf8'));
+ for(const file of options.pairSchema?['generation-study-pair-v3.pending.sql']:['generation-study.pending.sql','generation-study-supplied-v2.pending.sql'])f.sqlite.exec(readFileSync(new URL('../db/'+file,import.meta.url),'utf8'));
  f.sqlite.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES('mock-owner','owner@example.test','OFFLINE P2 synthetic principal','admin',?,?,?,?)").run(POLICY_VERSION,now,now,now);
  const binding={reviewId:'OFFLINE-review',authorityVersion:'OFFLINE-v2',sourceRef:'p2-source',directionRef:'p2-direction',declaredAuthor:'agent-proposed-study-draft',approvedUse:PROTOCOL,expiresAt:expiry};
  const plan=makeSuppliedPlan({packet,user:safetyIdentifier('mock-owner'),runtimeIdentity:runtime,binding}),grantId='OFFLINE-grant';

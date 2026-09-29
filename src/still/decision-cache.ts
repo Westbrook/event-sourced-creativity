@@ -11,6 +11,7 @@ export class DecisionMemo<T> {
   constructor(private options:{accept:(value:T)=>boolean;ttl?:(value:T)=>number;latency?:(value:T)=>number|undefined;age?:(value:T)=>number;now?:()=>number;maxEntries?:number;maxBytes?:number}){}
   private now(){return this.options.now?.()??Date.now();}
   private remove(key:string){const old=this.entries.get(key);if(old)this.bytes-=old.bytes;this.entries.delete(key);}
+  clearPending(){this.generation++;this.pending.clear();}
   clear(){this.generation++;this.entries.clear();this.pending.clear();this.bytes=0;}
   private result(entry:Entry<T>,status:DecisionCacheInfo['status']){
     const ageMs=Math.max(0,this.now()-entry.at);

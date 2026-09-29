@@ -1,0 +1,132 @@
+{
+  "source": "498936481741f7ed1b03d43422288d628db49f2f",
+  "version": 554,
+  "freshLiveState": false,
+  "retainedLocalOnly": true,
+  "preservedOwnerFiles": [
+    {
+      "path": "src/model/video-adapter.ts",
+      "sha256": "8dc657b69da85b74f141b05b3743ab5484e3ae71e960c2f41118dccb1dc350be"
+    },
+    {
+      "path": "src/still/app.ts",
+      "sha256": "c94a238b57741a08b45548dce7c90673bc76b839911ecf205795af0154bbe24e"
+    },
+    {
+      "path": "src/still/context-flow.ts",
+      "sha256": "adaa1e06219d41d53422d59762181ba0b0409a681b35dfe391501474fdd75cbc"
+    },
+    {
+      "path": "src/still/creation-flow.ts",
+      "sha256": "81ced9722cf3f218ef138c653d28f9fb8d6cd7e66e55bea8a01b45db4b62d37c"
+    },
+    {
+      "path": "src/still/decision-cache.ts",
+      "sha256": "6f88907548883089a95b16fee045a2e51cd15b6ae25a747ba64c33eda08b2788"
+    },
+    {
+      "path": "src/still/decision-transport.ts",
+      "sha256": "7915a1825833c5cb99009b72fd926726497492276397eb50834c58a20c2fa284"
+    },
+    {
+      "path": "src/still/local-policy.ts",
+      "sha256": "043d2f8dc4390f2f4ca1c0bb5964a90c54bec96e45cd59450423c6dfca8f30d2"
+    },
+    {
+      "path": "src/still/motion/coordinator.ts",
+      "sha256": "b5b04554333e208dfac37ea3711822481d576de5bc9178a04d935b9fd8c990c3"
+    },
+    {
+      "path": "src/still/motion/loading.d.ts",
+      "sha256": "4089031c8cb946553b01b00c16970d8d6be28f63654f9e2bac9499b3a0b38ff0"
+    },
+    {
+      "path": "src/still/motion/loading.js",
+      "sha256": "d1a8fa9800b1a345ad7e7f5d54efa2a7ff5a215973ad8b0f74f0b98ff5dc6ebf"
+    },
+    {
+      "path": "src/still/motion/motion.css",
+      "sha256": "640c179593a1b737ff974c18f4b9e1c9caf7b6d33915559bd151e93aedd71c63"
+    },
+    {
+      "path": "src/still/motion/request-rhythm.d.ts",
+      "sha256": "50fb73a155d3a5ba0f19a28e7dacc350f21e75c29975aa4637542408b6cbfa66"
+    },
+    {
+      "path": "src/still/motion/request-rhythm.js",
+      "sha256": "b07ac95c3ed27d997a11d86d978cae1e30fcb953fe895f59139f76269052e62e"
+    },
+    {
+      "path": "src/still/motion/thread.d.ts",
+      "sha256": "4bf565ccc125d47c37db458e1fa520d338d660fa7f4b204ce8a35b3410608ae5"
+    },
+    {
+      "path": "src/still/motion/thread.js",
+      "sha256": "3e31c853e3a9bd377a2234fe926885585f98a4f1dd4eaa11f5fe662f4cadc130"
+    },
+    {
+      "path": "src/still/style.css",
+      "sha256": "2e0bb4da758b2247bd9c3d0680cee2f111d35bc30e5e6056faaa3f3c32ae3ff7"
+    },
+    {
+      "path": "src/still/use-in-flow.ts",
+      "sha256": "8d9efc1b50f9cb9f3fe2b69dd01b8b26d633b2543e91b1388487a639064a1e9c"
+    },
+    {
+      "path": "src/still/workflow-toolbar.ts",
+      "sha256": "bcdffbe3477799f7eb6e0ca0600b0a1f1c06d63dca051f0aeeae33804d7689ee"
+    },
+    {
+      "path": "tests/browser/fixtures/still-toolbar-motion.js",
+      "sha256": "00c87a0dd90844887d1408833f96eaa66bbab6094851d1e0903fc72f98882737"
+    },
+    {
+      "path": "tests/browser/still-toolbar-motion.test.mjs",
+      "sha256": "fc4efbc8975760f2d2a5eb9bf8869194644d14336deb9a642fbe3e27c738ad9f"
+    },
+    {
+      "path": "tests/document-artifacts.test.mjs",
+      "sha256": "8c899a89112d97dae0227ef1aa45c1bc24c836df70d4d2ac45662dd51dee00bd"
+    },
+    {
+      "path": "tests/helpers/video-reference-provenance.mjs",
+      "sha256": "a3555d8bfd500722b4fcc7cb41a6ceaa047739c5a77f5bc5d36e894bc73d8a1b"
+    },
+    {
+      "path": "tests/still-decision-cache.test.mjs",
+      "sha256": "4775893ebf1f0e54dbc56cf3327f6f8e3fe415303774b17f82d4c6014cd92b7c"
+    },
+    {
+      "path": "tests/still-direct-create.test.mjs",
+      "sha256": "848d9dd2d87869730c6f7c0ada80f26934d3d3275034f4fa0755653b005d416e"
+    },
+    {
+      "path": "tests/still-generation-decision.test.mjs",
+      "sha256": "9ddf5da5182e6e255a62d87b72ad391649831a3ad32ff190fbcaae1b4c085eb0"
+    },
+    {
+      "path": "tests/still-thread-timing.test.mjs",
+      "sha256": "02804c045c010dcb215a7428d98b21b7ca879fc496bff57ea5d8b9436c15d60b"
+    },
+    {
+      "path": "tests/still-toolbar-rhythm.test.mjs",
+      "sha256": "7ad22abc0eddf379276dce0a8a29a2440b5eb5612c411345b43631537613625b"
+    },
+    {
+      "path": "tests/still-toolbar-transport.test.mjs",
+      "sha256": "db781710bdb3f1900e25ee1856f06d53f5bc20c183eacc6b6e1a69f6aa8c6b26"
+    },
+    {
+      "path": "tests/video-reference-provenance.test.mjs",
+      "sha256": "4b038d8a014a26841e0f008d7c9f8f1a3a91b9f9e7be13fec6fd94a238c70675"
+    },
+    {
+      "path": "worker/openai-adapter.ts",
+      "sha256": "df122ae254e7988e0e37935c72228b4a53fb7184dfc1a541c3517b9e578c0b72"
+    },
+    {
+      "path": "worker/video-prompt-adapter.ts",
+      "sha256": "245fe582c60f38e3d5c58027b42b22d7e26f792acbfeab5e37246909919a0393"
+    }
+  ]
+}

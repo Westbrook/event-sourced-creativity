@@ -1,0 +1,112 @@
+{
+  "method": "actual JS/TS host bundled into test-only Worker; synthetic producer rows; local Miniflare D1.batch and R2; fixed intercepted provider responses, no network forwarding",
+  "realProviderCalls": 0,
+  "interceptedPosts": 6,
+  "calls": [
+    {
+      "endpoint": "/v1/moderations",
+      "method": "POST"
+    },
+    {
+      "endpoint": "/v1/moderations",
+      "method": "POST"
+    },
+    {
+      "endpoint": "/v1/images/generations",
+      "method": "POST"
+    },
+    {
+      "endpoint": "/v1/moderations",
+      "method": "POST"
+    },
+    {
+      "endpoint": "/v1/moderations",
+      "method": "POST"
+    },
+    {
+      "endpoint": "/v1/images/generations",
+      "method": "POST"
+    }
+  ],
+  "operations": [
+    {
+      "trial_id": "baseline",
+      "status": "hold",
+      "measured_microusd": null,
+      "pair_head_reads": 4,
+      "yielded": 1
+    },
+    {
+      "trial_id": "treatment",
+      "status": "hold",
+      "measured_microusd": null,
+      "pair_head_reads": 0,
+      "yielded": 0
+    }
+  ],
+  "receipts": [
+    {
+      "action": "baseline",
+      "status": 200,
+      "result": {
+        "action": "hold",
+        "newPurchases": 1,
+        "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+        "reason": "original_charge_unreconciled",
+        "contentOutcome": "usable",
+        "accountingState": "unknown",
+        "uncachedEstimateMicrousd": 650,
+        "measuredMicrousd": null,
+        "errors": []
+      }
+    },
+    {
+      "action": "recover",
+      "status": 200,
+      "result": {
+        "action": "retained_unsettled",
+        "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+        "newPurchases": 0,
+        "accountingState": "unknown",
+        "bytes": 6190,
+        "errors": []
+      }
+    },
+    {
+      "action": "observe",
+      "status": 200,
+      "result": {
+        "action": "observation_recorded",
+        "operationId": "operation:9ad72861fb2f64aadd21f79a2f4429c389238f0d51b4d83cbf93cd0175348a73",
+        "requiresSettlement": true,
+        "nextArmGate": "independent-exact-pair-admission",
+        "originalLiability": "unsettled",
+        "newPurchases": 0,
+        "errors": []
+      }
+    },
+    {
+      "action": "treatment",
+      "status": 200,
+      "result": {
+        "action": "hold",
+        "newPurchases": 1,
+        "operationId": "operation:f1cc8b117421043c1a1f13616fd07781231c025d010809a75d7920e6a4aebf9d",
+        "reason": "original_charge_unreconciled",
+        "contentOutcome": "usable",
+        "accountingState": "unknown",
+        "uncachedEstimateMicrousd": 650,
+        "measuredMicrousd": null,
+        "errors": []
+      }
+    },
+    {
+      "action": "treatment",
+      "status": 409,
+      "result": {
+        "error": "D1_ERROR: CHECK constraint failed: passed=1: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)"
+      }
+    }
+  ],
+  "hostedFitEstablished": false
+}
