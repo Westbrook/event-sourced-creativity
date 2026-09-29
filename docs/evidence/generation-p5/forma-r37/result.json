@@ -1,0 +1,53 @@
+{
+  "status": "stopped-before-environment-read-contract-gap",
+  "baseCommit": "40991f54a87248caf34287fc46be43929fd5e3b0",
+  "observedAt": "2026-09-29T21:26:25.447517+00:00",
+  "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "nativeCalls": 1,
+  "latestSavedVersionNumber": 555,
+  "selectedSavedVersion": null,
+  "selectedDeployment": null,
+  "lastVerifiedLive": {
+    "basis": "R34 terminal restoration and final environment/access receipts; historical, not current certificate",
+    "versionNumber": 554,
+    "versionId": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_b640f9ffe7ac8191ba0b6189da7a0d3b",
+    "sourceCommit": "498936481741f7ed1b03d43422288d628db49f2f",
+    "deploymentId": "appgdep_6abc12ce06308191bbe07ee6b5e69a9d",
+    "terminalAt": "2026-09-29T19:35:34.593056+00:00",
+    "environmentRevision": 16,
+    "accessRevision": 7
+  },
+  "currentPublicationCertified": false,
+  "currentEnvironmentObserved": false,
+  "currentBindingMetadataObserved": false,
+  "fullAccessIdentityParityChecked": false,
+  "charged": {
+    "normal": 45,
+    "recovery": 18,
+    "total": 63
+  },
+  "ceilings": {
+    "normal": 48,
+    "recovery": 19,
+    "total": 67
+  },
+  "unused": {
+    "normal": 3,
+    "conditionalRecoveryR3": 1
+  },
+  "recoveryTransferAllowed": false,
+  "dispatches": {
+    "P1": "receipt-preserved",
+    "P2": "not-dispatched-contract-preflight-stop",
+    "P3": "not-dispatched-after-stop",
+    "P4": "not-dispatched-after-stop"
+  },
+  "holds": {
+    "token": 17,
+    "cost": 46,
+    "basis": "historical R34; unclassified; not a unique-operation count"
+  },
+  "expiry": "2026-10-01T00:00:00Z",
+  "recoveryMargin": "2026-09-30T22:00:00Z",
+  "renewed": false
+}

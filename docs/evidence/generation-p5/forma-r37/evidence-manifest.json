@@ -1,0 +1,14 @@
+{
+  "files": {
+    "63-site-redacted.json": "5177684dc031357281b2ef9827eb2c5e6fc9c5841584fd58a505ea18cfb55fcd",
+    "decision.md": "52f76c93840b203695aed0fd543952d04f4f4fe304bfab2de7ec666fbd1f5973",
+    "handoff.md": "359ff0664b2c16121ab3b931e39150083bf7d5bcf6ac942ff5a4a743c4f4900b",
+    "index.html": "5b4e8bad5b008ee691aa2550066beb47d6d984882270b3c4449bfddf40989829",
+    "ledger.py": "766708b0757c46a497dc4ba0bf19a67f7bf62f0ce1a6e3939760c92403d161f6",
+    "request-ledger.json": "0faab26683c3c820da72e73fc2b4ac8147952bf7f7d050bc956c36840acf5b45",
+    "result.json": "fa7b4a09f4cfef22d2d43a60128ba14555c11adb1e79d2b75940ec0b4fde911a",
+    "result.md": "5db43ea80ec346c9033ee4c79424bdc61ddbad2a7de4980c058c011a5a455929",
+    "supported-tool-contracts.json": "1c3c887d1dd16d0d9e1b8f6ae286256ea2576e4df658fdcc23daf40d910d3a5a",
+    "validation.json": "115d69967929ae9f993592eb449fb66169ad9ba9ff420a313446fca2007c5cf2"
+  }
+}

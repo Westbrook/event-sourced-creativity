@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — R36 opt-in pair implemented locally | Existing P5 task | [R36 result](evidence/generation-p5/forma-r36/result.md): versioned producer/policy, exact atomic pair transfer and fresh schema; fixed owner hold read/default-off42-file candidate. Retained554 owner work preserved; R34 restoration closed. | [Next decision](evidence/generation-p5/forma-r36/decision.md): four new metadata-only reservations to reconcile current publication before any release/read scope.17 token/46 cost holds remain unclassified; authentic authority/custody and paid execution separate. No hosted action, renewal or empirical fidelity/moderation finding. |
+| GEN-P5 | In progress — R37 metadata pass stopped | Existing P5 task | [R37 result](evidence/generation-p5/forma-r37/result.md): fresh owner/workspace_all/access7/latest saved555; no active publication certificate. R36 local implementation and R34 recovery preserved. | [Exact next capability](evidence/generation-p5/forma-r37/decision.md): secret-free environment metadata and authoritative current-publication binding. One call;45normal/18recovery/63charged. P2–P4 not dispatched. Conditional41-migration fixed-read plan;17token/46cost holds unclassified; no paid action or renewal. |
 
 ## Memory
 

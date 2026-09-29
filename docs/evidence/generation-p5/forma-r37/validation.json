@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-29T21:29:13.093715+00:00",
+  "checks": [
+    "62 prior ledger entries unchanged",
+    "one durable reservation63 and matching redacted receipt SHA256",
+    "45normal/18recovery/63charged and48/19/67 ceilings",
+    "P2\u2013P4 uncalled; stop recorded",
+    "new relative document links resolve",
+    "receipt project identity and allowlisted fields verified",
+    "sealed R34/R36 evidence unchanged; no source/migration changes"
+  ],
+  "applicationBuildRepeated": false,
+  "nativeCalls": 1,
+  "environmentCalls": 0,
+  "browserCalls": 0,
+  "hostedMutations": 0,
+  "providerCalls": 0
+}

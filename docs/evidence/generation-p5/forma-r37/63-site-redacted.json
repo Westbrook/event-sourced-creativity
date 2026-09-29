@@ -1,0 +1,43 @@
+{
+  "id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "status": "active",
+  "current_user_role": "owner",
+  "access_mode": "workspace_all",
+  "latest_version_number": 555,
+  "current_live_url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+  "expected_url": null,
+  "updated_at": "2026-09-29T19:35:34.662333+00:00",
+  "access_policy": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "revision": 7,
+    "access_mode": "workspace_all",
+    "updated_at": "2026-08-25T23:53:45.934374+00:00",
+    "allowedAccountUserCount": 6,
+    "allowedTenantGroupCount": 0,
+    "allowedWorkspaceGroupCount": 0,
+    "allowedUserRoles": [
+      {
+        "role": "owner"
+      },
+      {
+        "role": "viewer"
+      },
+      {
+        "role": "viewer"
+      },
+      {
+        "role": "viewer"
+      },
+      {
+        "role": "viewer"
+      },
+      {
+        "role": "viewer"
+      }
+    ],
+    "allowedEditorRoles": [],
+    "external_visitor_count": 0
+  },
+  "redaction": "Allowlisted metadata only; no personal identifiers, tokens, credentials, MCP details, screenshot URLs or private content retained.",
+  "activeDeploymentPointerExposed": false
+}
