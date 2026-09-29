@@ -1,0 +1,19 @@
+{
+  "reservation45DurableBeforeCall": true,
+  "receiptDurable": true,
+  "prior44EntriesUnchanged": true,
+  "newInventoryCalls": 1,
+  "otherBrowserActions": 0,
+  "nativeCalls": 0,
+  "r30EvidenceFilesHashVerified": 21,
+  "archiveSha256": "a1c604d813972d4c95a5fdf37a201c4fe2255d3e2ab09526474be3d147f438ae",
+  "currentCeilings": {
+    "normal": 43,
+    "recovery": 19
+  },
+  "proposedOnlyCeilings": {
+    "normal": 44,
+    "recovery": 19
+  },
+  "authorityExtended": false
+}

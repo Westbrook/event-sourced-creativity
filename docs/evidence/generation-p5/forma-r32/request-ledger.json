@@ -1,0 +1,779 @@
+{
+  "stage": "R32 exactly one approved metadata-only browser inventory recheck",
+  "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "accepted": true,
+  "limits": {
+    "normal": 43,
+    "recovery": 19
+  },
+  "normal": 32,
+  "recovery": 13,
+  "issued": 45,
+  "entries": [
+    {
+      "sequence": 1,
+      "reservedAt": "2026-09-28T21:03:08.323793+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "01-site.json",
+      "receiptSha256": "79ef45fd2b051ee76efab87ce411c2ffc29c888290cbf2cc93080208c08385eb",
+      "completedAt": "2026-09-28T21:03:10.260896+00:00"
+    },
+    {
+      "sequence": 2,
+      "reservedAt": "2026-09-28T21:03:16.869797+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "02-environment.json",
+      "receiptSha256": "6e1bc9fa46ff642b2ec5fcf29eac49dd64d7ce59e3abc001fb964b6d9b3db942",
+      "completedAt": "2026-09-28T21:03:17.738720+00:00"
+    },
+    {
+      "sequence": 3,
+      "reservedAt": "2026-09-28T21:03:17.896886+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "03-predecessor-version.json",
+      "receiptSha256": "0cd13c78b1df8d9dee68891d3ab5a8dca4c11f4a0c1447c38c979eab55a5a978",
+      "completedAt": "2026-09-28T21:03:19.012008+00:00"
+    },
+    {
+      "sequence": 4,
+      "reservedAt": "2026-09-28T21:04:56.444127+00:00",
+      "state": "receipt-preserved",
+      "group": "credential",
+      "action": "create_source_repository_write_credential",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "publish_on_push": null
+      },
+      "receipt": "04-source-credential-redacted.json",
+      "receiptSha256": "bd935c68bf39373f1bbfada022ee3793322c1b9725defbf6023dd448ee36f9b3",
+      "completedAt": "2026-09-28T21:05:03.668125+00:00"
+    },
+    {
+      "sequence": 5,
+      "reservedAt": "2026-09-28T21:05:03.851786+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-head-before",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "05-git-head-before.json",
+      "receiptSha256": "d60f1cc952c8ff1b2526321f9661c831c042e6a5d8627aca29fe4871c9a6bea4",
+      "completedAt": "2026-09-28T21:05:14.362858+00:00"
+    },
+    {
+      "sequence": 6,
+      "reservedAt": "2026-09-28T21:05:14.363828+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-fetch",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "06-git-fetch-failed.json",
+      "receiptSha256": "50572159343604ebd8c51e8b2669c6f688b6e20e6b67e32e0a4b56368d8a5e94",
+      "completedAt": "2026-09-28T21:05:19.767503+00:00"
+    },
+    {
+      "sequence": 7,
+      "reservedAt": "2026-09-28T21:14:34.167835+00:00",
+      "state": "receipt-preserved",
+      "group": "credential",
+      "action": "create_source_repository_write_credential",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "publish_on_push": null
+      },
+      "receipt": "07-source-credential-redacted.json",
+      "receiptSha256": "be52b79396948c96b0b6d9cc06562d0c3dd2b24b722e34abef98052ad54f617b",
+      "completedAt": "2026-09-28T21:14:38.346361+00:00"
+    },
+    {
+      "sequence": 8,
+      "reservedAt": "2026-09-28T21:14:38.460597+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-head-resume",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "08-git-head-resume.json",
+      "receiptSha256": "9a79fad8f88f47d6b9156774ce5daea2eadd25652af865e58a1154e582b99603",
+      "completedAt": "2026-09-28T21:14:40.841172+00:00"
+    },
+    {
+      "sequence": 9,
+      "reservedAt": "2026-09-28T21:14:40.842096+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-push",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "09-git-push.json",
+      "receiptSha256": "cb49c7027f90d03cbffc13d599721e6c90bb228224a5cb266b71fd8b1bf7c75f",
+      "completedAt": "2026-09-28T21:14:43.592539+00:00"
+    },
+    {
+      "sequence": 10,
+      "reservedAt": "2026-09-28T21:14:43.593373+00:00",
+      "state": "receipt-preserved",
+      "group": "source",
+      "action": "git-head-verified",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "branch": "main"
+      },
+      "receipt": "10-git-head-verified.json",
+      "receiptSha256": "a86f56e42ee7addfe432844c22e20a008329727c6b7123c75e026f290be92800",
+      "completedAt": "2026-09-28T21:14:45.144264+00:00"
+    },
+    {
+      "sequence": 11,
+      "reservedAt": "2026-09-28T21:15:07.942086+00:00",
+      "state": "receipt-preserved",
+      "group": "save",
+      "action": "save_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "commit_sha": "d147817ff14b502a8fc116a74fa5388f9fe7ad62",
+        "archive": "/private/tmp/forma-p5-live-comparison/docs/evidence/generation-p5/forma-r17/native-package.tar.gz"
+      },
+      "receipt": "11-saved-version.json",
+      "receiptSha256": "1c0ca50ac8c25b7dbdcff7a65c31f158e9eae4bc90b1f9176372c2c4c58119ac",
+      "completedAt": "2026-09-28T21:15:41.254233+00:00"
+    },
+    {
+      "sequence": 12,
+      "reservedAt": "2026-09-28T21:15:56.259691+00:00",
+      "state": "receipt-preserved",
+      "group": "admission",
+      "action": "get_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+      },
+      "receipt": "12-admission-verified.json",
+      "receiptSha256": "7aa842f633ba668cf499842a70b2ab5490463d73af2a3db74ca48faf83d13370",
+      "completedAt": "2026-09-28T21:15:57.199484+00:00"
+    },
+    {
+      "sequence": 13,
+      "reservedAt": "2026-09-28T21:16:05.839998+00:00",
+      "state": "receipt-preserved",
+      "group": "deploy",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+      },
+      "receipt": "13-deployment.json",
+      "receiptSha256": "269e6bfd8640cdf7b34a687a328a7e29ecb61d805ea4aa0e920ec291fdc00ff0",
+      "completedAt": "2026-09-28T21:16:28.455717+00:00"
+    },
+    {
+      "sequence": 14,
+      "reservedAt": "2026-09-28T21:16:46.204566+00:00",
+      "state": "receipt-preserved",
+      "group": "browser",
+      "action": "open-signed-in-browser-tab",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "url": "about:blank",
+        "purpose": "Use existing in-app browser authentication for the fixed qualification route"
+      },
+      "receipt": "14-browser-access.json",
+      "receiptSha256": "523e19d204c4b200ba4bc44c76870d47a7f3aa3b85cc4742fd1cf02009c034cf",
+      "completedAt": "2026-09-28T21:17:04.172413+00:00"
+    },
+    {
+      "sequence": 15,
+      "reservedAt": "2026-09-28T21:17:04.228283+00:00",
+      "state": "receipt-preserved",
+      "group": "qualification",
+      "action": "fixed-qualification-get-1",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "method": "GET",
+        "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site/api/internal/generation-study/qualification"
+      },
+      "receipt": "15-qualification-authentication-stop.json",
+      "receiptSha256": "4dc85bc9d7148575d761c6351766027eac7ba93272a32e4e772ba5759e612eb9",
+      "completedAt": "2026-09-28T21:17:56.023379+00:00"
+    },
+    {
+      "sequence": 16,
+      "reservedAt": "2026-09-28T21:17:56.220880+00:00",
+      "state": "receipt-preserved",
+      "group": "restore",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "16-restoration.json",
+      "receiptSha256": "3a67b6e0789cc999daa5dd15df0059b452c50d7fa2f1b754fc8ac882180f6769",
+      "completedAt": "2026-09-28T21:18:27.272794+00:00"
+    },
+    {
+      "sequence": 17,
+      "reservedAt": "2026-09-28T21:18:42.613116+00:00",
+      "state": "receipt-preserved",
+      "group": "restore-final",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "17-site-final.json",
+      "receiptSha256": "692527b90bd8b4c474bbc150bb8b13e9a92458e5c3609affab62f39c1db48fd1",
+      "completedAt": "2026-09-28T21:18:44.712307+00:00"
+    },
+    {
+      "sequence": 18,
+      "reservedAt": "2026-09-28T21:18:44.840227+00:00",
+      "state": "receipt-preserved",
+      "group": "restore-final",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "18-environment-final.json",
+      "receiptSha256": "47c353f59897c86f0d14265c1abfb7c3ba067efa64ca8d1c89b4fc305a0ee5c3",
+      "completedAt": "2026-09-28T21:18:46.021296+00:00"
+    },
+    {
+      "sequence": 19,
+      "reservedAt": "2026-09-28T23:43:02.670907+00:00",
+      "state": "receipt-preserved",
+      "group": "browser",
+      "action": "user-authorized-forma-sign-in-page",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site/",
+        "scope": "Open sign-in page; credentials and security checks handled by user"
+      },
+      "receipt": "19-sign-in-page-opened.json",
+      "receiptSha256": "508502b0776f64f1e5315630db42a668d6b5905a02e1d1cf3ef7af06616304ed",
+      "completedAt": "2026-09-28T23:44:06.623943+00:00"
+    },
+    {
+      "sequence": 20,
+      "reservedAt": "2026-09-28T23:57:02.141967+00:00",
+      "state": "receipt-preserved",
+      "group": "deploy",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+      },
+      "receipt": "20-redeployment.json",
+      "receiptSha256": "8748b6d08688f815dc0254504c1f8f2b60c2ce322be032166861dc5abd49f4e9",
+      "completedAt": "2026-09-28T23:57:22.999451+00:00"
+    },
+    {
+      "sequence": 21,
+      "reservedAt": "2026-09-28T23:57:45.950721+00:00",
+      "state": "receipt-preserved",
+      "group": "qualification",
+      "action": "fixed-qualification-read-resume-1",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "method": "GET",
+        "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site/api/internal/generation-study/qualification",
+        "tabId": "7"
+      },
+      "receipt": "21-browser-client-block.json",
+      "receiptSha256": "3212aef08bcbe0ffad553d74d1e554d7c1f907a52dfd59cee03e81dfa653ca1d",
+      "completedAt": "2026-09-28T23:58:30.915793+00:00"
+    },
+    {
+      "sequence": 22,
+      "reservedAt": "2026-09-28T23:58:31.074851+00:00",
+      "state": "receipt-preserved",
+      "group": "restore",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "22-restoration.json",
+      "receiptSha256": "4019b352d6351b5f02a9917102123ed79383c4e9f74bf529b04b0c903d661b2a",
+      "completedAt": "2026-09-28T23:59:00.035280+00:00"
+    },
+    {
+      "sequence": 23,
+      "reservedAt": "2026-09-28T23:59:13.749668+00:00",
+      "state": "receipt-preserved",
+      "group": "restore-final",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "23-site-final.json",
+      "receiptSha256": "d434b52bbdc96417f3b55d717f4e05e5a3947d7f7fd66f03dd43daa14575385c",
+      "completedAt": "2026-09-28T23:59:15.212926+00:00"
+    },
+    {
+      "sequence": 24,
+      "reservedAt": "2026-09-28T23:59:15.469895+00:00",
+      "state": "receipt-preserved",
+      "group": "restore-final",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "24-environment-final.json",
+      "receiptSha256": "a1fd6ce35d5491c91e965a71044845f629111735ab580939eebda4a15bcfd8db",
+      "completedAt": "2026-09-28T23:59:16.247274+00:00"
+    },
+    {
+      "sequence": 25,
+      "reservedAt": "2026-09-29T00:58:20.665599+00:00",
+      "state": "receipt-preserved",
+      "group": "logs",
+      "action": "sites_get_site_worker_logs",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "since_minutes": 62,
+        "limit": 100,
+        "errors_only": false
+      },
+      "receipt": "25-worker-logs-redacted.json",
+      "receiptSha256": "2d532d31b027bdc5f8fb2caaaec005bd5245151d95fb324f54a0997e713e67ae",
+      "completedAt": "2026-09-29T00:59:50.486483+00:00"
+    },
+    {
+      "sequence": 26,
+      "reservedAt": "2026-09-29T01:49:47.867565+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "26-site.json",
+      "receiptSha256": "68403774acda7bb11d3b83962f25cf2ec26a725d01c0a38195dfe16792ef3e3f",
+      "completedAt": "2026-09-29T01:49:49.327776+00:00"
+    },
+    {
+      "sequence": 27,
+      "reservedAt": "2026-09-29T01:49:54.437307+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "27-environment.json",
+      "receiptSha256": "6917f2e5f5ee929fc8db32ab29e05fde096476eed43a646bd7acf06f0109f8c9",
+      "completedAt": "2026-09-29T01:49:55.280831+00:00"
+    },
+    {
+      "sequence": 28,
+      "reservedAt": "2026-09-29T01:50:00.677045+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+      },
+      "receipt": "28-saved551.json",
+      "receiptSha256": "bdcf07cb32a291c8ef30eddc4a84123c07ca604f85dc3a88c1a1393dd43060f1",
+      "completedAt": "2026-09-29T01:50:01.656562+00:00"
+    },
+    {
+      "sequence": 29,
+      "reservedAt": "2026-09-29T01:50:21.024035+00:00",
+      "state": "receipt-preserved",
+      "group": "deploy",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+      },
+      "receipt": "29-deployment551.json",
+      "receiptSha256": "449ca1ee071b985aff48465f371e9a61fa291f9cc1b9b4b95a4fe2ab25c3002b",
+      "completedAt": "2026-09-29T01:50:43.477405+00:00"
+    },
+    {
+      "sequence": 30,
+      "reservedAt": "2026-09-29T01:51:52.205029+00:00",
+      "state": "receipt-preserved",
+      "group": "restore",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "30-restoration550.json",
+      "receiptSha256": "74e7aeb30d7e6e91259733a91a78354110677c0699906a50b5bf453b593a96bb",
+      "completedAt": "2026-09-29T01:52:20.819878+00:00"
+    },
+    {
+      "sequence": 31,
+      "reservedAt": "2026-09-29T01:52:29.652021+00:00",
+      "state": "receipt-preserved",
+      "group": "restore-final",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "31-site-final.json",
+      "receiptSha256": "72618a3508b7b1345a138c94496926c11a532c3aa21413cda9755c74eada1008",
+      "completedAt": "2026-09-29T01:52:31.373598+00:00"
+    },
+    {
+      "sequence": 32,
+      "reservedAt": "2026-09-29T01:52:36.575092+00:00",
+      "state": "receipt-preserved",
+      "group": "restore-final",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "32-environment-final.json",
+      "receiptSha256": "5931f858f07ea7c59dc9fd22ec0747285961274ddbc2c5125920520e4ab5d110",
+      "completedAt": "2026-09-29T01:52:37.571568+00:00"
+    },
+    {
+      "sequence": 33,
+      "reservedAt": "2026-09-29T12:00:40.988790+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "33-site.json",
+      "receiptSha256": "e7c2ec28d09f86ed91137a7a497fdcb2d4352ee9fa6f841e6b604968077539fc",
+      "completedAt": "2026-09-29T12:00:42.930545+00:00"
+    },
+    {
+      "sequence": 34,
+      "reservedAt": "2026-09-29T12:00:48.570888+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "34-environment.json",
+      "receiptSha256": "3aff3eac6ba528b9388e737ffe1bd1b40a1e05ebb7fc8313998a2983c2386fe9",
+      "completedAt": "2026-09-29T12:00:49.738819+00:00"
+    },
+    {
+      "sequence": 35,
+      "reservedAt": "2026-09-29T12:00:57.431112+00:00",
+      "state": "receipt-preserved",
+      "group": "fresh",
+      "action": "get_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+      },
+      "receipt": "35-saved551.json",
+      "receiptSha256": "63bb3a51ad9fd380993c95eae0025cb5f86eacc011dae9c8e178bc46a23fe7b0",
+      "completedAt": "2026-09-29T12:00:58.438390+00:00"
+    },
+    {
+      "sequence": 36,
+      "reservedAt": "2026-09-29T12:01:27.753515+00:00",
+      "state": "receipt-preserved",
+      "group": "deploy",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+      },
+      "receipt": "36-deployment551.json",
+      "receiptSha256": "8d94a37daf6e6734131e4350160153764145865387421b6132f664b53fd48e9a",
+      "completedAt": "2026-09-29T12:01:58.391980+00:00"
+    },
+    {
+      "sequence": 37,
+      "reservedAt": "2026-09-29T12:02:25.645147+00:00",
+      "state": "receipt-preserved",
+      "group": "diagnostic",
+      "action": "fixed-qualification-navigation",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site/api/internal/generation-study/qualification",
+        "method": "GET",
+        "tabId": "8"
+      },
+      "receipt": "37-browser-client-block.json",
+      "receiptSha256": "4040d00c70ba7ca66e6bbd30c776094512f36b09b2ed06feb7edb0bfb80ed91d",
+      "completedAt": "2026-09-29T12:03:12.725943+00:00"
+    },
+    {
+      "sequence": 38,
+      "reservedAt": "2026-09-29T12:03:12.898291+00:00",
+      "state": "receipt-preserved",
+      "group": "logs",
+      "action": "sites_get_site_worker_logs",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "since_minutes": 5,
+        "limit": 100,
+        "errors_only": false
+      },
+      "receipt": "38-worker-logs-redacted.json",
+      "receiptSha256": "ae96069a938e30a11ba3a9c27a7833ff8fcc7460afaafd6fc85ec849b562cb6d",
+      "completedAt": "2026-09-29T12:03:47.839782+00:00"
+    },
+    {
+      "sequence": 39,
+      "reservedAt": "2026-09-29T12:03:56.027339+00:00",
+      "state": "receipt-preserved",
+      "group": "restore",
+      "action": "deploy_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "39-restoration550.json",
+      "receiptSha256": "ee9d5b689d68347e1a4535ce0a647a823c7297dbb57acfa7593ee34b29e5f407",
+      "completedAt": "2026-09-29T12:04:22.924004+00:00"
+    },
+    {
+      "sequence": 40,
+      "reservedAt": "2026-09-29T12:36:17.048389+00:00",
+      "state": "receipt-preserved",
+      "group": "reconciliation-normal",
+      "action": "get_site_version",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+      },
+      "receipt": "40-saved550.json",
+      "receiptSha256": "dbb9b7f66a2569bbf5b8ddb55fc25e874a666172996cd4d78251cceb099362c5",
+      "completedAt": "2026-09-29T12:36:47.691986+00:00"
+    },
+    {
+      "sequence": 41,
+      "reservedAt": "2026-09-29T12:36:47.851614+00:00",
+      "state": "receipt-preserved",
+      "group": "reconciliation-recovery",
+      "action": "get_deployment_status",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "deployment_id": "appgdep_6abba93920488191a3838ac3899a463d"
+      },
+      "receipt": "41-restoration-status.json",
+      "receiptSha256": "9a6d5c682bf93871782a4b56ee943153600c731d751390ffa10b1df2a9d2a412",
+      "completedAt": "2026-09-29T12:37:16.649872+00:00"
+    },
+    {
+      "sequence": 42,
+      "reservedAt": "2026-09-29T12:37:16.875000+00:00",
+      "state": "receipt-preserved",
+      "group": "reconciliation-recovery",
+      "action": "get_site",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "42-final-site.json",
+      "receiptSha256": "e7b21a23b4fe0793481ee4d661c318b1801b56dc3337da8f5a17466868f60a03",
+      "completedAt": "2026-09-29T12:37:57.185618+00:00"
+    },
+    {
+      "sequence": 43,
+      "reservedAt": "2026-09-29T12:37:57.371868+00:00",
+      "state": "receipt-preserved",
+      "group": "reconciliation-recovery",
+      "action": "get_environment_variables",
+      "args": {
+        "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+      },
+      "receipt": "43-final-environment.json",
+      "receiptSha256": "758641e4e92918559a738bbb8046ca5403261539712d1a82aae98ee7e2597561",
+      "completedAt": "2026-09-29T12:38:18.411829+00:00"
+    },
+    {
+      "sequence": 44,
+      "reservedAt": "2026-09-29T18:02:18.572946+00:00",
+      "state": "receipt-preserved",
+      "group": "r30-normal",
+      "slot": "N1",
+      "action": "browser_inventory",
+      "args": {
+        "operation": "cua.getState",
+        "metadataOnly": true
+      },
+      "receipt": "44-browser-inventory.json",
+      "receiptSha256": "227eabe296b7dcc257b1bed1741f1ee601273a9334ceeca675433d65ae79e35d",
+      "completedAt": "2026-09-29T18:03:01.420155+00:00"
+    },
+    {
+      "sequence": 45,
+      "reservedAt": "2026-09-29T18:52:02.230933+00:00",
+      "state": "receipt-preserved",
+      "group": "r32-one-inventory",
+      "slot": "inventory-recheck-1",
+      "action": "cua.getState",
+      "args": {
+        "metadataOnly": true,
+        "explicitBrowserContext": true
+      },
+      "receipt": "45-browser-inventory.json",
+      "receiptSha256": "eac2319d629b50f28783a285f30b4038a83fb805d4fb4317d3a31598643f2231",
+      "completedAt": "2026-09-29T18:52:36.488997+00:00"
+    }
+  ],
+  "stop": "One authorized inventory recheck completed; visibility confirmed. Publication remains stopped pending exact resumption and +1 normal decision.",
+  "expiry": "2026-10-01T00:00:00Z",
+  "mutationRecoveryMargin": "2026-09-30T22:00:00Z",
+  "decisionSha256": "5980d0b14541caa76fe1c2fddf3362d2988a33f355e6daf410925d05dc454070",
+  "unit": "operator reservations, hidden native/browser/authentication HTTP and hosting costs unknown",
+  "otherLedgersUnchanged": {
+    "stageA": "7/8 complete; spare not transferable",
+    "private": "60/71; normalStop59 exhausted"
+  },
+  "retention": {
+    "owner": "westbrook.johnson@reve.art",
+    "duration": "indefinite until separately reviewed deletion",
+    "sourceVersionHistory": "existing Site access",
+    "receipts": "redacted restricted P5 evidence/Git"
+  },
+  "replacedPrerequisite": "User accepts no new/changed migration files on source/package equality and supported Sites contract; zero hosted DDL and exact prior archive bytes not independently proved",
+  "previousLedgerSha256": "6c6ccd215b1c75cce3e0784c3bb637d8422bc701e226b3d35e2d03cf6fecfeeb",
+  "previousLedger": "../forma-r20/request-ledger.json",
+  "stopHistory": [
+    {
+      "reason": "Source operation stopped: Git exit 128: fatal: git fetch-pack: expected shallow list\n",
+      "resolvedBy": "User approved exact R18 transport resumption; no fetch retry"
+    },
+    {
+      "reason": "Authentication expansion at first qualification navigation; auto-review blocked Google account inspection. No second qualification GET; authorized predecessor restoration only.",
+      "resumption": "User explicitly authorized actual-Forma Google sign-in flow and asked to open page; browser access only, no deployment or qualification GET resumption."
+    },
+    {
+      "reason": "Authorized authentication-page opening complete; Forma workspace visible without sign-in prompt. No saved551 redeployment or qualification retry authorized by this page-opening request.",
+      "resolvedBy": "User: I approve. Explicit remaining6normal/3recovery saved551 resumption."
+    }
+  ],
+  "amendment": {
+    "accepted": true,
+    "acceptedAt": "2026-09-28T21:13:54.039613+00:00",
+    "decisionSha256": "37ef471438fb65635874358f31fbbba52d640486018bffd417b0a94fff1071f8",
+    "additionalNormal": 2,
+    "credentialCap": 2,
+    "sourceCap": 5,
+    "noCounterReset": true
+  },
+  "authenticationApproval": {
+    "accepted": true,
+    "scope": "Open actual Forma sign-in page; user completes credentials/security checks; no redeployment or qualification retry",
+    "at": "2026-09-28T23:43:02.618443+00:00"
+  },
+  "boundedResumption": {
+    "accepted": true,
+    "acceptedAt": "2026-09-28T23:57:01.956592+00:00",
+    "normalRemainingAtAcceptance": 6,
+    "recoveryRemainingAtAcceptance": 3,
+    "normalPlan": [
+      "saved551deploy1",
+      "necessaryStatusAtMost1",
+      "fixedQualificationGET2",
+      "finalSiteEnvironment2"
+    ],
+    "recoveryPlan": "restore550 once; at most two verification calls within three total recovery remaining; stop on nonterminal/failed bounded verification",
+    "categoryCapsAdjusted": true,
+    "noTotalIncrease": true,
+    "noSourcePushSaveBuild": true
+  },
+  "priorLedger": {
+    "path": "../forma-r21/request-ledger.json",
+    "sha256": "de4660e5ca0a7048071f2c46527e6c2923403b5489aef315b5ac7ad9aa2764e1",
+    "entries": 24,
+    "receiptBase": "../forma-r21/"
+  },
+  "acceptedLogOnlyException": {
+    "userMessage": "Approve.",
+    "respondingTo": "Approve that single log read?",
+    "decision": "../forma-r22/decision.md",
+    "decisionSha256": "c8c5091a4b598eff7683078ba9016bae0b41c1c171d6a79906e74c1a06562c14",
+    "normalReservations": 1,
+    "recoveryReservations": 0,
+    "allowedGroup": "logs",
+    "groupCap": 1,
+    "allOtherActionsRemainStopped": true
+  },
+  "diagnosticGoAheadAccepted": true,
+  "acceptedR24Amendment": {
+    "normalAddition": 4,
+    "recoveryAddition": 4,
+    "userAnswer": "Approve the +4 normal / +4 recovery amendment",
+    "decisionSha256": "fd84f86bd6c52f45fdb5b46870ec1cdd163dd405d7adecce70f14121d50f420b",
+    "priorLedgerSha256": "e2e8d1d06cbce83c6aeddecc1e4ce944608d810506fe4467d689a6fdc22e92b2",
+    "priorEntries": 25
+  },
+  "priorReceiptLocations": {
+    "1-24": "../forma-r21/",
+    "25": "../forma-r23/",
+    "26-32": "../forma-r25/",
+    "33-39": "../forma-r27/",
+    "40-43": "../forma-r29/",
+    "44": "../forma-r31/"
+  },
+  "acceptedR26Amendment": {
+    "normalAddition": 4,
+    "recoveryAddition": 3,
+    "userAnswer": "Approve the full cycle and amendment",
+    "decisionSha256": "03911d2fc45f518423001a90bfcf180adcc1ca9cac03a049525bc4d951f1ab45",
+    "priorLedgerSha256": "3d794dab386336c6a5e86debc862fabc6fcec3f2390248aeb17680307fee6323",
+    "priorEntries": 32,
+    "intermediateDiagnosticApprovalPause": false
+  },
+  "priorStop": "Restoration native internal error -32603 with no deployment ID. No blind retry; last confirmed live551. Exact remaining-allocation recovery amendment pending.",
+  "acceptedRecoveryLookup": {
+    "scope": "R27 recovery-decision.md exactly; unused normal status slot reassigned; no deployment or diagnostic",
+    "decisionSha256": "0641e4a033a8fc2ec9cd8b91f1d549942ec0acd52d86e24e49d5fc8a2790a1c7",
+    "priorLedgerSha256": "43319af41dda33aab87b75d601efe487adffb377eae6ab05ebb5ab59172d0c0b",
+    "maxNormal": 1,
+    "maxRecovery": 3,
+    "approved": true
+  },
+  "acceptedR30": {
+    "commit": "fa61b4bdbd661cf37c39c164543a44adcdde740b",
+    "envelope": "p5-forma-current-qualification:20088b648d017aba644ee08c8d30c8a651f5e5177f10ecf8911f94d245139f51",
+    "normalAddition": 13,
+    "recoveryAddition": 6,
+    "priorLedgerSha256": "e57b797218bfab8d19549f02d1913c135b69902a80cb74180f896d273dd778ee",
+    "decisionSha256": "433869a18a4c542769f3d0fac1fc0ce6dd1be5822e6195ba90b78aa8a854f807",
+    "ownerSignedInAttestation": true,
+    "exclusivePublicationWindowAccepted": true,
+    "accepted": true,
+    "expiry": "2026-10-01T00:00:00Z",
+    "margin": "2026-09-30T22:00:00Z"
+  },
+  "previousStop": "R30 N1: supported inventory returned browsers=[]; stop before mutation, no restoration obligation created.",
+  "acceptedInventoryRecheck": {
+    "scope": "Exactly one cua.getState() metadata-only inventory, explicitly selected @Browser context; no tab selection, navigation, login, Sites or publication",
+    "reassignedUnusedNormal": 1,
+    "newAllowance": 0,
+    "accepted": true,
+    "priorLedgerSha256": "a8433d8e3da0ee4c4ccc23c4a885bdfc3ec3dff4bc4056346f98439d597d5991"
+  }
+}

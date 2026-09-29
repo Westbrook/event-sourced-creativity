@@ -1,0 +1,33 @@
+{
+  "operation": "cua.getState()",
+  "result": "existing-actual-Forma-tab-visible",
+  "browsers": [
+    {
+      "id": "2",
+      "name": "Codex In-app Browser",
+      "type": "iab",
+      "tabs": [
+        {
+          "id": "1",
+          "origin": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+          "existingActualFormaOriginMatches": true,
+          "documentPathAndTitleOmitted": true
+        }
+      ]
+    },
+    {
+      "id": "1",
+      "name": "Codex MCP Apps",
+      "type": "mcpapps",
+      "tabs": []
+    }
+  ],
+  "unrelatedApplicationInventoryAndSessionIdentifiersOmitted": true,
+  "visibilityOnly": true,
+  "tabSelected": false,
+  "pageContentRead": false,
+  "navigation": false,
+  "authenticationIndependentlyVerified": false,
+  "ownerSignedInAttestationPreserved": true,
+  "nativeSiteCalls": 0
+}
