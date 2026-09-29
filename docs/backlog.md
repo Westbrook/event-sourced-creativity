@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — idle; release basis superseded | Existing P5 task | [Idle handoff](evidence/generation-p5/idle-handoff.md): R29 restoration closed;30/30normal and13/13recovery consumed. User reports toolbar version552 subsequently published. R28 StageB unapproved and old551/550 basis superseded; no automatic restoration. Await finite P6 owner inputs or new supported evidence. Future diagnostics require fresh publication/recovery reconciliation and explicit scope. | Qualification evidence and required actual-Forma authority are established, then a separately authorized real two-image comparison has exact request/provider/image evidence and original settlement. No real pair, qualification JSON or moderation-cause finding exists. P2 gates,847/six exclusions and expiry persist. |
+| GEN-P5 | In progress — current-production qualification prepared | Existing P5 task | [R30 decision](evidence/generation-p5/forma-r30/decision.md): sealed qualification-only successor of retained554, one manual read and guarded restoration554;13normal/6recovery proposed, no new authority. R29 closed;43prior charges preserved; old551/550 superseded. Fresh release/tab parity after acceptance; no P6/export/billing prerequisite. | Hosted qualification plus separately authorized real two-image comparison with exact request/provider evidence. [Original-settlement contract change](evidence/generation-p5/forma-r30/settlement-change.md) proposed separately, unimplemented. No real pair or moderation finding. P2,847/six and expiry persist. |
 
 ## Memory
 

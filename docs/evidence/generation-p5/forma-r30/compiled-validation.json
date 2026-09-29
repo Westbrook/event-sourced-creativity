@@ -1,0 +1,2460 @@
+{
+  "method": "compiled full application Worker with disposable local D1/R2; exact41 released migrations; no optional schema; disposable synthetic principal, not hosted migration machinery",
+  "checks": [
+    "compiled authenticated bounded released catalog/principal/holds read with real local D1 metrics; synthetic-only local principal",
+    "compiled arbitrary query and absent identity refuse",
+    "unrelated asset route preserved",
+    "read phase preserves principal/catalog and makes no R2 object",
+    "zero real outbound attempts; no purchased authority or fixture import endpoint"
+  ],
+  "requests": 3,
+  "networkAttempts": 0,
+  "workerSha256": "8b821b063b45a9f0f61f945fefe7f48560bccef85a07be18e946c2f857e1e078",
+  "firstReadMetrics": {
+    "statements": 14,
+    "reads": 915,
+    "writes": 0,
+    "resultBytes": 201134,
+    "databaseBytes": 1966080
+  },
+  "firstReadSchemaObjects": 385,
+  "custodyProbeInstalled": false,
+  "actualFormaQualified": false,
+  "receipts": [
+    {
+      "route": "/api/internal/generation-study/qualification",
+      "status": 200,
+      "result": {
+        "contract": "forma-p5-qualification-v1",
+        "release": "p5-forma-qualification-only:ea53147a124d910bc7e6e9c6fc362e4e641d65527f7829cf0ed24ad62c6d1fc7",
+        "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+        "expiry": "2026-10-01T00:00:00Z",
+        "capturedAt": "2026-09-29T17:25:56.961Z",
+        "status": "observed-not-purchase-qualified",
+        "principal": {
+          "identitySha256": "9690844ab249a0f3182488c9bc6c269d16fe767930ff93dceb7ee619b01831e7",
+          "fingerprint": "ffeca3bcab5af2b0a1aeac2ee26e2fd450d05de06da3d3a7849cd1043a727925",
+          "role": "admin",
+          "currentConsent": true,
+          "personalScope": true,
+          "noPilot": true,
+          "notBootstrap": true
+        },
+        "schema": {
+          "catalog": [
+            {
+              "type": "table",
+              "name": "__appgarden_migrations",
+              "table": "__appgarden_migrations",
+              "sqlSha256": "2a0d01833c0914f306dd963c9d7d21fe60ea49187d1b15a3a6e3fb5d484c4753"
+            },
+            {
+              "type": "table",
+              "name": "_cf_METADATA",
+              "table": "_cf_METADATA",
+              "sqlSha256": "4104659c1e5a262f4246eb6938b7df89a65e646165d1fdb10e64553f1cc44d1b"
+            },
+            {
+              "type": "table",
+              "name": "artifact_revisions",
+              "table": "artifact_revisions",
+              "sqlSha256": "28b7781f9ad25c8edefe8ecfca71807dbffc874f3cfa8590726d9c2136353f10"
+            },
+            {
+              "type": "table",
+              "name": "assistant_action_commits",
+              "table": "assistant_action_commits",
+              "sqlSha256": "233605574c0c7dd8d2896d69f171dcbbc20824c9a704845f0b4e6cbf88728ae2"
+            },
+            {
+              "type": "table",
+              "name": "assistant_action_proposals",
+              "table": "assistant_action_proposals",
+              "sqlSha256": "7bb8f7163ff12e106b12307d1ec2bcb7c1a7a873b09bc51fd06a466849c3634f"
+            },
+            {
+              "type": "trigger",
+              "name": "assistant_billing_reconciliation_block_delete",
+              "table": "assistant_billing_reconciliations",
+              "sqlSha256": "b6146ce91ef62376d7c715e03c236efa90b52e1aa4c5e111d16ab740b5f34982"
+            },
+            {
+              "type": "trigger",
+              "name": "assistant_billing_reconciliation_block_update",
+              "table": "assistant_billing_reconciliations",
+              "sqlSha256": "70e09cce51e0409dd85426bee86cbc9015045448be72d90d5d8f91d37c846e55"
+            },
+            {
+              "type": "table",
+              "name": "assistant_billing_reconciliations",
+              "table": "assistant_billing_reconciliations",
+              "sqlSha256": "ad55050d71e55670c61583ee72d5ab2e3cea0b79aeb002a6afc18f10d5fae44f"
+            },
+            {
+              "type": "table",
+              "name": "assistant_specialist_tasks",
+              "table": "assistant_specialist_tasks",
+              "sqlSha256": "4693df953e26a1a3ae84c0c96dddb905c249fdb185834a8ac0550d8c4a680082"
+            },
+            {
+              "type": "table",
+              "name": "assistant_turns",
+              "table": "assistant_turns",
+              "sqlSha256": "a82b426b31c7576c0edd271537c14c29cb74d7252a0a387a30da9509c179b8c7"
+            },
+            {
+              "type": "table",
+              "name": "authoring_commits",
+              "table": "authoring_commits",
+              "sqlSha256": "ce2a8670960b41fc4db7fe2a1e93cabeda587f5b0562962fd4c9dd3b2ab2785c"
+            },
+            {
+              "type": "table",
+              "name": "budget_counters",
+              "table": "budget_counters",
+              "sqlSha256": "47ff057bbd3fd744f347e94e6d0d2e470aa31c9c194b5e23099f01435a4aae1f"
+            },
+            {
+              "type": "table",
+              "name": "budget_hold_dispositions",
+              "table": "budget_hold_dispositions",
+              "sqlSha256": "4ca18429617fc464a96f4ee8e460b3a16f02bcb4dc0a26db479d42c272078f51"
+            },
+            {
+              "type": "index",
+              "name": "budget_hold_dispositions_cost_reservation_id_unique",
+              "table": "budget_hold_dispositions",
+              "sqlSha256": "d5f11599fca35d40d3f7e5d9dd906c50b6fc1809c8812e35d6d1e36610788311"
+            },
+            {
+              "type": "index",
+              "name": "budget_hold_dispositions_event_id_unique",
+              "table": "budget_hold_dispositions",
+              "sqlSha256": "25a893801946f08863b2046560eb85cac26776aee4d55bc380b99a2d16b44c0b"
+            },
+            {
+              "type": "trigger",
+              "name": "budget_hold_dispositions_no_delete",
+              "table": "budget_hold_dispositions",
+              "sqlSha256": "d6124cc3c8a1bb8f763c2f5249f7886c3c9a032c4c96af4d94eb4094f685fd1b"
+            },
+            {
+              "type": "trigger",
+              "name": "budget_hold_dispositions_no_replace",
+              "table": "budget_hold_dispositions",
+              "sqlSha256": "58a523dc675ce662e597cad46ca74b45bf21dff961ef72ab4b054677dd338ea2"
+            },
+            {
+              "type": "trigger",
+              "name": "budget_hold_dispositions_no_update",
+              "table": "budget_hold_dispositions",
+              "sqlSha256": "e33bb69481b274e5b8e161090cb749eae2d67a3e2f85dad11dd3a26fad18cdc9"
+            },
+            {
+              "type": "index",
+              "name": "budget_hold_dispositions_token_reservation_id_unique",
+              "table": "budget_hold_dispositions",
+              "sqlSha256": "99fd7a075f2f34d1b2e72c801e4e9dcc9aa6a7333837859e4a3457bab0eedd0a"
+            },
+            {
+              "type": "table",
+              "name": "budget_reservations",
+              "table": "budget_reservations",
+              "sqlSha256": "c29d9fb87a973a405689333724f139e77fa5c9782f8d44032335bd5382311848"
+            },
+            {
+              "type": "trigger",
+              "name": "budget_reservations_disposition_no_delete",
+              "table": "budget_reservations",
+              "sqlSha256": "0d2068fa8089655b414bd8990d874499f1f769790e825a38e087439a669fc7aa"
+            },
+            {
+              "type": "trigger",
+              "name": "budget_reservations_disposition_no_insert",
+              "table": "budget_reservations",
+              "sqlSha256": "b8d2bbb3d6e4543e5b9f200309d414fed3cb92997c46d3e188f0ca1f314b101d"
+            },
+            {
+              "type": "trigger",
+              "name": "budget_reservations_disposition_no_update",
+              "table": "budget_reservations",
+              "sqlSha256": "3a4003c64f77d7f637d5b0db02d32230554ab260e53723dbe91a99ce80d6f4a3"
+            },
+            {
+              "type": "trigger",
+              "name": "budget_reservations_video_reconciliation_no_delete",
+              "table": "budget_reservations",
+              "sqlSha256": "586f7536458e73d9673ba2e934cf5dff356830914cdc0c15da31345269ba3444"
+            },
+            {
+              "type": "trigger",
+              "name": "budget_reservations_video_reconciliation_no_insert",
+              "table": "budget_reservations",
+              "sqlSha256": "4244427f767f59a1612edcbf56afa246743693761801f24c850ad27aaf65a754"
+            },
+            {
+              "type": "trigger",
+              "name": "budget_reservations_video_reconciliation_no_update",
+              "table": "budget_reservations",
+              "sqlSha256": "a1ce0b9f0c9aa6810a8854ba219ca7850b62b5099866fd5484547eba4c6919c4"
+            },
+            {
+              "type": "table",
+              "name": "budget_scope_policies",
+              "table": "budget_scope_policies",
+              "sqlSha256": "3880c5aaa2ce1a4689c9db6b1818c55b0093ce37db7db7904623643e556f7e27"
+            },
+            {
+              "type": "table",
+              "name": "canvas_governance_requirements",
+              "table": "canvas_governance_requirements",
+              "sqlSha256": "f787617a479962591716692d57c91afb8ef0b73f50bc02f32948bea90028a14d"
+            },
+            {
+              "type": "table",
+              "name": "capability_grants",
+              "table": "capability_grants",
+              "sqlSha256": "990e4a17b81f54f15734c57eb6719bb9a00838c3269640811d0c83c3979bf97b"
+            },
+            {
+              "type": "table",
+              "name": "consequential_execution_steps",
+              "table": "consequential_execution_steps",
+              "sqlSha256": "49b7df8b67e83711ef3700cfe84f8202048d37d0c442e750eccc48a3e4fb63e0"
+            },
+            {
+              "type": "table",
+              "name": "consequential_executions",
+              "table": "consequential_executions",
+              "sqlSha256": "acb84c344b6f016d3e865b330a742d30d1b0034496ad6680450fb735ceb92100"
+            },
+            {
+              "type": "table",
+              "name": "cost_budget_counters",
+              "table": "cost_budget_counters",
+              "sqlSha256": "26d315dc1f987de8644a2a9c182d08447b1bd9095390fc142f8457e7c0795465"
+            },
+            {
+              "type": "table",
+              "name": "cost_budget_reservations",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "2ecc476eb2cebb4b3c51ccce1041206a9d0ad02eac278652c5aa16e819f41ae8"
+            },
+            {
+              "type": "trigger",
+              "name": "cost_budget_reservations_disposition_no_delete",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "f8340645bd207eaa71c07029e01fcf631711886b933561025dcf5d57e31815fc"
+            },
+            {
+              "type": "trigger",
+              "name": "cost_budget_reservations_disposition_no_insert",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "2717674cccc429929344b51656de6c9be495daf2cdddbd8e2bffc9767563de01"
+            },
+            {
+              "type": "trigger",
+              "name": "cost_budget_reservations_disposition_no_update",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "5ed7df2ccf7d919e4e840eb5a95defbe8d3ad77988638c0031d89134b902678e"
+            },
+            {
+              "type": "trigger",
+              "name": "cost_budget_reservations_video_reconciliation_no_delete",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "e6133a851f183393e13862a0281c604062a356a7b77e385e8ad1a78865299a67"
+            },
+            {
+              "type": "trigger",
+              "name": "cost_budget_reservations_video_reconciliation_no_insert",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "7c44ef31e2b5834bc713988bd109988a7654852d6c9f427ba9490f997ba3a86e"
+            },
+            {
+              "type": "trigger",
+              "name": "cost_budget_reservations_video_reconciliation_no_update",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "bf45b135c6ce72adbee0bd0ab4db5837fcd05c091653176d49395204a56783d5"
+            },
+            {
+              "type": "table",
+              "name": "delivery_decisions",
+              "table": "delivery_decisions",
+              "sqlSha256": "844ba093652217d55b381e5ac26531823924258d793a5c925b1f9bc89183a24c"
+            },
+            {
+              "type": "table",
+              "name": "document_jobs",
+              "table": "document_jobs",
+              "sqlSha256": "9afa69aaf80898f4819945d0222f6287a05facee886790c871c13cb68184e170"
+            },
+            {
+              "type": "table",
+              "name": "event_client_receipts",
+              "table": "event_client_receipts",
+              "sqlSha256": "91405853e1912566836375b4c9ae0a7c9e192491a86599246f1aa307a66fa6a3"
+            },
+            {
+              "type": "table",
+              "name": "event_private_payloads",
+              "table": "event_private_payloads",
+              "sqlSha256": "f028b511245941dd50434ba15dd93c5ca867ad192899d1dd1dfe09a0b9d7fa1b"
+            },
+            {
+              "type": "table",
+              "name": "event_write_stage",
+              "table": "event_write_stage",
+              "sqlSha256": "3d544f8046975d0357db62f23c5df7cb482e8fb13acbb432d0b3a6238969fca8"
+            },
+            {
+              "type": "table",
+              "name": "events",
+              "table": "events",
+              "sqlSha256": "52ccb433dce6f2073c089003a76c8895a40e6bbfe71a2ff76f9461f2531b47ae"
+            },
+            {
+              "type": "trigger",
+              "name": "events_block_delete",
+              "table": "events",
+              "sqlSha256": "5d44b046d7780f8471a392efe3f11a986a854bafd9289a3dafb5c7249a4e3895"
+            },
+            {
+              "type": "trigger",
+              "name": "events_block_update",
+              "table": "events",
+              "sqlSha256": "7f944d47239e3b5b12b99eee7db15037efe8b7f363e176bd660dcdb2b2003519"
+            },
+            {
+              "type": "table",
+              "name": "external_content",
+              "table": "external_content",
+              "sqlSha256": "0179e8ca9dddd6c0b76fa2d5976f6edb685005851482d52ffe3c652200ae8d3e"
+            },
+            {
+              "type": "index",
+              "name": "idx_artifact_revisions_expiry",
+              "table": "artifact_revisions",
+              "sqlSha256": "5fb07c7853f6540dcab7f80f06b785db7ede037b8c18e5adc3a90950f4e60130"
+            },
+            {
+              "type": "index",
+              "name": "idx_artifact_revisions_owner_artifact_revision",
+              "table": "artifact_revisions",
+              "sqlSha256": "c6138da5bf59d9f67a83e99de6c6f93925dde02ebf5430b48c0cdf898cfa0623"
+            },
+            {
+              "type": "index",
+              "name": "idx_artifact_revisions_project_artifact",
+              "table": "artifact_revisions",
+              "sqlSha256": "a1e6cba1fbc9732effe3b48b9e367cc360a6d9d6bcf47576091779ee98727431"
+            },
+            {
+              "type": "index",
+              "name": "idx_assistant_billing_reconciliations_actor_scope",
+              "table": "assistant_billing_reconciliations",
+              "sqlSha256": "c45d005489a09ba9288bdcd23a4fdd4ba19a6493afb8da45e31c4f8eacfecdb6"
+            },
+            {
+              "type": "index",
+              "name": "idx_assistant_proposals_actor_scope",
+              "table": "assistant_action_proposals",
+              "sqlSha256": "a89513b48c5aff6b0d1e6c5a53f446d311f8902fe8e3d76c52e6d282d00d4ebf"
+            },
+            {
+              "type": "index",
+              "name": "idx_assistant_single_consented_turn",
+              "table": "assistant_specialist_tasks",
+              "sqlSha256": "d6dd4b52c698c7fcec6eeacb985792fa6adb0235655bfb4d710a42ae5fcb4b25"
+            },
+            {
+              "type": "index",
+              "name": "idx_assistant_tasks_actor_scope",
+              "table": "assistant_specialist_tasks",
+              "sqlSha256": "f1e910bedf84294bb1dce277d65d50e57079d788bd59714c4be0cd9e1044393d"
+            },
+            {
+              "type": "index",
+              "name": "idx_assistant_turns_actor_scope",
+              "table": "assistant_turns",
+              "sqlSha256": "789608de94c34a3b40408281ee2f74ef3e402ae92600098dcad0781daa29f181"
+            },
+            {
+              "type": "index",
+              "name": "idx_authoring_commits_actor_document",
+              "table": "authoring_commits",
+              "sqlSha256": "e7d650ce6ba2da3d58945bdf35792d22be01ce8f730e6b9095cbc4741d364bea"
+            },
+            {
+              "type": "index",
+              "name": "idx_budget_reservations_correlation",
+              "table": "budget_reservations",
+              "sqlSha256": "480442a27a42198571a464f88e4a218398288d16b62b6d847409373ac69fbb17"
+            },
+            {
+              "type": "index",
+              "name": "idx_budget_reservations_owner_status",
+              "table": "budget_reservations",
+              "sqlSha256": "b0e10e3d4def1818f311882854094da397e1a2b521c309803a984c1cd86b87a6"
+            },
+            {
+              "type": "index",
+              "name": "idx_budget_scope_policies_organization",
+              "table": "budget_scope_policies",
+              "sqlSha256": "1d1f419455896f1f78196dc348089f3a66bbd7938cfd6efcc8d747083b25fffd"
+            },
+            {
+              "type": "index",
+              "name": "idx_capability_grants_organization",
+              "table": "capability_grants",
+              "sqlSha256": "b43adf973c9826f860ef61032a87469eef80d91e6d21d81cf9e7716c6f5c6f25"
+            },
+            {
+              "type": "index",
+              "name": "idx_capability_grants_user_status",
+              "table": "capability_grants",
+              "sqlSha256": "9bfb733b2411e8a71a1e03f146bbc9289b3f19c52c1ed5cab6cacadfb2b6aa90"
+            },
+            {
+              "type": "index",
+              "name": "idx_consequential_executions_actor_scope",
+              "table": "consequential_executions",
+              "sqlSha256": "77c2748748e51b6361213374e6f72601daf4d2ae0e60454fccac3010c157f769"
+            },
+            {
+              "type": "index",
+              "name": "idx_cost_budget_reservations_owner_correlation",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "2e8079e59bfcf7a8505b70306288b7befb9edd913d8366c017cd457d9714f0eb"
+            },
+            {
+              "type": "index",
+              "name": "idx_cost_budget_reservations_owner_status_period",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "94b24be3627706c39cc4a78e24099f9fecf261c031f55adf6e86aba8eaecedd3"
+            },
+            {
+              "type": "index",
+              "name": "idx_cost_budget_reservations_workspace_period_status",
+              "table": "cost_budget_reservations",
+              "sqlSha256": "79eb373bbd131ce6f3f9dc73b98414cd39e5f653d3e3ae7599732e2eee6cb340"
+            },
+            {
+              "type": "index",
+              "name": "idx_delivery_decisions_owner",
+              "table": "delivery_decisions",
+              "sqlSha256": "070a6263403338fb8d29985f2d7e0617ae05f29f2f0f88e6ca020f49a65e62be"
+            },
+            {
+              "type": "index",
+              "name": "idx_delivery_decisions_status_updated",
+              "table": "delivery_decisions",
+              "sqlSha256": "12d61987cef489a9f83ecad4f1ff11e99f5cd623b24728941b05ea34e9e1f041"
+            },
+            {
+              "type": "index",
+              "name": "idx_document_jobs_owner_status",
+              "table": "document_jobs",
+              "sqlSha256": "40e79d4844904993b5f9e901ae1d3f3096a9309097a712093321d59ba7e4af9a"
+            },
+            {
+              "type": "index",
+              "name": "idx_document_jobs_stream_correlation",
+              "table": "document_jobs",
+              "sqlSha256": "0ec88596ba57fd4adda1acda6bdbe6ccaad94fe247b15891dbb14cdaaf5f2514"
+            },
+            {
+              "type": "index",
+              "name": "idx_document_jobs_stream_document",
+              "table": "document_jobs",
+              "sqlSha256": "0b16030521164505c627d3ee2b8b61a8cb1a67cc83713dd9870cf426ea20b7ab"
+            },
+            {
+              "type": "index",
+              "name": "idx_document_jobs_stream_status_requested",
+              "table": "document_jobs",
+              "sqlSha256": "c56d6c09e5f5b777f04b082b57e96b3a0db7b08e2f9f4e0cca9226c61784f607"
+            },
+            {
+              "type": "index",
+              "name": "idx_document_profile_grants_actor",
+              "table": "memory_document_profile_grants",
+              "sqlSha256": "4722ec144ca77efd5f46cde8ec6a2bb13eefdd0d5d7f4293acf0fbcb5b47123c"
+            },
+            {
+              "type": "index",
+              "name": "idx_document_profile_grants_enrollment",
+              "table": "memory_document_profile_grants",
+              "sqlSha256": "9822bc8bbfdc6f244d8677ca9b5ca88c96720fbe5fdff09bbdb5f2837ce45fbb"
+            },
+            {
+              "type": "index",
+              "name": "idx_document_profile_grants_organization",
+              "table": "memory_document_profile_grants",
+              "sqlSha256": "140f7d8eda416202af2ae3d80a9f4a56a78fc47974f5cda01fac0b0c65651790"
+            },
+            {
+              "type": "index",
+              "name": "idx_event_client_receipts_event",
+              "table": "event_client_receipts",
+              "sqlSha256": "88aa08f40732b18904cc8f68ecaefff40294b88c8c94878ee9f5e46e47a37741"
+            },
+            {
+              "type": "index",
+              "name": "idx_event_private_payloads_owner_scope",
+              "table": "event_private_payloads",
+              "sqlSha256": "1d49683a9f5b89c7f0f575b721bbaddd73eb393445648b060285ee12efd6ff5c"
+            },
+            {
+              "type": "index",
+              "name": "idx_events_correlation",
+              "table": "events",
+              "sqlSha256": "dcdfe3d7881e70e902615be89387d51bcde806f7d428bf22b731fee8fc3a175e"
+            },
+            {
+              "type": "index",
+              "name": "idx_events_nonphantom_stream_sequence",
+              "table": "events",
+              "sqlSha256": "eb20e1404d6c553c3532463989b57dfd9f7f9d44fcc8fbd5b64c2f226e96ad15"
+            },
+            {
+              "type": "index",
+              "name": "idx_events_stream_actor",
+              "table": "events",
+              "sqlSha256": "910ca9648ab676de74a833a7518b27c9a31e9dbd30893ada596c8f763525af3f"
+            },
+            {
+              "type": "index",
+              "name": "idx_events_stream_sequence",
+              "table": "events",
+              "sqlSha256": "818ad6dd75edddd36c538b170da29692e440f02abab8a8753337790b67d8eb37"
+            },
+            {
+              "type": "index",
+              "name": "idx_events_stream_type",
+              "table": "events",
+              "sqlSha256": "f9e4bd733352f69b565ed1ccbdcd7f7008606c54994a369161b61c292f75169e"
+            },
+            {
+              "type": "index",
+              "name": "idx_events_type_occurred_stream",
+              "table": "events",
+              "sqlSha256": "d3ba14469a705f7f0a91aa167d4e962b03c4a066fac38be1a712b2a3210f850e"
+            },
+            {
+              "type": "index",
+              "name": "idx_external_content_owner",
+              "table": "external_content",
+              "sqlSha256": "ab1818dfe3bf4d3259f0405cd2da0a153f910c5ad91bb685db8b7855a375be01"
+            },
+            {
+              "type": "index",
+              "name": "idx_hold_dispositions_job_attempt",
+              "table": "budget_hold_dispositions",
+              "sqlSha256": "25d0ffc1532a95cfbadfecaf3264c88ecc1644b84e1ad3373382fdd2952f6d7a"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_actor",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "287f9bbbdfd4aa1ac2f6c66718a808b6f27e2c492a496bf65e7f348c988d6255"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_answer_content_id",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "ccad2e679c25f4a412142bb39cb6f3c29c6325968f127d05f15a20912a89bc5e"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_answer_event_id",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "e75f5756ece9c5e76a21d7ac4a1e7c6473b0a10904b9990492d92e01451e68c7"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_dependency",
+              "table": "memory_document_job_origin_dependencies",
+              "sqlSha256": "61076631d9f0959a18dd1e14757dfa017f07604f49963f71348d9e64d0cf228f"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_enrollment",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "c1020a892e5ef54e427952b19044b09d1031dac38f1f798cff44060bf70bec6a"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_expiry",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "6ccf891fc6ec7164cf857d6b9ba3226b66382bd25bc8da966ee26f8dec76a4c3"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_job_id",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "26b0568bfc1c0d5f3d536ab3793655b3502d780322209e7d97724db345d459b4"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_manifest_content_ref",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "806aa4c56303aa0707312022727c15f99649ae5197f44b41e00b4adbf5688efe"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_scope",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "f4162e460a85aef7ac4eb6365ef93bd75c4014defc218a18b3f015e2d532c0ed"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_turn",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "cefcb2efc9c3b0b0d3c36313b9b3b05685d22ec94694acace429c50d03a3ba95"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_user_content_id",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "1767842ae9c71ea1ba8f8d49a5a07ce672dd99d06045e80bfbb1e69443fd34d3"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_document_job_origin_user_event_id",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "b51ef1828e6ee528e93782b72c4caeb31d5eb07a63bb4bee9902823b4bec67ca"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_live_actor",
+              "table": "memory_live_enrollments",
+              "sqlSha256": "ffac6e10cdbfe03729c5386164d4bb75f6b8d2081c35ee9bc2169fb2b2f6bf92"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_live_checkpoint_expiry",
+              "table": "memory_live_change_checkpoints",
+              "sqlSha256": "3bcd866139f6e5ca982b30b4b53c4ca51d20fab6dddf2326f6e12bd4eec647ae"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_live_conversation_page",
+              "table": "memory_live_conversation_segments",
+              "sqlSha256": "56683600184e4f10b2c7718fa9977ca3eeb7951633d19bbe961102baabf46146"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_live_due",
+              "table": "memory_live_enrollments",
+              "sqlSha256": "7536ebc078ba08c9598529c33a1c858e5dc902feffd7898a04ebad0bc0f277e0"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_live_expiry",
+              "table": "memory_live_sources",
+              "sqlSha256": "f89f0cd49d120c1088854b051ad49b5fff61cb093a5a6689b6c836ed9648a72e"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_live_organization",
+              "table": "memory_live_enrollments",
+              "sqlSha256": "3b0c692424be0fbb9197a7596e530116d55d1547f6654ad16ccf4abbb76b177a"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_live_runs_started",
+              "table": "memory_live_runs",
+              "sqlSha256": "39ebfa8cc1f14f2c51e4f0060e87d62353073c89d1a723c1e462ca680e06b4ff"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_live_source_page",
+              "table": "memory_live_sources",
+              "sqlSha256": "4dcdd3b9fa772806cb73905034e82016964ed81cd0241f6afb11a0ce671d2aba"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_native_origin_actor",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "354d8e21b24b20b264d52b1c3e2bdeb6c3e77a2eeaf026eb470dac931b8e1cbe"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_native_origin_answer_content",
+              "table": "memory_native_answer_dependencies",
+              "sqlSha256": "a0755c54e04855116d6f38172e253bca0a5bbdfcdce25f68af09a3baf13a23d5"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_native_origin_enrollment",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "4c5bef97d0fd843aa8a0d43d26563464dae21f72938ac3ef1c1fe1f93eb9edb3"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_native_origin_source",
+              "table": "memory_native_answer_dependencies",
+              "sqlSha256": "0515089ef38f07d8285ebeef47cba5a12f4d26441ea49716255acad3e5c4b0be"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_native_origin_user_content",
+              "table": "memory_native_answer_dependencies",
+              "sqlSha256": "f278e1067d746a389c4c459dd0d125f84f37d73d4e66c69ed0ddd71e7815c1ff"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_heads_cleanup",
+              "table": "memory_structured_conversation_heads",
+              "sqlSha256": "442bced01375f84ac41f2fff46b689159e50fe1006bedce193ef81f9f0fc7879"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_heads_enrollment",
+              "table": "memory_structured_conversation_heads",
+              "sqlSha256": "3a856b220b21ba583da0e0ad76f5905f3c2fe70b05a7ea819fe577959e1eae63"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_heads_organization",
+              "table": "memory_structured_conversation_heads",
+              "sqlSha256": "265c021baacbe41acff65b76d475ed9e53cf2d6f6d468538612d59a3940ef755"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_heads_personal",
+              "table": "memory_structured_conversation_heads",
+              "sqlSha256": "c25b92eb0b0b865cfb981d12c00a5c390a26ad87ca4e8fb1f8933fd5e68e9133"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_heads_shared",
+              "table": "memory_structured_conversation_heads",
+              "sqlSha256": "2a0f5beb1474c5012e7892e938d7c0d4a33c017f875024c8991c6bf88c543313"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_actor",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "dcfbba39dba95aca62a153476d2463be748d6610ed1c7a8d3988b23ca6c5d66e"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_answer_content",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "58c37bb371f740b20b0cb4b1ef987704f22648d88010b6ca144d845e378ba225"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_answer_event",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "2728e95c0c42b51f2e746638d07edc6f7bcd100bb79a853e8fd3d400da6ddc81"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_enrollment",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "20c67d279fc0156dedcef51e475c00d35cccf95f3b244e3ae9ec73359c6f1aea"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_ledger",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "812c1eaef3f6d37297c0d96b177730db6a56cb46358db08909945b82760419ff"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_manifest",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "174da4d9e80329d2a1233456295aee452d06c2e882194c4d860a5b01b87d7f7d"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_revision",
+              "table": "memory_structured_answer_ledger_revisions",
+              "sqlSha256": "4a65d0999ed5f59d9f3114bc2f6e8891dc04e37de91068f3f15b010cfc8713a7"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_revision_body",
+              "table": "memory_structured_answer_ledger_revisions",
+              "sqlSha256": "210ac20006727bd572cd18ba97fdfa0f40ca99e8a839084e04d76756548dffb1"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_revision_content",
+              "table": "memory_structured_answer_ledger_revisions",
+              "sqlSha256": "3595715ee1dec16ace68c009970521afeb47d0bdb3c76f738007089c6fcb2b7f"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_revision_ledger",
+              "table": "memory_structured_answer_ledger_revisions",
+              "sqlSha256": "2bab82ce6446159e090dc90b583bf70c5b55ea4edb8ac7243249cce8dd18a172"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_turn",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "ed4cfc855cee188b7c591962f6f2a3d08190a9b2ce376506a2fc07c620f092b5"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_user_content",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "00f82488763039154b90c0a55a665872d68115756a9ea2f9bd027efcd8e4209a"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_origin_user_event",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "17247a0d42f04c1238104f47c816be7a1a703ca56958265f1061b1385068a307"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_original_body",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "0a6ae989f7244a5c6b1c4b3f21f7cf0224bc7520d9cca75e7a2b710558c3f861"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_original_content",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "96a80bd60ac4cb68753576ddba1bccf5a35eabbdbdebb6bd346c285ddb5712d0"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_original_event",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "818bc4f4576fafd98fd452ed4d551b51792c0c748a38c2c27afd38d84e5309c4"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_original_sequence",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "94a5d81e18d54cbf168d67ea16eadf0291bdc0644552a3bbb48fef5986adb6ae"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_original_source",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "783e01354e0250665b213b14a4e8a0be300f24a658aca910b790a4273a2c9cbe"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_original_turn_role",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "61182d454cf5fe091e36943116d9de833df06ef5dd0e451d6ee678658960e34b"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_revisions_body",
+              "table": "memory_structured_conversation_revisions",
+              "sqlSha256": "9d24fcb7f056386e5bf9099d01f22660ee9572c5af9ebc056e7d267252312b01"
+            },
+            {
+              "type": "index",
+              "name": "idx_memory_structured_revisions_expiry",
+              "table": "memory_structured_conversation_revisions",
+              "sqlSha256": "d5d6e1ede3901cabd3b0e3f25df0c52a6ccff9c04ad6afdc0928404e022580e3"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_context_package_contents_scope",
+              "table": "organization_context_package_contents",
+              "sqlSha256": "7d113a4bf1136183a779fc8eff89a9aa2edd1a282e87d6e79efcccb262052712"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_context_package_version",
+              "table": "organization_context_package_versions",
+              "sqlSha256": "2c08be7ae5723c7ba0d85ee4e24a0a4889a89ac587210f4ad69080fb47cc557a"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_context_packages_scope",
+              "table": "organization_context_packages",
+              "sqlSha256": "15d17ec856339883cef194c79636b423cbfc2f47606456015651a054539e0c26"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_context_sources_scope",
+              "table": "organization_context_package_sources",
+              "sqlSha256": "0942229eb4f631a723c2c0e7f59a403c20722c2a61281492e1467503b4fc18bf"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_context_versions_scope",
+              "table": "organization_context_package_versions",
+              "sqlSha256": "8a56a8e351f61f88050bd985ea4db767ad29b7832762ec3864e3be9ffc98388b"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_custody_transfer_scope",
+              "table": "organization_custody_transfers",
+              "sqlSha256": "2cd9134679fcf6b325f86877a040bf3076b0774a1fd9da8f08c804d9e5c2fc8a"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_deletion_items_status",
+              "table": "organization_deletion_items",
+              "sqlSha256": "1638e23f24b1cecc522f55248390ff6173e88654d61cc389f6b35c00c4926f7d"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_deletion_jobs_scope",
+              "table": "organization_deletion_jobs",
+              "sqlSha256": "7ee62c27477168ab4d439e501aa01f86015c4745202086fe34407684f750b308"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_identity_binding_subject",
+              "table": "organization_identity_bindings",
+              "sqlSha256": "00820132ed57a4140c0faee1b6ff21050170433484638489b8076a259d42bc7a"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_identity_binding_user",
+              "table": "organization_identity_bindings",
+              "sqlSha256": "4dfa7bebb880faaa7a122eed2bdf5ed95b7d2071b97750fe0c592778d0e50d21"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_identity_group_external",
+              "table": "organization_identity_groups",
+              "sqlSha256": "e40916b4744a21e40da611383443abac7a8e11684d9b8e46d011777bddb19355"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_identity_group_members_user",
+              "table": "organization_identity_group_members",
+              "sqlSha256": "d7ca771a0173f101c05c4b1c98a6f6bcc2284d0a0604d0f2ea338e3bd5fdb802"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_key_active",
+              "table": "organization_key_versions",
+              "sqlSha256": "9eb2cbb16c2ab9f2256af69e04e0f16d5b8fc2fc1e4e6599f3576f465ef14591"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_key_one_active",
+              "table": "organization_key_versions",
+              "sqlSha256": "b08192e991e26940755feab77395540ca723430e15a006d11e3971f4994fd9e4"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_key_version",
+              "table": "organization_key_versions",
+              "sqlSha256": "6769cd422a6d816e26e5d3e27bfab7a49eee44a0767805660872f23d4107327e"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_legal_holds_scope",
+              "table": "organization_legal_holds",
+              "sqlSha256": "728e2a9a807869b9894c3add7d45d854cf4b4d898b16fbf9fb240ce1c94ed36b"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_provisioning_scope",
+              "table": "organization_provisioning_credentials",
+              "sqlSha256": "926c3d2d7fa4640bb14ce619d8546689f8320da780ebc1e3c5e9cacc98223ceb"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_provisioning_token_hash",
+              "table": "organization_provisioning_credentials",
+              "sqlSha256": "c99980ebd07d2f782c818d57a02f546fc24285ce37b13170c01ca99980e34daa"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_recovery_drills_scope",
+              "table": "organization_recovery_drills",
+              "sqlSha256": "4686feb798368c2e92aef203291290f56980a1c919e8a1f8073b616ba5760285"
+            },
+            {
+              "type": "index",
+              "name": "idx_org_recovery_snapshots_scope",
+              "table": "organization_recovery_snapshots",
+              "sqlSha256": "4f1b03142c166585854bf982efe224a5b87012d61a4f114c6722bfe545d8a8be"
+            },
+            {
+              "type": "index",
+              "name": "idx_organization_audit_scope_time",
+              "table": "organization_audit_events",
+              "sqlSha256": "bf035f1a95a451c8349167892f768da221b586705375c2d2d3eaf953d7e338b0"
+            },
+            {
+              "type": "index",
+              "name": "idx_organization_invitations_email_status",
+              "table": "organization_invitations",
+              "sqlSha256": "8f84ddf6a9beabb50fb4566bee6f17ffb6b687b67a92d21c6d4e65b755389efc"
+            },
+            {
+              "type": "index",
+              "name": "idx_organization_invitations_organization",
+              "table": "organization_invitations",
+              "sqlSha256": "4e88b26152316f8d8b2e568b3f3b6fb1716c3e10df1ce00b8213d92699742984"
+            },
+            {
+              "type": "index",
+              "name": "idx_organization_invitations_token",
+              "table": "organization_invitations",
+              "sqlSha256": "6ab54a3f6073d0bdb972bd9d6a641f0de905c7222d6b4ea4a4542bd8421f1c82"
+            },
+            {
+              "type": "index",
+              "name": "idx_organization_memberships_org_user",
+              "table": "organization_memberships",
+              "sqlSha256": "3f31bb8f004f392b5444ca477dd6eae0867a7c6d715e8ca45117762f55dc1123"
+            },
+            {
+              "type": "index",
+              "name": "idx_organization_memberships_user_status",
+              "table": "organization_memberships",
+              "sqlSha256": "916399b78d528bc67de41518357b265142e8c84ebbff39bee498413ee3f0c552"
+            },
+            {
+              "type": "index",
+              "name": "idx_organization_projects_organization",
+              "table": "organization_projects",
+              "sqlSha256": "ef7272ac21c5a6995c717a8f2e0d24f4eda151c3cdd8c20099cf0ca30d4aaec9"
+            },
+            {
+              "type": "index",
+              "name": "idx_organization_projects_owner",
+              "table": "organization_projects",
+              "sqlSha256": "c12b8cdeb0809594cec41be964fe3dfa381f9d8274f53ec7e659a247b5c03157"
+            },
+            {
+              "type": "index",
+              "name": "idx_organization_projects_owner_project",
+              "table": "organization_projects",
+              "sqlSha256": "9929dd4ee9c525abf748ab8dea1632cc32ecf1825e03bdf84a105248593dc921"
+            },
+            {
+              "type": "index",
+              "name": "idx_organizations_owner",
+              "table": "organizations",
+              "sqlSha256": "88d76ad2bd377cfe609d9c0758ded7fde904047e3611f12eb0c4ff9d633fa2cc"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_asset_storage_writes_unique_1",
+              "table": "output_asset_storage_writes",
+              "sqlSha256": "c41d9c518e7a392c52528af4029e7ad94c6f46bf6a463760db1d8158f7d6ca8c"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_asset_storage_writes_unique_2",
+              "table": "output_asset_storage_writes",
+              "sqlSha256": "3f6dc011be2f13c9df401f0c56b2e36997709cf8ec512506c9c1bb5e64e3cd43"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_assets_unique_1",
+              "table": "output_assets",
+              "sqlSha256": "71444b377788861c975c6faa16978e5d2caebfcc9fef794c89f644bff0af4523"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_execution_grants_unique_1",
+              "table": "output_execution_grants",
+              "sqlSha256": "331579ba1f8421a5fba712fa047a528882876a49962c5d50017b19efa4321db3"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_native_storage_writes_unique_1",
+              "table": "output_native_storage_writes",
+              "sqlSha256": "f809de3b086dd838a481432fd9b6d6dd73e80f46140bb2aa8fe3435b85c35d31"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_operation_slots_unique_1",
+              "table": "output_operation_slots",
+              "sqlSha256": "51f57fb98a6049883b651f9e4eeb7848329908d17ad66b5bfce30e85738df671"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_operation_slots_unique_2",
+              "table": "output_operation_slots",
+              "sqlSha256": "9e6b287279ce8f5eac7b55fe5cfb1d449cfec8cd46d7bcf7722af988862488e4"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_operation_slots_unique_3",
+              "table": "output_operation_slots",
+              "sqlSha256": "0a2ced389ef73e0f7b890955e2b2f13b9bd9518e03b8e41eba12a6c3152d0d5c"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_operation_slots_unique_4",
+              "table": "output_operation_slots",
+              "sqlSha256": "628e182894e6c46c666be1fcb7ccd745fb225d527382e16250faf87302107b26"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_operation_slots_unique_5",
+              "table": "output_operation_slots",
+              "sqlSha256": "d8bec68a9e6b07832764d55697bbd2f52c067c125b48e554105169a48839c800"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_plan_revisions_unique_1",
+              "table": "output_plan_revisions",
+              "sqlSha256": "47a3c664e6eb0c5edce9eacb663a669ba58d8a0570e3c7ccef354a42486e0a8e"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_plans_document",
+              "table": "output_plan_revisions",
+              "sqlSha256": "b0ed3c377410809325d15c6fa5d7f01e516e20e98f8adb95d4dcc59ff4eb120f"
+            },
+            {
+              "type": "index",
+              "name": "idx_output_provider_calls_unique_1",
+              "table": "output_provider_calls",
+              "sqlSha256": "104949619bc2b2484b77cbd5b4d6c4be5325102b6be1554dd6f4a9ac6bf59c0f"
+            },
+            {
+              "type": "index",
+              "name": "idx_pilot_cohorts_active_organization",
+              "table": "pilot_cohorts",
+              "sqlSha256": "2d4c303cbbfe6d66778bc5d279a38f2b4a8c2d41a3cef8382129f5e5ad319e28"
+            },
+            {
+              "type": "index",
+              "name": "idx_pilot_cohorts_organization_status",
+              "table": "pilot_cohorts",
+              "sqlSha256": "7aba6ea722eba33f06ede60f49da9c02332eedc7f7555ecba0287d58f04d165b"
+            },
+            {
+              "type": "index",
+              "name": "idx_pilot_cost_reservation_cohort_actor",
+              "table": "pilot_cost_reservation_scopes",
+              "sqlSha256": "985076eef778a983519d3e5ead95527eef82705a7d79c90cd4d4c47d5a2fc7aa"
+            },
+            {
+              "type": "index",
+              "name": "idx_pilot_participants_cohort_email",
+              "table": "pilot_participants",
+              "sqlSha256": "4931d9f1fa6a06683c5f2112c3ce65ba3fc64d8306fe1016292cf55b5bd82bb7"
+            },
+            {
+              "type": "index",
+              "name": "idx_pilot_participants_cohort_user",
+              "table": "pilot_participants",
+              "sqlSha256": "9420b0c5e3329078c50a9dab01a2f387622ebdf334fcd09466e5498b9be10b0a"
+            },
+            {
+              "type": "index",
+              "name": "idx_pilot_participants_organization_status",
+              "table": "pilot_participants",
+              "sqlSha256": "c593c3ce8da594c6d88dd4afc9701dafe70df4417ef97678302034135d011cbc"
+            },
+            {
+              "type": "index",
+              "name": "idx_private_content_owner_expiry",
+              "table": "private_content",
+              "sqlSha256": "5002b9b8ccf1495859418e91488ad0f787d921cf71a18065914b543bb2434309"
+            },
+            {
+              "type": "index",
+              "name": "idx_private_content_pending_expiry",
+              "table": "private_content",
+              "sqlSha256": "6cdf4f0ea97a6fd407fcc9090ab970e5df11a085c16edcca68a72bde141f34fc"
+            },
+            {
+              "type": "index",
+              "name": "idx_private_content_retention_organization_expiry",
+              "table": "private_content_retention_scopes",
+              "sqlSha256": "fadadc8506d8575d52862e69dd1da1deb2475b595e8a6446d3af24bcbae6379c"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_automation_outbox_idempotency",
+              "table": "project_automation_outbox",
+              "sqlSha256": "1b66c88806e1338dff62ab96adfa690bc472152d36264f1f38e8e226f1f0ad55"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_automation_outbox_pending",
+              "table": "project_automation_outbox",
+              "sqlSha256": "e5d5a76eeac217adbc3abdfbb873488194da96329c4d7a12d2bf64b1f14ef7aa"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_automation_policy_org",
+              "table": "project_automation_policies",
+              "sqlSha256": "a22161b3d3038b0fab513282009526dfc0b35aaab28a4268a2b6cf51f54175a3"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_automation_run_event_rule",
+              "table": "project_automation_runs",
+              "sqlSha256": "16899f67ea0f2f3a8f1aaa9814eeab91fd8ddc4228ae433e7953c0fc923b7031"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_automation_runs_scope",
+              "table": "project_automation_runs",
+              "sqlSha256": "1e7500ccbd13eeb853619a0a82f1d1cec135de712b94b550c9e1e67f37d726d9"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_budget_scope_organization",
+              "table": "project_budget_reservation_scopes",
+              "sqlSha256": "9d8642ab036fff3b27d71259769e90cda46aa2ec9809d8c0f776c53c227765c4"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_context_binding_document_package",
+              "table": "project_context_package_bindings",
+              "sqlSha256": "fee666fa13f0f4ae5a6d1b0b0a63f01257d58340e4fdc13cc2f28ab9f3bf7aa5"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_context_binding_package",
+              "table": "project_context_package_bindings",
+              "sqlSha256": "060002a9e08a45db9b34db3397b3eed22132ce51f26af210772e708d7b9caef1"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_context_member_target",
+              "table": "project_context_package_members",
+              "sqlSha256": "7a3e25cd96e8cb3836138c28b58cc4a07218c00bb78d9d5a89c4e32d12aab6e7"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_context_principal_scope",
+              "table": "project_context_sessions",
+              "sqlSha256": "458838e9d6bdb6d870595f621d16f051abb9dfcffea65c36e8091e91643552f5"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_event_scopes_owner",
+              "table": "project_event_scopes",
+              "sqlSha256": "4cab487a3913061d08065d5fe627063be2c3ddb5b20d4510031666fa3d00430b"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_event_scopes_sequence",
+              "table": "project_event_scopes",
+              "sqlSha256": "a753452731e7735cf4e87eaf7dd1e7606fa06390a73b3191e432376a9a9411c2"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_memberships_access_user",
+              "table": "project_memberships",
+              "sqlSha256": "6bbac494d8d4977ab4930659d7729d496e9f6c0ad0c57950a1e7a821026142e7"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_memberships_user_status",
+              "table": "project_memberships",
+              "sqlSha256": "435e51f2876e42abc172b0c3732241ac484a9df1fa8c8d7132134190496d064e"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_migration_organization_status",
+              "table": "project_migration_states",
+              "sqlSha256": "8f079d59c5dfcb098fbd6aa668216a3c4ed356a2bbcc285077b4a59b1aca820f"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_notifications_recipient_event",
+              "table": "project_notifications",
+              "sqlSha256": "5d708e7273c607a578c38c27e3847f884890ffccee3044885bcf03e0f54ad216"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_notifications_recipient_time",
+              "table": "project_notifications",
+              "sqlSha256": "09d6da6a966b6cb838e1374fc0f8b42e15c5b337f7f1cb370800564fd89e8fce"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_resource_scopes_owner_kind_actor",
+              "table": "project_resource_scopes",
+              "sqlSha256": "ef5a13775ccc034ec36b45c35bf12e59609a32a6862848516457e53a38e0b63d"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_resource_scopes_resource",
+              "table": "project_resource_scopes",
+              "sqlSha256": "34c2829b677836f26c62db6633672219601393741a5911ed6ba930f8d15eed11"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_review_task_event_assignee",
+              "table": "project_review_tasks",
+              "sqlSha256": "fa1e028f2cd9b5d76a153c4c5d6aeb8dae0fcb037760df6de22e1cc0f80ddd52"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_review_tasks_artifact",
+              "table": "project_review_tasks",
+              "sqlSha256": "a66bad8e184bf980f2d6776c54c038448d12652e001a75e4f9ffae6840eda088"
+            },
+            {
+              "type": "index",
+              "name": "idx_project_review_tasks_assigned",
+              "table": "project_review_tasks",
+              "sqlSha256": "2c8a8c68f8adc10e424acd8ad83c8b6f0db630e3fbc61a45e2147018597848a6"
+            },
+            {
+              "type": "index",
+              "name": "idx_replay_approvals_owner_expiry",
+              "table": "replay_approvals",
+              "sqlSha256": "333d889a57a22f5605b06899c1c1286f60b08ced47003f5a4309f1ed31ae4ca9"
+            },
+            {
+              "type": "index",
+              "name": "idx_replay_sessions_owner_created",
+              "table": "replay_sessions",
+              "sqlSha256": "dba3fe0dbaddc90cbeda3ce8440ffc8dadd1441e8c12e585207aec046717a4db"
+            },
+            {
+              "type": "index",
+              "name": "idx_retention_sweep_runs_started",
+              "table": "retention_sweep_runs",
+              "sqlSha256": "c064e9131e500ee51cdbffc7250a267b8f6e843afb7b9eb9b7114db866bc97ff"
+            },
+            {
+              "type": "index",
+              "name": "idx_route_performance_recorded_at",
+              "table": "route_performance_samples",
+              "sqlSha256": "7fd3287f6b213c30aaf9b7ef81567cf4c34682b6b7bad145c00bfa25cf5bea7a"
+            },
+            {
+              "type": "index",
+              "name": "idx_route_performance_surface_time",
+              "table": "route_performance_samples",
+              "sqlSha256": "eca0e78c1e32f1594204983ac972aec142ce1c293669a6c7798ba56a263cba71"
+            },
+            {
+              "type": "index",
+              "name": "idx_share_scopes_owner_resource",
+              "table": "share_scopes",
+              "sqlSha256": "da6d4e21253df6ee3828b7e78f30d08714f72df8ee0eec2d6eb8036e6757bb02"
+            },
+            {
+              "type": "index",
+              "name": "idx_shares_owner",
+              "table": "shares",
+              "sqlSha256": "35ec76f0d60ff54c36439f54423781442455c07511aabd5e755e0189b7b9a224"
+            },
+            {
+              "type": "index",
+              "name": "idx_shares_token_hash",
+              "table": "shares",
+              "sqlSha256": "c3f710f6316d8953bd21741a7fffac5b01e15126fe5d1716f7afc27bc7f84d63"
+            },
+            {
+              "type": "index",
+              "name": "idx_still_decision_cache_expiry",
+              "table": "still_decision_cache",
+              "sqlSha256": "ff35f54fc2c1286d4399e6cdbd39ed3e8f5e8d10b208a6af27dbfcebb9770abb"
+            },
+            {
+              "type": "index",
+              "name": "idx_still_decision_cache_owner",
+              "table": "still_decision_cache",
+              "sqlSha256": "51567568060fc97b996612ea30d94249ff64485263be7c9639d65f0f6c74be4c"
+            },
+            {
+              "type": "index",
+              "name": "idx_still_history_cache_expiry",
+              "table": "still_history_cache",
+              "sqlSha256": "6be3ba180b9e5554a5826e4bd8f2e38edbe0049b4cd24aec0d193193a702fadd"
+            },
+            {
+              "type": "index",
+              "name": "idx_still_history_cache_owner",
+              "table": "still_history_cache",
+              "sqlSha256": "a178c8182e9ce0771c36552e60252b243e0a763416c40d4110061158580ac3a3"
+            },
+            {
+              "type": "index",
+              "name": "idx_still_panel_commands",
+              "table": "still_panel_commands",
+              "sqlSha256": "019cf92a74a7b8a4d91c39e8e0022bbc1903d888428de65b70fe5026d631d492"
+            },
+            {
+              "type": "index",
+              "name": "idx_still_panel_expiry",
+              "table": "still_panel_sessions",
+              "sqlSha256": "5e81dac5fc1497fc514df56aade7b9dfa5206c8523472c03911b77459b4a6f4f"
+            },
+            {
+              "type": "index",
+              "name": "idx_still_panel_owner",
+              "table": "still_panel_sessions",
+              "sqlSha256": "302b47236c195e73375bc89cbb5cdfb971da163adb055edfd2ac1bf1bdc40a1b"
+            },
+            {
+              "type": "index",
+              "name": "idx_users_email",
+              "table": "users",
+              "sqlSha256": "05edc43db237e83e7c6cd1a31caa31eec4db7558bce08c6907d3a429973ba845"
+            },
+            {
+              "type": "index",
+              "name": "idx_users_role",
+              "table": "users",
+              "sqlSha256": "8a20af10d8916b8acf808d01a4dee590dd7fd285173aef245546721f89a4c04b"
+            },
+            {
+              "type": "index",
+              "name": "idx_video_reconciliations_job_attempt",
+              "table": "managed_video_reconciliations",
+              "sqlSha256": "5572c625abf7053584ce8b47e561587b0932c286703d6b0e2a81930890312043"
+            },
+            {
+              "type": "table",
+              "name": "managed_video_reconciliations",
+              "table": "managed_video_reconciliations",
+              "sqlSha256": "4b18e52ad65d0063d8682893b4a696d038957405c2274739efc9eaad8135847d"
+            },
+            {
+              "type": "index",
+              "name": "managed_video_reconciliations_cost_reservation_id_unique",
+              "table": "managed_video_reconciliations",
+              "sqlSha256": "a5f130fa6108eb98351f564e5ba490e2715dd271860fcc1af91c156306bd9833"
+            },
+            {
+              "type": "trigger",
+              "name": "managed_video_reconciliations_no_delete",
+              "table": "managed_video_reconciliations",
+              "sqlSha256": "82bbdcbdeed3942f3637d1bce6865235f7c722c378a92036ea867bed1207d41d"
+            },
+            {
+              "type": "trigger",
+              "name": "managed_video_reconciliations_no_replace",
+              "table": "managed_video_reconciliations",
+              "sqlSha256": "df6dfc25f0603eeeee6831e6fe61e3c912937ec9a1621773e4dc724978f561e1"
+            },
+            {
+              "type": "trigger",
+              "name": "managed_video_reconciliations_no_update",
+              "table": "managed_video_reconciliations",
+              "sqlSha256": "271932ff0044877647af2030337377c39d8ff12acfeecceba8d96c4a23a9dff3"
+            },
+            {
+              "type": "index",
+              "name": "managed_video_reconciliations_token_reservation_id_unique",
+              "table": "managed_video_reconciliations",
+              "sqlSha256": "e45d8d127b122f8f927c666ad4e088d61a57c6dfa45cd748dcad7ae734aa91a5"
+            },
+            {
+              "type": "table",
+              "name": "memory_document_job_answer_origins",
+              "table": "memory_document_job_answer_origins",
+              "sqlSha256": "eb02d98a4f33fe9da2f007f38b9f24850ca41dc98449cc550c6e82f70fa44d74"
+            },
+            {
+              "type": "table",
+              "name": "memory_document_job_origin_dependencies",
+              "table": "memory_document_job_origin_dependencies",
+              "sqlSha256": "e0a0798e9dc0e16a15e85a4153bd2e5a55112d2fb8bc21462851e3cb9944f14b"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_document_job_origin_retirement_delete",
+              "table": "memory_document_job_origin_retirement_progress",
+              "sqlSha256": "03e76d5c10e47f5913aa50c8e40e664a0ec1e9b8554a20437e416db391a5ce20"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_document_job_origin_retirement_insert",
+              "table": "memory_document_job_origin_retirement_progress",
+              "sqlSha256": "f00bddf615a20a5a2c21f5904a756f5823ba0b17672d0d5330a4a43fa710c7e7"
+            },
+            {
+              "type": "table",
+              "name": "memory_document_job_origin_retirement_progress",
+              "table": "memory_document_job_origin_retirement_progress",
+              "sqlSha256": "57223de0f6127ed04d7b3ad42f1c38ba36898f8a4e010bdba41bf51e100347ff"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_document_job_origin_retirement_update",
+              "table": "memory_document_job_origin_retirement_progress",
+              "sqlSha256": "cfa4f57612f18cf34608e48e282edb52c2dde77849aa3d68d847d0af0bec8755"
+            },
+            {
+              "type": "table",
+              "name": "memory_document_profile_grants",
+              "table": "memory_document_profile_grants",
+              "sqlSha256": "51fbd450adf6db768560d7c9799ba6ae18a191fbad66936479ca1f1790d40b0a"
+            },
+            {
+              "type": "table",
+              "name": "memory_document_profile_suppressions",
+              "table": "memory_document_profile_suppressions",
+              "sqlSha256": "d140beb48a0f72e51b3feced784c105cd776470bcfa70b75158cb2b3023fcbc3"
+            },
+            {
+              "type": "table",
+              "name": "memory_live_change_checkpoints",
+              "table": "memory_live_change_checkpoints",
+              "sqlSha256": "a0e5c374fe5ed15cf32fc5652b5317bc72aaccf60a33ac59cfbb162760576e44"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_live_checkpoint_enrollment_changed",
+              "table": "memory_live_enrollments",
+              "sqlSha256": "a62b4a53136958563c87591d39f050e2ad3bf0a75ecdf773badeddc44e226106"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_live_checkpoint_source_changed",
+              "table": "memory_live_sources",
+              "sqlSha256": "45bf65d63405afb69cb8b10e60df0c2c88eb434585dbde94cb9797100c39008e"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_live_checkpoint_source_deleted",
+              "table": "memory_live_sources",
+              "sqlSha256": "eaaed157fe5cdb59c5d1374a225bc431981f5e0d39066dd755fd270cdb429130"
+            },
+            {
+              "type": "table",
+              "name": "memory_live_conversation_segments",
+              "table": "memory_live_conversation_segments",
+              "sqlSha256": "9182eadb24154931071573aa1a8bbfdbd23e975f970314fe790e441b67c35c4d"
+            },
+            {
+              "type": "table",
+              "name": "memory_live_enrollments",
+              "table": "memory_live_enrollments",
+              "sqlSha256": "998df2a238b79861784ebb0d4cc5b382d5ff5734c28c8fb0d7cf07d8ed4a421c"
+            },
+            {
+              "type": "table",
+              "name": "memory_live_runs",
+              "table": "memory_live_runs",
+              "sqlSha256": "c1f46e82bef2047a5892f65fce251edc7c727d03f0cef401b6ef28fba40b9b9f"
+            },
+            {
+              "type": "table",
+              "name": "memory_live_sources",
+              "table": "memory_live_sources",
+              "sqlSha256": "ab101bc87d9c8d2e8093a4c9b6c990a31b0dda03f8e72539188c3b6ae94a22e1"
+            },
+            {
+              "type": "table",
+              "name": "memory_native_answer_dependencies",
+              "table": "memory_native_answer_dependencies",
+              "sqlSha256": "5282b1d592d6b650cde3127c84a1620ebeedc49b0c41ab8fed4f9a6fadb6794f"
+            },
+            {
+              "type": "index",
+              "name": "memory_native_answer_dependencies_origin_id_event_id_unique",
+              "table": "memory_native_answer_dependencies",
+              "sqlSha256": "49aabc08ff48f2540b20e8fd6dcefe220f7853441b0925e1b81baeb18fc24304"
+            },
+            {
+              "type": "index",
+              "name": "memory_native_answer_dependencies_origin_id_source_sequence_unique",
+              "table": "memory_native_answer_dependencies",
+              "sqlSha256": "9b52aebfdbc5f60ccc37ffb2156e841e8951f2acc4626f1e2882a9dcc0e8b6c5"
+            },
+            {
+              "type": "table",
+              "name": "memory_native_answer_origins",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "8bf855ad40c32009dce37440aba152ae81dcbcb55401ea5c26dc3a65f7f97d67"
+            },
+            {
+              "type": "index",
+              "name": "memory_native_answer_origins_actor_user_id_scope_key_turn_id_unique",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "1609cc2771ece8859ff9e528df6cc7db79dbdaaea5044640f1804cde2ed774ee"
+            },
+            {
+              "type": "index",
+              "name": "memory_native_answer_origins_answer_content_id_unique",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "85a6a0f54842a9544e24179b9b35ae5090b55fab5971a440d27b97a66edf815e"
+            },
+            {
+              "type": "index",
+              "name": "memory_native_answer_origins_answer_event_id_unique",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "73f7b282480dd21280bccc77201b503691f5e0713ae346d26150f74c8b9af732"
+            },
+            {
+              "type": "index",
+              "name": "memory_native_answer_origins_user_content_id_unique",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "e34cc3259f7ae056fe01f7bb4eb6eb38a7f528528ae4415ab396a8b37e1ad7d2"
+            },
+            {
+              "type": "index",
+              "name": "memory_native_answer_origins_user_event_id_unique",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "316153f0f11dfb3e91988b6e896d5f8becf4cada229d15e5ef89d31d60f1195d"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_native_dependency_delete_active",
+              "table": "memory_native_answer_dependencies",
+              "sqlSha256": "29f620479a2245612d7a7305fd0d86a9e5598ab1b8c4141c79a98f2343012892"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_native_dependency_immutable",
+              "table": "memory_native_answer_dependencies",
+              "sqlSha256": "4306c7aa1874087879ee24b901394f4111d7e02faf2baef3770c83e6973ddb62"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_native_origin_delete_active",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "7df7397e3688abcc7c4f6227d741a9945cbef58bd4a85deed7221d81f5b38247"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_native_origin_immutable",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "cc8d4655ef61ed6fae56f0a388e093c523a6b755918c55f4d72da27e4bb90508"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_native_origin_user_immutable",
+              "table": "memory_native_answer_origins",
+              "sqlSha256": "f957320ff086cbde1247a038a09be64af8360c82e8a8dc5db0c6b65ab94d8377"
+            },
+            {
+              "type": "table",
+              "name": "memory_structured_answer_ledger_revisions",
+              "table": "memory_structured_answer_ledger_revisions",
+              "sqlSha256": "f49c6592d7bad7c01932595b8e2a388f5b91a8338782c6b9de7e1e6db1464cd3"
+            },
+            {
+              "type": "table",
+              "name": "memory_structured_answer_originals",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "31ad5648a3d9f660ba5bcc10510f9d4f9baea9cc2cdbc5edf256d1726b563d24"
+            },
+            {
+              "type": "table",
+              "name": "memory_structured_answer_origins",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "8cbcc269e78d41bc152c00cc7d9a1f32967d32dc77b222ba21e558ac422b6981"
+            },
+            {
+              "type": "table",
+              "name": "memory_structured_conversation_heads",
+              "table": "memory_structured_conversation_heads",
+              "sqlSha256": "a8939a80b7300b0012d814275269733b4c97f77a7435b732b6dfedadd9a2bd33"
+            },
+            {
+              "type": "table",
+              "name": "memory_structured_conversation_revisions",
+              "table": "memory_structured_conversation_revisions",
+              "sqlSha256": "34d520a51fcbb2e1279563342ade241e90cc93c79bf6ce69ebcc2f0f27f3f709"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_structured_origin_immutable",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "6cbd791461cf86110c30055a52c2b6a9d2623c2897f30a1e38de178c00e06450"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_structured_origin_insert",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "9daae2855bc9c0b437cf4627c31d876733d134d4eb50e15da6d7dc8ebdc9a9cb"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_structured_origin_no_delete",
+              "table": "memory_structured_answer_origins",
+              "sqlSha256": "46e5f3a492b9222225844a7314f600072de2ee634fe821d532c0318f8e8fbe1f"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_structured_origin_revision_immutable",
+              "table": "memory_structured_answer_ledger_revisions",
+              "sqlSha256": "4dca329ca854dbcc973fbda06624c5e6b1396fc97f50545d2d8d666da7d666b5"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_structured_origin_revision_insert",
+              "table": "memory_structured_answer_ledger_revisions",
+              "sqlSha256": "422c1f91d1f24ca9a85248bcb2e4710e4539aa59e3371e510b33f1618df38fb6"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_structured_origin_revision_withdrawn_delete",
+              "table": "memory_structured_answer_ledger_revisions",
+              "sqlSha256": "19dc94901a0fb5fbf7bd2af06815c99937e7ba9003f0e28c06906f38a2674e61"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_structured_original_immutable",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "7c5ac2927d6b490019231cc6a4aaa8a85d71a1acaf589b2af6ef1fe7f70be0f6"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_structured_original_insert",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "4ce950e221d7c1547a91c437a462d5662776dca9bfdecbdcbb281d6f2ab38bb1"
+            },
+            {
+              "type": "trigger",
+              "name": "memory_structured_original_withdrawn_delete",
+              "table": "memory_structured_answer_originals",
+              "sqlSha256": "c2d23b669d56f513b4afb9edefe3b05d941fed060587e2885e1d1b17c4297d85"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_audit_block_delete",
+              "table": "organization_audit_events",
+              "sqlSha256": "ada3618b24f31383cc1ce665d980fd410bd83801aec208f337a7b06da6909db8"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_audit_block_update",
+              "table": "organization_audit_events",
+              "sqlSha256": "b486e3bb4dac34a278868b4a9987bebc6f6295b615cd46b7de48df961656aa9e"
+            },
+            {
+              "type": "table",
+              "name": "organization_audit_events",
+              "table": "organization_audit_events",
+              "sqlSha256": "6345dcd43e4bd5e4b437e0c31a2eb4040368c1a7d0250271eee37cf8e2d325f6"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_context_package_content_immutable",
+              "table": "organization_context_package_contents",
+              "sqlSha256": "48ca10e2a5b5caac104aac85d121e5b836cd2df561afb4fe9fb1644cfe44b80f"
+            },
+            {
+              "type": "table",
+              "name": "organization_context_package_contents",
+              "table": "organization_context_package_contents",
+              "sqlSha256": "30d3d412659c6bced9f50d36382d46bdc245b82f21928f78bc3252e87c65d52f"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_context_package_source_delete_guard",
+              "table": "organization_context_package_sources",
+              "sqlSha256": "8881c4a9290bee10653466f381ed67d0454bbc68cc229bd834b7fcbbac0ac1c2"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_context_package_source_immutable",
+              "table": "organization_context_package_sources",
+              "sqlSha256": "4ad8ea0eacf2592d06c3ef4535cb575ffeb63f88bd5a69d1f300e870c84ffd65"
+            },
+            {
+              "type": "table",
+              "name": "organization_context_package_sources",
+              "table": "organization_context_package_sources",
+              "sqlSha256": "ada2feb1cc18e7360802de83c559ad116cbb76978229c84112cf1afa5993d01f"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_context_package_version_delete_guard",
+              "table": "organization_context_package_versions",
+              "sqlSha256": "6e450514c2eed129e413522e13d77dcd895de9938b625a0687b170313db937dc"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_context_package_version_immutable",
+              "table": "organization_context_package_versions",
+              "sqlSha256": "455b1fa50f7ef619aa2abb8bf4fe052825874c488c9f9b57069fe9c1f4279169"
+            },
+            {
+              "type": "table",
+              "name": "organization_context_package_versions",
+              "table": "organization_context_package_versions",
+              "sqlSha256": "719c80b53c3c54f85b60118b8439d331445575c55f696c5a8f5c4c9ffb2d9b83"
+            },
+            {
+              "type": "table",
+              "name": "organization_context_packages",
+              "table": "organization_context_packages",
+              "sqlSha256": "90d056c98b9a28be02835ce4916309881bdfef874f1d3fa9807525e3f0a286dd"
+            },
+            {
+              "type": "table",
+              "name": "organization_custody_transfers",
+              "table": "organization_custody_transfers",
+              "sqlSha256": "b645f4b4f033c3055ad01bc70cb16d9456ad6fcda3cfab2bb520a59d92a7de1d"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_deletion_active_hold_guard",
+              "table": "organization_deletion_jobs",
+              "sqlSha256": "21174c8d52828770dc9eaea69e4548f79d2ff316229cb72b39f65c407b308d17"
+            },
+            {
+              "type": "table",
+              "name": "organization_deletion_items",
+              "table": "organization_deletion_items",
+              "sqlSha256": "c00c1b670b6d460afcfafe08ebef5b9fa3eae000bd2c7b9974c7e5053777676c"
+            },
+            {
+              "type": "table",
+              "name": "organization_deletion_jobs",
+              "table": "organization_deletion_jobs",
+              "sqlSha256": "354e57d3b3fc90aecfc793ce67f72f61cefa0208ecaed546fa0bfc487d0122f4"
+            },
+            {
+              "type": "table",
+              "name": "organization_identity_bindings",
+              "table": "organization_identity_bindings",
+              "sqlSha256": "38755bbac085c61ea9fc4bb404e9c1094ac8dfb2a78c47672f925f9478775224"
+            },
+            {
+              "type": "table",
+              "name": "organization_identity_group_members",
+              "table": "organization_identity_group_members",
+              "sqlSha256": "fe4e679fdb9f8a5810e672b08805b6ef90818b60b5a047b44d338ee9bd481136"
+            },
+            {
+              "type": "table",
+              "name": "organization_identity_groups",
+              "table": "organization_identity_groups",
+              "sqlSha256": "350aecf4229a80f10cf1a63637618d8adc1e693937e18e82a375079f478bcd95"
+            },
+            {
+              "type": "table",
+              "name": "organization_invitations",
+              "table": "organization_invitations",
+              "sqlSha256": "455b67961f43e370e512a8b6d9ba07f2bc35e2d776eaeb34956dcf7dcbecbe08"
+            },
+            {
+              "type": "table",
+              "name": "organization_key_versions",
+              "table": "organization_key_versions",
+              "sqlSha256": "c124c59f8438f918e4962c61b4b6e547957fd694ab81f5f00db02d5309935ade"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_legal_hold_during_deletion_guard",
+              "table": "organization_legal_holds",
+              "sqlSha256": "ba9a2c20c70a5289d8086fa6e54b9965089df5ea67eca9126b0d6d649c71eb97"
+            },
+            {
+              "type": "table",
+              "name": "organization_legal_holds",
+              "table": "organization_legal_holds",
+              "sqlSha256": "6d5a65b5e7546f575bea1240b7256a4c39b3509ae4a22f17f1bb2d61c54ee900"
+            },
+            {
+              "type": "table",
+              "name": "organization_memberships",
+              "table": "organization_memberships",
+              "sqlSha256": "290305d436664ce084f4523c9c1b9e43eb6f69e40b57b90cd545045b42fc0ffc"
+            },
+            {
+              "type": "table",
+              "name": "organization_projects",
+              "table": "organization_projects",
+              "sqlSha256": "3e73cfc1e71afabbf367e00e4b3bc3701d0a64957763b618c2d9891bf57f4a05"
+            },
+            {
+              "type": "table",
+              "name": "organization_provisioning_credentials",
+              "table": "organization_provisioning_credentials",
+              "sqlSha256": "4d94c0ebcf245accf8de5edcb6aead37c74d0d5854dcffc41b7f46b520085b26"
+            },
+            {
+              "type": "table",
+              "name": "organization_recovery_drills",
+              "table": "organization_recovery_drills",
+              "sqlSha256": "4d1b0c4f028b3e48754180f8cf5644cb3db8825bd7c7b4e7b4e8dcde12444562"
+            },
+            {
+              "type": "table",
+              "name": "organization_recovery_snapshots",
+              "table": "organization_recovery_snapshots",
+              "sqlSha256": "4c0091e13c1fb286542de8acaf9753bdbbe13d52ca8859da503efb5861a7ad1b"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_retention_hold_during_deletion_guard",
+              "table": "organization_retention_policies",
+              "sqlSha256": "ae58a306d99c81ad243abe80836b160c8ebd466c04a2877780754f16afa66593"
+            },
+            {
+              "type": "trigger",
+              "name": "organization_retention_hold_insert_during_deletion_guard",
+              "table": "organization_retention_policies",
+              "sqlSha256": "891b47933f7b5f1d11475668d97a9998a428c9b80bf5a7ebac2d18ae379f8b51"
+            },
+            {
+              "type": "table",
+              "name": "organization_retention_policies",
+              "table": "organization_retention_policies",
+              "sqlSha256": "b12df453a7f9d4abecb94e6e8b963e69786f3be02083d84624c9fb4396942556"
+            },
+            {
+              "type": "table",
+              "name": "organization_security_policies",
+              "table": "organization_security_policies",
+              "sqlSha256": "038bed08db6233d71d2fd039d62c50043d7bd4497bfaf591fa3282508ecc998d"
+            },
+            {
+              "type": "table",
+              "name": "organizations",
+              "table": "organizations",
+              "sqlSha256": "cdbcaed0ac887e3fd26fee8f4aa04d4c5c3d949cc453441fe80295d260769822"
+            },
+            {
+              "type": "table",
+              "name": "output_asset_storage_writes",
+              "table": "output_asset_storage_writes",
+              "sqlSha256": "dd5ebf4889b0a551c100c7e7428ea4fc01c1b2afba1f95b36e0be4b06b5ac97c"
+            },
+            {
+              "type": "table",
+              "name": "output_assets",
+              "table": "output_assets",
+              "sqlSha256": "33e5c97b6553bada5e5c64297fcaed8fbe17d32a3b81fd5ff34db8be56165a3e"
+            },
+            {
+              "type": "table",
+              "name": "output_atomic_assertions",
+              "table": "output_atomic_assertions",
+              "sqlSha256": "44e76d921736f336eef9ab5584151bc93de2f90de43a8d53ad7e2a69fa978c0d"
+            },
+            {
+              "type": "table",
+              "name": "output_commands",
+              "table": "output_commands",
+              "sqlSha256": "81e65a9d7cb06e671d585cd1240ed97210c446edf7da9886145867d83d36fa84"
+            },
+            {
+              "type": "table",
+              "name": "output_delivery_manifests",
+              "table": "output_delivery_manifests",
+              "sqlSha256": "1e3cdedefce30eeffee821fe98baa6f71699f69e5fc232680c2f404985de5693"
+            },
+            {
+              "type": "table",
+              "name": "output_execution_grants",
+              "table": "output_execution_grants",
+              "sqlSha256": "7478932f86194d368df9f78347c1d40e0c3c0b4d041c54c1f152ab8d71fedd91"
+            },
+            {
+              "type": "table",
+              "name": "output_native_storage_writes",
+              "table": "output_native_storage_writes",
+              "sqlSha256": "49413c352a89894da737a2648d94a5821a1cf323d845b6bf2eeacd4810692056"
+            },
+            {
+              "type": "table",
+              "name": "output_operation_routes",
+              "table": "output_operation_routes",
+              "sqlSha256": "17ed5ef4cb909cda1c904baa38e9ca4a26e4d6d2c28dffd0cbc9264d7d867b4f"
+            },
+            {
+              "type": "table",
+              "name": "output_operation_slots",
+              "table": "output_operation_slots",
+              "sqlSha256": "70de4a982f05615dba378aff2e4d92527be260f5c277af8b25dbedf4cb4df15e"
+            },
+            {
+              "type": "table",
+              "name": "output_plan_fulfillments",
+              "table": "output_plan_fulfillments",
+              "sqlSha256": "634a9b97a53f938a34e7c4b62a3e4c42099d818f183a2dfe93b541f67ead3422"
+            },
+            {
+              "type": "table",
+              "name": "output_plan_revisions",
+              "table": "output_plan_revisions",
+              "sqlSha256": "0b809b01f1aca9aeedb3411523418d2840a385665b1a39151b49824d763a3362"
+            },
+            {
+              "type": "table",
+              "name": "output_plan_targets",
+              "table": "output_plan_targets",
+              "sqlSha256": "454b3c9dc8a27960becc88da557a597f88c87718811caac0817601678bd70e85"
+            },
+            {
+              "type": "table",
+              "name": "output_preflights",
+              "table": "output_preflights",
+              "sqlSha256": "08ab1da6256d5f923c49ccfc9db30be45f56e0cd4d61ef05a0a6dacee02ef702"
+            },
+            {
+              "type": "table",
+              "name": "output_provider_calls",
+              "table": "output_provider_calls",
+              "sqlSha256": "a6c407503b405cf4650e8e389353fa177b638261f27940dcd5f3caed26a74db1"
+            },
+            {
+              "type": "table",
+              "name": "output_results",
+              "table": "output_results",
+              "sqlSha256": "d6504acf1da96f90cbb60eea4ea2a53c64ef6e9fd5a092e6bdeaeeec7d60c3e1"
+            },
+            {
+              "type": "table",
+              "name": "output_target_acceptances",
+              "table": "output_target_acceptances",
+              "sqlSha256": "72801e373c38d6315ea1f2b9b2f7a536925c5bef9f0dbe2748c3d0a77510cbc6"
+            },
+            {
+              "type": "trigger",
+              "name": "pilot_active_cohort_deletion_guard",
+              "table": "pilot_cohorts",
+              "sqlSha256": "f28db4fcb6ae8cd87ec920aab98c37b7fb5c74a0421bb953696460f0518a60a9"
+            },
+            {
+              "type": "table",
+              "name": "pilot_cohorts",
+              "table": "pilot_cohorts",
+              "sqlSha256": "a6a61d7bf3e4b3603da3f7ff05cf058dad02312f8da37c0511f137582a504910"
+            },
+            {
+              "type": "table",
+              "name": "pilot_cost_reservation_scopes",
+              "table": "pilot_cost_reservation_scopes",
+              "sqlSha256": "4b2cb88c7d99256cd846bdbc6e65ba08eb30920016d28e91c4942e05d2c40823"
+            },
+            {
+              "type": "table",
+              "name": "pilot_participants",
+              "table": "pilot_participants",
+              "sqlSha256": "45d57d4ab81f1fb2308cfe472602684b9a20a0330af3ec0609bbf5110a412815"
+            },
+            {
+              "type": "trigger",
+              "name": "pilot_project_owner_membership_deletion_guard",
+              "table": "organization_memberships",
+              "sqlSha256": "67dcd5788498acf0af7372204333f425d5ce30eafca902dda0de0feddd715a52"
+            },
+            {
+              "type": "trigger",
+              "name": "pilot_project_owner_membership_guard",
+              "table": "organization_memberships",
+              "sqlSha256": "2b81418f092cb0fe83e647fd4fd1c7dbf47fb76a8cbd10b7e98bce763508433e"
+            },
+            {
+              "type": "trigger",
+              "name": "pilot_project_owner_participant_deletion_guard",
+              "table": "pilot_participants",
+              "sqlSha256": "ca5912778656217e5c8739e9f38fe9086b6f7337e770479d779908d23e4b2773"
+            },
+            {
+              "type": "trigger",
+              "name": "pilot_project_owner_participant_guard",
+              "table": "pilot_participants",
+              "sqlSha256": "7ece23d4ccfe525e025aa3a88acf7217480cc2f91bf1ab3effdfe976780daa34"
+            },
+            {
+              "type": "table",
+              "name": "private_content",
+              "table": "private_content",
+              "sqlSha256": "3d88390c87cb7081e14e2d21df8bd71a054fceae943d951d119f112e30ff91d5"
+            },
+            {
+              "type": "table",
+              "name": "private_content_retention_scopes",
+              "table": "private_content_retention_scopes",
+              "sqlSha256": "223f8aa1d9461311fde9ad9140d87ae10071f604e7b722ecbf2b6ec5c7fbc81e"
+            },
+            {
+              "type": "table",
+              "name": "project_automation_outbox",
+              "table": "project_automation_outbox",
+              "sqlSha256": "b9b23d66e0d774e81992c5ee5b2491bfc328a6ee45412d26d7c5333c7d50c4ff"
+            },
+            {
+              "type": "table",
+              "name": "project_automation_policies",
+              "table": "project_automation_policies",
+              "sqlSha256": "5023f937071c63d7c0f7f338ad37f4a05c8043bdb3cd0274f2b5051c3fa687e7"
+            },
+            {
+              "type": "table",
+              "name": "project_automation_runs",
+              "table": "project_automation_runs",
+              "sqlSha256": "f6cfe13c4b503782ff06367a83a6481a66b30ffca258788cd9c54e5b61468fda"
+            },
+            {
+              "type": "table",
+              "name": "project_budget_reservation_scopes",
+              "table": "project_budget_reservation_scopes",
+              "sqlSha256": "dcbc3c7c62ae4da3e6371c4121efd8573e9fe97053d19a6c22ebd5684e92a200"
+            },
+            {
+              "type": "table",
+              "name": "project_context_package_bindings",
+              "table": "project_context_package_bindings",
+              "sqlSha256": "bc340abf931cc56e8d6326f4a0e3ab7eb64daa67a6620372799b96493a756b85"
+            },
+            {
+              "type": "table",
+              "name": "project_context_package_members",
+              "table": "project_context_package_members",
+              "sqlSha256": "fd5cac34f19a412183a7f2700c9eff8299c5eab1162dbc44f1b9e29d12572ae1"
+            },
+            {
+              "type": "table",
+              "name": "project_context_sessions",
+              "table": "project_context_sessions",
+              "sqlSha256": "2caae24df1a26639ba2e94cf77c334e6c3545253815fc54334699959ae55a9d5"
+            },
+            {
+              "type": "table",
+              "name": "project_event_scopes",
+              "table": "project_event_scopes",
+              "sqlSha256": "c208d965c63d3f2dda8c55ca8abf43220575f7035c3c1532afc7b3577c84f1a3"
+            },
+            {
+              "type": "table",
+              "name": "project_memberships",
+              "table": "project_memberships",
+              "sqlSha256": "1795b43b7b653e48fa239e8b5414a7ad1cc7f85cf46e78456444e6fda5f96516"
+            },
+            {
+              "type": "table",
+              "name": "project_migration_states",
+              "table": "project_migration_states",
+              "sqlSha256": "b37b6ab69752b82315e66cd4f59fe517a2431f3e81d6e0b94d45539266fa6006"
+            },
+            {
+              "type": "table",
+              "name": "project_notifications",
+              "table": "project_notifications",
+              "sqlSha256": "7b72d4712c3838243ceb9f5e214d6948a7b2dbfa1900b08fc217f3a2a6654ea4"
+            },
+            {
+              "type": "table",
+              "name": "project_resource_scopes",
+              "table": "project_resource_scopes",
+              "sqlSha256": "bef1ccbf5b87f57b37098059891e48ade01f35f76375d8a50bd252ee4198fbf4"
+            },
+            {
+              "type": "table",
+              "name": "project_review_tasks",
+              "table": "project_review_tasks",
+              "sqlSha256": "ba78ee4472170a6572f357dd834a25eceba9c97a4cf235f504ae402462da135a"
+            },
+            {
+              "type": "table",
+              "name": "replay_approvals",
+              "table": "replay_approvals",
+              "sqlSha256": "d3a4c8243ea3c520def46371bb2f893e9447b503238b500fb76960bfed17d8e4"
+            },
+            {
+              "type": "table",
+              "name": "replay_cost_authorizations",
+              "table": "replay_cost_authorizations",
+              "sqlSha256": "5b104f45d1f325282a81a075902251ac201fd9f8498ef9f3135a9fb1346be85b"
+            },
+            {
+              "type": "table",
+              "name": "replay_sessions",
+              "table": "replay_sessions",
+              "sqlSha256": "199464caa8a7077ee84c195dcd68ed5dfe27faa41077a7b8568e2f035a0088aa"
+            },
+            {
+              "type": "table",
+              "name": "retention_sweep_runs",
+              "table": "retention_sweep_runs",
+              "sqlSha256": "bbef8a8385bd371e0b184c55a39bc501daeba09f97ee1ebd08a7303aadfd2a51"
+            },
+            {
+              "type": "table",
+              "name": "route_performance_samples",
+              "table": "route_performance_samples",
+              "sqlSha256": "b292325490ec646c1f859211c0da22874ae6ccadd05ac75b0b8932839d7afb3f"
+            },
+            {
+              "type": "table",
+              "name": "scene_source_epoch",
+              "table": "scene_source_epoch",
+              "sqlSha256": "421bb84baf7154f6a05740a2fb1c286c4c7af7a572f06749adf0be4482c39190"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_epoch_delete_guard",
+              "table": "scene_source_epoch",
+              "sqlSha256": "1ef51ec105f3d45821d28bf09eb77d011b3aa4c484cbabe9c1853bc0cdf577ef"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_epoch_insert_guard",
+              "table": "scene_source_epoch",
+              "sqlSha256": "a686740d729e4f75544349851dbd216144612f67eab1864607fa2da3c2238543"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_epoch_update_guard",
+              "table": "scene_source_epoch",
+              "sqlSha256": "aa0bf1b9a201928916e77a186f11cb6fa426c267d42f40740675671330afc969"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_event_private_payloads_delete",
+              "table": "event_private_payloads",
+              "sqlSha256": "3e63559043d36015e3b6b29c8963393bc7a68eee4dad9aef8ae6fb3c0e432a18"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_event_private_payloads_insert",
+              "table": "event_private_payloads",
+              "sqlSha256": "075e199adadff06526b43fb94f5c90cf902e2ffab01dabbf8765df1c845f8e1f"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_event_private_payloads_update",
+              "table": "event_private_payloads",
+              "sqlSha256": "3c2e25a638b1a76b38ac1705add53578ab05e60e39aac776e301abc259999db4"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_events_delete",
+              "table": "events",
+              "sqlSha256": "fe324022ca4cd20a0d726d80b7593972aa7326d47f0cc92adf731bc163bd5b50"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_events_insert",
+              "table": "events",
+              "sqlSha256": "a1e6a071c03c40eb6922d87721126bb7e2cdf98e295cd09be312641c14671bb1"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_events_update",
+              "table": "events",
+              "sqlSha256": "ecc4838b7763288529535b7ea5a24e476dc2dc8de950004ccbd82c5abcfb2982"
+            },
+            {
+              "type": "table",
+              "name": "scene_source_generations",
+              "table": "scene_source_generations",
+              "sqlSha256": "54bda1fe5597c7d32d8344ffbbcb7861b9f06c1d06bf4a778e1d4c00a01bee35"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_generations_delete_guard",
+              "table": "scene_source_generations",
+              "sqlSha256": "24fc7a1ca4ed06e98e5d70ca74b25d47d62b7e960ff39904eba5b29fb69f2588"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_generations_insert_guard",
+              "table": "scene_source_generations",
+              "sqlSha256": "bdb37c19ea302adb5df4f8d8187a4e8e941f13592e268933fb472868fc25c291"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_generations_update_guard",
+              "table": "scene_source_generations",
+              "sqlSha256": "cee4b07a504834d29b30ff95c5121cfb495711e9c5ff4e5c258f0ca9944fd094"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_project_event_scopes_delete",
+              "table": "project_event_scopes",
+              "sqlSha256": "aa9e720165c5a63b77d148a0ccf73f1bf0031ded45893534f55389c49f19d2cd"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_project_event_scopes_insert",
+              "table": "project_event_scopes",
+              "sqlSha256": "884ee58ab4217abaf244873d11550bdc9ef5f24cc9876386a8decb11ca0978c4"
+            },
+            {
+              "type": "trigger",
+              "name": "scene_source_project_event_scopes_update",
+              "table": "project_event_scopes",
+              "sqlSha256": "2f2e4b5dc9b08ee4978b723c343f35e97bf1aa9535350087c335b6a73e01c0a2"
+            },
+            {
+              "type": "trigger",
+              "name": "selected_output_share_immutable",
+              "table": "selected_output_shares",
+              "sqlSha256": "46ab8bb723c40e378105bb96cf24370c7c110d910230028ef22d69af22257848"
+            },
+            {
+              "type": "trigger",
+              "name": "selected_output_share_no_delete",
+              "table": "selected_output_shares",
+              "sqlSha256": "b9fba0d9901430e9ecca7a4edaf338fcc47fdab448eee60ca76e06b6cba99d2a"
+            },
+            {
+              "type": "trigger",
+              "name": "selected_output_share_no_replace",
+              "table": "selected_output_shares",
+              "sqlSha256": "42eb7e2733f0914a93c52ed3f2b060a6840b71896e4bfcaf22f63547b8352260"
+            },
+            {
+              "type": "table",
+              "name": "selected_output_shares",
+              "table": "selected_output_shares",
+              "sqlSha256": "4d764a69b14ecc6f83f02468993b02022d6d7af25d6dde05bba89569801c7620"
+            },
+            {
+              "type": "index",
+              "name": "selected_output_shares_owner",
+              "table": "selected_output_shares",
+              "sqlSha256": "eb0618fab03eacfccabfdbf54caae01528f7fbfc06f8ce3937bdade9920f921b"
+            },
+            {
+              "type": "table",
+              "name": "share_scopes",
+              "table": "share_scopes",
+              "sqlSha256": "9df9f0aa562e2caba266c25139a13137aa6e7cd33f7bf58b9dfea5e490408947"
+            },
+            {
+              "type": "table",
+              "name": "shares",
+              "table": "shares",
+              "sqlSha256": "1a22c388bbfc34041776e39f0458ff20fd2b8f2e829e13b6fa9827abd52e96bf"
+            },
+            {
+              "type": "table",
+              "name": "sqlite_sequence",
+              "table": "sqlite_sequence",
+              "sqlSha256": "3f401c6e63202d04f814d5b8b23cb5d1966ed2a8f1b279ee6fd1b0799efc937d"
+            },
+            {
+              "type": "table",
+              "name": "still_decision_cache",
+              "table": "still_decision_cache",
+              "sqlSha256": "d8fc2487a20f4e1e61c0a1ffb6514daa5ff70e851ecd5d60245a568fbed79f89"
+            },
+            {
+              "type": "table",
+              "name": "still_history_cache",
+              "table": "still_history_cache",
+              "sqlSha256": "d3a431cd2b94d7d065be12e22127560788687d91566fe1b12495fffdef597b0a"
+            },
+            {
+              "type": "table",
+              "name": "still_panel_commands",
+              "table": "still_panel_commands",
+              "sqlSha256": "8c05ad4ec5e5af052da4ac091d02e2cd587ebb3ed8ac92a0dd410e047171b1c3"
+            },
+            {
+              "type": "table",
+              "name": "still_panel_sessions",
+              "table": "still_panel_sessions",
+              "sqlSha256": "12d8fe63871b9501bb047da0108e47600c34d88af1fb7ae68b4001c64a6f35b6"
+            },
+            {
+              "type": "table",
+              "name": "users",
+              "table": "users",
+              "sqlSha256": "d37ec95faa3627c9a96e77fcc220362112a09eab9e3dae451c3c5c25d6830309"
+            }
+          ],
+          "completeWithinBound": true,
+          "studyExact": false,
+          "approvalExact": false,
+          "settings": {
+            "foreign_keys": 1,
+            "ignore_check_constraints": 0,
+            "legacy_alter_table": 0
+          },
+          "migrations": {
+            "status": "observed-names-only",
+            "names": [
+              "sha256:e53f24c248e93b3afcd4dfc2130dde7ca5d067fe1e0a2a5b690e21a4bc39e597"
+            ],
+            "count": 1,
+            "runnerExecutionCertified": false
+          }
+        },
+        "holds": {
+          "token": {
+            "status": "observed",
+            "count": 0,
+            "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "outstanding": false
+          },
+          "cost": {
+            "status": "observed",
+            "count": 0,
+            "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "outstanding": false
+          },
+          "counters": {
+            "status": "observed",
+            "count": 0,
+            "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "costCounters": {
+            "status": "observed",
+            "count": 0,
+            "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+          },
+          "study": {
+            "status": "unavailable",
+            "reason": "study_schema_not_exact"
+          },
+          "preparationLifecycle": {
+            "status": "not-installed",
+            "notAClearance": true
+          },
+          "originalExternalHolds": {
+            "status": "unavailable",
+            "reason": "dependencies_not_installed"
+          }
+        },
+        "purchases": {
+          "compiledEntries": 0,
+          "purchaseRoutesInstalled": false,
+          "approvalFlagOn": false,
+          "executionFlagOn": false,
+          "qualified": false
+        },
+        "media": {
+          "status": "not-probed"
+        },
+        "finance": {
+          "status": "not-authenticated-by-this-read",
+          "secretValuesRead": false
+        },
+        "metrics": {
+          "statements": 14,
+          "reads": 915,
+          "writes": 0,
+          "resultBytes": 201134,
+          "databaseBytes": 1966080
+        },
+        "limits": {
+          "statements": 32,
+          "rowsPerQuery": 1024,
+          "queryBytes": 100000,
+          "resultBytes": 1048576,
+          "outputBytes": 524288,
+          "reads": 1000000,
+          "deadlineMs": 20000
+        }
+      }
+    },
+    {
+      "route": "/api/internal/generation-study/qualification?sql=DROP",
+      "status": 409,
+      "result": {
+        "status": "denied",
+        "reason": "qualification_unavailable",
+        "purchasesEnabled": false
+      }
+    },
+    {
+      "route": "/api/internal/generation-study/qualification",
+      "status": 409,
+      "result": {
+        "status": "denied",
+        "reason": "qualification_unavailable",
+        "purchasesEnabled": false
+      }
+    }
+  ]
+}

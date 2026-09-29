@@ -1,0 +1,23 @@
+{
+  "baseline.json": "e1711a0ef11f0a0b64592d7883ee1b960898757d87e422803306820c8207aedc",
+  "build.log": "14b4b653387661fe519912e227923bc76465765c64a19caf35b3309b08639dc8",
+  "candidate-delta.tar.gz": "e203f4afcf8e25caea62cfbf19153839b63b6949b8fbc2c679e95ec27ae67edf",
+  "candidate.patch": "f0bce85c9804ec2b169440cd8eb5f4e21eaeaa8b7b99f5efa48ad9ba026530fd",
+  "cem.log": "21613a99dd723b90ca943a14ac3ad007129dc8f7e48d1ebec8a1cf998083bd1a",
+  "compiled-check.mjs": "7cbeb50c47c8db4bc3c12dbedf957ca98cb035d6faf5e42f466d034665deaaaa",
+  "compiled-validation.json": "01c3e9ac67c78d8155bfd724c89f5937d7373f72336ef701fc2f531215958dc1",
+  "decision.md": "433869a18a4c542769f3d0fac1fc0ce6dd1be5822e6195ba90b78aa8a854f807",
+  "focused.log": "2251ad24584ed237821ad05521edbb2312de0ae55cd81a872d10d1d300086a5f",
+  "handoff.md": "48052be2ce723fbf271a9af4ebf5285cd7671c4ddc0de68a6f82120992948b5c",
+  "index.html": "02b2116960d2a077fabc46155419ee3a729e5486e093feb4bb4a380cc18ea085",
+  "lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "package-manifest.json": "c810be56c84f58ad3804aa537afaca9e21596ce545c7b20dff9940530491a562",
+  "package.log": "6d3eb1e6dd64179a34a81e046ce8d9233df9bf567a2ee0abdb2d5fc1ebef844e",
+  "preservation.json": "58e0a3214ac2d6d9462221d3da65c52b6ed3c62ee1e5892ba1a5d97e80c82dcc",
+  "release-envelope.json": "cb85b1624d85097a9297065114309ab0c7141bd1c996dd98de259c070348f1a8",
+  "settlement-change.md": "e0045bf50e2eb0d66e8b912ac1284a4399aca7b570be63077601c703be0bc815",
+  "source-manifest.json": "ff0e9bcaafec69cb8de3324188dc84ab51cb9b64c03e71a3ca997435c454f868",
+  "typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "validation.json": "3cd809c0bd3fe1837f793f6e2e996bd3bb71fe3da899be71dc45176c3503adcd",
+  "workerd.log": "be6e3202ca90a047769cfd9638bb5cf2ad3cddf90760d23c8a376254d996472b"
+}

@@ -1,0 +1,45 @@
+{
+  "contract": "p5-current-production-browser-qualification-r30",
+  "release": "p5-forma-qualification-only:ea53147a124d910bc7e6e9c6fc362e4e641d65527f7829cf0ed24ad62c6d1fc7",
+  "baseline": {
+    "version": 554,
+    "source": "498936481741f7ed1b03d43422288d628db49f2f",
+    "project": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "savedVersion": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_b640f9ffe7ac8191ba0b6189da7a0d3b",
+    "deployment": "appgdep_6abbbe8da40c81918609f1d58f590ecc",
+    "terminal": "succeeded",
+    "updatedAt": "2026-09-29T13:35:32.554149+00:00",
+    "audience": "workspace_all",
+    "accessRevision": 7,
+    "environmentRevision": 16,
+    "receiptSha256": "378087e11ed579b475dfc67a84ec1ad193beaebf04c4e7babb41337b804ab349",
+    "nativeArchiveSha256": "b5004cd6303f7290e8e10e04694c0df075bf2c5d487b46790c7ee1606cc5ac1a",
+    "freshLiveState": false,
+    "p7CheckoutUnmodified": true
+  },
+  "sourceManifestSha256": "ff0e9bcaafec69cb8de3324188dc84ab51cb9b64c03e71a3ca997435c454f868",
+  "deltaArchiveSha256": "e203f4afcf8e25caea62cfbf19153839b63b6949b8fbc2c679e95ec27ae67edf",
+  "fullSourceArchive": "/private/tmp/p5-r30-source.tar.gz",
+  "fullSourceArchiveSha256": "0b217bad9c4aa21e5222c6dcbbbfb08dff439c6eb4072a13a85fa2f6460dd6eb",
+  "packageManifestSha256": "c810be56c84f58ad3804aa537afaca9e21596ce545c7b20dff9940530491a562",
+  "archiveSha256": "a1c604d813972d4c95a5fdf37a201c4fe2255d3e2ab09526474be3d147f438ae",
+  "archive": "/private/tmp/p5-r30-held.tar",
+  "qualificationPath": "/api/internal/generation-study/qualification",
+  "expiry": "2026-10-01T00:00:00Z",
+  "mutationRecoveryMargin": "2026-09-30T22:00:00Z",
+  "newReservations": {
+    "normal": 13,
+    "recovery": 6
+  },
+  "priorConsumed": {
+    "normal": 30,
+    "recovery": 13
+  },
+  "proposedCumulativeCeilings": {
+    "normal": 43,
+    "recovery": 19,
+    "total": 62
+  },
+  "authorized": false,
+  "id": "p5-forma-current-qualification:20088b648d017aba644ee08c8d30c8a651f5e5177f10ecf8911f94d245139f51"
+}

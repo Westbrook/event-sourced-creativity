@@ -1,5 +1,7 @@
 # P5 idle handoff — old release basis superseded
 
+**Historical instruction, superseded only for the new local preparation assignment.** [R30](forma-r30/handoff.md) now supplies the current proposal based on retained554. No new hosted authority or reopening of R29 follows. The original idle record below is preserved.
+
 Latest user status instruction: keep existing P5 idle pending the finite P6 owner input groups or new supported evidence. This supersedes the prior recommendation to resume R28 StageB. It authorizes no new hosted calls.
 
 R29 verified saved550 restoration with terminal native status and final workspace_all/access7/environment16 parity. That restoration obligation is closed. The cumulative allowance is fully consumed:30/30normal,13/13recovery,43charged; zero unused. No automatic P5 restoration remains.

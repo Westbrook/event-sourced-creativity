@@ -1,0 +1,16 @@
+{
+  "version": 554,
+  "source": "498936481741f7ed1b03d43422288d628db49f2f",
+  "project": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "savedVersion": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_b640f9ffe7ac8191ba0b6189da7a0d3b",
+  "deployment": "appgdep_6abbbe8da40c81918609f1d58f590ecc",
+  "terminal": "succeeded",
+  "updatedAt": "2026-09-29T13:35:32.554149+00:00",
+  "audience": "workspace_all",
+  "accessRevision": 7,
+  "environmentRevision": 16,
+  "receiptSha256": "378087e11ed579b475dfc67a84ec1ad193beaebf04c4e7babb41337b804ab349",
+  "nativeArchiveSha256": "b5004cd6303f7290e8e10e04694c0df075bf2c5d487b46790c7ee1606cc5ac1a",
+  "freshLiveState": false,
+  "p7CheckoutUnmodified": true
+}

@@ -1,0 +1,18 @@
+{
+  "sourceFilesMatched": 4748,
+  "archivePayloadsMatched": 622,
+  "baselinePatchApplies": true,
+  "p7CheckoutUnchanged": true,
+  "oldLedgerSha256": "e57b797218bfab8d19549f02d1913c135b69902a80cb74180f896d273dd778ee",
+  "prior43EntriesUnchanged": true,
+  "historicalTrackedEvidenceUnchangedExceptExplicitHandoffSupersession": true,
+  "newReservationsConsumed": 0,
+  "proposedNewNormal": 13,
+  "proposedNewRecovery": 6,
+  "proposedCumulativeNormal": 43,
+  "proposedCumulativeRecovery": 19,
+  "proposedCumulativeTotal": 62,
+  "localMarkdownLinks": true,
+  "runtimeArchiveUnchangedAfterTestWhitespaceFix": true,
+  "nativeAdmission": false
+}

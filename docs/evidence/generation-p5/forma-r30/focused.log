@@ -1,0 +1,30 @@
+✔ missing optional study schema is unavailable, never silently installed or treated as clear holds (57.827292ms)
+✔ refuse anonymous (20.577459ms)
+✔ refuse other-account (20.583875ms)
+✔ refuse forged-cf-only (19.604042ms)
+✔ refuse cross-origin (19.364125ms)
+✔ refuse cross-site (19.706708ms)
+✔ refuse impersonation (19.585417ms)
+✔ refuse project-context (20.148292ms)
+✔ refuse post (19.789125ms)
+✔ no caller-selected query /api/internal/generation-study/qualification?sql=DELETE (19.787458ms)
+✔ no caller-selected query /api/internal/generation-study/qualification?table=users (19.611458ms)
+✔ no principal bootstrap: UPDATE users SET role='creator' (19.799625ms)
+✔ no principal bootstrap: UPDATE users SET consent_version='old' (20.166417ms)
+✔ no principal bootstrap: DELETE FROM users (20.114834ms)
+✔ fixed inventory preserves active/unknown reservations and reports original holds (37.283958ms)
+✔ catalog overflow fails closed without partial result (70.97475ms)
+✔ reservation inventory overflow fails closed (29.98825ms)
+✔ principal drift across read is refused (30.571583ms)
+✔ read capability rejects writes, batches, exec and excessive reads (0.333833ms)
+✔ actual554 Worker route has no retention, storage, asset, secret or network effects (29.983667ms)
+✔ absolute expiry refuses without DB reads (22.535917ms)
+✔ exact 41-file packaged baseline is inspectable without installing held or study migrations (29.690291ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 22
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2953.761084
