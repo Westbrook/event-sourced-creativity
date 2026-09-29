@@ -1,0 +1,112 @@
+{
+  "action": "get_environment_variables",
+  "args": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f"
+  },
+  "capturedAt": "2026-09-29T12:38:17.961Z",
+  "isError": false,
+  "data": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "revision": 16,
+    "entries": [
+      {
+        "key": "FAL_IMAGE_EDIT_MODEL",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "FAL_IMAGE_MODEL",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "FAL_IMAGE_PREVIEW_MODEL",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "FAL_KEY",
+        "type": "envvar",
+        "is_secret": true,
+        "valuePresent": false
+      },
+      {
+        "key": "FAL_REFERENCE_VIDEO_MODEL",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "FAL_VIDEO_MODEL",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "FORMA_IMAGE_PROVIDER",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "FORMA_RETENTION_DAYS",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "FORMA_USER_TOKEN_LIMIT",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "FORMA_VIDEO_PROVIDER",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "FORMA_WORKSPACE_TOKEN_LIMIT",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "JEV_API_KEY",
+        "type": "envvar",
+        "is_secret": true,
+        "valuePresent": false
+      },
+      {
+        "key": "OPENAI_API_KEY",
+        "type": "envvar",
+        "is_secret": true,
+        "valuePresent": false
+      },
+      {
+        "key": "OPENAI_IMAGE_MODEL",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "OPENAI_MODEL",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      },
+      {
+        "key": "OPENAI_PROJECT",
+        "type": "envvar",
+        "is_secret": false,
+        "valuePresent": true
+      }
+    ]
+  },
+  "parity": true,
+  "verificationScope": "Revision and redacted key/type/secret/value-presence metadata; no secret values retained or independent physical resource verification."
+}

@@ -1,0 +1,5 @@
+# P5 R29 handoff
+
+R27 restoration-state reconciliation is complete under the user’s exact approval. Read [result](result.md), [receipts/ledger](request-ledger.json), current generationP5/generationNextAdviceV66/focus and unresolved feedback. Verified saved550 terminal restore appgdep_6abba93920488191a3838ac3899a463d; final workspace_all/access7 andenvironment16 metadata parity.43 charged:30/30normal,13/13recovery; no capacity remains. Prior39entries unchanged. No new deployment or browser call.
+
+Supersedes R28’s unknown-restoration state, not its pending manual-cycle proposal. R28 StageB remains unapproved; P6 finite owner answer recommended. P7 release may proceed only under its separate authority; no pending automatic P5 restore can overwrite it. If P7 publishes first, freeze the old551/550 cycle until a separately approved new basis. Preserve exact package, historical decisions/retention, support acknowledgement limits and October1 expiry. P5 remains open; no comparison images, paid authority or moderation finding.

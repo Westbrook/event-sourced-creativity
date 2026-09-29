@@ -1,0 +1,26 @@
+{
+  "action": "get_deployment_status",
+  "args": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "deployment_id": "appgdep_6abba93920488191a3838ac3899a463d"
+  },
+  "capturedAt": "2026-09-29T12:37:16.277Z",
+  "isError": false,
+  "data": {
+    "id": "appgdep_6abba93920488191a3838ac3899a463d",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": "sediment://file_00000000e8688230b32488520a49cd87",
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-09-29T12:06:03.347946+00:00"
+  },
+  "parity": true,
+  "timingInterpretation": "Terminal timestamp follows the R27 tool error and precedes this lookup; consistent with asynchronous completion of that restoration, not a new deployment submitted here."
+}

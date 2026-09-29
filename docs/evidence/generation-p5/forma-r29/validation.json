@@ -1,0 +1,11 @@
+{
+  "prior39LedgerEntriesUnchanged": true,
+  "fourReceiptsHashVerified": true,
+  "reservationBeforeDispatchAndReceipt": true,
+  "allFourParityChecksPassed": true,
+  "ceilingsNotExpanded": true,
+  "deploymentCalls": 0,
+  "browserCalls": 0,
+  "sourceChanges": 0,
+  "applicationTestsRepeated": false
+}
