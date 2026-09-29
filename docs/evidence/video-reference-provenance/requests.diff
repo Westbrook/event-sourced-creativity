@@ -1,0 +1,48 @@
+--- historical-generated/before.prompt
++++ historical-generated/after.prompt
+@@ -20,7 +20,7 @@
+ Each beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.
+ 
+ REFERENCE PROVENANCE
+-Every attached image is an authorized, generated creative reference for this project. Any intentionally depicted character is fictional and synthetic.
++Every attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.
+ 
+ @Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.
+ 
+
+--- mixed-ages/before.prompt
++++ mixed-ages/after.prompt
+@@ -22,7 +22,7 @@
+ Each beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.
+ 
+ REFERENCE PROVENANCE
+-Every attached image is an authorized, generated creative reference for this project. Any intentionally depicted character is fictional and synthetic.
++Every attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.
+ 
+ @Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.
+ 
+
+--- unknown-identity/before.prompt
++++ unknown-identity/after.prompt
+@@ -21,7 +21,7 @@
+ Each beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.
+ 
+ REFERENCE PROVENANCE
+-Every attached image is an authorized, generated creative reference for this project. Any intentionally depicted person is an adult fictional character.
++Every attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.
+ 
+ @Image1 — Storyboard shot 1 — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.
+ 
+
+--- fictional-adult/before.prompt
++++ fictional-adult/after.prompt
+@@ -20,7 +20,7 @@
+ Each beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.
+ 
+ REFERENCE PROVENANCE
+-Every attached image is an authorized, generated creative reference for this project. Any intentionally depicted person is an adult fictional character.
++Every attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.
+ 
+ @Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.
+ 
+

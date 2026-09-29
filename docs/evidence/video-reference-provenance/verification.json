@@ -1,0 +1,86 @@
+{
+  "scope": "synthetic offline Video reference provenance only",
+  "base": "25a7a722",
+  "checkedAt": "2026-09-29T01:58:48.248926+00:00",
+  "checks": {
+    "promptReferenceDocument": {
+      "tests": 133,
+      "pass": 127,
+      "fail": 6,
+      "failures": [
+        "keeps text, structured slides, storyboard, and video rendering behind durable server jobs",
+        "only submits original ambient video audio after an explicit user opt-in",
+        "recovers an empty Fal submission body from its durable request header",
+        "actual Video intake handler rereads custody at save and commit and forwards combined proof/head to atomic intake",
+        "Video changed source refuses commit; an existing original receipt recovers without a replacement source",
+        "Video malformed, stale review and private proof failures do not reach save or atomic mutation"
+      ]
+    },
+    "nativeConsumers": {
+      "tests": 87,
+      "pass": 83,
+      "fail": 4,
+      "failures": [
+        "initial Video adapter/execution/publication/retained/Edit: complete",
+        "initial Video adapter/execution/publication/retained/Edit: source_changed",
+        "initial Video adapter/execution/publication/retained/Edit: canceled",
+        "initial Video adapter/execution/publication/retained/Edit: grant_revoked"
+      ]
+    },
+    "mainPromptReferenceFailures": {
+      "tests": 6,
+      "pass": 0,
+      "fail": 6,
+      "failures": [
+        "keeps text, structured slides, storyboard, and video rendering behind durable server jobs",
+        "only submits original ambient video audio after an explicit user opt-in",
+        "recovers an empty Fal submission body from its durable request header",
+        "actual Video intake handler rereads custody at save and commit and forwards combined proof/head to atomic intake",
+        "Video changed source refuses commit; an existing original receipt recovers without a replacement source",
+        "Video malformed, stale review and private proof failures do not reach save or atomic mutation"
+      ]
+    },
+    "mainNativeFailures": {
+      "tests": 4,
+      "pass": 0,
+      "fail": 4,
+      "failures": [
+        "initial Video adapter/execution/publication/retained/Edit: complete",
+        "initial Video adapter/execution/publication/retained/Edit: source_changed",
+        "initial Video adapter/execution/publication/retained/Edit: canceled",
+        "initial Video adapter/execution/publication/retained/Edit: grant_revoked"
+      ]
+    }
+  },
+  "newFocusedTests": {
+    "tests": 6,
+    "pass": 6,
+    "fail": 0,
+    "exactBytePatchReconstruction": true
+  },
+  "typecheck": {
+    "command": "node node_modules/typescript/bin/tsc --noEmit",
+    "exitCode": 0
+  },
+  "changedFileLint": {
+    "command": "node node_modules/eslint/bin/eslint.js worker/video-prompt-adapter.ts worker/openai-adapter.ts src/model/video-adapter.ts tests/document-artifacts.test.mjs tests/video-reference-provenance.test.mjs tests/helpers/video-reference-provenance.mjs",
+    "exitCode": 0
+  },
+  "liveProviderCalls": 0,
+  "generatedMedia": 0,
+  "deployment": false,
+  "activation": false,
+  "historicalEvidenceModified": false,
+  "p5PackageModified": false,
+  "nativeTransportAdapterVersion": "2.0.0",
+  "promptAdapterVersion": "1.1.1",
+  "sharedBuildRun": false,
+  "qualityEffect": "unknown",
+  "moderationEffect": "unknown",
+  "historicalImageRejectionExplanation": false,
+  "limitations": [
+    "10 existing failures reproduced on unchanged main; full suite is not green",
+    "No build/browser/provider output qualification",
+    "pnpm wrapper auto-install failed with worktree permission error; installed tools used directly without dependency changes"
+  ]
+}

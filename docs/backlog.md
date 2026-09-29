@@ -24,6 +24,12 @@ TODO. Ongoing work in other branches must be reconciled before reimplementing it
   newly discovered work here and link its detailed issue or guide. Keep proposals
   separate from accepted delivery requirements in the linked decision records.
 
+## Video provenance follow-up
+
+| ID | Status | Owner | Remaining work / next action | Done when |
+| --- | --- | --- | --- | --- |
+| VP-001 | Locally integrated; focused Sites publication authorized | Video reference provenance; P7 release owner | Apply reviewed `a1662572` only over verified released553; preserve552 toolbar and newer Idea note. [Scoped release gates, baseline limitations and recovery](video-reference-provenance-release.md). Actual publication receipt is recorded in the independent Progress Report. | Synthetic provenance/recovery checks pass; original receipts stay historical. No live quality/moderation or user-acceptance claim. P5 package and exhausted allocation remain independent. |
+
 ## Durable generation
 
 **Current state:** the reviewed execution/recovery foundations are implemented;
