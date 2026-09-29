@@ -60,6 +60,12 @@ define these gates. The [safe-pause contract](durable-generation-activation-2026
 continues to apply during rollout. Route-specific readiness must be recorded even
 if a different route has already passed its canary.
 
+## P5 prompt-comparison qualification
+
+| ID | Status | Owner | Remaining work / next action | Done when |
+| --- | --- | --- | --- | --- |
+| GEN-P5 | In progress | Existing P5 task | Complete the bounded actual-Forma qualification cycle using admitted saved551, then restore550. [R25](evidence/generation-p5/forma-r25/result.md), commit03f699e4, restored550 after a browser-readiness stop; tab8 is now exposed before deployment. [R26](evidence/generation-p5/forma-r26/decision.md) proposes the exact new allowance without resetting32priorcharges. | Qualification evidence and required actual-Forma authority are established, then a separately authorized real two-image comparison has exact request/provider/image evidence and original settlement. Infrastructure readiness, prompt adherence and moderation remain separate; P2 gates,847/six exclusions and expiry persist. |
+
 ## Memory
 
 The Memory branch was reconciled with local `main` on 2026-09-17. Source delivery,

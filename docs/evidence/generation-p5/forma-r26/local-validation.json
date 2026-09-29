@@ -1,0 +1,28 @@
+{
+  "nativeCalls": 0,
+  "sourceChanges": 0,
+  "confirmedBrowserTab": "8",
+  "actualFormaOriginConfirmed": true,
+  "normalCharged": 23,
+  "recoveryCharged": 9,
+  "priorCharges": 32,
+  "proposedNormalCeiling": 30,
+  "proposedRecoveryCeiling": 13,
+  "normalAddition": 4,
+  "recoveryAddition": 3,
+  "newNormalStages": [
+    3,
+    1,
+    1,
+    1,
+    1
+  ],
+  "newRecoveryStages": [
+    1,
+    1,
+    2
+  ],
+  "furtherNormal": 7,
+  "furtherRecovery": 4,
+  "amendmentAccepted": false
+}
