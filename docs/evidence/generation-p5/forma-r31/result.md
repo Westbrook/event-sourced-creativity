@@ -1,0 +1,17 @@
+# P5 R31 — stopped at browser preflight
+
+The exact R30 decision was accepted. Its first required supported inventory, `cua.getState()`, returned **`browsers: []`**. No actual-Forma tab was exposed. This is an empty inventory result, not a native Sites refusal. The user reports an ordinary signed-in page and ambient UI also names Forma; neither substitutes for R30's explicit inventory requirement. This does not establish a disconnected browser, failed authentication, application/schema failure or moderation cause. No private document body was read; unrelated application inventory is omitted from the retained receipt.
+
+The attempt stopped at N1 before any native Site read, source credential, push, save, admission or deployment. No diagnostic GET was sent and the user was not given a diagnostic go-ahead. **No new restoration obligation was created.** R29 remains closed. Retained554 remains only a planning baseline; current production was not verified or changed. Never run551/550 or restore554 over newer work.
+
+Reservation44/N1 was saved, flushed and read back before the call. The receipt was retained and the ledger durably stopped. Totals: **31/43normal,13/19recovery,44/62charged**;12normal and6recovery unused. All43 historical entries and sealed R30 artifacts are unchanged. Unused capacity does not override the stop condition or authorize another N1 attempt. Native/browser internal HTTP remains uncounted; these are operator reservations.
+
+## Smallest next decision
+
+The missing capability is exposure of the existing actual-Forma tab through the supported browser inventory. No native deployment, application change, login or billing/P6 research can establish that capability. Do not retry publication to reproduce it, switch surfaces or inspect browser internals.
+
+After that exposure is available, the smallest changed scope is **one metadata-only inventory recheck**, explicitly reassigning one unused normal reservation, with no navigation, login, native Site request, publication or recovery action. It would preserve the current ceilings and leave32normal/13recovery charged,11normal/6recovery unused. A matching existing IAB tab would establish inventory visibility only, with authentication still supported by the owner's attestation; an empty/failed inventory would stop again. No recheck is currently authorized and no particular UI repair is asserted without evidence.
+
+That recheck alone would not reopen the ended publication attempt. The remaining original N2–N13 sequence needs up to12normal reservations; after a recheck only11would remain. A later full resumption therefore needs an explicit allocation reconciliation (at least one additional normal reservation if all original branches are preserved), plus fresh source/version/audience/environment parity and all6recovery slots. No extra charge, expiry renewal or broad approval is inferred here. This is concrete arithmetic, not a request to repeat settled authentication/exposure/retention intake.
+
+Existing unknown-price exposure, indefinite retention and authentication decisions remain recorded. Sep30 22:00UTC margin and Oct1 00:00UTC expiry remain. Infrastructure qualification has no new hosted observation; prompt fidelity has no real pair; moderation has no new finding. P2 gates,847/six exclusions, private R14 cleanup and retention persist. Settlement-gate proposal remains unimplemented; no paid authority or custody action.

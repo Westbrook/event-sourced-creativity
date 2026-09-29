@@ -1,0 +1,18 @@
+{
+  "operation": "cua.getState()",
+  "result": {
+    "browsers": []
+  },
+  "browserCount": 0,
+  "matchingActualFormaTabs": 0,
+  "inventoryErrorsReturned": false,
+  "unrelatedApplicationInventoryOmitted": true,
+  "ownerAttestsSignedIn": true,
+  "ambientFormaUrlPresent": true,
+  "authenticationFailureEstablished": false,
+  "disconnectedBrowserEstablished": false,
+  "privateDocumentBodyRead": false,
+  "navigation": false,
+  "nativeSiteCalls": 0,
+  "stopCondition": "Required existing actual-Forma tab was not exposed by supported inventory."
+}

@@ -1,0 +1,9 @@
+{
+  "reservation44DurablySavedBeforeInventory": true,
+  "receiptDurablySaved": true,
+  "prior43EntriesUnchanged": true,
+  "priorLedgerSha256": "e57b797218bfab8d19549f02d1913c135b69902a80cb74180f896d273dd778ee",
+  "sealedR30EvidenceFilesVerified": 21,
+  "archiveSha256": "a1c604d813972d4c95a5fdf37a201c4fe2255d3e2ab09526474be3d147f438ae",
+  "oneInventoryNoFurtherAction": true
+}

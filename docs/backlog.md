@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — current-production qualification prepared | Existing P5 task | [R30 decision](evidence/generation-p5/forma-r30/decision.md): sealed qualification-only successor of retained554, one manual read and guarded restoration554;13normal/6recovery proposed, no new authority. R29 closed;43prior charges preserved; old551/550 superseded. Fresh release/tab parity after acceptance; no P6/export/billing prerequisite. | Hosted qualification plus separately authorized real two-image comparison with exact request/provider evidence. [Original-settlement contract change](evidence/generation-p5/forma-r30/settlement-change.md) proposed separately, unimplemented. No real pair or moderation finding. P2,847/six and expiry persist. |
+| GEN-P5 | In progress — approved preflight stopped before mutation | Existing P5 task | [R31 result](evidence/generation-p5/forma-r31/result.md): R30 accepted; N1 supported inventory returned browsers=[] despite owner signed-in attestation. No native call/deployment/read/restoration.31/43normal,13/19recovery;44charged. Exact sealed554 successor preserved; no551/550. Smallest next scope is separately authorized inventory-only recheck; no P6/billing wait. | Hosted qualification then separately authorized real two-image comparison; no real pair or new moderation finding. R29 recovery closed. Current production unverified. P2,847/six and expiry persist; settlement contract unchanged. |
 
 ## Memory
 
