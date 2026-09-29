@@ -1,0 +1,12 @@
+{
+  "id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "status": "active",
+  "current_user_role": "owner",
+  "access_mode": "workspace_all",
+  "latest_version_number": 555,
+  "current_live_url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+  "access_revision": 7,
+  "access_policy_sha256": "70f6a2e99e71e89b34359006a742a61766bf43b926235719bbebcb8cb541a43f",
+  "fullAccessPolicyParity": true,
+  "noNewerSavedVersion": true
+}

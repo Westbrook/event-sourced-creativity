@@ -1,0 +1,344 @@
+{
+  "basis": "R30 compiled local41migration fixture; not a complete hosted expected schema or applied-history certification",
+  "localObjects": 385,
+  "hostedObjects": 558,
+  "hostedTypeCounts": {
+    "table": 172,
+    "trigger": 138,
+    "index": 248
+  },
+  "missingLocalNames": [
+    "_cf_METADATA"
+  ],
+  "extraHostedNames": [
+    "__forma_event_save_repair_receipts",
+    "__forma_memory_schema_repair_receipts",
+    "_cf_KV",
+    "event_save_isolation_memory_authored_image_receipts",
+    "event_save_isolation_memory_derivation_asset_edges",
+    "event_save_isolation_memory_derivation_completion_cursors",
+    "event_save_isolation_memory_derivation_completions",
+    "event_save_isolation_memory_derivation_consumer_contents",
+    "event_save_isolation_memory_derivation_consumer_parents",
+    "event_save_isolation_memory_derivation_consumer_sources",
+    "event_save_isolation_memory_derivation_consumers",
+    "event_save_isolation_memory_derivation_contexts",
+    "event_save_isolation_memory_derivation_cursors",
+    "event_save_isolation_memory_derivation_finance",
+    "event_save_isolation_memory_derivation_grants",
+    "event_save_isolation_memory_derivation_index_intents",
+    "event_save_isolation_memory_derivation_job_finance",
+    "event_save_isolation_memory_derivation_job_sources",
+    "event_save_isolation_memory_derivation_jobs",
+    "event_save_isolation_memory_derivation_month_caps",
+    "event_save_isolation_memory_derivation_no_dispatch",
+    "event_save_isolation_memory_derivation_observation_controls",
+    "event_save_isolation_memory_derivation_producer_cursors",
+    "event_save_isolation_memory_derivation_producer_jobs",
+    "event_save_isolation_memory_derivation_profile_contexts",
+    "event_save_isolation_memory_derivation_qualifications",
+    "event_save_isolation_memory_derivation_recovery_cursor",
+    "event_save_isolation_memory_derivation_result_dependencies",
+    "event_save_isolation_memory_derivation_results",
+    "event_save_isolation_memory_derivation_split_commands",
+    "event_save_isolation_memory_derivation_usage",
+    "event_save_isolation_memory_derivation_user_controls",
+    "event_save_isolation_memory_recall_boundaries",
+    "event_save_isolation_memory_recall_organization_ranges",
+    "event_save_isolation_memory_resource_assistant_contents",
+    "event_save_isolation_memory_resource_assistant_runs",
+    "event_save_isolation_memory_resource_contexts",
+    "event_save_isolation_memory_resource_enrollments",
+    "event_save_isolation_memory_resource_history",
+    "event_save_isolation_memory_resource_openings",
+    "event_save_isolation_memory_resource_retired_sources",
+    "event_save_isolation_memory_scope_profile_checkpoints",
+    "event_save_isolation_memory_scope_profile_snapshots",
+    "event_write_stage_after_insert",
+    "generation_preflights",
+    "idx_generation_preflights_owner_document",
+    "idx_impersonation_actor_status",
+    "idx_memory_derivation_asset_expiry",
+    "idx_memory_derivation_asset_owner",
+    "idx_memory_derivation_asset_target",
+    "idx_memory_derivation_consumer_content_origin",
+    "idx_memory_derivation_consumer_context",
+    "idx_memory_derivation_consumer_execution",
+    "idx_memory_derivation_consumer_original_answer",
+    "idx_memory_derivation_consumer_original_turn",
+    "idx_memory_derivation_consumer_original_user",
+    "idx_memory_derivation_consumer_parent",
+    "idx_memory_derivation_consumer_source",
+    "idx_memory_derivation_consumer_turn",
+    "idx_memory_derivation_contexts_source",
+    "idx_memory_derivation_cursor_expiry",
+    "idx_memory_derivation_finance_payer_month",
+    "idx_memory_derivation_finance_workspace",
+    "idx_memory_derivation_grant_active",
+    "idx_memory_derivation_grant_actor",
+    "idx_memory_derivation_grant_organization",
+    "idx_memory_derivation_grant_parent",
+    "idx_memory_derivation_index_pending",
+    "idx_memory_derivation_job_consent",
+    "idx_memory_derivation_job_due",
+    "idx_memory_derivation_job_interval",
+    "idx_memory_derivation_observation_control_expiry",
+    "idx_memory_derivation_observation_control_lineage",
+    "idx_memory_derivation_observation_control_source",
+    "idx_memory_derivation_profile_context_job",
+    "idx_memory_derivation_qualification_current",
+    "idx_memory_derivation_result_expiry",
+    "idx_memory_derivation_result_inverse",
+    "idx_memory_derivation_source_inverse",
+    "idx_memory_derivation_source_sequence",
+    "idx_memory_derivation_user_control_expiry",
+    "idx_memory_derivation_user_control_lineage",
+    "idx_memory_derivation_user_control_source",
+    "idx_memory_resource_assistant_context",
+    "idx_memory_resource_context_active",
+    "idx_memory_resource_context_expiry",
+    "idx_memory_resource_due",
+    "idx_memory_resource_history_expiry",
+    "idx_memory_resource_openings_expiry",
+    "idx_memory_scope_profile_expiry",
+    "idx_memory_scope_profile_target",
+    "idx_organization_project_nesting_org",
+    "idx_project_containment_parent",
+    "idx_provider_health_expiry",
+    "idx_replay_event_chunks_sequence",
+    "idx_replay_personas_owner_updated",
+    "idx_replay_session_operations_owner_heartbeat",
+    "impersonation_sessions",
+    "memory_authored_image_receipts",
+    "memory_authored_image_receipts_event_id_unique",
+    "memory_authored_image_receipts_media_key_unique",
+    "memory_derivation_asset_edges",
+    "memory_derivation_completion_cursors",
+    "memory_derivation_completions",
+    "memory_derivation_consumer_contents",
+    "memory_derivation_consumer_parents",
+    "memory_derivation_consumer_sources",
+    "memory_derivation_consumers",
+    "memory_derivation_contexts",
+    "memory_derivation_cursors",
+    "memory_derivation_finance",
+    "memory_derivation_grants",
+    "memory_derivation_index_intents",
+    "memory_derivation_job_finance",
+    "memory_derivation_job_sources",
+    "memory_derivation_jobs",
+    "memory_derivation_month_caps",
+    "memory_derivation_no_dispatch",
+    "memory_derivation_observation_controls",
+    "memory_derivation_producer_cursors",
+    "memory_derivation_producer_jobs",
+    "memory_derivation_profile_contexts",
+    "memory_derivation_qualifications",
+    "memory_derivation_recovery_cursor",
+    "memory_derivation_result_dependencies",
+    "memory_derivation_results",
+    "memory_derivation_results_finance_id_unique",
+    "memory_derivation_split_commands",
+    "memory_derivation_usage",
+    "memory_derivation_user_controls",
+    "memory_recall_boundaries",
+    "memory_recall_organization_ranges",
+    "memory_resource_assistant_contents",
+    "memory_resource_assistant_runs",
+    "memory_resource_contexts",
+    "memory_resource_enrollments",
+    "memory_resource_history",
+    "memory_resource_openings",
+    "memory_resource_retired_sources",
+    "memory_scope_profile_checkpoints",
+    "memory_scope_profile_snapshots",
+    "organization_project_nesting",
+    "organization_project_nesting_compensation",
+    "organization_project_nesting_custody_delete",
+    "organization_project_nesting_custody_insert",
+    "organization_project_nesting_custody_update",
+    "organization_project_nesting_declaration",
+    "organization_project_nesting_immutable",
+    "organization_project_nesting_insert",
+    "organization_project_nesting_local_delete",
+    "organization_project_nesting_local_insert",
+    "organization_project_nesting_local_update",
+    "organization_project_nesting_migration_delete",
+    "organization_project_nesting_migration_update",
+    "organization_project_nesting_retire",
+    "project_containment",
+    "project_containment_compensation",
+    "project_containment_custody_delete",
+    "project_containment_custody_insert",
+    "project_containment_custody_update",
+    "project_containment_declaration_update",
+    "project_containment_insert",
+    "project_containment_update",
+    "project_notification_after_event",
+    "provider_health",
+    "replay_approval_profiles",
+    "replay_cost_settlements",
+    "replay_development_profiles",
+    "replay_event_chunks",
+    "replay_experience_profiles",
+    "replay_personas",
+    "replay_session_milestones",
+    "replay_session_operations",
+    "sqlite_stat1"
+  ],
+  "changedSharedMetadataOrSqlHashes": [
+    {
+      "name": "__appgarden_migrations",
+      "local": {
+        "type": "table",
+        "name": "__appgarden_migrations",
+        "table": "__appgarden_migrations",
+        "sqlSha256": "2a0d01833c0914f306dd963c9d7d21fe60ea49187d1b15a3a6e3fb5d484c4753"
+      },
+      "hosted": {
+        "type": "table",
+        "name": "__appgarden_migrations",
+        "table": "__appgarden_migrations",
+        "sqlSha256": "9ec7414d0dabaf3f7f51bdc85f4367f36c24de2cc4b70b6d1e4d8a9c8c561066"
+      }
+    },
+    {
+      "name": "budget_reservations",
+      "local": {
+        "type": "table",
+        "name": "budget_reservations",
+        "table": "budget_reservations",
+        "sqlSha256": "c29d9fb87a973a405689333724f139e77fa5c9782f8d44032335bd5382311848"
+      },
+      "hosted": {
+        "type": "table",
+        "name": "budget_reservations",
+        "table": "budget_reservations",
+        "sqlSha256": "dd6578df0133f7f7eeff7191d2cb5bb4c2bd0878bd04711d4a5bf4a58a0990c8"
+      }
+    },
+    {
+      "name": "idx_budget_reservations_correlation",
+      "local": {
+        "type": "index",
+        "name": "idx_budget_reservations_correlation",
+        "table": "budget_reservations",
+        "sqlSha256": "480442a27a42198571a464f88e4a218398288d16b62b6d847409373ac69fbb17"
+      },
+      "hosted": {
+        "type": "index",
+        "name": "idx_budget_reservations_correlation",
+        "table": "budget_reservations",
+        "sqlSha256": "1e0f81fac541c1295a95541287cf3ab5e6ba6b89e288eadcea8d77cc617b022a"
+      }
+    },
+    {
+      "name": "idx_budget_reservations_owner_status",
+      "local": {
+        "type": "index",
+        "name": "idx_budget_reservations_owner_status",
+        "table": "budget_reservations",
+        "sqlSha256": "b0e10e3d4def1818f311882854094da397e1a2b521c309803a984c1cd86b87a6"
+      },
+      "hosted": {
+        "type": "index",
+        "name": "idx_budget_reservations_owner_status",
+        "table": "budget_reservations",
+        "sqlSha256": "543128508b6879693a42bebf62a23d0423621a1fa2b6e399fba6170eaf0d344d"
+      }
+    },
+    {
+      "name": "organization_context_package_content_immutable",
+      "local": {
+        "type": "trigger",
+        "name": "organization_context_package_content_immutable",
+        "table": "organization_context_package_contents",
+        "sqlSha256": "48ca10e2a5b5caac104aac85d121e5b836cd2df561afb4fe9fb1644cfe44b80f"
+      },
+      "hosted": {
+        "type": "trigger",
+        "name": "organization_context_package_content_immutable",
+        "table": "organization_context_package_contents",
+        "sqlSha256": "39bd6fc7235d13fc56fccbe087ab5efc6f14fec6b63c218dd2550af384124a6b"
+      }
+    },
+    {
+      "name": "organization_context_package_version_immutable",
+      "local": {
+        "type": "trigger",
+        "name": "organization_context_package_version_immutable",
+        "table": "organization_context_package_versions",
+        "sqlSha256": "455b1fa50f7ef619aa2abb8bf4fe052825874c488c9f9b57069fe9c1f4279169"
+      },
+      "hosted": {
+        "type": "trigger",
+        "name": "organization_context_package_version_immutable",
+        "table": "organization_context_package_versions",
+        "sqlSha256": "748911bdfdbe9dfca761d67a1d76d26fd4c33d9d139f93ce683480ed53c69aff"
+      }
+    },
+    {
+      "name": "organization_deletion_active_hold_guard",
+      "local": {
+        "type": "trigger",
+        "name": "organization_deletion_active_hold_guard",
+        "table": "organization_deletion_jobs",
+        "sqlSha256": "21174c8d52828770dc9eaea69e4548f79d2ff316229cb72b39f65c407b308d17"
+      },
+      "hosted": {
+        "type": "trigger",
+        "name": "organization_deletion_active_hold_guard",
+        "table": "organization_deletion_jobs",
+        "sqlSha256": "c4c99784be823545c63ba4b19a7b1c93e634bbfcdd0ab11702d0b2090d26717a"
+      }
+    },
+    {
+      "name": "organization_legal_hold_during_deletion_guard",
+      "local": {
+        "type": "trigger",
+        "name": "organization_legal_hold_during_deletion_guard",
+        "table": "organization_legal_holds",
+        "sqlSha256": "ba9a2c20c70a5289d8086fa6e54b9965089df5ea67eca9126b0d6d649c71eb97"
+      },
+      "hosted": {
+        "type": "trigger",
+        "name": "organization_legal_hold_during_deletion_guard",
+        "table": "organization_legal_holds",
+        "sqlSha256": "8be03dc329cfa1c4d3a73cdfe8c3725bc40318ff42be4512a7c2ad65d6fdf4d6"
+      }
+    },
+    {
+      "name": "organization_retention_hold_during_deletion_guard",
+      "local": {
+        "type": "trigger",
+        "name": "organization_retention_hold_during_deletion_guard",
+        "table": "organization_retention_policies",
+        "sqlSha256": "ae58a306d99c81ad243abe80836b160c8ebd466c04a2877780754f16afa66593"
+      },
+      "hosted": {
+        "type": "trigger",
+        "name": "organization_retention_hold_during_deletion_guard",
+        "table": "organization_retention_policies",
+        "sqlSha256": "c24f63aaf5e59dfcb7bfeee6ee597bdb08223f9544131afb465b03269521dc75"
+      }
+    },
+    {
+      "name": "organization_retention_hold_insert_during_deletion_guard",
+      "local": {
+        "type": "trigger",
+        "name": "organization_retention_hold_insert_during_deletion_guard",
+        "table": "organization_retention_policies",
+        "sqlSha256": "891b47933f7b5f1d11475668d97a9998a428c9b80bf5a7ebac2d18ae379f8b51"
+      },
+      "hosted": {
+        "type": "trigger",
+        "name": "organization_retention_hold_insert_during_deletion_guard",
+        "table": "organization_retention_policies",
+        "sqlSha256": "c8af0418af544acb4357d2955de99a7b226841d622bfcf6e2eb09fc3bc93e495"
+      }
+    }
+  ],
+  "identicalSharedObjects": 374,
+  "studyPrefixHostedCount": 0,
+  "approvalPrefixHostedCount": 0
+}

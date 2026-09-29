@@ -1,0 +1,17 @@
+{
+  "57-owner-qualification.raw.json": "647fd6d12234ab74c2ee52e05f73342532738fbcbe7499777eecd60b8abb728b",
+  "57-owner-receipt.json": "a382afdd4ec90cb129818d44a1a37de2d147ad56aabc84e68947829c36cd96f1",
+  "58-pre-restoration-site.json": "61786b5d9e2105e5199d969fd3c38de25b00140f1b3420696d72225a03ead6a0",
+  "59-restoration-initial.json": "369860a8aeaf092c5d4d03b2e483bdc0968dba614b792b9988b017ed27f1762d",
+  "60-restoration-terminal.json": "85d12bf2bc17bc92c508067250fe73a361e85819eab591154f5e147188a70ecc",
+  "61-final-site-redacted.json": "467e24dcfc261c50e3077332ed8b9e7b1a8f737653c5e3366f87d9020ca54dd8",
+  "62-final-environment-redacted.json": "9e716324fe0a4b826cce32643f093b98bd14be92849ccb74741ae55351d7f028",
+  "catalog-comparison.json": "aa92674101e668601ceb28a43c5e6ea602347bcd37efeefead1fbab9ab3df9ce",
+  "handoff.md": "accf7ec4aa8e1fc3b6cc25cfbe9f6f5a38b203e4a738e5b6b18a59adc784f81b",
+  "index.html": "75dc3b17309ed1cf509fa1f988634f212c4490d4c7619a37c49d541562415cbe",
+  "ledger.py": "5a097771a53c65130d04bd0e35e81ebbee994dca989ae713814adb5732c07aea",
+  "request-ledger.json": "c57e67d7c4b446ae6bbc011a4db0bafb35793e4b87370f6887d5d333c507d1ae",
+  "result.json": "e8913b4c4d7de0f2c6f2e1441e5a57b0cd636a079ede12b12b619aa7755ec143",
+  "result.md": "b8f53ae749dc28671512859c9a0a4b1d28b7dff206236c2547d2162e2ad78e4d",
+  "validation.json": "683efc935bc82530a907c4d798b08857ecd2f30bca273e98f5726a2c12124d16"
+}

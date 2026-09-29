@@ -1,0 +1,14 @@
+{
+  "prior56LedgerEntriesUnchanged": true,
+  "manualRawHashMatches": true,
+  "allReservationsReceipted": true,
+  "fiveRecoveryCalls": true,
+  "terminalRestorationAndFinalParity": true,
+  "unchangedProductCode": true,
+  "broadTestsOrBuildRepeated": false,
+  "limitsRespected": true,
+  "normal": 44,
+  "recovery": 18,
+  "charged": 62,
+  "noNewBrowserCall": true
+}

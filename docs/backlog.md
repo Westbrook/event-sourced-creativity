@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — 555 deployed; one manual receipt pending | Existing P5 task | [R33 handoff](evidence/generation-p5/forma-r33/handoff.md): exact R30sealed successor admitted as555/sourceea8e7121;terminal env16. N13/reservation57 saved before go-ahead;owner manual JSON/error pending.44/44normal,13/19recovery;6recovery slots retained for guarded554 restoration. No repeated inventory or browser call. | Preserve original receipt then finish authorized R1–R6;do not restore over newerwork or551/550. No hosted qualificationJSON received yet,real imagepair or new moderation finding. P2,847/six,retention and expiry persist;paid study separate. |
+| GEN-P5 | In progress — qualification observed; restoration closed | Existing P5 task | [R34 handoff](evidence/generation-p5/forma-r34/handoff.md): one matching owner JSON from555;14 statements/zero writes, study/approval schema not exact,17 token/46 cost holds. Restored554 terminal success;final workspace access7/env16 parity.44/44normal,18/19recovery,62charged. | Local-only narrow activation/hold-handling proposal is the next decision; no automatic restoration, repeated GET, broad schema repair or paid authority. No real pair/fidelity result or moderation finding. P2,847/six,retention and expiry persist. |
 
 ## Memory
 

@@ -1,0 +1,22 @@
+{
+  "provenance": "Owner pasted response from the one authorized manual navigation; no agent HTTP or browser reread",
+  "rawFile": "57-owner-qualification.raw.json",
+  "rawSha256": "647fd6d12234ab74c2ee52e05f73342532738fbcbe7499777eecd60b8abb728b",
+  "rawBytes": 104172,
+  "contract": "forma-p5-qualification-v1",
+  "release": "p5-forma-qualification-only:ea53147a124d910bc7e6e9c6fc362e4e641d65527f7829cf0ed24ad62c6d1fc7",
+  "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "capturedAt": "2026-09-29T19:32:40.176Z",
+  "status": "observed-not-purchase-qualified",
+  "metrics": {
+    "statements": 14,
+    "reads": 1927,
+    "writes": 0,
+    "resultBytes": 313770,
+    "databaseBytes": 69468160
+  },
+  "singleReadReported": true,
+  "httpStatusNotIndependentlyCaptured": true,
+  "expectedReleaseAndTargetMatch": true,
+  "agentReadRepeated": false
+}
