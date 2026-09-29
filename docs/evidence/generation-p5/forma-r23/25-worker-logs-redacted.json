@@ -1,0 +1,29 @@
+{
+  "operation": "sites_get_site_worker_logs",
+  "reservation": 25,
+  "args": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "since_minutes": 62,
+    "limit": 100,
+    "errors_only": false
+  },
+  "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "projectMatches": true,
+  "nativeIsError": false,
+  "returnedCount": 100,
+  "limitReached": true,
+  "matchingEvents": [],
+  "omittedCount": 100,
+  "invalidTimestampCount": 0,
+  "returnedTimestampRange": {
+    "earliest": "2026-09-29T00:22:25.002Z",
+    "latest": "2026-09-29T00:55:20.444Z"
+  },
+  "redaction": "Only relevant event metadata and aggregate coverage retained. Request headers/cookies/identities, bodies, query values, unrelated event content and raw tool dump not persisted.",
+  "correlationLimit": "R21 has no recorded request/trace id; route/time matches cannot conclusively attribute an event to tab7.",
+  "coverageLimit": "At most100 recent events; no pagination or completeness guarantee; no match is not proof of no invocation.",
+  "eventsWithinAttemptInterval": 0,
+  "routeInspectionComplete": false,
+  "localProcessingLimitation": "Initial URL parsing relied on an unavailable URL constructor in the orchestration runtime. Route-only counts were invalidated and removed. Aggregate numeric timestamp range independently establishes that all100 returned events postdate the attempt; no matching event metadata was retained. Raw logs were discarded after privacy filtering and no second read was made.",
+  "conclusion": "Inconclusive: returned100-event window begins after original attempt interval. No matching invocation can be evaluated from this result."
+}

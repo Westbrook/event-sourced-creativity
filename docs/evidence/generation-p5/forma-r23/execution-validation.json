@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-09-29T01:01:57.850186+00:00",
+  "prior24EntriesUnchanged": true,
+  "priorLedgerHashUnchanged": true,
+  "reservation25BeforeNativeDispatch": true,
+  "receiptHashVerified": true,
+  "normal": 19,
+  "recovery": 6,
+  "issued": 25,
+  "nativeCallsThisContinuation": 1,
+  "retries": 0,
+  "hostedMutations": 0,
+  "qualificationRequests": 0,
+  "allReturnedEventsAfterAttempt": true,
+  "localRouteFilterLimitationDisclosed": true,
+  "rawLogsRetained": false,
+  "platformRequestSent": false,
+  "status": "stopped; exact read consumed"
+}
