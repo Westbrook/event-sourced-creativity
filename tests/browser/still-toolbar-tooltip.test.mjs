@@ -4,13 +4,13 @@ import {createServer} from 'vite';
 import {chromium} from '@playwright/test';
 
 test('toolbar tooltips retire with their navigation context and buttons',async t=>{
- const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-toolbar-tooltip',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body></body></html>');});}}]});let browser;
+ const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-toolbar-tooltip',optimizeDeps:{noDiscovery:true,include:['lit']},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body></body></html>');});}}]});let browser;
  try{
   await server.listen();browser=await chromium.launch({headless:true});const page=await browser.newPage();page.setDefaultTimeout(5000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/still`);
   await page.evaluate(async()=>{
-   const {html}=await import('/node_modules/lit/index.js');
+   const {html}=await import('/@id/lit');
    const {StillApp}=await import('/src/still/app.ts');
    const {foldEvents}=await import('/src/model/events.ts');
    class Fixture extends StillApp{

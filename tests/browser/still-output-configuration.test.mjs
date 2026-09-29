@@ -4,12 +4,12 @@ import {createServer} from 'vite';
 import {chromium} from '@playwright/test';
 
 test('Still selects types before configuring and explicitly submitting',async()=>{
- const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-output-configuration',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body></body></html>');});}}]});let browser;
+ const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-output-configuration',optimizeDeps:{noDiscovery:true,include:['lit']},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body></body></html>');});}}]});let browser;
  try{
   await server.listen();browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1000,height:850}});page.setDefaultTimeout(5000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/still`);
   await page.evaluate(async()=>{
-   const {html,LitElement}=await import('/node_modules/lit/index.js'),{StillApp}=await import('/src/still/app.ts'),{StillClient}=await import('/src/still/client.ts'),{foldEvents}=await import('/src/model/events.ts');
+   const {html,LitElement}=await import('/@id/lit'),{StillApp}=await import('/src/still/app.ts'),{StillClient}=await import('/src/still/client.ts'),{foldEvents}=await import('/src/model/events.ts');
    const css=(await import('/src/still/style.css?raw')).default;const style=document.createElement('style');style.textContent=css.replaceAll('still-app','output-fixture');document.head.append(style);
    class Fixture extends StillApp{
     connectedCallback(){LitElement.prototype.connectedCallback.call(this);} updated(){this.scheduleDockFit();} decide(){} suggestFormats(){} currentRouteProblem(){return '';}
