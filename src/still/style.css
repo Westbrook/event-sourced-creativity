@@ -59,6 +59,7 @@ still-app en-textarea::part(label) { color: var(--en-color-text-muted); font-siz
 still-app .form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 28px; }
 still-app .select-label { display:block;min-width:0;margin:24px 0; }
 still-app .context-preview { font: 22px/1.65 Georgia, serif; white-space: pre-wrap; }
+still-app .idea-sharing-note { margin-block-start: var(--en-space-8); color: var(--en-color-text-muted); font-size: var(--en-font-metadata-size); line-height: var(--en-font-metadata-line-height); }
 still-app .generation-page { max-width: 900px; }
 still-app .generation-context { margin: 24px 0 40px; }
 still-app .generation-context p { font: 24px/1.57 Georgia, serif; margin: 28px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
