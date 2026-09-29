@@ -73,3 +73,13 @@ H owns the global Progress Report handoff. This task updates only `generation-e2
 The user subsequently explicitly requested merging this E2a work to main and publishing Production. This supersedes only the original publication restriction. The transform remains disabled, with no production caller, new generation, planner inference, live study, credential/infrastructure provisioning, changed defaults or Memory activation. C serialized its release after the independently authorized E, G and D releases and preserves their current-main source plus F2. H's disabled execution bridge remains separate and is not included by this release.
 
 The immutable v1 capture and original source/compiler baseline remain unchanged. The exact release source, successful native deployment/version, checks and retained environment/audience are appended under `handoff.generationE2a.release` through the canonical report's atomic helper. Publication does not establish user review, visual fidelity, refusal-rate improvement or financial qualification.
+
+## Independent Video follow-up — 29 September 2026
+
+The [bounded local Video correction](video-reference-provenance-correction.md)
+implements the Video ledger's existing origin-versus-identity requirement. It
+removes blanket fictional/adult assertions from reference provenance and fixes
+new prepared metadata without applying the E2a image compiler or changing its
+immutable v1 capture. Existing real/fictional identities and ages remain authored
+subject facts; unknown stays unknown. Offline request fidelity is demonstrated,
+not rendered quality or moderation causation. P5 and completed N2 remain separate.

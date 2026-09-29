@@ -53,3 +53,15 @@ H3 pins settled integrated H/E2 `a5cedbbc5dfde9bde753403c3f71ffb2c958f11a`; [E2'
 | 3D — E, C, F2, H | Dedicated geometry/material scope and original request | Rodin queue/download/authority, topology/material/scale; usable asset and measured/unknown cost | Dedicated route remains outside generic planner; no new planner or image-finance adoption. |
 
 [H3 host and gate matrix](generation-first-study-h3.md) adds disabled native owner/D1/transport/custody bindings and offline crash/race proofs. No cross-media executor is wired, no empirical improvement is claimed, and no all-media prerequisite is added to the first image feasibility study. Actual source/direction, new real C capture, fresh exact F2 and live authority remain outstanding. Historical envelopes and the Image2 incident are unchanged.
+
+## Independent Video provenance correction — 29 September 2026
+
+[Bounded local result](video-reference-provenance-correction.md) implements the
+Video row's semantic requirement: generated/storyboard origin never proves
+fictional identity or adult age. Four synthetic intercepted request fixtures,
+unknown-origin variants and original-receipt recovery verify the correction.
+Explicit subject facts, exclusions, reference roles/order/bytes and existing
+audio/rights/custody/accounting remain intact. Prompt adapter 1.1.1; transport
+2.0.0 unchanged. Local only, with baseline test limitations recorded. Video
+quality and moderation effects remain unmeasured; P5's approved package and the
+completed N2 audit are unchanged. H/C/E integration is a separate recommendation.

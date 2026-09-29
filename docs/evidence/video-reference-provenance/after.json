@@ -1,0 +1,1051 @@
+{
+  "provenance": "synthetic offline interception after local correction; no live requests or media generation; not historical evidence",
+  "captures": [
+    {
+      "fixture": "historical-generated",
+      "requestBody": "{\"prompt\":\"OUTPUT CONTRACT\\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\\n\\nVISUAL RHYTHM\\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\\n\\nCREATIVE MEANING\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\\n\\nMANDATORY AUTHORIAL DECISIONS\\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\\n\\nAUTHORIAL BOUNDARIES\\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\\n\\nORDERED STORYBOARD CHRONOLOGY\\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\\n\\nREFERENCE PROVENANCE\\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\\n\\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\nMOTION AND STORY DIRECTION\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\",\"aspect_ratio\":\"16:9\",\"duration\":4,\"resolution\":\"480p\",\"generate_audio\":false,\"image_urls\":[\"https://v3b.fal.media/files/fixture-1.png\",\"https://v3b.fal.media/files/fixture-2.png\"]}",
+      "prepared": {
+        "provider": "fal",
+        "model": "bytedance/seedance-2.0/reference-to-video",
+        "submittedPrompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+        "parameters": {
+          "aspect_ratio": "16:9",
+          "duration": 4,
+          "resolution": "480p",
+          "generate_audio": false,
+          "audio_mode": "silent",
+          "native_audio_mode": "silent",
+          "audio_opt_in": false,
+          "audio_policy": "Sound was not explicitly requested. Silent video preserves authored visual intent and avoids unrequested soundtrack-generation risk.",
+          "audio_residual_risk": "none",
+          "soundtrack_mode": "none",
+          "audio_reference_count": 0,
+          "audio_reference_duration_seconds": 0,
+          "end_user_id_supplied": false,
+          "reference_syntax": "@ImageN",
+          "reference_prompt_profile": "positive-only",
+          "identity_provenance": "not-inferred-from-asset-origin",
+          "reference_requested_count": 2,
+          "provider_pixel_count": 2,
+          "prompt_adapter_id": "video-production-director",
+          "prompt_adapter_version": "1.1.1",
+          "source_prompt_characters": 89,
+          "submitted_prompt_characters": 2345,
+          "prompt_compacted": false,
+          "omitted_optional_sections": [],
+          "narrative_beat_count": 2,
+          "authored_timecodes_preserved": true,
+          "reference_token_coverage": [
+            {
+              "token": "@Image1",
+              "sequence": 1,
+              "mode": "preserve_subject"
+            },
+            {
+              "token": "@Image2",
+              "sequence": 2,
+              "mode": "preserve_composition"
+            }
+          ],
+          "adapter_id": "fal-seedance-reference",
+          "adapter_version": "2.0.0",
+          "adapter_status": "adopted",
+          "image_count": 2,
+          "image_transport": "fal-storage-upload",
+          "original_provider_asset_count": 0,
+          "uploaded_asset_count": 2,
+          "reference_order": "storyboard-sequence-then-document-position"
+        },
+        "referenceInputs": [
+          {
+            "index": 1,
+            "block_id": "reference-block-1",
+            "reference_id": "reference-1",
+            "label": "View 1",
+            "mode": "preserve_subject",
+            "mime_type": "image/png",
+            "byte_length": 5,
+            "sha256": "871923f8e5535ef938edc1ea710d5cf9e18637ce5d39feccef23030823993e4e",
+            "storyboard_sequence": 1,
+            "shot_direction": "The first subject turns toward the window.",
+            "camera_direction": "Static camera.",
+            "frame_prompt": "A quiet interior.",
+            "source_artifact_id": "storyboard-fixture",
+            "source_artifact_item_id": "frame-1",
+            "source_artifact_kind": "storyboard",
+            "storyboard_title": "Two views",
+            "context_groups": [
+              {
+                "id": "cast-fixture",
+                "name": "Subject continuity",
+                "target": "First subject",
+                "role": "character",
+                "application": "isolate",
+                "relativity": 1
+              }
+            ],
+            "pixels_submitted": true,
+            "provider_reference_mode": "pixel",
+            "provider_downgrade_reason": null,
+            "transport": "fal-storage-upload",
+            "original_provider_asset_reused": false
+          },
+          {
+            "index": 2,
+            "block_id": "reference-block-2",
+            "reference_id": "reference-2",
+            "label": "View 2",
+            "mode": "preserve_composition",
+            "mime_type": "image/png",
+            "byte_length": 5,
+            "sha256": "8fb5ddd9a15a069bb6c49ec47dab08c7952b0fe6cee1578918d0030411d0cae3",
+            "storyboard_sequence": 2,
+            "shot_direction": "The second view holds the doorway.",
+            "camera_direction": "Static camera.",
+            "frame_prompt": "A quiet interior.",
+            "source_artifact_id": "storyboard-fixture",
+            "source_artifact_item_id": "frame-2",
+            "source_artifact_kind": "storyboard",
+            "storyboard_title": "Two views",
+            "context_groups": [
+              {
+                "id": "cast-fixture",
+                "name": "Subject continuity",
+                "target": "First subject",
+                "role": "character",
+                "application": "isolate",
+                "relativity": 1
+              }
+            ],
+            "pixels_submitted": true,
+            "provider_reference_mode": "pixel",
+            "provider_downgrade_reason": null,
+            "transport": "fal-storage-upload",
+            "original_provider_asset_reused": false
+          }
+        ],
+        "usedReferencePixels": true,
+        "adaptation": {
+          "prompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+          "adapterId": "video-production-director",
+          "adapterVersion": "1.1.1",
+          "audio": {
+            "requestedMode": "silent",
+            "effectiveMode": "silent",
+            "generateAudio": false,
+            "explicitlyRequested": false,
+            "authoredRequirement": "none",
+            "residualRisk": "none",
+            "rationale": "Sound was not explicitly requested. Silent video preserves authored visual intent and avoids unrequested soundtrack-generation risk."
+          },
+          "compilation": {
+            "prompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+            "valid": true,
+            "limit": 10000,
+            "originalCharacters": 2345,
+            "adaptedCharacters": 2345,
+            "compacted": false,
+            "includedSectionIds": [
+              "output-contract",
+              "audio-contract",
+              "creative-meaning",
+              "mandatory-authored-decisions",
+              "authored-boundaries",
+              "ordered-storyboard-beats",
+              "reference-provenance",
+              "reference-1",
+              "reference-2",
+              "motion-and-story-direction"
+            ],
+            "omittedSectionIds": [],
+            "compactedSectionIds": [],
+            "issues": []
+          },
+          "storyboardBeats": [
+            {
+              "sequence": 1,
+              "title": "View 1",
+              "startsAtSeconds": 0,
+              "endsAtSeconds": 2,
+              "sourceBlockId": "reference-block-1"
+            },
+            {
+              "sequence": 2,
+              "title": "View 2",
+              "startsAtSeconds": 2,
+              "endsAtSeconds": 4,
+              "sourceBlockId": "reference-block-2"
+            }
+          ],
+          "referenceBindings": [
+            {
+              "token": "@Image1",
+              "referenceId": "reference-1",
+              "blockId": "reference-block-1",
+              "sequence": 1,
+              "mode": "preserve_subject",
+              "contextGroupIds": [
+                "cast-fixture"
+              ]
+            },
+            {
+              "token": "@Image2",
+              "referenceId": "reference-2",
+              "blockId": "reference-block-2",
+              "sequence": 2,
+              "mode": "preserve_composition",
+              "contextGroupIds": [
+                "cast-fixture"
+              ]
+            }
+          ],
+          "sourceBlockIds": [
+            "subject-0",
+            "excluded"
+          ],
+          "removedAudioDirections": [],
+          "sourceInterpretations": [],
+          "audioExclusionInterpretations": [],
+          "timingSource": "authored"
+        }
+      },
+      "calls": [
+        {
+          "url": "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+          "method": "POST",
+          "body": "{\"content_type\":\"image/png\",\"file_name\":\"1790646756788.png\"}"
+        },
+        {
+          "url": "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+          "method": "POST",
+          "body": "{\"content_type\":\"image/png\",\"file_name\":\"1790646756800.png\"}"
+        },
+        {
+          "url": "https://upload.fal.media/fixture-1",
+          "method": "PUT",
+          "body": [
+            137,
+            80,
+            78,
+            71,
+            1
+          ]
+        },
+        {
+          "url": "https://upload.fal.media/fixture-2",
+          "method": "PUT",
+          "body": [
+            137,
+            80,
+            78,
+            71,
+            2
+          ]
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video",
+          "method": "POST",
+          "body": "{\"prompt\":\"OUTPUT CONTRACT\\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\\n\\nVISUAL RHYTHM\\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\\n\\nCREATIVE MEANING\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\\n\\nMANDATORY AUTHORIAL DECISIONS\\nSUBJECT: Ada Lovelace is the real historical person, depicted at age 28.\\n\\nAUTHORIAL BOUNDARIES\\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\\n\\nORDERED STORYBOARD CHRONOLOGY\\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\\n\\nREFERENCE PROVENANCE\\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\\n\\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\nMOTION AND STORY DIRECTION\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\",\"aspect_ratio\":\"16:9\",\"duration\":4,\"resolution\":\"480p\",\"generate_audio\":false,\"image_urls\":[\"https://v3b.fal.media/files/fixture-1.png\",\"https://v3b.fal.media/files/fixture-2.png\"]}"
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/requests/fixture-original/status?logs=1",
+          "method": "GET"
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/requests/fixture-original",
+          "method": "GET"
+        },
+        {
+          "url": "https://v3b.fal.media/files/fixture-result.mp4",
+          "method": "GET"
+        }
+      ],
+      "costMicrousd": 538020
+    },
+    {
+      "fixture": "mixed-ages",
+      "requestBody": "{\"prompt\":\"OUTPUT CONTRACT\\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\\n\\nVISUAL RHYTHM\\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\\n\\nCREATIVE MEANING\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\\nSUBJECT: Mara is an adult aged 35.\\nSUBJECT: Leo is a child aged 8.\\n\\nMANDATORY AUTHORIAL DECISIONS\\nSUBJECT: Mara is an adult aged 35.\\nSUBJECT: Leo is a child aged 8.\\n\\nAUTHORIAL BOUNDARIES\\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\\n\\nORDERED STORYBOARD CHRONOLOGY\\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\\n\\nREFERENCE PROVENANCE\\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\\n\\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\nMOTION AND STORY DIRECTION\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\",\"aspect_ratio\":\"16:9\",\"duration\":4,\"resolution\":\"480p\",\"generate_audio\":false,\"image_urls\":[\"https://v3b.fal.media/files/fixture-1.png\",\"https://v3b.fal.media/files/fixture-2.png\"]}",
+      "prepared": {
+        "provider": "fal",
+        "model": "bytedance/seedance-2.0/reference-to-video",
+        "submittedPrompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: Mara is an adult aged 35.\nSUBJECT: Leo is a child aged 8.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: Mara is an adult aged 35.\nSUBJECT: Leo is a child aged 8.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+        "parameters": {
+          "aspect_ratio": "16:9",
+          "duration": 4,
+          "resolution": "480p",
+          "generate_audio": false,
+          "audio_mode": "silent",
+          "native_audio_mode": "silent",
+          "audio_opt_in": false,
+          "audio_policy": "Sound was not explicitly requested. Silent video preserves authored visual intent and avoids unrequested soundtrack-generation risk.",
+          "audio_residual_risk": "none",
+          "soundtrack_mode": "none",
+          "audio_reference_count": 0,
+          "audio_reference_duration_seconds": 0,
+          "end_user_id_supplied": false,
+          "reference_syntax": "@ImageN",
+          "reference_prompt_profile": "positive-only",
+          "identity_provenance": "not-inferred-from-asset-origin",
+          "reference_requested_count": 2,
+          "provider_pixel_count": 2,
+          "prompt_adapter_id": "video-production-director",
+          "prompt_adapter_version": "1.1.1",
+          "source_prompt_characters": 89,
+          "submitted_prompt_characters": 2333,
+          "prompt_compacted": false,
+          "omitted_optional_sections": [],
+          "narrative_beat_count": 2,
+          "authored_timecodes_preserved": true,
+          "reference_token_coverage": [
+            {
+              "token": "@Image1",
+              "sequence": 1,
+              "mode": "preserve_subject"
+            },
+            {
+              "token": "@Image2",
+              "sequence": 2,
+              "mode": "preserve_composition"
+            }
+          ],
+          "adapter_id": "fal-seedance-reference",
+          "adapter_version": "2.0.0",
+          "adapter_status": "adopted",
+          "image_count": 2,
+          "image_transport": "fal-storage-upload",
+          "original_provider_asset_count": 0,
+          "uploaded_asset_count": 2,
+          "reference_order": "storyboard-sequence-then-document-position"
+        },
+        "referenceInputs": [
+          {
+            "index": 1,
+            "block_id": "reference-block-1",
+            "reference_id": "reference-1",
+            "label": "View 1",
+            "mode": "preserve_subject",
+            "mime_type": "image/png",
+            "byte_length": 5,
+            "sha256": "871923f8e5535ef938edc1ea710d5cf9e18637ce5d39feccef23030823993e4e",
+            "storyboard_sequence": 1,
+            "shot_direction": "The first subject turns toward the window.",
+            "camera_direction": "Static camera.",
+            "frame_prompt": "A quiet interior.",
+            "source_artifact_id": "storyboard-fixture",
+            "source_artifact_item_id": "frame-1",
+            "source_artifact_kind": "storyboard",
+            "storyboard_title": "Two views",
+            "context_groups": [
+              {
+                "id": "cast-fixture",
+                "name": "Subject continuity",
+                "target": "First subject",
+                "role": "character",
+                "application": "isolate",
+                "relativity": 1
+              }
+            ],
+            "pixels_submitted": true,
+            "provider_reference_mode": "pixel",
+            "provider_downgrade_reason": null,
+            "transport": "fal-storage-upload",
+            "original_provider_asset_reused": false
+          },
+          {
+            "index": 2,
+            "block_id": "reference-block-2",
+            "reference_id": "reference-2",
+            "label": "View 2",
+            "mode": "preserve_composition",
+            "mime_type": "image/png",
+            "byte_length": 5,
+            "sha256": "8fb5ddd9a15a069bb6c49ec47dab08c7952b0fe6cee1578918d0030411d0cae3",
+            "storyboard_sequence": 2,
+            "shot_direction": "The second view holds the doorway.",
+            "camera_direction": "Static camera.",
+            "frame_prompt": "A quiet interior.",
+            "source_artifact_id": "storyboard-fixture",
+            "source_artifact_item_id": "frame-2",
+            "source_artifact_kind": "storyboard",
+            "storyboard_title": "Two views",
+            "context_groups": [
+              {
+                "id": "cast-fixture",
+                "name": "Subject continuity",
+                "target": "First subject",
+                "role": "character",
+                "application": "isolate",
+                "relativity": 1
+              }
+            ],
+            "pixels_submitted": true,
+            "provider_reference_mode": "pixel",
+            "provider_downgrade_reason": null,
+            "transport": "fal-storage-upload",
+            "original_provider_asset_reused": false
+          }
+        ],
+        "usedReferencePixels": true,
+        "adaptation": {
+          "prompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: Mara is an adult aged 35.\nSUBJECT: Leo is a child aged 8.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: Mara is an adult aged 35.\nSUBJECT: Leo is a child aged 8.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+          "adapterId": "video-production-director",
+          "adapterVersion": "1.1.1",
+          "audio": {
+            "requestedMode": "silent",
+            "effectiveMode": "silent",
+            "generateAudio": false,
+            "explicitlyRequested": false,
+            "authoredRequirement": "none",
+            "residualRisk": "none",
+            "rationale": "Sound was not explicitly requested. Silent video preserves authored visual intent and avoids unrequested soundtrack-generation risk."
+          },
+          "compilation": {
+            "prompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: Mara is an adult aged 35.\nSUBJECT: Leo is a child aged 8.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: Mara is an adult aged 35.\nSUBJECT: Leo is a child aged 8.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+            "valid": true,
+            "limit": 10000,
+            "originalCharacters": 2333,
+            "adaptedCharacters": 2333,
+            "compacted": false,
+            "includedSectionIds": [
+              "output-contract",
+              "audio-contract",
+              "creative-meaning",
+              "mandatory-authored-decisions",
+              "authored-boundaries",
+              "ordered-storyboard-beats",
+              "reference-provenance",
+              "reference-1",
+              "reference-2",
+              "motion-and-story-direction"
+            ],
+            "omittedSectionIds": [],
+            "compactedSectionIds": [],
+            "issues": []
+          },
+          "storyboardBeats": [
+            {
+              "sequence": 1,
+              "title": "View 1",
+              "startsAtSeconds": 0,
+              "endsAtSeconds": 2,
+              "sourceBlockId": "reference-block-1"
+            },
+            {
+              "sequence": 2,
+              "title": "View 2",
+              "startsAtSeconds": 2,
+              "endsAtSeconds": 4,
+              "sourceBlockId": "reference-block-2"
+            }
+          ],
+          "referenceBindings": [
+            {
+              "token": "@Image1",
+              "referenceId": "reference-1",
+              "blockId": "reference-block-1",
+              "sequence": 1,
+              "mode": "preserve_subject",
+              "contextGroupIds": [
+                "cast-fixture"
+              ]
+            },
+            {
+              "token": "@Image2",
+              "referenceId": "reference-2",
+              "blockId": "reference-block-2",
+              "sequence": 2,
+              "mode": "preserve_composition",
+              "contextGroupIds": [
+                "cast-fixture"
+              ]
+            }
+          ],
+          "sourceBlockIds": [
+            "subject-0",
+            "subject-1",
+            "excluded"
+          ],
+          "removedAudioDirections": [],
+          "sourceInterpretations": [],
+          "audioExclusionInterpretations": [],
+          "timingSource": "authored"
+        }
+      },
+      "calls": [
+        {
+          "url": "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+          "method": "POST",
+          "body": "{\"content_type\":\"image/png\",\"file_name\":\"1790646756808.png\"}"
+        },
+        {
+          "url": "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+          "method": "POST",
+          "body": "{\"content_type\":\"image/png\",\"file_name\":\"1790646756808.png\"}"
+        },
+        {
+          "url": "https://upload.fal.media/fixture-1",
+          "method": "PUT",
+          "body": [
+            137,
+            80,
+            78,
+            71,
+            1
+          ]
+        },
+        {
+          "url": "https://upload.fal.media/fixture-2",
+          "method": "PUT",
+          "body": [
+            137,
+            80,
+            78,
+            71,
+            2
+          ]
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video",
+          "method": "POST",
+          "body": "{\"prompt\":\"OUTPUT CONTRACT\\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\\n\\nVISUAL RHYTHM\\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\\n\\nCREATIVE MEANING\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\\nSUBJECT: Mara is an adult aged 35.\\nSUBJECT: Leo is a child aged 8.\\n\\nMANDATORY AUTHORIAL DECISIONS\\nSUBJECT: Mara is an adult aged 35.\\nSUBJECT: Leo is a child aged 8.\\n\\nAUTHORIAL BOUNDARIES\\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\\n\\nORDERED STORYBOARD CHRONOLOGY\\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\\n\\nREFERENCE PROVENANCE\\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\\n\\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\nMOTION AND STORY DIRECTION\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\",\"aspect_ratio\":\"16:9\",\"duration\":4,\"resolution\":\"480p\",\"generate_audio\":false,\"image_urls\":[\"https://v3b.fal.media/files/fixture-1.png\",\"https://v3b.fal.media/files/fixture-2.png\"]}"
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/requests/fixture-original/status?logs=1",
+          "method": "GET"
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/requests/fixture-original",
+          "method": "GET"
+        },
+        {
+          "url": "https://v3b.fal.media/files/fixture-result.mp4",
+          "method": "GET"
+        }
+      ],
+      "costMicrousd": 538020
+    },
+    {
+      "fixture": "unknown-identity",
+      "requestBody": "{\"prompt\":\"OUTPUT CONTRACT\\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\\n\\nVISUAL RHYTHM\\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\\n\\nCREATIVE MEANING\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\\nSUBJECT: The traveler has unspecified identity and age.\\nAUDIENCE: The intended audience is adult museum visitors.\\n\\nMANDATORY AUTHORIAL DECISIONS\\nSUBJECT: The traveler has unspecified identity and age.\\n\\nAUTHORIAL BOUNDARIES\\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\\n\\nORDERED STORYBOARD CHRONOLOGY\\n0–2s · Storyboard shot 1 — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\\n2–4s · Storyboard shot 2 — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\\n\\nREFERENCE PROVENANCE\\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\\n\\n@Image1 — Storyboard shot 1 — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\n@Image2 — Storyboard shot 2 — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\nMOTION AND STORY DIRECTION\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\",\"aspect_ratio\":\"16:9\",\"duration\":4,\"resolution\":\"480p\",\"generate_audio\":false,\"image_urls\":[\"https://v3b.fal.media/files/fixture-1.png\",\"https://v3b.fal.media/files/fixture-2.png\"]}",
+      "prepared": {
+        "provider": "fal",
+        "model": "bytedance/seedance-2.0/reference-to-video",
+        "submittedPrompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: The traveler has unspecified identity and age.\nAUDIENCE: The intended audience is adult museum visitors.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: The traveler has unspecified identity and age.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+        "parameters": {
+          "aspect_ratio": "16:9",
+          "duration": 4,
+          "resolution": "480p",
+          "generate_audio": false,
+          "audio_mode": "silent",
+          "native_audio_mode": "silent",
+          "audio_opt_in": false,
+          "audio_policy": "Sound was not explicitly requested. Silent video preserves authored visual intent and avoids unrequested soundtrack-generation risk.",
+          "audio_residual_risk": "none",
+          "soundtrack_mode": "none",
+          "audio_reference_count": 0,
+          "audio_reference_duration_seconds": 0,
+          "end_user_id_supplied": false,
+          "reference_syntax": "@ImageN",
+          "reference_prompt_profile": "positive-only",
+          "identity_provenance": "not-inferred-from-asset-origin",
+          "reference_requested_count": 2,
+          "provider_pixel_count": 2,
+          "prompt_adapter_id": "video-production-director",
+          "prompt_adapter_version": "1.1.1",
+          "source_prompt_characters": 89,
+          "submitted_prompt_characters": 2301,
+          "prompt_compacted": false,
+          "omitted_optional_sections": [],
+          "narrative_beat_count": 2,
+          "authored_timecodes_preserved": true,
+          "reference_token_coverage": [
+            {
+              "token": "@Image1",
+              "sequence": 1,
+              "mode": "preserve_subject"
+            },
+            {
+              "token": "@Image2",
+              "sequence": 2,
+              "mode": "preserve_composition"
+            }
+          ],
+          "adapter_id": "fal-seedance-reference",
+          "adapter_version": "2.0.0",
+          "adapter_status": "adopted",
+          "image_count": 2,
+          "image_transport": "fal-storage-upload",
+          "original_provider_asset_count": 0,
+          "uploaded_asset_count": 2,
+          "reference_order": "storyboard-sequence-then-document-position"
+        },
+        "referenceInputs": [
+          {
+            "index": 1,
+            "block_id": "reference-block-1",
+            "reference_id": "reference-1",
+            "label": "View 1",
+            "mode": "preserve_subject",
+            "mime_type": "image/png",
+            "byte_length": 5,
+            "sha256": "871923f8e5535ef938edc1ea710d5cf9e18637ce5d39feccef23030823993e4e",
+            "storyboard_sequence": 1,
+            "shot_direction": "The first subject turns toward the window.",
+            "camera_direction": "Static camera.",
+            "frame_prompt": "A quiet interior.",
+            "source_artifact_id": null,
+            "source_artifact_item_id": null,
+            "source_artifact_kind": null,
+            "storyboard_title": null,
+            "context_groups": [
+              {
+                "id": "cast-fixture",
+                "name": "Subject continuity",
+                "target": "First subject",
+                "role": "character",
+                "application": "isolate",
+                "relativity": 1
+              }
+            ],
+            "pixels_submitted": true,
+            "provider_reference_mode": "pixel",
+            "provider_downgrade_reason": null,
+            "transport": "fal-storage-upload",
+            "original_provider_asset_reused": false
+          },
+          {
+            "index": 2,
+            "block_id": "reference-block-2",
+            "reference_id": "reference-2",
+            "label": "View 2",
+            "mode": "preserve_composition",
+            "mime_type": "image/png",
+            "byte_length": 5,
+            "sha256": "8fb5ddd9a15a069bb6c49ec47dab08c7952b0fe6cee1578918d0030411d0cae3",
+            "storyboard_sequence": 2,
+            "shot_direction": "The second view holds the doorway.",
+            "camera_direction": "Static camera.",
+            "frame_prompt": "A quiet interior.",
+            "source_artifact_id": null,
+            "source_artifact_item_id": null,
+            "source_artifact_kind": null,
+            "storyboard_title": null,
+            "context_groups": [
+              {
+                "id": "cast-fixture",
+                "name": "Subject continuity",
+                "target": "First subject",
+                "role": "character",
+                "application": "isolate",
+                "relativity": 1
+              }
+            ],
+            "pixels_submitted": true,
+            "provider_reference_mode": "pixel",
+            "provider_downgrade_reason": null,
+            "transport": "fal-storage-upload",
+            "original_provider_asset_reused": false
+          }
+        ],
+        "usedReferencePixels": true,
+        "adaptation": {
+          "prompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: The traveler has unspecified identity and age.\nAUDIENCE: The intended audience is adult museum visitors.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: The traveler has unspecified identity and age.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+          "adapterId": "video-production-director",
+          "adapterVersion": "1.1.1",
+          "audio": {
+            "requestedMode": "silent",
+            "effectiveMode": "silent",
+            "generateAudio": false,
+            "explicitlyRequested": false,
+            "authoredRequirement": "none",
+            "residualRisk": "none",
+            "rationale": "Sound was not explicitly requested. Silent video preserves authored visual intent and avoids unrequested soundtrack-generation risk."
+          },
+          "compilation": {
+            "prompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: The traveler has unspecified identity and age.\nAUDIENCE: The intended audience is adult museum visitors.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: The traveler has unspecified identity and age.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+            "valid": true,
+            "limit": 10000,
+            "originalCharacters": 2301,
+            "adaptedCharacters": 2301,
+            "compacted": false,
+            "includedSectionIds": [
+              "output-contract",
+              "audio-contract",
+              "creative-meaning",
+              "mandatory-authored-decisions",
+              "authored-boundaries",
+              "ordered-storyboard-beats",
+              "reference-provenance",
+              "reference-1",
+              "reference-2",
+              "motion-and-story-direction"
+            ],
+            "omittedSectionIds": [],
+            "compactedSectionIds": [],
+            "issues": []
+          },
+          "storyboardBeats": [
+            {
+              "sequence": 1,
+              "title": "View 1",
+              "startsAtSeconds": 0,
+              "endsAtSeconds": 2,
+              "sourceBlockId": "reference-block-1"
+            },
+            {
+              "sequence": 2,
+              "title": "View 2",
+              "startsAtSeconds": 2,
+              "endsAtSeconds": 4,
+              "sourceBlockId": "reference-block-2"
+            }
+          ],
+          "referenceBindings": [
+            {
+              "token": "@Image1",
+              "referenceId": "reference-1",
+              "blockId": "reference-block-1",
+              "sequence": 1,
+              "mode": "preserve_subject",
+              "contextGroupIds": [
+                "cast-fixture"
+              ]
+            },
+            {
+              "token": "@Image2",
+              "referenceId": "reference-2",
+              "blockId": "reference-block-2",
+              "sequence": 2,
+              "mode": "preserve_composition",
+              "contextGroupIds": [
+                "cast-fixture"
+              ]
+            }
+          ],
+          "sourceBlockIds": [
+            "subject-0",
+            "excluded",
+            "audience"
+          ],
+          "removedAudioDirections": [],
+          "sourceInterpretations": [],
+          "audioExclusionInterpretations": [],
+          "timingSource": "authored"
+        }
+      },
+      "calls": [
+        {
+          "url": "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+          "method": "POST",
+          "body": "{\"content_type\":\"image/png\",\"file_name\":\"1790646756809.png\"}"
+        },
+        {
+          "url": "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+          "method": "POST",
+          "body": "{\"content_type\":\"image/png\",\"file_name\":\"1790646756809.png\"}"
+        },
+        {
+          "url": "https://upload.fal.media/fixture-1",
+          "method": "PUT",
+          "body": [
+            137,
+            80,
+            78,
+            71,
+            1
+          ]
+        },
+        {
+          "url": "https://upload.fal.media/fixture-2",
+          "method": "PUT",
+          "body": [
+            137,
+            80,
+            78,
+            71,
+            2
+          ]
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video",
+          "method": "POST",
+          "body": "{\"prompt\":\"OUTPUT CONTRACT\\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\\n\\nVISUAL RHYTHM\\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\\n\\nCREATIVE MEANING\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\\nSUBJECT: The traveler has unspecified identity and age.\\nAUDIENCE: The intended audience is adult museum visitors.\\n\\nMANDATORY AUTHORIAL DECISIONS\\nSUBJECT: The traveler has unspecified identity and age.\\n\\nAUTHORIAL BOUNDARIES\\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\\n\\nORDERED STORYBOARD CHRONOLOGY\\n0–2s · Storyboard shot 1 — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\\n2–4s · Storyboard shot 2 — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\\n\\nREFERENCE PROVENANCE\\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\\n\\n@Image1 — Storyboard shot 1 — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\n@Image2 — Storyboard shot 2 — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\nMOTION AND STORY DIRECTION\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\",\"aspect_ratio\":\"16:9\",\"duration\":4,\"resolution\":\"480p\",\"generate_audio\":false,\"image_urls\":[\"https://v3b.fal.media/files/fixture-1.png\",\"https://v3b.fal.media/files/fixture-2.png\"]}"
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/requests/fixture-original/status?logs=1",
+          "method": "GET"
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/requests/fixture-original",
+          "method": "GET"
+        },
+        {
+          "url": "https://v3b.fal.media/files/fixture-result.mp4",
+          "method": "GET"
+        }
+      ],
+      "costMicrousd": 538020
+    },
+    {
+      "fixture": "fictional-adult",
+      "requestBody": "{\"prompt\":\"OUTPUT CONTRACT\\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\\n\\nVISUAL RHYTHM\\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\\n\\nCREATIVE MEANING\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\\n\\nMANDATORY AUTHORIAL DECISIONS\\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\\n\\nAUTHORIAL BOUNDARIES\\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\\n\\nORDERED STORYBOARD CHRONOLOGY\\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\\n\\nREFERENCE PROVENANCE\\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\\n\\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\nMOTION AND STORY DIRECTION\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\",\"aspect_ratio\":\"16:9\",\"duration\":4,\"resolution\":\"480p\",\"generate_audio\":false,\"image_urls\":[\"https://v3b.fal.media/files/fixture-1.png\",\"https://v3b.fal.media/files/fixture-2.png\"]}",
+      "prepared": {
+        "provider": "fal",
+        "model": "bytedance/seedance-2.0/reference-to-video",
+        "submittedPrompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+        "parameters": {
+          "aspect_ratio": "16:9",
+          "duration": 4,
+          "resolution": "480p",
+          "generate_audio": false,
+          "audio_mode": "silent",
+          "native_audio_mode": "silent",
+          "audio_opt_in": false,
+          "audio_policy": "Sound was not explicitly requested. Silent video preserves authored visual intent and avoids unrequested soundtrack-generation risk.",
+          "audio_residual_risk": "none",
+          "soundtrack_mode": "none",
+          "audio_reference_count": 0,
+          "audio_reference_duration_seconds": 0,
+          "end_user_id_supplied": false,
+          "reference_syntax": "@ImageN",
+          "reference_prompt_profile": "positive-only",
+          "identity_provenance": "not-inferred-from-asset-origin",
+          "reference_requested_count": 2,
+          "provider_pixel_count": 2,
+          "prompt_adapter_id": "video-production-director",
+          "prompt_adapter_version": "1.1.1",
+          "source_prompt_characters": 89,
+          "submitted_prompt_characters": 2309,
+          "prompt_compacted": false,
+          "omitted_optional_sections": [],
+          "narrative_beat_count": 2,
+          "authored_timecodes_preserved": true,
+          "reference_token_coverage": [
+            {
+              "token": "@Image1",
+              "sequence": 1,
+              "mode": "preserve_subject"
+            },
+            {
+              "token": "@Image2",
+              "sequence": 2,
+              "mode": "preserve_composition"
+            }
+          ],
+          "adapter_id": "fal-seedance-reference",
+          "adapter_version": "2.0.0",
+          "adapter_status": "adopted",
+          "image_count": 2,
+          "image_transport": "fal-storage-upload",
+          "original_provider_asset_count": 0,
+          "uploaded_asset_count": 2,
+          "reference_order": "storyboard-sequence-then-document-position"
+        },
+        "referenceInputs": [
+          {
+            "index": 1,
+            "block_id": "reference-block-1",
+            "reference_id": "reference-1",
+            "label": "View 1",
+            "mode": "preserve_subject",
+            "mime_type": "image/png",
+            "byte_length": 5,
+            "sha256": "871923f8e5535ef938edc1ea710d5cf9e18637ce5d39feccef23030823993e4e",
+            "storyboard_sequence": 1,
+            "shot_direction": "The first subject turns toward the window.",
+            "camera_direction": "Static camera.",
+            "frame_prompt": "A quiet interior.",
+            "source_artifact_id": "storyboard-fixture",
+            "source_artifact_item_id": "frame-1",
+            "source_artifact_kind": "storyboard",
+            "storyboard_title": "Two views",
+            "context_groups": [
+              {
+                "id": "cast-fixture",
+                "name": "Subject continuity",
+                "target": "First subject",
+                "role": "character",
+                "application": "isolate",
+                "relativity": 1
+              }
+            ],
+            "pixels_submitted": true,
+            "provider_reference_mode": "pixel",
+            "provider_downgrade_reason": null,
+            "transport": "fal-storage-upload",
+            "original_provider_asset_reused": false
+          },
+          {
+            "index": 2,
+            "block_id": "reference-block-2",
+            "reference_id": "reference-2",
+            "label": "View 2",
+            "mode": "preserve_composition",
+            "mime_type": "image/png",
+            "byte_length": 5,
+            "sha256": "8fb5ddd9a15a069bb6c49ec47dab08c7952b0fe6cee1578918d0030411d0cae3",
+            "storyboard_sequence": 2,
+            "shot_direction": "The second view holds the doorway.",
+            "camera_direction": "Static camera.",
+            "frame_prompt": "A quiet interior.",
+            "source_artifact_id": "storyboard-fixture",
+            "source_artifact_item_id": "frame-2",
+            "source_artifact_kind": "storyboard",
+            "storyboard_title": "Two views",
+            "context_groups": [
+              {
+                "id": "cast-fixture",
+                "name": "Subject continuity",
+                "target": "First subject",
+                "role": "character",
+                "application": "isolate",
+                "relativity": 1
+              }
+            ],
+            "pixels_submitted": true,
+            "provider_reference_mode": "pixel",
+            "provider_downgrade_reason": null,
+            "transport": "fal-storage-upload",
+            "original_provider_asset_reused": false
+          }
+        ],
+        "usedReferencePixels": true,
+        "adaptation": {
+          "prompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+          "adapterId": "video-production-director",
+          "adapterVersion": "1.1.1",
+          "audio": {
+            "requestedMode": "silent",
+            "effectiveMode": "silent",
+            "generateAudio": false,
+            "explicitlyRequested": false,
+            "authoredRequirement": "none",
+            "residualRisk": "none",
+            "rationale": "Sound was not explicitly requested. Silent video preserves authored visual intent and avoids unrequested soundtrack-generation risk."
+          },
+          "compilation": {
+            "prompt": "OUTPUT CONTRACT\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\n\nVISUAL RHYTHM\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\n\nCREATIVE MEANING\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\n\nMANDATORY AUTHORIAL DECISIONS\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\n\nAUTHORIAL BOUNDARIES\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\n\nORDERED STORYBOARD CHRONOLOGY\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\n\nREFERENCE PROVENANCE\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\n\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\n\nMOTION AND STORY DIRECTION\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.",
+            "valid": true,
+            "limit": 10000,
+            "originalCharacters": 2309,
+            "adaptedCharacters": 2309,
+            "compacted": false,
+            "includedSectionIds": [
+              "output-contract",
+              "audio-contract",
+              "creative-meaning",
+              "mandatory-authored-decisions",
+              "authored-boundaries",
+              "ordered-storyboard-beats",
+              "reference-provenance",
+              "reference-1",
+              "reference-2",
+              "motion-and-story-direction"
+            ],
+            "omittedSectionIds": [],
+            "compactedSectionIds": [],
+            "issues": []
+          },
+          "storyboardBeats": [
+            {
+              "sequence": 1,
+              "title": "View 1",
+              "startsAtSeconds": 0,
+              "endsAtSeconds": 2,
+              "sourceBlockId": "reference-block-1"
+            },
+            {
+              "sequence": 2,
+              "title": "View 2",
+              "startsAtSeconds": 2,
+              "endsAtSeconds": 4,
+              "sourceBlockId": "reference-block-2"
+            }
+          ],
+          "referenceBindings": [
+            {
+              "token": "@Image1",
+              "referenceId": "reference-1",
+              "blockId": "reference-block-1",
+              "sequence": 1,
+              "mode": "preserve_subject",
+              "contextGroupIds": [
+                "cast-fixture"
+              ]
+            },
+            {
+              "token": "@Image2",
+              "referenceId": "reference-2",
+              "blockId": "reference-block-2",
+              "sequence": 2,
+              "mode": "preserve_composition",
+              "contextGroupIds": [
+                "cast-fixture"
+              ]
+            }
+          ],
+          "sourceBlockIds": [
+            "subject-0",
+            "excluded"
+          ],
+          "removedAudioDirections": [],
+          "sourceInterpretations": [],
+          "audioExclusionInterpretations": [],
+          "timingSource": "authored"
+        }
+      },
+      "calls": [
+        {
+          "url": "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+          "method": "POST",
+          "body": "{\"content_type\":\"image/png\",\"file_name\":\"1790646756810.png\"}"
+        },
+        {
+          "url": "https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3",
+          "method": "POST",
+          "body": "{\"content_type\":\"image/png\",\"file_name\":\"1790646756810.png\"}"
+        },
+        {
+          "url": "https://upload.fal.media/fixture-1",
+          "method": "PUT",
+          "body": [
+            137,
+            80,
+            78,
+            71,
+            1
+          ]
+        },
+        {
+          "url": "https://upload.fal.media/fixture-2",
+          "method": "PUT",
+          "body": [
+            137,
+            80,
+            78,
+            71,
+            2
+          ]
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video",
+          "method": "POST",
+          "body": "{\"prompt\":\"OUTPUT CONTRACT\\nCreate exactly 4 seconds of 16:9 landscape video. Preserve every authored story beat within that single continuous runtime.\\n\\nVISUAL RHYTHM\\nDeliver silent visual-only motion. Convey the complete emotional progression through performance, camera movement, editing cadence, weather, physical action, and changing light.\\n\\nCREATIVE MEANING\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\\n\\nMANDATORY AUTHORIAL DECISIONS\\nSUBJECT: Ivo is an explicitly fictional adult aged 40.\\n\\nAUTHORIAL BOUNDARIES\\nKeep the finished frame limited to the permitted authored world; these prohibited elements remain outside the composition: Do not add any extra people or change the authored ages..\\n\\nORDERED STORYBOARD CHRONOLOGY\\n0–2s · Storyboard shot 1 from “Two views” — View 1: The first subject turns toward the window. Camera: Static camera. Visual anchors: A quiet interior..\\n2–4s · Storyboard shot 2 from “Two views” — View 2: The second view holds the doorway. Camera: Static camera. Visual anchors: A quiet interior..\\nEach beat is a linked visual progression; short durations may use continuous transitions rather than forcing separate cuts.\\n\\nREFERENCE PROVENANCE\\nEvery attached image is an authorized creative reference for this project. Asset origin does not establish a depicted person's identity or age. Preserve explicit authored subject identities and ages; unspecified identity and age remain unknown.\\n\\n@Image1 — Storyboard shot 1 from “Two views” — View 1. SUBJECT ONLY: preserve the authorized principal subject's recognizable appearance and defining form; composition, environment, and treatment follow authored direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\n@Image2 — Storyboard shot 2 from “Two views” — View 2. COMPOSITION ONLY: preserve framing, geometry, balance, depth, and camera placement; all subjects, wardrobe, action, and story come from the authored visual direction. Combined Context “Subject continuity” applies this image only to character “First subject” at 100% relativity; isolate.\\n\\nMOTION AND STORY DIRECTION\\n0–2s: The first subject turns toward the window. 2–4s: The second view holds the doorway.\",\"aspect_ratio\":\"16:9\",\"duration\":4,\"resolution\":\"480p\",\"generate_audio\":false,\"image_urls\":[\"https://v3b.fal.media/files/fixture-1.png\",\"https://v3b.fal.media/files/fixture-2.png\"]}"
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/requests/fixture-original/status?logs=1",
+          "method": "GET"
+        },
+        {
+          "url": "https://queue.fal.run/bytedance/seedance-2.0/requests/fixture-original",
+          "method": "GET"
+        },
+        {
+          "url": "https://v3b.fal.media/files/fixture-result.mp4",
+          "method": "GET"
+        }
+      ],
+      "costMicrousd": 538020
+    }
+  ]
+}

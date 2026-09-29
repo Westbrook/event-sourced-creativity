@@ -19,7 +19,7 @@ export const VIDEO_ADAPTER_CONTRACT={
   label:"Seedance 2.0 reference-to-video",
   promptProfile:"positive-only" as const,
   promptAdapterId:"video-production-director",
-  promptAdapterVersion:"1.1.0",
+  promptAdapterVersion:"1.1.1",
   maxPromptCharacters:20_000,
   targetPromptCharacters:10_000,
   maxReferenceImages:9,

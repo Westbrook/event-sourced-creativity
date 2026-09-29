@@ -24,6 +24,12 @@ TODO. Ongoing work in other branches must be reconciled before reimplementing it
   newly discovered work here and link its detailed issue or guide. Keep proposals
   separate from accepted delivery requirements in the linked decision records.
 
+## Video provenance follow-up
+
+| ID | Status | Owner | Remaining work / next action | Done when |
+| --- | --- | --- | --- | --- |
+| VP-001 | Done — local semantic correction; integration proposed | Fix video reference provenance; H/C/E integration owners | Review and independently integrate the [local patch and offline evidence](video-reference-provenance-correction.md). Keep P5 `cc23f13d` source/envelopes untouched; no deployment or activation in this task. | Unsupported origin/keyword identity inference removed; exact intercepted request and historical-recovery checks pass. Local checks do not establish live quality, moderation benefit or acceptance. |
+
 ## Durable generation
 
 **Current state:** the reviewed execution/recovery foundations are implemented;
