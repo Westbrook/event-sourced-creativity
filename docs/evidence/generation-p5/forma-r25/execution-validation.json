@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-09-29T01:54:40.639368+00:00",
+  "prior25EntriesUnchanged": true,
+  "reservationReceiptHashesVerified": 7,
+  "normalCharged": 23,
+  "recoveryCharged": 9,
+  "normalLimit": 26,
+  "recoveryLimit": 10,
+  "normalRemaining": 3,
+  "recoveryRemaining": 1,
+  "nativeCalls": 7,
+  "diagnosticRequests": 0,
+  "failureLogReads": 0,
+  "sourceChanges": 0,
+  "restorationTerminal": true,
+  "finalAudienceEnvironmentParity": true,
+  "orderingLessonDisclosed": true,
+  "manualFallbackQueued": true
+}

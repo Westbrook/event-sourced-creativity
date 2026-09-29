@@ -1,0 +1,27 @@
+{
+  "action": "get_site_version",
+  "args": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a"
+  },
+  "capturedAt": "2026-09-29T01:50:01.552Z",
+  "isError": false,
+  "data": {
+    "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_dc5968eecc788191bfae9709c514379a",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version_number": 551,
+    "source": {
+      "commit_sha": "d147817ff14b502a8fc116a74fa5388f9fe7ad62"
+    },
+    "archive_storage": {
+      "archive_format": "tar",
+      "sediment_file_id": "file_000000007570820da474e0f47e2cb189",
+      "content_hash": "sha256:79c7f2c618e5cbe68ad454e27d5649bb24e33cf129bc0947638247af7eb50aa2",
+      "size_bytes": 44728320,
+      "file_count": 622
+    },
+    "deployment_id": "appgdep_6abafed39468819189c982f1d30d5b0a"
+  },
+  "parity": true,
+  "incidentalScreenshotUrlOmitted": true
+}

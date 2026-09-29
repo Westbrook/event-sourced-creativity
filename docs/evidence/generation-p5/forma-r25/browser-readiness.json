@@ -1,0 +1,11 @@
+{
+  "operation": "cua.listTabs({browser:'1',emit:false}) filtered locally by exact actual-Forma origin",
+  "actualFormaOrigin": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+  "matchingTabs": [],
+  "newHostedNavigation": false,
+  "qualificationRequestSent": false,
+  "diagnosticApprovalQuestionWithdrawn": true,
+  "reason": "R24 explicitly stops if the existing session/tab is unavailable; no new tab or authentication traffic was authorized in that sequence.",
+  "doesNotEstablish": ["browser disconnected", "authentication failure", "application failure", "R21 client-block cause"],
+  "orderingLesson": "Inspect existing-tab availability before deployment, not after."
+}
