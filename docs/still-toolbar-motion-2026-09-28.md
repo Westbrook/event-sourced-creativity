@@ -128,4 +128,35 @@ receipt remain outside this merge; the broad suite was not repeated.
 
 The normal Still application entry now consumes this implementation. The
 fictional preview and isolated study remain available independently. No remote
-push, hosted deployment, migration or paid provider execution was performed.
+push, hosted deployment, migration or paid provider execution was performed at
+that integration checkpoint.
+
+## Hosted release — 2026-09-29
+
+The user explicitly authorized deployment. Sites version **552**, source
+`c7224bcb1ca4f871d6270abaa9abc4ef899314c9`, deployed successfully as
+`appgdep_6abbb530100c8191ad00aee8ec45567c` at 12:55 UTC to
+https://forma-creative-studio.reve-ai-0869.chatgpt.site.
+
+The release overlays the reviewed toolbar on the restored live version550
+(`c28af5fea0fc3ec2b37b878a544ec59c52a64daf`). Version551 was a temporary P5
+qualification release, already restored to550; its qualification runtime was
+not reactivated. Its source ancestry is retained without force-pushing. Worker,
+database source, build policy and hosting configuration match550 exactly; the
+toolbar source matches reviewed main `68534342`. Workspace access is preserved,
+and the successful deployment reports environment revision16.
+
+The isolated release build, typecheck and42 focused unit tests pass;11 real-app
+toolbar browser checks pass. The archive contains the existing41 approved
+migrations and matching built Worker bytes, with no candidate migrations. The
+Sites-normalized archive hash is
+`a1b2cc78d427148f97be2e1decf950b6c2fd66af5ad1bc14f6f58c16c58ecafb`.
+It was reproduced locally from the inspected archive by sorting file entries
+and normalizing tar metadata, with every file byte unchanged.
+
+The bundled publishing helper disappeared from the plugin cache during this
+release. The fallback used an ephemeral stdin-only source credential, the
+repository's held-migration packager and native Sites save/deploy operations.
+No paid provider test, manual database change or unrelated feature activation
+was performed. Native terminal deployment success is the hosted verification;
+user review of this live version remains separate.
