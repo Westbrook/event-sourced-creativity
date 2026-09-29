@@ -24,7 +24,9 @@
     "eval:image-adapters:preflight": "node --experimental-strip-types scripts/run-image-adapter-eval.mjs --preflight-only=true",
     "eval:image-adapters:cycle": "node --experimental-strip-types scripts/run-image-adapter-cycle-search.mjs",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "node scripts/migrate-local.mjs"
+    "db:migrate:local": "node scripts/migrate-local.mjs",
+    "test:still-toolbar": "node scripts/test-still-toolbar.mjs",
+    "release:verify": "node --experimental-strip-types scripts/verify-site-release.mjs"
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.1",

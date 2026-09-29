@@ -1,6 +1,6 @@
 /** Selected Thread motion, adopted from the isolated Still study. Visual layers
  * contain inert snapshots only; the coordinator retains real Lit/En controls. */
-const CONSTRUCTION = {thread: {duration:1040, pagingDuration:800, openingSweepExtension:100, closingSweepRatio:750/900}};
+import {THREAD_TIMING} from './timing.js';
 const active = new WeakMap();
 const EASE = 'cubic-bezier(.22,.74,.2,1)';
 const SOFT = 'cubic-bezier(.35,0,.3,1)';
@@ -28,12 +28,12 @@ export function threadTimeline(base, { arrival = 1, departure = 0, opening = fal
     // Match the accepted loading loop’s right/left sweep ratio, independent of
     // its edge hold and rest. Preserve construction pace and scale with playback.
     const open = threadTimeline(base, { arrival: .69, opening: true });
-    const returnSweep = (open.duration - .69 * base) * CONSTRUCTION.thread.closingSweepRatio;
+    const returnSweep = (open.duration - .69 * base) * THREAD_TIMING.closingSweepRatio;
     const delay = Math.max(0, returnSweep - .56 * base);
     return { base, delay, openingExtra: 0, sweepScale: 1, returnSweep, duration: base + delay };
   }
   const sweepScale = opening ? 1.5 : 2;
-  const openingExtra = opening ? CONSTRUCTION.thread.openingSweepExtension * base / CONSTRUCTION.thread.duration : 0;
+  const openingExtra = opening ? THREAD_TIMING.openingSweepExtension * base / THREAD_TIMING.duration : 0;
   const delay = departure * base * (sweepScale - 1);
   const arrivalSpan = (1 - arrival) * base + openingExtra;
   return { base, delay, openingExtra, sweepScale, duration: delay + base + openingExtra + arrivalSpan * (sweepScale - 1) };
@@ -84,7 +84,7 @@ function decorate(parent, styles, debris, kind = 'material') {
   return node;
 }
 
-function capsuleGeometry(entry, save, anchor = 'center') {
+function capsuleGeometry(entry, save) {
   const c = control(entry);
   save(entry); save(c);
   // Direct toolbar clicks can still be releasing the component's native press
@@ -98,13 +98,13 @@ function capsuleGeometry(entry, save, anchor = 'center') {
     position: 'relative', width: `${host.width}px`, minWidth: `${host.width}px`,
     maxWidth: `${host.width}px`, height: `${host.height}px`, flex: `0 0 ${host.width}px`,
   });
-  const shift = anchor === 'center' ? width / 2 : anchor === 'right' ? width : 0;
+  const shift = width / 2;
   Object.assign(c.style, {
     position: 'absolute', left: `${inner.left - host.left + shift}px`, top: `${inner.top - host.top}px`,
     width: `${width}px`, height: `${height}px`, minWidth: '0', minHeight: '0',
     minInlineSize: '0', minBlockSize: '0', maxWidth: 'none', boxSizing: 'border-box',
     padding: '0', margin: '0', overflow: 'hidden', whiteSpace: 'nowrap',
-    borderRadius: `${height / 2}px`, transform: anchor === 'center' ? 'translateX(-50%)' : anchor === 'right' ? 'translateX(-100%)' : 'none',
+    borderRadius: `${height / 2}px`, transform: 'translateX(-50%)',
     willChange: 'width, opacity',
   });
   labels(entry).forEach(label => {
@@ -198,7 +198,7 @@ function buttonInfusion(entry, ctx, start, finish, departing = false) {
   ]));
 }
 
-function centerIncoming(entry, index, entries, ctx) {
+function centerIncoming(entry, ctx) {
   const { play, opening, save, to } = ctx;
   const primary = isPrimary(entry), c = control(entry);
   const { width, minimum } = capsuleGeometry(entry, save);
@@ -233,7 +233,7 @@ function centerIncoming(entry, index, entries, ctx) {
   buttonInfusion(entry, ctx, landed - .10, 1);
 }
 
-function centerOutgoing(entry, index, entries, ctx) {
+function centerOutgoing(entry, ctx) {
   const { play, closing, chosen, save, from } = ctx;
   const primary = isPrimary(entry) && chosen === entry, c = control(entry);
   const { width, minimum } = capsuleGeometry(entry, save);
@@ -285,12 +285,10 @@ function compact(node, play, incomingMark, direction) {
       { opacity: 0, offset: 1 },
     ]);
   }
-  if (node.dataset.empty === 'halo') play(node, incomingMark
-    ? [{ opacity: 0, offset: 0 }, { opacity: 0, offset: .5 }, { opacity: 1, offset: 1 }]
-    : [{ opacity: 1, offset: 0 }, { opacity: 0, offset: .35 }, { opacity: 0, offset: 1 }]);
+
 }
 
-export async function constructionTransition({ host, from, to, family = 'thread', threadMode = 'center', duration, reduced = false, trigger = 'action', signal, onTimeline, onInteractive } = {}) {
+export async function constructionTransition({ host, from, to, duration, reduced = false, trigger = 'action', signal, onTimeline, onInteractive } = {}) {
   if (!host || !to) throw new TypeError('A transition needs a host and destination toolbar.');
   const prior = active.get(host);
   if (prior) {
@@ -301,15 +299,13 @@ export async function constructionTransition({ host, from, to, family = 'thread'
     if (to.parentNode !== host) host.append(to);
     return { cancelled: Boolean(signal?.aborted) };
   }
-  family = 'thread';
-  threadMode = 'center';
   const fromState = from.dataset.state, toState = to.dataset.state;
-  const baseMilliseconds = reduced ? Math.min(120, Number(duration) || 120) : clamp(Number(duration) || CONSTRUCTION[family].duration, 100, 8000);
+  const baseMilliseconds = reduced ? Math.min(120, Number(duration) || 120) : clamp(Number(duration) || THREAD_TIMING.duration, 100, 8000);
   let timing = { base: baseMilliseconds, delay: 0, openingExtra: 0, sweepScale: 1, duration: baseMilliseconds };
   let milliseconds = baseMilliseconds;
   const animations = [], restorers = [], debris = [], saved = new WeakSet();
   let cancelled = Boolean(signal?.aborted), stage, resolveDone, phaseFrame, interactive = false;
-  let interactiveAt = milliseconds, unchangedPairs = [];
+  let interactiveAt = milliseconds;
   const done = new Promise(resolve => { resolveDone = resolve; });
   const operation = { done, cancel() { cancelled = true; setInteractive(false); animations.forEach(animation => animation.cancel()); } };
   active.set(host, operation);
@@ -324,13 +320,6 @@ export async function constructionTransition({ host, from, to, family = 'thread'
     to.setAttribute('inert', '');
     to.style.pointerEvents = 'none';
     host.setAttribute('aria-busy', enabled ? 'false' : 'true');
-    // During a primary variant change, the untouched source neighbors stand in
-    // for their identical destination controls. Swap those actual controls at
-    // the same instant that the destination becomes keyboard/pointer available.
-    unchangedPairs.forEach(([before, after]) => {
-      before.style.opacity = enabled ? '0' : '1';
-      after.style.opacity = enabled ? '1' : '0';
-    });
     onInteractive?.({ from, to, interactive: enabled, at: interactiveAt, duration: milliseconds });
   };
   const visibility = () => animations.forEach(animation => {
@@ -354,7 +343,7 @@ export async function constructionTransition({ host, from, to, family = 'thread'
   to.setAttribute('inert', '');
   host.setAttribute('aria-busy', 'true');
   host.dataset.motionPhase = 'reserve';
-  host.dataset.motionFamily = family;
+  host.dataset.motionFamily = 'thread';
   try {
     await Promise.all([from.ready, to.ready].filter(Boolean));
     if (cancelled) return { cancelled: true, from: fromState, to: toState };
@@ -362,34 +351,32 @@ export async function constructionTransition({ host, from, to, family = 'thread'
     const oldStyle = getComputedStyle(from), newStyle = getComputedStyle(to);
     const surface = { backgroundColor: newStyle.backgroundColor, borderColor: newStyle.borderColor, boxShadow: newStyle.boxShadow };
     const sourceSurface = { backgroundColor: oldStyle.backgroundColor, borderColor: oldStyle.borderColor, boxShadow: oldStyle.boxShadow };
-    // Computed styles are live. Snapshot the Cushion/Basin paint before layer()
+    // Computed styles are live. Snapshot the Cushion paint before layer()
     // clears each real toolbar's background in favor of the single owning shell.
     const sourceTexture = texture(oldStyle), destinationTexture = texture(newStyle);
     const fromActions = actions(from), toActions = actions(to);
     const opening = !fromActions.length && toActions.length > 0, closing = fromActions.length > 0 && !toActions.length;
     const direction = trigger === 'back' || fromState === 'page2' && toState !== 'page2' ? -1 : 1;
     const chosen = selected(fromActions, trigger);
-    const primaryChange = false;
-    const threadPaging = family === 'thread' && threadMode === 'center'
-      && fromActions.length > 0 && toActions.length > 0 && !primaryChange;
+    const paging = fromActions.length > 0 && toActions.length > 0;
 
-    if (!reduced && family === 'thread' && threadMode === 'center') {
-      const widthScale = primaryChange ? 1 : threadWidthScale(fromSize.width, toSize.width);
+    if (!reduced) {
+      const widthScale = threadWidthScale(fromSize.width, toSize.width);
       timing = threadTimeline(baseMilliseconds * widthScale, {
-        arrival: primaryChange ? .58 : toActions.length ? (opening ? .69 : .75) : 1,
-        departure: primaryChange || !fromActions.length ? 0 : closing ? (isPrimary(chosen) ? .61 : .56) : .435,
+        arrival: toActions.length ? (opening ? .69 : .75) : 1,
+        departure: !fromActions.length ? 0 : closing ? (isPrimary(chosen) ? .61 : .56) : .435,
         opening: opening && ['loading', 'waiting'].includes(fromState),
         returnToLoading: closing && toState === 'loading',
       });
       milliseconds = timing.duration;
     }
-    interactiveAt = !reduced && family === 'thread' && threadMode === 'center' && toActions.length
+    interactiveAt = !reduced && toActions.length
       ? timing.delay + timing.base * (opening ? .97 : 1)
       : milliseconds;
 
     stage = document.createElement('div');
-    stage.className = `toolbar-motion-stage family-${family} construction-stage`;
-    if (family === 'thread') stage.dataset.threadMode = threadMode;
+    stage.className = 'toolbar-motion-stage family-thread construction-stage';
+    stage.dataset.threadMode = 'center';
     Object.assign(stage.style, { position: 'relative', width: `${Math.max(fromSize.width, toSize.width)}px`, height: `${Math.max(fromSize.height, toSize.height)}px`, flex: '0 0 auto', maxWidth: '100%', marginInline: 'auto', isolation: 'isolate', pointerEvents: 'none' });
     const shell = document.createElement('div');
     shell.className = 'toolbar-motion-shell';
@@ -413,7 +400,7 @@ export async function constructionTransition({ host, from, to, family = 'thread'
       // Paging shares the buttons' gathered center. The shell reaches its
       // compact circle as the left sweep ends, then opens with the new row.
       const compactSize = Math.max(fromSize.height, toSize.height);
-      play(shell, threadPaging ? [
+      play(shell, paging ? [
         { width: `${fromSize.width}px`, height: `${fromSize.height}px`, ...sourceSurface, offset: 0 },
         { width: `${fromSize.width}px`, height: `${fromSize.height}px`, ...sourceSurface, offset: .14, easing: SOFT },
         { width: `${compactSize}px`, height: `${compactSize}px`, ...sourceSurface, offset: .435 },
@@ -426,9 +413,9 @@ export async function constructionTransition({ host, from, to, family = 'thread'
         { width: `${toSize.width}px`, height: `${toSize.height}px`, ...surface, offset: closing ? 1 : opening ? .42 : .55 },
         ...(!closing ? [{ width: `${toSize.width}px`, height: `${toSize.height}px`, ...surface, offset: 1 }] : []),
       ]);
-      const ctx = { family, threadMode, play, playFull, timing, direction, opening, closing, chosen, debris, from, to, save };
-        fromActions.forEach((entry, index) => centerOutgoing(entry, index, fromActions, ctx));
-        toActions.forEach((entry, index) => centerIncoming(entry, index, toActions, ctx));
+      const ctx = { play, playFull, timing, opening, closing, chosen, debris, from, to, save };
+        fromActions.forEach(entry => centerOutgoing(entry, ctx));
+        toActions.forEach(entry => centerIncoming(entry, ctx));
         compact(from, play, false, direction); compact(to, play, true, direction);
         // Retire status copy and the inserted wordmark letters before
         // constructing actions. Loading also contains the hidden waiting copy;

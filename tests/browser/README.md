@@ -476,3 +476,33 @@ the installed face used for each glyph. Existing English/French loaded-Manrope
 and Arabic declared-system-stack requirements remain unchanged. No contrast,
 individual-glyph, backend permission, whole-surface or accessibility-conformance
 claim follows from membership or a green control test.
+
+## Still toolbar motion
+
+`pnpm test:still-toolbar` runs the focused unit cases and real-app fixture suites
+in Chromium, Firefox and WebKit. Use `pnpm test:still-toolbar chromium` for a
+bounded iteration. The repository pins Playwright1.62.1; install its matching
+engines with `pnpm exec playwright install chromium firefox webkit` if absent.
+Use the declared Node/pnpm versions and the lockfile in CI/container runs.
+
+The Vite fixture has an OS-temporary cache per server and synthetic page data;
+all `/api` calls are intercepted. No live account, generation or retained archive
+is needed. Browser tests cover final-action gating, waiting/fallback, recovery,
+More/Back focus and compact midpoint, Find action dismissal, page effects,
+background completion, narrow layout, interruption during opening/paging,
+mid-transition resize and reduced-motion changes, and disconnect/reconnect.
+Animation snapshots must remain absent from the accessibility tree while the
+real controls are inert; the live tab-navigation control group is restored once.
+
+These checks verify browser semantics, not audible screen-reader behavior or a
+physical iOS device. Before closing the human accessibility follow-up, review:
+
+- VoiceOver on Safari and a screen reader on another supported browser: hear one
+  meaningful loading/waiting/ready announcement; never hear snapshot buttons.
+- Native Tab/Shift+Tab/Enter through More, Back and Find action; dismissal retains
+  page two and focus; navigation during motion never traps focus.
+- Actual200% browser zoom and iOS orientation changes, including long labels and
+  reduced motion. Controls remain visible, reachable and correctly ordered.
+
+Record engine/OS/AT versions and observations; passing WebKit does not establish
+that these physical/manual checks passed.

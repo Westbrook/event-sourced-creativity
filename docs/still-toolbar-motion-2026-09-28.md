@@ -160,3 +160,28 @@ repository's held-migration packager and native Sites save/deploy operations.
 No paid provider test, manual database change or unrelated feature activation
 was performed. Native terminal deployment success is the hosted verification;
 user review of this live version remains separate.
+
+## Post-release hardening
+
+Selected Thread now has one production path and shared Infusion/Thread timing
+configuration. Removed exploration-only families, inactive primary-variant swap
+paths and duplicate base-duration literals without changing the accepted numeric
+landmarks. The isolated study and its preview remain independent references.
+
+`pnpm test:still-toolbar` runs the focused unit and real-app browser suites in
+Chromium, Firefox and WebKit. It includes interruption, responsive, reduced-motion,
+reconnect, accessibility-tree and focus handoff checks. See the
+[browser guide](../tests/browser/README.md#still-toolbar-motion) for fixture
+isolation and the remaining human Safari/iOS, zoom and screen-reader checklist.
+
+[Release checks](still-toolbar-release-checks.md) make baseline/source scope,
+held migrations and the normalized Sites archive receipt explicit and repeatable.
+They perform no hosted actions. Hardening is local until separately published.
+
+Hardening verification: production build, typecheck and changed-file lint pass;
+42 focused unit tests,60 browser checks across the three pinned engines, and5
+release-preflight tests pass. The browser lane checks native inert/focus behavior
+in every engine and Chromium's native accessibility tree. It does not substitute
+role-locator visibility for browser inert semantics. The release checker also
+reproduced the recorded Sites552 archive hash,622 files and44,574,720 normalized
+bytes exactly. Existing unrelated repository-wide failures were not rerun.

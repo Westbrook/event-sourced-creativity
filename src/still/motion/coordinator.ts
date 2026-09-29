@@ -1,4 +1,5 @@
 import {constructionTransition} from './thread.js';
+import {THREAD_TIMING} from './timing.js';
 import {createLoadingSurface,type LoadingSurface} from './loading.js';
 import {startRequestRhythm} from './request-rhythm.js';
 
@@ -58,7 +59,7 @@ export class ToolbarMotion {
   this.task=(async()=>{
    await prior;if(epoch!==this.epoch)return;
    this.visual!.replaceChildren();this.loader=createLoadingSurface(()=>this.root!.clientWidth);this.visual!.append(this.loader);this.loader.refreshWaitingSurface();
-   if(from){this.visual!.prepend(from);this.abort=new AbortController();await constructionTransition({host:this.visual!,from,to:this.loader,duration:1040,reduced:this.reduce.matches,trigger,signal:this.abort.signal});}
+   if(from){this.visual!.prepend(from);this.abort=new AbortController();await constructionTransition({host:this.visual!,from,to:this.loader,duration:THREAD_TIMING.duration,reduced:this.reduce.matches,trigger,signal:this.abort.signal});}
    if(epoch!==this.epoch)return;
    this.phase='loading';this.root!.dataset.toolbarPhase='loading';
    this.clock=startRequestRhythm({isSuspended:()=>document.hidden,
@@ -97,7 +98,7 @@ export class ToolbarMotion {
  private async open(epoch:number){
   const to=this.snapshot();if(!to||!this.loader||!this.visual)return;
   this.phase='opening';this.root!.dataset.toolbarPhase='opening';this.visual.append(to);this.abort=new AbortController();
-  await constructionTransition({host:this.visual,from:this.loader,to,duration:1040,reduced:this.reduce.matches,signal:this.abort.signal,onInteractive:e=>{if(e.interactive&&epoch===this.epoch)this.reveal();}});
+  await constructionTransition({host:this.visual,from:this.loader,to,duration:THREAD_TIMING.duration,reduced:this.reduce.matches,signal:this.abort.signal,onInteractive:e=>{if(e.interactive&&epoch===this.epoch)this.reveal();}});
   if(epoch!==this.epoch)return;
   this.finish();
  }
@@ -109,7 +110,7 @@ export class ToolbarMotion {
    await prior;if(epoch!==this.epoch)return;await change();if(epoch!==this.epoch)return;
    this.visual!.replaceChildren(from);const to=this.snapshot();if(!to){this.finish();return;}this.visual!.append(to);this.abort=new AbortController();
    const focus=()=>{if(!keyboard)return;this.focusParked=false;const selector=trigger==='more'?'[data-action-id="ui:back"]':'[data-action-id="ui:more"]';(this.live?.querySelector<HTMLElement>(selector)||this.live?.querySelector<HTMLElement>('en-toolbar > en-button'))?.focus({preventScroll:true});};
-   await constructionTransition({host:this.visual!,from,to,duration:800,reduced:this.reduce.matches,trigger,signal:this.abort.signal,onInteractive:e=>{if(e.interactive&&epoch===this.epoch){this.reveal();focus();}}});
+   await constructionTransition({host:this.visual!,from,to,duration:THREAD_TIMING.pagingDuration,reduced:this.reduce.matches,trigger,signal:this.abort.signal,onInteractive:e=>{if(e.interactive&&epoch===this.epoch){this.reveal();focus();}}});
    if(epoch===this.epoch){this.finish();focus();}
   })();await this.task;
  }
