@@ -36,3 +36,11 @@ test('browser copies inherit original age and expiry without extending the serve
  const timing=decisionTiming({requestElapsedMs:1,cache:{...hit.cache,layer:'browser'},trace:{metrics:{elapsedMs:500},passes:[]}});
  assert.match(timing.description,/Local cache delivery/);assert.match(timing.description,/original decision, not a new Jev call/);
 });
+
+test('navigation detaches aborted pending work without discarding valid completed decisions',async()=>{
+ const cache=new DecisionMemo({accept:()=>true});await cache.run('good',async()=>({value:1}));
+ const gate=pause(),obsolete=cache.run('pending',()=>gate.promise);cache.clearPending();
+ assert.equal(cache.peek('good').value.value,1);
+ assert.equal((await cache.run('pending',async()=>({value:2}))).value.value,2);
+ gate.resolve({value:3});await obsolete;assert.equal(cache.peek('pending').value.value,2);
+});

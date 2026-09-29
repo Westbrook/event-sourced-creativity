@@ -91,5 +91,9 @@ export function evaluateLocalActions(candidates:Action[],p:CreativeProjection,po
     else if(selected.filter(a=>a.group===action.group).length>=2)row.reason='Two actions per group limit';
     else{selected.push(action);row.selected=selected.length;row.reason='';}
   }
+  if(!selected.length){
+    const fallback=candidates.find(a=>a.id===(pos.view==='projects'?'new-project':'projects'));
+    if(fallback){selected.push(fallback);const row=rows.find(r=>r.id===fallback.id)!;row.selected=1;row.reason='';row.localReason='A useful next step when no contextual suggestions apply';}
+  }
   return {selected,ranked,rows,modelRanked:false};
 }

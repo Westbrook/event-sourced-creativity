@@ -24,6 +24,12 @@ TODO. Ongoing work in other branches must be reconciled before reimplementing it
   newly discovered work here and link its detailed issue or guide. Keep proposals
   separate from accepted delivery requirements in the linked decision records.
 
+## Still toolbar adoption
+
+| ID | Status | Owner | Remaining work / next action | Done when |
+| --- | --- | --- | --- | --- |
+| ST-MOTION-001 | In progress | Codex · `codex/still-toolbar-motion` | Implementation and focused app verification complete on the implementation branch; review the local preview, merge and record activation. See [contract and verification](still-toolbar-motion-2026-09-28.md). | Verified integration is reviewed and merged; production activation is recorded separately. |
+
 ## Durable generation
 
 **Current state:** the reviewed execution/recovery foundations are implemented;

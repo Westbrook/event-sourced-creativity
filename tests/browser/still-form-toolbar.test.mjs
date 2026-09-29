@@ -4,13 +4,13 @@ import {createServer} from 'vite';
 import {chromium} from '@playwright/test';
 
 test('Still form workflows use one responsive toolbar with their original commands',async t=>{
- const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-form-toolbar',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body></body></html>');});}}]});let browser;
+ const server=await createServer({configFile:false,cacheDir:'node_modules/.vite-form-toolbar',optimizeDeps:{noDiscovery:true,include:['lit']},server:{host:'127.0.0.1',port:0},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body></body></html>');});}}]});let browser;
  try{
   await server.listen();browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:900,height:700}});page.setDefaultTimeout(5000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/api/context/apply',route=>route.fulfill({json:{status:'start'}}));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/still/action/new-project`);
   await page.evaluate(async()=>{
-   const {html,LitElement}=await import('/node_modules/lit/index.js'),{StillApp}=await import('/src/still/app.ts'),{foldEvents}=await import('/src/model/events.ts');
+   const {html,LitElement}=await import('/@id/lit'),{StillApp}=await import('/src/still/app.ts'),{foldEvents}=await import('/src/model/events.ts');
    const css=(await import('/src/still/style.css?raw')).default;const style=document.createElement('style');style.textContent=css.replaceAll('still-app','form-fixture');document.head.append(style);
    class Fixture extends StillApp{
     connectedCallback(){LitElement.prototype.connectedCallback.call(this);}
