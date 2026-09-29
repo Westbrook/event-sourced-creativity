@@ -1,0 +1,22 @@
+{
+  "checkedAt": "2026-09-29T12:09:25.134309+00:00",
+  "prior32EntriesUnchanged": true,
+  "receiptHashesVerified": 7,
+  "normal": 29,
+  "recovery": 10,
+  "normalLimit": 30,
+  "recoveryLimit": 13,
+  "diagnosticAttempts": 1,
+  "immediateNativeLogReads": 1,
+  "matchingRouteTimeGet200": 1,
+  "applicationJsonObtained": false,
+  "uniqueBrowserRequestCorrelation": false,
+  "restorationOutcome": "unknown",
+  "restorationNativeError": -32603,
+  "restorationDeploymentIdReturned": false,
+  "blindRetries": 0,
+  "sourcePayloadChanged": false,
+  "rawLogsRetained": false,
+  "newModerationFinding": false,
+  "realComparisonImages": 0
+}

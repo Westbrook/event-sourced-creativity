@@ -1,0 +1,14 @@
+{
+  "tabId": "8",
+  "requestedUrl": "https://forma-creative-studio.reve-ai-0869.chatgpt.site/api/internal/generation-study/qualification",
+  "method": "GET",
+  "startedAt": "2026-09-29T12:02:45.305Z",
+  "completedAt": "2026-09-29T12:02:48.503Z",
+  "navigationAttempts": 1,
+  "error": "net::ERR_BLOCKED_BY_CLIENT",
+  "toolMessage": "Browser Use cannot open the fixed qualification URL in tab8; browser reported net::ERR_BLOCKED_BY_CLIENT",
+  "qualificationResponseObtained": false,
+  "httpStatusKnown": false,
+  "workerInvocationEstablished": false,
+  "retried": false
+}

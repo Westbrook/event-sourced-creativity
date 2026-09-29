@@ -1,0 +1,14 @@
+# R27 recovery amendment — identify the uncertain restoration
+
+The approved full cycle reached its single diagnostic. The browser returned ERR_BLOCKED_BY_CLIENT; immediate native logs contain one exact GET route/time match with status200/outcomeok. The subsequent deploy550 call returned native internal error-32603 with **no deployment ID**. That does not establish whether the backend restored550. Last confirmed live deployment is551 `appgdep_6abba8a798a88191850f1b72b6563b66`; restoration outcome is unknown. No repeat deploy is proposed.
+
+Current ledger: **29/30normal,10/13recovery,39charged**, leaving1normal/3recovery. Request explicit permission to **reassign the unused normal deployment-status slot to one native saved-version read** and use the remaining recovery slots only as below. No ceiling increase/reset and no repeated restoration submission.
+
+1. Reserve1normal,then call `sites_get_site_version` for project `appgprj_6a7a020e334881919ed8aea0363cb98f` and550 `appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8`. Verify exact project/version/source relationship. Read its documented `deployment_id` (latest publish attempt). No source/build/save or app request.
+2. If the returned deployment ID is new compared with the known R25 predecessor deployment `appgdep_6abb19be0a988191a2265321a8167d40`, reserve1recovery and call `sites_get_deployment_status` with that **returned** ID. Require project,550version,environment16 and expectedactualFormaURL. A status timestamp must be consistent with the R27 restoration interval; historical/stale evidence cannot verify this restoration.
+3. Only after terminal successful550 status, spend up to2recovery on `get_site` and `get_environment_variables` to verify exact original workspace_all/access7 andenvironment16/redactedmetadata parity.
+4. On missing/old/ambiguous ID,refusal,nonterminal/failed status or drift, stop and report the exact known deployment state. Do not publish again, guess an ID, poll again or borrow another slot. If the ID is not new,no status call is needed; unused slots remain unused. No provider,qualification,manualbrowser orschema request.
+
+Maximum4calls within existing ceilings30normal/13recovery,total43. Every reservation is persisted before dispatch. This replaces only the unavailable same-ID restoration lookup path; other accepted terms,retention,audience,expiry and stop rules persist. The prior no-retry rule is preserved.
+
+If status remains unknown, the owner-only qualification route within the workspace-audience551 Worker may remain available; purchase/custody controls remain off in the last verified configuration. No fresh state is asserted until verified. No private bodies or credentials are retained. Restoration does not erase history orundo database effects. P5 remains open; no paid generation or StageC authority is included.

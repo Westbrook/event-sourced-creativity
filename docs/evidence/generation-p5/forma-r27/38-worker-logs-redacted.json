@@ -1,0 +1,55 @@
+{
+  "action": "sites_get_site_worker_logs",
+  "args": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "since_minutes": 5,
+    "limit": 100,
+    "errors_only": false
+  },
+  "capturedAt": "2026-09-29T12:03:47.703Z",
+  "isError": false,
+  "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "projectMatches": true,
+  "counts": {
+    "returned": 7,
+    "invalidTimestamp": 0,
+    "missingRequestUrl": 0,
+    "missingMethod": 0,
+    "inAttemptInterval": 1,
+    "exactRouteAllTimes": 1,
+    "exactRouteAndTime": 1,
+    "matchingGet": 1
+  },
+  "limitReached": false,
+  "returnedTimestampRange": {
+    "earliest": "2026-09-29T12:01:48.662Z",
+    "latest": "2026-09-29T12:02:50.560Z"
+  },
+  "attemptInterval": {
+    "start": "2026-09-29T12:02:45.305Z",
+    "end": "2026-09-29T12:02:48.503Z"
+  },
+  "matchingEvents": [
+    {
+      "timestamp": "2026-09-29T12:02:48.058Z",
+      "route": "/api/internal/generation-study/qualification",
+      "method": "GET",
+      "outcome": "ok",
+      "status": 200,
+      "requestId": "882b053103b599b9669b4163ca5e361b",
+      "traceId": "fefdbc4f99abd2c9af62239a600f74b7",
+      "rayId": "a42ad73958785f83",
+      "scriptVersionId": "3afbca95-db42-4f16-98b6-20c3ec0e38ed",
+      "truncated": false
+    }
+  ],
+  "unrelatedContentsOmitted": 6,
+  "rawLogDumpRetained": false,
+  "localClassifierChecksPassed": true,
+  "limitations": [
+    "No completeness, sampling or retention guarantee",
+    "R21/R27 browser errors supply no request/trace identifier; route/time matches are corroboration without unique correlation",
+    "No match does not prove no Worker invocation"
+  ],
+  "redaction": "No headers,cookies,tokens,identities,bodies,query values or unrelated log contents retained."
+}

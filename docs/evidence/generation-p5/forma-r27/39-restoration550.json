@@ -1,0 +1,17 @@
+{
+  "action": "deploy_site_version",
+  "args": {
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_e2949878bb5c81919d4845ec5e3cb3f8"
+  },
+  "capturedAt": "2026-09-29T12:04:22.783Z",
+  "isError": true,
+  "data": {},
+  "parity": null,
+  "toolError": {
+    "code": -32603,
+    "message": "Internal error",
+    "nativeDeploymentIdReturned": false
+  },
+  "outcome": "unknown: request failed at native tool boundary; cannot establish whether restoration occurred"
+}

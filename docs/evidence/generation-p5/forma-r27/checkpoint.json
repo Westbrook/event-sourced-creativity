@@ -1,0 +1,13 @@
+{
+  "status": "restoration-uncertain-recovery-lookup-pending",
+  "normal": 29,
+  "recovery": 10,
+  "issued": 39,
+  "lastConfirmedLiveVersion": 551,
+  "restorationOutcome": "unknown",
+  "diagnosticAttempts": 1,
+  "matchingWorkerEvents": 1,
+  "workerStatus": 200,
+  "qualificationJson": false,
+  "prior32EntriesUnchanged": true
+}
