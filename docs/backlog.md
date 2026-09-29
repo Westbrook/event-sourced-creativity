@@ -30,6 +30,12 @@ TODO. Ongoing work in other branches must be reconciled before reimplementing it
 | --- | --- | --- | --- | --- |
 | VP-001 | Done — local semantic correction; integration proposed | Fix video reference provenance; H/C/E integration owners | Review and independently integrate the [local patch and offline evidence](video-reference-provenance-correction.md). Keep P5 `cc23f13d` source/envelopes untouched; no deployment or activation in this task. | Unsupported origin/keyword identity inference removed; exact intercepted request and historical-recovery checks pass. Local checks do not establish live quality, moderation benefit or acceptance. |
 
+## P5 pilot evidence feasibility
+
+| ID | Status | Owner | Next action / completion basis |
+| --- | --- | --- | --- |
+| P6-EVIDENCE | Done — bounded local feasibility decision; paid pilot remains unsupported | P6 evidence task; P5 retains browser/Sites support ownership | [Decision sheet](evidence/generation-p6/decision-sheet.md): missing authentic private registration, original study-charge producer and account-specific finality source. Owner supplies only the four consolidated record/choice groups. Conditional producer connection is a proposal, not accepted implementation. P4 is complete; no hosted action, purchase or October 1 expiry renewal. |
+
 ## Durable generation
 
 **Current state:** the reviewed execution/recovery foundations are implemented;
