@@ -1,0 +1,16 @@
+{
+  "localOnly": true,
+  "hostedCalls": 0,
+  "navigation": false,
+  "logQueries": 0,
+  "ledgerUnchanged": true,
+  "charged": 39,
+  "allocationArithmeticVerified": true,
+  "proposalAccepted": false,
+  "localLinksChecked": 5,
+  "sealedArchiveSha256Verified": true,
+  "sourceMigrationsFixtureUnchanged": true,
+  "p6SheetHashVerified": true,
+  "newApplicationTests": 0,
+  "reviewPageNotNavigated": true
+}

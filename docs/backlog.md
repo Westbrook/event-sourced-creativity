@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — restoration outcome uncertain | Existing P5 task | [R27](evidence/generation-p5/forma-r27/result.md), following accepted R26 at7ac9c0ae, captured a matching Worker GET200 despite browser client refusal. Restore550 returned a native internal error without a deployment ID; last confirmed live551. Complete the [bounded recovery lookup](evidence/generation-p5/forma-r27/recovery-decision.md) only after its explicit reallocation approval; no deployment retry. | Qualification evidence and required actual-Forma authority are established, then a separately authorized real two-image comparison has exact request/provider/image evidence and original settlement. Infrastructure readiness, prompt adherence and moderation remain separate; P2 gates,847/six exclusions and expiry persist. |
+| GEN-P5 | In progress — readiness proposal; restoration unknown | Existing P5 task | [R28 proposal](evidence/generation-p5/forma-r28/proposal.md): recommend finite P6 owner answer before another manual diagnostic. R27 supersedes R25:29/30 normal,10/13 recovery; last confirmed551, restore550 uncertain. No hosted actions in R28. Any elected cycle must secure recovery/final verification and serialize with locally integrated P7; never restore old550 over a later release. | Qualification evidence and required actual-Forma authority are established, then a separately authorized real two-image comparison has exact request/provider/image evidence and original settlement. Infrastructure readiness, prompt adherence and moderation remain separate; P2 gates,847/six exclusions and expiry persist. |
 
 ## Memory
 

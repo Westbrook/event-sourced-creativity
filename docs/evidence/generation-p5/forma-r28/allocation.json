@@ -1,0 +1,38 @@
+{
+  "accepted": false,
+  "prior": {
+    "normal": 29,
+    "normalCeiling": 30,
+    "recovery": 10,
+    "recoveryCeiling": 13,
+    "totalCharged": 39
+  },
+  "reconciliation": {
+    "normal": 1,
+    "recovery": 3,
+    "explicitReassignmentRequired": true
+  },
+  "newManualCycle": {
+    "normal": 6,
+    "recovery": 5,
+    "opening": 0,
+    "authentication": 0,
+    "diagnostic": 1,
+    "logs": 0
+  },
+  "proposedAddition": {
+    "normal": 6,
+    "recovery": 5
+  },
+  "proposedCeilings": {
+    "normal": 36,
+    "recovery": 18,
+    "total": 54
+  },
+  "optionalOrdinaryOpening": {
+    "additionalNormal": 1,
+    "totalCeiling": 55,
+    "separateExplicitSelection": true
+  },
+  "reservationsMadeThisTurn": 0
+}

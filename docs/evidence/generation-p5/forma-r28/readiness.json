@@ -1,0 +1,15 @@
+{
+  "checkedAt": "2026-09-29T12:15:43.562Z",
+  "operation": "cua.listTabs({browser:'1',emit:false})",
+  "browser": "1",
+  "matchingTabs": [
+    {
+      "id": "8",
+      "origin": "https://forma-creative-studio.reve-ai-0869.chatgpt.site"
+    }
+  ],
+  "pageBodyRead": false,
+  "navigation": false,
+  "hostedCalls": 0,
+  "authenticationEstablished": false
+}
