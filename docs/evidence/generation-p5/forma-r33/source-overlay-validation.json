@@ -1,0 +1,15 @@
+{
+  "sourceParent": "498936481741f7ed1b03d43422288d628db49f2f",
+  "sourceInputsMatched": 4748,
+  "delta": [
+    "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+    "tests/generation-p5-qualification-only.test.mjs",
+    "worker/authoring-study-schema.ts",
+    "worker/generation-study-qualification-release.json",
+    "worker/generation-study-qualification.ts",
+    "worker/index.ts"
+  ],
+  "testedBuildPayloadsMatched": 622,
+  "archiveUnchanged": true,
+  "rebuild": false
+}

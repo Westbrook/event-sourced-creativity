@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — browser visible; exact resumption pending | Existing P5 task | [R32 decision](evidence/generation-p5/forma-r32/resumption-decision.md): one authorized metadata recheck exposes IAB2/tab1;no content/native action.32/43normal,13/19recovery,45charged;11normal/6recovery unused. Proposed +1normal for original N2–N13/R1–R6,44/19ceilings,total63;not accepted. Sealed554 candidate unchanged;fresh native checks only after resumption. | Hosted qualification then separately authorized real two-image comparison. R29closed;no old551/550. Visibility only;no qualificationJSON/real pair/moderation finding. P2,847/six,retention and expiry unchanged. |
+| GEN-P5 | In progress — 555 deployed; one manual receipt pending | Existing P5 task | [R33 handoff](evidence/generation-p5/forma-r33/handoff.md): exact R30sealed successor admitted as555/sourceea8e7121;terminal env16. N13/reservation57 saved before go-ahead;owner manual JSON/error pending.44/44normal,13/19recovery;6recovery slots retained for guarded554 restoration. No repeated inventory or browser call. | Preserve original receipt then finish authorized R1–R6;do not restore over newerwork or551/550. No hosted qualificationJSON received yet,real imagepair or new moderation finding. P2,847/six,retention and expiry persist;paid study separate. |
 
 ## Memory
 

@@ -1,0 +1,17 @@
+{
+  "prior45EntriesUnchanged": true,
+  "allNewReservationsBeforeDispatch": true,
+  "localReceiptParserCorrections": "R29 access receipt contains summary only; compared full retained R21 policy successfully. Failed local N3 reservation before N2 receipt was rejected without increment or dispatch. No native retry or late reservation.",
+  "nativeBaselineMetadataTimestamp": "same successful554deployment ID; later updated_at/screenshot metadata, not another deployment attempt",
+  "sealedR30EvidenceFilesVerified": 21,
+  "uploadArchiveHashMatches": true,
+  "sourceInputCount": 4748,
+  "buildPayloads": 622,
+  "migrationFiles": 41,
+  "heldMigrations": 31,
+  "newTestsOrBuild": false,
+  "nativeCalls": 9,
+  "browserCalls": 0,
+  "qualificationReceiptReceived": false,
+  "restorationVerified": false
+}

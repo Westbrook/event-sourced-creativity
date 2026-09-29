@@ -1,0 +1,8 @@
+{
+  "beforeDeployment": true,
+  "recoveryCharged": 13,
+  "recoveryCeiling": 19,
+  "reservedForOriginalRecovery": 6,
+  "chargedOnlyBeforeEachActualDispatch": true,
+  "unchangedRecoveryVersion": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_b640f9ffe7ac8191ba0b6189da7a0d3b"
+}

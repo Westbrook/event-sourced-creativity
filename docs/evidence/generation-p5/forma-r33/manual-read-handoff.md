@@ -1,0 +1,7 @@
+# One owner manual read — go-ahead issued
+
+Native saved555 deployment `appgdep_6abc0ece98cc8191855e3fcab3d8d6f7` succeeded at2026-09-29T19:18:40.147701+00:00 with env16. Admission and source provenance verified. N13/reservation57 was durably saved before the go-ahead. The owner may use the existing signed-in Forma tab's address bar once for the exact fixed endpoint in the accepted R30 decision. No query/body, refresh, repeat, automated navigation, surface switch or fallback. Return the resulting JSON or exact refusal/error. No further approval is required for unchanged authorized restoration.
+
+Current normal44/44,recovery13/19,total57charged includes this reserved manual action, whose dispatch/response is not yet known. No duplicate GET if delivery is uncertain. Keep the six recovery slots for R1–R6. Preserve receipt first, then R1 checks no newer publication/audience drift, R2 restores exact saved554, R3 conditional missing-ID lookup, R4 conditional single terminal-status check,R5 finalsite,R6 finalenvironment. No blind retry. Record every reservation before dispatch. Do not restore over newer work.
+
+The owner has the diagnostic go-ahead, not another authorization question. Publication remains diagnostic555 until original guarded restoration is completed. No claim of completed qualification or cleanup. Source/version history persists under accepted retention. Sep30 22UTC recovery margin and Oct1 00UTC expiry unchanged. P5 stays open.

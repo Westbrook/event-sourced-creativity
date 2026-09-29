@@ -1,0 +1,23 @@
+{
+  "id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "title": "Forma Creative Studio",
+  "slug": "forma-creative-studio",
+  "status": "active",
+  "latest_version_number": 554,
+  "current_live_url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+  "expected_url": null,
+  "current_user_role": "owner",
+  "access_mode": "workspace_all",
+  "created_at": "2026-08-10T16:53:36.603648+00:00",
+  "updated_at": "2026-09-29T13:36:20.192491+00:00",
+  "access_policy_sha256": "70f6a2e99e71e89b34359006a742a61766bf43b926235719bbebcb8cb541a43f",
+  "access_revision": 7,
+  "fullAccessPolicyParityWithRetainedR21": true,
+  "policyDifferingFields": [],
+  "redactions": [
+    "credential/token",
+    "signed screenshot URL",
+    "account/access-list personal identifiers"
+  ],
+  "nativeCall": "sites_get_site"
+}

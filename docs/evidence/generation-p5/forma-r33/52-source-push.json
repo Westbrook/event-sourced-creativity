@@ -1,0 +1,9 @@
+{
+  "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "checkout_path": "/private/tmp/forma-p5-r33-sites-release",
+  "commit_sha": "ea8e7121f85e51a91a2b7fb5618294ff61001b16",
+  "archive": "/private/tmp/p5-r33-generic-quarantine.tar",
+  "genericArchiveQuarantined": true,
+  "uploadArchive": "/private/tmp/p5-r30-held.tar",
+  "automaticPublication": false
+}
