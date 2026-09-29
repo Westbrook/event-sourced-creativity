@@ -1,0 +1,295 @@
+{
+  "_fixture": {
+    "source": "Sanitized frozen Forma benefits source. Authored wording, source order, and exact placement directives are unchanged; actor, document, event, reference, timestamp, and other custody metadata are removed and block IDs are remapped.",
+    "output": "syntheticOutput is a test-authored six-slide probe, NOT either retained paid provider response. It isolates the source-contract disagreement and is not evidence of the original within-slide failures.",
+    "observedRepairCopy": "Visible fields transcribed from the live private review of the settled initial-plus-repair attempt ($0.130952) on 2026-09-02. Only the copy relevant to the reported duplicate paths is retained here. These are not a complete raw provider response or its private custody/provenance metadata. Pairing each visual field with its matching bullet is verified locally; the historical validator's firstPath details were not exposed in the UI."
+  },
+  "observedRepairCopy": {
+    "openingBody": "One source. Many outputs.",
+    "closingBody": "One source. Many outputs.",
+    "slideFive": {
+      "title": "Leave room for the next experience",
+      "body": "The document need not belong to one interface.",
+      "bullets": [
+        "A standalone lead-gen experience could use it to create a tailored result.",
+        "A newly capable model could use the same goals and constraints for live video direction.",
+        "These are expansion paths, not promises that those experiences are live today."
+      ],
+      "visualLabel": "Possible next interfaces",
+      "data": [
+        { "label": "Tailored result", "value": "A standalone lead-gen experience could use it" },
+        { "label": "Live video direction", "value": "A newly capable model could use the same goals and constraints" }
+      ]
+    },
+    "genuineRedundantPairs": [
+      { "bullet": 0, "datum": 0, "field": "value", "reportedPath": "items.4.slide.visual.data.0.value" },
+      { "bullet": 1, "datum": 1, "field": "label", "reportedPath": "items.4.slide.visual.data.1.label" },
+      { "bullet": 1, "datum": 1, "field": "value", "reportedPath": "items.4.slide.visual.data.1.value" }
+    ]
+  },
+  "request": {
+    "itemCount": 6,
+    "requestedSlideCount": 6,
+    "presentationFidelity": "faithful"
+  },
+  "sourceSnapshot": {
+    "facts": [
+      {
+        "type": "direction",
+        "role": "direction",
+        "intent": "include",
+        "effect": "shape_or_include",
+        "active": true,
+        "authority": "authored",
+        "block_id": "forma-benefits-source-01",
+        "properties": {
+          "authority": "authored",
+          "subtype": "Campaign goal",
+          "text": "Explain the benefits of Forma with six concise narrative beats: the file-management problem; one source with many outputs; event-log collaboration; reviewed suggestions and memory; future experiences; and a demonstration across media. Keep the source clear and short so the app's outputs do most of the showing. Do not generate outputs during document creation.",
+          "weight": 0.8
+        }
+      },
+      {
+        "type": "audience",
+        "role": "audience",
+        "intent": "include",
+        "effect": "shape_or_include",
+        "active": true,
+        "authority": "authored",
+        "block_id": "forma-benefits-source-02",
+        "properties": {
+          "authority": "authored",
+          "subtype": "Primary audience",
+          "text": "Hands-on creators and small creative teams evaluating Forma.",
+          "weight": 0.8
+        }
+      },
+      {
+        "type": "message",
+        "role": "message",
+        "intent": "include",
+        "effect": "shape_or_include",
+        "active": true,
+        "authority": "authored",
+        "block_id": "forma-benefits-source-03",
+        "properties": {
+          "authority": "authored",
+          "exact_placements": [
+            "opening",
+            "closing"
+          ],
+          "exact_text": "One source. Many outputs.",
+          "protected_phrases": [
+            {
+              "placement": "opening_and_closing",
+              "text": "One source. Many outputs."
+            }
+          ],
+          "subtype": "Single proposition",
+          "text": "Manage shared creative meaning in one Forma document. Deliver it in the form each audience needs. Recorded change makes room for collaboration, assistance, and future experiences.\n\nPreserve this line exactly: One source. Many outputs.",
+          "weight": 0.8
+        }
+      },
+      {
+        "type": "format",
+        "role": "format",
+        "intent": "include",
+        "effect": "shape_or_include",
+        "active": true,
+        "authority": "authored",
+        "block_id": "forma-benefits-source-04",
+        "properties": {
+          "authority": "authored",
+          "subtype": "Aspect ratio",
+          "text": "One source document, then a slideshow, a two-speaker audio podcast, and a production-crew-directed video. Review each output before delivery.",
+          "weight": 0.8
+        }
+      },
+      {
+        "type": "exclusion",
+        "role": "exclusion",
+        "intent": "prohibit",
+        "effect": "must_not_include",
+        "active": true,
+        "authority": "authored",
+        "block_id": "forma-benefits-source-05",
+        "properties": {
+          "authority": "authored",
+          "intent": "prohibit",
+          "subtype": "Visual exclusion",
+          "text": "No claims that exports disappear, outputs auto-update, models retrain themselves, or agents have unlimited autonomy. Standalone lead-gen and live video direction are future expansion paths. No invented metrics or lyrical filler.",
+          "weight": 0.8
+        }
+      },
+      {
+        "type": "reference",
+        "role": "reference",
+        "intent": "include",
+        "effect": "shape_or_include",
+        "active": true,
+        "authority": "authored",
+        "block_id": "forma-benefits-source-06",
+        "properties": {
+          "authority": "authored",
+          "extraction_status": "ready",
+          "label": "Project source excerpt",
+          "media_type": "text/plain",
+          "source_kind": "text",
+          "source_type": "pasted-text",
+          "subtype": "Mood",
+          "text": "# One document. More ways to use it.\n\n## 01 — Less file management\nA brief in .docx. A deck in .pptx. A script in .txt. Images in .png. Audio in .wav. Video in .mp4. Then the project files, exports, and “final-final” versions.\n\nThe hard part is not the extensions. It is keeping the same idea intact across them.\n\n## 02 — One source, many outputs\nA Forma document holds the shared creative context: what we are making, who it is for, what it should say, and what must stay true.\n\nStart there, then produce the form the audience needs. Formats still exist at delivery; they stop being separate places to manage the meaning. Revise the source, then review and regenerate the affected outputs.\n\n## 03 — Changes become useful context\nEvent-log-based management records the work as changes, not only as a latest saved state. A shared record helps people coordinate: what changed and what needs attention.\n\nThe same foundation that supports multiplayer collaboration can support agents working at different levels—from a local suggestion to a specialist production task—with changes that can be reviewed.\n\n## 04 — Assistance that can improve\nA useful loop is simple: suggest → review → decide → remember → improve the next pass.\n\nAccepted decisions can inform later suggestions, within the right permissions and scope. Memory should preserve useful context, not turn every draft into an irreversible preference. This is a path to better assistance, not automatic model retraining.\n\n## 05 — Room for the next experience\nThe document need not belong to one interface. A standalone lead-gen experience could use it to create a tailored result. A newly capable model could use the same goals and constraints for live video direction.\n\nThese are expansion paths, not promises that those experiences are live today. The benefit is a reusable source that new tools can work from.\n\n## 06 — Let Forma show it\nCompare the slideshow, two-speaker podcast, and crew-directed video made from this document. Different forms, same central claims. That is the test of the workflow.",
+          "weight": 0.8
+        }
+      }
+    ],
+    "relationships": [],
+    "context_groups": [],
+    "pins": [],
+    "tail": []
+  },
+  "syntheticOutput": {
+    "title": "Forma benefits",
+    "summary": "One document supports several reviewed outputs.",
+    "content_markdown": "One source. Many outputs.\nKeeping the same idea intact across files\n\nShared creative context\nDeliver the form the audience needs\n\nA record of changes\nWhat changed and what needs attention\n\nAssistance that can improve\nSuggest → review → decide → remember\n\nRoom for future experiences\nExpansion paths, not live promises\n\nLet Forma show it\nOne source. Many outputs.\nSlideshow, two-speaker podcast, crew-directed video",
+    "presentation": {
+      "aspectRatio": "16:9",
+      "theme": "Forma",
+      "footerLabel": "Forma",
+      "stylePreset": "editorial"
+    },
+    "items": [
+      {
+        "title": "One source. Many outputs.",
+        "body": "",
+        "notes": "",
+        "image_prompt": "",
+        "context_group_ids": [],
+        "slide": {
+          "layout": "cover",
+          "kicker": "",
+          "bullets": [],
+          "sourceIds": [
+            "forma-benefits-source-03",
+            "forma-benefits-source-06"
+          ],
+          "visual": {
+            "kind": "hero-type",
+            "label": "",
+            "value": "Keeping the same idea intact across files",
+            "data": []
+          }
+        }
+      },
+      {
+        "title": "Shared creative context",
+        "body": "",
+        "notes": "",
+        "image_prompt": "",
+        "context_group_ids": [],
+        "slide": {
+          "layout": "statement",
+          "kicker": "",
+          "bullets": [],
+          "sourceIds": [
+            "forma-benefits-source-03",
+            "forma-benefits-source-06"
+          ],
+          "visual": {
+            "kind": "hero-type",
+            "label": "",
+            "value": "Deliver the form the audience needs",
+            "data": []
+          }
+        }
+      },
+      {
+        "title": "A record of changes",
+        "body": "",
+        "notes": "",
+        "image_prompt": "",
+        "context_group_ids": [],
+        "slide": {
+          "layout": "statement",
+          "kicker": "",
+          "bullets": [],
+          "sourceIds": [
+            "forma-benefits-source-03",
+            "forma-benefits-source-06"
+          ],
+          "visual": {
+            "kind": "hero-type",
+            "label": "",
+            "value": "What changed and what needs attention",
+            "data": []
+          }
+        }
+      },
+      {
+        "title": "Assistance that can improve",
+        "body": "",
+        "notes": "",
+        "image_prompt": "",
+        "context_group_ids": [],
+        "slide": {
+          "layout": "statement",
+          "kicker": "",
+          "bullets": [],
+          "sourceIds": [
+            "forma-benefits-source-03",
+            "forma-benefits-source-06"
+          ],
+          "visual": {
+            "kind": "hero-type",
+            "label": "",
+            "value": "Suggest → review → decide → remember",
+            "data": []
+          }
+        }
+      },
+      {
+        "title": "Room for future experiences",
+        "body": "",
+        "notes": "",
+        "image_prompt": "",
+        "context_group_ids": [],
+        "slide": {
+          "layout": "statement",
+          "kicker": "",
+          "bullets": [],
+          "sourceIds": [
+            "forma-benefits-source-03",
+            "forma-benefits-source-06"
+          ],
+          "visual": {
+            "kind": "hero-type",
+            "label": "",
+            "value": "Expansion paths, not live promises",
+            "data": []
+          }
+        }
+      },
+      {
+        "title": "Let Forma show it",
+        "body": "One source. Many outputs.",
+        "notes": "",
+        "image_prompt": "",
+        "context_group_ids": [],
+        "slide": {
+          "layout": "closing",
+          "kicker": "",
+          "bullets": [],
+          "sourceIds": [
+            "forma-benefits-source-03",
+            "forma-benefits-source-06"
+          ],
+          "visual": {
+            "kind": "hero-type",
+            "label": "",
+            "value": "Slideshow, two-speaker podcast, crew-directed video",
+            "data": []
+          }
+        }
+      }
+    ]
+  }
+}

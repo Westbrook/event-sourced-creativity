@@ -1,0 +1,90 @@
+{
+  "task": "H3",
+  "status": "local-offline-disabled-unreviewed",
+  "verifiedAt": "2026-09-22T18:55:46.697130+00:00",
+  "integratedSource": "a5cedbbc5dfde9bde753403c3f71ffb2c958f11a",
+  "foundationRelease": {
+    "production": 517,
+    "reportedBy": "H release owner",
+    "h3Included": false
+  },
+  "executionPlanId": "execution:5b353eaa929463860f1bff3c702a0236896172b7990b6a8b4beadfbb1cdbf544",
+  "bindingCaptureId": "h3-binding-capture:73bea5c09254bf44993e3119d2c55154515077ff4985ccfc9398308ee24f059e",
+  "runtimeFiles": 952,
+  "checks": {
+    "nativeHostTests": 40,
+    "combinedTests": 273,
+    "combinedPassed": 273,
+    "combinedFailed": 0,
+    "testFiles": [
+      "tests/generation-study-native.test.mjs",
+      "tests/generation-execution-bridge.test.mjs",
+      "tests/generation-execution-evidence.test.mjs",
+      "tests/sunburst-financial.test.mjs",
+      "tests/image-financial-qualification.test.mjs",
+      "tests/cost-budget-ledger.test.mjs",
+      "tests/moderation-response-validation.test.mjs",
+      "tests/output-asset-inspection.test.mjs",
+      "tests/cross-media-planner-outcome.test.mjs",
+      "tests/cross-media-request-parity.test.mjs",
+      "tests/output-narrative-custody.test.mjs",
+      "tests/output-storyboard-fal.test.mjs",
+      "tests/generation-outcome-evidence.test.mjs"
+    ],
+    "command": "FORMA_SOURCE_ROOT=/private/tmp/forma-generation-first-study-h3 node --import tsx --test tests/generation-study-native.test.mjs tests/generation-execution-bridge.test.mjs tests/generation-execution-evidence.test.mjs tests/sunburst-financial.test.mjs tests/image-financial-qualification.test.mjs tests/cost-budget-ledger.test.mjs tests/moderation-response-validation.test.mjs tests/output-asset-inspection.test.mjs tests/cross-media-planner-outcome.test.mjs tests/cross-media-request-parity.test.mjs tests/output-narrative-custody.test.mjs tests/output-storyboard-fal.test.mjs tests/generation-outcome-evidence.test.mjs",
+    "log": "offline-tests.txt",
+    "logSha256": "1f16a14dad6972701378f672435246816d7bc47411b909d3ebd8fde005b547af",
+    "typecheck": "passed: tsc --noEmit",
+    "lint": "passed: native-host/*.mjs and generation-study-native.test.mjs",
+    "schema": "exact optional schema verified in disposable in-memory database",
+    "envelope": "952 source/config/schema hashes and archived C/F2/H seals verified",
+    "diffCheck": "passed",
+    "initialRunnerCorrection": "Initial expanded invocation omitted required FORMA_SOURCE_ROOT for one existing extracted fixture; rerun with explicit source root passed273/273. No source workaround.",
+    "browserReview": "Local readiness artifact4223 rendered and visually inspected; existing report4187 rendered; review state remains unacknowledged.",
+    "historicalAndProductDiff": "No differences from settled a5cedbbc in worker/, src/, drizzle/, C/F2 or H v1\u20135 artifacts."
+  },
+  "testFileSha256": {
+    "tests/generation-study-native.test.mjs": "61e72c21dbcb78b7ab327c565acadf65bd6138125085ff5672f81853c0a2d284",
+    "tests/generation-execution-bridge.test.mjs": "7cb8e40f6462aa908ba229b1ba1c612e844601f7eb87cd4adfbf5c6328cfa4d2",
+    "tests/generation-execution-evidence.test.mjs": "59cca6316e02c869d5823d82bc8dadc8c619e5a38f42912a9cc284cc1dea334e",
+    "tests/sunburst-financial.test.mjs": "5e9aa17c6876cdbaf6de20887ef5b5f8660fb1d356405e9564391f08e84fce05",
+    "tests/image-financial-qualification.test.mjs": "aac7974b3bec64a51cd21092a29cc3e2193e6311461ea5b340894389003eb192",
+    "tests/cost-budget-ledger.test.mjs": "fac05fa16afccebf599df505064cd3609aa5e191a01f521bed62f0920c220000",
+    "tests/moderation-response-validation.test.mjs": "e41bddac19bf1a3d6f3f1e49f2fd2e34b088b4fa2c560b3b9a6991fee2d1edf0",
+    "tests/output-asset-inspection.test.mjs": "649bc9f7b150cb24b18039626f5b22033e134dfec1c8c06edf30de2996f2f284",
+    "tests/cross-media-planner-outcome.test.mjs": "8d87c1ab39dcb7689f8328fa3577f858ccdf9c82d2d2e3603096eacdb054748c",
+    "tests/cross-media-request-parity.test.mjs": "b24b1b78df96ac59fc2bf7153025c8934d9bd0e1c3a66f49957a775e81bfe149",
+    "tests/output-narrative-custody.test.mjs": "13b369b755925d47587bbdd9c11a162de1783474ac05e35c6b21e28aa5b08ce6",
+    "tests/output-storyboard-fal.test.mjs": "45734433110cbd6bb8599b4e4c348b335f0f59cfbaaeafc826e931bfbfc88f81",
+    "tests/generation-outcome-evidence.test.mjs": "54cb4abb8efdce8a9aa09ca1f4fa21cd9404288a77d97162ccf946c056fe8aca"
+  },
+  "currentReadiness": {
+    "actualRetainedPair": false,
+    "actualCCapture": null,
+    "financialAvailable": false,
+    "maximumEndToEndExposureMicrousd": null,
+    "authorizedCostMicrousd": 0,
+    "hostInstalled": false,
+    "newMigrationRegistration": false,
+    "liveAuthorized": false,
+    "userReviewed": false
+  },
+  "activity": {
+    "livePlannerCalls": 0,
+    "liveModerationCalls": 0,
+    "liveImageCalls": 0,
+    "liveEvaluatorCalls": 0,
+    "deploymentsByH3": 0,
+    "completedLiveStudies": 0,
+    "trustedPrivateDiscovery": "existing authenticated owner UI read only; no full private input copied"
+  },
+  "limitations": [
+    "Native race/crash proofs use actual repository D1/host adapters backed by test SQLite; no live distributed D1 qualification.",
+    "Optional schema/route/grants not provisioned. No product imports native-host or mock authority.",
+    "Synthetic C and historical F2 are preserved references, not actual source qualification.",
+    "Direct Images status/result retrieval unsupported; no polls or replacement request.",
+    "Public preparation price scenario is not an actual request estimate, allowance, measured charge or maximum loss.",
+    "H/E2 wider922 suite retains3 documented baseline failures; H3 selected273 is narrower.",
+    "All-media semantic outcome metrics remain unmeasured."
+  ]
+}

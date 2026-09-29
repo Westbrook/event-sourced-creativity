@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "principles": ["Every pointer affordance has a keyboard path", "Single-letter commands are inactive in text fields", "Escape cancels the current mode", "Bindings are discoverable from the command palette and help overlay"],
+  "bindings": [
+    {"domain":"global","keys":["Meta+K"],"command":"Open command palette","implemented":true},
+    {"domain":"global","keys":["Meta+Z","Shift+Meta+Z"],"command":"Undo or redo the latest grouped action on this board","implemented":true},
+    {"domain":"global","keys":["?"],"command":"Open Canvas reading-order help","implemented":true},
+    {"domain":"global","keys":["Escape"],"command":"Cancel the current dialog, clear selection, then exit focused view","implemented":true},
+    {"domain":"semantic-list","keys":["?","Meta+\\"],"command":"Open the accessible board reading order","implemented":true},
+    {"domain":"selection","keys":["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"],"command":"Nudge one unit; Shift nudges ten","implemented":true},
+    {"domain":"formalize","keys":["F"],"command":"Combine selected project sources as reusable context","implemented":true},
+    {"domain":"create","keys":["N"],"command":"Open the project-source Add menu","implemented":true},
+    {"domain":"create","keys":["D"],"command":"Create or resume a reusable sketch and enter Draw mode","implemented":true},
+    {"domain":"create","keys":["E"],"command":"Edit one selected shared context block","implemented":true},
+    {"domain":"create","keys":["Delete","Backspace"],"command":"Remove selected Canvas placements","implemented":true},
+    {"domain":"comparison","keys":["C"],"command":"Compare two to four selected references or generations","implemented":true},
+    {"domain":"viewport","keys":["+","-","Meta+0","Meta+1"],"command":"Zoom, fit, and reset","implemented":true},
+    {"domain":"object-menu","keys":["Shift+F10","Meta+."],"command":"Open provenance, lock, restore, re-home, and copy actions","implemented":false},
+    {"domain":"ink","keys":["D"],"command":"Create a project Sketch block and begin drawing","implemented":true},
+    {"domain":"lenses","keys":["V","Shift+V"],"command":"Open or clear URL-only lens","implemented":false},
+    {"domain":"chat","keys":["Meta+J"],"command":"Open the active document conversation","implemented":false}
+  ]
+}

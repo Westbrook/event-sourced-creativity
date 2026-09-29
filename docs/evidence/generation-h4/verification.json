@@ -1,0 +1,90 @@
+{
+  "version": "h4-offline-verification-v1",
+  "at": "2026-09-22T20:02:25.840Z",
+  "baseCommit": "882729f176a2f66ec7e10aeb90765ab89d3f6870",
+  "evidenceClass": "disabled-offline-binding-capture-not-real-source",
+  "providerCalls": 0,
+  "actualSource": null,
+  "actualRequest": null,
+  "actualEstimate": null,
+  "actualOutput": null,
+  "financialPolicySelected": false,
+  "hostInstalled": false,
+  "schemaInstalled": false,
+  "productionRoutingChanged": false,
+  "published": false,
+  "tests": {
+    "focused": 52,
+    "focusedPassed": 52,
+    "selectedCommand": "node --import tsx --test tests/generation-preparation-h4.test.mjs tests/generation-study-native.test.mjs tests/generation-financial-policy.test.mjs tests/generation-execution-bridge.test.mjs tests/generation-execution-evidence.test.mjs tests/planner-response-outcome.test.mjs tests/image-generation.test.mjs tests/flare-draft-generation.test.mjs",
+    "selectedResult": [
+      "ℹ tests 225",
+      "ℹ pass 224",
+      "ℹ fail 1",
+      "ℹ cancelled 0",
+      "ℹ skipped 0",
+      "ℹ todo 0"
+    ],
+    "expectedHistoricalGuardFailure": "Historical v5 image envelope refuses new worker/openai-adapter.ts source hash; preserve old bytes and create actual-input successor only after genuine input/output review.",
+    "typecheck": "passed: node node_modules/typescript/bin/tsc --noEmit",
+    "focusedLint": "passed",
+    "exactPreparationSchema": "passed; in-memory only",
+    "diffCheck": "passed"
+  },
+  "files": {
+    "worker/openai-adapter.ts": "5913ce9b1841dc2cadc3a4922576587b260563c611c52d615f7a4e3d3b7ce933",
+    "db/generation-preparation.pending.sql": "34247048aeea4bf3be8a6173561adeeea2d9b576f8d25d40ac821d63d95bcf1c",
+    "tests/generation-preparation-h4.test.mjs": "a9eb8b1d6d53d052a6ffabbb838c4777189039a7b4457f7c1d76ce1588a9d039",
+    "evals/generation-reliability/preparation/check-evidence.mjs": "221bdb9a8445ad54fafcacc4467dbe76ca85ea8163c627d59bb7eb759ae003a8",
+    "evals/generation-reliability/preparation/check-schema.mjs": "137be007ebaad81baa0e563173de6ace9c6a82451ce2f77a165989912be2b32a",
+    "evals/generation-reliability/preparation/contract.mjs": "ab72b305dacfe52e6bf79390b4a77da3769788dfcd730424f41114465dcb3823",
+    "evals/generation-reliability/preparation/external-guard.mjs": "70df256abe544d6500085ef7840ae14de1bd113131a4e350a2fba18ca3e551dd",
+    "evals/generation-reliability/preparation/native-host.mjs": "330b768a4eb47bd749d31cfe775ed03cfbc6ab0c9ee0eadef0345d378374e7b8",
+    "evals/generation-reliability/preparation/schema-contract.mjs": "c2caea2f38ec71ba27f5d4c58787d104e1be36cbbeca44b340dd3f2664afafd4",
+    "evals/generation-reliability/preparation/transport.mjs": "a746ee08cd2e52944053f6ae56df1d36155e0fd8d57434ce8084e67c5edc85e4",
+    "docs/generation-preparation-h4.md": "b21326cbf03d0068063ad9d845dc89dd8bdf56f2591af4206151c0aaa94dd547",
+    "docs/generation-cross-media-transfer-h4.md": "f1e06f54bcd19ca6f4a869868167798000cfaeb08f57074577e27b27ff247751",
+    "docs/evidence/generation-h4/proposal.json": "ec504ea3a74d868e9d82189cab2851186bcb4b616030a6df223f47b00b6bf23f",
+    "docs/evidence/generation-h4/human-review.json": "34ad56d73d1caa562a95f97cd81e009d44dcd76b486460e6dacdb8670f208d98",
+    "evals/generation-reliability/native-host/authority.mjs": "854e5fc0839e23951bfb762bd6164e22e3fd988ce59d6bcdc41ee0945bbf5085",
+    "evals/generation-reliability/native-host/transport.mjs": "01c3dca958f037d822d52d17ca43897e16e3ab3e3b1c88e09b100af996cea61f",
+    "evals/generation-reliability/native-host/financial-policy.mjs": "d4a87d1b0865d64fcfe7d4995aaac0cb00f59f83fa3c170793531d38f5ec84ae",
+    "evals/generation-reliability/native-host/schema-contract.mjs": "0b0011c88b67fdf641016c5d9540f371067e2e00be7f3faf43791b33c020e2b0",
+    "db/generation-study.pending.sql": "a3065bf8b61640de47aed06fcfd1a5dfc3a96a5f8fcf11305879fca8c9df9ed2",
+    "worker/openai-image-route-contract.ts": "aa943885dd8e5f1334f7207645f7d4cdd49c4a8a22366f0c61ff828053296b3e",
+    "worker/pilot-policy.ts": "4eebdb123501b6e3f9559c109e521cb1f0825d4c4629373b78567e3751e24e2d",
+    "worker/memory-native-boundary.ts": "5c23f756e60009efdf3c531a6610a7594b540c36ce770a87bfb9e84c12e70fc4",
+    "src/model/prompt-policy.ts": "48a2cfbb2d9ff8fbeca9e018d9413b9e77d0fedfe1f2cf556e27ca349e253fb2"
+  },
+  "preserved": [
+    {
+      "path": "evals/generation-reliability/bridge-artifacts/v5/first-study.json",
+      "sha256": "46b501dcfa61cbcab17b678cadb99f6d3aaa8b95d7a3b37b3b6072143426a6aa",
+      "unchangedFromH3": true
+    },
+    {
+      "path": "docs/evidence/generation-h3/preparation-proposal.json",
+      "sha256": "28c79da1ceba6a796ebb3aab4fe67f166caf16de284ed09e9269707dd8d0dfd4",
+      "unchangedFromH3": true
+    },
+    {
+      "path": "docs/evidence/generation-h3/execution-envelope.json",
+      "sha256": "6dc41b4ea5addc262b4d46304b3d43f8503ac392d9782654bc7efd38f966b9c8",
+      "unchangedFromH3": true
+    },
+    {
+      "path": "docs/evidence/generation-h3/binding-capture.json",
+      "sha256": "6283552386c19ae18b0bffbcbd8e9061df5f7dedb52f240fc89bf6ddca0cafed",
+      "unchangedFromH3": true
+    }
+  ],
+  "limitations": [
+    "All provider transport mocked; SQLite models native D1 batches, not deployed distributed execution.",
+    "Source/UI discovery gives no eligible complete private freeze or actual configuration.",
+    "F3 pure policy is reused; preparation original settlement/provision adapter uninstalled/unqualified and holds never cleared.",
+    "No actual C capture, semantic fidelity score, image worksheet or H execution envelope created.",
+    "Broader pre-existing baseline tests are outside this selected suite; E3 owns three baseline repairs."
+  ],
+  "next": "Trusted current source/config freeze and concrete financial policy/reconciliation binding, then separate qualified release review and exact one-operation authorization.",
+  "captureId": "h4-offline:0b453125232d066e215d0170f6742306bba8503e7730ca072bde0079e7c8a87f"
+}

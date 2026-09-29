@@ -1,0 +1,30 @@
+E4 policy denial line 389 {"clientRequestId":"forma-scene-6ea471ef-2b9a-48e2-bdeb-5aeb2d886d0f","provider":"openai","operation":"planning","model":"gpt-5.6-terra","status":"rejected","requestDigest":"2e2ba5adc5fe3d0f6a3da45c91226aa4d689d08de9c135b152d79f91eaa322bc","costMicrousd":0}
+✖ manual visual pending policy stop permits only explicit fresh preparation and separate approval (8139.979542ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9369.740916
+
+✖ failing tests:
+
+test at tests/scene-policy-stop-recovery.test.mjs:57:3
+✖ manual visual pending policy stop permits only explicit fresh preparation and separate approval (8139.979542ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 0
+  
+      at exactReceipt (file:///private/tmp/forma-e4-baseline/tests/scene-policy-stop-recovery.test.mjs:28:10)
+      at TestContext.<anonymous> (file:///private/tmp/forma-e4-baseline/tests/scene-policy-stop-recovery.test.mjs:60:66)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Still · Media layout review</title></head><body>
+<script type="module">
+import {html,LitElement} from '/node_modules/lit/index.js';
+import {StillApp} from '/src/still/app.ts';
+import {stillImageStage} from '/src/still/media.ts';
+import '/src/still/theme.css';
+import css from '/src/still/style.css?raw';
+const style=document.createElement('style');style.textContent=css.replaceAll('still-app','media-layout-fixture');document.head.append(style);
+const title='The actual scene of the crime.';
+class Fixture extends StillApp {
+ connectedCallback(){LitElement.prototype.connectedCallback.call(this);}
+ updated(){}
+ currentRouteProblem(){return '';}
+ renderList(items,fn,cls){return html`<div class=${cls}>${items.map(fn)}</div>`;}
+ render(){return html`<div class=${this.panel?'still-layout has-developer':'still-layout'}><div class="still-shell"><header class="masthead"><a class="wordmark header-stamp" href="?scene=document">still<span>.</span></a></header><main>${this.scene==='pending'?stillImageStage(title,this.metadata,undefined,true):this.renderCanvas()}</main><div class="dock-stack"><footer class="action-dock"><en-toolbar label="Layout review"><en-button @click=${()=>window.draw({scene:'image'})}>Image</en-button><en-button @click=${()=>window.draw({scene:'document'})}>Document</en-button><en-button @click=${()=>window.draw({scene:'slides'})}>Slide</en-button></en-toolbar></footer></div></div>${this.panel?html`<aside class="developer-panel">Developer panel</aside>`:null}${new URL(location.href).searchParams.has('progress-report')?html`<a class="progress-return" href="http://127.0.0.1:4187">Progress Report</a>`:null}</div>`;}
+}
+customElements.define('media-layout-fixture',Fixture);
+window.app=new Fixture();window.app.loading=false;
+window.draw=async({scene='image',width=1536,height=1024,panel=false,metadata={width,height},source}={})=>{
+ const src=source??`/api/media/layout-image?width=${width}&height=${height}`;
+ const item={title,body:'Every part of the generated result remains available.',mediaUrl:src,width,height};
+ const artifact={id:'result',documentId:'document',kind:scene,title,summary:'',settings:{width,height},items:[item],mediaUrl:src};
+ const block={id:'idea',projectId:'project',documentId:'document',type:'subject',handle:'Creative direction',properties:{text:'A visual and philosophical mystery played out in the form of a bug in your software that you likely wrote but cannot explain.'}};
+ Object.assign(window.app,{scene,panel,metadata});
+ window.app.client={scopeKey:'fixture',epoch:0,events:[],content:{},jobs:[],jobsLoaded:true,abilities:{author:true},session:{policy:{accepted:true}},position:{view:['document','documents','ideas','results'].includes(scene)?scene:'artifact',projectId:'project',documentId:'document',outputId:'result',blockId:''},projection:{projectId:'project',documentId:'document',projectName:'What does Jev do?',documentTitle:title,blocks:[block],libraryBlocks:[block],libraryOutputs:[],libraryArtifacts:[],blockRelations:[],projects:[{id:'project',name:'What does Jev do?',documentCount:1}],documents:[{id:'document',title}],artifacts:scene==='image'?[]:[artifact],outputs:scene==='image'?[{id:'result',title,mediaUrl:src,...metadata}]:[]}};
+ window.app.changed();await window.app.updateComplete;
+};
+document.body.append(window.app);
+await window.draw({scene:new URL(location.href).searchParams.get('scene')??'image'});
+</script></body></html>

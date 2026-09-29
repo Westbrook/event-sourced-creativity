@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Forma synthetic native 3D qualification</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/src/styles.css">
+    <link rel="stylesheet" href="/src/design-system.css">
+    <link rel="stylesheet" href="/src/responsive-foundation.css">
+    <style>
+      /* Fixture placement only. No component selectors, typography, focus,
+         dialog geometry or product overflow rules are replaced. */
+      #native3d-root { min-inline-size: 0; min-block-size: 0; }
+      #native3d-root[data-placement="isolated"] { padding: 1rem; }
+    </style>
+  </head>
+  <body>
+    <div id="native3d-root" class="application-creative" data-placement="isolated"></div>
+    <script type="module" src="/tests/model3d-native/fixture.mjs"></script>
+  </body>
+</html>

@@ -6,20 +6,20 @@ import { makeExecutionPlan, safetyIdentifier, validateExecutionPlan } from './ex
 
 /** Local synthetic capture only. A future authorized preparation creates another immutable plan. */
 export async function firstCompilerStudy() {
-  const capture=JSON.parse(await readFile(new URL('./e2a/artifacts/v2/capture.json',import.meta.url),'utf8'));
+  const capture=JSON.parse(await readFile(new URL('./e2a/artifacts/capture.json',import.meta.url),'utf8'));
   verifySeal('e2a-capture',capture);
   if(canonical(capture)!==canonical(captureE2aFixture(newCurrentE2aFixture()))) throw new Error('C_capture_changed');
-  const financial=JSON.parse(await readFile(new URL('../../docs/evidence/f2-sunburst/c2-v2/financial-gate.json',import.meta.url),'utf8'));
+  const financial=JSON.parse(await readFile(new URL('../../docs/evidence/f2-sunburst/financial-gate.json',import.meta.url),'utf8'));
   verifySeal('f2-financial',financial);
   for(const arm of ['before','after']) {
-    const bytes=await readFile(new URL(`./e2a/artifacts/v2/${arm}.txt`,import.meta.url));
+    const bytes=await readFile(new URL(`./e2a/artifacts/${arm}.txt`,import.meta.url));
     if(hash(bytes)!==capture[arm].hash||bytes.toString()!==capture[arm].prompt) throw new Error('C_actual_bytes_mismatch');
     if(!financial.promptEvidence.some(e=>e.sha256===hash(bytes)&&e.captureId===capture.id)) throw new Error('F2_exact_prompt_not_qualified');
   }
   const config={prompt:capture.before.prompt,references:[],model:'gpt-image-2.5-sunburst',quality:'high',size:'1536x1024',outputFormat:'png',stream:false,moderation:null,
     endpoint:'/v1/images/generations',planner:{mode:'frozen'},checker:{mode:'off'},compiler:'current-production-unmodified'};
   const baseline=makeCell(capture.case,config),candidate=makeCell(capture.case,{...config,prompt:capture.after.prompt,compiler:capture.compilerVersion},baseline,['prompt','compiler']);
-  const initial=makeManifest({experiment:'H-C-provenance-feasibility-c2-v2',cases:[capture.case],cells:[baseline,candidate],repetitions:1,allowedFactors:['prompt','compiler'],
+  const initial=makeManifest({experiment:'H-C-provenance-feasibility-v1',cases:[capture.case],cells:[baseline,candidate],repetitions:1,allowedFactors:['prompt','compiler'],
     interpretation:'Actual provenance-only compiler outputs on a newly authored synthetic current control. No historical incident coverage; no captured planner output or measured image outcomes.',
     callsPerTrial:{planner:0,moderation:1,media:1,storage:1,evaluator:0,contextChecker:0,status:1,result:1},
     gates:['current_source_and_actual_planner_direction','F2_exact_cell_available','existing_owner_and_paid_authority','trusted_production_transport_and_custody_adoption']});

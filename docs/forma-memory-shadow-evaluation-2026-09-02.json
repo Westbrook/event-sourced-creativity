@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "mode": "offline-synthetic-shadow",
+  "fixtureTime": "2026-09-02T06:00:00.000Z",
+  "defaultActivation": "off",
+  "productionActivationImplemented": false,
+  "currentContextUnchanged": true,
+  "normalizedInteractions": {
+    "total": 10,
+    "privateChat": 2,
+    "nonChat": 8
+  },
+  "consumption": [
+    {
+      "kind": "artifact",
+      "revision": "r1",
+      "episodes": 1,
+      "outcomes": 2,
+      "actions": {
+        "inspect": 1,
+        "commit": 1
+      }
+    },
+    {
+      "kind": "block",
+      "revision": "r1",
+      "episodes": 3,
+      "outcomes": 4,
+      "actions": {
+        "edit": 4,
+        "accept": 1
+      }
+    },
+    {
+      "kind": "document",
+      "revision": "r1",
+      "episodes": 2,
+      "outcomes": 3,
+      "actions": {
+        "encounter": 1,
+        "request": 2
+      }
+    }
+  ],
+  "descriptiveWorkflowPatterns": [
+    {
+      "action": "edit",
+      "independentOutcomes": 3,
+      "episodeCount": 3
+    }
+  ],
+  "conversation": {
+    "method": "extractive-v1",
+    "summarizedTurns": 2,
+    "recentTurns": 2,
+    "omittedTurns": 0,
+    "continuous": true
+  },
+  "review": {
+    "id": "3fb317340427dfb8e6f3317ea6c7ba6bde690e1ebe66e9fe747add4e977dcbe9",
+    "admission": "planned",
+    "publicationGuardPassed": true,
+    "capturedCutoff": {
+      "synthetic-actions": 8,
+      "synthetic-conversation": 11
+    },
+    "replayAdmission": "no-activity",
+    "persisted": false
+  },
+  "recall": {
+    "method": "lexical-baseline",
+    "selected": 4,
+    "serializedBytes": 1170,
+    "maxBytes": 16384,
+    "forgottenLineagesExcluded": true
+  },
+  "providerCalls": 0,
+  "databaseWrites": 0,
+  "limitations": [
+    "No live event ingestion or durable memory storage",
+    "No deployed scheduler, queue or vector index",
+    "Extractive summary and lexical recall are baselines, not evaluated semantic models",
+    "No serving-path or UI integration"
+  ]
+}

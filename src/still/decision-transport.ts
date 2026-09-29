@@ -2,8 +2,9 @@ import type { DecisionResponse } from './diagnostics.ts';
 import { ApiError } from './client.ts';
 
 /** Read-only decisions can arrive before optional enrichment. No mutation retry. */
-export async function fetchDecision(body:Record<string,unknown>,onInitial?:(value:DecisionResponse)=>void,timeoutMs=30_000):Promise<DecisionResponse>{
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+export async function fetchDecision(body:Record<string,unknown>,onInitial?:(value:DecisionResponse)=>void,timeoutMs=30_000,signal?:AbortSignal):Promise<DecisionResponse>{
+  const controller=new AbortController(),timer=timeoutMs>0?setTimeout(()=>controller.abort(),timeoutMs):undefined;
+  const abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
   let initial:DecisionResponse|undefined;
   try{
     const response=await fetch('/api/still/decision',{method:'POST',credentials:'same-origin',signal:controller.signal,
@@ -29,5 +30,5 @@ export async function fetchDecision(body:Record<string,unknown>,onInitial?:(valu
     // A valid first ranking stays useful if only the optional tail is interrupted.
     if(initial)return {...initial,delivery:{...initial.delivery!,stage:'initial',enrichment:'interrupted'}};
     throw error;
-  }finally{clearTimeout(timer);}
+  }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
 }

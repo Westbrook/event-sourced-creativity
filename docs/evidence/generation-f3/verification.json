@@ -1,0 +1,49 @@
+{
+  "version": "generation-financial-policy-v1",
+  "verifiedAt": "2026-09-22T19:59:23.039Z",
+  "baseCommit": "882729f176a2f66ec7e10aeb90765ab89d3f6870",
+  "status": "local-disabled-uninstalled-unpublished",
+  "selectedMode": null,
+  "residualRiskAccepted": null,
+  "liveAuthorityMicrousd": 0,
+  "providerCalls": 0,
+  "productionDatabaseOpened": false,
+  "tests": {
+    "passed": 90,
+    "failed": 0,
+    "command": "node --experimental-transform-types --test tests/generation-financial-policy.test.mjs tests/generation-study-native.test.mjs tests/sunburst-financial.test.mjs tests/image-financial-qualification.test.mjs",
+    "kind": "mocked transport and in-memory SQLite using real native host/D1 adapter statements"
+  },
+  "checks": {
+    "targetedEslint": "passed",
+    "optionalSchema": "passed; generated in-memory only",
+    "gitDiffCheck": "passed",
+    "productRuntimeImports": "none",
+    "f2Original": {
+      "id": "f2-financial:02e1f21c272deeb5040baf3b0de8f20cb88e1102dff89b91cf2cf0f396d21aa4",
+      "available": false,
+      "maximumCostMicrousd": null,
+      "sha256": "83d678eeeb6277f6fb542cb6057232dd56efe3e042f7827f565ddf703834a7c9"
+    }
+  },
+  "files": {
+    "db/generation-study.pending.sql": "a3065bf8b61640de47aed06fcfd1a5dfc3a96a5f8fcf11305879fca8c9df9ed2",
+    "evals/generation-reliability/native-host/financial-policy.mjs": "d4a87d1b0865d64fcfe7d4995aaac0cb00f59f83fa3c170793531d38f5ec84ae",
+    "evals/generation-reliability/native-host/financial-reconciliation.mjs": "97a1777d4677c9601c125ce9fae55f2453c9bd15f01a3f9430d0f1cc367b1deb",
+    "evals/generation-reliability/native-host/host.mjs": "91faed4d94e282408af668000860c39811b174d467c1d1850e88b6d6a863c57d",
+    "evals/generation-reliability/native-host/schema-contract.mjs": "0b0011c88b67fdf641016c5d9540f371067e2e00be7f3faf43791b33c020e2b0",
+    "tests/generation-financial-policy.test.mjs": "c8526b6f8bed1a54535bdabb982c9a6ca8875a5d0c99d876e4a098831d6ec3d0",
+    "tests/generation-study-fixture.mjs": "4833faea5ac5f4977621dbedfc527d558cfa69e7802152de8c1dce5b9f55020f",
+    "tests/generation-study-native.test.mjs": "e2726f72fb4314e80c95aa1223881b2fcd1deb4f7ea554c859aa9306b234b8d1",
+    "docs/generation-financial-policy-f3.md": "cf7fd3148a9a9a2df810b6a84df62be3cfc5417be74d2b61ad60702796c126e0",
+    "docs/evidence/generation-f3/offline-tests.txt": "0911555d8ffba83d370c84e8f891976a0e88188c877ae07855ce7b38049b18d4"
+  },
+  "limits": [
+    "No deployed distributed guarantee or invoice authenticity demonstrated by mocks.",
+    "Future trusted grant issuer and billing verifier must establish evidence authenticity.",
+    "Actual source/direction, account/credential/region, estimate/bound, liability inventory and user policy decision remain absent.",
+    "H4 preparation completion adapter remains closed; no other-media quality inferred.",
+    "Historical H3 envelopes remain unchanged; a new combined source-bound deployment envelope is required."
+  ],
+  "id": "f3-offline-verification:ab238b822eedecbfa265ec9ca67e9f374ce451374f696004fe23f40a0aad7f4b"
+}

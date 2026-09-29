@@ -1,0 +1,3 @@
+export function threadWidthScale(fromWidth:number,toWidth:number):number;
+export function threadTimeline(base:number,options?:{arrival?:number;departure?:number;opening?:boolean;returnToLoading?:boolean}):{base:number;delay:number;openingExtra:number;sweepScale:number;returnSweep?:number;duration:number};
+export function constructionTransition(options:{host:HTMLElement;from:HTMLElement;to:HTMLElement;duration?:number;reduced?:boolean;trigger?:string;signal?:AbortSignal;onInteractive?:(event:{interactive:boolean;at:number;duration:number})=>void;onTimeline?:(animations:Animation[],duration:number)=>void}):Promise<{cancelled:boolean;duration?:number}>;

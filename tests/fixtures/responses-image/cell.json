@@ -1,0 +1,18 @@
+{
+  "mainlineModel": "gpt-5.5",
+  "imageModel": "gpt-image-2.5-sunburst",
+  "action": "generate",
+  "context": {
+    "kind": "single-user-brief",
+    "text": "Generate one watercolor of an adult botanist beside a greenhouse.\nPreserve the words “FIELD NOTES”."
+  },
+  "assets": [],
+  "settings": {
+    "quality": "high",
+    "size": "1536x1024",
+    "outputFormat": "png",
+    "background": "opaque",
+    "moderation": "auto",
+    "stream": false
+  }
+}

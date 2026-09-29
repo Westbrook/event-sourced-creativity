@@ -1,0 +1,1205 @@
+{
+  "specificationVersion": "v19",
+  "purpose": "Planning fixture and acceptance cases; not an executed application or unique required interpretation",
+  "identityPhase": "Draft temporary IDs; commit remaps projectId/blockId through the operation receipt, retaining occurrence IDs",
+  "bodyStorage": "Idea.body is IdeaBodyV1 persisted as protected properties.rich_text_body; Idea.text is its exact readable projection. Token text preserves the authored readable phrase while token styling supplies reference affordance.",
+  "source": "Recording the White Album. /document Paul and Jon sit with their instruments on either side of a microphone. /image /document Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano. /video",
+  "offsetUnits": "UTF-16 code units (this ASCII fixture also matches Python code points)",
+  "project": {
+    "id": "project-white-album",
+    "title": "Recording the White Album",
+    "sourceEvidence": [
+      {
+        "start": 0,
+        "end": 25,
+        "quote": "Recording the White Album"
+      }
+    ]
+  },
+  "documents": [
+    {
+      "id": "doc-paul-jon",
+      "title": "Paul and Jon",
+      "ideaIds": [
+        "idea-paul",
+        "idea-jon",
+        "idea-paul-instrument",
+        "idea-jon-instrument",
+        "idea-microphone",
+        "idea-first-scene",
+        "idea-image"
+      ],
+      "sourceEvidence": [
+        {
+          "start": 37,
+          "end": 108,
+          "quote": "Paul and Jon sit with their instruments on either side of a microphone."
+        },
+        {
+          "start": 109,
+          "end": 115,
+          "quote": "/image"
+        }
+      ]
+    },
+    {
+      "id": "doc-window",
+      "title": "Jon, Ringo, and George",
+      "ideaIds": [
+        "idea-jon",
+        "idea-ringo",
+        "idea-george",
+        "idea-paul",
+        "idea-window",
+        "idea-piano",
+        "idea-mixing-room",
+        "idea-second-scene",
+        "idea-video"
+      ],
+      "sourceEvidence": [
+        {
+          "start": 126,
+          "end": 272,
+          "quote": "Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano."
+        },
+        {
+          "start": 273,
+          "end": 279,
+          "quote": "/video"
+        }
+      ]
+    }
+  ],
+  "ideas": [
+    {
+      "id": "idea-paul",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Paul",
+      "type": "subject",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Paul"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "Paul",
+      "sourceEvidence": [
+        {
+          "start": 37,
+          "end": 41,
+          "quote": "Paul"
+        },
+        {
+          "start": 210,
+          "end": 214,
+          "quote": "Paul"
+        },
+        {
+          "start": 37,
+          "end": 108,
+          "quote": "Paul and Jon sit with their instruments on either side of a microphone."
+        },
+        {
+          "start": 126,
+          "end": 272,
+          "quote": "Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano."
+        }
+      ],
+      "uses": [
+        "doc-paul-jon",
+        "doc-window"
+      ],
+      "subtype": "Human presence",
+      "extractionBasis": "Named participant explicitly present in the cited complete scene; body is the supplied identity, not inferred biographical detail."
+    },
+    {
+      "id": "idea-jon",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Jon",
+      "type": "subject",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Jon"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "Jon",
+      "sourceEvidence": [
+        {
+          "start": 46,
+          "end": 49,
+          "quote": "Jon"
+        },
+        {
+          "start": 126,
+          "end": 129,
+          "quote": "Jon"
+        },
+        {
+          "start": 37,
+          "end": 108,
+          "quote": "Paul and Jon sit with their instruments on either side of a microphone."
+        },
+        {
+          "start": 126,
+          "end": 272,
+          "quote": "Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano."
+        }
+      ],
+      "uses": [
+        "doc-paul-jon",
+        "doc-window"
+      ],
+      "subtype": "Human presence",
+      "extractionBasis": "Named participant explicitly present in the cited complete scene; body is the supplied identity, not inferred biographical detail."
+    },
+    {
+      "id": "idea-ringo",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Ringo",
+      "type": "subject",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Ringo"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "Ringo",
+      "sourceEvidence": [
+        {
+          "start": 131,
+          "end": 136,
+          "quote": "Ringo"
+        },
+        {
+          "start": 126,
+          "end": 272,
+          "quote": "Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano."
+        }
+      ],
+      "uses": [
+        "doc-window"
+      ],
+      "subtype": "Human presence",
+      "extractionBasis": "Named participant explicitly present in the cited complete scene; body is the supplied identity, not inferred biographical detail."
+    },
+    {
+      "id": "idea-george",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "George",
+      "type": "subject",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "George"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "George",
+      "sourceEvidence": [
+        {
+          "start": 142,
+          "end": 148,
+          "quote": "George"
+        },
+        {
+          "start": 126,
+          "end": 272,
+          "quote": "Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano."
+        }
+      ],
+      "uses": [
+        "doc-window"
+      ],
+      "subtype": "Human presence",
+      "extractionBasis": "Named participant explicitly present in the cited complete scene; body is the supplied identity, not inferred biographical detail."
+    },
+    {
+      "id": "idea-paul-instrument",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Paul's instrument",
+      "type": "subject",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-paulinstrument-owner",
+                        "type": "still-idea-reference",
+                        "text": "Paul",
+                        "label": "Paul",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-paul"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "'s instrument"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "Paul's instrument",
+      "sourceEvidence": [
+        {
+          "start": 37,
+          "end": 76,
+          "quote": "Paul and Jon sit with their instruments"
+        }
+      ],
+      "uses": [
+        "doc-paul-jon"
+      ],
+      "subtype": "Object study"
+    },
+    {
+      "id": "idea-jon-instrument",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Jon's instrument",
+      "type": "subject",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-joninstrument-owner",
+                        "type": "still-idea-reference",
+                        "text": "Jon",
+                        "label": "Jon",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-jon"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "'s instrument"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "Jon's instrument",
+      "sourceEvidence": [
+        {
+          "start": 37,
+          "end": 76,
+          "quote": "Paul and Jon sit with their instruments"
+        }
+      ],
+      "uses": [
+        "doc-paul-jon"
+      ],
+      "subtype": "Object study"
+    },
+    {
+      "id": "idea-microphone",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Microphone",
+      "type": "subject",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "microphone"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "microphone",
+      "sourceEvidence": [
+        {
+          "start": 97,
+          "end": 107,
+          "quote": "microphone"
+        }
+      ],
+      "uses": [
+        "doc-paul-jon"
+      ],
+      "subtype": "Object study"
+    },
+    {
+      "id": "idea-window",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Window",
+      "type": "subject",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "window"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "window",
+      "sourceEvidence": [
+        {
+          "start": 178,
+          "end": 184,
+          "quote": "window"
+        },
+        {
+          "start": 248,
+          "end": 253,
+          "quote": "glass"
+        }
+      ],
+      "uses": [
+        "doc-window"
+      ],
+      "subtype": "Object study"
+    },
+    {
+      "id": "idea-piano",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Piano",
+      "type": "subject",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "piano"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "piano",
+      "sourceEvidence": [
+        {
+          "start": 266,
+          "end": 271,
+          "quote": "piano"
+        }
+      ],
+      "uses": [
+        "doc-window"
+      ],
+      "subtype": "Object study"
+    },
+    {
+      "id": "idea-mixing-room",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Mixing room",
+      "type": "environment",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "mixing room"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "mixing room",
+      "sourceEvidence": [
+        {
+          "start": 192,
+          "end": 203,
+          "quote": "mixing room"
+        }
+      ],
+      "uses": [
+        "doc-window"
+      ]
+    },
+    {
+      "id": "idea-first-scene",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "At the microphone",
+      "type": "action",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a1-paul",
+                        "type": "still-idea-reference",
+                        "text": "Paul",
+                        "label": "Paul",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-paul"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " and "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a1-jon",
+                        "type": "still-idea-reference",
+                        "text": "Jon",
+                        "label": "Jon",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-jon"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " sit with "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a1-pi",
+                        "type": "still-idea-reference",
+                        "text": "Paul's instrument",
+                        "label": "Paul's instrument",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-paul-instrument"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " and "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a1-ji",
+                        "type": "still-idea-reference",
+                        "text": "Jon's instrument",
+                        "label": "Jon's instrument",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-jon-instrument"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " on either side of a "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a1-mic",
+                        "type": "still-idea-reference",
+                        "text": "microphone",
+                        "label": "microphone",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-microphone"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "."
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "Paul and Jon sit with Paul's instrument and Jon's instrument on either side of a microphone.",
+      "sourceEvidence": [
+        {
+          "start": 37,
+          "end": 108,
+          "quote": "Paul and Jon sit with their instruments on either side of a microphone."
+        }
+      ],
+      "uses": [
+        "doc-paul-jon"
+      ],
+      "subtype": "Group activity"
+    },
+    {
+      "id": "idea-second-scene",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Through the window",
+      "type": "action",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a2-jon",
+                        "type": "still-idea-reference",
+                        "text": "Jon",
+                        "label": "Jon",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-jon"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": ", "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a2-ringo",
+                        "type": "still-idea-reference",
+                        "text": "Ringo",
+                        "label": "Ringo",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-ringo"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": ", and "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a2-george",
+                        "type": "still-idea-reference",
+                        "text": "George",
+                        "label": "George",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-george"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " sit on the other side of the "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a2-window",
+                        "type": "still-idea-reference",
+                        "text": "window",
+                        "label": "window",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-window"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " to the "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a2-room",
+                        "type": "still-idea-reference",
+                        "text": "mixing room",
+                        "label": "mixing room",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-mixing-room"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " while "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a2-paul",
+                        "type": "still-idea-reference",
+                        "text": "Paul",
+                        "label": "Paul",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-paul"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " appears in the reflection on the "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a2-glass",
+                        "type": "still-idea-reference",
+                        "text": "glass",
+                        "label": "glass",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-window"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": " playing the "
+                  },
+                  {
+                    "type": "token",
+                    "attrs": {
+                      "run": {
+                        "kind": "token",
+                        "id": "occ-a2-piano",
+                        "type": "still-idea-reference",
+                        "text": "piano",
+                        "label": "piano",
+                        "data": {
+                          "schemaVersion": 1,
+                          "kind": "idea-reference",
+                          "projectId": "project-white-album",
+                          "blockId": "idea-piano"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "text",
+                    "text": "."
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano.",
+      "sourceEvidence": [
+        {
+          "start": 126,
+          "end": 272,
+          "quote": "Jon, Ringo, and George sit on the other side of the window to the mixing room while Paul appears in the reflection on the glass playing the piano."
+        }
+      ],
+      "uses": [
+        "doc-window"
+      ],
+      "subtype": "Group activity"
+    },
+    {
+      "id": "idea-image",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Image preference",
+      "type": "format",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Preferred output: Image"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "Preferred output: Image",
+      "sourceEvidence": [
+        {
+          "start": 109,
+          "end": 115,
+          "quote": "/image"
+        }
+      ],
+      "uses": [
+        "doc-paul-jon"
+      ],
+      "subtype": "Channel",
+      "properties": {
+        "intent": "prefer",
+        "preferred_output_kinds": [
+          "image"
+        ]
+      }
+    },
+    {
+      "id": "idea-video",
+      "kind": "idea",
+      "projectId": "project-white-album",
+      "title": "Video preference",
+      "type": "format",
+      "body": {
+        "schemaVersion": 1,
+        "document": {
+          "type": "en-rich-text",
+          "version": 1,
+          "doc": {
+            "type": "doc",
+            "content": [
+              {
+                "type": "paragraph",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Preferred output: Video"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "text": "Preferred output: Video",
+      "sourceEvidence": [
+        {
+          "start": 273,
+          "end": 279,
+          "quote": "/video"
+        }
+      ],
+      "uses": [
+        "doc-window"
+      ],
+      "subtype": "Channel",
+      "properties": {
+        "intent": "prefer",
+        "preferred_output_kinds": [
+          "video"
+        ]
+      }
+    }
+  ],
+  "bodyPolicy": "Identity-only bodies such as Paul are explicit participant content extracted from the full scene, not auto-filled bodies for title-only requests. Type/body are visible and approved. No biographies or physical attributes are supplied.",
+  "expected": {
+    "newProjects": 1,
+    "newDocuments": 2,
+    "uniqueNewIdeas": 14,
+    "uniqueNewRecords": 17,
+    "sharedIdeaIds": [
+      "idea-paul",
+      "idea-jon"
+    ],
+    "effectiveIdeaIdsByDocument": {
+      "doc-paul-jon": [
+        "idea-paul",
+        "idea-jon",
+        "idea-paul-instrument",
+        "idea-jon-instrument",
+        "idea-microphone",
+        "idea-first-scene",
+        "idea-image"
+      ],
+      "doc-window": [
+        "idea-jon",
+        "idea-ringo",
+        "idea-george",
+        "idea-paul",
+        "idea-window",
+        "idea-piano",
+        "idea-mixing-room",
+        "idea-second-scene",
+        "idea-video"
+      ]
+    },
+    "firstSceneMustNotInclude": [
+      "idea-piano",
+      "idea-window",
+      "idea-mixing-room",
+      "idea-second-scene",
+      "idea-video"
+    ],
+    "secondSceneMustNotInclude": [
+      "idea-paul-instrument",
+      "idea-jon-instrument",
+      "idea-microphone",
+      "idea-first-scene",
+      "idea-image"
+    ]
+  },
+  "acceptanceCases": [
+    {
+      "id": "title-project",
+      "given": "Only a title in New Project",
+      "expected": "Exact title; empty Project; no organizational model call; idempotent save."
+    },
+    {
+      "id": "title-document",
+      "given": "Only a title in New Document",
+      "expected": "Exact title; empty Document in current Project; no Creative direction."
+    },
+    {
+      "id": "title-idea",
+      "given": "Only a title in New Idea",
+      "expected": "Body/type omissions shown; zero canonical records until complete."
+    },
+    {
+      "id": "reuse-only",
+      "given": "Only a resolved existing Idea in New Idea",
+      "expected": "Review attachment if new use; otherwise no changes/Open; no invented wrapper."
+    },
+    {
+      "id": "remove-document",
+      "given": "Remove doc-paul-jon after some Ideas approved",
+      "expected": "Remove only proposed Document/uses; all Ideas survive with previous review/completeness state."
+    },
+    {
+      "id": "remove-microphone",
+      "given": "Remove altogether idea-microphone",
+      "expected": "Preview Idea removal and first-scene spatial phrase repair; no unknown residual; original retained only as evidence."
+    },
+    {
+      "id": "keep-split",
+      "given": "Keep as one after a split hint",
+      "expected": "Exact revised input retained; same semantic revision not prompted again; no implicit approval."
+    },
+    {
+      "id": "stale-live",
+      "given": "Type after a live assessment starts",
+      "expected": "Old hint/options discarded even if cancellation fails."
+    },
+    {
+      "id": "local-paul",
+      "given": "Make Paul separate only in doc-window",
+      "expected": "New local Paul and any dependent local parent variants; first scene retains original; effective closure excludes unintended old Paul."
+    },
+    {
+      "id": "shared-edit",
+      "given": "Edit shared new Paul",
+      "expected": "Both uses reflected; changed Idea and affected composition approvals renewed."
+    },
+    {
+      "id": "partial-reference",
+      "given": "Extract lighting from a broader same-Project existing Idea",
+      "expected": "New independent identity with faithful body/type and protected provenance; no inclusion edge to full source."
+    },
+    {
+      "id": "cross-project",
+      "given": "Paste or Use another Project reference",
+      "expected": "Actionable scope resolution; no adoption, dependency leakage or source-as-new silent fallback."
+    },
+    {
+      "id": "source-changed",
+      "given": "Saved reference changed before commit",
+      "expected": "Pause; same selected identities refreshed; diff shown; affected approvals renewed."
+    },
+    {
+      "id": "soundtrack-added",
+      "given": "Add Soundtrack to selected source Document",
+      "expected": "Chosen root list unchanged; no automatic inclusion."
+    },
+    {
+      "id": "incomplete-child",
+      "given": "Remove a Document with an unfinished new Idea",
+      "expected": "Retain unfinished Idea; still requires explicit body/type completion or removal/merge."
+    },
+    {
+      "id": "merge-saved",
+      "given": "Choose an existing saved Idea as merge target",
+      "expected": "Independent reviewed merged variation; no hidden shared-source mutation."
+    },
+    {
+      "id": "plain-edit",
+      "given": "Edit structured body through legacy editor",
+      "expected": "Token-aware editor or explicit redirect; server mutation guard rejects unsupported writes; no flattening or stale text/body dependency divergence."
+    },
+    {
+      "id": "alternative-output",
+      "given": "Image/3D preferred; explicitly choose video",
+      "expected": "Video request governs; no preference rewrite or auto generation."
+    },
+    {
+      "id": "lost-receipt",
+      "given": "Double Save / lost apply response",
+      "expected": "Original retained receipt and IDs retrieved; exactly one graph."
+    },
+    {
+      "id": "unapproved-retained",
+      "given": "One retained Idea/use is seen but unapproved",
+      "expected": "Keep recoverable draft; final commit disabled until approval, explicit removal or merge; no silent partial save."
+    },
+    {
+      "id": "attachment-count",
+      "given": "One existing Idea gains one Document use and no records",
+      "expected": "Composition review approves its use/content hashes; final action counts the use, not zero new records."
+    },
+    {
+      "id": "payload-limit",
+      "given": "Protected draft/plan exceeds 1000000 UTF-8 bytes",
+      "expected": "No truncation/partial commit; failed autosave disclosed; latest live text remains available for copy/reduction."
+    },
+    {
+      "id": "unicode-reference",
+      "given": "Combining marks, emoji, repeated reference targets and formatted blocks",
+      "expected": "Public decoder/range APIs preserve Unicode; occurrence IDs unique; one dependency inclusion per target."
+    },
+    {
+      "id": "limit",
+      "given": "Plan compiles beyond 512 events",
+      "expected": "No truncation or partial commits; input intact; explicit reduce/separate drafts."
+    },
+    {
+      "id": "partial-index",
+      "given": "Semantic index unavailable or incomplete",
+      "expected": "Honest degraded/partial coverage; no definitive no-match claim; Save unaffected."
+    },
+    {
+      "id": "two-tabs",
+      "given": "Concurrent draft revisions",
+      "expected": "CAS conflict; preserve local changes; no silent overwrite."
+    },
+    {
+      "id": "proofreading",
+      "given": "Only format styling changes after Keep as one",
+      "expected": "No repeat split prompt or semantic approval invalidation."
+    },
+    {
+      "id": "no-source-invention",
+      "given": "Source participant/instrument underspecified",
+      "expected": "No biography, instrument identity, extra posture or room-side guess."
+    },
+    {
+      "id": "alias-removal",
+      "given": "Same concept appears as microphone/mic/it; other distinct microphone also exists",
+      "expected": "Preview context-supported occurrences; unresolved ambiguous matches flagged; no indiscriminate word deletion."
+    }
+  ]
+}

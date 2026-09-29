@@ -1,0 +1,26 @@
+{
+  "archiveSha256": "bf01db2e38ff2ac1906c0bda6cbd591d8f3f2e9ba09b310a44331ee8a555defd",
+  "files": 615,
+  "migrations": 41,
+  "historicalPrefixAndJournalMatch": true,
+  "pendingSchemasExcluded": true,
+  "disabledHostAndMockSentinelsAbsent": [
+    "FORMA_GENERATION_SOURCE_FREEZE_ENABLED",
+    "FORMA_GENERATION_PREPARATION_ENABLED",
+    "FORMA_GENERATION_STUDY_ENABLED",
+    "OFFLINE-SENTINEL",
+    "offline-charge-authority",
+    "offline-freeze-receipt",
+    "generation_preparation_grants",
+    "generation_study_grants"
+  ],
+  "ownedH5F4FilesPreserved": 23,
+  "exactE4FilesPreserved": 29,
+  "unrelatedWorkingTreeSha256": {
+    "docs/forma-experience-runtime-proposal-2026-09-02.md": "917541cf70f42a05931f18776af80405ebe9be427422f6647e20fc8f2f09fb7e",
+    "docs/forma-mini-app-proposal-2026-09-02.md": "fd8b37b02709e9f019fe05b92f376dfb4673a9f0a0f0cd55d0775a1cb93f78d9",
+    "docs/idea-project-ownership-feasibility-2026-09-20.md": "ac7cbdc7a35f33fb089fe04af6f7c77906e1f451a1e4a05b94c49f15c2d3312d",
+    "docs/still-generation-failure-remediation-2026-09-22.md": "3c6531652cc9ec426236b40db43bb4fc5c29439817aa1da60b0b913d20b3c704"
+  },
+  "genericArchiveAllowedForUpload": false
+}

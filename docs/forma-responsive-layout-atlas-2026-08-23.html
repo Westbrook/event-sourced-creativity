@@ -1,0 +1,2853 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="description"
+      content="A self-contained, speculative Forma responsive-design decision atlas based on role-played stakeholder research."
+    />
+    <title>Forma responsive layout atlas · Stakeholder decision aid</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f7f7f4;
+        --surface: #ffffff;
+        --subtle: #efefea;
+        --ink: #171717;
+        --muted: #50504b;
+        --quiet: #70706a;
+        --line: #deded8;
+        --line-strong: #a7a79f;
+        --accent: #2445af;
+        --accent-wash: #e9eeff;
+        --success: #1b5232;
+        --success-wash: #e7f2ea;
+        --attention: #6d4510;
+        --attention-wash: #fff1d9;
+        --danger: #852c22;
+        --danger-wash: #f8eae8;
+        --radius-control: 6px;
+        --radius-panel: 12px;
+        --radius-device: 23px;
+        --max-width: 91rem;
+        --gutter: clamp(1rem, 4.5vw, 4.5rem);
+        --font: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        --mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: var(--paper);
+        font-family: var(--font);
+        line-height: 1.58;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 0.19em;
+      }
+
+      :focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 4px;
+      }
+
+      ::selection {
+        color: var(--ink);
+        background: var(--accent-wash);
+      }
+
+      .skip-link {
+        position: absolute;
+        z-index: 8;
+        top: 0.8rem;
+        left: 1rem;
+        padding: 0.7rem 0.95rem;
+        color: var(--surface);
+        background: var(--ink);
+        border-radius: var(--radius-control);
+        transform: translateY(-180%);
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .page-width {
+        width: min(100%, var(--max-width));
+        margin-inline: auto;
+        padding-inline: var(--gutter);
+      }
+
+      .masthead {
+        display: flex;
+        min-height: 5.5rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .wordmark {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.64rem;
+        color: var(--ink);
+        font-size: 1.04rem;
+        font-weight: 670;
+        letter-spacing: -0.045em;
+      }
+
+      .wordmark-icon {
+        display: grid;
+        width: 2rem;
+        height: 2rem;
+        place-items: center;
+        color: var(--surface);
+        background: var(--ink);
+        border-radius: 50%;
+        font-size: 0.87rem;
+      }
+
+      .document-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      .status-pill,
+      .tag {
+        display: inline-flex;
+        min-height: 1.72rem;
+        align-items: center;
+        gap: 0.35rem;
+        padding-inline: 0.58rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-size: 0.71rem;
+        font-weight: 590;
+        line-height: 1.25;
+      }
+
+      .status-pill {
+        color: var(--accent);
+        background: var(--accent-wash);
+        border-color: #cbd5fb;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(14rem, 19rem);
+        align-items: end;
+        gap: 4rem;
+        padding-block: clamp(4.5rem, 11vw, 9.5rem) clamp(4rem, 8vw, 7rem);
+      }
+
+      .eyebrow {
+        margin: 0 0 0.9rem;
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 610;
+        letter-spacing: 0.015em;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      p,
+      figure,
+      blockquote {
+        margin-top: 0;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4 {
+        font-weight: 650;
+        letter-spacing: -0.055em;
+      }
+
+      h1 {
+        max-width: 12.5ch;
+        margin-bottom: 1.2rem;
+        font-size: clamp(3.1rem, 8.3vw, 7.8rem);
+        line-height: 0.92;
+      }
+
+      h1 span {
+        color: var(--accent);
+      }
+
+      .hero-copy {
+        max-width: 47rem;
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: clamp(1rem, 1.25vw, 1.18rem);
+      }
+
+      .hero-aside {
+        padding-top: 1rem;
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .hero-aside p {
+        margin-bottom: 0.8rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .hero-aside strong {
+        color: var(--ink);
+      }
+
+      .section {
+        padding-block: clamp(3.4rem, 7vw, 6.5rem);
+        border-top: 1px solid var(--line);
+      }
+
+      .section-heading {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(15rem, 23rem);
+        align-items: end;
+        gap: 2rem;
+        margin-bottom: clamp(2rem, 5vw, 3.25rem);
+      }
+
+      .section-heading h2 {
+        margin-bottom: 0;
+        font-size: clamp(2rem, 4.1vw, 3.65rem);
+        line-height: 1.04;
+      }
+
+      .section-heading > p {
+        margin-bottom: 0.15rem;
+        color: var(--muted);
+        font-size: 0.87rem;
+      }
+
+      .research-notice {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        margin-bottom: 2rem;
+        padding: 1rem 1.15rem;
+        color: var(--attention);
+        background: var(--attention-wash);
+        border: 1px solid #ebd5ae;
+        border-radius: var(--radius-panel);
+        font-size: 0.84rem;
+      }
+
+      .research-notice strong {
+        flex: none;
+      }
+
+      .scoreboard {
+        display: grid;
+        grid-template-columns: minmax(12rem, 0.75fr) minmax(0, 2.25fr);
+        gap: 1.2rem;
+      }
+
+      .overall-score {
+        display: flex;
+        min-height: 17rem;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 1.35rem;
+        color: var(--surface);
+        background: var(--ink);
+        border: 1px solid var(--ink);
+        border-radius: var(--radius-panel);
+      }
+
+      .overall-score h3,
+      .overall-score p {
+        margin-bottom: 0;
+      }
+
+      .overall-score h3 {
+        font-size: 0.88rem;
+        font-weight: 530;
+        letter-spacing: 0;
+      }
+
+      .overall-score strong {
+        display: block;
+        font-size: clamp(3.3rem, 6vw, 5.1rem);
+        font-weight: 660;
+        letter-spacing: -0.095em;
+        line-height: 0.92;
+      }
+
+      .overall-score small {
+        display: block;
+        margin-top: 0.6rem;
+        color: #dddeda;
+        font-size: 0.77rem;
+      }
+
+      .goal-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1px;
+        overflow: hidden;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-panel);
+      }
+
+      .goal-card {
+        display: flex;
+        min-width: 0;
+        min-height: 8.45rem;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 0.65rem;
+        padding: 1rem 1.05rem;
+        background: var(--surface);
+      }
+
+      .goal-card h3 {
+        margin-bottom: 0.24rem;
+        font-size: 0.74rem;
+        font-weight: 580;
+        letter-spacing: 0;
+      }
+
+      .goal-card h3 span {
+        display: block;
+        color: var(--muted);
+        font-weight: 450;
+      }
+
+      .goal-value {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 0.4rem;
+      }
+
+      .goal-value strong {
+        font-size: 1.65rem;
+        font-weight: 650;
+        letter-spacing: -0.075em;
+      }
+
+      .goal-value small {
+        color: var(--muted);
+        font-size: 0.66rem;
+      }
+
+      meter {
+        display: block;
+        width: 100%;
+        height: 0.32rem;
+        overflow: hidden;
+        appearance: none;
+        background: var(--subtle);
+        border: 0;
+        border-radius: 999px;
+      }
+
+      meter::-webkit-meter-bar {
+        background: var(--subtle);
+        border: 0;
+        border-radius: 999px;
+      }
+
+      meter::-webkit-meter-optimum-value,
+      meter::-webkit-meter-suboptimum-value,
+      meter::-webkit-meter-even-less-good-value {
+        background: var(--accent);
+        border-radius: 999px;
+      }
+
+      meter::-moz-meter-bar {
+        background: var(--accent);
+        border-radius: 999px;
+      }
+
+      .score-note {
+        margin: 0.9rem 0 0;
+        color: var(--muted);
+        font-size: 0.76rem;
+      }
+
+      .baseline-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 1rem;
+        margin-top: 2rem;
+      }
+
+      .baseline-fact {
+        padding-top: 0.85rem;
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .baseline-fact h3 {
+        margin-bottom: 0.3rem;
+        font-size: 0.92rem;
+      }
+
+      .baseline-fact p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.76rem;
+      }
+
+      .posture-lab {
+        padding: clamp(1rem, 3vw, 2rem);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+      }
+
+      .control-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        justify-content: space-between;
+        gap: 1.6rem 2rem;
+        padding-bottom: 1.4rem;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .control-row + .control-row {
+        margin-top: 1.2rem;
+      }
+
+      fieldset {
+        min-width: 0;
+        margin: 0;
+        padding: 0;
+        border: 0;
+      }
+
+      legend,
+      .control-label {
+        display: block;
+        margin-bottom: 0.62rem;
+        color: var(--muted);
+        font-size: 0.72rem;
+        font-weight: 600;
+      }
+
+      .choices {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.44rem;
+      }
+
+      .choice {
+        position: relative;
+        display: inline-grid;
+      }
+
+      .choice input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+
+      .choice span {
+        display: inline-flex;
+        min-height: 2.75rem;
+        align-items: center;
+        gap: 0.37rem;
+        padding-inline: 0.76rem;
+        color: var(--muted);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-control);
+        cursor: pointer;
+        font-size: 0.76rem;
+        font-weight: 540;
+      }
+
+      .choice input:checked + span {
+        color: var(--accent);
+        background: var(--accent-wash);
+        border-color: #bbc9fa;
+      }
+
+      .choice input:focus-visible + span {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+      }
+
+      .choice-icon {
+        width: 1rem;
+        height: 1rem;
+        flex: none;
+      }
+
+      .annotation-toggle {
+        display: inline-flex;
+        min-height: 2.75rem;
+        align-items: center;
+        gap: 0.55rem;
+        padding-inline: 0.7rem;
+        color: var(--muted);
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-control);
+        cursor: pointer;
+        font-size: 0.77rem;
+      }
+
+      .annotation-toggle[aria-pressed="true"] {
+        color: var(--accent);
+        border-color: #bbc9fa;
+      }
+
+      .lab-layout {
+        display: grid;
+        min-height: 42rem;
+        grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem);
+        gap: 2rem;
+        padding-block: 2.1rem 0.25rem;
+      }
+
+      .device-stage {
+        display: flex;
+        min-width: 0;
+        min-height: 37rem;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(0.55rem, 2vw, 1.6rem);
+        background-image: radial-gradient(#d7d7d0 0.7px, transparent 0.7px);
+        background-size: 17px 17px;
+        border-radius: var(--radius-panel);
+      }
+
+      .device-frame {
+        position: relative;
+        display: grid;
+        width: min(100%, var(--device-max-width, 20rem));
+        aspect-ratio: var(--device-ratio, 390 / 844);
+        max-height: 42rem;
+        overflow: hidden;
+        padding: var(--device-bezel, 0.45rem);
+        background: var(--ink);
+        border: 1px solid var(--ink);
+        border-radius: var(--device-radius, var(--radius-device));
+        box-shadow: 0 18px 50px rgb(23 23 23 / 12%);
+        container: device / inline-size;
+      }
+
+      .device-frame[data-posture="phone-portrait"] {
+        --device-max-width: 20rem;
+        --device-ratio: 390 / 780;
+        --device-radius: 26px;
+        --device-bezel: 0.5rem;
+      }
+
+      .device-frame[data-posture="phone-landscape"] {
+        --device-max-width: 41.4rem;
+        --device-ratio: 844 / 412;
+        --device-radius: 24px;
+        --device-bezel: 0.44rem;
+      }
+
+      .device-frame[data-posture="tablet-portrait"] {
+        --device-max-width: 26rem;
+        --device-ratio: 834 / 1100;
+        --device-radius: 20px;
+        --device-bezel: 0.48rem;
+      }
+
+      .device-frame[data-posture="tablet-landscape"] {
+        --device-max-width: 43rem;
+        --device-ratio: 1194 / 810;
+        --device-radius: 18px;
+        --device-bezel: 0.48rem;
+      }
+
+      .device-frame[data-posture="laptop-split"] {
+        --device-max-width: 29rem;
+        --device-ratio: 768 / 815;
+        --device-radius: 12px;
+        --device-bezel: 0.34rem;
+      }
+
+      .device-frame[data-posture="large-monitor"] {
+        --device-max-width: 52rem;
+        --device-ratio: 1728 / 1010;
+        --device-radius: 10px;
+        --device-bezel: 0.33rem;
+      }
+
+      .sim-screen {
+        display: grid;
+        min-width: 0;
+        min-height: 0;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        overflow: hidden;
+        color: var(--ink);
+        background: var(--paper);
+        border-radius: max(5px, calc(var(--device-radius, 23px) - 7px));
+        font-size: 0.65rem;
+        line-height: 1.38;
+      }
+
+      .sim-topbar {
+        display: flex;
+        min-height: 2.45rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.45rem;
+        padding-inline: 0.68rem;
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .sim-brand {
+        display: inline-flex;
+        min-width: 0;
+        align-items: center;
+        gap: 0.35rem;
+        font-weight: 650;
+        letter-spacing: -0.025em;
+      }
+
+      .sim-brand-mark {
+        display: grid;
+        width: 1.1rem;
+        height: 1.1rem;
+        flex: none;
+        place-items: center;
+        color: var(--surface);
+        background: var(--ink);
+        border-radius: 50%;
+        font-size: 0.625rem;
+      }
+
+      .sim-breadcrumb {
+        overflow: hidden;
+        color: var(--muted);
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sim-top-actions {
+        display: flex;
+        flex: none;
+        align-items: center;
+        gap: 0.45rem;
+      }
+
+      .sim-presence {
+        color: var(--success);
+        font-weight: 600;
+      }
+
+      .sim-alert {
+        display: grid;
+        min-width: 1.14rem;
+        min-height: 1.14rem;
+        place-items: center;
+        color: var(--attention);
+        background: var(--attention-wash);
+        border: 1px solid #e8d4b2;
+        border-radius: 999px;
+        font-size: 0.625rem;
+        font-weight: 670;
+      }
+
+      .sim-structure {
+        display: grid;
+        min-width: 0;
+        min-height: 0;
+        grid-template-columns: var(--edge-rail, 0px) minmax(0, 1fr);
+        overflow: hidden;
+      }
+
+      .sim-rail {
+        display: none;
+        min-width: 0;
+        flex-direction: column;
+        gap: 0.25rem;
+        padding: 0.65rem 0.32rem;
+        background: var(--surface);
+        border-right: 1px solid var(--line);
+      }
+
+      .device-frame[data-navigation="edge-rail"] .sim-rail,
+      .device-frame[data-navigation="expanded-rail"] .sim-rail {
+        display: flex;
+      }
+
+      .device-frame[data-navigation="edge-rail"] {
+        --edge-rail: 2.55rem;
+      }
+
+      .device-frame[data-navigation="expanded-rail"] {
+        --edge-rail: 6.3rem;
+      }
+
+      .sim-rail-item,
+      .sim-dock-item {
+        display: flex;
+        min-width: 0;
+        min-height: 2.14rem;
+        align-items: center;
+        gap: 0.33rem;
+        color: var(--muted);
+        border-radius: 5px;
+      }
+
+      .sim-rail-item {
+        justify-content: center;
+        padding-inline: 0.22rem;
+      }
+
+      .device-frame[data-navigation="expanded-rail"] .sim-rail-item {
+        justify-content: flex-start;
+        padding-inline: 0.34rem;
+      }
+
+      .sim-rail-item[data-active="true"],
+      .sim-dock-item[data-active="true"] {
+        color: var(--accent);
+        background: var(--accent-wash);
+      }
+
+      .sim-rail-label {
+        display: none;
+        min-width: 0;
+        overflow: hidden;
+        font-size: 0.625rem;
+        font-weight: 530;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .device-frame[data-navigation="expanded-rail"] .sim-rail-label {
+        display: block;
+      }
+
+      .sim-icon {
+        width: 1rem;
+        height: 1rem;
+        flex: none;
+      }
+
+      .sim-content {
+        display: grid;
+        min-width: 0;
+        min-height: 0;
+        grid-template-rows: auto minmax(0, 1fr);
+        overflow: hidden;
+      }
+
+      .sim-toolbar {
+        display: flex;
+        min-height: 2.5rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.45rem;
+        padding-inline: 0.62rem;
+        background: var(--paper);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .sim-toolbar h3 {
+        overflow: hidden;
+        margin-bottom: 0;
+        font-size: 0.8rem;
+        letter-spacing: -0.035em;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sim-toolbar-meta {
+        overflow: hidden;
+        color: var(--muted);
+        font-size: 0.625rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .sim-toolbar-action {
+        display: inline-flex;
+        min-height: 1.58rem;
+        flex: none;
+        align-items: center;
+        padding-inline: 0.48rem;
+        color: var(--surface);
+        background: var(--ink);
+        border-radius: 4px;
+        font-size: 0.625rem;
+        font-weight: 550;
+      }
+
+      .sim-panes {
+        display: grid;
+        min-width: 0;
+        min-height: 0;
+        grid-template-columns: var(--pane-columns, minmax(0, 1fr));
+        overflow: hidden;
+      }
+
+      .sim-pane {
+        display: flex;
+        min-width: 0;
+        min-height: 0;
+        flex-direction: column;
+        gap: 0.56rem;
+        overflow: hidden;
+        padding: 0.72rem 0.6rem;
+        border-right: 1px solid var(--line);
+      }
+
+      .sim-pane:last-child {
+        border-right: 0;
+      }
+
+      .sim-pane[data-tone="quiet"] {
+        background: var(--surface);
+      }
+
+      .sim-pane[data-tone="canvas"] {
+        background-color: #ecece7;
+        background-image: radial-gradient(#c5c5bd 0.7px, transparent 0.7px);
+        background-size: 12px 12px;
+      }
+
+      .pane-kicker {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.35rem;
+        color: var(--muted);
+        font-size: 0.625rem;
+        font-weight: 590;
+      }
+
+      .pane-heading {
+        margin-bottom: 0;
+        font-size: 0.89rem;
+        letter-spacing: -0.045em;
+        line-height: 1.13;
+      }
+
+      .sim-copy {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.625rem;
+        line-height: 1.5;
+      }
+
+      .sim-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+      }
+
+      .sim-chip {
+        display: inline-flex;
+        min-height: 1.37rem;
+        align-items: center;
+        padding-inline: 0.4rem;
+        color: var(--muted);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-size: 0.625rem;
+        white-space: nowrap;
+      }
+
+      .sim-chip[data-emphasis="true"] {
+        color: var(--accent);
+        background: var(--accent-wash);
+        border-color: #cbd5fb;
+      }
+
+      .sim-card {
+        display: grid;
+        min-width: 0;
+        gap: 0.4rem;
+        padding: 0.56rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+      }
+
+      .sim-card h4,
+      .sim-card p {
+        margin-bottom: 0;
+      }
+
+      .sim-card h4 {
+        font-size: 0.69rem;
+        font-weight: 640;
+        letter-spacing: -0.015em;
+      }
+
+      .sim-card p {
+        color: var(--muted);
+        font-size: 0.625rem;
+        line-height: 1.38;
+      }
+
+      .sim-card-action {
+        width: fit-content;
+        color: var(--accent);
+        font-size: 0.625rem;
+        font-weight: 630;
+      }
+
+      .sim-art {
+        position: relative;
+        min-height: 5.9rem;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 72% 31%, #d4dbfc 0 13%, transparent 14%),
+          linear-gradient(128deg, #ded6ca 0%, #f4f0e8 39%, #9eaed0 100%);
+        border: 1px solid #d6d0c6;
+        border-radius: 6px;
+      }
+
+      .sim-art::after {
+        position: absolute;
+        right: 8%;
+        bottom: -31%;
+        width: 69%;
+        height: 77%;
+        background: #546588;
+        border-radius: 49% 49% 0 0;
+        content: "";
+      }
+
+      .sim-art[data-variant="second"] {
+        min-height: 4.7rem;
+        background:
+          radial-gradient(circle at 34% 28%, #f4d5ab 0 13%, transparent 14%),
+          linear-gradient(136deg, #c1c9bc, #f3efe7 46%, #ac9c91);
+      }
+
+      .sim-art[data-variant="second"]::after {
+        right: 20%;
+        background: #68796e;
+      }
+
+      .sim-chat {
+        display: grid;
+        gap: 0.48rem;
+      }
+
+      .sim-message {
+        width: fit-content;
+        max-width: 100%;
+        padding: 0.52rem;
+        color: var(--ink);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        font-size: 0.625rem;
+      }
+
+      .sim-message[data-author="creator"] {
+        margin-left: auto;
+        background: var(--accent-wash);
+        border-color: #cbd5fb;
+      }
+
+      .sim-composer {
+        display: flex;
+        min-height: 2rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.4rem;
+        margin-top: auto;
+        padding-inline: 0.5rem;
+        color: var(--muted);
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        font-size: 0.625rem;
+      }
+
+      .sim-canvas {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.48rem;
+        align-content: start;
+      }
+
+      .sim-canvas .sim-card {
+        padding: 0.43rem;
+      }
+
+      .sim-canvas .sim-art {
+        min-height: 3.7rem;
+      }
+
+      .sim-dock {
+        display: none;
+        min-height: 3.25rem;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        align-items: center;
+        gap: 0.08rem;
+        padding: 0.17rem 0.28rem max(0.22rem, env(safe-area-inset-bottom));
+        background: var(--surface);
+        border-top: 1px solid var(--line);
+      }
+
+      .device-frame[data-navigation="bottom-dock"] .sim-dock {
+        display: grid;
+      }
+
+      .sim-dock-item {
+        min-height: 2.5rem;
+        flex-direction: column;
+        justify-content: center;
+        gap: 0.08rem;
+        font-size: 0.625rem;
+        line-height: 1.1;
+      }
+
+      .sim-dock-item .sim-icon {
+        width: 0.91rem;
+        height: 0.91rem;
+      }
+
+      .device-frame[data-short="true"] .sim-topbar {
+        min-height: 1.95rem;
+      }
+
+      .device-frame[data-short="true"] .sim-toolbar {
+        min-height: 2rem;
+      }
+
+      .device-frame[data-short="true"] .sim-pane {
+        gap: 0.36rem;
+        padding-block: 0.46rem;
+      }
+
+      .device-frame[data-short="true"] .sim-art {
+        min-height: 3.8rem;
+      }
+
+      .device-frame[data-short="true"] .sim-composer {
+        min-height: 1.72rem;
+      }
+
+      .device-frame[data-annotations="true"] .sim-pane {
+        position: relative;
+      }
+
+      .device-frame[data-annotations="true"] .sim-pane::after {
+        position: absolute;
+        z-index: 1;
+        right: 0.3rem;
+        bottom: 0.33rem;
+        max-width: calc(100% - 0.6rem);
+        overflow: hidden;
+        padding: 0.22rem 0.35rem;
+        color: var(--surface);
+        background: var(--accent);
+        border-radius: 4px;
+        content: attr(data-annotation);
+        font-size: 0.625rem;
+        line-height: 1.15;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .insight-panel {
+        min-width: 0;
+        padding-top: 0.1rem;
+      }
+
+      .insight-panel h3 {
+        margin-bottom: 0.4rem;
+        font-size: 1.46rem;
+        line-height: 1.08;
+      }
+
+      .insight-panel > p {
+        margin-bottom: 1.1rem;
+        color: var(--muted);
+        font-size: 0.79rem;
+      }
+
+      .live-status {
+        min-height: 1.25rem;
+        margin-bottom: 0.9rem;
+        color: var(--accent);
+        font-size: 0.74rem;
+        font-weight: 570;
+      }
+
+      .priority-list {
+        display: grid;
+        gap: 0.78rem;
+        margin: 0 0 1.4rem;
+        padding: 0;
+        list-style: none;
+        counter-reset: priority;
+      }
+
+      .priority-list li {
+        display: grid;
+        grid-template-columns: 1.55rem minmax(0, 1fr);
+        align-items: start;
+        gap: 0.43rem;
+        color: var(--muted);
+        font-size: 0.77rem;
+        counter-increment: priority;
+      }
+
+      .priority-list li::before {
+        display: grid;
+        width: 1.32rem;
+        height: 1.32rem;
+        place-items: center;
+        color: var(--accent);
+        background: var(--accent-wash);
+        border-radius: 50%;
+        content: counter(priority);
+        font-size: 0.67rem;
+        font-weight: 620;
+      }
+
+      .signal-list {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 0.75rem;
+        margin: 0;
+        padding-top: 1rem;
+        border-top: 1px solid var(--line);
+      }
+
+      .signal-list div {
+        min-width: 0;
+      }
+
+      .signal-list dt {
+        margin-bottom: 0.18rem;
+        color: var(--muted);
+        font-size: 0.67rem;
+      }
+
+      .signal-list dd {
+        margin: 0;
+        color: var(--ink);
+        font-size: 0.75rem;
+        font-weight: 590;
+        overflow-wrap: anywhere;
+      }
+
+      .preview-caption {
+        margin: 0.95rem 0 0;
+        color: var(--muted);
+        font-size: 0.74rem;
+      }
+
+      .legend-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.7rem 1.1rem;
+        margin: 1.4rem 0 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .legend-list li {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.39rem;
+        color: var(--muted);
+        font-size: 0.72rem;
+      }
+
+      .legend-swatch {
+        width: 0.8rem;
+        height: 0.8rem;
+        flex: none;
+        border: 1px solid var(--line-strong);
+        border-radius: 3px;
+      }
+
+      .legend-swatch[data-tone="action"] {
+        background: var(--accent-wash);
+        border-color: #bbc9fa;
+      }
+
+      .legend-swatch[data-tone="attention"] {
+        background: var(--attention-wash);
+        border-color: #e8d4b2;
+      }
+
+      .legend-swatch[data-tone="content"] {
+        background: var(--surface);
+      }
+
+      .legend-swatch[data-tone="spatial"] {
+        background-color: #ecece7;
+        background-image: radial-gradient(#aaa 0.7px, transparent 0.7px);
+        background-size: 5px 5px;
+      }
+
+      .principle-band {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 1.5rem;
+        padding-block: 1.5rem 0.2rem;
+      }
+
+      .principle-band h3 {
+        margin-bottom: 0.35rem;
+        font-size: 0.95rem;
+      }
+
+      .principle-band p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.76rem;
+      }
+
+      .posture-matrix {
+        display: grid;
+        gap: 0.9rem;
+      }
+
+      .matrix-row {
+        display: grid;
+        grid-template-columns: minmax(10rem, 1.04fr) repeat(5, minmax(0, 1fr));
+        gap: 0.85rem;
+        align-items: start;
+        padding: 1.1rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-panel);
+      }
+
+      .matrix-posture h3,
+      .matrix-cell h4 {
+        margin-bottom: 0.26rem;
+      }
+
+      .matrix-posture h3 {
+        font-size: 0.94rem;
+      }
+
+      .matrix-posture p,
+      .matrix-cell p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.72rem;
+        overflow-wrap: anywhere;
+      }
+
+      .matrix-cell h4 {
+        color: var(--accent);
+        font-size: 0.69rem;
+        letter-spacing: 0;
+      }
+
+      .quote-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1rem;
+      }
+
+      .quote-card {
+        display: grid;
+        min-height: 16rem;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 0.9rem;
+        padding: 1.12rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-panel);
+      }
+
+      .quote-card[data-role="lead-designer"] {
+        background: var(--accent-wash);
+        border-color: #cbd5fb;
+      }
+
+      .quote-role {
+        color: var(--muted);
+        font-size: 0.74rem;
+        font-weight: 580;
+      }
+
+      .quote-card blockquote {
+        align-self: start;
+        margin-bottom: 0;
+        font-size: 0.98rem;
+        font-weight: 510;
+        letter-spacing: -0.027em;
+        line-height: 1.46;
+      }
+
+      .quote-impact {
+        padding-top: 0.73rem;
+        color: var(--muted);
+        border-top: 1px solid color-mix(in srgb, var(--line-strong) 48%, transparent);
+        font-size: 0.72rem;
+      }
+
+      .quote-impact strong {
+        color: var(--ink);
+      }
+
+      .blocker-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1rem;
+      }
+
+      .blocker-card {
+        display: grid;
+        gap: 0.7rem;
+        align-content: start;
+        padding: 1.1rem;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-panel);
+      }
+
+      .severity {
+        width: fit-content;
+        color: var(--danger);
+        background: var(--danger-wash);
+        border-color: #e7c6c2;
+      }
+
+      .severity[data-level="gate"] {
+        color: var(--attention);
+        background: var(--attention-wash);
+        border-color: #e8d4b2;
+      }
+
+      .blocker-card h3 {
+        margin-bottom: 0;
+        font-size: 1.04rem;
+      }
+
+      .blocker-card p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      .blocker-card strong {
+        color: var(--ink);
+      }
+
+      .roadmap {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 2.1rem 0;
+        padding-top: 1.15rem;
+      }
+
+      .roadmap-phase {
+        position: relative;
+        min-width: 0;
+        padding: 1.25rem 1.1rem 0 0;
+        border-top: 2px solid var(--line);
+      }
+
+      .roadmap-phase::before {
+        position: absolute;
+        top: -0.36rem;
+        left: 0;
+        width: 0.62rem;
+        height: 0.62rem;
+        background: var(--accent);
+        border: 2px solid var(--paper);
+        border-radius: 50%;
+        content: "";
+      }
+
+      .phase-weeks {
+        margin-bottom: 0.42rem;
+        color: var(--accent);
+        font-size: 0.7rem;
+        font-weight: 640;
+      }
+
+      .roadmap-phase h3 {
+        min-height: 3rem;
+        margin-bottom: 0.55rem;
+        font-size: 1.05rem;
+        line-height: 1.3;
+      }
+
+      .roadmap-phase p,
+      .roadmap-phase li {
+        color: var(--muted);
+        font-size: 0.76rem;
+      }
+
+      .roadmap-phase ul {
+        display: grid;
+        gap: 0.35rem;
+        margin: 0.6rem 0 0.7rem;
+        padding-left: 1rem;
+      }
+
+      .phase-gate {
+        padding-top: 0.65rem;
+        border-top: 1px solid var(--line);
+      }
+
+      .phase-gate strong {
+        color: var(--ink);
+      }
+
+      .signal-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1.3rem 2rem;
+      }
+
+      .signal-card {
+        padding-top: 0.9rem;
+        border-top: 1px solid var(--line-strong);
+      }
+
+      .signal-card h3 {
+        margin-bottom: 0.38rem;
+        font-size: 1rem;
+      }
+
+      .signal-card p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.79rem;
+      }
+
+      code {
+        padding: 0.09rem 0.25rem;
+        background: var(--subtle);
+        border-radius: 3px;
+        font-family: var(--mono);
+        font-size: 0.86em;
+        overflow-wrap: anywhere;
+      }
+
+      .evidence-footer {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(13rem, 22rem);
+        gap: 2rem;
+        padding-block: 2rem 4rem;
+        border-top: 1px solid var(--line);
+      }
+
+      .evidence-footer p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 0.77rem;
+      }
+
+      .evidence-footer strong {
+        color: var(--ink);
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+      }
+
+      @container device (max-width: 25rem) {
+        .device-frame[data-navigation="expanded-rail"] .sim-structure {
+          grid-template-columns: 2.55rem minmax(0, 1fr);
+        }
+
+        .device-frame[data-navigation="expanded-rail"] .sim-rail-label {
+          display: none;
+        }
+
+        .device-frame[data-navigation="expanded-rail"] .sim-rail-item {
+          justify-content: center;
+        }
+
+        .sim-toolbar-meta,
+        .sim-presence {
+          display: none;
+        }
+
+        .sim-pane {
+          padding-inline: 0.42rem;
+        }
+
+        .sim-panes[data-count="4"] {
+          grid-template-columns: 0.8fr minmax(0, 1.2fr) 1fr;
+        }
+
+        .sim-panes[data-count="4"] .sim-pane:last-child {
+          display: none;
+        }
+      }
+
+      @media (max-width: 1160px) {
+        .lab-layout {
+          grid-template-columns: minmax(0, 1fr) minmax(13rem, 15rem);
+          gap: 1.1rem;
+        }
+
+        .matrix-row {
+          grid-template-columns: minmax(8.5rem, 1fr) repeat(5, minmax(0, 0.94fr));
+          gap: 0.6rem;
+        }
+
+        .principle-band {
+          gap: 0.85rem;
+        }
+      }
+
+      @media (max-width: 880px) {
+        .hero,
+        .section-heading,
+        .scoreboard,
+        .evidence-footer {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 1.35rem;
+        }
+
+        .hero {
+          padding-top: 5.2rem;
+        }
+
+        .hero-aside {
+          max-width: 34rem;
+        }
+
+        .overall-score {
+          min-height: 11.5rem;
+        }
+
+        .lab-layout {
+          min-height: 0;
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .device-stage {
+          min-height: 25rem;
+        }
+
+        .insight-panel {
+          padding-top: 1rem;
+          border-top: 1px solid var(--line);
+        }
+
+        .signal-list {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .principle-band {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 1.45rem;
+        }
+
+        .baseline-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .matrix-row {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 1rem;
+        }
+
+        .matrix-posture {
+          grid-column: 1 / -1;
+          padding-bottom: 0.65rem;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .quote-grid,
+        .blocker-grid,
+        .signal-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .roadmap {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 2.2rem 1.2rem;
+        }
+
+        .roadmap-phase h3 {
+          min-height: 0;
+        }
+      }
+
+      @media (max-width: 520px) {
+        .masthead {
+          min-height: 4.6rem;
+        }
+
+        .document-meta time {
+          display: none;
+        }
+
+        .hero {
+          padding-block: 4.25rem 3.8rem;
+        }
+
+        h1 {
+          font-size: clamp(3.1rem, 13vw, 4.3rem);
+        }
+
+        .goal-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .goal-card {
+          min-height: 8.6rem;
+          padding: 0.86rem;
+        }
+
+        .research-notice {
+          display: block;
+        }
+
+        .research-notice strong {
+          display: block;
+          margin-bottom: 0.22rem;
+        }
+
+        .posture-lab {
+          padding: 0.78rem;
+          border-radius: 12px;
+        }
+
+        .choices {
+          gap: 0.34rem;
+        }
+
+        .choice span {
+          padding-inline: 0.55rem;
+          font-size: 0.7rem;
+        }
+
+        .control-row {
+          gap: 1rem;
+        }
+
+        .device-stage {
+          min-height: 22.5rem;
+          padding-inline: 0.2rem;
+        }
+
+        .device-frame[data-posture="phone-landscape"],
+        .device-frame[data-posture="tablet-landscape"],
+        .device-frame[data-posture="large-monitor"] {
+          --device-bezel: 0.27rem;
+        }
+
+        .signal-list {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .principle-band,
+        .baseline-grid,
+        .quote-grid,
+        .blocker-grid,
+        .roadmap,
+        .signal-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .quote-card {
+          min-height: 0;
+        }
+
+        .matrix-row {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          padding: 0.85rem;
+        }
+
+        .roadmap {
+          gap: 1.7rem;
+        }
+
+        .roadmap-phase {
+          padding-right: 0;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          scroll-behavior: auto !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+
+      @media (forced-colors: active) {
+        .choice input:checked + span,
+        .sim-rail-item[data-active="true"],
+        .sim-dock-item[data-active="true"] {
+          outline: 2px solid Highlight;
+          outline-offset: -2px;
+        }
+
+        .sim-art,
+        .legend-swatch {
+          forced-color-adjust: none;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        .page-width {
+          width: 100%;
+          padding-inline: 0.5in;
+        }
+
+        .hero {
+          padding-block: 0.65in 0.45in;
+        }
+
+        .section {
+          break-inside: auto;
+          padding-block: 0.36in;
+        }
+
+        .choice,
+        .annotation-toggle {
+          display: none;
+        }
+
+        .choice:has(input:checked) {
+          display: inline-grid;
+        }
+
+        .quote-card,
+        .blocker-card,
+        .matrix-row,
+        .roadmap-phase {
+          break-inside: avoid;
+        }
+
+        .device-frame {
+          box-shadow: none;
+        }
+
+        .lab-layout {
+          min-height: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to the responsive strategy atlas</a>
+
+    <svg
+      aria-hidden="true"
+      focusable="false"
+      width="0"
+      height="0"
+      style="position: absolute; overflow: hidden"
+    >
+      <defs>
+        <symbol id="icon-projects" viewBox="0 0 20 20">
+          <path d="M3 6.4h5.1l1.5 1.8H17v7.5H3zM3 6.4V4.3h5.2l1.2 1.3H17v2.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="icon-work" viewBox="0 0 20 20">
+          <rect x="4" y="3.2" width="12" height="13.6" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <path d="M7 7h6M7 10h6M7 13h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+        </symbol>
+        <symbol id="icon-explore" viewBox="0 0 20 20">
+          <circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <path d="m12.8 7.2-1.3 4.3-4.3 1.3 1.3-4.3z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="icon-activity" viewBox="0 0 20 20">
+          <path d="M4.2 12.6h2.5l1.7-6.2 3 9 1.8-5h2.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="icon-deliver" viewBox="0 0 20 20">
+          <path d="M4 11.5v4.4h12v-4.4M10 3.6v8.5m-3-3 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+        </symbol>
+        <symbol id="icon-search" viewBox="0 0 20 20">
+          <circle cx="8.7" cy="8.7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <path d="m12.2 12.2 3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+        </symbol>
+        <symbol id="icon-phone" viewBox="0 0 20 20">
+          <rect x="6" y="2.8" width="8" height="14.4" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <path d="M9 14.7h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+        </symbol>
+        <symbol id="icon-tablet" viewBox="0 0 20 20">
+          <rect x="4" y="2.8" width="12" height="14.4" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <path d="M9 14.8h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+        </symbol>
+        <symbol id="icon-monitor" viewBox="0 0 20 20">
+          <rect x="2.8" y="4" width="14.4" height="9.8" rx="1.3" fill="none" stroke="currentColor" stroke-width="1.5" />
+          <path d="M10 14v2.5m-3.1 0h6.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <header class="masthead page-width">
+      <div class="wordmark" aria-label="Forma responsive design atlas">
+        <span class="wordmark-icon" aria-hidden="true">F</span>
+        <span>Forma</span>
+      </div>
+      <div class="document-meta">
+        <time datetime="2026-08-23">August 23, 2026</time>
+        <span class="status-pill">Speculative decision aid</span>
+      </div>
+    </header>
+
+    <main id="main" class="page-width">
+      <section class="hero" aria-labelledby="atlas-title">
+        <div>
+          <p class="eyebrow">Responsive product strategy · Layout atlas</p>
+          <h1 id="atlas-title">One creative system. <span>Every posture.</span></h1>
+          <p class="hero-copy">
+            Make the next useful action unmistakable on a phone, let a tablet
+            invite exploration, keep split-screen work complete, and give an
+            expansive monitor room to reveal the work—not more chrome.
+          </p>
+        </div>
+        <aside class="hero-aside" aria-label="Research scope">
+          <p><strong>Seven role perspectives.</strong> Four exacting end-user contexts, one lead designer, one design engineer, and one product owner.</p>
+          <p><strong>Six productive postures.</strong> Phone portrait and landscape; tablet portrait and landscape; constrained laptop; expansive monitor.</p>
+          <p><strong>One invariant.</strong> Projects, Work, Explore, Activity, and Deliver keep their meaning as the available space changes.</p>
+        </aside>
+      </section>
+
+      <section class="section" aria-labelledby="score-heading">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">01 · Current-state decision score</p>
+            <h2 id="score-heading">Usable is not yet inevitable.</h2>
+          </div>
+          <p>
+            Directional role-play assessment of the reviewed responsive
+            experience. These figures are planning inputs, not externally
+            validated customer research or measured production telemetry.
+          </p>
+        </header>
+
+        <aside class="research-notice" aria-label="Research limitation">
+          <strong>Research integrity:</strong>
+          <span>This atlas uses <strong>role-played stakeholder research, not external customer interviews</strong>. Stakeholder statements are attributed to their simulated perspectives; every screen below is a speculative wireframe containing synthetic examples only.</span>
+        </aside>
+
+        <div class="scoreboard">
+          <article class="overall-score" aria-label="Overall assessment score: 61.125 out of 100">
+            <h3>Overall baseline</h3>
+            <div>
+              <strong>61.125</strong>
+              <small>Arithmetic mean across G1–G6 · out of 100</small>
+            </div>
+          </article>
+
+          <div class="goal-grid" aria-label="Six responsive experience goals">
+            <article class="goal-card">
+              <div><h3>G1 <span>Phone completion</span></h3></div>
+              <div class="goal-value"><strong>39.75</strong><small>/ 100</small></div>
+              <meter value="39.75" min="0" max="100" aria-label="G1 phone completion: 39.75 out of 100">39.75 out of 100</meter>
+            </article>
+            <article class="goal-card">
+              <div><h3>G2 <span>Tablet exploration</span></h3></div>
+              <div class="goal-value"><strong>53</strong><small>/ 100</small></div>
+              <meter value="53" min="0" max="100" aria-label="G2 tablet exploration: 53 out of 100">53 out of 100</meter>
+            </article>
+            <article class="goal-card">
+              <div><h3>G3 <span>Small-monitor productivity</span></h3></div>
+              <div class="goal-value"><strong>67.25</strong><small>/ 100</small></div>
+              <meter value="67.25" min="0" max="100" aria-label="G3 small-monitor productivity: 67.25 out of 100">67.25 out of 100</meter>
+            </article>
+            <article class="goal-card">
+              <div><h3>G4 <span>Large-monitor productivity</span></h3></div>
+              <div class="goal-value"><strong>68.5</strong><small>/ 100</small></div>
+              <meter value="68.5" min="0" max="100" aria-label="G4 large-monitor productivity: 68.5 out of 100">68.5 out of 100</meter>
+            </article>
+            <article class="goal-card">
+              <div><h3>G5 <span>Coherent adaptive experience</span></h3></div>
+              <div class="goal-value"><strong>58.75</strong><small>/ 100</small></div>
+              <meter value="58.75" min="0" max="100" aria-label="G5 coherent adaptive experience: 58.75 out of 100">58.75 out of 100</meter>
+            </article>
+            <article class="goal-card">
+              <div><h3>G6 <span>Durable context-to-delivery</span></h3></div>
+              <div class="goal-value"><strong>79.5</strong><small>/ 100</small></div>
+              <meter value="79.5" min="0" max="100" aria-label="G6 durable context-to-delivery: 79.5 out of 100">79.5 out of 100</meter>
+            </article>
+          </div>
+        </div>
+        <p class="score-note">The six supplied goal means average exactly 61.125 across 24 equally weighted independent role-reviewer cells. This is an expert role-play assessment, not a customer benchmark or production telemetry.</p>
+
+        <div class="baseline-grid" aria-label="Verified observations that anchor the strategy">
+          <article class="baseline-fact">
+            <h3>Phone search disappears.</h3>
+            <p>At 390 × 844, the existing command/search control measured 0 × 0; mobile CSS also hides visible Ask/Send and nested collection lists.</p>
+          </article>
+          <article class="baseline-fact">
+            <h3>Short-height work does not fit.</h3>
+            <p>A 64px shell combines with approximately 544px Canvas or 620px Chat minimums. Chat can place a tall image ahead of the conversation.</p>
+          </article>
+          <article class="baseline-fact">
+            <h3>Activity exists but does not follow through.</h3>
+            <p>Scoped notifications already exist; the current document-only, four-item UI acknowledges an item without opening its exact work.</p>
+          </article>
+          <article class="baseline-fact">
+            <h3>A successful save can appear to fail.</h3>
+            <p>During the authorized project exercise, stale-sequence conflict messaging followed successful commits; retry advice created a duplicate research project and four duplicate documents.</p>
+          </article>
+          <article class="baseline-fact">
+            <h3>Delivery is stronger than stale reports suggest.</h3>
+            <p>Editable PPTX and DOCX, speaker notes, revision bodies/restoration, independent review, and project-scoped notifications are already implemented.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="posture-lab" class="section" aria-labelledby="posture-heading">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">02 · Interactive posture laboratory</p>
+            <h2 id="posture-heading">Change the space. Keep the promise.</h2>
+          </div>
+          <p>Choose a posture and task to inspect the proposed navigation, visible panes, priority order, interruption posture, and implementation signals.</p>
+        </header>
+
+        <div class="posture-lab">
+          <div class="control-row">
+            <fieldset>
+              <legend>Available device posture</legend>
+              <div class="choices" id="posture-choices">
+                <label class="choice"><input type="radio" name="posture" value="phone-portrait" checked /><span><svg class="choice-icon" aria-hidden="true"><use href="#icon-phone"></use></svg>Phone portrait</span></label>
+                <label class="choice"><input type="radio" name="posture" value="phone-landscape" /><span><svg class="choice-icon" aria-hidden="true"><use href="#icon-phone"></use></svg>Phone landscape</span></label>
+                <label class="choice"><input type="radio" name="posture" value="tablet-portrait" /><span><svg class="choice-icon" aria-hidden="true"><use href="#icon-tablet"></use></svg>Tablet portrait</span></label>
+                <label class="choice"><input type="radio" name="posture" value="tablet-landscape" /><span><svg class="choice-icon" aria-hidden="true"><use href="#icon-tablet"></use></svg>Tablet landscape</span></label>
+                <label class="choice"><input type="radio" name="posture" value="laptop-split" /><span><svg class="choice-icon" aria-hidden="true"><use href="#icon-monitor"></use></svg>Laptop split</span></label>
+                <label class="choice"><input type="radio" name="posture" value="large-monitor" /><span><svg class="choice-icon" aria-hidden="true"><use href="#icon-monitor"></use></svg>Large monitor</span></label>
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="control-row">
+            <fieldset>
+              <legend>Creative task or page</legend>
+              <div class="choices" id="scenario-choices">
+                <label class="choice"><input type="radio" name="scenario" value="work" checked /><span>Work</span></label>
+                <label class="choice"><input type="radio" name="scenario" value="chat" /><span>Chat</span></label>
+                <label class="choice"><input type="radio" name="scenario" value="canvas" /><span>Canvas</span></label>
+                <label class="choice"><input type="radio" name="scenario" value="deliver" /><span>Deliver</span></label>
+                <label class="choice"><input type="radio" name="scenario" value="activity" /><span>Activity</span></label>
+              </div>
+            </fieldset>
+            <button class="annotation-toggle" id="annotation-toggle" type="button" aria-pressed="true">Pane annotations on</button>
+          </div>
+
+          <div class="lab-layout">
+            <figure>
+              <div class="device-stage">
+                <div
+                  id="device-frame"
+                  class="device-frame"
+                  data-posture="phone-portrait"
+                  data-navigation="bottom-dock"
+                  data-short="false"
+                  data-annotations="true"
+                  role="img"
+                  aria-label="Speculative phone portrait wireframe for the Work scenario"
+                >
+                  <div class="sim-screen" id="sim-screen" aria-hidden="true"></div>
+                </div>
+              </div>
+              <figcaption id="preview-caption" class="preview-caption">Speculative synthetic wireframe. No existing customer project, document, collaborator, or output data appears in this preview.</figcaption>
+              <ul class="legend-list" aria-label="Wireframe legend">
+                <li><span class="legend-swatch" data-tone="action" aria-hidden="true"></span>Current task or direct action</li>
+                <li><span class="legend-swatch" data-tone="attention" aria-hidden="true"></span>Needs a human decision</li>
+                <li><span class="legend-swatch" data-tone="content" aria-hidden="true"></span>Authoritative source or result</li>
+                <li><span class="legend-swatch" data-tone="spatial" aria-hidden="true"></span>Spatial exploration surface</li>
+              </ul>
+            </figure>
+
+            <aside class="insight-panel" aria-labelledby="insight-title">
+              <div id="live-status" class="live-status" role="status" aria-live="polite" aria-atomic="true"></div>
+              <h3 id="insight-title">Phone portrait</h3>
+              <p id="insight-description"></p>
+              <p class="control-label">Priority order for this task</p>
+              <ol id="priority-list" class="priority-list"></ol>
+              <dl class="signal-list">
+                <div><dt>Reference space</dt><dd id="signal-space"></dd></div>
+                <div><dt>Navigation</dt><dd id="signal-navigation"></dd></div>
+                <div><dt>Visible panes</dt><dd id="signal-panes"></dd></div>
+                <div><dt>Primary input</dt><dd id="signal-input"></dd></div>
+                <div><dt>Shell posture</dt><dd id="signal-shell"></dd></div>
+                <div><dt>Interruption</dt><dd id="signal-attention"></dd></div>
+              </dl>
+            </aside>
+          </div>
+        </div>
+
+        <div class="principle-band" aria-label="Stable navigation vocabulary">
+          <article><h3>Projects</h3><p>Choose the durable workspace, resume work, and understand access.</p></article>
+          <article><h3>Work</h3><p>Author one shared document through task-appropriate views, including Chat.</p></article>
+          <article><h3>Explore</h3><p>Find reusable project context, outcomes, and authorized spatial Canvas.</p></article>
+          <article><h3>Activity</h3><p>Surface actor-safe completions, decisions, failures, and direct next actions.</p></article>
+          <article><h3>Deliver</h3><p>Review real outputs, inspect truthful evidence, export, or share exact resources.</p></article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="matrix-heading">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">03 · Displayable feature decisions</p>
+            <h2 id="matrix-heading">Prioritize by job, not by screen stereotype.</h2>
+          </div>
+          <p>Every row preserves the same project, document, permission, job, and delivery reality. Only visible priority, density, arrangement, and input affordance change.</p>
+        </header>
+        <div id="posture-matrix" class="posture-matrix" aria-label="Features prioritized by posture and page"></div>
+      </section>
+
+      <section class="section" aria-labelledby="stakeholder-heading">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">04 · Attributed stakeholder perspectives</p>
+            <h2 id="stakeholder-heading">The disagreements made the plan sharper.</h2>
+          </div>
+          <p>These are actual original, verbatim statements from seven commissioned role-playing stakeholder agents in this study. They are not external customer interviews, employee interviews, or independent market research.</p>
+        </header>
+
+        <div class="quote-grid">
+          <article class="quote-card" data-role="lead-designer">
+            <p class="quote-role">Lead designer · research agent</p>
+            <blockquote>“A smaller screen is not a smaller product; it is a stricter argument about what deserves the next square inch.”</blockquote>
+            <p class="quote-impact"><strong>Decision:</strong> Treat the source, authored work, result, and review as one intentional hierarchy. Navigation becomes quiet, stable, and secondary to the creative object.</p>
+          </article>
+
+          <article class="quote-card">
+            <p class="quote-role">Design engineer · research agent</p>
+            <blockquote>“The viewport tells the shell how to spend space; the container tells the work surface what it can actually afford.”</blockquote>
+            <p class="quote-impact"><strong>Decision:</strong> Define layout from available container size, height, safe area, and input capability—not device names or duplicated application state.</p>
+          </article>
+
+          <article class="quote-card">
+            <p class="quote-role">Product owner · research agent</p>
+            <blockquote>“A smaller screen is not permission to ship a smaller product; it is an obligation to present the next meaningful decision first.”</blockquote>
+            <p class="quote-impact"><strong>Decision:</strong> Keep five stable semantic destinations and reveal contextual capabilities progressively. Never turn a document view or format into another product.</p>
+          </article>
+
+          <article class="quote-card">
+            <p class="quote-role">Smart phone end user · research agent</p>
+            <blockquote>“I am here to finish something, not to reconstruct a desktop sidebar.”</blockquote>
+            <p class="quote-impact"><strong>Decision:</strong> Give portrait use a reachable five-destination dock, direct resume and approval actions, privacy-safe async status, and a short-height landscape shell.</p>
+          </article>
+
+          <article class="quote-card">
+            <p class="quote-role">Tablet end user · research agent</p>
+            <blockquote>“A pencil should draw, two fingers should move the board, and none of that should depend on owning a keyboard.”</blockquote>
+            <p class="quote-impact"><strong>Decision:</strong> Make portrait reading-plus-context and landscape source-plus-making productive. Offer optional orientation guidance without withholding completion.</p>
+          </article>
+
+          <article class="quote-card">
+            <p class="quote-role">Small monitor end user · research agent</p>
+            <blockquote>“A half-width window is not a half-capable application.”</blockquote>
+            <p class="quote-impact"><strong>Decision:</strong> Preserve two meaningful panes in split-screen; move to a labeled rail and richer context when the application itself—not the physical display—gains room.</p>
+          </article>
+
+          <article class="quote-card">
+            <p class="quote-role">Large monitor end user · research agent</p>
+            <blockquote>“I bought screen space to see relationships, decisions, and collaborators together—not to display a larger version of the same cramped interface.”</blockquote>
+            <p class="quote-impact"><strong>Decision:</strong> Reveal source, authoring, outcome, and review together when useful; keep an intentional reading width and collapse gracefully when the window narrows.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="blocker-heading">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">05 · Hard passes and delivery gates</p>
+            <h2 id="blocker-heading">Do not make a polished promise the platform cannot keep.</h2>
+          </div>
+          <p>These are responsive-strategy risks and launch conditions. Existing authorization, consent, recovery, collaboration, and output boundaries remain authoritative.</p>
+        </header>
+
+        <div class="blocker-grid">
+          <article class="blocker-card">
+            <span class="tag severity">Hard pass · navigation</span>
+            <h3>Small screens cannot lose a destination.</h3>
+            <p><strong>Failure:</strong> the current 390px shell hides global search; narrow CSS hides the visible Ask/Send action and descendants in actual nested collection trees.</p>
+            <p><strong>Gate:</strong> the same five creator tasks, visible search, Ask/Send, and complete project hierarchy remain reachable at 320–390px, in landscape, under zoom, and with keyboard-only input.</p>
+          </article>
+
+          <article class="blocker-card">
+            <span class="tag severity">Hard pass · attention</span>
+            <h3>Async status must lead somewhere real.</h3>
+            <p><strong>Failure:</strong> existing project-scoped notifications appear only in one document mode, show at most four entries, and acknowledge a task without opening its exact result or decision.</p>
+            <p><strong>Gate:</strong> principal-safe Activity aggregates authorized work and directly deep-links each exact resource; optional browser push is not claimed until actually implemented.</p>
+          </article>
+
+          <article class="blocker-card">
+            <span class="tag severity">Hard pass · committed state</span>
+            <h3>A confirmed save cannot ask someone to create it again.</h3>
+            <p><strong>Failure:</strong> an authorized in-app exercise displayed stale-sequence conflict advice after successful commits; retries produced two identically titled research projects and four duplicate role documents. Both projects and all documents were truthfully preserved.</p>
+            <p><strong>Gate:</strong> client mutation IDs, server-side project/document idempotency, authoritative acknowledgments, visible pending-versus-confirmed states, and reconciliation prove retries cannot duplicate or silently discard a committed project or document.</p>
+          </article>
+
+          <article class="blocker-card">
+            <span class="tag severity">Hard pass · truthfulness</span>
+            <h3>Proposed output is not delivered capability.</h3>
+            <p><strong>Failure:</strong> the interface hides already implemented editable PPTX/DOCX, speaker notes, revision restoration, or independent review—or advertises a generic native report, combined MP4, push, validated visual quality, or live remote cursors before they exist.</p>
+            <p><strong>Gate:</strong> each existing export, actual revision, real review, evidence state, and collaborator signal maps to its implemented and separately authorized platform contract.</p>
+          </article>
+
+          <article class="blocker-card">
+            <span class="tag severity" data-level="gate">Release gate · access</span>
+            <h3>Responsive layout never becomes authorization.</h3>
+            <p><strong>Failure:</strong> hidden panes still fetch protected customer work, another actor’s private conversation or job, inaccessible Canvas data, or privileged internal surfaces.</p>
+            <p><strong>Gate:</strong> project scope, actor privacy, Canvas entitlement, exact-resource sharing, and revocation remain enforced before data or application bytes load.</p>
+          </article>
+
+          <article class="blocker-card">
+            <span class="tag severity" data-level="gate">Release gate · interaction</span>
+            <h3>Touch discovery cannot require touch.</h3>
+            <p><strong>Failure:</strong> pinch, drag, swipe, hover, orientation, or finely positioned gestures become the only way to review, compare, rearrange, approve, or finish.</p>
+            <p><strong>Gate:</strong> Forma’s own 44px effective-target contract, named buttons, real two-touch Canvas behavior, keyboard/list equivalents, focus return, reduced motion, RTL, and 400% reflow all remain complete.</p>
+          </article>
+
+          <article class="blocker-card">
+            <span class="tag severity" data-level="gate">Release gate · consent</span>
+            <h3>Adaptation cannot approve or spend.</h3>
+            <p><strong>Failure:</strong> a suggested action auto-submits paid work, cross-project references, public sharing, or a retried provider operation while a pane appears or changes size.</p>
+            <p><strong>Gate:</strong> explicit human commitment, exact scope and cost, actor/project reservations, safe recovery, and existing approval ownership remain intact.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="roadmap-heading">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">06 · Proposed 12–16 week delivery sequence</p>
+            <h2 id="roadmap-heading">Earn coherence before adding surface area.</h2>
+          </div>
+          <p>Eight overlapping workstreams produce a useful first release in approximately 4–6 weeks and a comprehensive program in approximately 12–16 weeks. Duration, owners, and outcome targets are proposals—not current delivery claims.</p>
+        </header>
+
+        <div class="roadmap">
+          <article class="roadmap-phase">
+            <p class="phase-weeks">Weeks 01–02 · Phase 0</p>
+            <h3>Truth, instrumentation, baseline</h3>
+            <p>Owners: product owner, lead designer, design engineer, QA/accessibility, privacy.</p>
+            <ul>
+              <li>Inventory exact pages, permissions, actor-private jobs, approvals, Canvas, real outputs, committed-state acknowledgments, and responsive failure evidence.</li>
+              <li>Build behavioral tests for hidden phone search, nested folders, actual targets, chat height, landscape, presence, false stale-conflict messaging, and duplicate project/document creation.</li>
+            </ul>
+            <p class="phase-gate"><strong>Gate:</strong> the observed responsive failures, false successful-save conflicts, and duplicate-create retries reproduce in real interaction tests with no sensitive telemetry.</p>
+          </article>
+
+          <article class="roadmap-phase">
+            <p class="phase-weeks">Weeks 02–04 · Phase 1</p>
+            <h3>Adaptive shell and immediate blockers</h3>
+            <p>Owners: lead designer, design engineers, collaboration/backend, QA/accessibility.</p>
+            <ul>
+              <li>Deliver five stable destinations, visible search and Ask/Send, full-depth project navigation, 44px targets, short-height layout, and truthful pending/confirmed save states.</li>
+              <li>Introduce client mutation IDs, server-side idempotency, authoritative acknowledgment/reconciliation, and duplicate-safe create/save retries while preserving drafts and focus.</li>
+            </ul>
+            <p class="phase-gate"><strong>Gate:</strong> 320px portrait and short-height landscape complete search, navigation, authoring, and authorized Canvas entry; retries never duplicate a committed project or document.</p>
+          </article>
+
+          <article class="roadmap-phase">
+            <p class="phase-weeks">Weeks 03–06 · Phase 2</p>
+            <h3>Secure Activity, review, and Deliver</h3>
+            <p>Owners: product owner, collaboration/backend, privacy/security, design engineering.</p>
+            <ul>
+              <li>Extend real recipient-scoped notifications into a principal-safe inbox with exact resource deep links and private/shared separation.</li>
+              <li>Project actual PPTX, DOCX, PDF, revision, approval, output, and review capabilities truthfully across the project.</li>
+            </ul>
+            <p class="phase-gate"><strong>Gate:</strong> an authorized reviewer reaches the exact current artifact in two interactions without private-job leakage or self-approval.</p>
+          </article>
+
+          <article class="roadmap-phase">
+            <p class="phase-weeks">Weeks 04–08 · Phase 3</p>
+            <h3>Phone-first Work, Chat, and slides</h3>
+            <p>Owners: lead designer, design engineers, document/output owners.</p>
+            <ul>
+              <li>Deliver task-first document templates, visible Send, Write/Shape/Present families, conversation-first Chat, and readable phone presentations.</li>
+              <li>Keep current action and composer available above software keyboards in portrait and constrained-height landscape.</li>
+            </ul>
+            <p class="phase-gate"><strong>Gate:</strong> all seven existing document lenses and supported artifact-review tasks remain completable without forced orientation or draft loss.</p>
+          </article>
+
+          <article class="roadmap-phase">
+            <p class="phase-weeks">Weeks 05–09 · Phase 4</p>
+            <h3>Projects, Explore, and continuity</h3>
+            <p>Owners: product owner, design engineers, research/QA.</p>
+            <ul>
+              <li>Make project home, full-depth collections, project Library, Scout, Taste &amp; time, previews, and exact-resource continuation discoverable.</li>
+              <li>Preserve selected object, project authority, chosen pane, scroll, and unsaved work as available space changes.</li>
+            </ul>
+            <p class="phase-gate"><strong>Gate:</strong> every authorized advanced feature, collection, Library family, and existing lens is reachable in two deliberate contextual actions.</p>
+          </article>
+
+          <article class="roadmap-phase">
+            <p class="phase-weeks">Weeks 06–11 · Phase 5</p>
+            <h3>Tablet-native Canvas and direct manipulation</h3>
+            <p>Owners: Canvas engineer, lead designer, design engineer, QA/accessibility.</p>
+            <ul>
+              <li>Implement actual two-pointer pan/pinch, additive touch selection, 44px effective handles, safe pen enhancement, and anchored comments.</li>
+              <li>Preserve accessible list/button equivalents, board identity, project scope, and rotation/split-view continuity.</li>
+            </ul>
+            <p class="phase-gate"><strong>Gate:</strong> portrait and landscape users select, group, move, inspect, annotate, and review without Shift, hover, leaks, or duplicate writes.</p>
+          </article>
+
+          <article class="roadmap-phase">
+            <p class="phase-weeks">Weeks 08–13 · Phase 6</p>
+            <h3>Wide workbench and truthful collaboration</h3>
+            <p>Owners: design engineer, collaboration/backend, product owner.</p>
+            <ul>
+              <li>Compose two to four user-controlled source/work/result/review panes with revision comparison and principal-safe activity.</li>
+              <li>Expose genuine remote presence only after authenticated cross-account transport, exact project access, and consent exist.</li>
+            </ul>
+            <p class="phase-gate"><strong>Gate:</strong> 2560 → 1440 → 900 → 2560 preserves identity, draft, selection, focus, review revision, and pane intent; no fake cursors.</p>
+          </article>
+
+          <article class="roadmap-phase">
+            <p class="phase-weeks">Weeks 11–16 · Phase 7</p>
+            <h3>Specialist parity, trust, and staged rollout</h3>
+            <p>Owners: product and quality, QA/accessibility, privacy/security, operations, procurement.</p>
+            <ul>
+              <li>Verify specialist boundaries, real browsers/devices/assistive technology, performance, RTL, privacy-safe reporting, and reversible pilot rollout.</li>
+              <li>Keep enterprise identity, deletion, recovery, governance, and independent accessibility evidence as separately controlled release gates.</li>
+            </ul>
+            <p class="phase-gate"><strong>Gate:</strong> no P0/P1 blockers; role, permission, locale, and input matrices pass; unrestricted enterprise remains blocked until its distinct trust evidence exists.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="engineering-heading">
+        <header class="section-heading">
+          <div>
+            <p class="eyebrow">07 · Implementation signals and evidence</p>
+            <h2 id="engineering-heading">Adapt the presentation, never duplicate the truth.</h2>
+          </div>
+          <p>The current application already includes container-query, dynamic-viewport, route, account-popover, project-boundary, and accessibility foundations. The following contracts direct proposed expansion.</p>
+        </header>
+
+        <div class="signal-grid">
+          <article class="signal-card">
+            <h3>Measure the space Forma actually has.</h3>
+            <p>Prefer <code>@container</code> for panes and application width; supplement with short-height queries, <code>100dvh</code>, and safe-area insets. A large display running a narrow window is still a narrow workspace.</p>
+          </article>
+          <article class="signal-card">
+            <h3>Model input capability, not device identity.</h3>
+            <p>Use coarse/fine pointer, hover availability, keyboard focus, and explicit user actions. Tablets may have keyboards; laptops may support touch. Orientation is advisory, never a capability gate.</p>
+          </article>
+          <article class="signal-card">
+            <h3>Preserve one route and one authoring truth.</h3>
+            <p>Recompose shared panes around the same project ID, document ID, owner, actor, permission epoch, locale, and draft. Bind each create/save to a client mutation ID and authoritative idempotent acknowledgment; never turn a committed result into duplicate-producing retry advice.</p>
+          </article>
+          <article class="signal-card">
+            <h3>Activity is a scoped workflow, not a badge.</h3>
+            <p>Separate observable completion from proposed notifications. Filter by exact actor/project permissions; state whether a result is ready, a human decision is required, or a failed operation can safely resume.</p>
+          </article>
+          <article class="signal-card">
+            <h3>Keep navigation semantics stable.</h3>
+            <p>Real destination changes remain links; actions remain buttons. Canvas remains an independently entitled project-level surface; Chat remains a view of the same document; guest Review never inherits the signed-in shell.</p>
+          </article>
+          <article class="signal-card">
+            <h3>Performance and inclusion are release criteria.</h3>
+            <p>Preserve bounded route modules, containable pane widths, local-only scroll where justified, 44px controls, visible focus, screen-reader names, RTL, 400% reflow, reduced motion, and honest evidence labeling.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="evidence-footer page-width">
+      <p><strong>Evidence boundary.</strong> Derived from role-played stakeholder research, the existing Forma design contract, current information architecture, platform boundaries, and checked-in responsive tests. All demonstrations are synthetic, speculative planning material; no customer interview, production measurement, existing customer project, provider execution, application mutation, or implemented-feature claim is implied.</p>
+      <p><strong>Reading key.</strong> Blue identifies a task or next action; amber indicates a human decision; ink keeps the work prominent. Six posture models × five scenarios produce thirty inspectable decision states.</p>
+    </footer>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const navigation = Object.freeze([
+          { id: "projects", label: "Projects", icon: "projects" },
+          { id: "work", label: "Work", icon: "work" },
+          { id: "explore", label: "Explore", icon: "explore" },
+          { id: "activity", label: "Activity", icon: "activity" },
+          { id: "deliver", label: "Deliver", icon: "deliver" },
+        ]);
+
+        const postures = Object.freeze({
+          "phone-portrait": {
+            title: "Phone portrait",
+            shortTitle: "Phone portrait",
+            space: "390 × 844 px",
+            navigation: "bottom-dock",
+            navigationLabel: "Bottom dock · 5 tasks",
+            paneCount: 1,
+            input: "Reachable touch",
+            shell: "Compact; safe-area dock",
+            attention: "Immediate, one action",
+            short: false,
+            description: "Finish the next meaningful action with one reachable hand, preserve project orientation, and surface exact human decisions without obscuring everything else Forma can do.",
+            priorities: [
+              "Resume or complete the current document task immediately.",
+              "Keep five creator destinations within a stable, touch-reachable dock.",
+              "Show human-required completions, approvals, and safe recovery first.",
+              "Expose source, result, and review through clear progressive disclosure.",
+            ],
+            matrix: {
+              work: "Resume, source chips, edit, one clear next action.",
+              chat: "Conversation, reachable composer, result handoff.",
+              canvas: "Inspect or select; named list and review alternatives.",
+              deliver: "Actual result, format truth, one share/export action.",
+              activity: "Needs-you queue, completed work, direct deep links.",
+            },
+          },
+          "phone-landscape": {
+            title: "Phone landscape",
+            shortTitle: "Phone landscape",
+            space: "844 × 390 px",
+            navigation: "edge-rail",
+            navigationLabel: "Compact edge rail",
+            paneCount: 2,
+            input: "Touch; short height",
+            shell: "Short-height header",
+            attention: "Inline human decision",
+            short: true,
+            description: "Treat limited height as the primary constraint: trade the bottom dock for an edge rail, compress chrome, and keep the composer or result visible alongside its working context.",
+            priorities: [
+              "Protect vertical room by collapsing the header into a short-height shell.",
+              "Keep two useful surfaces visible: task plus source, result, or review.",
+              "Retain all five stable destinations in an accessible compact edge rail.",
+              "Avoid keyboard, safe-area, and composer collisions during touch input.",
+            ],
+            matrix: {
+              work: "Short header; focused editor and one adjacent context.",
+              chat: "Conversation and result; composer never slips below view.",
+              canvas: "Wide spatial strip; named selection and bounded tools.",
+              deliver: "Output plus compact review or direct export action.",
+              activity: "Decision list plus exact result or recovery detail.",
+            },
+          },
+          "tablet-portrait": {
+            title: "Tablet portrait",
+            shortTitle: "Tablet portrait",
+            space: "834 × 1194 px",
+            navigation: "edge-rail",
+            navigationLabel: "Compact touch edge rail",
+            paneCount: 2,
+            input: "Touch; optional keys",
+            shell: "Reading-first shell",
+            attention: "Contextual review card",
+            short: false,
+            description: "Use the generous reading height for focused authoring or leisurely exploration, keep project context adjacent, and make every touch-enhanced interaction equally discoverable without a gesture.",
+            priorities: [
+              "Give the creative object or conversation a generous reading-first column.",
+              "Keep one contextual result, source, or review pane visible beside the work.",
+              "Surface touch-friendly compare, selection, and exploration controls.",
+              "Offer optional landscape guidance only when it adds simultaneous context.",
+            ],
+            matrix: {
+              work: "Reading-first editor with source decisions alongside.",
+              chat: "Long-form conversation and current result or references.",
+              canvas: "Touch-friendly board, accessible list, contextual actions.",
+              deliver: "Large output preview and lightweight review companion.",
+              activity: "Readable triage queue with preview and next action.",
+            },
+          },
+          "tablet-landscape": {
+            title: "Tablet landscape",
+            shortTitle: "Tablet landscape",
+            space: "1194 × 834 px",
+            navigation: "edge-rail",
+            navigationLabel: "Touch-sized edge rail",
+            paneCount: 3,
+            input: "Touch, pen, keyboard",
+            shell: "Expanded creative shell",
+            attention: "Visible review pane",
+            short: false,
+            description: "Prioritize a genuinely useful work-plus-companion split and reveal a third source or outcome pane only when the primary surface stays meaningfully wide. Favor direct manipulation while preserving explicit buttons, keyboard operation, and equal completion paths.",
+            priorities: [
+              "Keep source, current work, and outcome visible together only when the primary work retains useful width.",
+              "Expose direct touch/pen interaction with named, non-gesture equivalents.",
+              "Preserve Canvas entitlement and honest collaborator/review boundaries.",
+              "Let review and generation decisions stay near the object they affect.",
+            ],
+            matrix: {
+              work: "Source decisions, editor, and latest result together.",
+              chat: "References, assistant conversation, inspectable result.",
+              canvas: "Board, source tray, result/review drawer; touch plus keys.",
+              deliver: "Large preview, source context, reviewer-ready evidence.",
+              activity: "Task queue, selected result, exact decision or recovery.",
+            },
+          },
+          "laptop-split": {
+            title: "Small monitor · split window",
+            shortTitle: "Laptop split",
+            space: "768 × 820 px",
+            navigation: "edge-rail",
+            navigationLabel: "Collapsible edge rail",
+            paneCount: 2,
+            input: "Keyboard; optional touch",
+            shell: "Window-width responsive",
+            attention: "Persistent next action",
+            short: false,
+            description: "Optimize for the application’s available width rather than the physical display. Keep an actual two-surface workflow productive in split-screen and reveal breadth progressively when the window expands.",
+            priorities: [
+              "Keep focused authoring and one meaningful companion pane visible.",
+              "Respect shortcuts, selection, focus, and keyboard-visible affordances.",
+              "Recover context and wider capability as the application container grows.",
+              "Never infer touch absence or full-screen use from a laptop form factor.",
+            ],
+            matrix: {
+              work: "Focus-first editor plus source or result; quick shortcuts.",
+              chat: "Conversation and latest output in a true split workflow.",
+              canvas: "Board plus project source/result; non-hover controls.",
+              deliver: "Inspectable result plus approval, export, or exact share.",
+              activity: "Visible queue and linked decision without context loss.",
+            },
+          },
+          "large-monitor": {
+            title: "Large monitor · expansive window",
+            shortTitle: "Large monitor",
+            space: "1728 × 1080 px",
+            navigation: "expanded-rail",
+            navigationLabel: "Expanded labeled rail",
+            paneCount: 4,
+            input: "Keyboard, pointer, touch",
+            shell: "Bounded four-pane workspace",
+            attention: "Visible decision column",
+            short: false,
+            description: "Use abundant application width to make source, authoring, outcomes, and review concurrently visible. Protect a readable primary work area and let every auxiliary region yield gracefully when width disappears.",
+            priorities: [
+              "Reveal source, making, result, and review without burying core controls.",
+              "Give the actual creative object the largest bounded, readable workspace.",
+              "Keep the project task rail labeled and review/approval states visible.",
+              "Adapt to window resize; a large display does not guarantee a large app.",
+            ],
+            matrix: {
+              work: "Source, editor, result, and review visible simultaneously.",
+              chat: "Reference sources, conversation, output, review evidence.",
+              canvas: "Project source, expansive board, outcomes, review queue.",
+              deliver: "Inspectable source, result, evidence, and reviewer decision.",
+              activity: "Task queue, selected work, source context, direct review.",
+            },
+          },
+        });
+
+        const scenarios = Object.freeze({
+          work: {
+            title: "Work",
+            navigation: "work",
+            toolbarTitle: "Creative direction",
+            toolbarMeta: "Example document · saved",
+            action: "Continue",
+            primary: "author",
+            companions: ["source", "result", "review"],
+            priority: "The document remains the source of truth across every working mode.",
+          },
+          chat: {
+            title: "Chat",
+            navigation: "work",
+            toolbarTitle: "Ask about this work",
+            toolbarMeta: "Private to the current actor",
+            action: "New idea",
+            primary: "chat",
+            companions: ["result", "source", "review"],
+            priority: "Chat is one private view of the current document, not a new project or product.",
+          },
+          canvas: {
+            title: "Canvas",
+            navigation: "explore",
+            toolbarTitle: "Project canvas",
+            toolbarMeta: "Exact project access required",
+            action: "Add to board",
+            primary: "canvas",
+            companions: ["source", "result", "review"],
+            priority: "The spatial surface requires its own actual Canvas entitlement; arrangement never invents new generation context.",
+          },
+          deliver: {
+            title: "Deliver",
+            navigation: "deliver",
+            toolbarTitle: "Review and deliver",
+            toolbarMeta: "Only implemented formats",
+            action: "Review",
+            primary: "result",
+            companions: ["review", "source", "author"],
+            priority: "Share, export, review evidence, and format labels must reflect only real, authorized platform capabilities.",
+          },
+          activity: {
+            title: "Activity",
+            navigation: "activity",
+            toolbarTitle: "Needs your attention",
+            toolbarMeta: "Only your authorized activity",
+            action: "Open task",
+            primary: "activity",
+            companions: ["result", "review", "source"],
+            priority: "Completion, required decisions, and safe recovery need actor-private direct links rather than decorative notifications.",
+          },
+        });
+
+        const paneLabels = Object.freeze({
+          source: "Source and context",
+          author: "Authoring",
+          result: "Result",
+          review: "Review and next action",
+          chat: "Document conversation",
+          canvas: "Spatial project canvas",
+          activity: "Actionable activity",
+        });
+
+        const frame = document.getElementById("device-frame");
+        const screen = document.getElementById("sim-screen");
+        const status = document.getElementById("live-status");
+        const insightTitle = document.getElementById("insight-title");
+        const insightDescription = document.getElementById("insight-description");
+        const priorityList = document.getElementById("priority-list");
+        const matrix = document.getElementById("posture-matrix");
+        const annotationToggle = document.getElementById("annotation-toggle");
+
+        const state = {
+          posture: "phone-portrait",
+          scenario: "work",
+          annotations: true,
+          initial: true,
+        };
+
+        const element = (tag, className, text) => {
+          const node = document.createElement(tag);
+          if (className) node.className = className;
+          if (text !== undefined) node.textContent = text;
+          return node;
+        };
+
+        const icon = (name) => {
+          const node = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+          node.setAttribute("class", "sim-icon");
+          node.setAttribute("aria-hidden", "true");
+          use.setAttribute("href", "#icon-" + name);
+          node.append(use);
+          return node;
+        };
+
+        const chip = (label, emphasis = false) => {
+          const node = element("span", "sim-chip", label);
+          if (emphasis) node.dataset.emphasis = "true";
+          return node;
+        };
+
+        const card = (title, copy, action) => {
+          const node = element("div", "sim-card");
+          node.append(element("h4", "", title));
+          if (copy) node.append(element("p", "", copy));
+          if (action) node.append(element("span", "sim-card-action", action));
+          return node;
+        };
+
+        const art = (variant) => {
+          const node = element("div", "sim-art");
+          if (variant) node.dataset.variant = variant;
+          return node;
+        };
+
+        const navigationItem = (item, scenario, dock = false) => {
+          const node = element("div", dock ? "sim-dock-item" : "sim-rail-item");
+          if (item.id === scenario.navigation) node.dataset.active = "true";
+          node.append(icon(item.icon));
+          node.append(element("span", dock ? "" : "sim-rail-label", item.label));
+          return node;
+        };
+
+        const buildPane = (type, posture, scenario) => {
+          const pane = element("section", "sim-pane");
+          pane.dataset.pane = type;
+          pane.dataset.annotation = paneLabels[type];
+
+          if (type === "source" || type === "review") pane.dataset.tone = "quiet";
+          if (type === "canvas") pane.dataset.tone = "canvas";
+
+          const kicker = element("div", "pane-kicker");
+          kicker.append(element("span", "", paneLabels[type]));
+          pane.append(kicker);
+
+          switch (type) {
+            case "source": {
+              pane.append(element("h4", "pane-heading", "Shared creative intent"));
+              pane.append(element("p", "sim-copy", "Reusable project decisions stay attached to their original source."));
+              const row = element("div", "sim-chip-row");
+              row.append(chip("Audience", true), chip("Tone"), chip("References"));
+              pane.append(row);
+              pane.append(card("Creative principle", "Clear, warm, and grounded in the work.", "Inspect source"));
+              if (!posture.short) pane.append(card("Approved reference", "One project-scoped visual input.", "View reference"));
+              break;
+            }
+            case "author": {
+              pane.append(element("h4", "pane-heading", "Shape the direction"));
+              pane.append(element("p", "sim-copy", "One document holds the creative context, working draft, and every genuine result."));
+              const row = element("div", "sim-chip-row");
+              row.append(chip("Intent", true), chip("Audience"), chip("Sources"));
+              pane.append(row);
+              pane.append(card("Creative direction", "Begin with a clear point of view. Keep the result useful and specific.", "Edit decision"));
+              if (posture.paneCount === 1) pane.append(card("Latest outcome", "An existing result is ready to inspect.", "View result"));
+              pane.append(element("div", "sim-composer", "Add a decision or continue writing →"));
+              break;
+            }
+            case "result": {
+              pane.append(element("h4", "pane-heading", "Result ready to inspect"));
+              pane.append(art());
+              pane.append(element("p", "sim-copy", "Synthetic example · evidence reflects the implemented outcome, not an invented format."));
+              const row = element("div", "sim-chip-row");
+              row.append(chip("Review", true), chip("Source"));
+              pane.append(row);
+              if (!posture.short && posture.paneCount < 3) pane.append(card("Presentation output", "Semantic slides are available where already supported.", "Open actual output"));
+              break;
+            }
+            case "review": {
+              pane.append(element("h4", "pane-heading", "A human decision"));
+              pane.append(card("Result needs review", "Inspect the exact source and output before taking any action.", "Review result"));
+              pane.append(card("Share only this work", "Exact-resource scope and real access determine availability.", "Inspect share scope"));
+              if (!posture.short) pane.append(element("p", "sim-copy", "No paid action, public link, or approval happens automatically."));
+              break;
+            }
+            case "chat": {
+              pane.append(element("h4", "pane-heading", "Ask about this document"));
+              const messages = element("div", "sim-chat");
+              const creator = element("div", "sim-message", "Which part of the direction feels unclear?");
+              creator.dataset.author = "creator";
+              const assistant = element("div", "sim-message", "The audience is defined; the intended mood needs a more specific decision.");
+              assistant.dataset.author = "assistant";
+              messages.append(creator, assistant);
+              pane.append(messages);
+              if (!posture.short) pane.append(card("Proposed refinement", "Keep this suggestion editable and unaccepted until you decide.", "Inspect proposal"));
+              pane.append(element("div", "sim-composer", "Ask a follow-up about this work →"));
+              break;
+            }
+            case "canvas": {
+              pane.append(element("h4", "pane-heading", "Arrange this project"));
+              const board = element("div", "sim-canvas");
+              const first = card("Reference", "Source stays scoped");
+              first.prepend(art());
+              const second = card("Current result", "One real outcome");
+              second.prepend(art("second"));
+              board.append(first, second);
+              pane.append(board);
+              const row = element("div", "sim-chip-row");
+              row.append(chip("List alternative", true), chip("Inspect"));
+              pane.append(row);
+              break;
+            }
+            case "activity": {
+              pane.append(element("h4", "pane-heading", "What needs you now"));
+              pane.append(card("Slides are ready to review", "Completed in a project you are allowed to access.", "Open completed slides"));
+              pane.append(card("One approval needs you", "Inspect exact source, scope, and human decision before proceeding.", "Review approval"));
+              if (!posture.short) pane.append(card("An operation can safely resume", "Continue only when its original actor and reservation match.", "Inspect recovery"));
+              break;
+            }
+            default:
+              break;
+          }
+
+          if (scenario.title === "Canvas" && type === "review") {
+            const note = element("p", "sim-copy", "Live remote cursors are not implied.");
+            pane.append(note);
+          }
+
+          return pane;
+        };
+
+        const choosePanes = (posture, scenario) => {
+          const types = [scenario.primary, ...scenario.companions].slice(0, posture.paneCount);
+
+          if (posture.paneCount >= 3 && scenario.primary !== "activity") {
+            const sourceIndex = types.indexOf("source");
+            if (sourceIndex > 0) {
+              const source = types.splice(sourceIndex, 1)[0];
+              types.unshift(source);
+            }
+          }
+
+          return types;
+        };
+
+        const paneColumns = (types, scenario) => {
+          if (types.length === 1) return "minmax(0, 1fr)";
+          if (types.length === 2) {
+            return scenario.primary === "result" || scenario.primary === "activity"
+              ? "minmax(0, 1.12fr) minmax(0, 0.88fr)"
+              : "minmax(0, 1.28fr) minmax(0, 0.9fr)";
+          }
+          if (types.length === 3) return "minmax(0, 0.62fr) minmax(0, 1.65fr) minmax(0, 0.78fr)";
+          return "minmax(0, 0.7fr) minmax(0, 1.36fr) minmax(0, 0.92fr) minmax(0, 0.77fr)";
+        };
+
+        const buildWireframe = (posture, scenario, types) => {
+          const fragment = document.createDocumentFragment();
+          const topbar = element("div", "sim-topbar");
+          const brand = element("div", "sim-brand");
+          brand.append(element("span", "sim-brand-mark", "F"));
+          brand.append(element("span", "sim-breadcrumb", "Example project / Working document"));
+          const actions = element("div", "sim-top-actions");
+          actions.append(icon("search"));
+          actions.append(element("span", "sim-presence", "Saved"));
+          actions.append(element("span", "sim-alert", "2"));
+          topbar.append(brand, actions);
+          fragment.append(topbar);
+
+          const structure = element("div", "sim-structure");
+          const rail = element("div", "sim-rail");
+          navigation.forEach((item) => rail.append(navigationItem(item, scenario)));
+          structure.append(rail);
+
+          const content = element("div", "sim-content");
+          const toolbar = element("div", "sim-toolbar");
+          const titleGroup = element("div", "");
+          titleGroup.append(element("h3", "", scenario.toolbarTitle));
+          titleGroup.append(element("div", "sim-toolbar-meta", scenario.toolbarMeta));
+          toolbar.append(titleGroup, element("span", "sim-toolbar-action", scenario.action));
+          content.append(toolbar);
+
+          const panes = element("div", "sim-panes");
+          panes.dataset.count = String(types.length);
+          panes.style.setProperty("--pane-columns", paneColumns(types, scenario));
+          types.forEach((type) => panes.append(buildPane(type, posture, scenario)));
+          content.append(panes);
+          structure.append(content);
+          fragment.append(structure);
+
+          const dock = element("div", "sim-dock");
+          navigation.forEach((item) => dock.append(navigationItem(item, scenario, true)));
+          fragment.append(dock);
+
+          screen.replaceChildren(fragment);
+        };
+
+        const renderInsights = (posture, scenario, types) => {
+          insightTitle.textContent = posture.title;
+          insightDescription.textContent = posture.description;
+          status.textContent = state.initial
+            ? "Inspecting " + scenario.title + " · " + posture.shortTitle
+            : scenario.title + " updated for " + posture.shortTitle;
+
+          const priorities = [...posture.priorities];
+          priorities[priorities.length - 1] = scenario.priority;
+          priorityList.replaceChildren(...priorities.map((text) => element("li", "", text)));
+
+          document.getElementById("signal-space").textContent = posture.space;
+          document.getElementById("signal-navigation").textContent = posture.navigationLabel;
+          document.getElementById("signal-panes").textContent = types.length + " · " + types.map((type) => paneLabels[type]).join(" / ");
+          document.getElementById("signal-input").textContent = posture.input;
+          document.getElementById("signal-shell").textContent = posture.shell;
+          document.getElementById("signal-attention").textContent = posture.attention;
+        };
+
+        const render = () => {
+          const posture = postures[state.posture];
+          const scenario = scenarios[state.scenario];
+          if (!posture || !scenario) return;
+
+          const types = choosePanes(posture, scenario);
+          frame.dataset.posture = state.posture;
+          frame.dataset.navigation = posture.navigation;
+          frame.dataset.short = String(posture.short);
+          frame.dataset.annotations = String(state.annotations);
+          frame.setAttribute(
+            "aria-label",
+            "Speculative " + posture.title + " wireframe for " + scenario.title + "; " +
+              types.map((type) => paneLabels[type]).join(", ") + "; " + posture.navigationLabel,
+          );
+
+          buildWireframe(posture, scenario, types);
+          renderInsights(posture, scenario, types);
+          state.initial = false;
+        };
+
+        const renderMatrix = () => {
+          const fragment = document.createDocumentFragment();
+
+          Object.values(postures).forEach((posture) => {
+            const row = element("article", "matrix-row");
+            const heading = element("div", "matrix-posture");
+            heading.append(element("h3", "", posture.shortTitle));
+            heading.append(element("p", "", posture.space + " · " + posture.navigationLabel));
+            row.append(heading);
+
+            Object.entries(scenarios).forEach(([key, scenario]) => {
+              const cell = element("div", "matrix-cell");
+              cell.append(element("h4", "", scenario.title));
+              cell.append(element("p", "", posture.matrix[key]));
+              row.append(cell);
+            });
+
+            fragment.append(row);
+          });
+
+          matrix.replaceChildren(fragment);
+        };
+
+        document.getElementById("posture-choices").addEventListener("change", (event) => {
+          if (event.target instanceof HTMLInputElement && Object.hasOwn(postures, event.target.value)) {
+            state.posture = event.target.value;
+            render();
+          }
+        });
+
+        document.getElementById("scenario-choices").addEventListener("change", (event) => {
+          if (event.target instanceof HTMLInputElement && Object.hasOwn(scenarios, event.target.value)) {
+            state.scenario = event.target.value;
+            render();
+          }
+        });
+
+        annotationToggle.addEventListener("click", () => {
+          state.annotations = !state.annotations;
+          annotationToggle.setAttribute("aria-pressed", String(state.annotations));
+          annotationToggle.textContent = state.annotations ? "Pane annotations on" : "Pane annotations off";
+          render();
+        });
+
+        renderMatrix();
+        render();
+      })();
+    </script>
+  </body>
+</html>

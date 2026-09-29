@@ -1,8 +1,3 @@
-import {handleStudyCustodyProbe,CUSTODY_PROBE_PATH} from './generation-study-custody-probe.ts';
-import {handleStudyQualification,QUALIFICATION_PATH} from './generation-study-qualification.ts';
-import {createSitesStudyApi,SITES_STUDY_PREFIX} from './generation-study-api.ts';
-import {SITES_STUDY_CONFIGURATION} from './generation-study-configuration.ts';
-const handleSitesStudy=createSitesStudyApi(SITES_STUDY_CONFIGURATION);
 import {runCreationMaintenance} from './creation-index-maintenance.ts';
 import {maintainCreationSearchJobs} from './creation-search-api.ts';
 import { handleSourceEligibilityRead, SOURCE_ELIGIBILITY_PATH } from './source-eligibility-read.ts';
@@ -142,9 +137,6 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
 
 async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
     const url=new URL(request.url);
-    if(url.pathname===CUSTODY_PROBE_PATH)return handleStudyCustodyProbe(request,env);
-    if(url.pathname===QUALIFICATION_PATH)return handleStudyQualification(request,env);
-    if(url.pathname.startsWith(SITES_STUDY_PREFIX))return handleSitesStudy(request,env);
     if(url.pathname.startsWith("/api/internal/ordinary-images/"))return handleOrdinaryImageQueue(request,env);
     if(url.pathname===SOURCE_ELIGIBILITY_PATH)return handleSourceEligibilityRead(request,env);
     if(url.pathname===SOURCE_ADVISORY_PATH)return handleSourceAdvisoryRead(request,env);
@@ -414,7 +406,7 @@ export default {
     const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
       ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
     const memoryBenchmarkRequest=pathname==="/api/internal/memory-benchmark"||pathname==="/api/internal/memory-benchmark/approval"||pathname==="/api/internal/memory-benchmark/reconcile"||pathname==="/api/internal/memory-benchmark/release-undispatched";
-    if(pathname.startsWith("/api/")&&!pathname.startsWith(SITES_STUDY_PREFIX)&&pathname!==SOURCE_ADVISORY_PATH&&pathname!==SOURCE_ELIGIBILITY_PATH&&pathname!==GENERATION_EVIDENCE_PATH&&pathname!==CURRENT_SOURCE_PATH&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!==MEMORY_SCHEMA_REPAIR_PATH&&pathname!==EVENT_SAVE_REPAIR_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!pathname.startsWith("/api/still/panel")&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
+    if(pathname.startsWith("/api/")&&pathname!==SOURCE_ADVISORY_PATH&&pathname!==SOURCE_ELIGIBILITY_PATH&&pathname!==GENERATION_EVIDENCE_PATH&&pathname!==CURRENT_SOURCE_PATH&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!==MEMORY_SCHEMA_REPAIR_PATH&&pathname!==EVENT_SAVE_REPAIR_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!pathname.startsWith("/api/still/panel")&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
     const headers=new Headers(response.headers);
     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");

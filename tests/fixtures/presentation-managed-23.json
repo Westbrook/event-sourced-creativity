@@ -1,0 +1,106 @@
+{
+  "description": "Explicitly authored managed-generation fixture informed by, but not produced by, the independently created 23-slide PowerPoint benchmark.",
+  "referenceProvenance": "The PowerPoint benchmark was produced outside Forma and must never be represented as a Forma-native artifact.",
+  "requestedSlideCount": 23,
+  "expectedSlideTitles": [
+    "EVERY SCREEN, THE WHOLE CREATIVE JOB",
+    "KEEP THE PRODUCT WHOLE AT EVERY SIZE",
+    "THE INDEPENDENT SIX-GOAL SCORECARD",
+    "ESSENTIAL CAPABILITIES DISAPPEAR UNDER PRESSURE",
+    "PRODUCT STAKEHOLDER GUARDRAILS",
+    "DEVICE POSTURE CHANGES THE NEXT DECISION",
+    "FIVE DESTINATIONS REMAIN STABLE",
+    "THREE WORK MODE FAMILIES",
+    "FOUR PRINCIPAL DEVICE POSTURES",
+    "PHONE PORTRAIT AND LANDSCAPE",
+    "TABLET PORTRAIT AND LANDSCAPE",
+    "SMALL AND LARGE MONITOR WORKBENCHES",
+    "PROJECTS AND AUTHORING PRIORITIES",
+    "DISCOVERY AND GOVERNED DELIVERY",
+    "SCOPED ACTIVITY AND EXACT TASK RECOVERY",
+    "FOUR RESPONSIVE ENGINEERING INPUTS",
+    "COLLABORATION, PRIVACY AND AUTHORIZATION",
+    "VERIFIED MARKET DIFFERENTIATION",
+    "OBSERVABLE ACCEPTANCE METRICS",
+    "FIRST MEANINGFUL RELEASE IN 4–6 WEEKS",
+    "DEPENDENCY-AWARE 12–16 WEEK PROGRAM",
+    "INDEPENDENT REVIEW AND ENTERPRISE GATES",
+    "DECISION AND ACCOUNTABLE OWNERSHIP"
+  ],
+  "snapshot": {
+    "facts": [
+      {
+        "block_id": "managed-foundation",
+        "type": "direction",
+        "properties": {
+          "combined_context_memberships": [
+            {
+              "context_set_id": "chapter-strategy",
+              "name": "Strategic case and assessment",
+              "target": "Opening strategy chapter",
+              "role": "slide_chapter",
+              "application": "ordered",
+              "relativity": 1,
+              "member_order": 0
+            }
+          ],
+          "text": "CHAPTER 1 — STRATEGIC CASE, SLIDES 1–6. Slide 1 — EVERY SCREEN, THE WHOLE CREATIVE JOB: One traceable creative world remains complete on every authorized device. Slide 2 — KEEP THE PRODUCT WHOLE AT EVERY SIZE: Protect verified context, editable outcomes, independent approval, and deliberate human action. Slide 3 — THE INDEPENDENT SIX-GOAL SCORECARD: Exact equal-weight average 61.125/100; display 61.13. Phone 39.75, Tablet 53.00, Small monitor 67.25, Large monitor 68.50, Adaptive/accessibility 58.75, Governed creative loop 79.50. Slide 4 — ESSENTIAL CAPABILITIES DISAPPEAR UNDER PRESSURE: Restore visible search, Send, collections, exact review, and asynchronous task recovery. Slide 5 — PRODUCT STAKEHOLDER GUARDRAILS: “The differentiator is not that one brief can make five artifacts; it is that every artifact remains traceable, editable, reviewable, and reusable across devices.” — Product Owner. Slide 6 — DEVICE POSTURE CHANGES THE NEXT DECISION: Phone, Tablet, Small/snapped monitor, and Large monitor retain equal authorized capability."
+        }
+      },
+      {
+        "block_id": "managed-architecture",
+        "type": "audience",
+        "properties": {
+          "combined_context_memberships": [
+            {
+              "context_set_id": "chapter-experience",
+              "name": "Information architecture and device experience",
+              "target": "Device and interaction chapter",
+              "role": "slide_chapter",
+              "application": "ordered",
+              "relativity": 1,
+              "member_order": 1
+            }
+          ],
+          "text": "CHAPTER 2 — DEVICE EXPERIENCE, SLIDES 7–12. Slide 7 — FIVE DESTINATIONS REMAIN STABLE: Projects / Work / Explore / Activity / Deliver preserve meaning and authorized ownership. Slide 8 — THREE WORK MODE FAMILIES: Write / Shape / Present organize the same seven existing document lenses. Slide 9 — FOUR PRINCIPAL DEVICE POSTURES: Phone is the exact next action; Tablet enables touch-rich exploration; Small/snapped monitor preserves complete work; Large monitor reveals source → work → result → review. Slide 10 — PHONE PORTRAIT AND LANDSCAPE: Search, Send, exact task resumption, review, and 44×44px essential controls survive short available height. Slide 11 — TABLET PORTRAIT AND LANDSCAPE: Preserve route, draft, context, selected work, and authentic touch behavior through rotation. Slide 12 — SMALL AND LARGE MONITOR WORKBENCHES: “Every extra inch of screen should reveal a useful relationship, not another column of product chrome.” — Product Owner."
+        }
+      },
+      {
+        "block_id": "managed-governance",
+        "type": "direction",
+        "properties": {
+          "combined_context_memberships": [
+            {
+              "context_set_id": "chapter-governance",
+              "name": "Governance, attention and trustworthy evidence",
+              "target": "Governance and engineering chapter",
+              "role": "slide_chapter",
+              "application": "ordered",
+              "relativity": 1,
+              "member_order": 2
+            }
+          ],
+          "text": "CHAPTER 3 — GOVERNED DELIVERY, SLIDES 13–18. Slide 13 — PROJECTS AND AUTHORING PRIORITIES: Resume the authorized project, preserve document routes, and keep the exact primary action reachable. Slide 14 — DISCOVERY AND GOVERNED DELIVERY: Explore opens Library and authorized Canvas; Deliver retains review, revision, PPTX, DOCX, and PDF. Slide 15 — SCOPED ACTIVITY AND EXACT TASK RECOVERY: “An asynchronous job without a global, actionable inbox is just work the customer has to remember to check.” — Market Researcher. Slide 16 — FOUR RESPONSIVE ENGINEERING INPUTS: Viewport width, actual content-container width, available block size, and input/accessibility capabilities inform presentation only. Slide 17 — COLLABORATION, PRIVACY AND AUTHORIZATION: Project entitlement, actor-private jobs, independent reviewers, and explicit spending consent stay intact. Slide 18 — VERIFIED MARKET DIFFERENTIATION: Make protected authored source, attributable evidence, editable outcomes, and governed reuse visible."
+        }
+      },
+      {
+        "block_id": "managed-investment",
+        "type": "message",
+        "properties": {
+          "combined_context_memberships": [
+            {
+              "context_set_id": "chapter-investment",
+              "name": "Roadmap, investment and release decision",
+              "target": "Investment and release chapter",
+              "role": "slide_chapter",
+              "application": "ordered",
+              "relativity": 1,
+              "member_order": 3
+            }
+          ],
+          "text": "CHAPTER 4 — INVESTMENT AND DECISION, SLIDES 19–23. Slide 19 — OBSERVABLE ACCEPTANCE METRICS: Reach every authorized primary action and maintain 44×44px essential controls across resize and rotation. Slide 20 — FIRST MEANINGFUL RELEASE IN 4–6 WEEKS: Restore search, Send, stable destinations, scoped Activity, and independent review access. Slide 21 — DEPENDENCY-AWARE 12–16 WEEK PROGRAM: Sequence adaptive shell → secure Activity → phone Work/Chat → Explore continuity → touch-native tablet → truthful collaboration → accessibility evidence. Slide 22 — INDEPENDENT REVIEW AND ENTERPRISE GATES: No enterprise release without verified identity, deletion, recovery, accessibility, and permission boundaries. Slide 23 — DECISION AND ACCOUNTABLE OWNERSHIP: “A smaller screen is not a smaller product; it is a stricter argument about what deserves the next square inch.” — Lead Designer. Approve a governed cross-device program without automatic generation, spend, approval, or publication."
+        }
+      }
+    ]
+  }
+}

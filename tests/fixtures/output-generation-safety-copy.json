@@ -1,0 +1,15 @@
+{
+  "uiMessages": {
+    "output.delivery.costCeiling": "Maximum {amount} across at most {calls} generation calls, including bounded repairs. Charges may remain even when validation fails.",
+    "output.delivery.targetCostLimit": "Target limit: {amount} across at most {calls} generation calls.",
+    "output.delivery.retainedCalls": "Recorded generation calls: {used}; unresolved generation calls: {pending}; authorized maximum: {maximum}."
+  },
+  "runtimeMessages": {
+    "output_native_image_ready": "At most two generation calls: one direction call and one image call at the exact size. After authorization and Start, Forma sends the exact final image prompt as text to OpenAI (omni-moderation-latest) for at most one additional automatic safety check before image creation. This check is not counted as a generation call and is currently free under OpenAI’s pricing.",
+    "output_transfer_document_after_authorization": "After you authorize and start, the authorized Document source context and selected target instructions go to the disclosed provider. Native image attempts also send the exact final image prompt as text to OpenAI (omni-moderation-latest) for at most one additional automatic safety check before image creation. This check is not counted as a generation call and is currently free under OpenAI’s pricing. If reference pixels are required, native image generation is unavailable. This preflight sends nothing. Account and provider ceilings are separate; the displayed cap bounds application admission, not a guarantee of provider billing."
+  },
+  "priceEvidence": {
+    "source": "https://developers.openai.com/api/docs/models/omni-moderation-latest",
+    "checkedOn": "2026-08-27"
+  }
+}

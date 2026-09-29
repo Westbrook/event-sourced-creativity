@@ -26,7 +26,7 @@ export class StillUseInFlow extends LitElement{
     if(this.phase==='source')actions=[this.command('Next',()=>{this.phase='destination';this.changed();},true,!this.source),this.command('Back',()=>this.close())];
     else if(this.phase==='review'&&plan)actions=[this.command(this.client.hasUnconfirmedWrite?'Check save':plan.mode==='link'?'Link idea':'Copy idea',()=>void this.run(()=>this.apply()),true),this.command('Back',()=>{this.plan=undefined;this.phase='destination';this.changed();},false,this.client.hasUnconfirmedWrite)];
     else actions=[this.command('Review',()=>void this.run(()=>this.review()),true,!this.destinations.some(d=>d.id===this.destination)),this.command('Back',()=>this.close())];
-    return {actions,status:this.busy?'Working…':''};
+    return {actions,pending:this.busy,recovery:!!this.error,status:this.busy?'Working…':''};
   }
   private async run(work:()=>Promise<void>){if(this.busy)return;this.busy=true;this.error='';this.changed();try{await work();}catch(e){this.error=e instanceof Error?e.message:'Could not save.';}finally{this.busy=false;this.changed();}}
   private checkScope(){if(this.scope!==this.client.scopeKey||this.epoch!==this.client.epoch||!this.client.abilities.author)throw new Error('Workspace changed. Reopen this step.');}

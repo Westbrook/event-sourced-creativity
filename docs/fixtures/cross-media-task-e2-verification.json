@@ -1,0 +1,152 @@
+{
+  "task": "E2",
+  "date": "2026-09-22",
+  "status": "local-complete-unreviewed-unpublished",
+  "initialMain": "19ac5603c2c304c0ae0b30f2e8a0a5e44a600d4b",
+  "reconciledBase": "46153a831801d46c11dcb7d8802cd9cf9ee5c595",
+  "historicalERelease": {
+    "version": 512,
+    "source": "deb96fa50fb5ebcc94c560b34656a2b28418ae16",
+    "tests": 462,
+    "passed": 460,
+    "failed": 2
+  },
+  "combined": {
+    "tests": 725,
+    "passed": 722,
+    "failed": 3,
+    "files": [
+      "tests/planner-response-outcome.test.mjs",
+      "tests/cross-media-planner-outcome.test.mjs",
+      "tests/cross-media-request-parity.test.mjs",
+      "tests/output-narrative-request.test.mjs",
+      "tests/output-storyboard-planner.test.mjs",
+      "tests/output-video-planner.test.mjs",
+      "tests/rodin-adapter.test.mjs",
+      "tests/audio-original-recovery.test.mjs",
+      "tests/output-video-original-read.test.mjs",
+      "tests/storyboard-recovery-model.test.mjs",
+      "tests/storyboard-reconcile-provider-route.test.mjs",
+      "tests/output-model3d-recovery-authority.test.mjs",
+      "tests/output-model3d-recovery-storage.test.mjs",
+      "tests/moderation-response-validation.test.mjs",
+      "tests/output-scene-adapter.test.mjs",
+      "tests/output-audio-dispatch.test.mjs",
+      "tests/output-audio-recovery-lease.test.mjs",
+      "tests/output-narrative-custody.test.mjs",
+      "tests/generation-outcome-evidence.test.mjs",
+      "tests/generation-execution-evidence.test.mjs",
+      "tests/generation-request-parity.test.mjs",
+      "tests/flare-draft-generation.test.mjs",
+      "tests/output-storyboard-fal.test.mjs",
+      "tests/provider-errors.test.mjs",
+      "tests/cross-media-native-storyboard-journey.test.mjs",
+      "tests/output-scene-execution.test.mjs",
+      "tests/output-expired-scene-runner.test.mjs",
+      "tests/experience-sponsor-scene-native.test.mjs",
+      "tests/experience-sponsor-scene-driver.test.mjs",
+      "tests/managed-production.test.mjs",
+      "tests/presentation-private-receipts.test.mjs",
+      "tests/output-presentation-http.test.mjs",
+      "tests/sunburst-financial.test.mjs"
+    ]
+  },
+  "memory": {
+    "existingNativeJourneys": 48,
+    "newNativeJourneys": 7,
+    "passed": 55,
+    "failed": 0,
+    "file": "tests/assistant-runtime.test.mjs",
+    "patterns": [
+      "private Memory image:",
+      "E2 private Memory native journey:"
+    ],
+    "localD1Emulator": true
+  },
+  "nativeSceneDiagnostic": {
+    "tests": 1,
+    "passed": 1,
+    "strictSqlCompiler": false,
+    "command": "FORMA_SCENE_NATIVE_DIAGNOSTIC=1 node --import tsx --test tests/experience-sponsor-scene-native.test.mjs"
+  },
+  "beforeAfter": {
+    "base": "19ac5603",
+    "unchangedAdapters": {
+      "tests": 3,
+      "passed": 0,
+      "failed": 3
+    },
+    "repairedAdapters": {
+      "tests": 3,
+      "passed": 3,
+      "failed": 0
+    },
+    "meaning": "Suspended custody has not yet recorded finance on baseline; repaired adapters checkpoint first."
+  },
+  "assignedFixtureRepairs": {
+    "tests": 12,
+    "passed": 12,
+    "failed": 0,
+    "productionPatchRequired": false
+  },
+  "additionalBaselineFailures": [
+    {
+      "file": "tests/experience-sponsor-scene-driver.test.mjs",
+      "test": "connected Scene driver positive and replay",
+      "reason": "strict SQL compiler: too many arguments on function json_object"
+    },
+    {
+      "file": "tests/experience-sponsor-scene-native.test.mjs",
+      "test": "genuine sponsored Scene admission, Run and native dispatch settle the distinct payer once",
+      "reason": "strict SQL compiler: too many arguments on function json_object"
+    },
+    {
+      "file": "tests/output-presentation-http.test.mjs",
+      "test": "paid response recovery preserves the admitted range, rejects a changed policy, and never buys a replacement",
+      "reason": "fixture schema missing budget_hold_dispositions"
+    }
+  ],
+  "typecheck": "passed",
+  "build": "passed",
+  "focusedLint": "passed",
+  "assistantRuntimeLint": {
+    "unchangedBaselineErrors": 17,
+    "newErrors": 0
+  },
+  "diffCheck": "passed",
+  "runtimeSha256": {
+    "worker/openai-adapter.ts": "ba6429fdc639e4e0ae4a689da0f47389f0b1b8c6991d1629a90cfc03b9031d2f",
+    "worker/output-scene-adapter.ts": "c5e0a425195549f873c4a74225f1c3028c19a375021b67534d761017c1bdc479",
+    "worker/events-api.ts": "904e69bb5c0dbc34975077f29a1f66e237668932210d750ad7dfa53b54bfffab",
+    "worker/managed-production.ts": "cb5f7a3e0dfb7580cff695d560834a648522a56789126e06630afd7f52f847bd",
+    "worker/document-planner-evidence.ts": "d2e03ec82908d454afeb15209062e807bc24d2342d4ff72b589864559266bcfb"
+  },
+  "liveProviderCalls": 0,
+  "privateIncidentReads": 0,
+  "deployments": 0,
+  "mainMerged": false,
+  "productionChanges": false,
+  "coverageLimits": [
+    "Native Output and Memory retain specialized private stores; not universal A observer adoption.",
+    "Non-job direct event actions have no new generic observer.",
+    "Complete raw bodies >1MiB omitted from new evidence; exact digest retained.",
+    "Transport interruption has no invented complete raw envelope.",
+    "Native uncertain Storyboard proves no replacement, not new native read-only recovery support.",
+    "Sponsored Scene strict SQL qualification fails unchanged; diagnostic journey is not compatibility qualification.",
+    "No empirical narration/voice/layout/screenplay/video/geometry/material quality study.",
+    "Full repository suite not run; existing H v1-v4 envelopes intentionally unchanged and must not be resealed against E2."
+  ],
+  "logs": {
+    "combined": "/private/tmp/forma-e2-final-tests.log",
+    "memory": "/private/tmp/forma-e2-memory-journeys.log",
+    "memoryNew": "/private/tmp/forma-e2-memory-new.log",
+    "baseline": "/private/tmp/forma-e2-additional-baseline.log",
+    "orderingBefore": "/private/tmp/forma-e2-ordering-before.log",
+    "orderingAfter": "/private/tmp/forma-e2-ordering.log",
+    "sceneDiagnostic": "/private/tmp/forma-e2-scene-native-diagnostic.log",
+    "build": "/private/tmp/forma-e2-build.log",
+    "typecheck": "/private/tmp/forma-e2-tsc.log",
+    "lint": "/private/tmp/forma-e2-focused-lint.log",
+    "baselineLint": "/private/tmp/forma-e2-baseline-lint.log"
+  }
+}

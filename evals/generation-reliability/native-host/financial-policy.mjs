@@ -30,8 +30,7 @@ export function validateFinancialPolicy(p,scope,{now=Date.now()}={}) {
 }
 export function imageFinancialScope(plan,trial,ownerId,account) {
   const c=plan.manifest.cells.find(c=>c.id===trial.cellId);
-  const inputs=plan.version==='generation-supplied-study-v2'?plan.candidate.suppliedInputs:plan.candidate.retainedInputs;
-  return {operationId:operationKey(ownerId,plan,trial),planId:plan.id,kind:'image',sourceHash:inputs.sourceSha256,directionHash:inputs.directionSha256,
+  return {operationId:operationKey(ownerId,plan,trial),planId:plan.id,kind:'image',sourceHash:plan.candidate.retainedInputs.sourceSha256,directionHash:plan.candidate.retainedInputs.directionSha256,
     requestHash:hash(plan.requests[trial.cellId]),promptHash:c.promptHash,runtimeHash:hash(plan.runtimeIdentity),inventoryHash:hash(plan.inventory),payerId:ownerId,accountId:account?.accountId,region:account?.region};
 }
 export async function resolveFinancialPolicy(env,{policy,scope,grantId,ownerId}) {

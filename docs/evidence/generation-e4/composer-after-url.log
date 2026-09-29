@@ -1,0 +1,599 @@
+✔ Scene recovery en: stale Short-story submit cannot adopt a newly verified Scene approval (641.366791ms)
+✔ Scene recovery fr: stale Short-story submit cannot adopt a newly verified Scene approval (451.353ms)
+✔ Scene recovery ar: stale Short-story submit cannot adopt a newly verified Scene approval (437.811458ms)
+✔ Scene recovery ja: stale Short-story submit cannot adopt a newly verified Scene approval (518.816834ms)
+✔ Scene recovery: actual synchronous composer close hands the exact original job to the actual input dialog (434.920166ms)
+✔ Scene recovery: actual queued composer close hands the exact original job to the actual input dialog (466.686334ms)
+✔ Scene recovery en: every rendered format and same-kind replacement keeps its own submit opening (255.183709ms)
+✔ Scene recovery fr: every rendered format and same-kind replacement keeps its own submit opening (267.890542ms)
+✔ Scene recovery ar: every rendered format and same-kind replacement keeps its own submit opening (254.718083ms)
+✔ Scene recovery ja: every rendered format and same-kind replacement keeps its own submit opening (242.694792ms)
+✔ Scene recovery en: closed, unauthorized and disconnected captured forms cannot submit (17.893917ms)
+✔ Scene recovery fr: closed, unauthorized and disconnected captured forms cannot submit (19.18425ms)
+✔ Scene recovery ar: closed, unauthorized and disconnected captured forms cannot submit (18.746125ms)
+✔ Scene recovery ja: closed, unauthorized and disconnected captured forms cannot submit (22.545833ms)
+✔ Scene receipt en/personal/synchronous: all seven original statuses open the actual exact input dialog (706.14875ms)
+✔ Scene receipt en/personal/queued: all seven original statuses open the actual exact input dialog (696.935541ms)
+✔ Scene receipt en/shared/synchronous: all seven original statuses open the actual exact input dialog (674.351666ms)
+✔ Scene receipt en/shared/queued: all seven original statuses open the actual exact input dialog (983.551042ms)
+✔ Scene receipt fr/personal/synchronous: all seven original statuses open the actual exact input dialog (820.593208ms)
+✔ Scene receipt fr/personal/queued: all seven original statuses open the actual exact input dialog (732.093709ms)
+✔ Scene receipt fr/shared/synchronous: all seven original statuses open the actual exact input dialog (711.876958ms)
+✔ Scene receipt fr/shared/queued: all seven original statuses open the actual exact input dialog (719.355417ms)
+✔ Scene receipt ar/personal/synchronous: all seven original statuses open the actual exact input dialog (889.343375ms)
+✔ Scene receipt ar/personal/queued: all seven original statuses open the actual exact input dialog (964.542125ms)
+✔ Scene receipt ar/shared/synchronous: all seven original statuses open the actual exact input dialog (927.996459ms)
+✔ Scene receipt ar/shared/queued: all seven original statuses open the actual exact input dialog (900.581042ms)
+✔ Scene receipt ja/personal/synchronous: all seven original statuses open the actual exact input dialog (1006.178875ms)
+✔ Scene receipt ja/personal/queued: all seven original statuses open the actual exact input dialog (870.108917ms)
+✔ Scene receipt ja/shared/synchronous: all seven original statuses open the actual exact input dialog (832.17975ms)
+✔ Scene receipt ja/shared/queued: all seven original statuses open the actual exact input dialog (840.690917ms)
+✖ Scene continuation en/personal/canceled: fresh unused proof → explicit new free plan → separate Create (578.326042ms)
+✖ Scene continuation en/personal/source failure: fresh unused proof → explicit new free plan → separate Create (505.472958ms)
+✖ Scene continuation en/shared/canceled: fresh unused proof → explicit new free plan → separate Create (567.7165ms)
+✖ Scene continuation en/shared/source failure: fresh unused proof → explicit new free plan → separate Create (607.198458ms)
+✖ Scene continuation fr/personal/canceled: fresh unused proof → explicit new free plan → separate Create (537.732833ms)
+✖ Scene continuation fr/personal/source failure: fresh unused proof → explicit new free plan → separate Create (494.79725ms)
+✖ Scene continuation fr/shared/canceled: fresh unused proof → explicit new free plan → separate Create (570.123416ms)
+✖ Scene continuation fr/shared/source failure: fresh unused proof → explicit new free plan → separate Create (570.921458ms)
+✖ Scene continuation ar/personal/canceled: fresh unused proof → explicit new free plan → separate Create (524.470375ms)
+✖ Scene continuation ar/personal/source failure: fresh unused proof → explicit new free plan → separate Create (498.549792ms)
+✖ Scene continuation ar/shared/canceled: fresh unused proof → explicit new free plan → separate Create (471.325708ms)
+✖ Scene continuation ar/shared/source failure: fresh unused proof → explicit new free plan → separate Create (459.972042ms)
+✖ Scene continuation ja/personal/canceled: fresh unused proof → explicit new free plan → separate Create (518.1835ms)
+✖ Scene continuation ja/personal/source failure: fresh unused proof → explicit new free plan → separate Create (564.139708ms)
+✖ Scene continuation ja/shared/canceled: fresh unused proof → explicit new free plan → separate Create (531.167458ms)
+✖ Scene continuation ja/shared/source failure: fresh unused proof → explicit new free plan → separate Create (571.954208ms)
+✔ Scene receipt: shared original omitted from the activity feed still opens through the existing exact private receipt (639.607459ms)
+✔ Scene receipt: cached personal private input stays closed while a new exact read is pending or denied (519.175417ms)
+✔ Scene recovery en: changing a format within one opening cannot reuse its earlier submit callback (67.110208ms)
+✔ Scene recovery fr: changing a format within one opening cannot reuse its earlier submit callback (74.4765ms)
+✔ Scene recovery ar: changing a format within one opening cannot reuse its earlier submit callback (72.242209ms)
+✔ Scene recovery ja: changing a format within one opening cannot reuse its earlier submit callback (71.227208ms)
+✖ Scene continuation en: an expired offered New action performs a fresh free certification, not a dead click or stale approval (466.655958ms)
+✖ Scene continuation fr: an expired offered New action performs a fresh free certification, not a dead click or stale approval (434.834584ms)
+✖ Scene continuation ar: an expired offered New action performs a fresh free certification, not a dead click or stale approval (438.656417ms)
+✖ Scene continuation ja: an expired offered New action performs a fresh free certification, not a dead click or stale approval (480.024458ms)
+✖ Scene continuation en: fresh unknown, missing and held evidence never replaces a canceled original (445.091ms)
+✖ Scene continuation fr: fresh unknown, missing and held evidence never replaces a canceled original (458.48675ms)
+✖ Scene continuation ar: fresh unknown, missing and held evidence never replaces a canceled original (525.527083ms)
+✖ Scene continuation ja: fresh unknown, missing and held evidence never replaces a canceled original (545.181791ms)
+✖ Scene continuation: close while fresh eligibility is pending cannot allocate or approve changed work (536.218916ms)
+✖ Scene continuation: replacement while fresh eligibility is pending cannot allocate or approve changed work (502.525917ms)
+✖ Scene continuation: route while fresh eligibility is pending cannot allocate or approve changed work (542.093292ms)
+✖ Scene continuation: document while fresh eligibility is pending cannot allocate or approve changed work (507.842792ms)
+✖ Scene continuation: authority while fresh eligibility is pending cannot allocate or approve changed work (442.543875ms)
+✖ Scene continuation: source while fresh eligibility is pending cannot allocate or approve changed work (436.755083ms)
+✔ Scene composer: old short_story close/submit callbacks cannot dismiss a newer opening before-render (10.102209ms)
+✔ Scene composer: old short_story close/submit callbacks cannot dismiss a newer opening after-render (6.791416ms)
+✔ Scene composer: old scene close/submit callbacks cannot dismiss a newer opening before-render (22.346166ms)
+✔ Scene composer: old scene close/submit callbacks cannot dismiss a newer opening after-render (24.005709ms)
+✔ Scene receipt personal: replacement during handoff prevents late private restoration (594.184166ms)
+✔ Scene receipt personal: route during handoff prevents late private restoration (581.6395ms)
+✔ Scene receipt personal: document during handoff prevents late private restoration (508.191125ms)
+✔ Scene receipt personal: authority during handoff prevents late private restoration (444.072667ms)
+✔ Scene receipt personal: replacement during read prevents late private restoration (466.0385ms)
+✔ Scene receipt personal: route during read prevents late private restoration (532.753083ms)
+✔ Scene receipt personal: document during read prevents late private restoration (519.493833ms)
+✔ Scene receipt personal: authority during read prevents late private restoration (637.480167ms)
+✔ Scene receipt shared: replacement during handoff prevents late private restoration (610.574625ms)
+✔ Scene receipt shared: route during handoff prevents late private restoration (591.681458ms)
+✔ Scene receipt shared: document during handoff prevents late private restoration (610.35425ms)
+✔ Scene receipt shared: authority during handoff prevents late private restoration (524.075083ms)
+✔ Scene receipt shared: replacement during read prevents late private restoration (465.090875ms)
+✔ Scene receipt shared: route during read prevents late private restoration (482.092583ms)
+✔ Scene receipt shared: document during read prevents late private restoration (461.668667ms)
+✔ Scene receipt shared: authority during read prevents late private restoration (431.16375ms)
+✔ Scene receipt: a newer actual output viewer supersedes the old handoff without being closed (511.709375ms)
+✔ Scene receipt: a newer actual output viewer supersedes the old read without being closed (411.817542ms)
+✔ Scene receipt personal: the existing direct job action remains a positive control (421.881208ms)
+✔ Scene receipt shared: the existing direct job action remains a positive control (508.724292ms)
+✔ Scene receipt personal: an older generic read cannot overwrite a newer Scene-owned receipt (553.553416ms)
+✔ Scene receipt shared: an older generic read cannot overwrite a newer Scene-owned receipt (730.995625ms)
+✖ Scene normal completion boundary: repaired shared source waits for the actual response without another action (560.660667ms)
+ℹ tests 93
+ℹ suites 0
+ℹ pass 62
+ℹ fail 31
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 48944.664792
+
+✖ failing tests:
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation en/personal/canceled: fresh unused proof → explicit new free plan → separate Create (578.326042ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation en/personal/source failure: fresh unused proof → explicit new free plan → separate Create (505.472958ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation en/shared/canceled: fresh unused proof → explicit new free plan → separate Create (567.7165ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation en/shared/source failure: fresh unused proof → explicit new free plan → separate Create (607.198458ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation fr/personal/canceled: fresh unused proof → explicit new free plan → separate Create (537.732833ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation fr/personal/source failure: fresh unused proof → explicit new free plan → separate Create (494.79725ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation fr/shared/canceled: fresh unused proof → explicit new free plan → separate Create (570.123416ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation fr/shared/source failure: fresh unused proof → explicit new free plan → separate Create (570.921458ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation ar/personal/canceled: fresh unused proof → explicit new free plan → separate Create (524.470375ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation ar/personal/source failure: fresh unused proof → explicit new free plan → separate Create (498.549792ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation ar/shared/canceled: fresh unused proof → explicit new free plan → separate Create (471.325708ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation ar/shared/source failure: fresh unused proof → explicit new free plan → separate Create (459.972042ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation ja/personal/canceled: fresh unused proof → explicit new free plan → separate Create (518.1835ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation ja/personal/source failure: fresh unused proof → explicit new free plan → separate Create (564.139708ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation ja/shared/canceled: fresh unused proof → explicit new free plan → separate Create (531.167458ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:169:1
+✖ Scene continuation ja/shared/source failure: fresh unused proof → explicit new free plan → separate Create (571.954208ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:170:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:226:43
+✖ Scene continuation en: an expired offered New action performs a fresh free certification, not a dead click or stale approval (466.655958ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:227:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:226:43
+✖ Scene continuation fr: an expired offered New action performs a fresh free certification, not a dead click or stale approval (434.834584ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:227:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:226:43
+✖ Scene continuation ar: an expired offered New action performs a fresh free certification, not a dead click or stale approval (438.656417ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:227:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:226:43
+✖ Scene continuation ja: an expired offered New action performs a fresh free certification, not a dead click or stale approval (480.024458ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:227:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:239:43
+✖ Scene continuation en: fresh unknown, missing and held evidence never replaces a canceled original (445.091ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:240:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:239:43
+✖ Scene continuation fr: fresh unknown, missing and held evidence never replaces a canceled original (458.48675ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:240:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:239:43
+✖ Scene continuation ar: fresh unknown, missing and held evidence never replaces a canceled original (525.527083ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:240:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:239:43
+✖ Scene continuation ja: fresh unknown, missing and held evidence never replaces a canceled original (545.181791ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:240:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:259:87
+✖ Scene continuation: close while fresh eligibility is pending cannot allocate or approve changed work (536.218916ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:260:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:259:87
+✖ Scene continuation: replacement while fresh eligibility is pending cannot allocate or approve changed work (502.525917ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:260:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:259:87
+✖ Scene continuation: route while fresh eligibility is pending cannot allocate or approve changed work (542.093292ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:260:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:259:87
+✖ Scene continuation: document while fresh eligibility is pending cannot allocate or approve changed work (507.842792ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:260:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:259:87
+✖ Scene continuation: authority while fresh eligibility is pending cannot allocate or approve changed work (442.543875ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:260:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:259:87
+✖ Scene continuation: source while fresh eligibility is pending cannot allocate or approve changed work (436.755083ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:260:24)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at tests/scene-composer-recovery.test.mjs:344:1
+✖ Scene normal completion boundary: repaired shared source waits for the actual response without another action (560.660667ms)
+  AssertionError [ERR_ASSERTION]: undefined == true
+      at f.fill (file:///private/tmp/forma-e4-baseline/tests/scene-composer-recovery-fixture.mjs:127:189)
+      at unusedOriginal (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:164:31)
+      at async TestContext.<anonymous> (/private/tmp/forma-e4-baseline/tests/scene-composer-recovery.test.mjs:345:31)
+      at async Test.run (node:internal/test_runner/test:1313:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:897:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

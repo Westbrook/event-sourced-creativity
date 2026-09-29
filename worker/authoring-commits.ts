@@ -226,7 +226,3 @@ export async function commitAuthoringPlan(env:WorkerEnv,user:PilotUser,current:C
   }
   return plan.result;
 }
-
-// A separate typed side-effect receipt: ordinary document plans/event proofs stay unchanged.
-export { createAuthoringStudyApproval } from './authoring-study-approval.ts';
-export type { StudyApprovalProposal, StudyApprovalCommand, StudyApprovalConfiguration } from './authoring-study-types.ts';

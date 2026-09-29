@@ -1,0 +1,82 @@
+{
+  "task": "D",
+  "status": "local_complete_unreviewed",
+  "version": "responses-image-offline-2026-09-22-v1",
+  "workspace": "/Users/westbrook/.codex/worktrees/responses-image-disabled/codex",
+  "branch": "codex/responses-image-disabled",
+  "baseCommit": "2a0caa914a0c57002f9b69ff3b60cb3d6d8a687f",
+  "verifiedReleaseBaseline": "faa8fb42b7295c24e6ac35921586cc5cf511a840",
+  "currentMainAtFinalReview": "2a0caa914a0c57002f9b69ff3b60cb3d6d8a687f",
+  "document": "docs/responses-image-task-d.md",
+  "module": "worker/responses-image-experiment.ts",
+  "recipe": "docs/fixtures/responses-image-two-arm-recipe.json",
+  "reviewUrl": "http://127.0.0.1:4212/",
+  "reportUrl": "http://127.0.0.1:4187/",
+  "implementation": {
+    "disabled": true,
+    "liveTransport": false,
+    "runtime": "responses_runtime_unqualified",
+    "financial": "unavailable",
+    "maximumCostMicrousd": null,
+    "mainlineModel": "gpt-5.5",
+    "imageToolModel": "gpt-image-2.5-sunburst",
+    "automaticReplacementPurchases": 0
+  },
+  "verification": {
+    "tests": 99,
+    "failures": 0,
+    "newTaskDTests": 22,
+    "typecheck": "passed",
+    "changedFileLint": "passed",
+    "providerCalls": 0,
+    "spendMicrousd": 0,
+    "deployments": 0,
+    "commands": [
+      "node --import tsx --test tests/responses-image-experiment.test.mjs tests/image-operation-capabilities.test.mjs tests/image-financial-qualification.test.mjs tests/generation-outcome-evidence.test.mjs tests/flare-draft-generation.test.mjs tests/image-generation.test.mjs tests/native-image-generation.test.mjs",
+      "node node_modules/typescript/bin/tsc --noEmit",
+      "node node_modules/eslint/bin/eslint.js worker/responses-image-experiment.ts tests/responses-image-experiment.test.mjs"
+    ]
+  },
+  "officialSchema": {
+    "url": "https://developers.openai.com/api/reference/resources/responses/methods/create",
+    "fetched": "2026-09-22",
+    "markdownSha256": "5d7f689999e8464a602a155d9e0530f6389d3c867f7d649a74351aa4406fa0ab"
+  },
+  "coordination": "H confirmed additive-only work; no central hooks required for offline module. H owns any later runtime/persistence integration. F2 allowance does not transfer.",
+  "unchanged": [
+    "worker/openai-adapter.ts",
+    "worker/document-jobs-api.ts",
+    "src/model/generation-outcome-evidence.ts",
+    "worker/image-operation-capabilities.ts",
+    "K read-only runner",
+    "production routing/defaults",
+    "private Memory activation/custody/moderation",
+    "historical incident evidence"
+  ],
+  "tested": [
+    "Exact request/context/assets/settings hashes and recipe parity",
+    "Mocked success/error/no-tool/refusal/incomplete, optional identity/revision, usage absence/invalidity",
+    "Unsupported stream/partial/error/truncation and duplicate events",
+    "Cancellation/uncertainty identities and zero automatic replacements",
+    "A operation mapping and non-additive stage accounting",
+    "Existing routing, streaming, financial and native image regression tests"
+  ],
+  "proposals": [
+    "Owner/retention-bound private persistence and financial checkpoint integration by H",
+    "Exact route runtime/usage/cost qualification under separately reviewed manifest and authorization",
+    "Paired direct-versus-Responses comparison; orchestration/revision are treatment",
+    "Later model-by-route and clean-prompt-by-route interactions after isolated results"
+  ],
+  "limitations": [
+    "Held-object parser is not a bounded network/JSON reader; no network transport implemented",
+    "PNG signature fixture does not prove decoded image usability, fidelity or dimensions",
+    "No empirical access, runtime, provider cancellation/recovery, billing or refusal-rate evidence",
+    "Mainline/image usage overlap unqualified; no-tool can incur mainline cost",
+    "No private incident/source retrieval performed; authorization booleans grant no access"
+  ],
+  "crossMedia": "Only identity, privacy, all-exit accounting and no-replacement principles transfer as proposals. No audio/video/3D/text tool schema or cost qualification is implied.",
+  "unresolvedFeedback": [],
+  "userReview": "unacknowledged",
+  "next": "H review/link isolated D module; proceed with first C direct screen independently. Keep D runtime and finance blocks until separately qualified and authorized.",
+  "restart": "python3 -m http.server 4212 --bind 127.0.0.1 --directory /Users/westbrook/.codex/visualizations/2026/09/22/01a0ca17-e9ea-7a13-b537-b8625bcf5640/responses-image-review"
+}

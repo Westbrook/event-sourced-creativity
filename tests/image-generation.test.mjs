@@ -1,0 +1,286 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
+import test from "node:test";
+import ts from "typescript";
+import { buildCreativeImagePrompt, buildPixelReferenceDirectives, buildSpatialDirectives, generateCreativeDirection, generateCreativeImage, respondToCreativeChat, structureAdaptiveContext } from "../worker/openai-adapter.ts";
+import { audioFileExtension, audioMimeType } from "../src/model/audio.ts";
+import { verifiedAudioTiming } from "../src/model/audio-container.ts";
+import { foldEvents } from "../src/model/events.ts";
+import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
+import { MODEL3D_MIME_TYPE, validateModel3dAsset, validateModel3dContainer } from "../src/model/model3d-assets.ts";
+import { providerFailurePrompt } from "../worker/provider-errors.ts";
+
+const moderationPass=()=>Response.json({id:"modr_test",model:"omni-moderation-latest",results:[{flagged:false,categories:{},category_scores:{}}]});
+
+test("builds a GPT Image prompt that preserves role, intent, and negative constraints",()=>{
+  const prompt=buildCreativeImagePrompt({facts:[{block_id:"subject",role:"subject",intent:"avoid",effect:"must_not_include",properties:{text:"people under 20 years old"}},{block_id:"reference",role:"reference",intent:"include",properties:{label:"Casting reference"}}],relationships:[{relation_id:"relation",from_block_id:"subject",to_block_id:"reference",kind:"subject_reference"}]},{title:"Quiet interior",scene:"A still room after dusk"});
+  assert.match(prompt,/Create one polished landscape image/);
+  assert.match(prompt,/effect must_not_include/);
+  assert.match(prompt,/people under 20 years old/);
+  assert.match(prompt,/Never promote that content/);
+  assert.match(prompt,/subject_reference/);assert.match(prompt,/target block supports the source block/);
+});
+
+test("sends the requested prompt representation without changing the image request profile",async()=>{
+  const originalFetch=globalThis.fetch;const prompts=[];globalThis.fetch=async(url,init)=>{if(String(url).endsWith("/moderations"))return moderationPass();prompts.push(JSON.parse(String(init.body)).prompt);return Response.json({data:[{b64_json:btoa("image")}],usage:{total_tokens:1}});};
+  try{for(const promptTechnique of ["prose","bullets","json","xml"])await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[{block_id:"b",role:"direction",properties:{text:"Quiet field"}}]},{title:"Study"},{promptTechnique});}finally{globalThis.fetch=originalFetch;}
+  assert.match(prompts[0],/^Create one polished landscape/);assert.match(prompts[1],/Document decisions:/);assert.equal(JSON.parse(prompts[2]).operation,"generate_image");assert.match(prompts[3],/<image-generation-prompt/);assert.equal(new Set(prompts).size,4);
+});
+
+test("turns every spatial block scope into an explicit image-generation directive",()=>{
+  const snapshot={facts:[
+    {block_id:"subject-1",role:"subject",intent:"include",properties:{text:"glass vessel",weight:.8,spatial_scope:{kind:"aabb",aabb:{x:.62,y:.18,width:.28,height:.54},falloff:"hard"}}},
+    {block_id:"light-1",role:"lighting",intent:"prefer",properties:{text:"warm rim light",weight:.65,spatial_scope:{kind:"subject",subject_block_id:"subject-1",subject_relation:"around",falloff:"soft",feather:.25}}},
+    {block_id:"quiet-1",role:"composition",intent:"include",properties:{text:"negative space",weight:.5,spatial_scope:{kind:"region",region:"custom",instruction:"quiet upper-left field",polarity:"inside",falloff:"contextual"}}},
+    {block_id:"paused-1",role:"material",intent:"include",active:false,properties:{text:"polished chrome",weight:0}},
+  ]};
+  const directives=buildSpatialDirectives(snapshot);
+  assert.equal(directives.length,3);
+  assert.match(directives[0],/left 62%, top 18%, width 28%, height 54%/);
+  assert.match(directives[1],/around the subject “glass vessel”/);
+  assert.match(directives[2],/quiet upper-left field/);
+  assert.doesNotMatch(directives.join(" "),/polished chrome/);
+  const prompt=buildCreativeImagePrompt(snapshot,{title:"Spatial study"});
+  assert.match(prompt,/Spatial application map/);
+  assert.match(prompt,/spatial scope.*requirements/i);
+  assert.match(prompt,/quiet upper-left field/);
+  assert.doesNotMatch(prompt,/polished chrome/);
+});
+
+test("calls the direct Image API with GPT-image-2.5 Sunburst, project attribution, and decodes one private image",async()=>{
+  const originalFetch=globalThis.fetch;let requestBody;let requestHeaders;
+  globalThis.fetch=async(url,init)=>{if(String(url).endsWith("/moderations"))return moderationPass();assert.equal(url,"https://api.openai.com/v1/images/generations");requestBody=JSON.parse(String(init.body));requestHeaders=new Headers(init.headers);return Response.json({created:1786406400,data:[{b64_json:btoa("png-bytes")}],usage:{input_tokens:120,output_tokens:900,total_tokens:1020}});};
+  try{
+    const result=await generateCreativeImage({OPENAI_API_KEY:"test-only",OPENAI_PROJECT:"proj_test"},"user-1",{facts:[]},{title:"Study"});
+    assert.equal(requestBody.model,"gpt-image-2.5-sunburst");assert.equal(requestBody.size,"1536x1024");assert.equal(requestBody.quality,"high");assert.equal(requestBody.n,1);
+    assert.equal(requestHeaders.get("OpenAI-Project"),"proj_test");
+    assert.equal(new TextDecoder().decode(result.bytes),"png-bytes");assert.equal(result.usage.totalTokens,1020);assert.equal(result.mimeType,"image/png");
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("rejects invalid GPT Image 2.5 Sunburst dimensions before a paid provider request",async()=>{
+  const originalFetch=globalThis.fetch;let requests=0;globalThis.fetch=async()=>{requests+=1;return Response.json({});};
+  try{
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Invalid portrait"},{quality:"low",size:"544x816"}),error=>{
+      assert.equal(error.detail.code,"invalid_image_size");assert.equal(error.detail.action,"edit_request");assert.equal(error.detail.retryable,false);assert.match(error.detail.message,/at least 655,360 pixels/);return true;
+    });
+    assert.equal(requests,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("preserves the exact image prompt when moderation stops a generation",async()=>{
+  const originalFetch=globalThis.fetch;globalThis.fetch=async(url)=>String(url).endsWith("/moderations")?moderationPass():Response.json({error:{message:"Your request was rejected by the safety system.",type:"image_generation_user_error"}},{status:400,headers:{"x-request-id":"req_prompt_receipt"}});
+  try{
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[{block_id:"subject",role:"subject",properties:{text:"Editorial portrait"}}]},{title:"Moderation receipt study"}),error=>{
+      assert.match(providerFailurePrompt(error)??"",/Moderation receipt study/);
+      assert.equal(error.detail.category,"safety");assert.equal(error.detail.requestId,"req_prompt_receipt");return true;
+    });
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("screens the exact prompt and selected reference pixels before paid image work",async()=>{
+  const originalFetch=globalThis.fetch;let requests=0;globalThis.fetch=async(url)=>{requests+=1;assert.equal(url,"https://api.openai.com/v1/moderations");return requests===1?moderationPass():Response.json({id:"modr_flagged",model:"omni-moderation-latest",results:[{flagged:true,categories:{violence:true},category_scores:{violence:.91}}]},{headers:{"x-request-id":"req_preflight"}});};
+  try{
+    const reference={bytes:new TextEncoder().encode("reference-pixels"),mimeType:"image/png",label:"Action reference",referenceId:"reference-1",source:"uploaded-reference"};
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[{block_id:"direction",role:"direction",properties:{text:"Editorial action study"}}]},{title:"Safety review study"},{references:[reference]}),error=>{
+      assert.equal(error.detail.code,"safety_preflight_flagged");assert.deepEqual(error.detail.riskCategories,["violence"]);assert.deepEqual(error.detail.contributingReferenceIds,["reference-1"]);assert.equal(error.detail.requestId,"req_preflight");assert.match(providerFailurePrompt(error)??"",/Safety review study/);return true;
+    });
+    assert.equal(requests,2);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("moderates every reference with a valid one-image probe before a multi-image edit",async()=>{
+  const originalFetch=globalThis.fetch;const moderationInputs=[];let editRequest=null;
+  globalThis.fetch=async(url,init)=>{
+    if(String(url).endsWith("/moderations")){
+      const input=JSON.parse(String(init.body)).input;moderationInputs.push(input);
+      const imageCount=Array.isArray(input)?input.filter((item)=>item?.type==="image_url").length:0;
+      if(imageCount>1)return Response.json({error:{code:"invalid_value",message:`Number of images (${imageCount}) exceeds maximum of 1`}},{status:400});
+      return moderationPass();
+    }
+    assert.equal(url,"https://api.openai.com/v1/images/edits");editRequest=init;
+    return Response.json({data:[{b64_json:btoa("composed-image")}],usage:{total_tokens:12}});
+  };
+  try{
+    const references=Array.from({length:6},(_,index)=>({bytes:new TextEncoder().encode(`reference-${index}`),mimeType:index%2?"image/jpeg":"image/png",label:`Reference ${index+1}`,referenceId:`reference-${index+1}`,source:index<2?"actual-data-mock":"locked-study"}));
+    const result=await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Study-heavy composition"},{references});
+    assert.equal(new TextDecoder().decode(result.bytes),"composed-image");assert.equal(result.referenceCount,6);
+    assert.equal(moderationInputs.length,7);assert.equal(moderationInputs[0].filter((item)=>item.type==="image_url").length,0);
+    assert.ok(moderationInputs.slice(1).every((input)=>input.filter((item)=>item.type==="image_url").length===1));
+    assert.ok(editRequest?.body instanceof FormData);assert.equal(editRequest.body.get("model"),"gpt-image-2.5-sunburst");assert.equal(result.model,"gpt-image-2.5-sunburst");assert.equal(editRequest.body.getAll("image[]").length,6);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("stops before image generation when any independently moderated reference is flagged",async()=>{
+  const originalFetch=globalThis.fetch;let moderationRequests=0;let imageRequests=0;
+  globalThis.fetch=async(url)=>{
+    if(!String(url).endsWith("/moderations")){imageRequests+=1;return Response.json({data:[{b64_json:btoa("should-not-exist")}]});}
+    moderationRequests+=1;
+    return moderationRequests===3?Response.json({id:"modr_reference_2",model:"omni-moderation-latest",results:[{flagged:true,categories:{violence:true},category_scores:{violence:.88}}]},{headers:{"x-request-id":"req_reference_2"}}):moderationPass();
+  };
+  try{
+    const references=[1,2,3].map((number)=>({bytes:new TextEncoder().encode(`reference-${number}`),mimeType:"image/png",label:`Reference ${number}`,referenceId:`reference-${number}`,source:"locked-study"}));
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Guarded composition"},{references}),error=>{
+      assert.equal(error.detail.code,"safety_preflight_flagged");assert.deepEqual(error.detail.contributingReferenceIds,["reference-2"]);assert.equal(error.detail.requestId,"req_reference_2");return true;
+    });
+    assert.equal(moderationRequests,4);assert.equal(imageRequests,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("rejects unusable reference bytes before moderation or image generation",async()=>{
+  const originalFetch=globalThis.fetch;let requests=0;globalThis.fetch=async()=>{requests+=1;return Response.json({});};
+  try{
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Empty reference"},{references:[{bytes:new Uint8Array(),mimeType:"image/png",source:"uploaded-reference"}]}),error=>error.detail.code==="reference_image_empty");
+    await assert.rejects(()=>generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"SVG reference"},{references:[{bytes:new Uint8Array([1]),mimeType:"image/svg+xml",source:"uploaded-reference"}]}),error=>error.detail.code==="reference_image_type_unsupported");
+    assert.equal(requests,0);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("preserves planner instructions and context when moderation stops before image submission",async()=>{
+  const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json({error:{message:"Request was rejected by moderation.",type:"content_policy_violation"}},{status:400});
+  try{
+    await assert.rejects(()=>generateCreativeDirection({OPENAI_API_KEY:"test-only"},"user-1",{document:{title:"Planning receipt"}}),error=>{
+      const submitted=providerFailurePrompt(error)??"";assert.match(submitted,/creative-direction planner instructions/i);assert.match(submitted,/Planning receipt/);assert.equal(error.detail.category,"safety");return true;
+    });
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("all creative assistants exclude muted decisions while preserving editable identities and isolated group meaning",async()=>{
+  const originalFetch=globalThis.fetch;const requests=[];
+  const membership={context_set_id:"private-group",name:"Lead character",role:"character",target:"Mara",application:"isolate",relativity:.9,member_order:0,source_canvas_id:"private-canvas"};
+  const blocks=[
+    {id:"active-block",block_id:"active-block",type:"subject",properties:{text:"Mara in a rust rain shell",weight:.9,combined_context_memberships:[membership],content_ref:"private-content"},source_event_refs:["private-event"]},
+    {id:"muted-block",block_id:"muted-block",type:"subject",active:false,properties:{text:"suppressed unsafe content",weight:.8,combined_context_memberships:[membership]}},
+    {id:"weightless-block",block_id:"weightless-block",type:"direction",properties:{text:"zero-weight hidden content",weight:0,combined_context_memberships:[membership]}},
+  ];
+  const results=[
+    {title:"Field study",rationale:"Keep Mara recognizable.",scene:"Mara crosses the field.",palette:["#704214","#D8C8A7","#344B43"],next_moves:["Refine the shell","Keep the field quiet"]},
+    {reply:"Mara keeps the rust rain shell.",mutations:[],preview_direction:"Mara crosses the field in her rust rain shell.",preview_worthy:false},
+    {interpretation:"A field portrait",active_decision:{type:"subject",label:"Mara",prompt:"Clarify Mara's role",why:"She anchors the scene."},suggested_blocks:[],hidden_until_later:[]},
+  ];
+  globalThis.fetch=async(_url,init)=>{requests.push(JSON.parse(String(init.body)));return Response.json({id:`response-${requests.length}`,model:"gpt-test",output_text:JSON.stringify(results[requests.length-1]),usage:{input_tokens:20,output_tokens:10,total_tokens:30}});};
+  try{
+    await generateCreativeDirection({OPENAI_API_KEY:"test-only"},"user-1",{document:{title:"Field study"},facts:blocks,context_groups:[{id:"private-group"}]},undefined,"ja-JP");
+    await respondToCreativeChat({OPENAI_API_KEY:"test-only"},"user-1",{documentTitle:"Field study",blocks,history:[],message:"Keep Mara's rain shell.",locale:"ja-JP"});
+    await structureAdaptiveContext({OPENAI_API_KEY:"test-only"},"user-1",{documentTitle:"Field study",blocks,intent:"Strengthen Mara's portrait.",locale:"ja-JP"});
+  }finally{globalThis.fetch=originalFetch;}
+  assert.equal(requests.length,3);
+  for(const request of requests){
+    const providerInput=JSON.parse(request.input),serialized=JSON.stringify(providerInput);
+    assert.match(request.instructions,/Work only from active, authorized creative decisions/);
+    assert.match(serialized,/Mara in a rust rain shell/);
+    assert.doesNotMatch(serialized,/suppressed unsafe content|zero-weight hidden content|private-group|private-event|private-canvas|private-content/);
+    assert.equal(providerInput.combined_context_plan.length,1);
+    assert.equal(providerInput.combined_context_plan[0].context_key,"context_group_1");
+    assert.equal(providerInput.combined_context_plan[0].target,"Mara");
+  }
+  assert.doesNotMatch(requests[0].input,/active-block/,"a rendering planner needs semantic request-local aliases, not durable block identifiers");
+  assert.equal(JSON.parse(requests[0].input).facts[0].decision_key,"decision_1");
+  assert.equal(JSON.parse(requests[1].input).blocks[0].id,"active-block");
+  assert.equal(JSON.parse(requests[2].input).blocks.length,1);
+  assert.match(requests[0].instructions,/selected language \(ja-JP\)/);
+  assert.match(requests[0].instructions,/Preserve the original language and exact text of user-authored document titles/);
+  assert.match(requests[1].instructions,/selected language \(ja-JP\)/);
+  assert.match(requests[2].instructions,/selected language \(ja-JP\)/);
+  assert.match(requests[1].instructions,/Preserve user-authored titles, quoted text, names, and creative decisions verbatim/);
+  assert.match(requests[2].instructions,/never translate machine identifiers, block type values, or structured field names/);
+});
+
+test("documents project attribution for every direct OpenAI request",async()=>{
+  const adapter=await readFile(new URL("../worker/openai-adapter.ts",import.meta.url),"utf8");
+  assert.ok((adapter.match(/headers:\s*(?:\{\.\.\.)?openAIHeaders\(env\)/g)??[]).length>=4);
+  assert.match(adapter,/headers:\s*(?:\{\.\.\.)?openAIAuthHeaders\(env\)/);
+});
+
+test("uses the small compressed preview profile and hands multiple policy-labelled images to the high-quality edit request",async()=>{
+  const originalFetch=globalThis.fetch;const calls=[];
+  globalThis.fetch=async(url,init)=>{if(String(url).endsWith("/moderations"))return moderationPass();calls.push({url,init});return Response.json({data:[{b64_json:btoa("image")}],usage:{total_tokens:12}});};
+  try{
+    await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Draft"},{quality:"low",size:"816x816",outputFormat:"jpeg",outputCompression:70});
+    const draftBody=JSON.parse(String(calls[0].init.body));assert.equal(calls[0].url,"https://api.openai.com/v1/images/generations");assert.equal(draftBody.quality,"low");assert.equal(draftBody.size,"816x816");assert.equal(draftBody.output_format,"jpeg");assert.equal(draftBody.output_compression,70);
+    const reference=new TextEncoder().encode("draft-image");const uploaded=new TextEncoder().encode("uploaded-image");await generateCreativeImage({OPENAI_API_KEY:"test-only",OPENAI_PROJECT:"proj_test"},"user-1",{facts:[]},{title:"Final"},{quality:"high",size:"1536x1024",references:[{bytes:reference,mimeType:"image/png",label:"Selected draft",source:"ideation-preview"},{bytes:uploaded,mimeType:"image/jpeg",label:"Amber window",blockId:"reference-1",mode:"preserve_composition",source:"uploaded-reference"}]});
+    assert.equal(calls[1].url,"https://api.openai.com/v1/images/edits");assert.ok(calls[1].init.body instanceof FormData);assert.equal(calls[1].init.body.get("quality"),"high");assert.equal(calls[1].init.body.get("size"),"1536x1024");assert.equal(calls[1].init.body.getAll("image[]").length,2);assert.ok(calls[1].init.body.getAll("image[]").every((value)=>value instanceof Blob));assert.match(String(calls[1].init.body.get("prompt")),/Image 1 is the selected working draft/);assert.match(String(calls[1].init.body.get("prompt")),/preserve the reference image's composition/i);assert.equal(new Headers(calls[1].init.headers).get("OpenAI-Project"),"proj_test");assert.equal(new Headers(calls[1].init.headers).has("content-type"),false);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("explains reference pixel policy without attaching context-only images",()=>{
+  const directives=buildPixelReferenceDirectives([{bytes:new Uint8Array([1]),mimeType:"image/jpeg",label:"Texture study",mode:"preserve_style",source:"uploaded-reference"}]);
+  assert.match(directives,/Image 1/);assert.match(directives,/Texture study/);assert.match(directives,/material language/);
+  assert.match(buildPixelReferenceDirectives([]),/No source-image pixels are attached/);
+});
+
+test("streams one early GPT Image preview before returning the completed JPEG",async()=>{
+  const originalFetch=globalThis.fetch;const partials=[];let requestBody;
+  globalThis.fetch=async(_url,init)=>{if(String(_url).endsWith("/moderations"))return moderationPass();requestBody=JSON.parse(String(init.body));const events=[{type:"image_generation.partial_image",b64_json:btoa("partial-jpeg"),created_at:1,size:"816x816",quality:"low",output_format:"jpeg",partial_image_index:0},{type:"image_generation.completed",b64_json:btoa("final-jpeg"),created_at:2,size:"816x816",quality:"low",output_format:"jpeg",usage:{input_tokens:20,output_tokens:196,total_tokens:216}}];return new Response(events.map((event)=>`data: ${JSON.stringify(event)}\n\n`).join(""),{headers:{"content-type":"text/event-stream"}});};
+  try{
+    const result=await generateCreativeImage({OPENAI_API_KEY:"test-only"},"user-1",{facts:[]},{title:"Draft"},{quality:"low",size:"816x816",outputFormat:"jpeg",outputCompression:70,partialImages:1,onPartial:(partial)=>partials.push(partial)});
+    assert.equal(requestBody.model,"gpt-image-2.5-flare");assert.equal(result.model,"gpt-image-2.5-flare");assert.equal(requestBody.stream,true);assert.equal(requestBody.partial_images,1);assert.equal(requestBody.output_format,"jpeg");assert.equal(partials.length,1);assert.equal(new TextDecoder().decode(partials[0].bytes),"partial-jpeg");assert.equal(partials[0].mimeType,"image/jpeg");assert.equal(new TextDecoder().decode(result.bytes),"final-jpeg");assert.equal(result.mimeType,"image/jpeg");assert.equal(result.partialCount,1);assert.equal(result.usage.totalTokens,216);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test("stores generated bytes in R2 and projects only the authenticated asset reference",async()=>{
+  const [eventApi,mediaApi]=await Promise.all([readFile(new URL("../worker/events-api.ts",import.meta.url),"utf8"),readFile(new URL("../worker/media-api.ts",import.meta.url),"utf8")]);
+  // Execute both complete production storage functions with their real pure
+  // helpers. Only R2 transport is simulated; this is not live R2/auth evidence.
+  const tree=ts.createSourceFile("media-api.ts",mediaApi,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+  assert.equal(tree.parseDiagnostics.length,0);
+  const source=["storeGeneratedMedia","storeGeneratedImage"].map(name=>{
+    const declaration=tree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name);
+    assert.ok(declaration,"actual storage function "+name);
+    return declaration.getText(tree).replace(/^export\s+/u,"");
+  }).join("\n");
+  const dependencies={audioFileExtension,audioMimeType,verifiedAudioTiming,ownerMediaNamespace,MODEL3D_MIME_TYPE,validateModel3dAsset,validateModel3dContainer};
+  const storeImage=new Function(...Object.keys(dependencies),stripTypeScriptTypes(source)+";return storeGeneratedImage;")(...Object.values(dependencies));
+  const expected=new Uint8Array([137,80,78,71,13,10,26,10]); // Synthetic bytes, not image-decoding evidence.
+  const padded=new Uint8Array([201,202,...expected,203,204]);
+  const prefix=new Uint8Array([...expected,203,204]);
+  const expectedHash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",expected)),byte=>byte.toString(16).padStart(2,"0")).join("");
+  const originalFetch=globalThis.fetch;let networkAttempts=0,mediaUrl;
+  globalThis.fetch=async()=>{networkAttempts++;throw new Error("Generated image storage fixture cannot use a network or provider");};
+  try{
+    for(const bytes of [expected.slice(),padded.subarray(2,2+expected.length),prefix.subarray(0,expected.length)]){
+      const before=bytes.slice(),puts=[];
+      const env={MEDIA:{async put(key,value,options){assert.ok(value instanceof ArrayBuffer);puts.push({key,bytes:new Uint8Array(value).slice(),options});}}};
+      const stored=await storeImage(env,"owner@example.com","generation-1",bytes,"gpt-image-2");
+      assert.equal(puts.length,1);const put=puts[0];
+      assert.deepEqual(put.bytes,expected,"Only the provided byte range may enter private storage");
+      assert.deepEqual(bytes,before,"Storage preserves the supplied view");
+      assert.equal(put.key,ownerMediaNamespace("owner@example.com")+"/generated/generation-1.png");
+      assert.deepEqual(put.options.httpMetadata,{contentType:"image/png"});
+      assert.deepEqual(put.options.customMetadata,{ownerId:"owner@example.com",artifactId:"generation-1",model:"gpt-image-2",source:"provider-image-api",sha256:expectedHash,mimeType:"image/png",generationId:"generation-1"});
+      assert.equal(stored.contentHash,expectedHash);assert.equal(stored.key,put.key);
+      assert.equal(stored.url,"/api/media/"+encodeURIComponent(put.key));mediaUrl=stored.url;
+    }
+    assert.equal(networkAttempts,0);
+  }finally{globalThis.fetch=originalFetch;}
+  const base={streamId:"s",occurredAt:"2026-08-11T12:00:00.000Z",recordedAt:"2026-08-11T12:00:00.000Z",clientId:"test",correlationId:"c",causationId:null,compensatesEventId:null,schemaVersion:1};
+  const projection=foldEvents([
+    {...base,eventId:"e1",sequence:1,actor:"user",type:"ProjectCreated",payload:{project_id:"p",name:"P"}},
+    {...base,eventId:"e2",sequence:2,actor:"user",type:"DocumentCreated",payload:{document_id:"d",project_id:"p",title:"D"}},
+    {...base,eventId:"e3",sequence:3,actor:"worker:generator",type:"GenerationCompleted",payload:{generation_id:"g",document_id:"d",model_id:"gpt-image-2",planner_model_id:"gpt-5.6-terra",object_ids:["o"],media_url:mediaUrl,media_type:"image/png",image_width:1536,image_height:1024}},
+  ]);
+  assert.equal(projection.outputs[0].mediaUrl,mediaUrl);assert.equal(projection.outputs[0].modelId,"gpt-image-2");assert.equal(projection.outputs[0].plannerModelId,"gpt-5.6-terra");assert.equal(projection.outputs[0].width,1536);
+  assert.doesNotMatch(eventApi,/b64_json/);assert.match(eventApi,/media_url:media\.url/);
+});
+
+test('software keywords never replace the exact moderation prompt or bypass a flagged preflight', async context => {
+  for (const keyword of ['software','code','coding','debug','debugging','bug','stack trace','developer','programmer','engineer']) {
+    const prompt=`Document a real murder at a crime scene. A ${keyword} label is nearby.`;
+    let moderationCalls=0,paidCalls=0;
+    context.mock.method(globalThis,'fetch',async(url,init)=>{
+      if(String(url)!=='https://api.openai.com/v1/moderations'){paidCalls++;throw new Error('No paid provider call is allowed');}
+      moderationCalls++;
+      assert.deepEqual(JSON.parse(init.body).input,[{type:'text',text:prompt}]);
+      return Response.json({results:[{flagged:true,categories:{violence:true},category_scores:{violence:.99}}]});
+    });
+    await assert.rejects(generateCreativeImage({OPENAI_API_KEY:'test-only'},'test-user',{}, {}, {preparedPrompt:prompt}),error=>{
+      assert.equal(error.detail.code,'safety_preflight_flagged');
+      assert.equal(providerFailurePrompt(error),prompt);
+      assert.equal(error.detail.moderationReceipt.promptNormalization,undefined);
+      return true;
+    });
+    assert.equal(moderationCalls,1);assert.equal(paidCalls,0);
+    context.mock.restoreAll();
+  }
+});

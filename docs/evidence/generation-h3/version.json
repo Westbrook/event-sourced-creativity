@@ -1,0 +1,14 @@
+{
+  "version": "h3-native-bindings-v1",
+  "integratedSource": "a5cedbbc5dfde9bde753403c3f71ffb2c958f11a",
+  "h2Source": "46153a831801d46c11dcb7d8802cd9cf9ee5c595",
+  "e2Source": "d5411eaca61efdc53f8cc4e2ac127cf33911cfd7",
+  "hFoundationEnvelope": "execution:11ed9d82d4fbeccd2dbd884a85b701116227b73910d79973a3a9b3441bb9afa6",
+  "previousEnvelopes": [
+    "evals/generation-reliability/bridge-artifacts/v1/first-study.json",
+    "evals/generation-reliability/bridge-artifacts/v2/first-study.json",
+    "evals/generation-reliability/bridge-artifacts/v3/first-study.json",
+    "evals/generation-reliability/bridge-artifacts/v4/first-study.json",
+    "evals/generation-reliability/bridge-artifacts/v5/first-study.json"
+  ]
+}

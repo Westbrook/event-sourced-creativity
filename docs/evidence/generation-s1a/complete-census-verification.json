@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-09-23T16:40:04.257961+00:00",
+  "publishedBase": "cf4b8243d206cac897871998f433402cf1306f7a",
+  "localPrevious": "4331f628ffaae4a2dd05f5a666ab31a149a844d9",
+  "helperCases": 56,
+  "sourceWorkerJourneys": 8,
+  "rebuiltWorkerJourneys": 8,
+  "workerSha256": "0122b1bcc436379085349db49cdae8ed26977cd993b77b022965f7ee645aded2",
+  "sourceHashes": {
+    "worker/generation-historical-census.ts": "34e78c4822a5222b5bf252f741262ede7af6867113e57aa6625af5abdec53702",
+    "worker/generation-source-evidence-read.ts": "c40c64845da56155b828dda64333603e5587f5b2a1f286757a88762bcbd97e10",
+    "worker/generation-historical-scope-proof.ts": "1a9c3b3b1ef28bed6b88d4e0aa9ae389131a18a7732a2bbc2e52042a58757c76",
+    "tests/generation-historical-census.test.mjs": "b77b035edd07b2e17446201044dcaa7add8c8badde1e72cc17207669afa05ea2",
+    "tests/event-save-repair.test.mjs": "662df164e1089972095b294c7e47aca4a4d4e9301acf6a6eff846252ba67beb8",
+    "tests/generation-historical-scope-proof.test.mjs": "4b53d6bd733b1c8d752d9de9f8576743f2ce73ade55526ee29efb0915c537a5a"
+  },
+  "checks": {
+    "typescript": "pass",
+    "changedFileLint": "pass",
+    "localization": "pass",
+    "schemaConsistency": "pass",
+    "cleanBuild": "pass",
+    "diffWhitespace": "pass"
+  },
+  "diagnosticLimit": 40000,
+  "metadataChunk": 1000,
+  "preservedLimits": {
+    "historyRows": 50000,
+    "historyBytes": 67108864,
+    "queryCeiling": 1024,
+    "replyBytes": 12000000
+  },
+  "fixtureCoverage": [
+    "real-writer missing/redacted/empty-owner/invalid-owner/foreign/malformed states; six simultaneous exclusive failures",
+    "malformed foreign/redacted bodies withheld at DB boundary",
+    "scalar metadata mutation and same-head/same-byte history mutation in all-refused path",
+    "40001 real-writer prefix rows beyond diagnosticcap; counts/truncation/unexamined predicates",
+    "strict-source malformed owned/foreign history refuses before approval reads",
+    "existing positive, absent-scope, conflict, recreation/rehome/attachment, authority/retention/configuration/race cases"
+  ],
+  "inspectionWrites": 0,
+  "inspectionProviderCalls": 0,
+  "liveProviderCalls": 0,
+  "independentReview": {
+    "reviewer": "/root/census_review",
+    "baseline": "cf4b8243",
+    "result": "No remaining material blocker",
+    "independentlyRunHelpers": 56,
+    "findingResolved": "Masked invalid owned/foreign history cannot now grant a certificate; witnessed withheld flag refuses before approval reads",
+    "conditionsFulfilled": "Actual rebuilt Worker8/8 passes; exact tested source and bundle hashes recorded",
+    "limitations": "Does not establish live subject relevance, source eligibility, approvals or irrecoverability"
+  },
+  "warning": "Existing chunk-size build advisory"
+}

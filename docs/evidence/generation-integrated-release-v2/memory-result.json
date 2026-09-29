@@ -1,0 +1,13 @@
+{
+  "gate": "memory",
+  "exit": 0,
+  "seconds": 127.58,
+  "command": [
+    "node",
+    "--import",
+    "tsx",
+    "--test",
+    "--test-name-pattern=private Memory image:|E2 private Memory native journey:",
+    "tests/assistant-runtime.test.mjs"
+  ]
+}
