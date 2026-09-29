@@ -1,0 +1,7 @@
+# R21 handoff — browser-client block; recovery exhausted
+
+Latest user approved bounded6normal/3recovery saved551 resumption, no overall increase. Carried19 prior entries intact. Deploy551terminalsuccess/env16; first GET in existingtab7 failed net::ERR_BLOCKED_BY_CLIENT and left prior document visible. No application response/HTTPstatus/Worker proof; no secondGET. This is not a new explicit Google auto-review denial. R20authentication approval persists; do not repeat it unchanged.
+
+Restored550terminalsuccessdeploymentappgdep_6abaff2bfdcc8191b69c0aa47c3ae0a9;finalsite/env exactparity workspace_all/access7/env16. Latest saved551 remains retained, not live. Native source/archive/admission unchanged; no push/save/build/schema/provider/custody action. Ledger18normal+6recovery=24charged;4normalunused,0recovery. Stopactive. No hosted retries or borrowing normal into recovery.
+
+Read result.md and21-browser-client-block.json. Browser documented troubleshooting read, no applicable ERR_BLOCKED_BY_CLIENT remedy;tabnotdisconnected. Resolve supported client access path/cause before another deployment/approval cycle. No alternative surface/token/rawfetch/pluginpatch/browserinternals bypass. Once supported path exists, exact read resumption needs reviewed recovery allocation. Prior paid/custody/cost/retention decisions unchanged; no renewed initial intake. No qualificationJSON orschema diff, realimages0,newmoderationfalse. P5open;expiryOct1 00UTC/marginSep30 22UTC,P2gates,sixPOST/twoimages/concurrency1/no retries,847/six exclusions,R14cleanup/retention remain.

@@ -1,0 +1,5 @@
+{
+  "action": "git-fetch",
+  "error": "Git exit 128: fatal: git fetch-pack: expected shallow list\n",
+  "uncertain": true
+}
