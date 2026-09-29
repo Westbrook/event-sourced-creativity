@@ -1,0 +1,35 @@
+{
+  "status": "local-preparation-complete-not-implemented",
+  "baseCommit": "2fff9650ccc36c1223034666a4ad23c52824c1b1",
+  "currentContractChecks": {
+    "passed": 11,
+    "transportInvocations": 0,
+    "note": "Includes parent test; unchanged runtime/SQL with disposable P2 synthetic fixture"
+  },
+  "proposedModelChecks": {
+    "passed": 21,
+    "productionPolicyImplemented": false,
+    "nativeConcurrencyProven": false
+  },
+  "holdQueryChecks": {
+    "passed": 5,
+    "hostedExecution": false
+  },
+  "schemaDefinitionsMatched": 49,
+  "sourceContractsUnchanged": true,
+  "r34EvidenceUnchanged": true,
+  "newHostedCalls": 0,
+  "browserCalls": 0,
+  "providerCalls": 0,
+  "productOrMigrationChanges": false,
+  "fullSuiteOrBuildRepeated": false,
+  "ledger": {
+    "normal": 44,
+    "recovery": 18,
+    "charged": 62,
+    "unchanged": true
+  },
+  "noPaidAuthority": true,
+  "deadlineRenewed": false,
+  "p5Complete": false
+}

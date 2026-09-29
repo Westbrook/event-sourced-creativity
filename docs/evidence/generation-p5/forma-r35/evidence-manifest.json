@@ -1,0 +1,25 @@
+{
+  "envelope": "p5-pair-local-preparation:de1087e569c5dee33de7de21eb05fe7de97f2d6436c70aedad864cfffb68661b",
+  "meaning": "Local recommendation and evidence integrity only; not an executable release or authority",
+  "files": {
+    "contract-proposal.md": "eed60b8c1174f1796dcd22337c0a55a7314303cfbbc79dc1a95a8c87e4c85594",
+    "current-checks.log": "cdfbeff01ab38fac15605a98ed7a67b30fea60a7db405f703b2a52a3102af1e1",
+    "current-constraints.test.mjs": "55aa973cfd8a1dfc168056b30f6094f1ac2630df4c6e964f7448a82577582423",
+    "decision.md": "1690b508e9e83c21e2d273c3b6484628957474beffe77549827da1b1250cc8d2",
+    "dependencies.json": "2fbd01becc21496f3f6b98e764693aa5920c7215f87ee6c49c86e4f8fa56a170",
+    "dependency-schema-check.log": "9111cb68589d0e1552190e6eaebdc0231d050f721060eaac8958bb201fb0f10a",
+    "dependency-schema-check.mjs": "ba7d2b194e910c462ded40eea1b5b0c5a1fbdb98789487ccb8dbcc1e8797521d",
+    "handoff.md": "c1e035d9a947d38a5b8c405dea0084ee7b0e291a72b684978267d24f7d1c877f",
+    "hold-cost-read.sql": "3b7d1133e476848239e9cfff33ed072ea313bfd689bcc3bb96a9d41c1c4b9c1a",
+    "hold-plan.md": "856414876d86f608a5be5edd3f5301570811c57f58d8543babfd2316f629748d",
+    "hold-query-check.py": "c281272274062bb97a1e2eebc86679867cdb115c7760f4a7bf04d584bff71098",
+    "hold-query-checks.log": "3bc8c385e2cc019eb29eb8ea6caa51e033361a87aaa79d9be4b9ed303097f8ae",
+    "hold-token-read.sql": "fe2d5678a3abe1d13323c4eed00010bdd038d2c4c24e9c9e1b481c28de3f2314",
+    "index.html": "cb565829de245de24714c3d28b8da3463f0163396bc1a729c2fe60bd4936cd17",
+    "ordinary-path.diff": "2adb41e1e73a56fbd361d90f4f87660106e705c70253e01a2fd3abcd97162146",
+    "proposed-checks.log": "602cab9c0e92e438f764ab5710b2aa9a3e0cffcfc050a8f2613731eadce95562",
+    "proposed-contract-model.py": "bc8d7c38ed62101aeda13d3c6d00a2c91c117df2049b02017b1c876f289ec14b",
+    "source-review.json": "d0a2d485b5c46e834405c7e64a96723b835b5a07e0c411c09a31b5dbcd42f943",
+    "validation.json": "fa9e24647fdc8bfb19be807e40ed99b178191c709d5c84efcdf7b85c5f929256"
+  }
+}

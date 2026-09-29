@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — qualification observed; restoration closed | Existing P5 task | [R34 handoff](evidence/generation-p5/forma-r34/handoff.md): one matching owner JSON from555;14 statements/zero writes, study/approval schema not exact,17 token/46 cost holds. Restored554 terminal success;final workspace access7/env16 parity.44/44normal,18/19recovery,62charged. | Local-only narrow activation/hold-handling proposal is the next decision; no automatic restoration, repeated GET, broad schema repair or paid authority. No real pair/fidelity result or moderation finding. P2,847/six,retention and expiry persist. |
+| GEN-P5 | In progress — R35 local pair recommendation ready | Existing P5 task | [R35 decision](evidence/generation-p5/forma-r35/decision.md):49exact schema objects; full proposed pending-pair contract reconciles policy/producer/guards/index/triggers/lifecycle.11current+21model+5query checks; no hosted action. R34 qualification/restoration closed. | Decide local implementation only.17token/46cost holds remain separate unclassified prerequisites; fixed redacted query prepared, not executed. No paid authority, schema activation or deadline renewal. Preserve P2,847/six,retention, newer source and expiry; no real pair/fidelity/moderation finding. |
 
 ## Memory
 

@@ -1,0 +1,16 @@
+{
+  "basis": "P1 base to retained P7 published554 only; not fresh live source",
+  "from": "c28af5fea0fc3ec2b37b878a544ec59c52a64daf",
+  "to": "498936481741f7ed1b03d43422288d628db49f2f",
+  "files": [
+    "worker/events-api.ts",
+    "worker/image-adapter.ts",
+    "worker/openai-adapter.ts",
+    "worker/generation-readiness.ts",
+    "worker/document-jobs-api.ts"
+  ],
+  "onlyChangedFile": "worker/openai-adapter.ts",
+  "onlyChangedBehavior": "video identity_provenance metadata; no supplied/frozen image admission seam",
+  "deltaSha256": "2adb41e1e73a56fbd361d90f4f87660106e705c70253e01a2fd3abcd97162146",
+  "conclusion": "Retain P1 ordinary Generate rejection as alternative. Fresh planner or bound fan-cache direction persists; no fabricated document/job or preparedPrompt endpoint."
+}

@@ -1,0 +1,553 @@
+{
+  "scope": "R35 local dependency recommendation; not a release or authority",
+  "r34Commit": "2fff9650ccc36c1223034666a4ad23c52824c1b1",
+  "lastKnownLiveVersion": 554,
+  "lastKnownLiveSource": "498936481741f7ed1b03d43422288d628db49f2f",
+  "lastKnownLiveIsNotFresh": true,
+  "currentOptionalSchema": {
+    "inputs": [
+      {
+        "path": "db/generation-study.pending.sql",
+        "sha256": "a3065bf8b61640de47aed06fcfd1a5dfc3a96a5f8fcf11305879fca8c9df9ed2"
+      },
+      {
+        "path": "db/generation-study-supplied-v2.pending.sql",
+        "sha256": "d1acdc198bb35608b2b407b6b0c833fd383e7c57fde2c36bdae970178bf62594"
+      },
+      {
+        "path": "db/authoring-study-approval.pending.sql",
+        "sha256": "d8def4713f0dfcec6292161a5a0e6dba785d59b7250ff8a4c71aad1ceb94360e"
+      }
+    ],
+    "objects": [
+      {
+        "type": "trigger",
+        "name": "authoring_study_commit_no_delete",
+        "table": "authoring_study_commits",
+        "sql": "CREATE TRIGGER authoring_study_commit_no_delete BEFORE DELETE ON authoring_study_commits BEGIN SELECT RAISE(ABORT,'authoring_study_receipt_immutable'); END",
+        "sqlSha256": "70e6a174e378899a4be79bb710de72851763bfb9baa507157f2571e6fa88c8d7"
+      },
+      {
+        "type": "trigger",
+        "name": "authoring_study_commit_no_update",
+        "table": "authoring_study_commits",
+        "sql": "CREATE TRIGGER authoring_study_commit_no_update BEFORE UPDATE ON authoring_study_commits BEGIN SELECT RAISE(ABORT,'authoring_study_receipt_immutable'); END",
+        "sqlSha256": "96daf17dcc750ea584b0fccde33b3a50278d625fceeeff4bddc413bdf5e6e4dc"
+      },
+      {
+        "type": "table",
+        "name": "authoring_study_commits",
+        "table": "authoring_study_commits",
+        "sql": "CREATE TABLE authoring_study_commits (\n preview_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL UNIQUE REFERENCES authoring_study_configurations(proposal_id),\n owner_id TEXT NOT NULL REFERENCES users(user_id), intent_id TEXT NOT NULL UNIQUE,\n operation TEXT NOT NULL CHECK(operation='generation-supplied-study-approval'), version INTEGER NOT NULL CHECK(version=1),\n display_hash TEXT NOT NULL, configuration_hash TEXT NOT NULL, principal_hash TEXT NOT NULL,\n plan_id TEXT NOT NULL, grant_id TEXT NOT NULL UNIQUE REFERENCES generation_study_grants(grant_id),\n review_id TEXT NOT NULL UNIQUE REFERENCES generation_study_supplied_reviews(review_id),\n baseline_operation TEXT NOT NULL UNIQUE, treatment_operation TEXT NOT NULL UNIQUE,\n evidence_json TEXT NOT NULL CHECK(json_valid(evidence_json)), receipt_json TEXT NOT NULL CHECK(json_valid(receipt_json)),\n expires_at TEXT NOT NULL, verified INTEGER NOT NULL CHECK(verified=1), created_at TEXT NOT NULL\n)",
+        "sqlSha256": "7e4aefda85e0f502272da253a980b5496e814c42772efaa3fccadca54c906373"
+      },
+      {
+        "type": "trigger",
+        "name": "authoring_study_configuration_identity",
+        "table": "authoring_study_configurations",
+        "sql": "CREATE TRIGGER authoring_study_configuration_identity BEFORE UPDATE ON authoring_study_configurations\n WHEN NEW.proposal_id IS NOT OLD.proposal_id OR NEW.owner_id IS NOT OLD.owner_id OR NEW.configuration_hash IS NOT OLD.configuration_hash OR NEW.expires_at IS NOT OLD.expires_at OR OLD.status='revoked'\n BEGIN SELECT RAISE(ABORT,'authoring_study_configuration_immutable'); END",
+        "sqlSha256": "16ec443bf96c932b44b5e3e890df30548a7add43477ba42c9f9c460bfa4e8b97"
+      },
+      {
+        "type": "trigger",
+        "name": "authoring_study_configuration_no_delete",
+        "table": "authoring_study_configurations",
+        "sql": "CREATE TRIGGER authoring_study_configuration_no_delete BEFORE DELETE ON authoring_study_configurations BEGIN SELECT RAISE(ABORT,'authoring_study_configuration_immutable'); END",
+        "sqlSha256": "0cb686eb093ee02cfea52774f7e7e2e0c17c7582b3910f81cba19f8a11ddec82"
+      },
+      {
+        "type": "table",
+        "name": "authoring_study_configurations",
+        "table": "authoring_study_configurations",
+        "sql": "CREATE TABLE authoring_study_configurations (\n proposal_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(user_id),\n configuration_hash TEXT NOT NULL, expires_at TEXT NOT NULL,\n status TEXT NOT NULL CHECK(status IN('active','revoked'))\n)",
+        "sqlSha256": "135efc544ac281252dd13fdb6f256a232011c1f64be85dc2681f7a0f5803a612"
+      },
+      {
+        "type": "table",
+        "name": "authoring_study_evidence",
+        "table": "authoring_study_evidence",
+        "sql": "CREATE TABLE authoring_study_evidence (\n evidence_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL REFERENCES authoring_study_configurations(proposal_id),\n owner_id TEXT NOT NULL REFERENCES users(user_id), kind TEXT NOT NULL CHECK(kind IN('account','rate','liability','settlement','lifecycle','deletion','bound')),\n content_ref TEXT NOT NULL UNIQUE, content_hash TEXT NOT NULL,\n authority_id TEXT NOT NULL, expires_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('verified','revoked'))\n)",
+        "sqlSha256": "632cf308cc6846e30791c0e2b591169f30990475da63411c9d14c1b022bdc374"
+      },
+      {
+        "type": "trigger",
+        "name": "authoring_study_evidence_identity",
+        "table": "authoring_study_evidence",
+        "sql": "CREATE TRIGGER authoring_study_evidence_identity BEFORE UPDATE ON authoring_study_evidence\n WHEN NEW.evidence_id IS NOT OLD.evidence_id OR NEW.proposal_id IS NOT OLD.proposal_id OR NEW.owner_id IS NOT OLD.owner_id OR NEW.kind IS NOT OLD.kind OR NEW.content_ref IS NOT OLD.content_ref OR NEW.content_hash IS NOT OLD.content_hash OR NEW.authority_id IS NOT OLD.authority_id OR NEW.expires_at IS NOT OLD.expires_at OR OLD.status='revoked'\n BEGIN SELECT RAISE(ABORT,'authoring_study_evidence_immutable'); END",
+        "sqlSha256": "25c22382a10cd7a37d3a20ca3e4c01218f16b97efa78abafbb75726e524c013d"
+      },
+      {
+        "type": "trigger",
+        "name": "authoring_study_evidence_no_delete",
+        "table": "authoring_study_evidence",
+        "sql": "CREATE TRIGGER authoring_study_evidence_no_delete BEFORE DELETE ON authoring_study_evidence BEGIN SELECT RAISE(ABORT,'authoring_study_evidence_immutable'); END",
+        "sqlSha256": "06182646b6e7e82e841510880e5fcceb5e4c8fbd4283e53bbf741200da5db2d0"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_assertions",
+        "table": "generation_study_assertions",
+        "sql": "CREATE TABLE generation_study_assertions (passed INTEGER NOT NULL CHECK(passed=1))",
+        "sqlSha256": "83dd18d672b347b5ccaf0dcdb6cba253de3255fce1ba8aeac13ad9551558befc"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_charge_no_delete",
+        "table": "generation_study_charges",
+        "sql": "CREATE TRIGGER generation_study_charge_no_delete BEFORE DELETE ON generation_study_charges BEGIN SELECT RAISE(ABORT,'generation_study_immutable_charge'); END",
+        "sqlSha256": "2aeeeda1d407fa579aab84d303d32718a757b6f3bf3137e89cba64e023ed3da8"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_charge_no_update",
+        "table": "generation_study_charges",
+        "sql": "CREATE TRIGGER generation_study_charge_no_update BEFORE UPDATE ON generation_study_charges BEGIN SELECT RAISE(ABORT,'generation_study_immutable_charge'); END",
+        "sqlSha256": "1fc50414eaaf0fd52b6dceccbf46e932a765484ed25c827759cc7c4474546262"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_charges",
+        "table": "generation_study_charges",
+        "sql": "CREATE TABLE generation_study_charges (\n operation_id TEXT PRIMARY KEY REFERENCES generation_study_operations(operation_id), provider_request_id TEXT NOT NULL,\n receipt_hash TEXT NOT NULL, measured_microusd INTEGER NOT NULL CHECK(measured_microusd>=0), measured_tokens INTEGER NOT NULL CHECK(measured_tokens>=0),\n authority_version TEXT NOT NULL, evidence_ref TEXT NOT NULL, recorded_at TEXT NOT NULL,\n scope_hash TEXT NOT NULL, residual_exposure_microusd INTEGER CHECK(residual_exposure_microusd IS NULL OR residual_exposure_microusd>=0)\n)",
+        "sqlSha256": "2902b115c1198b9827aace7b3f08b9af6b5af6031f8edf033fe613cfcb7e4b87"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_cost_no_delete",
+        "table": "cost_budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_cost_no_delete BEFORE DELETE ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations WHERE cost_reservation_id=OLD.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_purchase'); END",
+        "sqlSha256": "465747b800904d2a5c38b539b55c3d551d28a06f98f0fdb0826c3823ed44b27c"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_cost_settlement",
+        "table": "cost_budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_cost_settlement BEFORE UPDATE ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations o WHERE o.cost_reservation_id=OLD.reservation_id)\n AND (NEW.reserved_microusd!=OLD.reserved_microusd OR NEW.owner_id!=OLD.owner_id OR NEW.period!=OLD.period OR\n (NEW.status NOT IN('active','authorizing','executing') AND NOT EXISTS(SELECT 1 FROM generation_study_operations o JOIN generation_study_charges c USING(operation_id)\n WHERE o.cost_reservation_id=OLD.reservation_id AND c.provider_request_id=o.provider_request_id AND c.receipt_hash=o.receipt_hash AND ((o.financial_policy_id IS NULL AND c.measured_microusd=NEW.used_microusd) OR EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=o.operation_id AND r.policy_id=o.financial_policy_id AND r.provider_settled=1 AND r.incurred_microusd=NEW.used_microusd AND r.sequence=(SELECT MAX(sequence) FROM generation_study_reconciliations WHERE operation_id=o.operation_id))))))\n BEGIN SELECT RAISE(ABORT,'generation_study_original_charge_required'); END",
+        "sqlSha256": "9ce11ec2fb4abc39fe047e6be0693cd1a307bdd75d0365cde7d2dea26aba805c"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_evidence",
+        "table": "generation_study_evidence",
+        "sql": "CREATE TABLE generation_study_evidence (\n operation_id TEXT NOT NULL REFERENCES generation_study_operations(operation_id), slot TEXT NOT NULL,\n content_ref TEXT NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY(operation_id,slot)\n)",
+        "sqlSha256": "3f63ac4fcc7b718b9343d04c5670c27e2c10fbeece618ce27fc95217b8e2dd89"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_external_cost",
+        "table": "cost_budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_external_cost BEFORE INSERT ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations o WHERE o.owner_id=NEW.owner_id AND o.status!='completed' AND o.cost_reservation_id!=NEW.reservation_id AND COALESCE(o.lifecycle_reservation_id,'')!=NEW.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_outstanding_exposure'); END",
+        "sqlSha256": "14e95dfc863b2ecc8f085aa9489e5088f7268583749ea226ca09f5c89050d56d"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_external_tokens",
+        "table": "budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_external_tokens BEFORE INSERT ON budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations o WHERE o.owner_id=NEW.owner_id AND o.status!='completed' AND o.token_reservation_id!=NEW.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_outstanding_exposure'); END",
+        "sqlSha256": "0408ddbe7628227ba11b868a481ea3c369f706ae70933456d102c4c0605b44f4"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_financial_grant_identity",
+        "table": "generation_study_financial_grants",
+        "sql": "CREATE TRIGGER generation_study_financial_grant_identity BEFORE UPDATE ON generation_study_financial_grants\n WHEN NEW.grant_id IS NOT OLD.grant_id OR NEW.operation_id IS NOT OLD.operation_id OR NEW.owner_id IS NOT OLD.owner_id OR NEW.policy_id IS NOT OLD.policy_id OR NEW.policy_json IS NOT OLD.policy_json OR NEW.expires_at IS NOT OLD.expires_at\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_financial_grant'); END",
+        "sqlSha256": "3f8b5542e50d4fbd8391bbb673ac4c6ea8b884aced6f6708c93ad59cf8eda888"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_financial_grant_no_delete",
+        "table": "generation_study_financial_grants",
+        "sql": "CREATE TRIGGER generation_study_financial_grant_no_delete BEFORE DELETE ON generation_study_financial_grants BEGIN SELECT RAISE(ABORT,'generation_study_immutable_financial_grant'); END",
+        "sqlSha256": "99be7f4486a8b23129905d783304b5d9b8e58a0876bcc215e9cb84ed74fc2855"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_financial_grants",
+        "table": "generation_study_financial_grants",
+        "sql": "CREATE TABLE generation_study_financial_grants (\n grant_id TEXT NOT NULL REFERENCES generation_study_grants(grant_id), operation_id TEXT NOT NULL,\n owner_id TEXT NOT NULL REFERENCES users(user_id), policy_id TEXT NOT NULL, policy_json TEXT NOT NULL CHECK(json_valid(policy_json)),\n expires_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('authorized','revoked')),\n PRIMARY KEY(grant_id,operation_id)\n)",
+        "sqlSha256": "4b878197877bae289ab04cf0597ff4b768807a87af4805405e6163813654851c"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_grant_identity",
+        "table": "generation_study_grants",
+        "sql": "CREATE TRIGGER generation_study_grant_identity BEFORE UPDATE ON generation_study_grants\n WHEN NEW.grant_id!=OLD.grant_id OR NEW.owner_id!=OLD.owner_id OR NEW.plan_id!=OLD.plan_id OR NEW.runtime_hash!=OLD.runtime_hash OR NEW.source_ref!=OLD.source_ref OR NEW.direction_ref!=OLD.direction_ref OR NEW.source_hash!=OLD.source_hash OR NEW.direction_hash!=OLD.direction_hash OR NEW.authority_version!=OLD.authority_version OR NEW.allowance_microusd!=OLD.allowance_microusd OR NEW.token_allowance!=OLD.token_allowance OR NEW.expires_at!=OLD.expires_at\n BEGIN SELECT RAISE(ABORT,'generation_study_new_authority_version_required'); END",
+        "sqlSha256": "f8289777eba362e6b370f1df3f7e9fc30f394c2ab048b7a30658a670c3143008"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_grants",
+        "table": "generation_study_grants",
+        "sql": "CREATE TABLE generation_study_grants (\n grant_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(user_id),\n plan_id TEXT NOT NULL, runtime_hash TEXT NOT NULL, source_ref TEXT NOT NULL, direction_ref TEXT NOT NULL,\n source_hash TEXT NOT NULL, direction_hash TEXT NOT NULL, authority_version TEXT NOT NULL,\n allowance_microusd INTEGER NOT NULL CHECK(allowance_microusd>0), token_allowance INTEGER NOT NULL CHECK(token_allowance>0),\n expires_at TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN('authorized','revoked')), stopped INTEGER NOT NULL DEFAULT 0 CHECK(stopped IN(0,1))\n)",
+        "sqlSha256": "85243e8f584474e3af186846ea1322f6896bd55d532f8dd50b3985c5353e90a2"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_lifecycle_cost_hold",
+        "table": "cost_budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_lifecycle_cost_hold BEFORE INSERT ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_lifecycle_holds WHERE owner_id=NEW.owner_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_lifecycle_exposure'); END",
+        "sqlSha256": "220660b5667c87d0e4e8d3f46f4c7d740278ea1561c007907dabc45115603739"
+      },
+      {
+        "type": "view",
+        "name": "generation_study_lifecycle_holds",
+        "table": "generation_study_lifecycle_holds",
+        "sql": "CREATE VIEW generation_study_lifecycle_holds AS\n SELECT o.owner_id,o.operation_id FROM generation_study_operations o\n JOIN generation_study_reconciliations r ON r.operation_id=o.operation_id\n AND r.sequence=(SELECT MAX(sequence) FROM generation_study_reconciliations WHERE operation_id=o.operation_id)\n WHERE o.financial_policy_id IS NOT NULL AND\n (r.policy_id!=o.financial_policy_id OR NOT EXISTS(SELECT 1 FROM generation_study_financial_grants g WHERE g.grant_id=o.grant_id AND g.operation_id=o.operation_id AND g.owner_id=o.owner_id AND g.policy_id=r.policy_id AND json_extract(g.policy_json,'$.lifecycle.scope')=r.lifecycle_scope AND json_extract(g.policy_json,'$.lifecycle.liabilityOwner')=r.liability_owner AND json_extract(g.policy_json,'$.lifecycle.through')=r.lifecycle_through AND json_extract(g.policy_json,'$.lifecycle.maximumMicrousd')>=r.lifecycle_microusd) OR r.provider_settled!=1 OR r.remaining_uncertainty_microusd IS NOT 0 OR\n (r.lifecycle_closed=1 AND (r.lifecycle_microusd!=0 OR r.lifecycle_incurred_microusd IS NULL OR r.lifecycle_incurred_microusd>COALESCE((SELECT reserved_microusd FROM cost_budget_reservations WHERE reservation_id=o.lifecycle_reservation_id),0))) OR\n (r.lifecycle_closed=0 AND (r.lifecycle_through<=strftime('%Y-%m-%dT%H:%M:%fZ','now') OR NOT EXISTS(\n SELECT 1 FROM cost_budget_reservations c WHERE c.reservation_id=o.lifecycle_reservation_id AND c.owner_id=o.owner_id AND c.status='active' AND c.reserved_microusd>=r.lifecycle_microusd))))",
+        "sqlSha256": "14e9b83dfd68bdc72a4a9dc74ae6294ac914156e3823b441d5a5291d94be2c16"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_lifecycle_no_delete",
+        "table": "cost_budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_lifecycle_no_delete BEFORE DELETE ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations WHERE lifecycle_reservation_id=OLD.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_provision'); END",
+        "sqlSha256": "8576a8ad70a3f0cc6da672a469ca0947c78bcef059d11acf9408261a8b76c74f"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_lifecycle_settlement",
+        "table": "cost_budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_lifecycle_settlement BEFORE UPDATE ON cost_budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations WHERE lifecycle_reservation_id=OLD.reservation_id)\n AND (NEW.reservation_id!=OLD.reservation_id OR NEW.workspace_id!=OLD.workspace_id OR NEW.stream_id!=OLD.stream_id OR NEW.correlation_id!=OLD.correlation_id OR NEW.operation!=OLD.operation OR NEW.reserved_microusd!=OLD.reserved_microusd OR NEW.owner_id!=OLD.owner_id OR NEW.period!=OLD.period OR\n (NEW.status NOT IN('active','authorizing') AND NOT EXISTS(SELECT 1 FROM generation_study_operations o JOIN generation_study_reconciliations r USING(operation_id)\n WHERE o.lifecycle_reservation_id=OLD.reservation_id AND r.sequence=(SELECT MAX(sequence) FROM generation_study_reconciliations WHERE operation_id=o.operation_id)\n AND r.lifecycle_closed=1 AND r.lifecycle_microusd=0 AND r.remaining_uncertainty_microusd=0 AND r.provider_settled=1 AND r.lifecycle_incurred_microusd=NEW.used_microusd)))\n BEGIN SELECT RAISE(ABORT,'generation_study_verified_lifecycle_closure_required'); END",
+        "sqlSha256": "643b8961af3c64ea7e4afb03e3f2ca8bd928eeafd1eb45aeb7004df3d8bafe20"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_lifecycle_token_hold",
+        "table": "budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_lifecycle_token_hold BEFORE INSERT ON budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_lifecycle_holds WHERE owner_id=NEW.owner_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_lifecycle_exposure'); END",
+        "sqlSha256": "4db7f9f3132851f2c0ce4b98bb5f1916c1b13c8e6b2a2e99beb92219c020cff5"
+      },
+      {
+        "type": "index",
+        "name": "generation_study_one_outstanding",
+        "table": "generation_study_operations",
+        "sql": "CREATE UNIQUE INDEX generation_study_one_outstanding ON generation_study_operations(owner_id) WHERE status!='completed'",
+        "sqlSha256": "128a1746d4afe8ec0c2f64e1e61e15f3be1f38497749f0d1073dcdee94c45521"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_operation_identity",
+        "table": "generation_study_operations",
+        "sql": "CREATE TRIGGER generation_study_operation_identity BEFORE UPDATE ON generation_study_operations\n WHEN NEW.operation_id!=OLD.operation_id OR NEW.owner_id!=OLD.owner_id OR NEW.grant_id!=OLD.grant_id OR NEW.plan_id!=OLD.plan_id OR NEW.trial_id!=OLD.trial_id OR NEW.request_hash!=OLD.request_hash OR NEW.token_reservation_id!=OLD.token_reservation_id OR NEW.cost_reservation_id!=OLD.cost_reservation_id OR NEW.expires_at!=OLD.expires_at OR NEW.financial_policy_id IS NOT OLD.financial_policy_id OR NEW.lifecycle_reservation_id IS NOT OLD.lifecycle_reservation_id\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_identity'); END",
+        "sqlSha256": "140dde014777e203aa5cd2658f2856c284019e6d255eb89b22691aa8d0cbbdc1"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_operation_no_delete",
+        "table": "generation_study_operations",
+        "sql": "CREATE TRIGGER generation_study_operation_no_delete BEFORE DELETE ON generation_study_operations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_purchase'); END",
+        "sqlSha256": "9b0c360a04df2dc9b043a3b063c1970ba425d386d05bea2404072b383d2cf562"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_operations",
+        "table": "generation_study_operations",
+        "sql": "CREATE TABLE generation_study_operations (\n operation_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(user_id), grant_id TEXT NOT NULL REFERENCES generation_study_grants(grant_id),\n plan_id TEXT NOT NULL, trial_id TEXT NOT NULL, request_hash TEXT NOT NULL,\n token_reservation_id TEXT NOT NULL UNIQUE, cost_reservation_id TEXT NOT NULL UNIQUE,\n status TEXT NOT NULL CHECK(status IN('reserved','paused','running','hold','completed')), reason TEXT,\n provider_request_id TEXT, receipt_hash TEXT, usage_json TEXT, measured_microusd INTEGER, measured_tokens INTEGER,\n artifact_ref TEXT, artifact_hash TEXT, private_bytes INTEGER NOT NULL DEFAULT 0, private_writes INTEGER NOT NULL DEFAULT 0,\n artifact_reads INTEGER NOT NULL DEFAULT 0, cleanup_attempts INTEGER NOT NULL DEFAULT 0,\n created_at TEXT NOT NULL, expires_at TEXT NOT NULL,\n financial_policy_id TEXT, lifecycle_reservation_id TEXT UNIQUE\n)",
+        "sqlSha256": "7f0c6c7dcca60c8a2a627e50b3fba13af69f5bf6fbf3c28417445c610724e883"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_reconciliation_chain",
+        "table": "generation_study_reconciliations",
+        "sql": "CREATE TRIGGER generation_study_reconciliation_chain BEFORE INSERT ON generation_study_reconciliations\n WHEN NEW.sequence!=COALESCE((SELECT MAX(sequence)+1 FROM generation_study_reconciliations WHERE operation_id=NEW.operation_id),1)\n OR NEW.previous_id IS NOT (SELECT evidence_id FROM generation_study_reconciliations WHERE operation_id=NEW.operation_id ORDER BY sequence DESC LIMIT 1)\n BEGIN SELECT RAISE(ABORT,'generation_study_reconciliation_chain'); END",
+        "sqlSha256": "1133cfe0c253dfe8c49cf06e5d7f4aea1eeb35659329e74665ca6d6a6f7bcfe5"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_reconciliation_finality",
+        "table": "generation_study_reconciliations",
+        "sql": "CREATE TRIGGER generation_study_reconciliation_finality BEFORE INSERT ON generation_study_reconciliations\n WHEN EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=NEW.operation_id AND (NEW.incurred_microusd<r.incurred_microusd OR NEW.incurred_tokens<r.incurred_tokens))\n OR EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=NEW.operation_id AND r.provider_settled=1\n AND (NEW.provider_settled!=1 OR NEW.incurred_microusd!=r.incurred_microusd OR NEW.incurred_tokens!=r.incurred_tokens))\n OR EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=NEW.operation_id AND r.lifecycle_closed=1\n AND (NEW.lifecycle_closed!=1 OR NEW.lifecycle_incurred_microusd IS NOT r.lifecycle_incurred_microusd))\n BEGIN SELECT RAISE(ABORT,'generation_study_settled_amount_immutable'); END",
+        "sqlSha256": "f36ef7541dcf2087444912309c202889f36e9700953d9637a2fdf01f701133ee"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_reconciliation_no_delete",
+        "table": "generation_study_reconciliations",
+        "sql": "CREATE TRIGGER generation_study_reconciliation_no_delete BEFORE DELETE ON generation_study_reconciliations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_reconciliation'); END",
+        "sqlSha256": "7382ced1ad478c266c4e60f1dd0004396b773ef1139ba57abf112f084ad44817"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_reconciliation_no_update",
+        "table": "generation_study_reconciliations",
+        "sql": "CREATE TRIGGER generation_study_reconciliation_no_update BEFORE UPDATE ON generation_study_reconciliations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_reconciliation'); END",
+        "sqlSha256": "cdd3368c60f896601f86f040703c18a1f6ccfefb172b1ed6e0314b6e784c5156"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_reconciliations",
+        "table": "generation_study_reconciliations",
+        "sql": "CREATE TABLE generation_study_reconciliations (\n evidence_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL REFERENCES generation_study_charges(operation_id),\n sequence INTEGER NOT NULL CHECK(sequence>0), previous_id TEXT REFERENCES generation_study_reconciliations(evidence_id),\n original_charge_hash TEXT NOT NULL, policy_id TEXT NOT NULL, evidence_kind TEXT NOT NULL CHECK(evidence_kind='verified-incurred-charge'),\n authority_version TEXT NOT NULL, evidence_ref TEXT NOT NULL, recorded_at TEXT NOT NULL,\n provider_settled INTEGER NOT NULL CHECK(provider_settled IN(0,1)),\n incurred_microusd INTEGER NOT NULL CHECK(incurred_microusd>=0), incurred_tokens INTEGER NOT NULL CHECK(incurred_tokens>=0),\n remaining_uncertainty_microusd INTEGER CHECK(remaining_uncertainty_microusd IS NULL OR remaining_uncertainty_microusd>=0),\n lifecycle_microusd INTEGER NOT NULL CHECK(lifecycle_microusd>=0), lifecycle_scope TEXT NOT NULL,\n liability_owner TEXT NOT NULL, lifecycle_through TEXT NOT NULL, lifecycle_evidence_ref TEXT NOT NULL,\n lifecycle_closed INTEGER NOT NULL DEFAULT 0 CHECK(lifecycle_closed IN(0,1)), lifecycle_incurred_microusd INTEGER,\n UNIQUE(operation_id,sequence)\n)",
+        "sqlSha256": "fcd1b31aeb81f394ad09ba88747655ef9c8c4cb9bbf8cc356dd84ec512bb00be"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_stages",
+        "table": "generation_study_stages",
+        "sql": "CREATE TABLE generation_study_stages (\n operation_id TEXT NOT NULL REFERENCES generation_study_operations(operation_id),\n stage TEXT NOT NULL CHECK(stage IN('advisory','moderation','image','storage')),\n status TEXT NOT NULL CHECK(status IN('intent','received','complete')),\n request_hash TEXT NOT NULL, receipt_hash TEXT, PRIMARY KEY(operation_id,stage)\n)",
+        "sqlSha256": "8970e29edb2bd0f9ab34c983dae20ea72809a6dea195e62e4a8486e653985305"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_supplied_grant_revocation",
+        "table": "generation_study_grants",
+        "sql": "CREATE TRIGGER generation_study_supplied_grant_revocation BEFORE UPDATE ON generation_study_grants\n WHEN OLD.status='revoked' AND NEW.status!='revoked' AND EXISTS(SELECT 1 FROM generation_study_supplied_reviews WHERE grant_id=OLD.grant_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_supplied_revocation_terminal'); END",
+        "sqlSha256": "d6d9d560ee12b4e2e61992b9f2fd8048f154d970503b3caca2c389115d9bd1f4"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_supplied_observation_no_delete",
+        "table": "generation_study_supplied_observations",
+        "sql": "CREATE TRIGGER generation_study_supplied_observation_no_delete BEFORE DELETE ON generation_study_supplied_observations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_observation'); END",
+        "sqlSha256": "1ceb38b5ff690406a08f703445cdd3c1c7d560aff17c755342e623da513b45c0"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_supplied_observation_no_update",
+        "table": "generation_study_supplied_observations",
+        "sql": "CREATE TRIGGER generation_study_supplied_observation_no_update BEFORE UPDATE ON generation_study_supplied_observations BEGIN SELECT RAISE(ABORT,'generation_study_immutable_observation'); END",
+        "sqlSha256": "8f8f7b4b2500a70a73b8ce2ca78d165b5a2d0bf8e7fb457064c07e5007d9e836"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_supplied_observations",
+        "table": "generation_study_supplied_observations",
+        "sql": "CREATE TABLE generation_study_supplied_observations (\n operation_id TEXT PRIMARY KEY REFERENCES generation_study_operations(operation_id),\n review_id TEXT NOT NULL REFERENCES generation_study_supplied_reviews(review_id),\n owner_id TEXT NOT NULL REFERENCES users(user_id), principal_hash TEXT NOT NULL,\n artifact_hash TEXT NOT NULL, receipt_hash TEXT NOT NULL, protocol TEXT NOT NULL,\n safety TEXT NOT NULL CHECK(safety IN('clear','unsafe')),\n fidelity TEXT NOT NULL CHECK(fidelity IN('pass','expected-failure')), finding TEXT NOT NULL,\n evidence_ref TEXT NOT NULL, resume INTEGER NOT NULL CHECK(resume IN(0,1)), recorded_at TEXT NOT NULL\n)",
+        "sqlSha256": "12d144121dacdac6ca5df4f38b5e00c3b9669cc560631425ed8c9a969eda8e91"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_supplied_review_identity",
+        "table": "generation_study_supplied_reviews",
+        "sql": "CREATE TRIGGER generation_study_supplied_review_identity BEFORE UPDATE ON generation_study_supplied_reviews\n WHEN NEW.review_id!=OLD.review_id OR NEW.grant_id!=OLD.grant_id OR NEW.owner_id!=OLD.owner_id OR NEW.principal_hash!=OLD.principal_hash OR NEW.binding_json!=OLD.binding_json OR NEW.expires_at!=OLD.expires_at OR (OLD.status='revoked' AND NEW.status!='revoked') OR (OLD.hard_stop IS NOT NULL AND NEW.hard_stop IS NOT OLD.hard_stop)\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_review'); END",
+        "sqlSha256": "3ab3912fd228a779ffc687ba4827d348236fd8e59f7707248aec21cc24294ee2"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_supplied_review_no_delete",
+        "table": "generation_study_supplied_reviews",
+        "sql": "CREATE TRIGGER generation_study_supplied_review_no_delete BEFORE DELETE ON generation_study_supplied_reviews BEGIN SELECT RAISE(ABORT,'generation_study_immutable_review'); END",
+        "sqlSha256": "9b848730095ff1903a9638896532eac46630b8ea1819a4db8aaabc9d17bbb615"
+      },
+      {
+        "type": "table",
+        "name": "generation_study_supplied_reviews",
+        "table": "generation_study_supplied_reviews",
+        "sql": "CREATE TABLE generation_study_supplied_reviews (\n review_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL UNIQUE REFERENCES generation_study_grants(grant_id),\n owner_id TEXT NOT NULL REFERENCES users(user_id), principal_hash TEXT NOT NULL,\n binding_json TEXT NOT NULL, expires_at TEXT NOT NULL,\n status TEXT NOT NULL CHECK(status IN('authorized','revoked')),\n hard_stop TEXT\n)",
+        "sqlSha256": "368b0eb650b2f2ca6f2d9a428f409fa27cea0681b0564fc0e34b488237bbc96c"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_supplied_stage_identity",
+        "table": "generation_study_stages",
+        "sql": "CREATE TRIGGER generation_study_supplied_stage_identity BEFORE UPDATE ON generation_study_stages\n WHEN NEW.operation_id!=OLD.operation_id OR NEW.stage!=OLD.stage OR NEW.request_hash!=OLD.request_hash OR (OLD.receipt_hash IS NOT NULL AND NEW.receipt_hash IS NOT OLD.receipt_hash) OR (OLD.status='received' AND NEW.status='intent') OR (OLD.status='complete' AND NEW.status!='complete')\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_intent'); END",
+        "sqlSha256": "32b70c3aea31029f02ab14a1d8f4f9fba2563efbc629a720237bfb7a84e626b8"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_supplied_stage_no_delete",
+        "table": "generation_study_stages",
+        "sql": "CREATE TRIGGER generation_study_supplied_stage_no_delete BEFORE DELETE ON generation_study_stages BEGIN SELECT RAISE(ABORT,'generation_study_immutable_intent'); END",
+        "sqlSha256": "b1fa92e6cef9853082062448fb2f739bce0b29725c961c1bed09dfe45febac9d"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_token_no_delete",
+        "table": "budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_token_no_delete BEFORE DELETE ON budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations WHERE token_reservation_id=OLD.reservation_id)\n BEGIN SELECT RAISE(ABORT,'generation_study_immutable_purchase'); END",
+        "sqlSha256": "a9956c13156ded8c546c76ab8a0a8bd71abca9b5b7dd7f3c637a60501d00e350"
+      },
+      {
+        "type": "trigger",
+        "name": "generation_study_token_settlement",
+        "table": "budget_reservations",
+        "sql": "CREATE TRIGGER generation_study_token_settlement BEFORE UPDATE ON budget_reservations\n WHEN EXISTS(SELECT 1 FROM generation_study_operations o WHERE o.token_reservation_id=OLD.reservation_id)\n AND (NEW.reserved_tokens!=OLD.reserved_tokens OR NEW.owner_id!=OLD.owner_id OR NEW.period!=OLD.period OR\n (NEW.status NOT IN('active','authorizing') AND NOT EXISTS(SELECT 1 FROM generation_study_operations o JOIN generation_study_charges c USING(operation_id)\n WHERE o.token_reservation_id=OLD.reservation_id AND c.provider_request_id=o.provider_request_id AND c.receipt_hash=o.receipt_hash AND ((o.financial_policy_id IS NULL AND c.measured_tokens=NEW.used_tokens) OR EXISTS(SELECT 1 FROM generation_study_reconciliations r WHERE r.operation_id=o.operation_id AND r.policy_id=o.financial_policy_id AND r.provider_settled=1 AND r.incurred_tokens=NEW.used_tokens AND r.sequence=(SELECT MAX(sequence) FROM generation_study_reconciliations WHERE operation_id=o.operation_id))))))\n BEGIN SELECT RAISE(ABORT,'generation_study_original_usage_required'); END",
+        "sqlSha256": "31789c3e3eac47bc492965f31dc41b8fb9150844b36caaf067fba69db4872bac"
+      }
+    ],
+    "objectCount": 49,
+    "tables": [
+      "authoring_study_commits",
+      "authoring_study_configurations",
+      "authoring_study_evidence",
+      "generation_study_assertions",
+      "generation_study_charges",
+      "generation_study_evidence",
+      "generation_study_financial_grants",
+      "generation_study_grants",
+      "generation_study_operations",
+      "generation_study_reconciliations",
+      "generation_study_stages",
+      "generation_study_supplied_observations",
+      "generation_study_supplied_reviews"
+    ],
+    "sourceSqlHashFormat": "SHA256(raw SQL UTF8); R34 uses SHA256(JSON-encoded SQL); do not compare formats directly"
+  },
+  "contractInputs": [
+    {
+      "path": "worker/authoring-study-types.ts",
+      "sha256": "54aff30323f25549902287035c2394154bb8c59f4e3d22f8860261d06d126024"
+    },
+    {
+      "path": "worker/authoring-study-finance.ts",
+      "sha256": "ef429042010cbb97505d723aae75689785cf59188e61a2d008482097927a0feb"
+    },
+    {
+      "path": "worker/authoring-study-approval.ts",
+      "sha256": "15a82e6a4a27db46f1e1a72d0da8dc23959042c137afce0fbb19d560102bcc8f"
+    },
+    {
+      "path": "worker/authoring-study-proof.ts",
+      "sha256": "6238726561a7a86ba0748a1f3fa192fcb2ce589a17297c2ef73d79dc48f1d77a"
+    },
+    {
+      "path": "worker/authoring-study-schema.ts",
+      "sha256": "5c3c06cc1e9bc81a3fc11e1af86f950ce6b9c47c232b4520facd1a253704ad89"
+    },
+    {
+      "path": "worker/generation-study-api.ts",
+      "sha256": "ac6b81815d0d111f755c8ffb1683d6ebeffb2fc866cdf7ba1c8e2ae07de99bec"
+    },
+    {
+      "path": "worker/generation-study-configuration.ts",
+      "sha256": "7ab7e00bc4ee587733955bc659f1e8c84783770ea3410ee50155e11a4ad2f4da"
+    },
+    {
+      "path": "worker/generation-study-cleanup.ts",
+      "sha256": "7bc82077ba372a4b5553d84280abf2adc98a0bfca86918eb025c41851de15da7"
+    },
+    {
+      "path": "worker/generation-study-custody-probe.ts",
+      "sha256": "d1d385f3ae39a475044072a09e1abc8da54ca55a49b31a5e7765d01168114c4d"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/authority.mjs",
+      "sha256": "843ce56cd7022fd995dadbddadeaffe66519acb6ea669921b3cc70b3ba26b0ed"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/host.mjs",
+      "sha256": "95c088c43d0bd5b36626fc77b149b81d97038afe2270de81211bf473cb0e50f9"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/supplied-authority.mjs",
+      "sha256": "3b72361202a23513bb88fb36186234ca91720cc7ee76057ff134b314c50fdc6e"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/supplied-schema-contract.mjs",
+      "sha256": "4143cad55780e7eb05c8d05c01ad5f6da335a50bb5d5e69479f892a5c54130d3"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/financial-policy.mjs",
+      "sha256": "e59f2bd57080b238964f0ab72217cf19f3e596ca5b5760c35cc63fbf447df561"
+    },
+    {
+      "path": "evals/generation-reliability/native-host/financial-reconciliation.mjs",
+      "sha256": "60b5023fc0ff95e55b2657c6fb31e61836f04106ad156e9717c1f942b39b2ab8"
+    },
+    {
+      "path": "evals/generation-reliability/preparation/external-guard.mjs",
+      "sha256": "5210824b035b5123cb40be89d7355c85d4e85951cda03389b128debf91a01691"
+    },
+    {
+      "path": "evals/generation-reliability/p2/contract.mjs",
+      "sha256": "b7bf0cabcabce1ddfcd83e885ffae1b01c7cbce8d4bba44f47386eb860284012"
+    },
+    {
+      "path": "worker/pilot-policy.ts",
+      "sha256": "bc31b99c19246fe6f0d493d5458ec1d50100776b43a911ec7cad231e436ab68d"
+    },
+    {
+      "path": "build/release-migrations.ts",
+      "sha256": "705a3f573d00f4aa4dd9ffbdaf7bc1ffe67cc21706c647215f4a8686560c1fd4"
+    },
+    {
+      "path": "build/memory-migration-release.json",
+      "sha256": "81590ac50237ba74856202dc72f83fdf9b052330c12b6afdfc084ce652239a64"
+    },
+    {
+      "path": "db/generation-study.pending.sql",
+      "sha256": "a3065bf8b61640de47aed06fcfd1a5dfc3a96a5f8fcf11305879fca8c9df9ed2"
+    },
+    {
+      "path": "db/generation-study-supplied-v2.pending.sql",
+      "sha256": "d1acdc198bb35608b2b407b6b0c833fd383e7c57fde2c36bdae970178bf62594"
+    },
+    {
+      "path": "db/authoring-study-approval.pending.sql",
+      "sha256": "d8def4713f0dfcec6292161a5a0e6dba785d59b7250ff8a4c71aad1ceb94360e"
+    }
+  ],
+  "routes": {
+    "prefix": "/api/internal/generation-study/",
+    "actions": [
+      "approval(preview/commit/status)",
+      "execute",
+      "observe",
+      "recover",
+      "reconcile",
+      "stop",
+      "cleanup",
+      "cleanup-proposal"
+    ],
+    "newProviderEndpoint": false,
+    "production554RoutesPresent": false,
+    "existingLocally": true,
+    "compiledConfiguration": "worker/generation-study-configuration.ts: entries=[]"
+  },
+  "flags": [
+    "FORMA_GENERATION_STUDY_APPROVAL_ENABLED",
+    "FORMA_GENERATION_STUDY_ENABLED"
+  ],
+  "origin": "FORMA_GENERATION_STUDY_ORIGIN",
+  "bindings": [
+    "same canonical DB",
+    "private MEDIA",
+    "existing server-only provider credential/header binding"
+  ],
+  "excluded": [
+    "generation-preparation.pending.sql",
+    "31 held source migrations",
+    "174 R34 fixture-relative extra objects",
+    "10 R34 shared SQL hash differences as a repair list",
+    "private R14 144-object migration",
+    "existing reservation clearance",
+    "all other media implementation"
+  ],
+  "proposedSchemaDelta": {
+    "newOperationColumn": "pair_yield_to TEXT NULL REFERENCES generation_study_operations(operation_id) DEFERRABLE INITIALLY DEFERRED; never set outside atomic exact-pair transfer",
+    "replaceIndex": "generation_study_one_outstanding: unique(owner_id) WHERE status!=completed AND pair_yield_to IS NULL",
+    "newTable": "generation_study_pair_transfers; immutable exact baseline/treatment identities and approved exposure/human/evidence bindings; unique baseline_id, treatment_id and pair_id; deferred treatment FK",
+    "newGuardObjects": [
+      "generation_study_pair_transfer_identity",
+      "generation_study_pair_transfer_no_delete",
+      "generation_study_pair_transfer_admission",
+      "generation_study_pair_yield_guard",
+      "generation_study_pair_operation_admission",
+      "generation_study_pair_eligible"
+    ],
+    "replaceTriggers": [
+      "generation_study_external_cost",
+      "generation_study_external_tokens",
+      "generation_study_lifecycle_cost_hold",
+      "generation_study_lifecycle_token_hold"
+    ],
+    "preserve": [
+      "generation_study_lifecycle_holds truth",
+      "charge/reconciliation finality",
+      "original token/cost/lifecycle settlement and no-delete triggers",
+      "supplied stage intents and hard-stop monotonicity"
+    ],
+    "status": "contract proposal only, no DDL implementation or hosted change",
+    "approvalCheck": "New fresh-install authoring_study_commits CHECK(version IN (1,2)); exact version-dispatched v1/v2 authoring compiler/receipt/schema guards; no historical SQL edit"
+  },
+  "retention": "Existing private rehearsal and qualification retention unchanged; future generated-image/private-finance custody terms and funding still explicit",
+  "deadline": "2026-10-01T00:00:00Z",
+  "mutationRecoveryMargin": "2026-09-30T22:00:00Z",
+  "proposedVersions": {
+    "supplied": "generation-supplied-study-v3",
+    "financial": "generation-financial-policy-v2 (image pair only)",
+    "authority": "authoring-study-v2",
+    "authoringProposalAndReceipt": 2,
+    "protocol": "unchanged P2 frozen-direction experiment",
+    "legacy": "v1/v2 supplied and v1 financial/authoring unchanged by default"
+  }
+}

@@ -1,0 +1,26 @@
+test_atomic_fault_cannot_leave_half_transfer (__main__.ContractTests.test_atomic_fault_cannot_leave_half_transfer) ... ok
+test_competing_transfer_and_restart_cannot_claim_again (__main__.ContractTests.test_competing_transfer_and_restart_cannot_claim_again) ... ok
+test_concurrent_execution_denied (__main__.ContractTests.test_concurrent_execution_denied) ... ok
+test_cross_period_liability_still_consumes_headroom (__main__.ContractTests.test_cross_period_liability_still_consumes_headroom) ... ok
+test_duplicate_submission (__main__.ContractTests.test_duplicate_submission) ... ok
+test_exact_pair_advances_without_falsifying_baseline (__main__.ContractTests.test_exact_pair_advances_without_falsifying_baseline) ... ok
+test_existing_unclassified_counts_still_block (__main__.ContractTests.test_existing_unclassified_counts_still_block) ... ok
+test_expiry_and_lifecycle (__main__.ContractTests.test_expiry_and_lifecycle) ... ok
+test_incomplete_usage (__main__.ContractTests.test_incomplete_usage) ... ok
+test_legacy_default (__main__.ContractTests.test_legacy_default) ... ok
+test_no_authentic_authority (__main__.ContractTests.test_no_authentic_authority) ... ok
+test_no_baseline_reserve_reuse (__main__.ContractTests.test_no_baseline_reserve_reuse) ... ok
+test_no_human_resume (__main__.ContractTests.test_no_human_resume) ... ok
+test_no_independent_acceptance (__main__.ContractTests.test_no_independent_acceptance) ... ok
+test_original_result_missing (__main__.ContractTests.test_original_result_missing) ... ok
+test_overrun_or_hard_stop_not_cleared (__main__.ContractTests.test_overrun_or_hard_stop_not_cleared) ... ok
+test_private_evidence_missing_or_changed (__main__.ContractTests.test_private_evidence_missing_or_changed) ... ok
+test_scope_wrong_pair_or_owner (__main__.ContractTests.test_scope_wrong_pair_or_owner) ... ok
+test_uncertain_submission (__main__.ContractTests.test_uncertain_submission) ... ok
+test_unrelated_hold_still_blocks (__main__.ContractTests.test_unrelated_hold_still_blocks) ... ok
+test_unsafe_or_unknown_fidelity (__main__.ContractTests.test_unsafe_or_unknown_fidelity) ... ok
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.005s
+
+OK

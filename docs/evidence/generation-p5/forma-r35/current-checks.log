@@ -1,0 +1,20 @@
+▶ CURRENT: independent gates deny unsettled baseline; no provider transport
+  ✔ human resume alone cannot satisfy legacy completed predicate (0.35ms)
+  ✔ owner unique index independently denies treatment operation (0.267834ms)
+  ✔ external token trigger independently denies new token reservation (0.149959ms)
+  ✔ external cost trigger independently denies new cost reservation (0.11225ms)
+  ✔ external guard denies active baseline reservations (0.243333ms)
+  ✔ current sealed policy rejects proposed nextPurchase discriminator (0.121625ms)
+  ✔ no reconciliation cannot imply settled provider or eligible next purchase (0.154917ms)
+  ✔ honest pending reconciliation remains a lifecycle hold (0.073292ms)
+  ✔ pending charge cannot release original token or cost holds (0.346333ms)
+  ✔ reconcile uncertainty latches terminal pair stop in current host (3.663708ms)
+✔ CURRENT: independent gates deny unsettled baseline; no provider transport (275.530417ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5128.936667
