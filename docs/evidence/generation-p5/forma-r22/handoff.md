@@ -1,0 +1,9 @@
+# R22 handoff
+
+Local/retained-only browser diagnosis from ade97e1d. No new hosted request. Read current P5/V58/focus and unresolved feedback; no P5 open feedback, three unrelated GKE items preserved. R21 remains the ledger/state authority:18/22normal,6/6recovery; live550 restored,551admitted/saved; no qualification JSON.
+
+The failed goto conforms to the documented operation. Two narrowly filtered captured-console queries returned empty arrays, which do not establish absence of invocation or a cause. Matching sealed source returns JSON, not an attachment. No supported browser network-failure/policy trace is advertised. No internals/account/document body/security/surface change or failed-navigation retry. Authentication approval remains accepted.
+
+Read result.md and decision.md. Next: user may approve one native Worker-log read (1existing normal/0recovery) using the specified bounded dynamic lookback,100events,errors_onlyfalse. This is a proposed read-only exception to the stop, not publication/read resumption. Do not execute without explicit approval. Record reservation25 before dispatch, carrying24old entries forward; enable only the logs accounting group in a new continuation ledger. Stop after one result/refusal and report correlation limits. A missing event is inconclusive. No platform request needed yet because a supported diagnostic exists. Do not demand a proven root cause before this observation.
+
+No ceiling amendment needed for that log-only read. Actual later deployment/qualification still needs a sufficient recovery amendment. Prior max6normal/3recovery would need+2/+3now or+3/+3after logread; neither approved. Use saved551 if later applicable, not a rebuild. Controls off, accepted evidence/retention/authentication settled, expiry unchanged, P5open, StageC/paid separate, realimages0/newmoderationfalse. No actual qualification or new application/schema failure established.

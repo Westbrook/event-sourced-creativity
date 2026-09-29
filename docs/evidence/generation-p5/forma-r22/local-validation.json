@@ -1,0 +1,48 @@
+{
+  "checkedAt": "2026-09-29T00:52:57.733996+00:00",
+  "baseCommit": "ade97e1d319a4129e2e3f882845174c54af7dc57",
+  "applicationSourceChanged": false,
+  "hostedActions": 0,
+  "broadTestsRun": false,
+  "retainedLedger": {
+    "path": "docs/evidence/generation-p5/forma-r21/request-ledger.json",
+    "sha256": "de4660e5ca0a7048071f2c46527e6c2923403b5489aef315b5ac7ad9aa2764e1",
+    "unchangedFromHEAD": true,
+    "normal": 18,
+    "normalLimit": 22,
+    "recovery": 6,
+    "recoveryLimit": 6,
+    "issued": 24
+  },
+  "sealedSourceHashesVerified": {
+    "worker/index.ts": "dbe6ce041c022fc4588d73e2e8dac298e3d1a010034b4697ff993a26a1d519ae",
+    "worker/generation-study-qualification.ts": "d318755b9bfb4b7cae87d35290ee10d8a244844461f55043367f88bd07c9f345"
+  },
+  "studyPrefixExcludesTrafficRetention": true,
+  "targetCopiedFromVerifiedReceipt": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "proposedRead": {
+    "normal": 1,
+    "recovery": 0,
+    "approved": false,
+    "exampleLookbackAtValidation": 57,
+    "afterNormal": 19,
+    "afterRecovery": 6,
+    "afterIssued": 25,
+    "normalRemaining": 3,
+    "recoveryRemaining": 0
+  },
+  "futurePriorMaximumResumption": {
+    "normalNeeded": 6,
+    "recoveryNeeded": 3,
+    "additionalNormalBeforeRead": 2,
+    "additionalNormalAfterRead": 3,
+    "additionalRecovery": 3,
+    "approved": false
+  },
+  "limitations": [
+    "No application response obtained",
+    "No cause established",
+    "No new live parity assertion",
+    "Native event availability and completeness unknown"
+  ]
+}

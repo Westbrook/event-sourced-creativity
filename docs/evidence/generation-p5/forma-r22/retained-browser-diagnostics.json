@@ -1,0 +1,33 @@
+{
+  "scope": "Retained captured console messages only; no navigation",
+  "tabId": "7",
+  "queries": [
+    {
+      "operation": "formaSignIn.dev.logs",
+      "args": {
+        "filter": "ERR_BLOCKED_BY_CLIENT",
+        "levels": [
+          "error",
+          "warn"
+        ],
+        "limit": 20
+      },
+      "result": []
+    },
+    {
+      "operation": "formaSignIn.dev.logs",
+      "args": {
+        "filter": "/api/internal/generation-study/qualification",
+        "limit": 20
+      },
+      "result": []
+    }
+  ],
+  "hostedActions": 0,
+  "newApplicationRequests": 0,
+  "documentBodyRead": false,
+  "credentialsRead": false,
+  "causeEstablished": false,
+  "workerInvocationEstablished": false,
+  "limitation": "Empty captured-console query results do not prove no Worker invocation or absence of blocking policy. Console coverage and retention unspecified."
+}
