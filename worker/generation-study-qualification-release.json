@@ -1,0 +1,13 @@
+{
+  "contract": "forma-p5-qualification-only-r30",
+  "parent": "498936481741f7ed1b03d43422288d628db49f2f",
+  "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "expiry": "2026-10-01T00:00:00Z",
+  "runtimeInputs": {
+    "worker/index.ts": "49a84bc6918e3e565f4d78a3d30b125505578d091addb5486d6eac91fc830261",
+    "worker/generation-study-qualification.ts": "a588e9929ccbe61dfb8775c992c85732b32e2abc161875b1b9f4dc1c68798233",
+    "worker/authoring-study-schema.ts": "5c3c06cc1e9bc81a3fc11e1af86f950ce6b9c47c232b4520facd1a253704ad89",
+    "evals/generation-reliability/native-host/supplied-schema-contract.mjs": "4143cad55780e7eb05c8d05c01ad5f6da335a50bb5d5e69479f892a5c54130d3"
+  },
+  "id": "p5-forma-qualification-only:ea53147a124d910bc7e6e9c6fc362e4e641d65527f7829cf0ed24ad62c6d1fc7"
+}
