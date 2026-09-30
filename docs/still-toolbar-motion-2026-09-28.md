@@ -283,3 +283,14 @@ Native terminal success confirms publication. The remaining acceptance work is
 the user's physical mobile recheck and audible assistive-technology review; no
 paid generation or new migration was run. Release evidence and the canonical
 handoff are retained in the independent Progress Report.
+
+
+### User acceptance — 2026-09-30
+
+After publication556, the user confirmed: “Physical touch and rotation” looks
+“good to go,” and “VoiceOver in iOS works weel.” These close the physical
+mobile interaction/rotation and iOS VoiceOver checks. Device, browser and OS
+versions were not supplied; no separate iPad or desktop Safari result is inferred.
+The remaining manual check is audible behavior with another supported
+browser/screen-reader combination. Earlier automated and deployment receipts
+remain unchanged.
