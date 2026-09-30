@@ -1,0 +1,19 @@
+{
+  "at": "2026-09-30T11:57:54.686725+00:00",
+  "approvedInputsVerified": true,
+  "sourceFiles": 4753,
+  "candidateClean": true,
+  "durableWriterSyntheticTest": true,
+  "environmentProjectorSyntheticTests": 17,
+  "prior67EntriesUnchanged": true,
+  "nativeCalls": 1,
+  "normal": 50,
+  "recovery": 18,
+  "charged": 68,
+  "mutations": 0,
+  "browserCalls": 0,
+  "restorationRequired": false,
+  "priorPolicySerializationVerified": false,
+  "policyDriftEstablished": false,
+  "stop": "policy parity not established"
+}

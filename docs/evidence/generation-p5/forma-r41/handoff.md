@@ -1,0 +1,21 @@
+# P5 R41 — stopped at the first preflight read
+
+R40 execution was accepted exactly by the owner. The decision SHA256, envelope, archive SHA256, source parent/commit and all 4,753 source-file hashes were verified. The independent candidate is clean and unchanged. No rebuild was needed.
+
+One native call was dispatched: N1 sites_get_site after durable reservation68, flush and readback. It returned the exact project, active status, owner role, workspace_all, latest saved555, access revision7, six allowed users, zero allowed editors/groups/external visitors, and the expected production origin. Latest saved remains distinct from active publication.
+
+Full access-policy parity was not established. SHA256 of the returned policy serialized with JavaScript JSON.stringify was d231fffa9cf655707d8106d2ea9331582e0f1675c3df4e32e2d8fda6aa2e18af; retained R33/R34 digest is 70f6a2e99e71e89b34359006a742a61766bf43b926235719bbebcb8cb541a43f. The prior digest's serialization recipe was not verified before dispatch. This is a verification shortcoming, not evidence that users/permissions changed. Key order, representation or actual policy differences remain possible; no cause is established. Raw policy/personal data and incidental credentials were not displayed or persisted. No additional read was made to resolve this.
+
+Normal work stopped. No environment read, source credential, fetch, push, save, flag mutation, deployment, browser request or manual GET occurred. No restoration obligation was created; do not deploy554 merely to close this attempt. The candidate and its archive remain sealed. Historical17token/46cost holds remain unclassified. Infrastructure qualification has no new application result; prompt fidelity and moderation have no new findings.
+
+Accounting: all67prior entries preserved; now50normal/18recovery/68charged, ceilings63normal/28recovery/91total. This stopped cycle has13unused normal and9new unused recovery reservations; the separate old conditionalR3 remains restricted and nontransferable. Unused capacity does not authorize replaying N1. Hidden HTTP and costs remain unknown. September30 22:00UTC margin and October1 00:00UTC expiry unchanged.
+
+Local workspace note: the evidence checkout's .git pointer was missing while its registered Git metadata and exact evidence commit remained. The pointer was repaired to that existing registration only. Numerous other tracked files are absent in this checkout; these deletions were not staged, restored or included. Candidate's independent repository and all sealed inputs remain verified. Focused new evidence is committed alone.
+
+## Smallest next decision
+
+Do not repeat the full release or authentication/exposure/retention intake. A narrowly approved metadata-only access-policy reconciliation is needed before any resumption: one sites_get_site(project_id,include_mcp_connection:false), transiently compute explicitly documented digest variants (raw compact JSON, recursively key-sorted compact JSON, and recursively key-sorted Python-style spaced JSON), preserving only digests and safe policy counts/revision. No raw policy/IDs, browser, credentials or mutations. A matching retained digest would support representation parity; no match would leave policy parity unresolved and require owner review/acceptance of the current access policy before publication. This cannot certify active publication.
+
+That read is not authorized by remaining capacity alone. It could reassign one unused normal slot with no new ceiling for reconciliation alone, leaving12normal/9new recovery. If the owner also later resumes all original N2–N14 branches, one additional normal reservation is required (64normal/28recovery/92total ceiling; maximum91charges), with quiet window/fresh source/environment guards and unchanged candidate/recovery acceptance. Do not grant this addition or resumption automatically. Reconcile exact timing against the unchanged deadlines. P5 stays open.
+
+Evidence: [redacted N1 receipt](68-site-redacted.json), [durable ledger](request-ledger.json), [approved R40 decision](../forma-r40/decision.md).

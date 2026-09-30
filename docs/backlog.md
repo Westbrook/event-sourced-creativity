@@ -696,3 +696,8 @@ schema effects were installed through the fixed atomic D1 repair instead.
 [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md) retain
 separate service-dependent and activation work. No repair is still pending for
 these31 journaled migrations.
+
+
+### P5 R41 — accepted R40 cycle stopped before mutation
+
+R40 exact candidate/archive verified; N1 owner/latest555/access7 read completed, but full policy digest parity is unresolved because prior serialization is unverified. No mutation or restoration obligation. Ledger50normal/18recovery/68charged; original caps63/28/91, old conditionalR3 restricted. One explicitly authorized metadata-only policy reconciliation is the next decision, not a whole publication repeat. [Result and bounded next scope](evidence/generation-p5/forma-r41/result.md). P5 remains open; no actual hold classification, image pair or moderation finding.
