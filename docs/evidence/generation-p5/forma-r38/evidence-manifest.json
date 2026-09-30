@@ -1,0 +1,16 @@
+{
+  "files": {
+    "64-environment-projection.json": "ad4db2cea844c3a85fcd61b5e7ac20929a73c59115414c2e7fa6ca670c7747d2",
+    "decision.md": "0edf375634563cfc952751d34c686f9d6a5305c4b68aa06c195e068fba3804d4",
+    "environment-metadata.mjs": "17889739fcdae5d502eaa532ebbabdb912c26eb43f7a44e4b2ffa95cca2ad5a5",
+    "environment-metadata.test.mjs": "d77a0c5e6ec464c4a659eedfa289d93c06f3ccef18cdf53425bb1f7f4f39dc73",
+    "handoff.md": "4972747b93a61e39a745a7be949c7a49f805df9903f85771d756be6f44d532f7",
+    "index.html": "d51d819e53573281940bc44606bcadb90a89e55b8cd762196d296f5dd0e6b2b6",
+    "ledger.py": "f920276edfd2c9239da296c4f3a30a2f648ffdb6744763b28b501adaddc99fae",
+    "request-ledger.json": "a3ef6db6fbfabe7e72c0c2433d0b9913333b5b0faf5f79ba5fb6b31151f96b7b",
+    "result.json": "69605f153679340cf27ec951a75ad14017243e62e386c224800f8b8ac6bd1647",
+    "result.md": "a62773585caa6a850b6d2cfd4c0d89bcf8965c80d7bce3a1c195b3b99eaac2e0",
+    "retained-source-check.json": "cf64d2535e36869382addb32d3a6abea4b7f70d80d92b318409872f5acb3dd82",
+    "validation.json": "8137df4a802dc4b7d51763532c71f88f40a4d5354b6deee99fa94370c064eb0a"
+  }
+}

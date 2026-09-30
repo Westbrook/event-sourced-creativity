@@ -1,0 +1,46 @@
+{
+  "base": "498936481741f7ed1b03d43422288d628db49f2f",
+  "freshLiveState": false,
+  "files": {
+    "worker/pilot-policy.ts": {
+      "retained": true,
+      "sameAsR36": true,
+      "retainedSha256": "bc31b99c19246fe6f0d493d5458ec1d50100776b43a911ec7cad231e436ab68d"
+    },
+    "worker/consequential-consent.ts": {
+      "retained": true,
+      "sameAsR36": true,
+      "retainedSha256": "53a1c58c6fe24e6229d9f975624de672622a8877cf7f3f12ae801ef3a04fc5dc"
+    },
+    "worker/principal-request-core.ts": {
+      "retained": true,
+      "sameAsR36": true,
+      "retainedSha256": "d486b63be51c3e63a60b9b15d66c5e7d1761a40ae138f2f0c4728b0e4e2ae3d5"
+    },
+    "worker/index.ts": {
+      "retained": true,
+      "sameAsR36": false,
+      "retainedSha256": "fbed144021eefc709e0a49f0c47ecd460b163ddfd9866fa4912f94721101b1db"
+    },
+    "worker/runtime.ts": {
+      "retained": true,
+      "sameAsR36": false,
+      "retainedSha256": "fae4e0e89676882ab76e0958cd0aca183748e65fd8fb1b5021034693055b9e8a"
+    },
+    "build/release-migrations.ts": {
+      "retained": true,
+      "sameAsR36": false,
+      "retainedSha256": "705a3f573d00f4aa4dd9ffbdaf7bc1ffe67cc21706c647215f4a8686560c1fd4"
+    },
+    "build/memory-migration-release.json": {
+      "retained": true,
+      "sameAsR36": true,
+      "retainedSha256": "81590ac50237ba74856202dc72f83fdf9b052330c12b6afdfc084ce652239a64"
+    },
+    ".openai/hosting.json": {
+      "retained": true,
+      "sameAsR36": true,
+      "retainedSha256": "7eca0d88ab6fee792a7a472247df26548f08224ef87a18596b0a3cd5697c0b9c"
+    }
+  }
+}

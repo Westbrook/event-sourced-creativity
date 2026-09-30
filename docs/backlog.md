@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — R37 metadata pass stopped | Existing P5 task | [R37 result](evidence/generation-p5/forma-r37/result.md): fresh owner/workspace_all/access7/latest saved555; no active publication certificate. R36 local implementation and R34 recovery preserved. | [Exact next capability](evidence/generation-p5/forma-r37/decision.md): secret-free environment metadata and authoritative current-publication binding. One call;45normal/18recovery/63charged. P2–P4 not dispatched. Conditional41-migration fixed-read plan;17token/46cost holds unclassified; no paid action or renewal. |
+| GEN-P5 | In progress — R38 P2 output rejected | Existing P5 task | [R38 result](evidence/generation-p5/forma-r38/result.md): one authorized environment call, tested projector returned malformed_response without raw retention; P3/P4 not sent.64charged; R36/R34 preserved. | [Concrete ordinary41-migration proposal](evidence/generation-p5/forma-r38/decision.md): narrow fixed read,14normal/8recovery future allocation; current environment/source/recovery selection and exact candidate seal remain. No42migration/full-pair activation, hold query, paid run or renewal. |
 
 ## Memory
 

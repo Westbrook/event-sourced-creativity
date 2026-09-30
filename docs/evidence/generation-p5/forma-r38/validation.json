@@ -1,0 +1,21 @@
+{
+  "at": "2026-09-30T01:02:49.655808+00:00",
+  "checks": [
+    "all63prior ledger entries preserved",
+    "reservation64 flush/readback before dispatch; matching projected receipt",
+    "46normal/18recovery/64charged; ceilings unchanged",
+    "P1not repeated and P3/P4not dispatched",
+    "reviewed projector exact bytes preserved;10synthetic tests pass plus3transient-loading cases",
+    "relative documentation links resolve",
+    "R34/R36/R37 evidence unchanged; no product or migration edit",
+    "retained554 direct authentication dependencies and ordinary migration policy match R36"
+  ],
+  "nativeCalls": 1,
+  "rawResponsePersistedByAgent": false,
+  "projectorFailure": "malformed_response",
+  "currentEnvironmentQualified": false,
+  "applicationBuildRepeated": false,
+  "browserCalls": 0,
+  "hostedMutations": 0,
+  "providerCalls": 0
+}
