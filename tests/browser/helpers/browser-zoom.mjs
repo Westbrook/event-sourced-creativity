@@ -36,4 +36,3 @@ export async function applyBrowserZoom(page, context, factor, onReceipt = async 
   expect(after.dpr / before.dpr).toBeCloseTo(factor, 5);
   return { before, after, result };
 }
-
