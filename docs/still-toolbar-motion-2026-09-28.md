@@ -242,3 +242,44 @@ live row becomes visible in the same update. This avoids painting two toolbar
 surfaces during the last frames without changing timing or input readiness.
 Geometry regressions sample the actual opening frames, compare each button and
 the outer surface to the native final bounds, and verify a single painted layer.
+
+
+## Hardening release — 2026-09-30
+
+The user authorized committing to `main` and publication. Mobile fixes and the
+expanded browser suite are committed as `53d2638b`; whitespace-only test-helper
+cleanup is `cd907dd7`. Both are on local `main`, along with the earlier hardening
+commit `156b2f28`. Unrelated local proposal files remain untracked and untouched.
+
+Sites **556** is successfully published from source
+`d1dddc3a9ce8f820ea81fa6e2c2cb09b346a41bc` on the hosted `main` branch.
+Deployment `appgdep_6abd6fa356808191aaccf2c88d7e2a52` completed at
+2026-09-30 20:23:14 UTC (4:23 PM America/New_York), at
+https://forma-creative-studio.reve-ai-0869.chatgpt.site.
+
+The release is based on the verified live554 tree (`49893648`), preserving its
+video provenance correction and Idea note. It retains the later555 Git ancestry
+without reactivating its rolled-back qualification code. Still production source
+matches reviewed main; backend, database source, lockfile, build policy and hosting
+configuration match554. Workspace access revision7 and environment revision16
+are unchanged.
+
+The exact candidate passes44 unit tests,98 Node-reported browser checks across
+Chromium/Firefox/WebKit,5 release-preflight tests, typecheck, changed-file lint,
+production build and diff checks. The browser lane includes orientation refitting,
+54×54px mobile loading, single-surface aligned opening, native keyboard navigation,
+Find action dismissal, Reduced Motion and true Chromium200% zoom. Browser emulation
+is not physical-device or audible screen-reader acceptance.
+
+The admitted622-file archive contains the same41 approved migrations. Its
+Sites-normalized hash is
+`a50017fe8adbf5165737bec29a88b15c40badc718d27d1e606582160b0c3cceb`, with44,574,720
+normalized bytes. The native saved-version source/hash/count/size receipt was
+verified before deployment. The bundled workflow pushed source; its generic
+package failed the repository's archive check and was not uploaded. Publication
+used the independently verified held-migration package from the same build.
+
+Native terminal success confirms publication. The remaining acceptance work is
+the user's physical mobile recheck and audible assistive-technology review; no
+paid generation or new migration was run. Release evidence and the canonical
+handoff are retained in the independent Progress Report.
