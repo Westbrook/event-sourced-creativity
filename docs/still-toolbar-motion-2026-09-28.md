@@ -172,7 +172,7 @@ landmarks. The isolated study and its preview remain independent references.
 Chromium, Firefox and WebKit. It includes interruption, responsive, reduced-motion,
 reconnect, accessibility-tree and focus handoff checks. See the
 [browser guide](../tests/browser/README.md#still-toolbar-motion) for fixture
-isolation and the remaining human Safari/iOS, zoom and screen-reader checklist.
+isolation and the remaining human Safari/iOS and screen-reader checklist.
 
 [Release checks](still-toolbar-release-checks.md) make baseline/source scope,
 held migrations and the normalized Sites archive receipt explicit and repeatable.
@@ -185,3 +185,60 @@ in every engine and Chromium's native accessibility tree. It does not substitute
 role-locator visibility for browser inert semantics. The release checker also
 reproduced the recorded Sites552 archive hash,622 files and44,574,720 normalized
 bytes exactly. Existing unrelated repository-wide failures were not rerun.
+
+### Automated 200% browser zoom
+
+The toolbar runner includes `tests/browser/still-toolbar-zoom.test.mjs` for
+Chromium. It shares the existing per-tab native zoom helper and isolated test
+extension with the broader accessibility suite. A temporary browser profile and
+`viewport: null` allow real 200% zoom, verified through API read-back, halved
+layout dimensions, doubled DPR and unchanged visual scale. Cases cover normal
+paging/Find action and focus, 320 CSS-pixel overflow access, and zoom changes
+during opening and paging. No production motion or accepted timing changed.
+Physical Safari/iOS and audible screen-reader checks remain open.
+
+### Routine keyboard and reduced-motion coverage
+
+The toolbar command runs native forward/reverse Tab order, focus indicators,
+More/Back activation, and Escape/Close dismissal of Find action in Chromium,
+Firefox and WebKit. Both normal and pre-enabled reduced-motion preferences are
+covered; the latter verifies actual short opacity-only construction animations.
+Dialog ranking requests remain allowed while delivered toolbar actions stay
+unchanged. Together with automated native Chromium zoom, these replace the
+routine manual keyboard/dismissal/reduced-motion/200% checklist. Physical mobile
+touch/orientation and audible screen-reader observations remain manual. No claim
+is made that Playwright WebKit verifies Safari's browser UI or native zoom.
+
+### Settled orientation reflow
+
+A physical iPhone review found that a settled four-button Projects toolbar could
+retain landscape actions after rotating to portrait. The WebKit regression
+reproduced this after tapping Next page: the retained button focus deferred all
+fitting changes. Unfocused rotation already fitted correctly.
+
+Available-width changes and any required shrinking now refit immediately. Only
+optional growth at an unchanged width can wait for focus to leave. When the
+focused action is no longer inline, focus moves to More actions; actions that
+remain inline retain focus. Reflow does not change the current content page or
+request new decisions. The orientation regression covers touch-retained focus,
+keyboard focus and no toolbar focus, then rotates back to landscape. Firefox
+uses a native mouse lane because its emulated tap emitted no activation click;
+Chromium and WebKit cover touch.
+
+This fix is local until published; passing Playwright WebKit does not establish
+that the published build has passed the user's physical-device recheck.
+
+### Mobile circle and painted handoff
+
+Browser measurements reproduced a54×58px mobile loader: its54px inline height
+was constrained by the58px minimum-height token. The loader now sets its shared
+side token alongside its dimensions, including after returning from actions.
+The motion root bottom-aligns the live row within its reserved height so its
+surface matches the animated shell (previous mobile offset:4px).
+
+Native controls still become interactive at the accepted Thread checkpoint.
+Painting stays with the animation until cleanup removes that surface, then the
+live row becomes visible in the same update. This avoids painting two toolbar
+surfaces during the last frames without changing timing or input readiness.
+Geometry regressions sample the actual opening frames, compare each button and
+the outer surface to the native final bounds, and verify a single painted layer.

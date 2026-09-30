@@ -63,9 +63,11 @@ still-app .toolbar-motion-visual .spec-toolbar .toolbar-sr-only { position: abso
 
 
 /* The production En toolbar owns controls. The sidecar owns decoration only. */
-still-app .toolbar-motion-root { position:relative; width:100%; min-height:66px; }
+still-app .toolbar-motion-root { position:relative; display:flex; flex-direction:column; justify-content:flex-end; width:100%; min-height:66px; }
 still-app .toolbar-motion-live > .action-dock { position:static; width:100%; padding:0; background:none; }
-still-app .toolbar-motion-root[data-motion-active] .toolbar-motion-live { opacity:0; pointer-events:none; }
+/* Painting lasts through cleanup; native interaction can resume at its earlier checkpoint. */
+still-app .toolbar-motion-root[data-motion-painting] .toolbar-motion-live { opacity:0; }
+still-app .toolbar-motion-root[data-motion-active] .toolbar-motion-live { pointer-events:none; }
 still-app .toolbar-motion-visual { position:absolute; inset:0 0 4px; display:flex; align-items:flex-end; justify-content:center; pointer-events:none; }
 still-app .toolbar-motion-visual * { pointer-events:none !important; }
 still-app .toolbar-motion-visual .toolbar-row { display:flex; align-items:center; }

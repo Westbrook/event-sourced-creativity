@@ -77,12 +77,12 @@ export class ToolbarMotion {
   })();
  }
  ensure(){if(!this.pending||this.root&&!this.root.hasAttribute('data-motion-active'))this.begin();}
- suspend(){++this.epoch;this.clock?.cancel();this.clock=undefined;this.abort?.abort();this.pending=false;this.phase='idle';this.visual?.replaceChildren();this.loader=undefined;this.reveal();this.announce('');}
+ suspend(){++this.epoch;this.clock?.cancel();this.clock=undefined;this.abort?.abort();this.pending=false;this.phase='idle';this.visual?.replaceChildren();this.loader=undefined;this.root?.removeAttribute('data-motion-painting');this.reveal();this.announce('');}
  /** Flush visible time before applying an arrival, so late data cannot enter an
   * already missed left checkpoint if animation frames were delayed. */
  sync(){this.clock?.sync();}
  private announce(message:string){if(this.status&&this.status.textContent!==message)this.status.textContent=message;}
- private hideLive(){this.root!.setAttribute('data-motion-active','');this.live!.setAttribute('aria-busy','true');this.live!.inert=true;}
+ private hideLive(){this.root!.setAttribute('data-motion-active','');this.root!.setAttribute('data-motion-painting','');this.live!.setAttribute('aria-busy','true');this.live!.inert=true;}
  private reveal(){this.root?.removeAttribute('data-motion-active');this.live?.setAttribute('aria-busy','false');if(this.live)this.live.inert=false;this.restoreFocus();}
  private parkFocus(){
   const focus=document.activeElement as HTMLElement|null;
@@ -114,7 +114,7 @@ export class ToolbarMotion {
    if(epoch===this.epoch){this.finish();focus();}
   })();await this.task;
  }
- private finish(){this.pending=false;this.phase='idle';this.reveal();this.visual?.replaceChildren();this.loader=undefined;if(this.root)this.root.dataset.toolbarPhase='ready';this.announce('Actions available.');this.options.settled?.();}
+ private finish(){this.pending=false;this.phase='idle';this.visual?.replaceChildren();this.loader=undefined;this.root?.removeAttribute('data-motion-painting');this.reveal();if(this.root)this.root.dataset.toolbarPhase='ready';this.announce('Actions available.');this.options.settled?.();}
  private snapshot():Snapshot|undefined{
   const toolbar=this.live?.querySelector<Upgraded>('.action-dock en-toolbar');
   const base=toolbar?.shadowRoot?.querySelector<HTMLElement>('[part~="base"]');if(!toolbar||!base)return;

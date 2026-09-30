@@ -6,5 +6,5 @@ function run(files){
  const result=spawnSync(process.execPath,['--import','tsx','--test',...files],{stdio:'inherit',env:{...process.env,STILL_TOOLBAR_BROWSERS:browsers}});
  if(result.status!==0)process.exit(result.status||1);
 }
-run(['tests/still-thread-timing.test.mjs','tests/still-toolbar-rhythm.test.mjs','tests/still-toolbar-transport.test.mjs','tests/still-decision-cache.test.mjs','tests/still-generation-decision.test.mjs','tests/still-direct-create.test.mjs']);
-run(['tests/browser/still-toolbar-motion.test.mjs','tests/browser/still-toolbar-interruption.test.mjs']);
+run(['tests/still-toolbar-fit.test.mjs','tests/still-thread-timing.test.mjs','tests/still-toolbar-rhythm.test.mjs','tests/still-toolbar-transport.test.mjs','tests/still-decision-cache.test.mjs','tests/still-generation-decision.test.mjs','tests/still-direct-create.test.mjs']);
+run(['tests/browser/still-toolbar-motion.test.mjs','tests/browser/still-toolbar-interruption.test.mjs','tests/browser/still-toolbar-zoom.test.mjs','tests/browser/still-toolbar-keyboard.test.mjs','tests/browser/still-toolbar-orientation.test.mjs','tests/browser/still-toolbar-geometry.test.mjs']);
