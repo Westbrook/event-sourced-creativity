@@ -1,24 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createServer} from 'vite';
-import {chromium} from '@playwright/test';
+import {toolbarBrowsers,mountToolbarFixture,fixtureServer} from './helpers/still-toolbar.mjs';
 
-// The real app, renderer, client projection and En controls. Only data/provider
-// boundaries are fixtures; no account, job, provider or mutation is contacted.
-export async function mountToolbarFixture(page, url){
- await page.route('**/api/**',route=>route.fulfill({status:503,json:{error:'fixture_only'}}));
- await page.goto(url);
- await page.evaluate(async()=>{const {mountStillMotionFixture}=await import('/tests/browser/fixtures/still-toolbar-motion.js');await mountStillMotionFixture();});
-}
-
-export async function fixtureServer(){
- const server=await createServer({configFile:false,cacheDir:'/private/tmp/still-motion-vite',optimizeDeps:{noDiscovery:true},server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'fixture',configureServer(s){s.middlewares.use('/still',(_req,res)=>{res.setHeader('content-type','text/html');res.end('<!doctype html><html><body></body></html>');});}}]});await server.listen();return server;
-}
-
-test('production toolbar keeps content immediate and coordinates final actions and motion',async t=>{
+for(const [name,engine] of toolbarBrowsers)
+test(`${name}: production toolbar keeps content immediate and coordinates final actions and motion`,async t=>{
  const server=await fixtureServer();let browser;
  try{
-  browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1100,height:800}});page.setDefaultTimeout(10000);const errors=[];page.on('pageerror',e=>errors.push(e.stack));
+  browser=await engine.launch({headless:true});const page=await browser.newPage({viewport:{width:1100,height:800}});page.setDefaultTimeout(10000);const errors=[];page.on('pageerror',e=>errors.push(e.stack));
   await mountToolbarFixture(page,`http://127.0.0.1:${server.httpServer.address().port}/still/project/p/document/d`);
   const root=page.locator('.toolbar-motion-root');
   const ready=()=>page.waitForFunction(()=>document.querySelector('.toolbar-motion-root')?.dataset.toolbarPhase==='ready');

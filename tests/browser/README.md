@@ -476,3 +476,66 @@ the installed face used for each glyph. Existing English/French loaded-Manrope
 and Arabic declared-system-stack requirements remain unchanged. No contrast,
 individual-glyph, backend permission, whole-surface or accessibility-conformance
 claim follows from membership or a green control test.
+
+## Still toolbar motion
+
+`pnpm test:still-toolbar` runs the focused unit cases and real-app fixture suites
+in Chromium, Firefox and WebKit. Use `pnpm test:still-toolbar chromium` for a
+bounded iteration. The repository pins Playwright1.62.1; install its matching
+engines with `pnpm exec playwright install chromium firefox webkit` if absent.
+Use the declared Node/pnpm versions and the lockfile in CI/container runs.
+
+The Vite fixture has an OS-temporary cache per server and synthetic page data;
+all `/api` calls are intercepted. No live account, generation or retained archive
+is needed. Browser tests cover final-action gating, waiting/fallback, recovery,
+More/Back focus and compact midpoint, Find action dismissal, page effects,
+background completion, narrow layout, interruption during opening/paging,
+mid-transition resize and reduced-motion changes, and disconnect/reconnect.
+Animation snapshots must remain absent from the accessibility tree while the
+real controls are inert; the live tab-navigation control group is restored once.
+
+`still-toolbar-geometry.test.mjs` verifies the compact loading circle on mobile,
+including a return from actions, and samples actual opening frames at mobile and
+wide widths. It checks surface and button bounds against the final native
+controls and verifies that live painting begins only after snapshots retire.
+
+The same command also runs `still-toolbar-zoom.test.mjs` when Chromium is
+selected. It reuses the shared native zoom helper and test-only extension in a
+fresh temporary profile with `viewport: null`. Receipts verify `getZoom() === 2`,
+halved layout dimensions, doubled DPR, and visual scale 1. The cases exercise
+More/Back and Find action focus, narrow overflow access, and zoom changes during
+opening/paging. It uses actual browser zoom, with no CSS zoom or pinch emulation.
+Run just this lane with `node --import tsx --test tests/browser/still-toolbar-zoom.test.mjs`.
+
+`still-toolbar-keyboard.test.mjs` runs native Tab/Shift+Tab/Enter journeys in all
+three engines. It checks forward/reverse toolbar order and focus indicators,
+More/Back focus restoration, and both Escape and the dialog close control for
+Find action. Dismissal preserves page two and does not request replacement
+actions. The same journey runs with reduced motion enabled before page load;
+observed construction animations must be short opacity fades. The interruption
+suite separately checks enabling reduced motion during an active transition.
+These are routine automated regressions, not a recurring manual checklist.
+
+`still-toolbar-orientation.test.mjs` covers a settled four-button Projects toolbar
+at landscape → portrait → landscape, after actual paging with retained pointer
+focus, native keyboard focus, and no toolbar focus. Chromium/WebKit use touch;
+desktop Firefox uses native mouse input because its emulated tap emits pointer
+events without activating the button. It checks buttons against the toolbar
+frame, preserves the current page and decision request count, and checks focus
+retention or transfer to overflow. The touch fixture waits for the page change
+before accepting a ready toolbar; engines may dispatch tap-generated clicks at
+different points.
+
+Playwright WebKit is not the Safari application. Native 200% zoom is automated
+in Chromium only; no WebKit viewport resize or CSS scaling is reported as Safari
+browser zoom. The routine 200% regression is the automated Chromium lane;
+a Safari-specific zoom check is a targeted compatibility spot-check, not a
+recurring substitute for that lane. Remaining manual integration checks are:
+
+- VoiceOver on Safari and a screen reader on another supported browser: hear one
+  meaningful loading/waiting/ready announcement; never hear snapshot buttons.
+- Physical iPhone/iPad touch and orientation changes, including long labels.
+  Controls remain visible, reachable and correctly ordered.
+
+Record engine/OS/AT versions and observations; passing WebKit does not establish
+that these physical/manual checks passed.

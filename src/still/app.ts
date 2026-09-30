@@ -186,6 +186,7 @@ export class StillApp extends LitElement {
   private firstDockLimit=5;
   private measuringDock=0;
   private dockFitScope='';
+  private dockFitWidth=0;
   private dockFit={maximum:5,fits:5,hidden:[] as string[],deferred:false};
   private get toolbarLimit(){return this.measuringDock||Math.min(this.pageActionLimit,this.measuredDockLimit);}
   private get dockClass(){return this.measuringDock?'dock-measure':'action-dock';}
@@ -202,8 +203,13 @@ export class StillApp extends LitElement {
     const scope=[this.activeAddress,this.mode,this.moreOpen,this.pageActionLimit].join('/');
     const previous=scope===this.dockFitScope?this.measuredDockLimit:undefined;
     const fits=fitToolbarLimit(widths,available,this.pageActionLimit,previous);
-    // Keep a keyboard user's target stable. CSS supplies temporary scrolling until focus leaves.
-    const deferred=previous!==undefined&&dock.matches(':focus-within')&&fits!==this.measuredDockLimit;
+    const resized=Math.abs(available-this.dockFitWidth)>1;
+    this.dockFitWidth=available;
+    const focused=dock.contains(document.activeElement)?document.activeElement as HTMLElement:null;
+    const focusId=focused?.dataset.actionId||focused?.id;
+    // Optional growth can wait while a control is focused. Shrinking and viewport
+    // changes must always refit, including focus retained after a touch action.
+    const deferred=previous!==undefined&&!resized&&!!focused&&fits>this.measuredDockLimit;
     const next=deferred?this.measuredDockLimit:fits;
     const current=probes.find(p=>Number(p.dataset.fitLimit)===next);
     const maximum=probes.find(p=>Number(p.dataset.fitLimit)===this.pageActionLimit);
@@ -213,7 +219,19 @@ export class StillApp extends LitElement {
     const changed=JSON.stringify(info)!==JSON.stringify(this.dockFit)||next!==this.measuredDockLimit;
     this.dockFitScope=scope;this.dockFit=info;this.measuredDockLimit=next;
     if(!this.moreOpen)this.firstDockLimit=next;
-    if(changed)this.changed();
+    if(changed){
+      this.changed();
+      if(previous!==undefined&&next!==previous&&focused&&focusId)void this.updateComplete.then(()=>{
+        if(!this.isConnected||scope!==this.dockFitScope)return;
+        // Do not steal focus if the user moved elsewhere while Lit was updating.
+        if(document.activeElement!==focused&&document.activeElement!==document.body)return;
+        const buttons=[...this.querySelectorAll<HTMLElement>('.action-dock en-toolbar > en-button')];
+        const target=buttons.find(button=>(button.dataset.actionId||button.id)===focusId)
+          ??buttons.find(button=>button.dataset.actionId==='ui:more'||button.id==='still-compact-menu')
+          ??buttons[0];
+        target?.focus({preventScroll:true});
+      });
+    }
   }
   // At most seven inert alternatives: real En Reve sizing without duplicate IDs, help requests or telemetry.
   private renderDockProbes(){

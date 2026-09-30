@@ -128,4 +128,117 @@ receipt remain outside this merge; the broad suite was not repeated.
 
 The normal Still application entry now consumes this implementation. The
 fictional preview and isolated study remain available independently. No remote
-push, hosted deployment, migration or paid provider execution was performed.
+push, hosted deployment, migration or paid provider execution was performed at
+that integration checkpoint.
+
+## Hosted release — 2026-09-29
+
+The user explicitly authorized deployment. Sites version **552**, source
+`c7224bcb1ca4f871d6270abaa9abc4ef899314c9`, deployed successfully as
+`appgdep_6abbb530100c8191ad00aee8ec45567c` at 12:55 UTC to
+https://forma-creative-studio.reve-ai-0869.chatgpt.site.
+
+The release overlays the reviewed toolbar on the restored live version550
+(`c28af5fea0fc3ec2b37b878a544ec59c52a64daf`). Version551 was a temporary P5
+qualification release, already restored to550; its qualification runtime was
+not reactivated. Its source ancestry is retained without force-pushing. Worker,
+database source, build policy and hosting configuration match550 exactly; the
+toolbar source matches reviewed main `68534342`. Workspace access is preserved,
+and the successful deployment reports environment revision16.
+
+The isolated release build, typecheck and42 focused unit tests pass;11 real-app
+toolbar browser checks pass. The archive contains the existing41 approved
+migrations and matching built Worker bytes, with no candidate migrations. The
+Sites-normalized archive hash is
+`a1b2cc78d427148f97be2e1decf950b6c2fd66af5ad1bc14f6f58c16c58ecafb`.
+It was reproduced locally from the inspected archive by sorting file entries
+and normalizing tar metadata, with every file byte unchanged.
+
+The bundled publishing helper disappeared from the plugin cache during this
+release. The fallback used an ephemeral stdin-only source credential, the
+repository's held-migration packager and native Sites save/deploy operations.
+No paid provider test, manual database change or unrelated feature activation
+was performed. Native terminal deployment success is the hosted verification;
+user review of this live version remains separate.
+
+## Post-release hardening
+
+Selected Thread now has one production path and shared Infusion/Thread timing
+configuration. Removed exploration-only families, inactive primary-variant swap
+paths and duplicate base-duration literals without changing the accepted numeric
+landmarks. The isolated study and its preview remain independent references.
+
+`pnpm test:still-toolbar` runs the focused unit and real-app browser suites in
+Chromium, Firefox and WebKit. It includes interruption, responsive, reduced-motion,
+reconnect, accessibility-tree and focus handoff checks. See the
+[browser guide](../tests/browser/README.md#still-toolbar-motion) for fixture
+isolation and the remaining human Safari/iOS and screen-reader checklist.
+
+[Release checks](still-toolbar-release-checks.md) make baseline/source scope,
+held migrations and the normalized Sites archive receipt explicit and repeatable.
+They perform no hosted actions. Hardening is local until separately published.
+
+Hardening verification: production build, typecheck and changed-file lint pass;
+42 focused unit tests,60 browser checks across the three pinned engines, and5
+release-preflight tests pass. The browser lane checks native inert/focus behavior
+in every engine and Chromium's native accessibility tree. It does not substitute
+role-locator visibility for browser inert semantics. The release checker also
+reproduced the recorded Sites552 archive hash,622 files and44,574,720 normalized
+bytes exactly. Existing unrelated repository-wide failures were not rerun.
+
+### Automated 200% browser zoom
+
+The toolbar runner includes `tests/browser/still-toolbar-zoom.test.mjs` for
+Chromium. It shares the existing per-tab native zoom helper and isolated test
+extension with the broader accessibility suite. A temporary browser profile and
+`viewport: null` allow real 200% zoom, verified through API read-back, halved
+layout dimensions, doubled DPR and unchanged visual scale. Cases cover normal
+paging/Find action and focus, 320 CSS-pixel overflow access, and zoom changes
+during opening and paging. No production motion or accepted timing changed.
+Physical Safari/iOS and audible screen-reader checks remain open.
+
+### Routine keyboard and reduced-motion coverage
+
+The toolbar command runs native forward/reverse Tab order, focus indicators,
+More/Back activation, and Escape/Close dismissal of Find action in Chromium,
+Firefox and WebKit. Both normal and pre-enabled reduced-motion preferences are
+covered; the latter verifies actual short opacity-only construction animations.
+Dialog ranking requests remain allowed while delivered toolbar actions stay
+unchanged. Together with automated native Chromium zoom, these replace the
+routine manual keyboard/dismissal/reduced-motion/200% checklist. Physical mobile
+touch/orientation and audible screen-reader observations remain manual. No claim
+is made that Playwright WebKit verifies Safari's browser UI or native zoom.
+
+### Settled orientation reflow
+
+A physical iPhone review found that a settled four-button Projects toolbar could
+retain landscape actions after rotating to portrait. The WebKit regression
+reproduced this after tapping Next page: the retained button focus deferred all
+fitting changes. Unfocused rotation already fitted correctly.
+
+Available-width changes and any required shrinking now refit immediately. Only
+optional growth at an unchanged width can wait for focus to leave. When the
+focused action is no longer inline, focus moves to More actions; actions that
+remain inline retain focus. Reflow does not change the current content page or
+request new decisions. The orientation regression covers touch-retained focus,
+keyboard focus and no toolbar focus, then rotates back to landscape. Firefox
+uses a native mouse lane because its emulated tap emitted no activation click;
+Chromium and WebKit cover touch.
+
+This fix is local until published; passing Playwright WebKit does not establish
+that the published build has passed the user's physical-device recheck.
+
+### Mobile circle and painted handoff
+
+Browser measurements reproduced a54×58px mobile loader: its54px inline height
+was constrained by the58px minimum-height token. The loader now sets its shared
+side token alongside its dimensions, including after returning from actions.
+The motion root bottom-aligns the live row within its reserved height so its
+surface matches the animated shell (previous mobile offset:4px).
+
+Native controls still become interactive at the accepted Thread checkpoint.
+Painting stays with the animation until cleanup removes that surface, then the
+live row becomes visible in the same update. This avoids painting two toolbar
+surfaces during the last frames without changing timing or input readiness.
+Geometry regressions sample the actual opening frames, compare each button and
+the outer surface to the native final bounds, and verify a single painted layer.

@@ -119,6 +119,7 @@ function loadingSurface(shell, row, state, getWidth) {
   shell.setWaitingProgress = value => {
     progress = Math.max(0, Math.min(1, Number(value) || 0));
     const side = getWidth() <= 600 ? 54 : 58;
+    shell.style.setProperty('--toolbar-side', `${side}px`);
     const fontSize = getWidth() <= 720 ? 30 : 35;
     shell.style.setProperty('--waiting-wordmark-size', `${fontSize}px`);
     const measured = measure(fontSize);

@@ -1,6 +1,7 @@
 // Request playback has its own logical clock. A response is admitted only at
 // the end of a left swipe; rendering and source readiness share that boundary.
-export const REQUEST_RHYTHM_TIMING = Object.freeze({right: 900, hold: 350, left: 750, rest: 1000});
+import {INFUSION_TIMING} from './timing.js';
+export const REQUEST_RHYTHM_TIMING = INFUSION_TIMING;
 
 const clamp = value => Math.min(1, Math.max(0, value));
 const EPSILON = 1e-7;
