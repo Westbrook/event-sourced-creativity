@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "id": "appgdep_6abc12ce06308191bbe07ee6b5e69a9d",
+  "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_b640f9ffe7ac8191ba0b6189da7a0d3b",
+  "env_set_revision": 16,
+  "status": "succeeded",
+  "type": "publish",
+  "updated_at": "2026-09-29T19:35:34.593056+00:00",
+  "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+  "failurePresent": false,
+  "activePublicationCertificate": false
+}

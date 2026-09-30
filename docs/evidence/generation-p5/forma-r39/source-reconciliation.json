@@ -1,0 +1,39 @@
+{
+  "retainedSaved555": "ea8e7121f85e51a91a2b7fb5618294ff61001b16",
+  "remoteFreshnessVerified": false,
+  "retainedTreeClean": true,
+  "directInputs": {
+    "worker/pilot-policy.ts": {
+      "retainedSha256": "bc31b99c19246fe6f0d493d5458ec1d50100776b43a911ec7cad231e436ab68d",
+      "sameAsR36": true
+    },
+    "worker/consequential-consent.ts": {
+      "retainedSha256": "53a1c58c6fe24e6229d9f975624de672622a8877cf7f3f12ae801ef3a04fc5dc",
+      "sameAsR36": true
+    },
+    "worker/principal-request-core.ts": {
+      "retainedSha256": "d486b63be51c3e63a60b9b15d66c5e7d1761a40ae138f2f0c4728b0e4e2ae3d5",
+      "sameAsR36": true
+    },
+    "build/memory-migration-release.json": {
+      "retainedSha256": "81590ac50237ba74856202dc72f83fdf9b052330c12b6afdfc084ce652239a64",
+      "sameAsR36": true
+    },
+    ".openai/hosting.json": {
+      "retainedSha256": "7eca0d88ab6fee792a7a472247df26548f08224ef87a18596b0a3cd5697c0b9c",
+      "sameAsR36": true
+    }
+  },
+  "migrations": {
+    "ordinary": 41,
+    "bytesMatchPolicy": true,
+    "policySha256": "81590ac50237ba74856202dc72f83fdf9b052330c12b6afdfc084ce652239a64",
+    "heldExcluded": 31,
+    "journalSha256": "0e8a855d8bae770304df5d5eceee7b717408444c5e5662aeec2b83de9fea7d7e"
+  },
+  "R36ReusableReadInputs": {
+    "worker/generation-study-hold-read.ts": "eb18c4cdc2498f5e33333cef6d73afe3dc6a13945e332fa13c3ba68f40696bf6",
+    "worker/generation-study-hold-queries.ts": "be2ce0e022a2967d07cce93687c0691bc29914e9599ccd42a89d74b255ddebe8",
+    "worker/generation-study-qualification.ts": "721cd2da66f95460c0a9b3f0cafeba082941199dd17c6f6f9a205a94c2444b4d"
+  }
+}

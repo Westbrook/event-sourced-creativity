@@ -1,0 +1,18 @@
+{
+  "files": {
+    "65-versions.json": "6a1d1021b3d7789ffcdcb34a9976179b20c8fb4c99b895d57aaab168c3ba8b1a",
+    "66-deployment-status.json": "920b0a9d9277ad273d0347c09e0b107c2faf8f8d4f1779ac3792fa5ad2967f51",
+    "67-environment-metadata.json": "39f8ce877e69afb44704d8f15c3b9cf62cd071842aa8fb9150097658069a54ee",
+    "decision.md": "387d4e7a83f2b800ca5f343344d95e130c5613e9a59dd40eeb48b3f29929dbfb",
+    "environment-metadata.mjs": "0a71a4fdde1309abff7f718ac8f3aeccd37813e273d43f36a94c4f708fb513a8",
+    "environment-metadata.test.mjs": "d6ef5d57651b53167d519fab8fd4b7c05c1664cbf1220574d4d454b949496652",
+    "handoff.md": "70a6fe79306f044b07f2d3109b4c31328f197d0d24c270adf6cd5916e8cf9b4b",
+    "index.html": "fdd5f724795e242d45d396ea521ed301fa1638f3415fdd99823527376fe911de",
+    "ledger.py": "f61a1ed3f9d075caa659e60dcc9593012f7f3ac2b845190cedb749e13b65a781",
+    "request-ledger.json": "cbad08d586e4b14aabdd66c5d4ba79ac1d90ac3b10c3f0a4aa1dd4b79979a1f9",
+    "result.json": "6d55572fd5baae555c5966114efc3b23d46a9593d5df811542bf753031f7f0df",
+    "result.md": "68e4a2d6013bf250b8a373c8594409dc3bae7ae24eda8bce9c87dd82cc5b9281",
+    "source-reconciliation.json": "7a4d52023ca148a4d44ee7eb2647985060a5e3a45482a000d04897bbc4cdb132",
+    "validation.json": "1c4973d08c0798f70ce06ddea263867d8e1b2d99b07c777c1095d3c060e23498"
+  }
+}

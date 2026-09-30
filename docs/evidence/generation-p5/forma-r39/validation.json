@@ -1,0 +1,23 @@
+{
+  "at": "2026-09-30T01:50:53.835197+00:00",
+  "checks": [
+    "all64prior entries preserved; three reservations durable before dispatch",
+    "49normal/18recovery/67charged; ceilings49/19/68; no normal capacity",
+    "exact554selection and project/version/attempt relationships",
+    "555and554source/archive hashes match retained R33 receipts",
+    "env16 entries match R34; four exact controls absent/off",
+    "17synthetic projector tests and4transient loading cases passed; reviewed file unchanged",
+    "retained555clean and41SQLpolicy hash verification; no fresh source claim",
+    "relative links resolve; R34/R36/R37/R38 evidence unchanged"
+  ],
+  "nativeCalls": 3,
+  "retries": 0,
+  "P1Repeated": false,
+  "pagination": false,
+  "statusPollsBeyondOne": 0,
+  "environmentRawAgentRetention": false,
+  "applicationBuildRepeated": false,
+  "browserCalls": 0,
+  "hostedMutations": 0,
+  "providerCalls": 0
+}

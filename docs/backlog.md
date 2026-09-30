@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — R38 P2 output rejected | Existing P5 task | [R38 result](evidence/generation-p5/forma-r38/result.md): one authorized environment call, tested projector returned malformed_response without raw retention; P3/P4 not sent.64charged; R36/R34 preserved. | [Concrete ordinary41-migration proposal](evidence/generation-p5/forma-r38/decision.md): narrow fixed read,14normal/8recovery future allocation; current environment/source/recovery selection and exact candidate seal remain. No42migration/full-pair activation, hold query, paid run or renewal. |
+| GEN-P5 | In progress — R39 metadata reconciliation complete | Existing P5 task | [R39 result](evidence/generation-p5/forma-r39/result.md): latest saved555, selected historical554restoration succeeded/env16; fresh env16 and fourcontrols absent/off.67charged; allnormal consumed, conditionalR3 untouched. | [Next exact choice](evidence/generation-p5/forma-r39/decision.md): explicit555source-parent/554recovery basis, small ordinary41migration candidate validation/seal, then recounted execution allocation. No generic metadata cycle,42migration/fullpair activation, paid run or renewal. |
 
 ## Memory
 
