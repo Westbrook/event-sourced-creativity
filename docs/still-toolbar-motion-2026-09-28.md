@@ -291,6 +291,9 @@ After publication556, the user confirmed: “Physical touch and rotation” look
 “good to go,” and “VoiceOver in iOS works weel.” These close the physical
 mobile interaction/rotation and iOS VoiceOver checks. Device, browser and OS
 versions were not supplied; no separate iPad or desktop Safari result is inferred.
-The remaining manual check is audible behavior with another supported
-browser/screen-reader combination. Earlier automated and deployment receipts
-remain unchanged.
+The user subsequently confirmed Chrome with VoiceOver on macOS also looks good.
+This satisfies the second browser/screen-reader combination and completes the
+scoped toolbar manual acceptance. Additional Firefox/Safari repetition is not
+required for this release. Other screen readers were unavailable for testing;
+this is not a claim of coverage for NVDA, JAWS, or every assistive technology.
+Earlier automated and deployment receipts remain unchanged.
