@@ -1,0 +1,45 @@
+{
+  "status": "local-candidate-verified-native-admission-pending",
+  "sourceCommit": "d02dc28e387ee8b9e70971aaef0bc150aeccaa24",
+  "productionFiles": 5,
+  "focusedTests": 9,
+  "compiledChecks": 7,
+  "compiledHoldMetrics": {
+    "statements": 15,
+    "reads": 242,
+    "writes": 0,
+    "resultBytes": 6587,
+    "databaseBytes": 1957888
+  },
+  "typecheck": "passed",
+  "affectedLint": "passed",
+  "productionBuild": "passed; existing chunk-size warning",
+  "runner": "existing installed declared Node/pnpm dependency set; exact package build steps run directly without dependency install/refresh",
+  "ordinaryMigrations": 41,
+  "heldExcluded": 31,
+  "helperBodiesByteEquivalent": true,
+  "handlerOnlyImportAdapted": true,
+  "otherEntrypointStatementsPreserved": true,
+  "routeRetentionExclusionUpdated": true,
+  "allArchivePayloadsMatchBuild": true,
+  "supportedOfflinePackaging": true,
+  "nativeAdmission": false,
+  "hostedCalls": 0,
+  "providerCalls": 0,
+  "browserCalls": 0,
+  "sourceCredentialOrRemoteFetch": false,
+  "whole217HistoryRerun": false,
+  "ledger": {
+    "normal": 49,
+    "recovery": 18,
+    "total": 67,
+    "conditionalOldR3Unchanged": true
+  },
+  "limitations": [
+    "no current remote head/live certificate",
+    "no actual hold classification",
+    "no native admission or managed quota/price guarantee",
+    "uninstalled route tests separated from hold-read immutability because unchanged fallback may run legacy maintenance",
+    "source/recovery and publication still unaccepted"
+  ]
+}

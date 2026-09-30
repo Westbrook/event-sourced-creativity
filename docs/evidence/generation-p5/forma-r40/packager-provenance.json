@@ -1,0 +1,13 @@
+{
+  "retainedPluginRoot": "/private/tmp/p7-sites-workflow-0.1.75",
+  "files": {
+    "scripts/package-site.mjs": "c478f3060d464edf075afb1f0cdb699979bfc7913a1e64114bfbd653a1352bcd",
+    "scripts/workflow-metrics.mjs": "33ddaf60a96ab73c9c9673b5acf7015b2e84025454544d5869554b2b3e94ee17",
+    "skills/sites-hosting/scripts/package-site.sh": "dc2fe55adac180885d0b9469fd09d5ea7b1824fcea9019fea27ccfda241968e7",
+    "skills/sites-hosting/scripts/prepare-site-build.cjs": "32496143dcc6f7e7c5410444e319469e2525c1d2eda0d2ed7c65e7c67995dbe3"
+  },
+  "stagingRoot": "/private/tmp/forma-p5-hold-read-r40-package",
+  "sourceUnchanged": true,
+  "providerToolingPatched": false,
+  "nativeOperation": false
+}

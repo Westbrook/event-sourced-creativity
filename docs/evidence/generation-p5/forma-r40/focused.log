@@ -1,0 +1,17 @@
+✔ hold read defaults off without database, storage or provider access (9.366542ms)
+✔ fixed hold classification works with 41 released migrations and no study schema (33.299708ms)
+✔ unknown holds are aggregated, actor scoped and retained without raw identifiers or money (29.611292ms)
+✔ hold metadata mismatch refuses without guessing query or modifying schema (40.859541ms)
+✔ hold overflow produces no partial report (35.508792ms)
+✔ Worker source route has no sweep, caller query or expiry renewal (35.66875ms)
+✔ owner identity and method checks deny nonowner and POST without writes (28.819334ms)
+✔ read adapter refuses mutations, semicolons, excess statements and reported writes (0.345916ms)
+✔ five-file integration retires qualification, preserves every other index statement and ordinary migrations (0.396ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 899.7655

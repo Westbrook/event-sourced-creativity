@@ -1,0 +1,28 @@
+{
+  "files": {
+    "archive-manifest.json": "adac04e48c1b8a2e53c4d67318907f6959c2fc8f8d88c0b74f2a5461a40be201",
+    "build.log": "e36e421539d8f8f3ca9523d72e8572b1a73d2ab33a3cc07836d0358747fd8d04",
+    "candidate-delta.tar.gz": "07fed6e7a62517d0a07e43ebe409c6371679862c3255e1fa663f8c26dbba8b33",
+    "candidate.patch": "11f072be055ae6c36ab34567c310ae33d5a71013f5265323a9da8d085f826973",
+    "compiled-validation.json": "a167369074aa4e4c29063dc02f9043a6aa64fa4d6f40977f1b8a7658dbd54229",
+    "compiled-worker.log": "39d6f2add39258cc67f9c29d41e8a0c537b88a8e9dc4d860f5cce7a33c6bdbc6",
+    "decision-binding.json": "5e837abf8f3ae404283e9db1e5787f52c5731a9fa145f4985183672f8d105a24",
+    "decision.md": "2626bc8b32e373183cacfe92c3fa764b1d8f1b7954e01a0601ad7a96d847ebc9",
+    "focused.log": "c87092f3e592cdd4e0ed75591d15a2ae56cec81797b9fcbb2316526fc8ddb244",
+    "handoff.md": "444473ddb58f1311f3ef47f1b8afc208b5e34f62ec1756513ed924b15a0d1f35",
+    "helper-equivalence.json": "3abd87af64e560acb14767f8ad08650bc8e92ca55f21e0f8620f05619bca6b27",
+    "index.html": "f23689c103ceb76a43a4da633d76807e01d5d9b8357223dd87e758de87a8ba8e",
+    "lint-test-driver.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "migration-manifest.json": "4aad7195fac6ddbf944ce95cf58031e8cf8e6dc8c50a966ec094059453e2263c",
+    "packager-provenance.json": "ec90928ca8ee67e95d93e8e3f637b1883603675d77ec9c6c4bc739aa5254fbda",
+    "packaging.log": "6c0fe286f40bbe51f69ac5b6bab072d005df85f682beba4c99e428e47b95628b",
+    "release-envelope.json": "0acd1ab31314a28bb941b9b2c457eb0e9b3af5328c2dc29ac4c0629853d5e978",
+    "result.md": "6b85f74d89d3c510b90c8adc99b3fec89a476686801c996bccce08f39132c103",
+    "sites-archive.tar.gz": "f8ca2d39e4284c054053f8f8e270c1457a682c006d08bf0c7689f859e07f145e",
+    "source-manifest.json": "402189b7daed63fbce6ebcde6101bcf96290f124b6fe4246f0f4eabfe90b705a",
+    "supported-tool-contracts.json": "ed8e45751bc1a416ad16e2f91f911bf14d4f4aebb99e88bcc19c05f61f4fb9d0",
+    "typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "validation.json": "632e997f27b605a48947859c2ce94bf4ee634ff5752b6e59dc32b114870bdea0"
+  }
+}

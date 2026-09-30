@@ -1,0 +1,10 @@
+{
+  "source": "R36 worker/generation-study-qualification.ts",
+  "method": "exact contiguous original source spans; imports narrowed to referenced existing auth types/functions",
+  "constantsSha256": "3ce6b7a3bf7d466651e1d8f704e43b1bb90b22f2657d0acebf00642d615d96fb",
+  "helpersSha256": "9a6fe36320f57638729d68aacf6087b8553f0398a1f87992aa3a5b509f5b9cdc",
+  "queriesByteIdentical": true,
+  "handlerOnlyImportChange": true,
+  "productionFiles": 5,
+  "unchangedExpiry": "2026-10-01T00:00:00Z"
+}

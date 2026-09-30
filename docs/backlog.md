@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — R39 metadata reconciliation complete | Existing P5 task | [R39 result](evidence/generation-p5/forma-r39/result.md): latest saved555, selected historical554restoration succeeded/env16; fresh env16 and fourcontrols absent/off.67charged; allnormal consumed, conditionalR3 untouched. | [Next exact choice](evidence/generation-p5/forma-r39/decision.md): explicit555source-parent/554recovery basis, small ordinary41migration candidate validation/seal, then recounted execution allocation. No generic metadata cycle,42migration/fullpair activation, paid run or renewal. |
+| GEN-P5 | In progress — R40 fixed-read candidate sealed locally | Existing P5 task | [R40 result](evidence/generation-p5/forma-r40/result.md): five production files on retained555,9focused/7compiledchecks plus build/type/lint pass; supported offline622-file package,41SQL/journal exact. | [One execution decision](evidence/generation-p5/forma-r40/decision.md): exact release, proposed554recovery/quietwindow,14newnormal/9newrecovery; nativeadmission/singlemanualread/flagremoval/conditionalrestoration.67actualcharges unchanged; no hostedauthority,42migration/fullpair or renewal. |
 
 ## Memory
 

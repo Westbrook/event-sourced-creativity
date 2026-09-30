@@ -1,0 +1,33 @@
+{
+  "contract": "p5-forma-hold-read-release-r40",
+  "target": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+  "sourceParent": "ea8e7121f85e51a91a2b7fb5618294ff61001b16",
+  "sourceCommit": "d02dc28e387ee8b9e70971aaef0bc150aeccaa24",
+  "proposedRecoveryVersion": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_b640f9ffe7ac8191ba0b6189da7a0d3b",
+  "proposedRecoverySource": "498936481741f7ed1b03d43422288d628db49f2f",
+  "productionFiles": 5,
+  "ordinaryMigrations": 41,
+  "expiry": "2026-10-01T00:00:00Z",
+  "normalWorkMargin": "2026-09-30T22:00:00Z",
+  "normalMaximum": 14,
+  "recoveryMaximum": 9,
+  "proposedCeilings": {
+    "normal": 63,
+    "recovery": 28,
+    "total": 91
+  },
+  "maximumChargedAfterCycle": 90,
+  "priorCharges": 67,
+  "conditionalOldR3Unusable": true,
+  "sourceManifestSha256": "402189b7daed63fbce6ebcde6101bcf96290f124b6fe4246f0f4eabfe90b705a",
+  "archiveManifestSha256": "adac04e48c1b8a2e53c4d67318907f6959c2fc8f8d88c0b74f2a5461a40be201",
+  "migrationManifestSha256": "4aad7195fac6ddbf944ce95cf58031e8cf8e6dc8c50a966ec094059453e2263c",
+  "validationSha256": "632e997f27b605a48947859c2ce94bf4ee634ff5752b6e59dc32b114870bdea0",
+  "archiveSha256": "f8ca2d39e4284c054053f8f8e270c1457a682c006d08bf0c7689f859e07f145e",
+  "sourceSnapshot": {
+    "path": "/private/tmp/p5-r40-source.tar.gz",
+    "sha256": "24518ec2843b32d360b199d53e16db1955912adc46038bfb2a5f049b5259a822"
+  },
+  "deltaSha256": "07fed6e7a62517d0a07e43ebe409c6371679862c3255e1fa663f8c26dbba8b33",
+  "id": "p5-forma-hold-read-release:c8b59eb065faec9bc85ad91e91cb93fe54828b2bac7a3a14419b9d67d9a8d3ab"
+}

@@ -1,0 +1,248 @@
+diff --git a/scripts/check-generation-p5-hold-read-only-workerd.mjs b/scripts/check-generation-p5-hold-read-only-workerd.mjs
+new file mode 100644
+index 00000000..5991fc24
+--- /dev/null
++++ b/scripts/check-generation-p5-hold-read-only-workerd.mjs
+@@ -0,0 +1,30 @@
++// Disposable local compiled-Worker check. No managed Site, real account or provider.
++import{createRequire}from'node:module';import{readFileSync,writeFileSync,readdirSync,mkdtempSync}from'node:fs';import{resolve}from'node:path';import{execFileSync}from'node:child_process';import{createHash}from'node:crypto';import assert from'node:assert/strict';
++const require=createRequire(import.meta.resolve('wrangler/package.json'));const{Miniflare}=require('miniflare');const out=process.argv[2],dir=mkdtempSync('/private/tmp/p5-pair-workerd-');const config=JSON.parse(readFileSync('dist/server/wrangler.json'));const egress=[],receipts=[],checks=[];
++const options={modules:true,scriptPath:resolve('dist/server/index.js'),modulesRoot:resolve('dist/server'),modulesRules:[{type:'ESModule',include:['**/*.js']},{type:'CompiledWasm',include:['**/*.wasm']}],compatibilityDate:config.compatibility_date,compatibilityFlags:config.compatibility_flags,d1Databases:['DB'],r2Buckets:['MEDIA'],d1Persist:dir+'/d1',r2Persist:dir+'/r2',bindings:{},serviceBindings:{ASSETS:()=>new Response('ordinary-asset-canary')},outboundService:r=>{egress.push(r.url);throw Error('unexpected outbound');}};let mf=new Miniflare(options);const keep=setInterval(()=>{},1000);
++const origin='https://forma-creative-studio.reve-ai-0869.chatgpt.site',path='/api/internal/generation-study/hold-classification';const headers={'oai-authenticated-user-id':'LOCAL-SYNTHETIC-HOLD-OWNER','oai-authenticated-user-email':'westbrook.johnson@reve.art'};
++async function call(route=path,init={}){const r=await mf.dispatchFetch(origin+route,{...init,headers:{...headers,...init.headers}});const result=await r.json();receipts.push({route,status:r.status,result});return result;}
++try{
++ assert.equal((await call()).status,'disabled');checks.push('full compiled hold route default off before any schema/principal');
++ await(await mf.getD1Database('DB')).prepare('SELECT 1').first();await mf.dispose();
++ const walk=p=>readdirSync(p,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(p+'/'+e.name):[p+'/'+e.name]);const files=walk(dir+'/d1').filter(p=>p.endsWith('.sqlite')&&!p.endsWith('/metadata.sqlite'));assert.equal(files.length,1);
++ const policy=readFileSync('worker/policy-version.ts','utf8').match(/POLICY_VERSION\s*=\s*["']([^"']+)/)[1];
++ const migrations=JSON.parse(readFileSync('build/memory-migration-release.json')).files.map(f=>'drizzle/'+f.path);
++ execFileSync('python3',['-c',`import sqlite3,json,sys
++p=json.load(sys.stdin);c=sqlite3.connect(p['file']);c.execute('PRAGMA foreign_keys=ON')
++for f in p['inputs']:c.executescript(open(f).read())
++c.execute("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES(?,?,?,'admin',?,?,?,?)",['LOCAL-SYNTHETIC-HOLD-OWNER','westbrook.johnson@reve.art','PRIVATE-LOCAL-CANARY',p['policy'],'2026-09-28','2026-09-28','2026-09-28'])
++c.execute("INSERT INTO cost_budget_reservations(reservation_id,owner_id,operation,period,reserved_microusd,status,created_at,updated_at) VALUES('PRIVATE-CANARY','LOCAL-SYNTHETIC-HOLD-OWNER','private-operation','2026-09',12345,'active','2026-09-28','2026-09-28')")
++c.commit();c.close()
++`],{input:JSON.stringify({file:files[0],inputs:migrations,policy}),encoding:'utf8'});
++ options.bindings.FORMA_GENERATION_STUDY_HOLD_READ_ENABLED='1';mf=new Miniflare(options);const db=await mf.getD1Database('DB');
++ const before=(await db.prepare('SELECT * FROM cost_budget_reservations').all()).results;const schemaBefore=(await db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY name").all()).results;
++ const first=await call();assert.equal(first.status,'observed-not-cleared',JSON.stringify(first));assert.equal(first.groups.cost.reservationCount,1);assert.equal(first.metrics.writes,0);assert.equal(first.uniqueOperations,null);assert(!/PRIVATE-CANARY|LOCAL-SYNTHETIC|12345|private-operation/.test(JSON.stringify(first)));checks.push('real local D1 metrics with fixed redacted aggregation; no identifiers, money or finality');
++ assert.equal((await call(path+'?sql=DROP')).status,'unavailable');assert.equal((await call(path,{headers:{'oai-authenticated-user-id':''}})).status,'unavailable');assert.equal((await call(path,{headers:{'oai-authenticated-user-email':'synthetic-other@example.invalid'}})).status,'unavailable');checks.push('caller query, absent identity and nonowner refuse');
++ assert.deepEqual((await db.prepare('SELECT * FROM cost_budget_reservations').all()).results,before);assert.deepEqual((await db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY name").all()).results,schemaBefore);assert.equal((await(await mf.getR2Bucket('MEDIA')).list()).objects.length,0);checks.push('catalog/holds unchanged; empty local R2');
++ for(const action of ['approval','execute'])assert.equal((await call('/api/internal/generation-study/'+action,{method:'POST',headers:{'content-type':'application/json'},body:'{}'})).error,'not_found');
++ assert.equal((await call('/api/internal/generation-study/qualification/custody',{method:'POST',body:'{}'})).error,'not_found');assert.equal((await call('/api/internal/generation-study/qualification')).error,'not_found');checks.push('after hold-read immutability checkpoint: study approval/execution/custody endpoints not installed; old qualification route retired');
++ assert.equal(await(await mf.dispatchFetch(origin+'/robots.txt')).text(),'ordinary-asset-canary');checks.push('ordinary asset route intact');
++ assert.equal(egress.length,0);checks.push('zero outbound attempts');
++ writeFileSync(out+'/compiled-validation.json',JSON.stringify({method:'compiled full Worker with disposable local D1/R2; 41 released SQL files applied directly to synthetic local fixture; no native migration machinery or hosted fit certification',checks,requests:receipts.length,networkAttempts:egress.length,workerSha256:createHash('sha256').update(readFileSync('dist/server/index.js')).digest('hex'),firstReadMetrics:first.metrics,actualFormaQualified:false,scopeNote:'No-write/catalog assertions cover hold-read calls before legacy fallback probes. Uninstalled API probes use unchanged ordinary fallback and may run existing maintenance; this is not a hold-read effect.',receipts},null,2)+'\n');console.log(JSON.stringify({checks:checks.length,networkAttempts:egress.length,metrics:first.metrics}));
++}finally{clearInterval(keep);await mf.dispose();}
+diff --git a/tests/generation-p5-hold-read-only.test.mjs b/tests/generation-p5-hold-read-only.test.mjs
+new file mode 100644
+index 00000000..5aaf6970
+--- /dev/null
++++ b/tests/generation-p5-hold-read-only.test.mjs
+@@ -0,0 +1,29 @@
++import test from 'node:test';import assert from 'node:assert/strict';import{readFileSync}from'node:fs';import{DatabaseSync}from'node:sqlite';
++import{registerOutputSourceImports}from'./output-execution-test-helpers.mjs';registerOutputSourceImports();
++import{qualificationReadDb,QUALIFICATION_ORIGIN,QUALIFICATION_OWNER_EMAIL}from'../worker/generation-study-hold-read-support.ts';
++
++import{POLICY_VERSION}from'../worker/policy-version.ts';import worker from'../worker/index.ts';
++function setup(t){
++ const sql=new DatabaseSync(':memory:');for(const f of JSON.parse(readFileSync('build/memory-migration-release.json')).files)sql.exec(readFileSync('drizzle/'+f.path,'utf8'));
++ const now='2026-09-28T20:00:00.000Z';const originalNow=Date.now;Date.now=()=>Date.parse(now);t.after(()=>{sql.close();Date.now=originalNow;});
++ sql.prepare("INSERT INTO users(user_id,email,display_name,role,consent_version,consented_at,created_at,updated_at) VALUES('synthetic-test-owner',?,'PRIVATE-NAME-CANARY','admin',?,?,?,?)").run(QUALIFICATION_OWNER_EMAIL,POLICY_VERSION,now,now,now);
++ const queries=[],writes=[];const db={prepare(q){assert.match(q,/^\s*SELECT\b/i);queries.push(q);return{bind(...v){return{async all(){return{success:true,results:sql.prepare(q).all(...v),meta:{rows_read:1,rows_written:0,size_after:9999}};},async run(){writes.push(q);throw Error('write sentinel');}};}}},exec(){throw Error('exec sentinel');},batch(){throw Error('batch sentinel');}};
++ const operations=[];const env={DB:db,MEDIA:new Proxy({},{get(){operations.push('R2');throw Error('R2 forbidden');}}),ASSETS:{fetch(){return new Response('ordinary-asset-canary');}}};
++ for(const key of ['OPENAI_API_KEY','OPENAI_PROJECT','FAL_KEY','PRIVATE_CONTENT_ENCRYPTION_KEY'])Object.defineProperty(env,key,{get(){throw Error('secret sentinel');}});
++ const originalFetch=globalThis.fetch;globalThis.fetch=()=>{throw Error('network sentinel');};t.after(()=>globalThis.fetch=originalFetch);
++ const request=(path=HOLD_READ_PATH,options={})=>new Request(QUALIFICATION_ORIGIN+path,{headers:{'oai-authenticated-user-id':'synthetic-test-owner','oai-authenticated-user-email':QUALIFICATION_OWNER_EMAIL,...options.headers},...options, ...(options.headers?{headers:{'oai-authenticated-user-id':'synthetic-test-owner','oai-authenticated-user-email':QUALIFICATION_OWNER_EMAIL,...options.headers}}:{})});
++ return{sql,db,env,queries,writes,operations,request};
++}
++
++import {handleStudyHoldRead,HOLD_READ_PATH} from '../worker/generation-study-hold-read.ts';
++const read=f=>handleStudyHoldRead(f.request(HOLD_READ_PATH),f.env).then(r=>r.json());
++test('hold read defaults off without database, storage or provider access',async()=>{const r=await handleStudyHoldRead(new Request('https://example.test'),new Proxy({},{get(_o,k){if(k==='FORMA_GENERATION_STUDY_HOLD_READ_ENABLED')return undefined;throw Error('no capability allowed');}}));assert.equal((await r.json()).status,'disabled');});
++test('fixed hold classification works with 41 released migrations and no study schema',async t=>{const f=setup(t,{optional:false,releasedOnly:true});f.env.FORMA_GENERATION_STUDY_HOLD_READ_ENABLED='1';const before=f.sql.prepare('SELECT total_changes() n').get().n;const r=await read(f);assert.equal(r.status,'observed-not-cleared',JSON.stringify(r));assert.equal(r.groups.token.reservationCount,0);assert.equal(r.groups.cost.reservationCount,0);assert.equal(r.uniqueOperations,null);assert.equal(r.finality,'not-established');assert.equal(f.operations.length,0);assert.equal(f.sql.prepare('SELECT total_changes() n').get().n,before);});
++test('unknown holds are aggregated, actor scoped and retained without raw identifiers or money',async t=>{const f=setup(t,{optional:false});f.env.FORMA_GENERATION_STUDY_HOLD_READ_ENABLED='1';for(let n=0;n<2;n++)f.sql.prepare("INSERT INTO cost_budget_reservations(reservation_id,owner_id,operation,period,reserved_microusd,status,created_at,updated_at) VALUES(?,?,'PRIVATE-OP','2026-09',8675309,'active','2026-09-01','2026-09-01')").run('PRIVATE-ID-'+n,n?'other-owner':'synthetic-test-owner');const r=await read(f);assert.equal(r.status,'observed-not-cleared');assert.equal(r.groups.cost.reservationCount,1);assert.equal(r.groups.cost.groups[0].ageBucket,'7-days-or-more');assert(!/PRIVATE|8675309|synthetic-test-owner/.test(JSON.stringify(r)));assert.equal(f.sql.prepare('SELECT count(*) n FROM cost_budget_reservations').get().n,2);});
++test('hold metadata mismatch refuses without guessing query or modifying schema',async t=>{const f=setup(t,{optional:false});f.env.FORMA_GENERATION_STUDY_HOLD_READ_ENABLED='1';f.sql.exec('ALTER TABLE document_jobs RENAME COLUMN correlation_id TO unexpected');const r=await read(f);assert.equal(r.completeWithinBound,false);assert.equal(r.groups,undefined);});
++test('hold overflow produces no partial report',async t=>{const f=setup(t,{optional:false});f.env.FORMA_GENERATION_STUDY_HOLD_READ_ENABLED='1';for(let i=0;i<101;i++)f.sql.prepare("INSERT INTO cost_budget_reservations(reservation_id,owner_id,operation,period,reserved_microusd,status,created_at,updated_at) VALUES(?,'synthetic-test-owner','x','2026-09',1,'active','2026','2026')").run('r'+i);assert.equal((await read(f)).completeWithinBound,false);});
++test('Worker source route has no sweep, caller query or expiry renewal',async t=>{const f=setup(t,{optional:false});f.env.FORMA_GENERATION_STUDY_HOLD_READ_ENABLED='1';let r=await worker.fetch(f.request(HOLD_READ_PATH),f.env,{waitUntil(){throw Error('sweep');}});assert.equal((await r.json()).status,'observed-not-cleared');r=await handleStudyHoldRead(f.request(HOLD_READ_PATH+'?owner=other'),f.env);assert.equal((await r.json()).status,'unavailable');Date.now=()=>Date.parse('2026-10-01T00:00:00Z');assert.equal((await read(f)).status,'expired');assert.equal(f.operations.length,0);});
++
++test('owner identity and method checks deny nonowner and POST without writes',async t=>{const f=setup(t);f.env.FORMA_GENERATION_STUDY_HOLD_READ_ENABLED='1';assert.equal((await(await handleStudyHoldRead(f.request(HOLD_READ_PATH,{headers:{'oai-authenticated-user-email':'synthetic-other@example.invalid'}}),f.env)).json()).status,'unavailable');assert.equal((await handleStudyHoldRead(f.request(HOLD_READ_PATH,{method:'POST',body:'{}'}),f.env)).status,405);assert.equal(f.writes.length,0);assert.equal(f.operations.length,0);});
++test('read adapter refuses mutations, semicolons, excess statements and reported writes',async()=>{const base={prepare(){return{bind(){return{all:async()=>({success:true,results:[],meta:{rows_read:1,rows_written:1,size_after:1}})}}}}};const r=qualificationReadDb(base);assert.throws(()=>r.db.prepare('DELETE FROM users'));assert.throws(()=>r.db.prepare('SELECT 1; SELECT 2'));await assert.rejects(()=>r.db.batch([]));await assert.rejects(()=>r.db.prepare('SELECT 1').all());const capped=qualificationReadDb(base,{statements:0,rowsPerQuery:1,queryBytes:100,resultBytes:100,outputBytes:100,reads:1,deadlineMs:20000});await assert.rejects(()=>capped.db.prepare('SELECT 1').all());});
++test('five-file integration retires qualification, preserves every other index statement and ordinary migrations',()=>{const index=readFileSync('worker/index.ts','utf8');assert(!index.includes('handleStudyQualification'));assert(!index.includes('QUALIFICATION_PATH'));const support=readFileSync('worker/generation-study-hold-read-support.ts','utf8');assert(!/studySchema|AUTHORING_STUDY_SCHEMA|SITES_STUDY_CONFIGURATION|externalGuard/.test(support));assert.equal(JSON.parse(readFileSync('build/memory-migration-release.json')).files.length,41);});
+diff --git a/worker/generation-study-hold-queries.ts b/worker/generation-study-hold-queries.ts
+new file mode 100644
+index 00000000..804afc7e
+--- /dev/null
++++ b/worker/generation-study-hold-queries.ts
+@@ -0,0 +1,27 @@
++// Fixed R35 queries. No request-selected SQL or bindings.
++export const HOLD_QUERIES={
++  "token": {
++    "sql": "SELECT\n CASE WHEN r.status IN ('authorizing','active','executing','exceeded') THEN r.status ELSE 'other-unsettled' END AS reservation_state,\n CASE WHEN r.operation IN ('generation-study','study-lifecycle-provision','image-generation','image-preview','video-generation') THEN r.operation ELSE 'other-or-unknown' END AS operation_class,\n CASE WHEN julianday(r.created_at) IS NULL OR julianday(r.created_at)>julianday(?) THEN 'unknown'\n      WHEN julianday(?)-julianday(r.created_at)<1 THEN 'under-1-day'\n      WHEN julianday(?)-julianday(r.created_at)<7 THEN '1-to-7-days' ELSE '7-days-or-more' END AS age_bucket,\n (SELECT COUNT(*) FROM (SELECT 1 FROM document_jobs j WHERE j.owner_id=? AND j.stream_id=r.stream_id\n   AND (j.correlation_id=r.correlation_id OR j.job_id=r.correlation_id OR json_extract(CASE WHEN json_valid(j.result_json) THEN j.result_json ELSE '{}' END,'$.reservationId')=r.reservation_id) LIMIT 2)) AS document_matches_capped2,\n EXISTS(SELECT 1 FROM output_operation_slots s JOIN output_execution_grants g ON g.scope_key=s.scope_key AND g.grant_id=s.grant_id\n   WHERE g.payer_user_id=? AND s.token_reservation_id=r.reservation_id) AS output_binding_candidate,\n EXISTS(SELECT 1 FROM consequential_execution_steps s JOIN consequential_executions e USING(execution_id)\n   WHERE e.actor_user_id=? AND s.token_reservation_id=r.reservation_id) AS consequential_binding_candidate\nFROM budget_reservations r WHERE r.owner_id=? AND r.status IN ('authorizing','active')\nORDER BY r.reservation_id LIMIT 101",
++    "bindings": [
++      "observed_at",
++      "observed_at",
++      "observed_at",
++      "owner_id",
++      "owner_id",
++      "owner_id",
++      "owner_id"
++    ]
++  },
++  "cost": {
++    "sql": "SELECT\n CASE WHEN r.status IN ('authorizing','active','executing','exceeded') THEN r.status ELSE 'other-unsettled' END AS reservation_state,\n CASE WHEN r.operation IN ('generation-study','study-lifecycle-provision','image-generation','image-preview','video-generation') THEN r.operation ELSE 'other-or-unknown' END AS operation_class,\n CASE WHEN julianday(r.created_at) IS NULL OR julianday(r.created_at)>julianday(?) THEN 'unknown'\n      WHEN julianday(?)-julianday(r.created_at)<1 THEN 'under-1-day'\n      WHEN julianday(?)-julianday(r.created_at)<7 THEN '1-to-7-days' ELSE '7-days-or-more' END AS age_bucket,\n (SELECT COUNT(*) FROM (SELECT 1 FROM document_jobs j WHERE j.owner_id=? AND j.stream_id=r.stream_id\n   AND (j.correlation_id=r.correlation_id OR j.job_id=r.correlation_id OR json_extract(CASE WHEN json_valid(j.result_json) THEN j.result_json ELSE '{}' END,'$.costReservationId')=r.reservation_id) LIMIT 2)) AS document_matches_capped2,\n EXISTS(SELECT 1 FROM output_operation_slots s JOIN output_execution_grants g ON g.scope_key=s.scope_key AND g.grant_id=s.grant_id\n   WHERE g.payer_user_id=? AND s.cost_reservation_id=r.reservation_id) AS output_binding_candidate,\n EXISTS(SELECT 1 FROM consequential_execution_steps s JOIN consequential_executions e USING(execution_id)\n   WHERE e.actor_user_id=? AND s.cost_reservation_id=r.reservation_id) AS consequential_binding_candidate\nFROM cost_budget_reservations r WHERE r.owner_id=? AND r.status NOT IN ('settled','released')\nORDER BY r.reservation_id LIMIT 101",
++    "bindings": [
++      "observed_at",
++      "observed_at",
++      "observed_at",
++      "owner_id",
++      "owner_id",
++      "owner_id",
++      "owner_id"
++    ]
++  }
++} as const;
+diff --git a/worker/generation-study-hold-read-support.ts b/worker/generation-study-hold-read-support.ts
+new file mode 100644
+index 00000000..89af2b0e
+--- /dev/null
++++ b/worker/generation-study-hold-read-support.ts
+@@ -0,0 +1,42 @@
++import type {WorkerEnv} from './runtime.ts';
++import {requireExistingHoldAdministrator,pilotExecutionAllowance} from './pilot-policy.ts';
++import {identityFromRequest} from './principal-request-core.ts';
++export const QUALIFICATION_ORIGIN='https://forma-creative-studio.reve-ai-0869.chatgpt.site';
++export const QUALIFICATION_EXPIRY='2026-10-01T00:00:00Z';
++export const QUALIFICATION_OWNER_EMAIL='westbrook.johnson@reve.art';
++export const QUALIFICATION_LIMITS={statements:32,rowsPerQuery:1024,queryBytes:100000,resultBytes:1048576,outputBytes:524288,reads:1000000,deadlineMs:20000};
++const byteLength=(v:unknown)=>new TextEncoder().encode(JSON.stringify(v)).byteLength;
++function fail():never{throw Error('qualification_unavailable');}
++const headers={'cache-control':'private, no-store',vary:'Cookie, oai-authenticated-user-id, oai-authenticated-user-email'};
++export const qualificationResponse=(v:unknown,status=200)=>Response.json(v,{status,headers});
++/** Capability-limited adapter. Only compiled SELECT statements reach D1; no exec,
++ * batch or run capability is provided to inherited authentication code. */
++export function qualificationReadDb(original:D1Database,limits:typeof QUALIFICATION_LIMITS=QUALIFICATION_LIMITS){
++ const metrics={statements:0,reads:0,writes:0,resultBytes:0,databaseBytes:0};const deadline=Date.now()+limits.deadlineMs;
++ const check=()=>{if(Date.now()>=deadline)fail();};
++ const prepare=(sql:string,values:unknown[]=[]):D1PreparedStatement=>{
++  if(!/^\s*SELECT\b/i.test(sql)||sql.includes(';')||new TextEncoder().encode(sql).length>limits.queryBytes||values.length>100)fail();
++  const all=async()=>{
++   check();if(++metrics.statements>limits.statements)fail();
++   const result=await original.prepare(sql).bind(...values).all();check();
++   if(!result.success||!Array.isArray(result.results)||result.results.length>limits.rowsPerQuery)fail();
++   const m=result.meta;if(!m||typeof m.rows_read!=='number'||!Number.isSafeInteger(m.rows_read)||m.rows_read<0||typeof m.rows_written!=='number'||m.rows_written!==0||typeof m.size_after!=='number'||!Number.isSafeInteger(m.size_after))fail();
++   metrics.reads+=m.rows_read;metrics.writes+=m.rows_written;metrics.databaseBytes=Math.max(metrics.databaseBytes,m.size_after);metrics.resultBytes+=byteLength(result.results);
++   if(metrics.reads>limits.reads||metrics.resultBytes>limits.resultBytes)fail();
++   return result;
++  };
++  return {bind:(...v:unknown[])=>prepare(sql,v),all,first:async(column?:string)=>{const r=(await all()).results[0] as Record<string,unknown>|undefined;return column?r?.[column]??null:r??null;},run:async()=>fail(),raw:async()=>fail()} as unknown as D1PreparedStatement;
++ };
++ return {db:{prepare,exec:async()=>fail(),batch:async()=>fail(),dump:async()=>fail()} as unknown as D1Database,metrics,check};
++}
++/** Inherited principal/consent/policy and personal-only guards. No principal bootstrap.
++ * Only DB and non-secret pilot admission configuration are passed to the guard. */
++export async function qualificationPrincipal(request:Request,env:WorkerEnv,db:D1Database){
++ const u=new URL(request.url),id=identityFromRequest(request);
++ if(u.origin!==QUALIFICATION_ORIGIN||u.protocol!=='https:'||u.search||u.hash||request.headers.get('sec-fetch-site')==='cross-site'||(request.headers.has('origin')&&request.headers.get('origin')!==u.origin)||!id||id.source!=='openai-workspace'||id.email!==QUALIFICATION_OWNER_EMAIL)fail();
++ const safe={DB:db,FORMA_PILOT_COHORT_ID:env.FORMA_PILOT_COHORT_ID,FORMA_ADMIN_EMAILS:env.FORMA_ADMIN_EMAILS} as WorkerEnv;
++ const a=await requireExistingHoldAdministrator(request,safe);
++ if(!a.user||a.response||a.user.fictional||a.user.projectExecution||a.user.billingUserId&&a.user.billingUserId!==a.user.userId)fail();
++ const allowance=await pilotExecutionAllowance(safe,a.user.userId);if(!allowance.allowed||allowance.pilot!==null)fail();
++ return a.user;
++}
+diff --git a/worker/generation-study-hold-read.ts b/worker/generation-study-hold-read.ts
+new file mode 100644
+index 00000000..c8fcc5e3
+--- /dev/null
++++ b/worker/generation-study-hold-read.ts
+@@ -0,0 +1,50 @@
++import type {WorkerEnv} from './runtime.ts';
++import {qualificationReadDb,qualificationPrincipal,qualificationResponse,QUALIFICATION_LIMITS,QUALIFICATION_EXPIRY} from './generation-study-hold-read-support.ts';
++import {consentHash} from './consequential-consent.ts';
++import {HOLD_QUERIES} from './generation-study-hold-queries.ts';
++export const HOLD_READ_PATH='/api/internal/generation-study/hold-classification';
++export const HOLD_READ_LIMITS={...QUALIFICATION_LIMITS,rowsPerQuery:101,resultBytes:65536,outputBytes:32768};
++const required={
++ budget_reservations:['reservation_id','owner_id','operation','period','status','created_at','stream_id','correlation_id'],
++ cost_budget_reservations:['reservation_id','owner_id','operation','period','status','created_at','stream_id','correlation_id'],
++ document_jobs:['job_id','owner_id','stream_id','correlation_id','result_json'],
++ output_operation_slots:['scope_key','grant_id','token_reservation_id','cost_reservation_id'],
++ output_execution_grants:['scope_key','grant_id','payer_user_id'],
++ consequential_execution_steps:['execution_id','token_reservation_id','cost_reservation_id'],
++ consequential_executions:['execution_id','actor_user_id'],
++} as const;
++const fail=()=>{throw Error('hold_classification_unavailable');};
++const bytes=(v:unknown)=>new TextEncoder().encode(JSON.stringify(v)).length;
++/** Owner-only, fixed metadata classification. No financial finality or clearance claim.
++ * Existing authentication receives a SELECT-only DB; MEDIA and provider are never passed. */
++export async function handleStudyHoldRead(request:Request,env:WorkerEnv):Promise<Response>{
++ if(env.FORMA_GENERATION_STUDY_HOLD_READ_ENABLED!=='1')return qualificationResponse({status:'disabled',newPurchases:0});
++ if(request.method!=='GET'||request.body!==null)return qualificationResponse({status:'denied',reason:'fixed_read_required'},405);
++ if(Date.now()>=Date.parse(QUALIFICATION_EXPIRY))return qualificationResponse({status:'expired',newPurchases:0},410);
++ try{
++  const original=env.DB,read=qualificationReadDb(original,HOLD_READ_LIMITS),db=read.db;
++  const actor=await qualificationPrincipal(request,env,db),observedAt=new Date().toISOString();
++  for(const [table,names] of Object.entries(required)){
++   // Table identifiers come exclusively from the compiled contract above.
++   const rows=(await db.prepare(`SELECT name,type,hidden FROM pragma_table_xinfo('${table}') ORDER BY cid LIMIT 101`).all()).results as {name:string;type:string;hidden:number}[];
++   if(rows.length===101||names.some(n=>!rows.some(c=>c.name===n&&c.type.toUpperCase()==='TEXT'&&c.hidden===0)))fail();
++  }
++  const groups:Record<string,unknown>={};let metadataBytes=0;
++  for(const [kind,query] of Object.entries(HOLD_QUERIES)){
++   const rows=(await db.prepare(query.sql).bind(...query.bindings.map(n=>n==='owner_id'?actor.userId:observedAt)).all()).results as Record<string,unknown>[];
++   metadataBytes+=bytes(rows);if(rows.length===101||metadataBytes>65536)fail();
++   const counts=new Map<string,number>();
++   for(const row of rows){
++    if(!['authorizing','active','executing','exceeded','other-unsettled'].includes(String(row.reservation_state))||!['generation-study','study-lifecycle-provision','image-generation','image-preview','video-generation','other-or-unknown'].includes(String(row.operation_class))||!['unknown','under-1-day','1-to-7-days','7-days-or-more'].includes(String(row.age_bucket))||![0,1,2].includes(Number(row.document_matches_capped2))||![0,1].includes(Number(row.output_binding_candidate))||![0,1].includes(Number(row.consequential_binding_candidate)))fail();
++    const value={reservationState:row.reservation_state,operationClass:row.operation_class,ageBucket:row.age_bucket,documentMatchesCapped2:row.document_matches_capped2,outputCandidate:row.output_binding_candidate,consequentialCandidate:row.consequential_binding_candidate};
++    const key=JSON.stringify(value);counts.set(key,(counts.get(key)??0)+1);
++   }
++   groups[kind]={reservationCount:rows.length,groups:[...counts].map(([key,count])=>({...JSON.parse(key),count}))};
++  }
++  const after=await qualificationPrincipal(request,env,db);
++  const principal=(a:typeof actor)=>consentHash({id:a.userId,consent:a.consentVersion,snapshot:a.authorizationSnapshot,access:a.access});
++  if(env.DB!==original||await principal(actor)!==await principal(after))fail();read.check();
++  const output={contract:'forma-p5-hold-classification-v1',status:'observed-not-cleared',observedAt,groups,completeWithinBound:true,uniqueOperations:null,finality:'not-established',newPurchases:0,metrics:read.metrics,limits:HOLD_READ_LIMITS};
++  if(bytes(output)>HOLD_READ_LIMITS.outputBytes)fail();return qualificationResponse(output);
++ }catch{return qualificationResponse({status:'unavailable',reason:'hold_classification_unavailable',completeWithinBound:false,newPurchases:0},409);}
++}
+diff --git a/worker/index.ts b/worker/index.ts
+index bf63360d..9ce13335 100644
+--- a/worker/index.ts
++++ b/worker/index.ts
+@@ -1,4 +1,4 @@
+-import {handleStudyQualification,QUALIFICATION_PATH} from './generation-study-qualification.ts';
++import {handleStudyHoldRead,HOLD_READ_PATH} from './generation-study-hold-read.ts';
+ import {runCreationMaintenance} from './creation-index-maintenance.ts';
+ import {maintainCreationSearchJobs} from './creation-search-api.ts';
+ import { handleSourceEligibilityRead, SOURCE_ELIGIBILITY_PATH } from './source-eligibility-read.ts';
+@@ -138,7 +138,7 @@ async function authorizeApplication(request: Request, env: WorkerEnv, applicatio
+ 
+ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExecutionContext): Promise<Response> {
+     const url=new URL(request.url);
+-    if(url.pathname===QUALIFICATION_PATH)return handleStudyQualification(request,env);
++    if(url.pathname===HOLD_READ_PATH)return handleStudyHoldRead(request,env);
+     if(url.pathname.startsWith("/api/internal/ordinary-images/"))return handleOrdinaryImageQueue(request,env);
+     if(url.pathname===SOURCE_ELIGIBILITY_PATH)return handleSourceEligibilityRead(request,env);
+     if(url.pathname===SOURCE_ADVISORY_PATH)return handleSourceAdvisoryRead(request,env);
+@@ -408,7 +408,7 @@ export default {
+     const retainedStoryRead=pathname==="/api/retained-story"||pathname.startsWith("/api/retained-story/")
+       ||pathname==="/api/retained-output"||pathname.startsWith("/api/retained-output/");
+     const memoryBenchmarkRequest=pathname==="/api/internal/memory-benchmark"||pathname==="/api/internal/memory-benchmark/approval"||pathname==="/api/internal/memory-benchmark/reconcile"||pathname==="/api/internal/memory-benchmark/release-undispatched";
+-    if(pathname.startsWith("/api/")&&pathname!==QUALIFICATION_PATH&&pathname!==SOURCE_ADVISORY_PATH&&pathname!==SOURCE_ELIGIBILITY_PATH&&pathname!==GENERATION_EVIDENCE_PATH&&pathname!==CURRENT_SOURCE_PATH&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!==MEMORY_SCHEMA_REPAIR_PATH&&pathname!==EVENT_SAVE_REPAIR_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!pathname.startsWith("/api/still/panel")&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
++    if(pathname.startsWith("/api/")&&pathname!==HOLD_READ_PATH&&pathname!==SOURCE_ADVISORY_PATH&&pathname!==SOURCE_ELIGIBILITY_PATH&&pathname!==GENERATION_EVIDENCE_PATH&&pathname!==CURRENT_SOURCE_PATH&&!memoryBenchmarkRequest&&pathname!==OUTPUT_SCHEMA_PREFLIGHT_PATH&&pathname!==MEMORY_SCHEMA_REPAIR_PATH&&pathname!==EVENT_SAVE_REPAIR_PATH&&pathname!=="/api/admin/budget-hold-dispositions"&&pathname!=="/api/admin/generation-accounting"&&pathname!=="/api/admin/managed-video-reconciliation"&&!retainedStoryRead&&!isSelectedOutputShareApiPath(pathname)&&!pathname.startsWith("/api/still/panel")&&!sponsoredImageResponses.has(response))schedulePrivateContentRetention(env,context);
+     const headers=new Headers(response.headers);
+     headers.append("server-timing",`app;dur=${Math.max(0,performance.now()-started).toFixed(1)}`);
+     if(new URL(request.url).pathname.startsWith("/api/")&&!headers.has("cache-control"))headers.set("cache-control","private, no-store");
+diff --git a/worker/runtime.ts b/worker/runtime.ts
+index 83a5b0e0..f75c62b7 100644
+--- a/worker/runtime.ts
++++ b/worker/runtime.ts
+@@ -16,6 +16,7 @@ export { StaleSequenceError, appendEvents };
+ export { PHANTOM_ATTENTION_EVENT_SQL } from "../db/event-predicates.ts";
+ 
+ export interface WorkerEnv {
++  FORMA_GENERATION_STUDY_HOLD_READ_ENABLED?: string;
+   /** Disabled until the companion consumer passes hosted qualification. */
+   FORMA_ORDINARY_IMAGE_QUEUE_QUALIFIED?: string;
+   FORMA_ORDINARY_IMAGE_QUEUE_SECRET?: string;
