@@ -64,7 +64,7 @@ if a different route has already passed its canary.
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| GEN-P5 | In progress — R40 fixed-read candidate sealed locally | Existing P5 task | [R40 result](evidence/generation-p5/forma-r40/result.md): five production files on retained555,9focused/7compiledchecks plus build/type/lint pass; supported offline622-file package,41SQL/journal exact. | [One execution decision](evidence/generation-p5/forma-r40/decision.md): exact release, proposed554recovery/quietwindow,14newnormal/9newrecovery; nativeadmission/singlemanualread/flagremoval/conditionalrestoration.67actualcharges unchanged; no hostedauthority,42migration/fullpair or renewal. |
+| GEN-P5 | Investigation closed by owner; empirical pair and further qualification deferred | No active execution owner assignment | [Final handoff](evidence/generation-p5/closeout/handoff.md). R34 restoration closed; R41 stopped before mutation. Holds remain unclassified;68operator actions. | No automatic next action. Future study requires a chosen hypothesis, supported path, authority and bounded stopping rule. Not an empirical success; archive ready, not archived. |
 
 ## Memory
 
@@ -701,3 +701,7 @@ these31 journaled migrations.
 ### P5 R41 — accepted R40 cycle stopped before mutation
 
 R40 exact candidate/archive verified; N1 owner/latest555/access7 read completed, but full policy digest parity is unresolved because prior serialization is unverified. No mutation or restoration obligation. Ledger50normal/18recovery/68charged; original caps63/28/91, old conditionalR3 restricted. One explicitly authorized metadata-only policy reconciliation is the next decision, not a whole publication repeat. [Result and bounded next scope](evidence/generation-p5/forma-r41/result.md). P5 remains open; no actual hold classification, image pair or moderation finding.
+
+### Accepted P5 investigation closure
+
+The owner superseded the R41 reconciliation kickoff with accepted closure and deferral. Historical moderation cause remains unresolved; no prospective image pair was executed. Further qualification is deferred, not successful. Preserve holds, retention, seals, receipts and feedback. [Final handoff and archive readiness](evidence/generation-p5/closeout/handoff.md). No new task, hosted action or deadline renewal. D2/J/L remain optional.
