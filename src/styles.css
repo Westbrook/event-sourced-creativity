@@ -2486,6 +2486,12 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
   .presentation-deck-list,.presentation-deck-stage { padding-inline: .75rem; }
 }
 
+/* Short create dialogs reserve disclosure space beside their visible actions. */
+@media (max-width: 720px) and (max-height: 32rem) {
+  .document-artifact-dialog > footer { display: grid; grid-template-columns: auto minmax(0,1fr); gap: .5rem; padding-block: .5rem; }
+  .document-artifact-dialog > footer > .button { width: auto; padding-inline: .5rem; min-inline-size: max(44px,var(--forma-hit-target,var(--forma-control-min-size,2.75rem))); min-block-size: max(44px,var(--forma-hit-target,var(--forma-control-min-size,2.75rem))); white-space: normal; overflow-wrap: anywhere; }
+}
+
 /* Finished work owns the viewing surface; evidence and review remain one action away. */
 .document-artifact-reader > .artifact-review-actions[hidden] { display: none; }
 .document-artifact-reader > footer { min-inline-size: 0; gap: .75rem; padding-block: .65rem; padding-inline: clamp(.8rem,2.5vi,2rem); }
