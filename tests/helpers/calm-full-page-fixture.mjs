@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import ts from "typescript";
-import { createSceneStoreHost } from "./scene-cost-store-host.mjs";
+const createSceneStoreHost = () => { throw new Error("Full Store/Scene fixture is unavailable in this isolated finite editor control"); };
 
 // Full component hierarchy, synthetic state and native-control ports; no CSS,
 // viewport, provider, study-data or accessibility certification is implied.

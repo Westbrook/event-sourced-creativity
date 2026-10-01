@@ -1,7 +1,10 @@
+import { projectGeneratedImageEdit, type GeneratedImageOutputEdit } from "./generated-image-revision.ts";
 import { audioMetadataAfterSourceEdit } from "./audio.ts";
 import { normalizeImageFocalPoint, type ImageFocalPoint } from "./focal-point.ts";
 import { normalizePromptTechnique, PROMPT_TECHNIQUES, type PromptTechnique } from "./prompt-structures.ts";
 import { isDocumentArtifactKind, normalizeSlidePresentation, normalizeSlideVisual, parseAudioMediaRevision, parseVideoMediaRevision, videoArtifactMediaItem, type DocumentArtifact } from "./document-artifacts.ts";
+import { model3dCurrentProjectionFile, model3dRevisionFile, parseModel3dCurrentProjection, parseModel3dMediaRevision } from "./model3d-media-revision.ts";
+import { projectNativeRetainedModel3d } from "./native-retained-model3d.ts";
 
 export type EventActor = "user" | `worker:${string}` | `model:${string}`;
 
@@ -90,6 +93,7 @@ export type CreativeDocument = {
 };
 
 export type CreativeOutput = {
+  imageRevision?: GeneratedImageOutputEdit;
   id: string;
   documentId: string;
   title?: string;
@@ -234,6 +238,9 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
   const originalAudio = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings">>();
   const originalVideo = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings" | "items">>();
   const videoEditCounts = new Map<string, number>();
+  const originalModel3d = new Map<string, Pick<DocumentArtifact, "mediaUrl" | "mediaType" | "settings">>();
+  const model3dEditCounts = new Map<string, number>();
+  const revisedModel3d = new Set<string>();
   const generationCanvas = new Map<string,{canvasId:string;contextSetId:string}>();
   const documentCompiles = new Map<string, Record<string, unknown>>();
   const previewOutputByEvent = new Map<string, string>();
@@ -355,6 +362,20 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         ids.forEach((value) => { const id = String(value); const promotedFromEventId=p.reference_preview_event_id?String(p.reference_preview_event_id):null;const receipt=generationCanvas.get(String(p.generation_id??""));const generatedTitle=String(p.title??asRecord(p.output_brief).title??"").trim(); outputs.set(id, { id, documentId: String(p.document_id ?? state.documentId),...(generatedTitle?{title:generatedTitle,titleSource:"generated" as const}:{}),createdAt:event.occurredAt, canvasId:p.canvas_id?String(p.canvas_id):receipt?.canvasId??null,contextSetId:p.context_set_id?String(p.context_set_id):receipt?.contextSetId??null,generationId: String(p.generation_id ?? ""), modelId: String(p.model_id ?? "adapter-neutral"), variant: Number(p.variant ?? outputs.size % 4), latency: Number(p.latency_ms ?? 0), sequence: event.sequence, pinned: false, saved: false, discarded: false, library: false, contentRef: p.output_ref ? String(p.output_ref) : null, promptRef:p.prompt_ref?String(p.prompt_ref):null,promptTechnique:normalizePromptTechnique(p.prompt_technique),promptFanId:p.prompt_fan_id?String(p.prompt_fan_id):null, provider: String(p.provider ?? (p.simulation ? "simulation" : "unknown")), mediaUrl: p.media_url ? String(p.media_url) : null, mediaType: p.media_type ? String(p.media_type) : null, width: p.image_width ? Number(p.image_width) : null, height: p.image_height ? Number(p.image_height) : null, plannerModelId: p.planner_model_id ? String(p.planner_model_id) : null, quality:p.quality==="low"?"low":p.quality==="medium"?"medium":"high",purpose:p.purpose==="ideate"?"ideate":"final",sourceEventId:event.eventId,sourceSurface:p.source_surface?String(p.source_surface):null,promotionId:p.promotion_id?String(p.promotion_id):null,promotedFromId:p.promoted_from_object_id?String(p.promoted_from_object_id):promotedFromEventId?previewOutputByEvent.get(promotedFromEventId)??null:null,promotedFromEventId,focalPoint:normalizeImageFocalPoint(p.focal_point),standalone:!p.prompt_fan_id,standaloneSequence:p.prompt_fan_id?null:event.sequence,...(p.production_mode==="managed"?{productionMode:"managed" as const,productionTeam:p.production_team?String(p.production_team):null}:{}) }); });
         break;
       }
+      case "GeneratedImageEdited": {
+        // A server-only event overlays current pixels, preserving the immutable
+        // producer identity. A contradictory targeted edit cannot leave the old
+        // image looking like the newly edited current result.
+        const ids=new Set([p.output_id,p.object_id].filter((id):id is string=>typeof id==="string"&&Boolean(id)));
+        for(const id of ids){
+          const output=outputs.get(id);if(!output)continue;
+          const ownerId=event.streamId.startsWith("creative:")?event.streamId.slice("creative:".length):"";
+          const projectId=documents.get(output.documentId)?.projectId??"";
+          const edited=projectGeneratedImageEdit(output,event,{ownerId,projectId});
+          outputs.set(id,edited??{...output,mediaUrl:null,mediaType:null,width:null,height:null,focalPoint:null});
+        }
+        break;
+      }
       case "DocumentRenderCompleted": {
         const kind = p.artifact_kind;
         if (!isDocumentArtifactKind(kind)) break;
@@ -371,10 +392,64 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
         });
         if (kind === "audio") { const audio = artifacts.get(id)!; originalAudio.set(id, { mediaUrl: audio.mediaUrl, mediaType: audio.mediaType, settings: { ...audio.settings } }); }
         if (kind === "video") { const video = artifacts.get(id)!; originalVideo.set(id, { mediaUrl: video.mediaUrl, mediaType: video.mediaType, settings: { ...video.settings }, items: video.items.map(item => ({ ...item })) }); videoEditCounts.set(id, 0); }
+        if (kind === "model3d") { const model = artifacts.get(id)!; originalModel3d.set(id, { mediaUrl: model.mediaUrl, mediaType: model.mediaType, settings: { ...model.settings } }); model3dEditCounts.set(id, 0); revisedModel3d.delete(id); }
         break;
       }
       case "DocumentArtifactEdited": {
         const artifact = artifacts.get(String(p.artifact_id ?? ""));
+        if (artifact?.kind === "model3d") {
+          const count = (model3dEditCounts.get(artifact.id) ?? 0) + 1; model3dEditCounts.set(artifact.id, count);
+          if (Object.hasOwn(p, "model3d_current_projection")) {
+            const projection = parseModel3dCurrentProjection(p.model3d_current_projection), file = model3dCurrentProjectionFile(projection);
+            // The server owns project-access authorization and creates this
+            // marker after validating the private revision and current resource.
+            const identity = /^project:.+$/u.test(event.streamId) && typeof p.project_id === "string" && p.project_id.length > 0
+              && p.artifact_id === artifact.id && p.artifact_kind === "model3d" && p.document_id === artifact.documentId
+              && artifact.contentRef !== null && p.content_ref === artifact.contentRef && p.project_id === documents.get(artifact.documentId)?.projectId
+              && Number.isSafeInteger(count) && p.revision === count && artifact.itemCount === 0 && artifact.items.length === 0
+              && !Object.hasOwn(p, "audio_revision") && !Object.hasOwn(p, "video_revision");
+            if (identity && projection && file && projection.revision === count && projection.contentSha256 === p.content_sha256) {
+              artifact.mediaUrl = file.url; artifact.mediaType = file.mimeType;
+              artifact.settings = { ...artifact.settings, model3d_files: [file], source_media_sha256: file.sha256 };
+              revisedModel3d.add(artifact.id);
+            } else {
+              artifact.mediaUrl = null; artifact.mediaType = null;
+              artifact.settings = { ...artifact.settings, model3d_files: [], source_media_sha256: null };
+            }
+            break;
+          }
+          // Legacy prose-only edits retain original files. A derivative requires its
+          // propagated binding on every later edit; omission cannot witness it.
+          if (!Object.hasOwn(p, "model3d_revision") && !Object.hasOwn(p, "audio_revision") && !Object.hasOwn(p, "video_revision")
+            && p.source_surface !== "document-artifact-model3d-scale" && !revisedModel3d.has(artifact.id)) break;
+          const original = originalModel3d.get(artifact.id);
+          const originals = original && projectNativeRetainedModel3d({ artifact_kind: "model3d", settings: original.settings });
+          const glbs = originals?.files.filter(file => file.role === "mesh" && file.format === "glb"
+            && file.mimeType === "model/gltf-binary" && file.previewSupported !== false) ?? [];
+          const source = glbs.length === 1 ? glbs[0]! : null;
+          const revised = parseModel3dMediaRevision(p.model3d_revision), file = model3dRevisionFile(revised);
+          const identity = p.artifact_id === artifact.id && p.artifact_kind === "model3d" && p.document_id === artifact.documentId
+            && artifact.contentRef !== null && p.content_ref === artifact.contentRef && p.project_id === documents.get(artifact.documentId)?.projectId
+            && Number.isSafeInteger(count) && p.revision === count && artifact.itemCount === 0 && artifact.items.length === 0
+            && !Object.hasOwn(p, "audio_revision") && !Object.hasOwn(p, "video_revision");
+          if (identity && original && source && revised && file && revised.source.revision < count
+            && (revised.source.revision !== 0 || revised.source.url === source.url
+              && revised.source.sha256 === source.sha256 && revised.source.byteLength === source.fileSize)) {
+            artifact.mediaUrl = revised.media.url; artifact.mediaType = revised.media.mediaType;
+            artifact.settings = { ...artifact.settings, model3d_files: [file], source_media_sha256: revised.media.sha256 };
+            revisedModel3d.add(artifact.id);
+          } else if (identity && original && source && p.model3d_revision === null && p.revision_action === "restore"
+            && p.source_surface === "document-artifact-history" && Number.isSafeInteger(p.restored_from_revision)
+            && Number(p.restored_from_revision) >= 0 && Number(p.restored_from_revision) < count) {
+            artifact.mediaUrl = original.mediaUrl; artifact.mediaType = original.mediaType; artifact.settings = { ...original.settings };
+            revisedModel3d.delete(artifact.id);
+          } else {
+            // A malformed or unwitnessed binding never falls back to the original inventory.
+            artifact.mediaUrl = null; artifact.mediaType = null;
+            artifact.settings = { ...artifact.settings, model3d_files: [], source_media_sha256: null };
+          }
+          break;
+        }
         if (artifact?.kind === "video") {
           const count = (videoEditCounts.get(artifact.id) ?? 0) + 1; videoEditCounts.set(artifact.id, count);
           if (!Object.hasOwn(p, "video_revision") && !Object.hasOwn(p, "audio_revision") && p.source_surface !== "document-artifact-video-trim") break;
@@ -438,7 +513,7 @@ export function foldEvents(events: CreativeEvent[], asOf = Number.POSITIVE_INFIN
       }
       case "ImageFocalPointCalculated": {
         const focalPoint=normalizeImageFocalPoint(p.focal_point);if(!focalPoint)break;
-        if(p.target_kind==="generation"){const output=outputs.get(String(p.target_id??""));if(output){output.focalPoint=focalPoint;}}
+        if(p.target_kind==="generation"){const output=outputs.get(String(p.target_id??""));if(output&&!output.imageRevision){output.focalPoint=focalPoint;}}
         else if(p.target_kind==="artifact"){for(const artifact of artifacts.values()){const item=artifact.items.find((candidate)=>candidate.id===String(p.target_id??""));if(item){item.focalPoint=focalPoint;break;}}}
         else {const block=blocks.get(String(p.block_id??p.target_id??""));if(block){block.properties.focal_point=focalPoint;block.sourceEvents.push(event.eventId);}}
         break;

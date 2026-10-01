@@ -1,0 +1,497 @@
+import { foldEvents, type CreativeEvent } from "../src/model/events.ts";
+import { GENERATED_IMAGE_EDIT_LIMITS } from "../src/model/generated-image-edit.ts";
+import { generatedImageEditOperationSha256, parseGeneratedImageEditRequest, parseGeneratedImageRevision,
+  type GeneratedImageEditRequest, type GeneratedImageEditSnapshot, type GeneratedImageRevision } from "../src/model/generated-image-revision.ts";
+import { inspectOutputAsset, outputAssetSha256 } from "../src/model/output-asset-inspection.ts";
+import { mediaKeyMatchesOwnerNamespace, ownerMediaNamespace } from "../src/model/media-ownership.ts";
+import { referenceCompositionMediaUrl, referenceCompositionSources, validateReferenceComposition } from "../src/model/reference-composition.ts";
+import { PRINCIPAL_WITH_ACCESS_SQL } from "./access-policy.ts";
+import { configuredPilotAdmissionGuard, POLICY_VERSION, requireConsent, requireUser, type PilotUser } from "./pilot-policy.ts";
+import { readProjectRequestContext } from "./project-access.ts";
+import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, serializeEvent, uuidV7, type WorkerEnv } from "./runtime.ts";
+
+// This personal endpoint owns one server-only event type. It does not turn a
+// CreativeOutput into a DocumentArtifact, modify planner content, or render PNGs.
+const DEADLINE_MS = 30_000;
+const MAX_EVENTS = 50_000;
+const MAX_EVENT_BYTES = 16_000_000;
+const MAX_REVISIONS = 128;
+const MAX_REVISION_BYTES = 8_000_000;
+const MAX_REQUEST_BYTES = GENERATED_IMAGE_EDIT_LIMITS.pngBytes + 131_072;
+const encoder = new TextEncoder();
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+const byteLengthOf = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")!.get!;
+const bufferOf = Object.getOwnPropertyDescriptor(typedArrayPrototype, "buffer")!.get!;
+const setBytes = Uint8Array.prototype.set;
+type Row = Record<string, unknown>;
+type Guard = { sql: string; bindings: Array<string | number | null> };
+type ConditionalImageBucket = {
+  put(key: string, value: ArrayBuffer, options: { onlyIf: { etagDoesNotMatch: "*" };
+    httpMetadata: { contentType: "image/png" }; customMetadata: Record<string, string> }): Promise<unknown>;
+};
+const object = (value: unknown): value is Row => value !== null && typeof value === "object" && !Array.isArray(value);
+const token = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\p{Cc}\p{Cf}]/u.test(value);
+const integer = (value: unknown, minimum = 0): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= minimum;
+const hash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+const exactKeys = (value: Row, keys: string[]) => Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+const textHash = (value: string) => outputAssetSha256(encoder.encode(value));
+const future = (value: unknown) => typeof value === "string" && Date.parse(value) > Date.now() && new Date(value).toISOString() === value;
+const reply = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+class Refusal extends Error {
+  constructor(readonly code: "unavailable" | "source_changed" | "invalid" | "forbidden", readonly status = 409) { super(code); }
+}
+function requireFact(value: unknown, code: Refusal["code"] = "unavailable", status = 409): asserts value {
+  if (!value) throw new Refusal(code, status);
+}
+
+class Lifetime {
+  active = true;
+  writing = false;
+  readonly cancellations = new Set<() => void>();
+  check() { requireFact(this.active, "unavailable", 408); }
+  stop() { this.active = false; for (const cancel of this.cancellations) { try { cancel(); } catch { /* Cancellation is best effort and never awaited. */ } } this.cancellations.clear(); }
+  async wait<T>(promise: Promise<T>): Promise<T> { const result = await promise; this.check(); return result; }
+}
+
+// One exact SQL witness includes mutable private envelopes as well as public
+// event identity. The bounded string is compared again inside the conditional
+// write; an unchanged stream head alone would miss a privacy withdrawal.
+const EVENT_SNAPSHOT_SQL = `(SELECT CASE WHEN COUNT(*)<=${MAX_EVENTS} AND COALESCE(SUM(length(CAST(payload AS BLOB))+length(CAST(COALESCE(private_json,'') AS BLOB))),0)<=${MAX_EVENT_BYTES}
+  THEN json_group_array(json_object('event_id',event_id,'stream_id',stream_id,'sequence',sequence,
+    'occurred_at',occurred_at,'recorded_at',recorded_at,'actor',actor,'client_id',client_id,'correlation_id',correlation_id,
+    'causation_id',causation_id,'compensates_event_id',compensates_event_id,'schema_version',schema_version,'type',type,'payload',payload,
+    'private_owner',private_owner,'private_project',private_project,'private_document',private_document,'private_json',private_json,'private_redacted',private_redacted)) ELSE NULL END
+  FROM (SELECT e.*,p.owner_id private_owner,p.project_id private_project,p.document_id private_document,p.private_json,p.redacted_at private_redacted
+    FROM events e LEFT JOIN event_private_payloads p ON p.private_event_id=e.event_id WHERE e.stream_id=? ORDER BY e.sequence LIMIT ${MAX_EVENTS + 1}))`;
+const REVISION_SNAPSHOT_SQL = `(SELECT CASE WHEN COUNT(*)<=${MAX_REVISIONS} AND COALESCE(SUM(length(CAST(content_json AS BLOB))),0)<=${MAX_REVISION_BYTES}
+  THEN json_group_array(json_object('revision_id',revision_id,'owner_id',owner_id,'organization_id',organization_id,'project_access_id',project_access_id,
+    'project_id',project_id,'document_id',document_id,'artifact_id',artifact_id,'revision',revision,'content_json',content_json,'content_sha256',content_sha256,
+    'created_by_user_id',created_by_user_id,'created_at',created_at,'expires_at',expires_at,'redacted_at',redacted_at)) ELSE NULL END
+  FROM (SELECT * FROM artifact_revisions WHERE owner_id=? AND artifact_id IN (?,?) ORDER BY artifact_id,revision LIMIT ${MAX_REVISIONS + 1}))`;
+
+function internalKey(outputId: string) {
+  return "generated-image/" + Array.from(encoder.encode(outputId), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+function admission(env: WorkerEnv, actor: PilotUser, projectId: string, documentId: string, outputId: string, contentId: string, mediaKeys: string[]): Guard {
+  const snapshot = actor.authorizationSnapshot, pilot = configuredPilotAdmissionGuard(env, actor);
+  if (!snapshot) return { sql: "0", bindings: [] };
+  return { sql: `EXISTS(SELECT 1 FROM(${PRINCIPAL_WITH_ACCESS_SQL}) principal
+    WHERE (principal.user_id,principal.email,principal.role,principal.updated_at,principal.consent_version,
+      COALESCE(principal.permission_epoch,''),COALESCE(principal.grants_json,'[]'),COALESCE(principal.organizations_json,'[]'),
+      COALESCE(principal.projects_json,'[]'),COALESCE(principal.identity_policies_json,'[]'),COALESCE(principal.approved_canvas_requirements,0))=(?,?,?,?,?,?,?,?,?,?,?))
+    AND (${pilot.sql}) AND NOT EXISTS(SELECT 1 FROM organization_projects WHERE project_id=?)
+    AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE (resource_kind='document' AND resource_id=?)
+      OR (resource_kind='artifact' AND resource_id IN (?,?)) OR (resource_kind='content' AND resource_id=?)
+      OR (resource_kind='media' AND resource_id IN (SELECT value FROM json_each(?))))
+    AND NOT EXISTS(SELECT 1 FROM private_content_retention_scopes WHERE content_id=?)`,
+    bindings: [actor.userId,actor.userId,actor.email,actor.role,snapshot.updatedAt,POLICY_VERSION,snapshot.rawEpoch,snapshot.grants,
+      snapshot.organizations,snapshot.projects,snapshot.identityPolicies,snapshot.canvasRequirements,...pilot.bindings,
+      projectId,documentId,outputId,internalKey(outputId),contentId,JSON.stringify(mediaKeys),contentId] };
+}
+type Origin = { outputId: string; documentId: string; generationId: string; sourceEventId: string; contentRef: string; contentSha256: string };
+type Media = GeneratedImageRevision["media"];
+type Envelope = { kind: "generated-image"; schemaVersion: 1; origin: Origin; initialMedia: Media;
+  request: GeneratedImageEditRequest | null; imageRevision: GeneratedImageRevision | null };
+type Retained = { row: Row; envelope: Envelope; event: CreativeEvent | null };
+type Current = {
+  snapshot: GeneratedImageEditSnapshot; origin: Origin; initialMedia: Media; retained: Retained[];
+  events: CreativeEvent[]; eventBytes: number; eventWitness: string; revisionWitness: string; rawExpires: string; originExpires: string | null; key: string; guard: Guard;
+};
+
+function mediaKey(value: unknown, owner: string): string | null {
+  if (typeof value !== "string" || referenceCompositionMediaUrl(value) !== value) return null;
+  const key = decodeURIComponent(value.slice("/api/media/".length));
+  return mediaKeyMatchesOwnerNamespace(key, owner) ? key : null;
+}
+function sameOrigin(value: unknown, origin: Origin): boolean {
+  return object(value) && exactKeys(value, Object.keys(origin)) && Object.entries(origin).every(([key, item]) => value[key] === item);
+}
+function sameMedia(value: unknown, media: Media): boolean {
+  return object(value) && exactKeys(value, Object.keys(media)) && Object.entries(media).every(([key, item]) => value[key] === item);
+}
+function matchesRequest(request: GeneratedImageEditRequest, snapshot: GeneratedImageEditSnapshot) {
+  return request.expectedRevision === snapshot.revision && request.expectedEditEventId === snapshot.editEventId
+    && request.expectedContentSha256 === snapshot.contentSha256 && request.generationId === snapshot.generationId
+    && request.sourceEventId === snapshot.sourceEventId && request.contentRef === snapshot.contentRef
+    && request.sourceMediaUrl === snapshot.media.url && request.sourceMediaSha256 === snapshot.media.sha256;
+}
+
+async function observeCurrent(env: WorkerEnv, actor: PilotUser, outputId: string, life: Lifetime): Promise<Current> {
+  life.check();
+  const key = internalKey(outputId);
+  const witnesses = await life.wait(env.DB.prepare(`SELECT ${EVENT_SNAPSHOT_SQL} eventWitness,${REVISION_SNAPSHOT_SQL} revisionWitness`).bind(actor.streamId, actor.userId, key, outputId).first<Row>());
+  requireFact(witnesses && typeof witnesses.eventWitness === "string" && typeof witnesses.revisionWitness === "string");
+  const eventWitness = witnesses.eventWitness, revisionWitness = witnesses.revisionWitness;
+  requireFact(encoder.encode(eventWitness).length <= MAX_EVENT_BYTES + 8_000_000 && encoder.encode(revisionWitness).length <= MAX_REVISION_BYTES + 131_072);
+  const eventRows: unknown = JSON.parse(eventWitness), revisionRows: unknown = JSON.parse(revisionWitness);
+  requireFact(Array.isArray(eventRows) && eventRows.length > 0 && eventRows.length <= MAX_EVENTS && Array.isArray(revisionRows) && revisionRows.length <= MAX_REVISIONS);
+  const events: CreativeEvent[] = eventRows.map((value: unknown) => {
+    requireFact(object(value) && token(value.event_id) && value.stream_id === actor.streamId && integer(value.sequence, 1));
+    if (value.private_json !== null) requireFact(value.private_owner === actor.userId && typeof value.private_json === "string");
+    const event = serializeEvent({ ...value, private_json: value.private_redacted === null ? value.private_json : null });
+    requireFact(object(event.payload));
+    return event;
+  });
+  const eventBytes = eventRows.reduce((total: number, value: Row) => total + encoder.encode(String(value.payload)).length
+    + (typeof value.private_json === "string" ? encoder.encode(value.private_json).length : 0), 0);
+  requireFact(new Set(events.map(event => event.eventId)).size === events.length && events.every((event, index) => index === 0 || events[index - 1]!.sequence < event.sequence));
+  const aliases = events.filter(event => (event.type === "GenerationCompleted" || event.type === "IdeationPreviewCompleted")
+    && (event.payload.object_id === outputId || Array.isArray(event.payload.object_ids) && event.payload.object_ids.includes(outputId)));
+  requireFact(aliases.length === 1);
+  const completed = aliases[0]!, p = completed.payload;
+  requireFact(completed.type === "GenerationCompleted" && completed.actor === "worker:generator" && p.report_space !== "scout"
+    && p.object_id === outputId && Array.isArray(p.object_ids) && p.object_ids.length === 1 && p.object_ids[0] === outputId
+    && token(p.document_id) && token(p.generation_id) && /^[A-Za-z0-9._-]+$/u.test(p.generation_id) && token(p.output_ref)
+    && p.media_type === "image/png" && hash(p.source_content_hash) && integer(p.image_width, 1) && p.image_width <= 16_384
+    && integer(p.image_height, 1) && p.image_height <= 16_384 && p.quality === "high" && p.purpose === "final" && p.simulation === false
+    && (p.content_expires_at == null || future(p.content_expires_at)));
+  requireFact(!events.some(event => event !== completed && ["GenerationCompleted", "IdeationPreviewCompleted"].includes(event.type) && event.payload.generation_id === p.generation_id));
+  const originalUrl = "/api/media/" + encodeURIComponent(ownerMediaNamespace(actor.userId) + "/generated/" + p.generation_id + ".png");
+  requireFact(p.media_url === originalUrl);
+  // The initial projection proves generated-output identity. Current projection
+  // supplies removal and current Document/reference state, including later edits.
+  const initial = foldEvents(events.filter(event => event.sequence <= completed.sequence), Infinity, p.document_id);
+  const initialOutput = initial.libraryOutputs.filter(output => output.id === outputId);
+  requireFact(initialOutput.length === 1 && initialOutput[0]!.sourceEventId === completed.eventId && initialOutput[0]!.generationId === p.generation_id
+    && initialOutput[0]!.contentRef === p.output_ref && initialOutput[0]!.mediaUrl === originalUrl && initialOutput[0]!.sequence === completed.sequence);
+  const projection = foldEvents(events, Infinity, p.document_id, initial.projectId);
+  const document = projection.documents.find(value => value.id === p.document_id), outputs = projection.libraryOutputs.filter(value => value.id === outputId);
+  requireFact(document && !document.removed && token(document.projectId) && projection.documentId === document.id && projection.projectId === document.projectId
+    && outputs.length === 1 && !outputs[0]!.discarded && outputs[0]!.documentId === document.id && outputs[0]!.generationId === p.generation_id
+    && outputs[0]!.sourceEventId === completed.eventId && outputs[0]!.contentRef === p.output_ref);
+  const originEnvelope: unknown = eventRows.find((value: unknown) => object(value) && value.event_id === completed.eventId);
+  requireFact(object(originEnvelope) && originEnvelope.private_owner === actor.userId && originEnvelope.private_redacted === null
+    && originEnvelope.private_document === document.id && (originEnvelope.private_project === null || originEnvelope.private_project === document.projectId));
+  requireFact(!events.some(event => ["DocumentRenderCompleted", "DocumentArtifactEdited"].includes(event.type)
+    && [outputId, key].includes(String(event.payload.artifact_id ?? ""))));
+  const source = await life.wait(env.DB.prepare("SELECT content,expires_at FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-output' AND redacted_at IS NULL AND expires_at>?")
+    .bind(p.output_ref, actor.userId, new Date().toISOString()).first<Row>());
+  requireFact(source && typeof source.content === "string" && source.content.length > 0 && encoder.encode(source.content).length <= GENERATED_IMAGE_EDIT_LIMITS.rawBytes && future(source.expires_at));
+  requireFact(object(JSON.parse(source.content)));
+  const origin: Origin = { outputId, documentId: document.id, generationId: p.generation_id, sourceEventId: completed.eventId,
+    contentRef: p.output_ref, contentSha256: await life.wait(textHash(source.content)) };
+  // Original length is established by the actual private-object read below on
+  // first Save; a retained revision-zero row must thereafter preserve it exactly.
+  let initialMedia: Media = { url: originalUrl, mediaType: "image/png", sha256: p.source_content_hash, byteLength: 0, width: p.image_width, height: p.image_height };
+  let media = initialMedia, editEventId: string | null = null;
+  const edits = events.filter(event => event.type === "GeneratedImageEdited" && (event.payload.output_id === outputId || event.payload.object_id === outputId));
+  requireFact(revisionRows.length === (edits.length === 0 ? 0 : edits.length + 1));
+  const retained: Retained[] = [];
+  for (let index = 0; index < revisionRows.length; index++) {
+    const value: unknown = revisionRows[index];
+    requireFact(object(value) && value.artifact_id === key && value.owner_id === actor.userId && value.organization_id === null && value.project_access_id === null
+      && value.project_id === document.projectId && value.document_id === document.id && value.revision === index && token(value.revision_id)
+      && value.created_by_user_id === actor.userId && typeof value.created_at === "string" && value.redacted_at === null && future(value.expires_at)
+      && typeof value.content_json === "string" && encoder.encode(value.content_json).length <= 100_000 && hash(value.content_sha256)
+      && await life.wait(textHash(value.content_json)) === value.content_sha256);
+    const envelope: unknown = JSON.parse(value.content_json);
+    requireFact(object(envelope) && exactKeys(envelope, ["kind", "schemaVersion", "origin", "initialMedia", "request", "imageRevision"])
+      && envelope.kind === "generated-image" && envelope.schemaVersion === 1 && sameOrigin(envelope.origin, origin));
+    if (index === 0) {
+      requireFact(object(envelope.initialMedia) && integer(envelope.initialMedia.byteLength, 1) && envelope.initialMedia.byteLength <= GENERATED_IMAGE_EDIT_LIMITS.pngBytes);
+      initialMedia = { ...initialMedia, byteLength: envelope.initialMedia.byteLength };
+      media = initialMedia;
+      requireFact(sameMedia(envelope.initialMedia, initialMedia) && envelope.request === null && envelope.imageRevision === null);
+      retained.push({ row: value, envelope: envelope as Envelope, event: null });
+      continue;
+    }
+    requireFact(sameMedia(envelope.initialMedia, initialMedia));
+    const record = parseGeneratedImageRevision(envelope.imageRevision, actor.userId), request = parseGeneratedImageEditRequest(envelope.request), event = edits[index - 1]!;
+    requireFact(record && request && record.revision === index && sameOrigin({ outputId: record.outputId, documentId: record.documentId,
+      generationId: record.generationId, sourceEventId: record.sourceEventId, contentRef: record.contentRef, contentSha256: record.contentSha256 }, origin)
+      && record.source.eventId === (editEventId ?? completed.eventId) && record.source.mediaUrl === media.url && record.source.sha256 === media.sha256
+      && record.source.width === media.width && record.source.height === media.height && request.expectedRevision === index - 1
+      && request.expectedEditEventId === editEventId && request.expectedContentSha256 === origin.contentSha256 && request.generationId === origin.generationId
+      && request.sourceEventId === origin.sourceEventId && request.contentRef === origin.contentRef && request.sourceMediaUrl === media.url
+      && request.sourceMediaSha256 === media.sha256 && request.sourceId === record.sourceId && request.resultMediaSha256 === record.media.sha256
+      && request.resultByteLength === record.media.byteLength && JSON.stringify(request.recipe) === JSON.stringify(record.recipe)
+      && record.recipeSha256 === await life.wait(textHash(JSON.stringify(record.recipe)))
+      && record.operationSha256 === await life.wait(generatedImageEditOperationSha256({ ownerId: actor.userId, projectId: document.projectId, documentId: document.id, outputId }, request)));
+    const ep = event.payload;
+    const editEnvelope: unknown = eventRows.find((row: unknown) => object(row) && row.event_id === event.eventId);
+    requireFact(object(editEnvelope) && editEnvelope.private_owner === actor.userId && editEnvelope.private_redacted === null
+      && editEnvelope.private_document === document.id && editEnvelope.private_project === document.projectId);
+    requireFact(event.sequence > completed.sequence && event.eventId === record.editEventId && event.actor === "user" && event.clientId === "web:generated-image-editor"
+      && ep.output_id === outputId && ep.object_id === outputId && ep.document_id === document.id && ep.project_id === document.projectId
+      && ep.generation_id === origin.generationId && ep.source_event_id === origin.sourceEventId && ep.content_ref === origin.contentRef && ep.content_sha256 === origin.contentSha256
+      && ep.revision === index && ep.previous_revision === index - 1 && ep.previous_edit_event_id === editEventId
+      && ep.image_revision_id === value.revision_id && ep.image_revision_sha256 === value.content_sha256 && ep.image_edit_operation_sha256 === record.operationSha256
+      && ep.media_url === record.media.url && ep.media_type === "image/png" && ep.source_content_hash === record.media.sha256
+      && ep.image_width === record.media.width && ep.image_height === record.media.height && ep.image_byte_length === record.media.byteLength
+      && ep.source_surface === "generated-image-editor" && ep.edited_by_user_id === actor.userId);
+    media = record.media; editEventId = record.editEventId;
+    retained.push({ row: value, envelope: { ...envelope, request, imageRevision: record } as Envelope, event });
+  }
+  requireFact(new Set(retained.flatMap(item => item.envelope.imageRevision ? [item.envelope.imageRevision.operationSha256] : [])).size === edits.length);
+  const sources = referenceCompositionSources(projection.libraryBlocks.filter(block => block.documentId === document.id && block.projectId === document.projectId), events)
+    .filter(item => mediaKey(item.mediaUrl, actor.userId) !== null);
+  requireFact(sources.length <= 128 && new Set(sources.map(item => item.id)).size === sources.length);
+  const sourceIds = sources.filter(item => {
+    if (item.kind !== "image" || item.requiresUnlock || item.mediaUrl !== media.url || item.contentHash !== media.sha256) return false;
+    const block = projection.libraryBlocks.find(value => value.id === item.blockId);
+    if (!block || block.type !== "reference" || !token(block.properties.reference_id)
+      || block.properties.source_output_id !== outputId || block.properties.source_generation_id !== origin.generationId
+      || block.properties.source_output_content_ref !== origin.contentRef || block.properties.source_document_id !== document.id) return false;
+    const receipt = [...events].reverse().find(value => value.type === "ReferenceIngested" && value.payload.reference_id === block.properties.reference_id)?.payload;
+    return receipt?.source_type === "generated-output" && receipt.source_output_id === outputId && receipt.source_generation_id === origin.generationId
+      && receipt.source_document_id === document.id && receipt.document_id === document.id && receipt.project_id === document.projectId;
+  }).map(item => item.id);
+  const snapshot: GeneratedImageEditSnapshot = { status: "current", ownerId: actor.userId, projectId: document.projectId, ...origin, rawJson: source.content,
+    revision: edits.length, editEventId, media: { ...media, ...(media.byteLength === 0 ? { byteLength: undefined } : {}) }, sources, sourceIds,
+    head: events[events.length - 1]!.sequence };
+  const keys = [originalUrl, media.url, ...sources.map(item => item.mediaUrl),
+    ...retained.flatMap(item => item.envelope.imageRevision ? [item.envelope.imageRevision.media.url] : [])]
+    .flatMap(url => [url, mediaKey(url, actor.userId)!]);
+  const access = admission(env, actor, document.projectId, document.id, outputId, origin.contentRef, keys);
+  const guard: Guard = { sql: `(${access.sql}) AND ${EVENT_SNAPSHOT_SQL}=? AND ${REVISION_SNAPSHOT_SQL}=?
+    AND EXISTS(SELECT 1 FROM private_content WHERE content_id=? AND owner_id=? AND kind='provider-output' AND content=? AND expires_at=? AND expires_at>? AND expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND redacted_at IS NULL)
+    AND (?='' OR ?>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    AND NOT EXISTS(SELECT 1 FROM artifact_revisions WHERE owner_id=? AND artifact_id=? AND (redacted_at IS NOT NULL OR expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,
+    bindings: [...access.bindings, actor.streamId, eventWitness, actor.userId, key, outputId, revisionWitness,
+      origin.contentRef, actor.userId, source.content, source.expires_at as string, new Date().toISOString(),
+      typeof p.content_expires_at === "string" ? p.content_expires_at : "", typeof p.content_expires_at === "string" ? p.content_expires_at : "", actor.userId, key] };
+  const current: Current = { snapshot, origin, initialMedia, retained, events, eventBytes, eventWitness, revisionWitness, rawExpires: source.expires_at as string,
+    originExpires: typeof p.content_expires_at === "string" ? p.content_expires_at : null, key, guard };
+  await assertCurrent(env, current, life);
+  return current;
+}
+
+async function assertCurrent(env: WorkerEnv, current: Current, life: Lifetime) {
+  life.check();
+  requireFact(future(current.rawExpires) && (current.originExpires === null || future(current.originExpires)) && current.retained.every(item => future(item.row.expires_at)), "source_changed");
+  const row = await life.wait(env.DB.prepare(`SELECT 1 ok WHERE ${current.guard.sql}`).bind(...current.guard.bindings).first<Row>());
+  requireFact(row?.ok === 1, "source_changed");
+}
+
+async function boundedStream(body: ReadableStream<Uint8Array>, limit: number, declared: number | null, life: Lifetime): Promise<Uint8Array> {
+  const reader = body.getReader(), chunks: Uint8Array[] = [];
+  let length = 0, reads = 0, complete = false;
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  life.cancellations.add(cancel);
+  try {
+    while (true) {
+      const result = await life.wait(reader.read());
+      if (result.done) { complete = true; break; }
+      requireFact(result.value instanceof Uint8Array && Object.getPrototypeOf(result.value) === Uint8Array.prototype
+        && bufferOf.call(result.value) instanceof ArrayBuffer && ++reads <= 65_536, "invalid", 413);
+      const chunkLength: number = byteLengthOf.call(result.value);
+      length += chunkLength;
+      requireFact(length <= limit && (declared === null || length <= declared), "invalid", 413);
+      const chunk = new Uint8Array(chunkLength);
+      setBytes.call(chunk, result.value);
+      chunks.push(chunk);
+    }
+    requireFact(length > 0 && (declared === null || length === declared), "invalid", 400);
+    const bytes = new Uint8Array(length); let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+    return bytes;
+  } finally {
+    life.cancellations.delete(cancel);
+    if (!complete) cancel();
+    for (const chunk of chunks) chunk.fill(0);
+    try { reader.releaseLock(); } catch { /* A pending cancelled read may still own the reader. */ }
+  }
+}
+
+async function ownedMedia(env: WorkerEnv, owner: string, url: string, expectedHash: string, life: Lifetime, expectedMime?: string): Promise<Uint8Array> {
+  const key = mediaKey(url, owner); requireFact(key && hash(expectedHash)); life.check();
+  const pending = env.MEDIA.get(key);
+  void pending.then(value => { if (!life.active && value) void value.body.cancel().catch(() => {}); }).catch(() => {});
+  const value = await life.wait(pending);
+  requireFact(value);
+  const cancel = () => { void value.body.cancel().catch(() => {}); };
+  try {
+    requireFact(value.customMetadata?.ownerId === owner && !value.customMetadata.projectAccessId && !value.customMetadata.organizationId && value.customMetadata.sha256 === expectedHash
+      && integer(value.size, 1) && value.size <= GENERATED_IMAGE_EDIT_LIMITS.pngBytes);
+    if (expectedMime) { const headers = new Headers(); value.writeHttpMetadata(headers); requireFact(headers.get("content-type") === expectedMime); }
+    const bytes = await boundedStream(value.body, GENERATED_IMAGE_EDIT_LIMITS.pngBytes, value.size, life);
+    try { requireFact(await life.wait(outputAssetSha256(bytes)) === expectedHash); return bytes; }
+    catch (error) { bytes.fill(0); throw error; }
+  } catch (error) { cancel(); throw error; }
+}
+async function pngFacts(bytes: Uint8Array, expected: { sha256: string; width: number; height: number; byteLength?: number }, life: Lifetime) {
+  const facts = await life.wait(inspectOutputAsset(bytes, "image.png", { snapshot: false }));
+  requireFact(facts.status === "inspected" && facts.kind === "image" && facts.extension === "png" && facts.mimeType === "image/png"
+    && facts.sha256 === expected.sha256 && facts.facts.width === expected.width && facts.facts.height === expected.height
+    && (expected.byteLength === undefined || expected.byteLength === bytes.length), "invalid", 422);
+}
+async function readMultipart(request: Request, life: Lifetime) {
+  requireFact(request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data;"), "invalid", 415);
+  const length = request.headers.get("content-length");
+  requireFact(length === null || /^\d+$/u.test(length) && integer(Number(length), 1) && Number(length) <= MAX_REQUEST_BYTES, "invalid", 413);
+  requireFact(request.body, "invalid", 400);
+  const body = await boundedStream(request.body, MAX_REQUEST_BYTES, length === null ? null : Number(length), life);
+  try {
+    const form = await life.wait(new Response(body as Uint8Array<ArrayBuffer>, { headers: { "content-type": request.headers.get("content-type")! } }).formData());
+    const entries = Array.from(form.entries());
+    requireFact(entries.length === 2 && form.getAll("request").length === 1 && form.getAll("png").length === 1, "invalid", 400);
+    const raw = form.get("request"), file = form.get("png");
+    requireFact(typeof raw === "string" && encoder.encode(raw).length <= 65_536 && file instanceof File && file.type === "image/png"
+      && file.size > 0 && file.size <= GENERATED_IMAGE_EDIT_LIMITS.pngBytes, "invalid", 400);
+    let value: unknown;
+    try { value = JSON.parse(raw); } catch { throw new Refusal("invalid", 400); }
+    const parsed = parseGeneratedImageEditRequest(value);
+    requireFact(parsed && file.size === parsed.resultByteLength, "invalid", 400);
+    const bytes = new Uint8Array(await life.wait(file.arrayBuffer()));
+    return { request: parsed, bytes };
+  } finally { body.fill(0); }
+}
+
+function committed(current: Current, operationSha256: string) {
+  return current.retained.find(item => item.envelope.imageRevision?.operationSha256 === operationSha256);
+}
+function acknowledgment(current: Current, item: Retained) {
+  const imageRevision = item.envelope.imageRevision!;
+  return { status: "saved", code: "saved", imageRevision, operationSha256: imageRevision.operationSha256,
+    stillCurrent: imageRevision.revision === current.snapshot.revision && imageRevision.editEventId === current.snapshot.editEventId,
+    currentRevision: current.snapshot.revision, currentEditEventId: current.snapshot.editEventId,
+    appended: item.event ? [item.event] : [], head: current.snapshot.head };
+}
+function densePositive(results: unknown, length: number): boolean {
+  return Array.isArray(results) && results.length === length && Array.from({ length }, (_, index) => index).every(index => {
+    if (!Object.hasOwn(results, index)) return false;
+    const result: unknown = results[index];
+    return object(result) && result.success === true && object(result.meta) && integer(result.meta.changes, 1);
+  });
+}
+
+async function execute(request: Request, env: WorkerEnv, outputId: string, life: Lifetime): Promise<Response> {
+  life.check();
+  requireFact(token(outputId), "invalid", 400);
+  const url = new URL(request.url), operation = url.searchParams.get("operationSha256"), check = operation !== null;
+  requireFact(request.method === "GET" || request.method === "PATCH", "invalid", 405);
+  requireFact(check ? request.method === "GET" && hash(operation) && Array.from(url.searchParams).length === 1 : !url.search, "invalid", 400);
+  if (request.method === "PATCH") requireFact(!request.headers.get("origin") || request.headers.get("origin") === url.origin, "forbidden", 403);
+  const authenticated = await life.wait(requireUser(request, env, "viewer", { account: "principal" }));
+  if (authenticated.response || !authenticated.user) return authenticated.response ?? reply({ status: "refused", code: "forbidden" }, 401);
+  const actor = authenticated.user, consent = requireConsent(actor);
+  if (consent) return consent;
+  requireFact(actor.streamId === "creative:" + actor.userId && (actor.role === "creator" || actor.role === "admin"), "forbidden", 403);
+  const selected = await life.wait(readProjectRequestContext(request, env, actor));
+  if (selected.response) return selected.response;
+  requireFact(!selected.context, "forbidden", 403);
+  let current = await observeCurrent(env, actor, outputId, life);
+  if (check) {
+    const item = committed(current, operation!);
+    if (!item) return reply({ status: "unconfirmed", code: "unconfirmed" });
+    const bytes = await ownedMedia(env, actor.userId, item.envelope.imageRevision!.media.url, item.envelope.imageRevision!.media.sha256, life, "image/png");
+    try { await pngFacts(bytes, item.envelope.imageRevision!.media, life); await assertCurrent(env, current, life); return reply(acknowledgment(current, item)); }
+    finally { bytes.fill(0); }
+  }
+  if (request.method === "GET") {
+    const bytes = await ownedMedia(env, actor.userId, current.snapshot.media.url, current.snapshot.media.sha256, life, "image/png");
+    try { await pngFacts(bytes, current.snapshot.media, life); await assertCurrent(env, current, life); return reply(current.snapshot); }
+    finally { bytes.fill(0); }
+  }
+  const input = await readMultipart(request, life);
+  try {
+    const operationSha256 = await life.wait(generatedImageEditOperationSha256({ ownerId: actor.userId, projectId: current.snapshot.projectId, documentId: current.snapshot.documentId, outputId }, input.request));
+    requireFact(operationSha256, "invalid", 400);
+    // Exact retransmission observes the already committed operation. It never
+    // allocates another object/event, even if a newer edit is now current.
+    const existing = committed(current, operationSha256);
+    if (existing) {
+      const media = existing.envelope.imageRevision!.media;
+      const bytes = await ownedMedia(env, actor.userId, media.url, media.sha256, life, "image/png");
+      try { await pngFacts(bytes, media, life); await assertCurrent(env, current, life); return reply(acknowledgment(current, existing)); }
+      finally { bytes.fill(0); }
+    }
+    requireFact(matchesRequest(input.request, current.snapshot) && current.snapshot.sourceIds.includes(input.request.sourceId), "source_changed");
+    requireFact(validateReferenceComposition(input.request.recipe, current.snapshot.sources) === null, "source_changed");
+    await pngFacts(input.bytes, { sha256: input.request.resultMediaSha256, width: input.request.recipe.width, height: input.request.recipe.height, byteLength: input.request.resultByteLength }, life);
+    const sourceBytes = await ownedMedia(env, actor.userId, current.snapshot.media.url, current.snapshot.media.sha256, life, "image/png");
+    try {
+      await pngFacts(sourceBytes, current.snapshot.media, life);
+      if (current.snapshot.revision === 0) current.initialMedia = { ...current.initialMedia, byteLength: sourceBytes.length };
+    } finally { sourceBytes.fill(0); }
+    for (const source of input.request.recipe.sources) {
+      if (source.mediaUrl === current.snapshot.media.url && source.contentHash === current.snapshot.media.sha256) continue;
+      const bytes = await ownedMedia(env, actor.userId, source.mediaUrl, source.contentHash, life);
+      bytes.fill(0);
+    }
+    await assertCurrent(env, current, life);
+    if (input.request.resultMediaSha256 === current.snapshot.media.sha256) return reply({ status: "unchanged", code: "unchanged" });
+    requireFact(current.events.length < MAX_EVENTS && integer(current.snapshot.head + 1, 1)
+      && current.retained.length + (current.snapshot.revision === 0 ? 2 : 1) <= MAX_REVISIONS, "unavailable");
+    const mediaId = "image-edit-" + uuidV7(), key = ownerMediaNamespace(actor.userId) + "/generated/" + mediaId + ".png";
+    const media: Media = { url: "/api/media/" + encodeURIComponent(key), mediaType: "image/png", sha256: input.request.resultMediaSha256,
+      byteLength: input.bytes.length, width: input.request.recipe.width, height: input.request.recipe.height };
+    const event = makeEvent(actor.streamId, current.snapshot.head + 1, "user", "web:generated-image-editor", uuidV7(), "GeneratedImageEdited", {});
+    const record: GeneratedImageRevision = { schemaVersion: 1, operation: "composition", revision: current.snapshot.revision + 1, editEventId: event.eventId, ...current.origin,
+      source: { revision: current.snapshot.revision, eventId: current.snapshot.editEventId ?? current.origin.sourceEventId,
+        mediaUrl: current.snapshot.media.url, sha256: current.snapshot.media.sha256, width: current.snapshot.media.width, height: current.snapshot.media.height },
+      media, sourceId: input.request.sourceId, recipe: input.request.recipe, recipeSha256: await life.wait(textHash(JSON.stringify(input.request.recipe))), operationSha256 };
+    requireFact(parseGeneratedImageRevision(record, actor.userId));
+    const envelope: Envelope = { kind: "generated-image", schemaVersion: 1, origin: current.origin, initialMedia: current.initialMedia, request: input.request, imageRevision: record };
+    const json = JSON.stringify(envelope), sha = await life.wait(textHash(json)), revisionId = uuidV7();
+    event.payload = { output_id: outputId, object_id: outputId, document_id: current.origin.documentId, project_id: current.snapshot.projectId,
+      generation_id: current.origin.generationId, source_event_id: current.origin.sourceEventId, content_ref: current.origin.contentRef, content_sha256: current.origin.contentSha256,
+      revision: record.revision, previous_revision: current.snapshot.revision, previous_edit_event_id: current.snapshot.editEventId,
+      image_revision_id: revisionId, image_revision_sha256: sha, image_edit_operation_sha256: operationSha256,
+      media_url: media.url, media_type: "image/png", source_content_hash: media.sha256, image_width: media.width, image_height: media.height,
+      image_byte_length: media.byteLength, source_surface: "generated-image-editor", edited_by_user_id: actor.userId };
+    const rows = [{ revisionId, revision: record.revision, json, sha }];
+    if (current.snapshot.revision === 0) {
+      const originalJson = JSON.stringify({ kind: "generated-image", schemaVersion: 1, origin: current.origin, initialMedia: current.initialMedia, request: null, imageRevision: null } satisfies Envelope);
+      rows.unshift({ revisionId: uuidV7(), revision: 0, json: originalJson, sha: await life.wait(textHash(originalJson)) });
+    }
+    const bindings = eventWriteBindings(event);
+    requireFact(current.eventBytes + encoder.encode(String(bindings[12])).length + encoder.encode(String(bindings[16] ?? "")).length <= MAX_EVENT_BYTES
+      && rows.every(row => encoder.encode(row.json).length <= 100_000)
+      && current.retained.reduce((total, item) => total + encoder.encode(String(item.row.content_json)).length, 0)
+        + rows.reduce((total, row) => total + encoder.encode(row.json).length, 0) <= MAX_REVISION_BYTES);
+    await assertCurrent(env, current, life);
+    // The upload owns its own buffer until settlement. A timeout cannot zero
+    // bytes while an already admitted R2 write is still consuming them.
+    const upload = input.bytes.slice();
+    life.writing = true;
+    const pending = (() => { try { return (env.MEDIA as ConditionalImageBucket).put(key, upload.buffer, { onlyIf: { etagDoesNotMatch: "*" }, httpMetadata: { contentType: "image/png" },
+      customMetadata: { ownerId: actor.userId, artifactId: mediaId, model: "authored-composition", source: "generated-image-editor", sha256: media.sha256, mimeType: "image/png", outputId, operationSha256 } }); }
+    catch (error) { upload.fill(0); throw error; } })();
+    void pending.finally(() => upload.fill(0)).catch(() => {});
+    requireFact(await life.wait(pending), "unavailable");
+    const written = await ownedMedia(env, actor.userId, media.url, media.sha256, life, "image/png");
+    try { await pngFacts(written, media, life); } finally { written.fill(0); }
+    await assertCurrent(env, current, life);
+    const statements = [env.DB.prepare(`INSERT INTO event_write_stage(${EVENT_WRITE_COLUMNS}) SELECT ${bindings.map(() => "?").join(",")} WHERE ${current.guard.sql}
+      AND NOT EXISTS(SELECT 1 FROM project_resource_scopes WHERE resource_kind='media' AND resource_id IN (?,?))`).bind(...bindings, ...current.guard.bindings, key, media.url)];
+    const expires = new Date(Math.min(Date.parse(current.rawExpires), Date.now() + 365 * 86_400_000)).toISOString();
+    for (const row of rows) statements.push(env.DB.prepare(`INSERT INTO artifact_revisions(revision_id,owner_id,organization_id,project_access_id,project_id,document_id,artifact_id,revision,content_json,content_sha256,created_by_user_id,created_at,expires_at,redacted_at)
+      SELECT ?,?,NULL,NULL,?,?,?,?,?,?,?,?,?,NULL WHERE EXISTS(SELECT 1 FROM events e JOIN event_private_payloads p ON p.private_event_id=e.event_id
+        WHERE e.event_id=? AND e.stream_id=? AND e.sequence=? AND e.type='GeneratedImageEdited' AND p.owner_id=? AND p.project_id=? AND p.document_id=? AND p.private_json=? AND p.redacted_at IS NULL)`)
+      .bind(row.revisionId,actor.userId,current.snapshot.projectId,current.origin.documentId,current.key,row.revision,row.json,row.sha,actor.userId,event.recordedAt,expires,
+        event.eventId,actor.streamId,event.sequence,actor.userId,current.snapshot.projectId,current.origin.documentId,JSON.stringify(event.payload)));
+    life.check();
+    const results = await life.wait(env.DB.batch(statements));
+    requireFact(densePositive(results, statements.length));
+    // Publication uses authoritative readback, including event, full private
+    // record and operation digest. A later edit is reported as historical.
+    current = await observeCurrent(env, actor, outputId, life);
+    const saved = committed(current, operationSha256);
+    requireFact(saved && saved.envelope.imageRevision?.editEventId === event.eventId);
+    return reply(acknowledgment(current, saved));
+  } finally { input.bytes.fill(0); }
+}
+
+/** One finite request lifetime, including stalled get/read/put/D1 operations.
+ * Cancellation never waits for an uncooperative stream. Admitted uncertain
+ * writes retain their immutable object and are resolved only by exact Check. */
+export async function handleGeneratedImageEdit(request: Request, env: WorkerEnv, outputId: string): Promise<Response> {
+  const life = new Lifetime();
+  if (request.body) life.cancellations.add(() => { void request.body!.cancel().catch(() => {}); });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stop: (() => void) | undefined;
+  const interrupted = new Promise<Response>(resolve => {
+    stop = () => { life.stop(); resolve(reply(life.writing ? { status: "unconfirmed", code: "unconfirmed" } : { status: "refused", code: "unavailable" }, life.writing ? 200 : 408)); };
+    timer = setTimeout(stop, DEADLINE_MS);
+    request.signal.addEventListener("abort", stop, { once: true });
+    if (request.signal.aborted) stop();
+  });
+  const work = execute(request, env, outputId, life).catch((error: unknown) => {
+    if (life.writing) return reply({ status: "unconfirmed", code: "unconfirmed" });
+    const failure = error instanceof Refusal ? error : new Refusal("unavailable");
+    return reply({ status: "refused", code: failure.code }, failure.status);
+  });
+  try { return await Promise.race([work, interrupted]); }
+  finally { life.stop(); if (timer !== undefined) clearTimeout(timer); if (stop) request.signal.removeEventListener("abort", stop); }
+}
