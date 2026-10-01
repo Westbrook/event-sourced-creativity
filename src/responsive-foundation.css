@@ -5809,3 +5809,41 @@ dialog.document-artifact-view[data-artifact-kind="slides"] .presentation-deck-st
     border-radius: 0;
   }
 }
+
+/* Document chrome and reading content share the pane's bounded leading edge.
+ * Full-width separators stay on their containers; control backgrounds hang
+ * into the gutter so their labels, rather than their boxes, align with copy. */
+.application-creative[data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document {
+  padding-inline: var(--forma-pane-inset);
+}
+
+html:not([data-document-focus]) .application-creative[data-layout-intent="workbench"] > .topbar {
+  padding-inline-start: max(var(--forma-pane-inset), var(--forma-safe-inline-start));
+  padding-inline-end: max(var(--forma-pane-inset), var(--forma-safe-inline-end));
+}
+
+html:not([data-document-focus]) .application-creative[data-layout-intent="workbench"] > .topbar > .brand {
+  justify-content: flex-start;
+  padding-inline: 0;
+}
+
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-nav-posture="expanded"]) .project-rail:is(.collapsed, .expanded) > .rail-toolbar {
+  padding-inline-start: max(var(--forma-pane-inset), var(--forma-safe-inline-start));
+  padding-inline-end: max(var(--forma-pane-inset), var(--forma-safe-inline-end));
+}
+
+.application-creative[data-layout-intent="workbench"] forma-studio-mode-nav > .studio-mode-nav {
+  padding-inline-start: calc(max(var(--forma-pane-inset), var(--forma-safe-inline-start)) - .55rem - 1px);
+  padding-inline-end: max(var(--forma-pane-inset), var(--forma-safe-inline-end));
+}
+
+.application-creative[data-layout-intent="workbench"] .document-workbench-tasks {
+  padding-inline-start: calc(var(--forma-pane-inset) - var(--forma-control-inset-inline) - 1px);
+  padding-inline-end: var(--forma-pane-inset);
+}
+
+@media (min-width: 48rem) {
+  .application-creative[data-layout-intent="workbench"]:not([data-nav-posture="compact"])[data-short-height="false"] > .application-task-navigation .ui-audience-navigation-list {
+    padding-inline: calc(var(--forma-pane-inset) - var(--forma-space-3, .75rem));
+  }
+}
