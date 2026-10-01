@@ -595,10 +595,9 @@ forma-project-rail {
 .rail-content { padding: .75rem .75rem 4rem; }
 
 .rail-project-card {
-  padding: .15rem 0 .9rem;
+  padding: 0 var(--forma-space-2, .5rem);
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--line);
   border-radius: 0;
   box-shadow: none;
 }
@@ -741,14 +740,16 @@ forma-project-rail {
   overflow-wrap: normal;
 }
 
-.rail-document-links > a > span {
+.rail-document-links > a > span,
+.rail-library-links > a > span {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: .35rem;
+  gap: var(--forma-space-2, .5rem);
 }
 
-.rail-document-links > a > span > span {
+.rail-document-links > a > span > span,
+.rail-library-links > a > span > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -761,8 +762,6 @@ forma-project-rail {
   font-size: var(--type-caption);
 }
 
-.rail-collections--empty { margin-top: .8rem; }
-.rail-collections--empty .tree-heading { padding-block: .55rem .15rem; }
 .rail-collections--empty .tree-heading small,
 .rail-collections--empty .tree-empty { display: none; }
 

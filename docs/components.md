@@ -15,6 +15,12 @@ Activity and Deliver reuse the same bounded page gutter as the document
 workbench. Library’s Resource Memory disclosure aligns with its search control.
 This is application layout, with no new
 component API or translated copy. The compact dock keeps its equal-width cells.
+Inside ProjectRail, section headings, project copy, and navigation icons share
+the same logical inset. Document and Library rows use centered, fixed-width
+icon cells and an explicit label gap; counts keep their own trailing space.
+Each section boundary has one divider with consistent vertical spacing. The
+existing fictional ProjectRail catalog composition and English, French, Arabic,
+and Japanese descriptions remain applicable; this adds no component API.
 The collapsed Ask Forma launcher shares the Results heading’s trailing content
 edge, including the inspector and reserved scrollbar gutter. Its compact Studio
 utility slot uses the same pane inset. Existing bottom clearance, obstacle
