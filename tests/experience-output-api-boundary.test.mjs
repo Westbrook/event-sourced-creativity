@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { digest } from "../src/experiences/compiler.ts";
 import { buildExperiencePlan, experienceResourceId, initialValues, registeredExperience } from "../src/experiences/intake.ts";
 import { experienceOutputBinding, experienceOutputCommandKey, experienceOutputEnvelope } from "../worker/experience-output-binding.ts";
+import { inheritRetainedOutputPrivateBodies } from "../worker/output-command-core.ts";
 import { createExperienceOutputRecipe } from "../worker/experience-output-recipe.ts";
 
 /**
@@ -28,7 +29,7 @@ const seamExports = {
   "./project-intake.ts": ["commitAtomicIntake"],
   "./output-requirements-api.ts": ["loadOutputTrustedContext", "outputDigest", "outputExperienceCommands"],
   "./output-requirements-ledger.ts": ["readOutputCommand", "outputCommandReceiptAssertion", "outputSourceEpochAssertion"],
-  "./output-command-core.ts": ["outputCommandReceiptAssertion", "readOutputCommand"],
+  "./output-command-core.ts": ["outputCommandReceiptAssertion", "readOutputCommand", "inheritRetainedOutputPrivateBodies"],
   "./output-fal-recovery.ts": ["recoverOutputFalImage"],
   "./output-video-recovery.ts": ["recoverOutputVideo"],
   "./output-model3d-recovery.ts": ["recoverOutputModel3d"],
@@ -38,7 +39,8 @@ const seamExports = {
   "./output-scene-source.ts": ["outputScenePreparationIdentity"],
   "./output-video-source.ts": ["outputVideoPreparationIdentity"],
 };
-const actualAPIImports = new Set(["../src/experiences/compiler.ts", "../src/experiences/intake.ts",
+// Retain current pure/optional production dependencies; provider calls still have no authorized fixture path.
+const actualAPIImports = new Set(["./experience-sponsor-intake-classification.ts","./experience-sponsor-audio-output-reads.ts","./experience-sponsor-audio-output-native.ts","./output-trusted-context.ts","./output-document-execution.ts","./experience-model3d-replacement.ts","./experience-model3d-replacement-proof.ts","./output-audio-source.ts","./output-storyboard-source.ts","./output-model3d-source.ts","./experience-model3d-renewal-proof.ts","./output-audio-recovery.ts","./output-audio-recovery-availability.ts","./experience-sponsor-approval.ts","./experience-sponsor-audio-review.ts","./experience-sponsor-audio-authorize.ts","./scene-read-diagnostic.ts","./output-database-diagnostic.ts","./output-durable-control.ts","../src/experiences/compiler.ts", "../src/experiences/intake.ts",
   "../src/experiences/host-source.ts", "./experience-output-binding.ts", "./experience-output-recipe.ts", "./experience-output-originals.ts", "./output-fal-recovery-policy.ts",
   "../src/model/audio-mini-app-consent.ts", "../src/model/output-audio-contract.ts",
   "../src/model/output-storyboard-contract.ts", "../src/model/output-storyboard-offer.ts",
@@ -65,7 +67,7 @@ const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
   if (apiBoundary && !actualAPIImports.has(specifier)) {
     throw new Error(`boundary_unapproved_api_import: ${specifier}`);
   }
-  if (originalsBoundary && !["./experience-output-binding.ts", "./experience-scene-renewal.ts"].includes(specifier)) {
+  if (originalsBoundary && !["./experience-output-binding.ts", "./experience-scene-renewal.ts", "../src/experiences/compiler.ts", "./experience-model3d-replacement.ts"].includes(specifier)) {
     throw new Error(`boundary_unapproved_originals_import: ${specifier}`);
   }
   return nextResolve(specifier, context);
@@ -140,13 +142,21 @@ async function harness(output = "slides") {
       scope: "document", canvasId: "", removed: false, locked: false, type: event.payload.type,
       handle: event.payload.handle, position: event.payload.position, properties: copy(event.payload.properties), sourceEvents: [event.eventId] })),
     libraryBlockRelations: [] };
-  const scope = { key: `personal:${owner}:${plan.documentId}`, kind: "personal", actorUserId: owner,
-    ownerUserId: owner, projectId: plan.projectId, documentId: plan.documentId };
+  const scope = { key: `personal:${owner}:${plan.projectId}`, kind: "personal", actorUserId: owner,
+    ownerUserId: owner, projectId: plan.projectId, documentId: plan.documentId, organizationId: null, projectAccessId: null, contextId: null };
   const guard = () => ({ sql: "synthetic retained draft custody guard", bindings: [plan.draftId] });
   const env = { DB: { prepare(sql) {
     h.preparedSql.push(sql);
-    return { bind(...args) { return { async first() {
+    return { bind(...args) { return { async all() {
+      assert.match(sql, /SELECT command_key FROM output_commands/);
+      const [scopeKey, actor, length, prefix, limit] = args;
+      assert.equal(scopeKey, scope.key); assert.equal(actor, owner);
+      assert.equal(length, prefix.length);
+      return {success:true, results:[...h.commands.keys()].filter(key => key.startsWith(prefix)).sort().slice(0, limit).map(command_key=>({command_key}))};
+    }, async first() {
       h.queries.push({ sql, args });
+      if (sql.includes("FROM sqlite_master") && args[0]==="experience_sponsor_intakes") return null;
+      if (sql.includes("FROM private_content") && sql.includes("sponsor_intake")) return null;
       if (h.missingSchema) throw new Error("no such table: output_commands");
       if (sql.includes("FROM output_commands command LEFT JOIN events")) return copy(h.commands.get(args[2]) ?? null);
       if (sql.includes("FROM output_operation_slots")) return h.unboundOperation ? { present: 1 } : null;
@@ -160,7 +170,11 @@ async function harness(output = "slides") {
     sourceProblems: h.sourceProblems, sourceDigest: h.sourceDigest, requirementsDigest: h.requirementsDigest,
     ownerHead: h.events.length, permission });
   function checkGuards(ctx) {
-    assert.ok(ctx.sourceAssertions.some(item => item.sql === "synthetic retained draft custody guard"));
+    const custody = ctx.sourceAssertions.find(item => item.sql.includes("synthetic retained draft custody guard"));
+    assert.ok(custody, "native retained-draft custody must survive guard composition");
+    assert.match(custody.sql, /NOT EXISTS\(SELECT 1 FROM sqlite_master/);
+    assert.match(custody.sql, /NOT EXISTS\(SELECT 1 FROM private_content/);
+    assert.deepEqual(custody.bindings, [plan.draftId, "experience_sponsor_intakes", plan.draftId]);
     if (!h.guardAlive) fail("synthetic_custody_guard_failed", 410);
   }
   async function saveReceipt(phase, envelope, payload) {
@@ -204,7 +218,7 @@ async function harness(output = "slides") {
           model: "stub-model", route: "stub-route", maximumMicrousd: 123, maximumCalls: 1, maximumTokens: 1,
           settings: {}, transferDescription: "Synthetic disclosure" }], maximumMicrousd: 123, maximumCalls: 1,
         expiresAt: future(), createdAt: new Date().toISOString(), operationAttempts: {} };
-      payload.preflight = copy(h.preflight);
+      Object.assign(payload, {preflight_id:h.preflight.id, plan_revision_id:h.preflight.planRevisionId, preflight:copy(h.preflight)});
     } else if (phase === "authorize") {
       const slot = { grantId: "synthetic-grant", slotId: "synthetic-slot", jobId: "synthetic-job",
         targetId: recipe.targetId, planRevisionId: h.confirmed.revisionId,
@@ -236,6 +250,7 @@ async function harness(output = "slides") {
     return { synthetic: true, replayed: false };
   }
   seamRegistry.set(binding.draftId, {
+    inheritRetainedOutputPrivateBodies,
     outputScenePreparationIdentity: async () => { throw new Error("boundary_scene_preparation_forbidden"); },
     // These Image/Slides controls do not exercise 3D source custody. Never
     // silently simulate that helper or load its native runtime dependency graph.
@@ -250,7 +265,7 @@ async function harness(output = "slides") {
     outputSourceEpochAssertion: () => { throw new Error("boundary_recovery_forbidden"); },
     authorizeExperienceIntake: async () => { h.authCalls++; return h.authStatus ? Response.json({ error: "synthetic_auth_denied" },
       { status: h.authStatus, headers: { "www-authenticate": 'Bearer realm="boundary"' } }) : { user: { userId: owner } }; },
-    readExperienceDraft: async () => h.missingDraft ? null : { plan: h.plan, content: "synthetic-retained-content" },
+    readExperienceDraft: async () => h.missingDraft ? null : { plan: h.plan, content: "synthetic-retained-content", expiresAt: h.retentionExpiresAt ?? future() },
     experienceDraftGuard: guard,
     readExperienceBody: request => request.json(),
     commitAtomicIntake: async (_env, _auth, body, mode) => { h.checkCalls++; assert.equal(mode, "check");
@@ -583,8 +598,9 @@ test("custody loss after a stage prevents subsequent synthetic writes and final 
   assert.deepEqual(h.writes, ["save"]); assert.equal(h.disclosures.length, 0);
 });
 
-test("expired or unavailable retained preflight does not authorize or refresh itself", async () => {
+test("expired retained preflight with insufficient renewal retention does not authorize or refresh itself", async () => {
   const h = await harness(); await prepare(h);
+  h.retentionExpiresAt = new Date(Date.now() + 300_000).toISOString();
   const receipt = await h.stageReceipt("preflight"); receipt.payload.preflight.expiresAt = "2000-01-01T00:00:00.000Z";
   const count = h.calls.length, result = await h.request();
   assert.equal(result.response.status, 200, JSON.stringify(result.value)); assert.equal(result.value.status, "unavailable");

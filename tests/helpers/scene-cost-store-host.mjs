@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { registerHooks } from "node:module";
 import ts from "typescript";
+import {fixtureCode} from "./fixture-code.mjs";
 import { createSceneCostFixture } from "./scene-cost-fixture.mjs";
 
 const root=new URL("../../",import.meta.url);
@@ -73,7 +74,7 @@ export async function createSceneStoreHost({count=9,medium="visual",shared=false
       // Exposes private state, not replacement behavior; every production method remains byte-for-byte intact.
       text=source.slice(0,owner.end-1)+"\nsceneGateForTest(kind:string,pending:Promise<any>){if(kind==='append')this.#appendPipeline=pending;else if(kind==='navigation')this.#navigationCommit=pending;else throw new Error('Unknown test gate');}\nsceneEstimateForTest(payload:Record<string,unknown>){return this.#generationEstimate('render_document',payload);}\n"+source.slice(owner.end-1);
     }
-    const code=ts.transpileModule(text,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+    const code=fixtureCode(text,{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS});
     const require=specifier=>{assert.ok(dependencies.has(specifier),"Actual dependency "+relative+" "+specifier);return dependencies.get(specifier);};
     new Function("require","exports","document","window","HTMLElement","Element","customElements","location","localStorage","fetch","requestAnimationFrame",code)(
       require,exports,documentPort,windowPort,ElementPort,ElementPort,{get:()=>true,define(){}},locationPort,localStoragePort,host.fetch,windowPort.requestAnimationFrame);

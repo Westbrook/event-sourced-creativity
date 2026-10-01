@@ -1,3 +1,4 @@
+import {fixtureCode} from "./fixture-code.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import ts from "typescript";
@@ -109,7 +110,7 @@ export function canvasLegacySourceOwnership(store){
   const members=names.map(name=>{const member=owner.members.find(node=>node.name?.getText(tree)===name);assert.ok(member,"actual Store source member "+name);return member.getText(tree);});
   // Legacy component tests retain their original mock authorization boundary,
   // but the new source ownership methods/brand are read byte-for-byte from Store.
-  const code=ts.transpileModule("class SourceOwner { constructor(store){this.store=store;this.session=store.session;} captureAuthorizationScope(){return this.store.captureAuthorizationScope();} authorizationScopeActive(scope){return this.store.authorizationScopeActive(scope);} "+members.join("\n")+" }\nexports.SourceOwner=SourceOwner;",{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+  const code=fixtureCode("class SourceOwner { constructor(store){this.store=store;this.session=store.session;} captureAuthorizationScope(){return this.store.captureAuthorizationScope();} authorizationScopeActive(scope){return this.store.authorizationScopeActive(scope);} "+members.join("\n")+" }\nexports.SourceOwner=SourceOwner;",{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS});
   const exports={};new Function("exports",code)(exports);const sourceOwner=new exports.SourceOwner(store);
   for(const name of names.filter(name=>!name.startsWith("#")))store[name]=sourceOwner[name].bind(sourceOwner);
 }

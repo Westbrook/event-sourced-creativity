@@ -243,7 +243,11 @@ for (const locale of ["en", "fr", "ar", "ja"]) test("cached dialog templates loc
 
 test("the inactive-dialog fixture renders the actual Slides action popover and its property-only controls",async()=>{
   const f=fixture("create",{artifact:true});
-  f.state.events.find(event=>event.type==="DocumentRenderCompleted").payload.artifact_kind="slides";
+  const completed=f.state.events.find(event=>event.type==="DocumentRenderCompleted");
+  completed.payload.artifact_kind="slides";
+  const items=[{id:"native-slide-a",title:"Exact retained slide",body:"Exact retained evidence",notes:"",image_prompt:"",context_group_ids:[]}];
+  completed.payload.items=items;completed.payload.item_count=items.length;
+  f.state.content["content-A"]=JSON.stringify({...JSON.parse(f.state.content["content-A"]),items});
   assert.equal(await f.host.openArtifactById("artifact-A"),true);await f.flush();
   const popover=f.renderer.query(f.host,"forma-ui-popover").find(node=>node.attributes.class==="artifact-viewer-actions-popover");
   assert.ok(popover instanceof FormaUiPopover);

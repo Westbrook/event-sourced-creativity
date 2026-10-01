@@ -913,7 +913,7 @@ function planningFocusPort(f,executionId,{matching=true,nativeReturn=false,headi
       addEventListener(type,handler,options){const key=name+":"+type;listeners.set(key,[...(listeners.get(key)??[]),{handler,once:Boolean(options?.once)}]);},
       focus(options){focusCalls.push({name,options,rendered,dialogOpen:port.dialog.open,reviewOpen:Boolean(f.host.planningConsent.get()),tabindex:values.get("tabindex")??null});ownerDocument.activeElement=target;},
     };
-    Object.defineProperty(target,"tabIndex",{get:()=>values.has("tabindex")?Number(values.get("tabindex")):tagName==="BUTTON"?0:-1,set:value=>values.set("tabindex",String(value))});
+    Object.defineProperty(target,"tabIndex",{get:()=>values.has("tabindex")?Number(values.get("tabindex")):tagName==="BUTTON"?0:-1,set:value=>{values.set("tabindex",String(value));}});
     nodes.push(target);return target;
   }
   port.original=node("removed-opener");port.original.isConnected=false;
@@ -3394,7 +3394,7 @@ async function finishPaidReuseR13(state){
 }
 for(const canvasId of[null,"original-board"])for(const status of["completed","uncertain"])for(const order of["verified-before-denial","denial-while-pending"]){
   test("adaptive paid reuse certification R13: "+(canvasId?"Canvas":"Document")+" "+status+" "+order,{timeout:5000},async t=>{
-    const state=await beginPaidReuseQuoteR13(t,canvasId,status),{f,saved,quoting}=state;
+    const state=await beginPaidReuseQuoteR13(t,canvasId,status),{f,saved}=state;
     const body=await paidReuseWorkerBodyR13(saved,status);
     if(order==="verified-before-denial"){
       await finishPaidQuoteReplyR13(state,body);assertPaidReuseReceiptR13(state,status);
@@ -3424,7 +3424,7 @@ const invalidPaidReuseBodiesR13=[
 ];
 for(const canvasId of[null,"original-board"])for(const[label,change,httpStatus=200]of invalidPaidReuseBodiesR13){
   test("adaptive paid reuse certification R13: "+(canvasId?"Canvas":"Document")+" "+label+" cannot certify an older paid view",{timeout:5000},async t=>{
-    const state=await beginPaidReuseQuoteR13(t,canvasId),{f,saved,quoting}=state;
+    const state=await beginPaidReuseQuoteR13(t,canvasId),{f,saved}=state;
     const body=await paidReuseWorkerBodyR13(saved,"completed");change(body);
     await finishPaidQuoteReplyR13(state,body,httpStatus);
     await denyOlderPaidReadR13(state);
@@ -3561,7 +3561,7 @@ function noHoldOriginalBodyR15(saved, job, status) {
     error: status === "failed" ? "adaptive_force_failed" : "adaptive_execution_in_progress"};
 }
 async function noHoldReceiptFixtureR15(t, canvasId, sample) {
-  const state = await personalPlanningDetailFixtureR7(t, canvasId), {f, saved} = state;
+  const state = await personalPlanningDetailFixtureR7(t, canvasId), {saved} = state;
   const current = await terminalWinnerSnapshotR9({
     winnerId: saved.executionId, request: saved.request,
     pendingQuote: saved.originalQuote, pendingJob: saved.originalJob,

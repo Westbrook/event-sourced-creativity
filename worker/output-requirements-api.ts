@@ -32,7 +32,7 @@ import { compileOutputPlan, type OutputPlan, type OutputPlanTarget } from "../sr
 import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES, MAX_OUTPUT_MODEL3D_ASSET_BYTES, validOutputAssetName, type OutputAssetInspection } from "../src/model/output-asset-inspection.ts";
 import { createOutputDeliveryArchive, createOutputDeliveryArchiveStream, outputDeliveryScopeForPlan, planOutputDeliveryParts, type OutputDeliveryManifestInput, type OutputDeliveryScopeInput, type OutputDeliveryPart, type OutputDeliveryScopeAmendmentInput } from "../src/model/output-delivery-archive.ts";
 import { OUTPUT_PREFLIGHT_TARGET_MAX_COUNT } from "../src/model/output-delivery-contract.ts";
-import type { OutputAssetRow, OutputCommandResponse, OutputConfirmedPlan, OutputConfirmationOptions, OutputPlanSuggestions, OutputGrantRow, OutputNativeTargetPreflight, OutputPreflight, OutputRequirementRow, OutputRequirementsSnapshot, OutputResultRow } from "../src/model/output-delivery-contract.ts";
+import type { OutputAssetRow, OutputCommandResponse, OutputConfirmedPlan, OutputConfirmationOptions, OutputPlanSuggestions, OutputNativeTargetPreflight, OutputPreflight, OutputRequirementRow, OutputResultRow } from "../src/model/output-delivery-contract.ts";
 import { outputScopeAmendmentReasonIssue } from "../src/model/output-scope-amendment.ts";
 import { authoritativeCreativeContext, ContextIntegrityError } from "./context-authority.ts";
 import { captureOutputGovernanceAssertions } from "./output-requirement-governance-assertions.ts";
@@ -40,10 +40,10 @@ import type { OutputGovernanceWitness } from "./output-governance-witness.ts";
 import { claimOutputAssetStorage, acknowledgeOutputAssetStorage, cleanupOutputAssetStorage, outputAssetPublicationAssertion, outputAssetPublicationStatements } from "./output-asset-storage-control.ts";
 import { outputAssetObjectKeys, outputAssetStorageCustodyMatches } from "./output-asset-storage-identity.ts";
 import { verifyOutputSourceEvidence, type OutputSourceEvidenceCheck } from "./output-source-evidence-capacity.ts";
-import { hasCapability, requireUser, type PilotUser } from "./pilot-policy.ts";
+import { requireUser, type PilotUser } from "./pilot-policy.ts";
 import type { ProjectRequestContext } from "./project-access.ts";
-import { readEvents, streamHead, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
-import { commitOutputCommand, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, outputSourceEpochAssertion, parseOutputRevision, OutputConflictError, readOutputCommand, readOutputSlots, outputSlotFromRow,
+import { readEvents, uuidV7, type EventRow, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
+import { commitOutputCommand, ensureOutputRequirementsSchema, outputAssertionStatements, outputScopeAuthority, outputSourceEpochAssertion, parseOutputRevision, OutputConflictError, readOutputCommand, outputSlotFromRow,
   retainedOutputBodyAssertions, rememberOutputPrivateBody, inheritRetainedOutputPrivateBodies, outputCommandReceiptAssertion,
   type OutputCommandReceipt, type OutputCommandPermission, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion, type OutputCommandWrite } from "./output-requirements-ledger.ts";
 
@@ -168,9 +168,7 @@ function requireCompleteOutputReadModel(model: OutputReadModel) {
   if (!model.complete) fail(model.reasonCodes[0] ?? "output_read_model_unavailable", 503);
   return model;
 }
-async function readAssets(trusted: OutputTrustedContext): Promise<OutputAssetRow[]> { return (await readOutputModel(trusted)).assets; }
 async function readResults(trusted: OutputTrustedContext): Promise<OutputResultRow[]> { return (await readOutputModel(trusted)).results; }
-async function readGrants(trusted: OutputTrustedContext): Promise<OutputGrantRow[]> { return (await readOutputModel(trusted)).grants; }
 
 
 /** Trusted worker-only resolver shared by admission, dispatch, provider guards and recovery. */

@@ -3,6 +3,7 @@ import test from "node:test";
 import {readFileSync} from "node:fs";
 import {stripTypeScriptTypes} from "node:module";
 import ts from "typescript";
+import {captureOutputNavigationFocus} from "../src/components/output-navigation-focus.ts";
 import {creativeNextActions,creativeNextTargetAvailable,creativePreparationChoice,creativePreparationTargetAvailable,followCreativeNextTarget,retainCreativePreparation} from "../src/model/workspace-intelligence.ts";
 import {VIDEO_ADAPTER_CONTRACT} from "../src/model/video-adapter.ts";
 import {outputComparisonHistory} from "../src/model/output-comparison.ts";
@@ -82,7 +83,7 @@ const sourceOwnershipMembers=actualClassMembers(storeSource,"FormaStore",[
   "#sourceExpiryValid","#sourceDeadlineCurrent","sourceOwnershipActive",
 ]);
 const SourceOwnership=new Function("return "+stripTypeScriptTypes("(class {"+sourceOwnershipMembers+"})"))();
-const privateSourceMembers=actualClassMembers(artifactSource,"DocumentArtifacts",["#privateSourceRevision","#editDraftRevision","#privateSourceCurrent"]).replaceAll("#","_");
+const privateSourceMembers=actualClassMembers(artifactSource,"DocumentArtifacts",["#privateSourceRevision","#editDraftRevision","#privateSourceCurrent","#selectedOutputShare","#retireSelectedOutputShare","#nativeStoryIntentRevision","#nativeStoryEpoch","#nativeStoryOpening","#nativeStoryCurrent","#nativeStoryController","#nativeStoryCloseLease","#nativeStoryDialog","#retireNativeStoryOpening","retireNativeShortStory","#requestReviewEpoch","#retireRequestReview","#requestDrafts"]).replaceAll("#","_");
 const PrivateSource=new Function("return "+stripTypeScriptTypes("(class {"+privateSourceMembers+"})"))();
 function installPrivateSource(host){
   const store=host.store;
@@ -94,7 +95,13 @@ function installPrivateSource(host){
   store.captureSourceOwnership=source.captureSourceOwnership.bind(source);
   store.sourceOwnershipActive=source.sourceOwnershipActive.bind(source);
   Object.assign(host,new PrivateSource(),{isConnected:true});
-  host._privateSourceCurrent=PrivateSource.prototype._privateSourceCurrent;
+  for(const name of Object.getOwnPropertyNames(PrivateSource.prototype))if(name!=="constructor")host[name]=PrivateSource.prototype[name];
+  host._createDialog ??= () => null;
+  // These text-only focus/revision scenarios never open a trim or scale editor.
+  host._syncAudioTrim = host._syncVideoTrim = host._syncModel3dScale = () => {};
+  host._retireAudioTrim = host._retireVideoTrim = host._retireModel3dScale = () => {};
+  host.ownerDocument ??= {activeElement:null,visibilityState:"visible",hasFocus:()=>true,addEventListener(){},removeEventListener(){}};
+  host._syncSelectedOutputShare = () => { assert.equal(host._selectedOutputShare ?? null, null); };
   return host;
 }
 function configurationMember(text,from,to){const begin=text.indexOf(from),end=text.indexOf(to,begin+from.length);assert.ok(begin>=0&&end>begin,"Production configuration boundaries changed: "+from);return text.slice(begin,end).replaceAll("#","_");}
@@ -105,7 +112,8 @@ const imageConfigurationMethods=[configurationMember(generationSource,"  async o
 // modal opening even transiently is a failure, not a success because it later closes.
 function configurationHost(kind,{changeAt=0,change=null}={}){
   const state={facts:makeFacts(),required:true,route:"/document/A"},trace=[];let host,awaits=0;
-  const document={documentElement:{dataset:{}}},window={clearTimeout(){}},nextActionFacts=()=>state.facts;
+  class HTMLElement {}
+  const document={activeElement:null,documentElement:{dataset:{}}},window={clearTimeout(){}},nextActionFacts=()=>state.facts;
   const fetch=()=>assert.fail("Free configuration must not dispatch a request");
   const store=new Proxy({captureAuthorizationScope:()=>({key:state.facts.authorityKey}),authorizationScopeActive:authorization=>Boolean(state.facts.canRead&&authorization?.key===state.facts.authorityKey),route:{get:()=>state.route},session:{get:()=>({projectContext:null})},projection:{get:()=>state.facts},canvasProjection:{get:()=>({selectedCanvasId:state.facts.canvasId})},routeDataReady:()=>false},{get(target,key){assert.ok(key in target,"Unexpected configuration store operation: "+String(key));return target[key];}});
   const popovers=[{open:true,close(){this.open=false;trace.push("popover-close");}}];
@@ -185,7 +193,7 @@ test("unavailable historical comparison renders the saved pair without a false z
 function actualArtifactViewerHost({boundary=null,change=null,unloaded=false,memberGate=null}={}){
   const event=(sequence,type,payload)=>({eventId:`artifact-event-${sequence}`,streamId:"stream",sequence,type,payload,actor:"user:owner",correlationId:"artifact",occurredAt:"2026-08-27T00:00:00Z"});
   const originalContent=JSON.stringify({content_markdown:"Saved body",items:[]});
-  const state={route:"/document/A",events:[event(1,"ProjectCreated",{project_id:"p",name:"Project"}),event(2,"DocumentCreated",{document_id:"A",project_id:"p",title:"Document"}),event(3,"DocumentRenderCompleted",{document_id:"A",project_id:"p",artifact_id:"saved-artifact",artifact_kind:"slides",title:"Saved revision",content_ref:"private-body"})],content:unloaded?{}:{"private-body":originalContent},authorityKey:"authority-1",canRead:true,saveConflicts:false},trace=[];let updateReads=0,invalidated=false;
+  const state={route:"/document/A",events:[event(1,"ProjectCreated",{project_id:"p",name:"Project"}),event(2,"DocumentCreated",{document_id:"A",project_id:"p",title:"Document"}),event(3,"DocumentRenderCompleted",{document_id:"A",project_id:"p",artifact_id:"saved-artifact",artifact_kind:"short_story",title:"Saved revision",content_ref:"private-body"})],content:unloaded?{}:{"private-body":originalContent},authorityKey:"authority-1",canRead:true,saveConflicts:false},trace=[];let updateReads=0,invalidated=false;
   const projection=()=>foldEvents(state.events,Infinity,"A","p"),original=projection().libraryArtifacts[0];
   const commitEdit=(markdown,extra={})=>{const revision=documentArtifactRevision(state.events,original.id)+1;state.events.push(event(state.events.length+1,"DocumentArtifactEdited",{project_id:"p",document_id:"A",artifact_id:original.id,content_ref:original.contentRef,revision,changed_fields:["content_markdown"],...extra}));state.content[original.contentRef]=JSON.stringify({content_markdown:markdown,items:[]});};
   const invalidate=()=>{if(invalidated)return;invalidated=true;trace.push("invalidate:"+change);if(change==="revision")commitEdit("Collaborator replacement");else if(change==="content")state.content[original.contentRef]="Unreceipted replacement";else if(change==="authorization"){state.authorityKey="authority-2";state.canRead=false;}else throw new Error("Unknown mutation "+change);};

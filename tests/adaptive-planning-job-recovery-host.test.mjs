@@ -3,9 +3,11 @@ import test from "node:test";
 import {readFileSync} from "node:fs";
 import {stripTypeScriptTypes} from "node:module";
 import ts from "typescript";
+import {completeClassFixture} from "./helpers/complete-class-fixture.mjs";
+import {hasServerExecutionOwner} from "../src/model/output-durable-observation.ts";
 import {documentIdFromRoute} from "../src/model/routes.ts";
-import {routeCapabilities} from "../src/state/route-capabilities.ts";
-import {documentJobTerminal,documentJobIsStale,documentJobCanRecoverPresentation,documentJobHasNoBudgetHold,planningStopBudget} from "../src/model/document-jobs.ts";
+import {routeCapabilities,isRetainedOutputReaderRoute} from "../src/state/route-capabilities.ts";
+import {documentJobIsMemory,documentJobTerminal,documentJobIsStale,documentJobCanRecoverPresentation,documentJobHasNoBudgetHold,planningStopBudget} from "../src/model/document-jobs.ts";
 import {adaptiveJobMatchesRequest,adaptiveRequestKey} from "../src/model/adaptive-request.ts";
 import {contextConsentFailure} from "../src/model/context-consent-state.ts";
 
@@ -22,7 +24,7 @@ function fixture(permissions=["project.read"]){
   const fetch=async(url,init)=>{calls.push([url,init?.method??"GET"]);if(requestPort)return requestPort(url,init);if(responseGate)await responseGate;const detail=details.get(url);return{ok:true,status:200,json:async()=>detail?{job:detail}:{jobs:responseJobs}};};
   // Actual polling/driver methods; deterministic network and unrelated rendering ports.
   // This proves reader recovery cannot dispatch, not native accessibility.
-  const Probe=eval(stripTypeScriptTypes(`(class {
+  const Probe=eval(stripTypeScriptTypes(completeClassFixture(syntax,"FormaStore",`(class {
     #jobPollTimer=0;#pendingPassiveJobPath="";#jobsSyncing=false;#jobSyncScope="";#jobResyncRequested=false;
     #jobDetails=new Map();#jobPollFailures=0;#jobPollIssueNotified=false;#pendingJobEventRefresh=false;#pendingJobSessionRefresh=false;
     #dismissedAdaptiveSuggestions=new Set();#pendingJobNotices=[];#jobsDriving=new Set();#presentationRecoveryAttempts=new Set();#adaptiveStructureJobIds=new Map();#pendingAdaptiveIntents=new Map();#planningRecoveryIdentities=new Map();#planningRecoverySequence=0;
@@ -36,12 +38,12 @@ function fixture(permissions=["project.read"]){
     #assertAuthorizationScope(scope){if(!this.#scopeStillActive(scope))throw new Error("scope-changed");}
     async #refreshEvents(){trace.push("events");}async refreshSession(){}#adaptiveIntentForJob(){return "Original intent";}#jobResultVisible(){return false;}#jobNotice(){return "job";}
     notify(){}toast(message){trace.push(message);}async #driveDocumentJob(){trace.push("DISPATCH");}async recoverDocumentPresentation(){trace.push("RECOVER_PROVIDER");}
-    drive(jobs){return this.#driveDocumentJobs(jobs);}ack(id){return this.#ackJob(id);}visible(){return this.#syncVisibleJobs();}
+    drive(jobs){return this.#driveDocumentJobs(jobs);}ack(id){return this.#ackJob(id,job({jobId:id}));}visible(){return this.#syncVisibleJobs();}
     bindPlan(job,plan){this.#adaptiveStructureJobIds.set(job.documentId,job.jobId);this.adaptiveStructures.set({[job.documentId]:plan});}cacheDetail(job){this.#jobDetails.set(job.jobId,job);}
     ${methods}
     ${actual("#clearPendingAdaptiveSelection")}
     ${actual("#canPresentAdaptivePlanningJob")}
-  })`));
+  })`)));
   const host=new Probe();return{host,calls,trace,timers,jobs(value){responseJobs=value;},detail(job){details.set("/api/document-jobs/"+encodeURIComponent(job.jobId)+"?inspection=1",job);},gate(promise){responseGate=promise;},respondWith(port){requestPort=port;}};
 }
 const job=(overrides={})=>({jobId:"original-plan",kind:"structure_adaptive",planningExecutionId:"original-plan",documentId:"doc-a",status:"queued",requestedAt:"2026-08-27T00:00:00Z",updatedAt:"2026-08-27T00:00:00Z",notifiedAt:"2026-08-27T00:00:00Z",result:{},...overrides});

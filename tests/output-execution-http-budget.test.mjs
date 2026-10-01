@@ -6,10 +6,10 @@ import {snapshot,outputFor,flexible} from './output-presentation-fixtures.mjs';
 registerOutputSourceImports();
 const [
  {handleSession,POLICY_VERSION,reconcileFailedBudgetReservations,requireUser},
- {handleEvents}, {handleDocumentJobs}, {handleWorkspaces}, {outputImageBudget},
- {reconcileOutputNativeStorage}, {handleOutputRequirements},
- {outputDocumentExecutionBridge,outputExactImageRender},
- {appendAuditEvent,streamHead,readWorkspaceEvents,makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}, {parseOutputRequirement}, {inspectOutputAsset},
+ {handleEvents}, {handleDocumentJobs}, {handleWorkspaces}, ,
+ , {handleOutputRequirements},
+ {outputDocumentExecutionBridge},
+ {appendAuditEvent,streamHead,makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}, {parseOutputRequirement}, {inspectOutputAsset},
 ]=await Promise.all([
  import('../worker/pilot-policy.ts'),import('../worker/events-api.ts'),import('../worker/document-jobs-api.ts'),
  import('../worker/workspaces-api.ts'),import('../worker/output-image-budget.ts'),import('../worker/output-private-execution.ts'),
@@ -301,7 +301,7 @@ for(const shared of[false,true])test(`121 authorized-only native jobs do not hid
  await m.profile('bounded-expiration-next-'+shared,()=>reconcileFailedBudgetReservations(f.env,user));assertBudget(m,'next bounded maintenance pass');assert.ok(f.sqlite.prepare("SELECT COUNT(*) AS n FROM cost_budget_reservations WHERE status='released'").get().n>firstReleased,'already settled older siblings cannot starve later work');
 });
 
-test('cold legacy GET initializes one composed schema and a failed initialization never installs a ready marker',async t=>{
+test('cold legacy GET initializes one composed schema and a failed initialization never installs a ready marker',async ()=>{
  const {outputSchemaIsReady}=await import('../worker/output-schema-state.ts');
  for(const lostAck of[false,true]){const f=outputTestDatabase();try{let fail=true,calls=0;const original=f.DB.batch.bind(f.DB);f.DB.batch=async statements=>{calls++;if(fail){fail=false;if(lostAck)await original(statements);throw new Error('schema initialization failed');}return original(statements);};
   await assert.rejects(()=>handleDocumentJobs(new Request('http://localhost/api/document-jobs'),f.env,''));assert.equal(outputSchemaIsReady(f.DB),false);

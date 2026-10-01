@@ -22,7 +22,7 @@ const quote = (value) => `"${value.replaceAll('"', '""')}"`;
 function checks(sql) {
   const values = [];
   const pattern = /\bCHECK\s*\(/giu;
-  for (let found; (found = pattern.exec(sql));) {
+  for (; pattern.exec(sql);) {
     let cursor = pattern.lastIndex, start = cursor, depth = 1, quoted = false;
     while (cursor < sql.length && depth) {
       const char = sql[cursor++];

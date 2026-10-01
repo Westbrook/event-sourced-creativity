@@ -38,12 +38,12 @@ export async function withLock(directory, fn) {
 export async function runProcess(command, args, { cwd, log, env = {}, timeoutMs = 0, onFailure = () => {} } = {}) {
   mkdirSync(dirname(log), { recursive: true });
   const output = createWriteStream(log), started = performance.now();
-  let tail = '', failureAnnounced = false;
+  let tail = '', failureAnnounced = false, firstNegativeMs = null;
   const grouped = process.platform !== 'win32';
   const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, detached: grouped, stdio: ['ignore', 'pipe', 'pipe'] });
   const consume = data => {
     output.write(data); tail = (tail + data.toString()).slice(-16000);
-    if (!failureAnnounced && /(?:^|\n)(?:not ok |.*error TS\d+:)/u.test(tail)) { failureAnnounced = true; onFailure(log); }
+    if (!failureAnnounced && /(?:^|\n)(?:not ok |.*error TS\d+:)/u.test(tail)) { failureAnnounced = true; firstNegativeMs = Math.round(performance.now() - started); onFailure(log); }
   };
   child.stdout.on('data', consume); child.stderr.on('data', consume);
   let terminated = false;
@@ -58,7 +58,7 @@ export async function runProcess(command, args, { cwd, log, env = {}, timeoutMs 
   try {
     const result = await new Promise((resolveResult, reject) => {
       child.once('error', reject);
-      child.once('close', (code, signal) => resolveResult({ code: terminated ? 1 : code ?? 1, signal, terminated, elapsedMs: Math.round(performance.now() - started) }));
+      child.once('close', (code, signal) => resolveResult({ code: terminated ? 1 : code ?? 1, signal, terminated, firstNegativeMs, elapsedMs: Math.round(performance.now() - started) }));
     });
     if (result.code) process.stderr.write(tail.slice(-6000));
     return result;

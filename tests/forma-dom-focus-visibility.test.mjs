@@ -34,6 +34,8 @@ function fixture() {
     append(node) { node.parentElement = this; this.children.push(node); }
     get localName() { return this.tagName.toLowerCase(); }
     contains(node) { for (let current = node; current; current = current.parentElement) if (current === this) return true; return false; }
+    // Traversal advances through ancestors; this is not a closure alias.
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     closest(selector) { for (let current = this; current; current = current.parentElement) if (current.matches(selector)) return current; return null; }
     get firstElementChild() { return this.children[0] ?? null; }
     getBoundingClientRect() { return this.box; }

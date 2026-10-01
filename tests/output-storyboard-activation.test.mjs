@@ -147,5 +147,7 @@ test('Storyboard activation actual native job gate needs server-owned preparatio
  const allowance=text.match(/outputPreparation\.maximumCalls!==\((nativeStoryboard\?5:[^\n]+?)\)\)return Response\.json/u);assert(allowance);
  const calls=new Function('nativeStoryboard','nativeAudio','nativeNarrative','nativeScene','payload','return '+allowance[1]);
  assert.equal(calls(native,null,null,null,payload),5);assert.equal(calls(null,null,null,null,payload),2,'legacy route unchanged');
- const estimate=text.match(/const estimatedCostMicrousd=(nativeStoryboard\?nativeStoryboard\.maximumMicrousd:)/u);assert(estimate,'native quote does not fall back to the legacy five-dollar estimate');
+ const estimate=text.match(/const estimatedCostMicrousd=([^\n]+);/u);assert(estimate);
+ const nativeEstimate=new Function('nativeVideo','nativeStoryboard','return '+estimate[1]);
+ assert.equal(nativeEstimate(null,native),native.maximumMicrousd,'the actual cost expression retains the exact native quote');
 });

@@ -1,7 +1,7 @@
 import type {CreativeProjection} from '../src/model/events.ts';
 import {IDEA_ACTIONS,IDEA_BENEFITS,ideaActionTargets} from '../src/still/idea-actions.ts';
 import {evaluateEligibility,type Abilities,type Position,type Question,type Answer} from '../src/still/decisions.ts';
-import type {IdeaAssessment,IdeaAssessmentCell} from '../src/still/idea-assessment.ts';
+import type {IdeaAssessment} from '../src/still/idea-assessment.ts';
 import type {DecisionPass} from '../src/still/diagnostics.ts';
 import {inspectAnswer} from '../src/still/diagnostics.ts';
 import type {WorkerEnv} from './runtime.ts';
@@ -91,9 +91,9 @@ export async function assessIdeas(plan:IdeaAssessmentPlan,passes:DecisionPass[])
  if(misses.length){await call(questions,false);const missing=remaining();if(Object.keys(missing).length&&passes.at(-1)?.status==='answered')await call(missing,true);}
  await Promise.all(misses.map(async({record,key})=>{
   const actions=report.blocks.find(b=>b.id===record.id)!.actions;if(!Object.values(actions).every(a=>a.status==='Answered'))return;
-  try{await env.DB.prepare('INSERT OR REPLACE INTO still_decision_cache(cache_key,owner_id,created_at,expires_at,body) VALUES(?,?,?,?,?)').bind(key,owner,Date.now(),Date.now()+TTL,JSON.stringify({version:VERSION,actions})).run();}catch{}
+  try{await env.DB.prepare('INSERT OR REPLACE INTO still_decision_cache(cache_key,owner_id,created_at,expires_at,body) VALUES(?,?,?,?,?)').bind(key,owner,Date.now(),Date.now()+TTL,JSON.stringify({version:VERSION,actions})).run();}catch{/* Cache maintenance is best effort. */}
  }));
- try{await env.DB.prepare("DELETE FROM still_decision_cache WHERE owner_id=? AND cache_key LIKE 'idea:%' AND (expires_at<=? OR cache_key NOT IN (SELECT cache_key FROM still_decision_cache WHERE owner_id=? AND cache_key LIKE 'idea:%' ORDER BY created_at DESC LIMIT 160))").bind(owner,Date.now(),owner).run();}catch{}
+ try{await env.DB.prepare("DELETE FROM still_decision_cache WHERE owner_id=? AND cache_key LIKE 'idea:%' AND (expires_at<=? OR cache_key NOT IN (SELECT cache_key FROM still_decision_cache WHERE owner_id=? AND cache_key LIKE 'idea:%' ORDER BY created_at DESC LIMIT 160))").bind(owner,Date.now(),owner).run();}catch{/* Cache maintenance is best effort. */}
  return summarize(plan);
 }
 export function ideaAssessmentAnswers(report:IdeaAssessment){

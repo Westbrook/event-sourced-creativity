@@ -98,7 +98,7 @@ export async function readExistingPrincipalRequest(request: Request, env: Worker
       if(!ownerRecovery)return{response:Response.json({error:"pilot_participant_required"},{status:403}),user:null};
     }
   }
-  let row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
+  const row = await env.DB.prepare(PRINCIPAL_WITH_ACCESS_SQL).bind(identity.userId).first<Record<string, unknown>>();
   if (!row) return { kind: "lifecycle-required", reason: "missing-account", identity, row, admittedParticipant } satisfies PrincipalLifecycleRequired;
   {
     const observed = { email: identity.email, source: identity.source, subject: identity.userId };

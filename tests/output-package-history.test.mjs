@@ -55,7 +55,7 @@ test("held package bytes are not released after same-revision history becomes un
   const path = "/api/output-requirements/deliveries/synthetic-package?documentId=doc-a";
   f.store.outputRequirementCommand = async (command) => {
     f.requests.push({ kind: "command", ...command });
-    return { status: "saved", body: { snapshot: structuredClone(initial), command: { action: "export", downloadUrl: path } } };
+    return { status: "saved", body: { snapshot: structuredClone(initial), command: { action: "export", manifestId: "synthetic-package", eventId: "synthetic-export-event", downloadUrl: path } } };
   };
   f.store.outputRequirements.download = (documentId, url) => { f.requests.push({ kind: "download", documentId, url }); bytesEntered.resolve(); return bytes.promise; };
   const pending = handler(exportForm(f), "submit", "#export").call(f.controller, submitEvent());
@@ -80,12 +80,12 @@ test("held package bytes are not released after same-revision history becomes un
   assert.equal(f.requests.filter((request) => request.action === "authorize" || request.action === "run").length, 0);
 });
 
-test("previously prepared package parts become disabled and old part callbacks refuse the history failure", async () => {
+test("previously prepared package parts retire and old part callbacks refuse the history failure", async () => {
   const f = await controllerFixture(), initial = f.snapshots.get("doc-a"); initial.summary.delivery_ready = true;
   f.store.outputRequirementCommand = async (command) => {
     f.requests.push({ kind: "command", ...command });
-    return { status: "saved", body: { snapshot: initial, command: { action: "export", downloadUrls: [
-      "/api/output-requirements/deliveries/synthetic-part-1?documentId=doc-a", "/api/output-requirements/deliveries/synthetic-part-2?documentId=doc-a",
+    return { status: "saved", body: { snapshot: initial, command: { action: "export", manifestId: "synthetic-package", eventId: "synthetic-export-event", downloadUrls: [
+      "/api/output-requirements/deliveries/synthetic-package?documentId=doc-a&part=1", "/api/output-requirements/deliveries/synthetic-package?documentId=doc-a&part=2",
     ] } } };
   };
   await handler(exportForm(f), "submit", "#export").call(f.controller, submitEvent());
@@ -93,9 +93,8 @@ test("previously prepared package parts become disabled and old part callbacks r
   assert.equal(oldClicks.length, 2); assert.equal(f.requests.length, 1);
   historyFailure(f);
   for (const callback of oldClicks) await callback();
-  for (const part of templates(region(f.controller.render(), 'class="output-package-parts"')).filter((part) => tagged(part, "downloadPart"))) {
-    assert.equal(binding(part, "?disabled"), true);
-  }
+  assert.ok(!templates(f.controller.render()).some(part => part.strings.join("").includes('class="output-package-parts"')),
+    "an invalidated inventory retires its recorded package controls");
   assert.equal(f.requests.length, 1, "part release is refused before another bytes request");
 });
 

@@ -17,7 +17,7 @@
     "cem:check": "node scripts/generate-custom-elements-manifest.mjs --check",
     "i18n:check": "node --experimental-strip-types scripts/check-system-localization.mjs",
     "typecheck": "tsc --noEmit --project tsconfig.validation.json",
-    "lint": "eslint . --ignore-pattern dist",
+    "lint": "node scripts/lint.mjs",
     "setup:local-encryption": "node scripts/setup-local-encryption-root.mjs",
     "replay": "node --experimental-strip-types scripts/replay.mjs",
     "eval:image-adapters": "node --experimental-strip-types scripts/run-image-adapter-eval.mjs",

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { NativeImageController } from "../src/components/native-image-controller.ts";
-import { captureNativeImageHandle, captureNativeImageSetup } from "../src/model/native-image-generation.ts";
+import { captureNativeImageHandle } from "../src/model/native-image-generation.ts";
 
 // New reconstruction controls, using actual generation capture/join functions.
 // Ports below are deterministic local promises: no Store, browser, provider,
@@ -9,7 +9,6 @@ import { captureNativeImageHandle, captureNativeImageSetup } from "../src/model/
 const NOW = Date.parse("2099-09-09T12:00:00.000Z");
 const AT = "2099-09-09T12:00:00.000Z", EXPIRES = "2099-09-09T12:05:00.000Z";
 const UNCONFIRMED = { disposition: "dispatched-unconfirmed", handle: null };
-const UNAVAILABLE = { status: "unavailable" }, SUPERSEDED = { status: "superseded" };
 function evidence() {
   const setup = { documentId: "document-a", documentRevision: "rev-abc123", sourceSurface: "native-image",
     promptTechnique: "prose", kind: "generate", productionMode: "manual", sourcePreviewId: null,

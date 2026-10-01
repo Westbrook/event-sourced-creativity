@@ -239,7 +239,7 @@ try {
 }
 // Hooks and the fail-closed fetch guard remain installed throughout actual tests.
 
-const PAST = '2000-01-01T00:00:00.000Z', FUTURE = '2999-01-01T00:00:00.000Z';
+const PAST = '2000-01-01T00:00:00.000Z';
 const OWNER = 'r11-author', PROJECT = 'r11-project', DOCUMENT = 'r11-document';
 const SHARED = Object.freeze({ organizationId: 'r11-organization', projectAccessId: 'r11-access', contextId: 'r11-context' });
 const SOURCE_TEXT = 'Local owned evidence: the botanical exhibit opens in October.';

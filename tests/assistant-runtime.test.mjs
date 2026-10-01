@@ -3713,7 +3713,7 @@ test("adaptive governed dispatch: a same-owner source in another project refresh
     const receipt=consequentialReceipt(state,quote.executionId);
     assert.equal(calls,1,"A target-only job anchor must not prevent this unchanged licensed source from running");
     assert.equal(reservationChecks,1);assert.equal(sourceBehindAtReservation,false,"The source derived index must catch up before the guarded reservation");
-    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id WHERE scope.project_access_id=? AND event.type=\'ProjectDocumentJobQueued\' AND json_extract(event.payload,\'$.job_id\')=?").get(input.sourceProjectAccessId,quote.executionId).n,0,"Refreshing the source must not scope another project\'s job anchor into it");
+    assert.equal(state.sqlite.prepare("SELECT COUNT(*) AS n FROM project_event_scopes scope JOIN events event ON event.event_id=scope.event_id WHERE scope.project_access_id=? AND event.type='ProjectDocumentJobQueued' AND json_extract(event.payload,'$.job_id')=?").get(input.sourceProjectAccessId,quote.executionId).n,0,"Refreshing the source must not scope another project's job anchor into it");
     assert.equal(adaptiveJob(state,quote.executionId).status,"completed");assert.equal(receipt.execution.status,"completed");assert.equal(receipt.steps[0].status,"settled");
     assert.deepEqual(consequentialBalances(state,input.owner),{tokens:{used:1300,reserved:0},cost:{used:5600,reserved:0}});
     assert.equal(adaptiveAuthoredCount(state,input.sourceStream),authoredBefore,"Refreshing a derived index must not author or remove source decisions");
@@ -7511,8 +7511,8 @@ SELECT 1 FROM pilot_cohorts reviewer_cohort
 test("assistant d1 depth: policy anti-joins preserve original cohort, enrollment, reviewer and NULL decisions",async(t)=>{
   const state=await fixture(),db=new DatabaseSync(":memory:");
   // Exact production table constraints; unrelated destructive-lifecycle triggers are not under test.
-  for(const name of["pilot_cohorts","pilot_participants"])db.exec(state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type=\'table\' AND name=?").get(name).sql);
-  for(const row of state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type=\'index\' AND tbl_name IN(\'pilot_cohorts\',\'pilot_participants\') AND sql IS NOT NULL").all())db.exec(row.sql);
+  for(const name of["pilot_cohorts","pilot_participants"])db.exec(state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name).sql);
+  for(const row of state.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name IN('pilot_cohorts','pilot_participants') AND sql IS NOT NULL").all())db.exec(row.sql);
   const sql=db.prepare("SELECT "+d1LegacyParticipantSql("expected.organization_id","expected.user_id")+" AS old_participant,"
     +effectivePilotParticipantSql("expected.organization_id","expected.user_id")+" AS current_participant,"
     +d1LegacyReviewerSql("expected.organization_id","expected.user_id")+" AS old_reviewer,"
@@ -14470,7 +14470,7 @@ for(const fault of ['rollback','lost-ack','source-change','personal-erasure','or
   const read=await state.readResult(),item=store.nativeDerivationResultInputs(state.env,read).candidate.items[0],expected=Object.fromEntries(item.lineageIds.map(lineage=>[lineage,0]));
   const batch=db.batch;let injected=false;
   if(['rollback','lost-ack'].includes(fault))db.batch=async statements=>{if(statements.some(s=>s.sql.startsWith('INSERT INTO memory_derivation_user_controls('))){injected=true;
-    if(fault==='rollback')statements=[...statements,db.prepare("SELECT json('control-rollback')")];const result=await batch.call(db,statements);throw Error('lost-control-ack');}return batch.call(db,statements);};
+    if(fault==='rollback')statements=[...statements,db.prepare("SELECT json('control-rollback')")];await batch.call(db,statements);throw Error('lost-control-ack');}return batch.call(db,statements);};
   const call=()=>controls.controlNativeDerivationResult(state.env,read,item.claimKey,'suppressed',null,expected);
   if(['rollback','lost-ack'].includes(fault)){await assert.rejects(call);assert.equal(injected,true);db.batch=batch;
     assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM memory_derivation_user_controls').get().n,Number(fault==='lost-ack'));
@@ -14545,7 +14545,7 @@ for(const hosted of [false,true])test('native derivation completion: stored body
 });
 for(const fault of ['rollback','lost-ack'])test('native derivation completion: '+fault+' cannot advance alone or repurchase',{timeout:60000},async t=>{
   const state=await nativeDerivationResultFixture(t,{userControls:true,completion:true}),db=state.env.DB,store=state.resultStore,batch=db.batch;let hit=false;
-  db.batch=async statements=>{if(statements.some(row=>row.sql.startsWith('INSERT INTO memory_derivation_completions('))){hit=true;if(fault==='rollback')statements=[...statements,db.prepare("SELECT json('completion-rollback')")];const result=await batch.call(db,statements);throw Error('completion-lost-ack');}return batch.call(db,statements);};
+  db.batch=async statements=>{if(statements.some(row=>row.sql.startsWith('INSERT INTO memory_derivation_completions('))){hit=true;if(fault==='rollback')statements=[...statements,db.prepare("SELECT json('completion-rollback')")];await batch.call(db,statements);throw Error('completion-lost-ack');}return batch.call(db,statements);};
   assert.equal((await store.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'uncertain');assert.equal(hit,true);db.batch=batch;
   for(const table of ['memory_derivation_completions','memory_derivation_results','memory_derivation_completion_cursors'])assert.equal(state.sqlite.prepare('SELECT COUNT(*) AS n FROM '+table).get().n,Number(fault==='lost-ack'));
   assert.equal((await store.publishNativeDerivationResult(state.env,state.resultReceipt)).status,'stored',state.controls.lastDatabaseError);
@@ -16970,7 +16970,7 @@ for(const fault of ['truncated','missing-references','missing-grant','wrong-gran
   return result;
  };
  t.after(()=>{state.env.DB=db;db.batch=batch;});
- let handle=null;try{handle=await admission.observeNativeDerivationJob(state.env,state.current().actor_user_id,state.executionJob.job_id);}catch{}
+ let handle=null;try{handle=await admission.observeNativeDerivationJob(state.env,state.current().actor_user_id,state.executionJob.job_id);}catch{/* Injected transport failure may reject; no handle may escape. */}
  assert.equal(injected,true);assert.equal(handle,null);
 });
 
@@ -20579,7 +20579,7 @@ for(const shared of [false,true])test('private Memory image: withdrawal during i
  assert.equal(state.imageCalls.length,2);const retry=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash});assert.ok(retry.status>=400);assert.equal(state.imageCalls.length,2);
 });
 for(const shared of [false,true])test('private Memory image: actual D1 preview and metadata-only maintenance '+shared,{timeout:180000},async t=>{
- const state=await semanticImagePreviewFixture(t,{shared,native:true}),db=state.env.DB,counter=semanticConsumerOperationCounter(state);
+ const state=await semanticImagePreviewFixture(t,{shared,native:true}),counter=semanticConsumerOperationCounter(state);
  const q=await state.imageSend('quote'),quote=await q.json();assert.equal(q.status,200,JSON.stringify(quote)+' '+state.controls.lastDatabaseError);
  const quoteCalls=counter.read();counter.reset();const response=await state.imageSend('execute',{previewExecutionId:quote.executionId,approvedPreviewHash:quote.quote.bindingHash}),body=await response.json();assert.equal(response.status,200,JSON.stringify(body)+' '+state.controls.lastDatabaseError);assert.ok(body.result.image.encoded);t.diagnostic(JSON.stringify({shared,quoteCalls,executeCalls:counter.read(),executeStatements:counter.statements()}));assert.ok(quoteCalls<=50);assert.ok(counter.read()<=50);
  assert.equal(await(import('../worker/memory-image-preview.ts')).then(m=>m.reconcileMemoryImageUsage(state.env)),0);

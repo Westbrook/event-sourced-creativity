@@ -178,7 +178,7 @@ test("frozen guidance is readonly rather than disabled and keeps the field templ
   }
 });
 
-const [host, workspace, view, css] = await Promise.all([
+const [host, , view, css] = await Promise.all([
   readFile(new URL("../src/components/document-artifacts.ts", import.meta.url), "utf8"),
   readFile(new URL("../src/components/forma-workspace.ts", import.meta.url), "utf8"),
   readFile(new URL("../src/components/native-short-story-dialog.ts", import.meta.url), "utf8"),

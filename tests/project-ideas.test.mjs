@@ -2,7 +2,7 @@ import {buildVectorIndex} from '../src/model/indexing.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {foldEvents} from '../src/model/events.ts';
-import {attachIdeaEvents,ideaDocumentUses} from '../src/model/project-ideas.ts';
+import {attachIdeaEvents} from '../src/model/project-ideas.ts';
 import {validateIdeaMembershipEvents,projectOwnedIdeaInput} from '../worker/idea-membership-guards.ts';
 import {useInPlan} from '../src/still/use-in.ts';
 import {parseStillRoute,stillPath,stillRouteProblem} from '../src/still/routes.ts';

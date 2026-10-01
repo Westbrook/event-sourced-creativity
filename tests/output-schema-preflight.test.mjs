@@ -110,7 +110,7 @@ for (const [method, suffix, cookie, expected] of [
  ['PUT','','',405],['GET','?sql=SELECT%201','',400],['GET','','forma_impersonation=1',409],['GET','','forma_project_context=1',409],['POST','','',403],
 ]) test(`Memory repair administration rejects ${method}/${suffix||cookie||'origin'} before DB access`,async()=>{
  const {handleMemorySchemaRepair,MEMORY_SCHEMA_REPAIR_PATH}=await import('../worker/memory-schema-repair-api.ts');
- const env={get DB(){assert.fail('No database access for rejected input');}};
+ const env={get DB(){return assert.fail('No database access for rejected input');}};
  const r=await handleMemorySchemaRepair(new Request('http://localhost'+MEMORY_SCHEMA_REPAIR_PATH+suffix,{method,headers:{cookie}}),env);
  assert.equal(r.status,expected);assert.equal(r.headers.get('cache-control'),'private, no-store');
 });
@@ -152,7 +152,7 @@ for(const [method,suffix,cookie,expected] of [
  ['PUT','','',405],['GET','?sql=SELECT%201','',400],['GET','','forma_impersonation=1',409],['GET','','forma_project_context=1',409],['POST','','',403],
 ])test(`Event save repair rejects ${method}/${suffix||cookie||'origin'} before database access`,async()=>{
  const {handleMemorySchemaRepair,EVENT_SAVE_REPAIR_PATH}=await import('../worker/memory-schema-repair-api.ts');
- const env={get DB(){assert.fail('No database access for rejected input');}};
+ const env={get DB(){return assert.fail('No database access for rejected input');}};
  assert.equal((await handleMemorySchemaRepair(new Request('http://localhost'+EVENT_SAVE_REPAIR_PATH+suffix,{method,headers:{cookie}}),env)).status,expected);
 });
 

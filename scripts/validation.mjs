@@ -5,10 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { availableParallelism } from 'node:os';
 import { census, classify, verifyInventory, classificationFingerprint } from './lib/validation-inventory.mjs';
 import { atomicJSON, fingerprint, withLock, runProcess } from './lib/validation-process.mjs';
+import { executionOwnership, environmentInputs } from './lib/validation-ownership.mjs';
 import { planValidation, runStages } from './lib/validation-plan.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const registryPath = resolve(root, 'tests/validation-registry.json');
+if (process.env.FORMA_SOURCE_ROOT && resolve(process.env.FORMA_SOURCE_ROOT) !== root) throw Error('Managed validation qualifies this checkout only; use direct diagnostic commands for an alternate FORMA_SOURCE_ROOT.');
 const argv = process.argv.slice(2), mode = argv.shift() ?? 'check';
 const workersArgument = argv.find(a => a.startsWith('--workers='));
 const workers = Number(workersArgument?.split('=')[1] ?? Math.min(2, availableParallelism()));
@@ -23,7 +25,7 @@ if (mode === 'inventory:update') {
   atomicJSON(registryPath, { schemaVersion: 1, owner: 'Repository validation maintainer; domain contracts stay with their code owners',
     tests, overrides: previous.overrides ?? {}, classificationInput: classificationFingerprint(root), browserConfigs: current.configs, commands: current.commands, entrypoints: current.entrypoints,
     testImportExceptions: previous.testImportExceptions ?? {}, historicalHolds: previous.historicalHolds ?? [],
-    conditionalModes: previous.conditionalModes ?? [], manualGates: previous.manualGates ?? ['docs/3d-production-readiness.md', 'docs/local-migrations.md', 'docs/still-toolbar-release-checks.md', 'tests/browser/README.md'],
+    execution: executionOwnership(root, current, tests), conditionalModes: environmentInputs(root, current), manualGates: previous.manualGates ?? ['docs/3d-production-readiness.md', 'docs/local-migrations.md', 'docs/still-toolbar-release-checks.md', 'tests/browser/README.md'],
     exclusions: previous.exclusions ?? {} });
   console.log(`Registered ${current.files.length} tests. Review lane assignments and the registry diff before using them.`);
   process.exit(0);
@@ -61,11 +63,15 @@ async function execute(step) {
     }
   }
   console.log(`[validation] ${step.id} → ${resolve(directory, step.id + '.log')}`);
-  const result = await runProcess(step.command, step.args, { cwd: root, log: resolve(directory, step.id + '.log'),
-    env: ['source', 'runtime', 'artifact'].includes(step.id) ? { FORMA_SQLITE_CACHE_DIR: resolve(directory, 'sqlite-compiles') } : {},
+  const nodeLane = ['source', 'runtime', 'artifact'].includes(step.id);
+  const caseLog = resolve(directory, step.id + '.cases.jsonl');
+  const args = nodeLane ? step.args.flatMap(arg => arg === '--test-reporter=tap' ? [arg, '--test-reporter-destination=stdout', '--test-reporter=' + resolve(root, 'scripts/lib/validation-reporter.mjs'), '--test-reporter-destination=' + caseLog] : [arg]) : step.args;
+  const result = await runProcess(step.command, args, { cwd: root, log: resolve(directory, step.id + '.log'),
+    env: ['source', 'runtime', 'artifact'].includes(step.id) ? { FORMA_SOURCE_ROOT: root, FORMA_SQLITE_CACHE_DIR: resolve(directory, 'sqlite-compiles') } : {},
     onFailure: log => console.error(`[validation] Negative result available now: ${log}`) });
   if (['source', 'runtime', 'artifact'].includes(step.id)) {
     const log = readFileSync(resolve(directory, step.id + '.log'), 'utf8');
+    result.caseLog = caseLog;
     result.nodeSummary = Object.fromEntries([...log.matchAll(/^# (tests|suites|pass|fail|cancelled|skipped|todo) (\d+)$/gmu)].map(m => [m[1], Number(m[2])]));
   }
   receipt.steps.push({ id: step.id, ...result }); save();

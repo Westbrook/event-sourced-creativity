@@ -7,7 +7,7 @@ const limits=Object.freeze({bytes:16_000_000,nodes:100_000,depth:96});
  * evidence consumed by Image's later global-alias, revision and rights checks;
  * neither source selection nor private authorization is established here. */
 export function createImageEventConsumer(outputId:string,key:string,decode:(row:Row)=>CreativeEvent){
-  let current=createCreativeEventFold();
+  const current=createCreativeEventFold();
   let prior:ReturnType<typeof createCreativeEventFold>|null=createCreativeEventFold();
   let initial:Pick<CreativeProjection,'projectId'|'libraryOutputs'>|null=null;
   let documentId='',count=0,head=0,finished=false;

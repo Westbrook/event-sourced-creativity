@@ -63,7 +63,7 @@ for(const [name,mutate] of [
  ['different compilation',raw=>{raw.compiled_snapshot_sha256='f'.repeat(64);}],
  ['truncated original',raw=>{raw.candidate_truncated=true;}],
 ])test('Audio rejects '+name+' retained envelope',async t=>{const f=await audioRecoveryFixture();t.after(()=>f.close());const raw=JSON.parse(f.sqlite.prepare("SELECT content FROM private_content WHERE content_id='audio-response'").get().content);mutate(raw);f.sqlite.prepare("UPDATE private_content SET content=? WHERE content_id='audio-response'").run(JSON.stringify(raw));await assert.rejects(f.claim());});
-test('Audio original source redaction or legacy uncertainty withdraws claimed custody',async t=>{
+test('Audio original source redaction or legacy uncertainty withdraws claimed custody',async ()=>{
  for(const sql of ["UPDATE private_content SET redacted_at='now' WHERE content_id='audio-source'","UPDATE document_jobs SET result_json=json_set(result_json,'$.providerSubmissionLegacyUncertain',json('true'))"]){const f=await audioRecoveryFixture();try{const lease=await f.claim();f.sqlite.exec(sql);await assert.rejects(lease.assertCurrent());}finally{f.close();}}
 });
 test('Audio media receipt transition is exact and settled phase cannot roll back',async t=>{const f=await audioRecoveryFixture();t.after(()=>f.close());const lease=await f.claim();await lease.recordCompletedMedia(37600);await lease.assertCurrent();f.sqlite.exec("UPDATE output_provider_calls SET status='settled',used_microusd=37600 WHERE provider='fal'");await lease.assertSettled();f.sqlite.exec("UPDATE output_provider_calls SET status='uncertain',used_microusd=NULL WHERE provider='fal'");await assert.rejects(lease.assertCurrent());});

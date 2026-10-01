@@ -8,7 +8,6 @@ const {executeOutputAudioRecovery,withinAudioRecovery,remainingAudioRecoveryUsag
 const {appendEvents,makeEvent}=await import(pathToFileURL(root+'/worker/runtime.ts'));
 const bytes=new Uint8Array([0x49,0x44,0x33,4,0,0,0,0,0,0,0xff,0xfb,0x90,0x64]);
 const mediaUrl='https://v3b.fal.media/files/original-audio.mp3';
-const key='owner/generated/artifact-audio.mp3';
 function mockProvider(t,f,{lyrics='',before}={}){
  const calls=[];
  t.mock.method(globalThis,'fetch',async (value,init={})=>{

@@ -2893,10 +2893,10 @@ export const memoryScopeProfileSnapshots=sqliteTable('memory_scope_profile_snaps
  check('memory_scope_profile_created',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),check('memory_scope_profile_expiry',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',expires_at) IS expires_at AND expires_at>created_at"))]);
 export const memoryScopeProfileCheckpoints=sqliteTable('memory_scope_profile_checkpoints',{
  targetEnrollmentId:text('target_enrollment_id').primaryKey().notNull(),actorUserId:text('actor_user_id').notNull(),targetRevision:integer('target_revision').notNull(),checkedAt:text('checked_at').notNull(),status:text('status').notNull(),
-},t=>[check('memory_scope_profile_checkpoint_revision',sql.raw("typeof(target_revision)='integer' AND target_revision>0")),check('memory_scope_profile_checkpoint_time',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',checked_at) IS checked_at")),check('memory_scope_profile_checkpoint_status',sql.raw("status IN('stored','unchanged','unavailable')"))]);
+},()=>[check('memory_scope_profile_checkpoint_revision',sql.raw("typeof(target_revision)='integer' AND target_revision>0")),check('memory_scope_profile_checkpoint_time',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',checked_at) IS checked_at")),check('memory_scope_profile_checkpoint_status',sql.raw("status IN('stored','unchanged','unavailable')"))]);
 
 /** Explicit authored-image acceptance survives Memory withdrawal. Erasure keeps
  * only this negative receipt so a restored body cannot resurrect pixels. */
 export const memoryAuthoredImageReceipts=sqliteTable('memory_authored_image_receipts',{
  contentId:text('content_id').primaryKey().notNull(),eventId:text('event_id').notNull().unique(),ownerId:text('owner_id').notNull(),mediaKey:text('media_key').notNull().unique(),state:text('state').notNull(),createdAt:text('created_at').notNull(),retiredAt:text('retired_at'),
-},t=>[check('memory_authored_image_state',sql.raw("state IN('active','retired')")),check('memory_authored_image_created',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),check('memory_authored_image_retirement',sql.raw("(state='active' AND retired_at IS NULL) OR (state='retired' AND retired_at>=created_at)"))]);
+},()=>[check('memory_authored_image_state',sql.raw("state IN('active','retired')")),check('memory_authored_image_created',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),check('memory_authored_image_retirement',sql.raw("(state='active' AND retired_at IS NULL) OR (state='retired' AND retired_at>=created_at)"))]);

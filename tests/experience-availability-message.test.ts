@@ -51,7 +51,7 @@ test("only one unavailable saved preparation receives a reason; original outcome
 
 test("host renders registered localized text inline without raw reason or new actions", () => {
   const source = readFileSync(new URL("../src/components/forma-experience-host.ts", import.meta.url), "utf8");
-  const summary = source.slice(source.indexOf("  #termsSummary("), source.indexOf("  override render()"));
+  const summary = source.slice(source.indexOf("  #termsSummary("), source.indexOf("  #renderSponsor()"));
   assert.match(summary, /outputAvailabilityMessage\(state\)/u);
   assert.match(summary, /<p data-experience-availability-reason dir="auto">/u);
   assert.match(summary, /this.i18n.t\(availability.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en\[availability.id\], availability.values\)/u);
@@ -71,7 +71,7 @@ test("known complete-source capacity refusal is explained without admitting work
   const malformed = {...unavailableBinding("output_source_proof_too_large"), permitted:{prepare:true}};
   assert.equal(outputSourceCapacityMessage(malformed as never), null);
   const source = readFileSync(new URL("../src/components/forma-experience-host.ts", import.meta.url), "utf8");
-  assert.match(source, /outputSourceCapacityMessage\(response\) \? this.i18n.system\("Original unavailable"\)/u);
+  assert.match(source, /outputSourceCapacityMessage\(response\) \|\| outputCommandRefusal\(response\) \? this.i18n.system\("Original unavailable"\)/u);
   assert.match(source, /available && binding \? outputSourceCapacityMessage\(binding.client.state\) : null/u);
   assert.match(source, /data-experience-source-capacity dir="auto"/u);
   assert.match(source, /this.i18n.t\(sourceCapacity.id, FORMA_OUTPUT_DELIVERY_RUNTIME_MESSAGES.en\[sourceCapacity.id\], sourceCapacity.values\)/u);

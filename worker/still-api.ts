@@ -121,7 +121,7 @@ export async function handleStillDecision(request: Request, env: WorkerEnv, cont
     await finishIdeas();
     // A manual reassessment must not be replaced by an older whole-menu cache on reload.
     decisionCache(env).clear();
-    try{await env.DB.prepare("DELETE FROM still_decision_cache WHERE owner_id=? AND cache_key NOT LIKE 'idea:%' AND CASE WHEN json_valid(body) THEN json_extract(body,'$.response.opportunities.scope.documentId')=? ELSE 0 END").bind(auth.user.userId,position.documentId).run();}catch{}
+    try{await env.DB.prepare("DELETE FROM still_decision_cache WHERE owner_id=? AND cache_key NOT LIKE 'idea:%' AND CASE WHEN json_valid(body) THEN json_extract(body,'$.response.opportunities.scope.documentId')=? ELSE 0 END").bind(auth.user.userId,position.documentId).run();}catch{/* Cache maintenance is best effort. */}
     return reply({source:'jev',policy:POLICY_VERSION,head,opportunities,...diagnostics('jev',undefined,opportunities?ideaAssessmentAnswers(opportunities):{})});}
   const fallbackWithIdeas=async(reason:string,observed?:Record<string,Answer>)=>{
     const initial=await fallback(reason,observed).json() as Record<string,unknown>;

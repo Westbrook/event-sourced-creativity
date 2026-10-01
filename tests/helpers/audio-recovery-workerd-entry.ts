@@ -16,7 +16,6 @@ function environment(bindings) {
   if(key==='batch')return async inputs=>{metrics.batches++;metrics.queries+=inputs.length;try{return await target.batch(inputs.map(i=>native.get(i)??i));}catch(e){const compile=[];for(const i of inputs){const d=descriptions.get(i);if(!d)continue;try{await target.prepare('EXPLAIN QUERY PLAN '+d.sql).bind(...d.values).all();}catch(e){compile.push({sql:d.sql,error:String(e)});}}metrics.failures.push({error:String(e),compile});throw e;}};
   const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
  }});
- let env;
  const MEDIA=new Proxy(bindings.Media,{get(target,key){
   if(key==='put')return async(name,bytes,options)=>{metrics.puts++;const value=await target.put(name,bytes,options);
    if(bindings.SKIP_GRACE)return value;
@@ -26,7 +25,7 @@ function environment(bindings) {
   if(key==='delete')return async names=>{metrics.deletes++;return target.delete(names);};
   const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
  }});
- env={...bindings,DB,MEDIA,FAL_KEY:'synthetic-unit-test-key-not-a-credential',ASSETS:{fetch(){throw Error('assets_forbidden');}}};
+ const env={...bindings,DB,MEDIA,FAL_KEY:'synthetic-unit-test-key-not-a-credential',ASSETS:{fetch(){throw Error('assets_forbidden');}}};
  const result={env,metrics};environments.set(bindings.DB,result);return result;
 }
 export default {async fetch(request,bindings){

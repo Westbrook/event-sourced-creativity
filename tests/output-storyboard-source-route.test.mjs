@@ -65,6 +65,7 @@ test("actual preflight command finalization preserves original deadline and tran
   trusted.env = { ...f.input.env, DB: { prepare(sql) { assert.match(sql, /^SELECT slot\./u); return { bind() { return { all: async () => ({ results: [] }) }; } }; } } };
   const preflight = oneFunction("worker/output-requirements-api.ts", "async function preflightPlan", "\nfunction outputProviderStages", {
     requireCurrentSource: () => f.input.context, currentPlan: (_t, p) => p, readConfirmedPlan: async () => f.input.confirmedPlan,
+    record: value => value && typeof value === "object" && !Array.isArray(value) ? value : {},
     identifier: v => v, OUTPUT_PREFLIGHT_TARGET_MAX_COUNT: 32, fail: code => { throw new Error(code); },
     bridgeTarget: () => f.input, outputStoryboardPreflightProof: f.outputStoryboardPreflightProof,
     outputProviderStages: value => { assert.equal(value.maximumCalls, value.settings.calls.length); },
@@ -97,6 +98,12 @@ test("actual native state offers authorization only for the exact current Storyb
     phases: ["save", "confirm", "preflight", "authorize", "run"],
     error: code => { throw new Error(code); },
     readStoryboardExecutionOffer,
+    renewalOffer: oneFunction("worker/experience-output-api.ts", "async function renewalOffer", "\nasync function replacementOffer", {
+      scenePreparationPredecessor: oneFunction("worker/experience-output-originals.ts", "export function scenePreparationPredecessor", "\nexport type ExperienceOutputLineage", {
+        record: value => Boolean(value && typeof value === "object" && !Array.isArray(value)),
+        error: code => { throw Error(code); },
+      }),
+    }),
   });
   let value = await state(loaded); assert.equal(value.status, "review");
   assert.deepEqual(value.permitted, { prepare: false, authorize: true, run: false, resumeRun: false });

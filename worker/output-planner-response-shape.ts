@@ -65,7 +65,7 @@ export async function retainedStoryboardResponseShape(raw:string,identity:{jobId
     const envelope=record(JSON.parse(retained.provider_envelope));
     if(!envelope||envelope.id!==identity.responseId||envelope.model!==identity.model)return null;
     let candidate:Record<string,unknown>|null=null;
-    try{candidate=record(JSON.parse(retained.output_text));}catch{}
+    try{candidate=record(JSON.parse(retained.output_text));}catch{/* Malformed evidence retains the unavailable result. */}
     const items=Array.isArray(candidate?.items)?candidate.items:[];
     // The caller may supply an independently certified original request. Never
     // infer an alias catalog from the returned candidate or current document.
@@ -74,7 +74,7 @@ export async function retainedStoryboardResponseShape(raw:string,identity:{jobId
     const missingWitness=requiresRequestWitness&&plannerRequestBody===undefined;
     try{await captureStoryboardPlannerResponse(envelope,retained.output_text,retained.output_storyboard,plannerRequestBody);}catch(error){issues.push(missingWitness?"storyboard_original_request_witness_required":storyboardPlanFailureReason(error)??"storyboard_candidate_invalid");}
     const contractValid=Boolean(parseStoryboardOutputContract(retained.output_storyboard));
-    let planValid:boolean|null=missingWitness?null:false;try{await captureOutputStoryboardPlan(candidate,retained.output_storyboard,identity.responseId,plannerRequestBody);planValid=true;}catch{}
+    let planValid:boolean|null=missingWitness?null:false;try{await captureOutputStoryboardPlan(candidate,retained.output_storyboard,identity.responseId,plannerRequestBody);planValid=true;}catch{/* Malformed evidence retains the unavailable result. */}
     // Fixed field names and numeric/type summaries only: no creative values,
     // unknown provider keys, group identifiers or opaque reasoning are exposed.
     const field=(value:unknown)=>({type:typeof value,length:typeof value==='string'?value.length:null,blank:typeof value==='string'?!value.trim():null});

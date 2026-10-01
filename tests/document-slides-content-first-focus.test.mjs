@@ -19,7 +19,7 @@ const parse = (path) => ts.createSourceFile(path, readFileSync(resolve(root, pat
 const source = parse("src/components/document-artifacts.ts");
 const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "DocumentArtifacts");
 assert.ok(declaration, "actual DocumentArtifacts class exists");
-const names = ["showSlidesViewingDialog", "showSlidesEvidence", "openArtifact", "showArtifactIntent", "syncViewerPopovers"];
+const names = ["showSlidesViewingDialog", "showSlidesEvidence", "openArtifact", "showArtifactIntent", "syncViewerPopovers", "retireSelectedOutputShare"];
 const methods = names.map(name => {
   const node = declaration.members.find(member => ts.isMethodDeclaration(member) && member.name.getText(source) === `#${name}`);
   assert.ok(node, `actual #${name} method exists`);
@@ -110,10 +110,12 @@ function fixture(mode = "slideshow") {
     _viewerCurrent: () => f.sourceCurrent, _viewDialog: () => f.currentDialog, _currentDeliveryBinding: () => f.binding,
     _closeViewerPopovers: () => menu.close(), _artifactBinding: async () => f.binding,
     _privateSourceCurrent: () => { const route = f.route; return () => f.sourceCurrent && f.route === route; },
+    // Share lifecycle is a separate port: these cases never own a share or export.
+    _syncSelectedOutputShare() { assert.equal(this._selectedOutputShare ?? null, null); },
     retireNativeShortStory() {}, requestUpdate() { f.updateCalls++; }, dispatchEvent() {},
     querySelector: selector => selector === ".artifact-viewer-evidence-popover" ? menu : null,
     store: { route: slot(() => f.route), events: slot(() => []), content: slot(() => bytes),
-      projection: slot(() => ({ libraryArtifacts: [artifact] })), session: slot(() => ({ projectContext: null })),
+      projection: slot(() => ({ libraryArtifacts: [artifact], documents: [{id: "one", projectId: "project-one"}] })), session: slot(() => ({ projectContext: null })),
       captureAuthorizationScope: () => ({ key: "owned-scope" }), authorizationScopeActive: () => f.authorized,
       ensurePrivateContent: forbidden, hot: forbidden, toast: forbidden, ui: { instrumentation: false } },
   });

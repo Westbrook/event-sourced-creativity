@@ -317,10 +317,6 @@ function nativeLauncherTemplate(env){
   assert.equal(values.length,1,"one actual Host-owned launcher template");return values[0];
 }
 function nativeRefs(template){return template.values.filter(value=>imageNative.isDirectiveResult(value)&&typeof value.values[0]==="function").map(value=>value.values[0]);}
-function nativeDismiss(host){
-  const handlers=[...imageNative.templates(host.renderStatus())].flatMap(template=>template.values.filter((_value,index)=>template.strings[index].endsWith("@click=")));
-  assert.ok(handlers.length<=1,"the actual Host has at most one status acknowledgment");return handlers[0]??null;
-}
 function mountNativeLauncher(env){
   const template=nativeLauncherTemplate(env),refs=nativeRefs(template);
   assert.equal(refs.length,1);

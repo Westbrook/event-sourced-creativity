@@ -5,7 +5,7 @@ export function planValidation(mode, groups, workers) {
   if (mode === 'fast') return steps;
   for (const group of groups) {
     if (group.lane === 'artifact') steps.push({ id: mode === 'node' ? 'require-build' : 'build' });
-    steps.push({ id: group.lane, command: process.execPath, args: ['--import', 'tsx', '--test', `--test-concurrency=${workers}`, '--test-reporter=tap', ...group.files] });
+    steps.push({ id: group.lane, command: process.execPath, args: ['--import', 'tsx', '--test', `--test-concurrency=${workers}`, `--test-timeout=${group.lane === 'source' ? 60000 : 180000}`, '--test-reporter=tap', ...group.files] });
   }
   return steps;
 }

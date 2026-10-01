@@ -5,7 +5,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readLocalMigrations,migrateLocalDatabase} from '../scripts/lib/local-migrations.mjs';
 import {SCENE_SOURCE_GENERATION_TRIGGERS,SCENE_SOURCE_GENERATION_MAX} from '../db/scene-source-generations.ts';
 import {SCENE_SOURCE_GENERATION_TABLES} from '../db/scene-source-generation-tables.ts';
-import {captureSceneSourceVersion,sceneSourceVersionAssertions,sceneSourceSchemaAssertion,sceneSourceRebuildStatements} from '../worker/scene-source-generation.ts';
+import {captureSceneSourceVersion,sceneSourceVersionAssertions,sceneSourceRebuildStatements} from '../worker/scene-source-generation.ts';
 import {migrateLegacyEventPayloads} from '../worker/event-privacy-migration.ts';
 import {ensureSchema} from '../worker/runtime.ts';
 

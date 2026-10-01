@@ -87,8 +87,8 @@ async function fixture(t, options = {}) {
     outputRequirementCommand: async command => { commands.push(command); throw new Error("film_host_command_forbidden"); },
   };
   const source = installSourceOwnershipPort(store);
-  class Base {
-    constructor() {
+  class Base extends EventTarget {
+    constructor() { super();
       this.store = store; this.isConnected = true; this.ownerDocument = focusDocument; this.updateComplete = Promise.resolve();
       this.i18n = { locale: "en", direction: "ltr", number: String, system: String,
         t: (_key, fallback, values = {}) => fallback.replace(/\{(\w+)\}/gu, (_, key) => String(values[key] ?? "")) };

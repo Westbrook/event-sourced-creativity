@@ -43,7 +43,7 @@ The registry accounts for `.test.mjs`, `.test.ts`, `.spec.mjs` and `.spec.ts` un
 and validation/evaluation entry points. A `browser` classification means separate
 prerequisites are required, not that the Node graph executes it. Direct Node
 browser runners retain their documented commands; explicit Playwright config
-selection does not invent membership for orphaned files. Review coverage and
+selection rejects specs without an owned config. Review coverage and
 conditional modes before claiming a complete project qualification.
 
 Source/runtime/artifact classification follows static helper references and is
@@ -64,6 +64,14 @@ exception when discovery fails.
 work is authorized; production/native-account/GPU qualification remains separately
 unresolved. No excluded file, disabled environment mode, skip, missing tool,
 or failure is a passing test. Node receipts distinguish passes with skips.
+
+Every suite has an execution record and named maintainer role. See
+[qualification and cost decisions](validation-qualification.md) for conditional
+browser commands, historical holds and the confirmed automation boundary.
+
+The managed runner supplies `FORMA_SOURCE_ROOT` for its checkout. Default per-test
+timeouts are 60 seconds for source cases and 180 seconds for runtime/artifact
+cases; an explicit test timeout can cover deliberately longer observations.
 
 ## Qualified reuse and resource ownership
 
@@ -100,7 +108,9 @@ are written into the cache. Mutable databases are never shared by this cache.
 ## Evidence and lifecycle
 
 Managed runs write `outputs/validation/<run>/receipt.json` and per-stage logs.
-Receipts retain input hashes, selections, concurrency, durations, exit signals,
+Each Node stage also writes `*.cases.jsonl` with actual leaf/parent names, outcomes,
+explicit skips and durations. `node scripts/validation-cost.mjs <cases.jsonl>`
+produces an offline cost ranking. Receipts retain input hashes, selections, concurrency, durations, exit signals,
 Node totals/skips and build reuse. Logs announce the first observed negative
 result while the active lane finishes; later lanes do not start. Process groups
 are terminated on interruption/timeout on POSIX. No automatic retry masks a

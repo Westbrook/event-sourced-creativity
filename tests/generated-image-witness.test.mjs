@@ -75,11 +75,11 @@ test('schema mismatch, absent acknowledgment and cancellation fail closed',async
   f.env.DB.batch=async statements=>{const r=await batch(statements);delete r[0].success;return r;};await assert.rejects(f.read());f.env.DB.batch=batch;
   await assert.rejects(f.read({check(){throw Error('cancelled');},async wait(p){return p;}}),/cancelled/);
   f.db.exec('DROP TRIGGER scene_source_events_insert');await assert.rejects(f.read(),/image_witness_schema/);
-  assert.equal(imageWitnessAcknowledged([,],1),false);
+  assert.equal(imageWitnessAcknowledged(Array(1),1),false);
   assert.equal(imageWitnessAcknowledged([{success:true,error:'explicit failure',results:[{current:1}]}],1),false);
   assert.equal(imageWitnessAcknowledged([{success:true,results:[Object.create({current:1})]}],1),false);
   assert.equal(imageWitnessAcknowledged([Object.create({success:true,results:[{current:1}]})],1),false);
-  assert.equal(imageWitnessAcknowledged([{success:true,results:[,]}],1),false);
+  assert.equal(imageWitnessAcknowledged([{success:true,results:Array(1)}],1),false);
 });
 test('actual PATCH publication validator rejects original accessor/inherited batch slots without invoking them',()=>{
   const api=readFileSync(new URL('../worker/generated-image-api.ts',import.meta.url),'utf8');
@@ -88,7 +88,7 @@ test('actual PATCH publication validator rejects original accessor/inherited bat
   assert.equal(imageWitnessPublished([guard,write],1,1),true);
   let touched=0;const accessor=[guard,write];Object.defineProperty(accessor,0,{get(){touched++;return guard;}});
   assert.equal(imageWitnessPublished(accessor,1,1),false);assert.equal(touched,0);
-  const inherited=[,write];Object.setPrototypeOf(inherited,{0:guard});assert.equal(imageWitnessPublished(inherited,1,1),false);
+  const inherited=Array(2);inherited[1]=write;Object.setPrototypeOf(inherited,{0:guard});assert.equal(imageWitnessPublished(inherited,1,1),false);
   assert.equal(imageWitnessPublished([guard,{...write,error:'failure'}],1,1),false);
   assert.equal(imageWitnessPublished([guard,{success:true,meta:Object.create({changes:1})}],1,1),false);
   assert.equal(imageWitnessPublished([guard,{success:true,meta:{changes:0}}],1,1),false);

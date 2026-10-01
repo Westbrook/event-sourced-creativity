@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { planValidation, runStages } from '../scripts/lib/validation-plan.mjs';
 import { census, classify, verifyInventory } from '../scripts/lib/validation-inventory.mjs';
+import { executionOwnership } from '../scripts/lib/validation-ownership.mjs';
 import { fingerprint, withLock, runProcess } from '../scripts/lib/validation-process.mjs';
 
 function sandbox(t) {
@@ -21,6 +22,7 @@ test('inventory assigns TypeScript and nested browser files; new and removed cas
   put('tests/logic.test.ts', ''); put('tests/browser/native.test.mjs', ''); put('playwright.local.config.mjs', '');
   const found = census(root);
   const registry = { tests: Object.fromEntries(found.files.map(f => [f, classify(root, f)])), browserConfigs: found.configs, entrypoints: found.entrypoints, commands: found.commands };
+  registry.execution = executionOwnership(root, found, registry.tests);
   assert.deepEqual(verifyInventory(root, registry), []);
   assert.equal(registry.tests['tests/logic.test.ts'], 'source'); assert.equal(registry.tests['tests/browser/native.test.mjs'], 'browser');
   put('tests/new.test.mjs', '');
@@ -37,6 +39,9 @@ test('build prerequisites follow helper imports instead of only looking at the t
   assert.equal(classify(root, 'tests/a.test.mjs'), 'artifact');
   put('tests/isolated.test.mjs', "import {build} from 'esbuild'; await build({write:false});");
   assert.equal(classify(root, 'tests/isolated.test.mjs'), 'runtime');
+  put('tests/computed.test.mjs', 'import(pathToFileURL(ROOT+"/tests/helpers/db.mjs").href);');
+  put('tests/helpers/db.mjs', 'import {DatabaseSync} from "node:sqlite";');
+  assert.equal(classify(root, 'tests/computed.test.mjs'), 'runtime');
 });
 
 test('fixture imports cannot silently register another suite', t => {
@@ -72,10 +77,10 @@ test('matching static receipts reuse successful checks and source changes invali
   const mark = `node -e "require('node:fs').appendFileSync('calls.log', 'checked\\n')"`;
   put('package.json', JSON.stringify({ type: 'module', scripts: { typecheck: mark, lint: mark } }));
   put('src/a.ts', 'export const a=1');
-  for (const file of ['validation.mjs', 'lib/validation-plan.mjs', 'lib/validation-process.mjs', 'lib/validation-inventory.mjs']) put('scripts/' + file, readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8'));
+  for (const file of ['validation.mjs', 'lib/validation-plan.mjs', 'lib/validation-process.mjs', 'lib/validation-inventory.mjs', 'lib/validation-ownership.mjs']) put('scripts/' + file, readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8'));
   symlinkSync(new URL('../node_modules', import.meta.url), join(root, 'node_modules'), 'dir');
   const run = async mode => {
-    const result = await runProcess(process.execPath, ['scripts/validation.mjs', mode], { cwd: root, log: join(root, mode + '.log'), env: { pnpm_config_verify_deps_before_run: 'false' } });
+    const result = await runProcess(process.execPath, ['scripts/validation.mjs', mode], { cwd: root, log: join(root, mode + '.log'), env: { pnpm_config_verify_deps_before_run: 'false', FORMA_SOURCE_ROOT: undefined } });
     assert.equal(result.code, 0, readFileSync(join(root, mode + '.log'), 'utf8'));
   };
   await run('inventory:update'); await run('fast'); await run('fast');
@@ -120,4 +125,27 @@ test('browser batches keep one compatible server and reject conflicting source/b
   assert.deepEqual(JSON.parse(compatible.stdout), { servers: 1, projects: 2 });
   const conflicting = run('content-first,output-footer');
   assert.equal(conflicting.status, 1); assert.match(conflicting.stderr, /Incompatible source\/built servers/u);
+});
+
+test('real type errors surface a timed negative before dependent stages start', async t => {
+  const { root, put } = sandbox(t), started = [];
+  put('bad.ts', 'export const wrong: number = "injected failure";');
+  const compiler = new URL('../node_modules/typescript/lib/tsc.js', import.meta.url).pathname;
+  const result = await runProcess(process.execPath, [compiler, '--noEmit', '--skipLibCheck', '--target', 'es2022', join(root, 'bad.ts')], {
+    cwd: root, log: join(root, 'types.log'), onFailure: () => started.push('negative'),
+  });
+  assert.notEqual(result.code, 0); assert.deepEqual(started, ['negative']);
+  assert.ok(result.firstNegativeMs >= 0 && result.firstNegativeMs <= result.elapsedMs);
+});
+
+test('case reporter distinguishes nested leaves, parent results and explicit skipped coverage', async t => {
+  const { root, put } = sandbox(t);
+  put('cases.mjs', `import test from 'node:test'; test('parent',async t=>{await t.test('one',()=>{});await t.test('two',{skip:'fixture unavailable'},()=>{});});test('independent',()=>{});`);
+  const reporter = new URL('../scripts/lib/validation-reporter.mjs', import.meta.url).pathname;
+  const result = await runProcess(process.execPath, ['--test', '--test-reporter='+reporter, '--test-reporter-destination='+join(root,'cases.jsonl'), join(root,'cases.mjs')], {cwd:root,log:join(root,'reporter.log'),env:{NODE_TEST_CONTEXT:undefined}});
+  assert.equal(result.code,0);
+  const rows=readFileSync(join(root,'cases.jsonl'),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.deepEqual(rows.filter(row=>row.parent).map(row=>row.name),['parent']);
+  assert.deepEqual(rows.filter(row=>!row.parent).map(row=>row.name),['one','two','independent']);
+  assert.equal(rows.find(row=>row.name==='two').skip,'fixture unavailable');
 });

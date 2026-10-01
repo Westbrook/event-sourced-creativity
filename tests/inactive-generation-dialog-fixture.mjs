@@ -51,7 +51,7 @@ class ElementPort {
   constructor() { this.store = activeFixture?.store; this.i18n = activeFixture?.i18n; this.fixture = activeFixture; this.isConnected = false; this.parentElement = null; this.tag = ""; }
   get renderRoot() { return this; }
   get ownerDocument() { return documentPort; }
-  get updateComplete() { return this.fixture.tick(this); }
+  get updateComplete() { return this === this.fixture.host ? this.fixture.tick(this) : Promise.resolve(true); }
   requestUpdate() { this.fixture.requested = true; }
   connectedCallback() {}
   disconnectedCallback() {}
@@ -68,7 +68,7 @@ class ElementPort {
   matches(selector) { return selector===":dir(rtl)"?this.i18n?.direction==="rtl":selector===this.tag; }
   getAttribute(name) { return this.attributes?.[name] ?? null; }
   setAttribute(name, value) { (this.attributes ??= {})[name] = String(value); }
-  closest(selector) { if (selector === "forma-workspace") return this.fixture.workspace; let owner = this.parentElement; while (owner) { if (owner.tag === selector) return owner; owner = owner.parentElement; } return null; }
+  closest(selector) { if (selector === "dialog" && this.tag.startsWith("forma-")) return this.fixture.renderer.containingDialog(this); if (selector === "forma-workspace") return this.fixture.workspace; let owner = this.parentElement; while (owner) { if (owner.tag === selector) return owner; owner = owner.parentElement; } return null; }
   dispatchEvent(event) {
     if (this.eventBindings?.[event.type]) this.eventBindings[event.type].call(this.parentElement, event);
     this.fixture.trace.push("event:" + event.type);
@@ -88,14 +88,14 @@ const identityCode = ts.transpileModule("class FormaElementIdentityPort {" + ide
 }).outputText;
 const identityPort = new Function(identityCode + "; return FormaElementIdentityPort;")();
 Object.defineProperty(ElementPort, "hasStoreIdentity", Object.getOwnPropertyDescriptor(identityPort, "hasStoreIdentity"));
-const documentPort = { activeElement: null, documentElement: { lang: "en", dataset: {} }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null };
+const documentPort = { hasFocus: () => true, activeElement: null, documentElement: { lang: "en", dataset: {} }, querySelector: selector => activeFixture?.renderer.query(null, selector)[0] ?? null };
 const windowPort = { requestAnimationFrame: callback => callback(), scrollTo() {}, addEventListener(type, handler) { activeFixture.listeners.set(type, [...(activeFixture.listeners.get(type) ?? []), handler]); }, removeEventListener(type, handler) { activeFixture.listeners.set(type, (activeFixture.listeners.get(type) ?? []).filter(value => value !== handler)); }, matchMedia: () => ({ matches: false }) };
 documentPort.defaultView=windowPort;
 documentPort.addEventListener=(...args)=>windowPort.addEventListener(...args);
 documentPort.removeEventListener=(...args)=>windowPort.removeEventListener(...args);
 windowPort.innerWidth=1280;windowPort.innerHeight=720;
 windowPort.getComputedStyle=()=>({width:"384px",getPropertyValue:()=>"0px",direction:activeFixture?.locale==="ar"?"rtl":"ltr"});
-const modalPort = { ensureModalDialog(dialog) { if (!dialog) return false; if (!dialog.open) { dialog.open = true; activeFixture.trace.push("open:" + dialog.attributes.class); } return true; }, requestDialogText: async () => null };
+const modalPort = { ensureModalDialog(dialog) { if (!dialog) return false; if (!dialog.open) { dialog.open = true; activeFixture.trace.push("open:" + dialog.attributes.class); const target=activeFixture.renderer.nodes.find(node=>Object.hasOwn(node.attributes,"autofocus")); if(target)target.focus(); } return true; }, requestDialogText: async () => null };
 
 async function loadActual(relative, literalImportDependencies = new Map()) {
   if (moduleCache.has(relative)) return moduleCache.get(relative);
@@ -255,7 +255,9 @@ class RendererPort {
       Object.setPrototypeOf(node,ElementPort.prototype);node.fixture=this.fixture;node.parentElement=owner;node.tagName=tag.toUpperCase();
       node.style={setProperty(){}};
       node.getBoundingClientRect=()=>({left:0,right:1280,top:0,bottom:44});
-      node.matches=selector=>selector===":popover-open"?this.openPopovers.has(node.attributes.id):selector.split(",").some(part=>part.trim()===tag||part.trim().startsWith(".")&&node.classList.contains(part.trim().slice(1)));
+      node.getClientRects=()=>node.isConnected?[node.getBoundingClientRect()]:[];
+      node.removeAttribute=name=>{delete node.attributes[name];};
+      node.matches=selector=>selector===":modal"?node.tag==="dialog"&&node.open:selector===":disabled"?Object.hasOwn(node.attributes,"disabled"):selector===":popover-open"?this.openPopovers.has(node.attributes.id):selector.split(",").some(part=>part.trim()===tag||part.trim().startsWith(".")&&node.classList.contains(part.trim().slice(1)));
       node.showPopover=()=>{this.openPopovers.add(node.attributes.id);node.handlers.toggle?.call(owner,{currentTarget:node,newState:"open"});};
       node.hidePopover=()=>{this.openPopovers.delete(node.attributes.id);node.handlers.toggle?.call(owner,{currentTarget:node,newState:"closed"});};
       node.click=()=>{
@@ -269,7 +271,7 @@ class RendererPort {
         if(!prevented&&target){if(target.matches(":popover-open"))target.hidePopover();else target.showPopover();}
       };
       node.querySelector = selector => this.query(owner, selector)[0] ?? null;
-      node.focus = () => this.fixture.trace.push("focus:" + (node.attributes.class ?? node.tag));
+      node.focus = () => { documentPort.activeElement=node; this.fixture.trace.push("focus:" + (node.attributes.class ?? node.tag)); };
       node.closest = () => null;
       node.close = () => { if (node.open) { this.fixture.trace.push("close:" + node.attributes.class); node.open = false; node.handlers.close?.call(owner, { target: node, currentTarget: node }); node.listeners?.close?.(); } };
       this.nodes.push(node);
@@ -304,6 +306,11 @@ class RendererPort {
     }
     host.updated?.(changedProperties);
     return this.markup;
+  }
+  containingDialog(component) {
+    const markup=this.markup, opening=markup.indexOf("<"+component.tag+" data-rendered-port=");
+    if(opening<0)return null;
+    return this.nodes.find(node=>node.tag==="dialog"&&markup.indexOf(node.full)<opening&&markup.indexOf("</dialog>",markup.indexOf(node.full))>opening)??null;
   }
   query(owner, selector) {
     if (selector.includes(",")) return selector.split(",").flatMap(part => this.query(owner, part.trim()));
@@ -359,6 +366,7 @@ export function fixture(kind = "create", options = {}) {
     append("DocumentArtifactEdited", { project_id: "p", document_id: artifact.documentId, artifact_id: id, content_ref: artifact.contentRef, revision, changed_fields: ["content_markdown"], ...extra });
   };
   f.store = {
+    subscribe: listener => { const listeners = f.listeners.get("store-change") ?? []; f.listeners.set("store-change", [...listeners, listener]); return () => f.listeners.set("store-change", (f.listeners.get("store-change") ?? []).filter(value => value !== listener)); },
     ui: { instrumentation: false },
     session: { get: () => ({ user: { userId: "owner", role: "user" }, provider: { configured: true, videoConfigured: true, audioConfigured: true, model: "fixture-model" }, capabilities: [...(state.canRead ? ["project.read", "project.author"] : []), ...(state.canRequest ? ["project.output.request"] : [])] }) },
     captureAuthorizationScope: () => state.canRead ? { key: state.authorization, shared: false } : null,
@@ -384,7 +392,8 @@ export function fixture(kind = "create", options = {}) {
   f.draw = () => { activeFixture = f; return f.renderer.draw(f.host); };
   f.flush = async () => { await new Promise(setImmediate); f.draw(); await Promise.resolve(); };
   f.changeDocument = id => { const previous = f.host.documentId; state.documentId = id; f.host.documentId = id; f.changed = new Map([["documentId", previous]]); };
-  f.emitAuthorization = () => { activeFixture = f; for (const listener of [...(f.listeners.get("forma-authorization-changed") ?? [])]) listener(); };
+  f.emitStoreChange = () => { activeFixture = f; for (const listener of [...(f.listeners.get("store-change") ?? [])]) listener(); };
+  f.emitAuthorization = () => { f.emitStoreChange(); activeFixture = f; for (const listener of [...(f.listeners.get("forma-authorization-changed") ?? [])]) listener(); };
   f.open = medium => f.host.openRender(medium, state.documentId, { current: () => state.required });
   f.createClose = async () => { await f.renderer.handler(f.host, "button", node => node.attributes["aria-label"] === f.i18n.system("Close"))(); f.draw(); };
   f.receipt = id => artifactGenerationInputInspection({ id, documentId: "A", kind: "short_story", modelId: "fixture", inputRef: "input-" + id, settings: {} }, { ["input-" + id]: JSON.stringify({ artifact_id: id, document_id: "A", project_id: "p", render: { submitted_prompt: "EXACT PRIVATE PROMPT " + id + "\n" + "Every immutable sentence stays complete.\n".repeat(130) }, approved_execution_id: "paid-" + id }) });

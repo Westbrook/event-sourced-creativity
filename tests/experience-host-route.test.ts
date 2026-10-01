@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { experienceHostRoute, hasExperienceHostSelector, isStandaloneExperienceRoute, parseExperienceHostRoute } from "../src/experiences/host-route.ts";
 
-test("standalone entry transport accepts only the catalog and closed two-output paths", () => {
-  for (const path of ["/experiences", "/experiences/image", "/experiences/slides"])
+test("standalone entry transport accepts only the catalog and closed supported-output paths", () => {
+  for (const path of ["/experiences", "/experiences/image", "/experiences/slides", "/experiences/short-story", "/experiences/scene", "/experiences/storyboard", "/experiences/audio", "/experiences/video", "/experiences/model3d"])
     for (const suffix of ["", "/", "?progress-report=return", "/?progress-report=return&resume=id"])
       assert.equal(isStandaloneExperienceRoute(path + suffix), true, path + suffix);
 });
 
 test("standalone entry transport leaves ordinary and malformed paths outside the full-page boundary", () => {
-  for (const path of ["/", "/document/Doc-1?experience=image", "/make/slides", "/library", "/experiences/video",
+  for (const path of ["/", "/document/Doc-1?experience=image", "/make/slides", "/library", "/experiences/unsupported",
     "/experiences/image/more", "/experiences//", "/experiences/Image", "/Experiences", "/experiences#", "/experiences#result",
     "/prefix/../experiences", "/experiences/./image", "/%65xperiences", "/experiences%2fimage", "/experiences\\image",
     "https://forma.local/experiences", "//forma.local/experiences", "/experiences\n", "/experiences?q=" + "x".repeat(4096)])
@@ -20,7 +20,7 @@ const draftId = "experience-draft-" + "a".repeat(64);
 const route = `/document/Doc-1/deck?experience=slides&experience-draft=${draftId}`;
 
 test("round trips both selectors and preserves the independent report return query", () => {
-  for (const output of ["image", "slides"] as const) {
+  for (const output of ["image", "slides", "short_story", "scene", "storyboard", "audio", "video", "model3d"] as const) {
     for (const documentRoute of ["/document/Doc-1", "/document/Doc-1/deck?progress-report=return"]) {
       const encoded = experienceHostRoute(documentRoute, output, draftId);
       const selection = parseExperienceHostRoute(encoded);
@@ -43,7 +43,7 @@ test("rejects nonlocal, malformed and oversized route authority", () => {
 test("rejects incomplete, unsupported, duplicated and unrelated selector parameters", () => {
   for (const invalid of [
     "/document/Doc-1?experience=image", `/document/Doc-1?experience-draft=${draftId}`,
-    route.replace("experience=slides", "experience=video"), route.replace(draftId, "experience-draft-invalid"),
+    route.replace("experience=slides", "experience=unsupported"), route.replace(draftId, "experience-draft-invalid"),
     route + "&experience=image", route + `&experience-draft=${draftId}`,
     route + "&progress-report=one&progress-report=two", route + "&grant=untrusted",
   ]) assert.equal(parseExperienceHostRoute(invalid), null, invalid);

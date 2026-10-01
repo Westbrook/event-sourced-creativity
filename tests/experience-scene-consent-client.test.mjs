@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { decodeExperienceBinding, ExperienceOutputBindingClient } from '../src/experiences/output-binding-client.ts';
 import { scenePreflightFixture } from './helpers/scene-output-fixture.mjs';
+import { experienceResponseTimeout } from '../src/experiences/output-transport-lifetime.ts';
 import { outputScenePreflightConfiguration } from '../worker/output-scene-preflight-contract.ts';
 
 function fixture() {
@@ -58,7 +59,7 @@ test('Scene explicit authorization survives 83.5s without repeat or automatic cr
     assert.deepEqual(JSON.parse(calls[1].init.body).sceneCostConsent, approval);
   } finally { client.dispose(); }
 });
-test('Scene authorization timeout is finite and reconciliation is GET only', async context => {
+test('Scene authorization timeout is finite and reconciliation is GET only', {timeout:5000}, async context => {
   context.mock.timers.enable({apis: ['setTimeout']});
   const f = fixture(), calls = [], origin = 'https://forma.invalid';
   const client = new ExperienceOutputBindingClient(f.identity, {origin, current: () => true, request: async (path, init) => {
@@ -70,7 +71,9 @@ test('Scene authorization timeout is finite and reconciliation is GET only', asy
   try {
     const shown = await client.read(), approval = {...f.preview, confirmed:true};
     const pending = client.command('authorize', shown, approval);
-    context.mock.timers.tick(119999); assert.equal(client.pending,true);
+    const deadline=experienceResponseTimeout({action:'authorize',output:'scene'});
+    assert.equal(deadline,240000,'the current explicit Scene admission wait is four minutes');
+    context.mock.timers.tick(deadline-1); assert.equal(client.pending,true);
     context.mock.timers.tick(1); await pending;
     assert.equal(calls[1].init.signal.aborted,true);
     assert.equal(client.state.status,'unavailable');

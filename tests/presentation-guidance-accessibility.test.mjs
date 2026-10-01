@@ -52,7 +52,10 @@ class ElementPort {
   hasAttribute(name) { return Object.hasOwn(this.attributes ?? {}, name); }
   setAttribute(name, value) { (this.attributes ??= {})[name] = String(value); }
   closest(selector) { if (selector === "forma-workspace") return this.fixture.workspace; let owner = this.parentElement; while (owner) { if (owner.tag === selector) return owner; owner = owner.parentElement; } return null; }
+  addEventListener(type, listener) { ((this.listeners ??= {})[type] ??= new Set()).add(listener); }
+  removeEventListener(type, listener) { this.listeners?.[type]?.delete(listener); }
   dispatchEvent(event) {
+    for (const listener of this.listeners?.[event.type] ?? []) listener.call(this, event);
     if (this.eventBindings?.[event.type]) this.eventBindings[event.type].call(this.parentElement, event);
     this.fixture.trace.push("event:" + event.type);
     return true;
@@ -100,8 +103,8 @@ async function loadActual(relative) {
   const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const exports = {}, registry = { get() { return true; }, define() {} };
   const require = specifier => dependencies.get(specifier) ?? {};
-  new Function("require", "exports", "customElements", "document", "window", "HTMLElement", "Element", "CSS", "location", "ResizeObserver", "getComputedStyle", "matchMedia", "InputEvent", code)(
-    require, exports, registry, documentPort, windowPort, ElementPort, ElementPort, { escape: String }, { origin: "https://fixture.invalid" }, class { observe() {} disconnect() {} }, () => ({ direction: activeFixture?.locale === "ar" ? "rtl" : "ltr", fontSize: "16px" }), () => ({ matches: true, addEventListener() {}, removeEventListener() {} }), class InputEvent {},
+  new Function("require", "exports", "customElements", "document", "window", "HTMLElement", "Element", "CSS", "location", "ResizeObserver", "getComputedStyle", "matchMedia", "InputEvent", "IntersectionObserver", code)(
+    require, exports, registry, documentPort, windowPort, ElementPort, ElementPort, { escape: String }, { origin: "https://fixture.invalid" }, class { observe() {} disconnect() {} }, () => ({ direction: activeFixture?.locale === "ar" ? "rtl" : "ltr", fontSize: "16px" }), () => ({ matches: true, addEventListener() {}, removeEventListener() {} }), class InputEvent {}, class { observe() {} disconnect() {} },
   );
   moduleCache.set(relative, exports);
   return exports;
@@ -173,6 +176,7 @@ class RendererPort {
   collect(markup, owner) {
     for (const [full, tag, raw] of markup.matchAll(/<([\w-]+)([^>]*)>/g)) {
       const parsed = this.attrs(raw), node = { tag, owner, ...parsed, full, open: Object.hasOwn(parsed.attributes, "open"), isConnected: true, value: parsed.properties.value ?? parsed.attributes.value ?? "", checked: parsed.properties.checked ?? false };
+      node.dataset = Object.fromEntries(Object.entries(node.attributes).filter(([key]) => key.startsWith("data-")).map(([key,value])=>[key.slice(5).replace(/-([a-z])/g,(_,char)=>char.toUpperCase()),value]));
       node.setAttribute = (name, value) => { node.attributes[name] = String(value); };
       node.addEventListener = (type, handler) => { (node.listeners ??= {})[type] = handler; };
       node.classList = { contains: name => String(node.attributes.class ?? "").split(/\s+/).includes(name) };

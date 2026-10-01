@@ -43,7 +43,7 @@ for(const [name,generate] of [['OpenAI',generateCreativeImage],['Fal',generateFa
 
 for(const [kind,shared] of [['generate',false],['preview',false],['generate',true]])test(`real ${kind} job (${shared?'shared':'personal'}): polling never forces delivery; explicit acknowledgment is exact-attempt and single-use`,async()=>{
   const f=await createSceneCostFixture(1,'visual',{shared}),saved=globalThis.fetch;let paid=0,plans=0;
-  globalThis.fetch=async(url,init)=>{
+  globalThis.fetch=async(url)=>{
     if(String(url).endsWith('/moderations'))return flagged();
     if(String(url).includes('/models'))return Response.json({data:[{id:'gpt-image-2'},{id:'gpt-image-2-sunburst'},{id:'gpt-5.6-terra'}]});
     if(String(url).endsWith('/responses'))return Response.json({id:`plan-${++plans}`,model:'gpt-5.6-terra',output_text:JSON.stringify({title:'Harbor',scene:'The keeper checks the harbor.',rationale:'Authored scene',palette:[],next_moves:[]}),usage:{input_tokens:1,output_tokens:1,total_tokens:2}});

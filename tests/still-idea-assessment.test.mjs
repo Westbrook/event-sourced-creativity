@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import {prepareIdeaAssessment,assessIdeas,ideaAssessmentAnswers} from '../worker/still-idea-assessment.ts';
 import {matchingIdeaAssessment} from '../src/still/idea-assessment.ts';
-import {IDEA_ACTIONS,IDEA_BENEFITS} from '../src/still/idea-actions.ts';
+import {IDEA_BENEFITS} from '../src/still/idea-actions.ts';
 import {createSceneCostFixture} from './helpers/scene-cost-fixture.mjs';
 import {fetchDecision} from '../src/still/decision-transport.ts';
 const abilities={author:true,generate:true,projectCreate:true,formats:['image','short_story']};

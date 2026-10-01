@@ -13,7 +13,7 @@ import { foldCanvasEvents } from "../src/canvas/model.ts";
 import { ASSISTANT_MESSAGES } from "../src/components/design-system/locales/assistant-messages.ts";
 import { isBlockKind } from "../src/model/block-types.ts";
 import { ASSISTANT_MODELS, type AssistantModel, type AssistantTask } from "../src/model/assistant-model-policy.ts";
-import { assistantSurfaceForRoute, type AssistantSurface } from "../src/model/assistant-route-policy.ts";
+import { assistantSurfaceForRoute } from "../src/model/assistant-route-policy.ts";
 import { ASSISTANT_STATE_EVENT_SQL } from "../src/model/assistant-event-views.ts";
 import type { MemoryAnswerPresentation } from "../src/model/memory-answer.ts";
 import { assistantActionEvents, normalizeAssistantActions, type AssistantContextAction } from "../src/model/assistant-proposals.ts";
@@ -31,9 +31,6 @@ import {
   requireCapability,
   requireConsent,
   requireUser,
-  settleBudget,
-  settleCostBudget,
-  type PilotUser,
   type BudgetReservationGuard,
 } from "./pilot-policy.ts";
 import { type AssistantProviderResult } from "./assistant-provider.ts";
@@ -56,7 +53,6 @@ import { AssistantContextReadWitness, assistantOwnSendProjectIndexGuard, assista
   type AssistantContextReadDescriptor, type AssistantOwnSendFootprint, type AssistantStructuredOwnSendFootprint } from "./assistant-context-source.ts";
 import { prepareOutputRequirementClientEvents } from "./output-requirement-event-guards.ts";
 import { appendProjectEvents, projectDocumentPublicationEvents, projectSourceProjectionCurrentAssertion, projectStructuredSourceProjectionCurrentAssertion, readProjectAssistantEventView, readProjectEventPage, readProjectRequestContext, resolveOwnerExecutionScope, synchronizeProjectScope } from "./project-access.ts";
-import { priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { EVENT_WRITE_COLUMNS, eventWriteBindings, makeEvent, serializeEvent, streamHead, uuidV7, type WorkerEnv, type WorkerExecutionContext } from "./runtime.ts";
 
 type AssistantReply = { key?: string; values?: Record<string, string | number>; text?: string };
@@ -793,16 +789,16 @@ async function prepareAssistantTurn(env: WorkerEnv, actor: AuthorizedAssistant, 
   const actions = input.actions ?? [];
   const actionContents = new Map(actions.map((action) => [action.id, uuidV7()]));
   const active = scope&&!scope.contextId?`EXISTS(SELECT 1 FROM organization_projects project
-    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status=\'active\'
-    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status=\'active\'
-    JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=project.owner_user_id AND member.status=\'active\' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
-    WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.owner_user_id=? AND project.status=\'active\')`:`EXISTS(SELECT 1 FROM project_context_sessions context
+    JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
+    JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status='active'
+    JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=project.owner_user_id AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
+    WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.owner_user_id=? AND project.status='active')`:`EXISTS(SELECT 1 FROM project_context_sessions context
       JOIN organization_projects project ON project.project_access_id=context.project_access_id AND project.organization_id=context.organization_id AND project.status='active'
       JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
       JOIN organization_memberships member ON member.organization_id=project.organization_id AND member.user_id=? AND member.status='active' AND member.accepted_at IS NOT NULL AND member.revoked_at IS NULL
       JOIN organization_memberships owner_member ON owner_member.organization_id=project.organization_id AND owner_member.user_id=project.owner_user_id AND owner_member.status='active' AND owner_member.accepted_at IS NOT NULL AND owner_member.revoked_at IS NULL
       LEFT JOIN project_memberships project_member ON project_member.project_access_id=project.project_access_id AND project_member.organization_id=project.organization_id AND project_member.project_id=project.project_id AND project_member.user_id=? AND project_member.status='active' AND project_member.revoked_at IS NULL
-      WHERE context.context_id=? AND context.principal_user_id=? AND context.revoked_at IS NULL AND context.expires_at>? AND context.expires_at>strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\') AND project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND(project.owner_user_id=? OR project_member.membership_id IS NOT NULL))`;
+      WHERE context.context_id=? AND context.principal_user_id=? AND context.revoked_at IS NULL AND context.expires_at>? AND context.expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND(project.owner_user_id=? OR project_member.membership_id IS NOT NULL))`;
   const activeBindings=scope?!scope.contextId?[scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,actor.principal.userId]:[actor.principal.userId,actor.principal.userId,scope.contextId,actor.principal.userId,createdAt,scope.projectAccessId,scope.organizationId,scope.projectId,scope.ownerUserId,actor.principal.userId]:[];
 
   const authority=assistantReadAuthorityGuard(actor);
@@ -1124,7 +1120,7 @@ function validAssistantAction(value: unknown, expectedKind: string): AssistantCo
 function activeAssistantProjectGuard(actor: AuthorizedAssistant, now: string) {
   const selected = actor.project;
   if (!selected) return { sql: "", bindings: [] as Array<string | number | null> };
-  if(!selected.contextId)return{sql:" AND EXISTS(SELECT 1 FROM organization_projects project JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status=\'active\' JOIN organization_memberships owner ON owner.organization_id=project.organization_id AND owner.user_id=project.owner_user_id AND owner.status=\'active\' AND owner.accepted_at IS NOT NULL AND owner.revoked_at IS NULL JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status=\'active\' WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.owner_user_id=? AND project.status=\'active\')",bindings:[selected.projectAccessId,selected.organizationId,selected.projectId,selected.ownerUserId,actor.principal.userId]};
+  if(!selected.contextId)return{sql:" AND EXISTS(SELECT 1 FROM organization_projects project JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active' JOIN organization_memberships owner ON owner.organization_id=project.organization_id AND owner.user_id=project.owner_user_id AND owner.status='active' AND owner.accepted_at IS NOT NULL AND owner.revoked_at IS NULL JOIN project_migration_states migration ON migration.project_access_id=project.project_access_id AND migration.organization_id=project.organization_id AND migration.owner_user_id=project.owner_user_id AND migration.status='active' WHERE project.project_access_id=? AND project.organization_id=? AND project.project_id=? AND project.owner_user_id=? AND project.owner_user_id=? AND project.status='active')",bindings:[selected.projectAccessId,selected.organizationId,selected.projectId,selected.ownerUserId,actor.principal.userId]};
   const sql = ` AND EXISTS(SELECT 1 FROM project_context_sessions context
     JOIN organization_projects project ON project.project_access_id=context.project_access_id AND project.organization_id=context.organization_id AND project.status='active'
     JOIN organizations organization ON organization.organization_id=project.organization_id AND organization.status='active'
@@ -1665,7 +1661,7 @@ export async function handleAssistantBillingReconciliation(request: Request, env
   try {
     const results = await env.DB.batch(statements);
     if (Number(results[0]?.meta.changes ?? 0) !== 1) return json({ error: "assistant_task_reconciliation_unavailable" }, 409);
-    if(!await env.DB.prepare(`SELECT 1 AS current FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND task.status=\'reconciling\' AND ${legacyAssistantNoChargeSql("task")}`).bind(taskId,actorUserId).first())
+    if(!await env.DB.prepare(`SELECT 1 AS current FROM assistant_specialist_tasks task WHERE task.task_id=? AND task.actor_user_id=? AND task.status='reconciling' AND ${legacyAssistantNoChargeSql("task")}`).bind(taskId,actorUserId).first())
       return json({error:"assistant_recorded_usage_cannot_be_reconciled_as_free",taskId,noAutomaticRetry:true},409);
     await releaseCostBudget(env, actorUserId, task.cost_reservation_id);
     await releaseBudget(env, actorUserId, task.token_reservation_id, { reason: "assistant_admin_verified_no_provider_charge" });

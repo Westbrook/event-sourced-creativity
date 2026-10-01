@@ -20,7 +20,7 @@ for(const shared of [false,true])test(`Still context uses real retained authorin
       return response;
     }
     assert.equal(String(url),'https://api.openai.com/v1/responses');providerCalls++;
-    const request=JSON.parse(init.body),payload=JSON.parse(request.input);
+    const request=JSON.parse(init.body);JSON.parse(request.input);
     return Response.json({id:'fixture-context-response',model:request.model,output_text:JSON.stringify({proposals:[{type:'subject',subtype:'Hero subject',label:'keeper',text:'keeper',source_excerpt:'keeper',participants:[]}]}),usage:{input_tokens:100,output_tokens:50,total_tokens:150}});
   };
   try {

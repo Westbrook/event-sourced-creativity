@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSceneCostFixture} from './helpers/scene-cost-fixture.mjs';
-import {ensureCreationSearchSchema} from '../worker/creation-search-index.ts';
-import {installCreationIndexSchema,claimIndexJob} from '../worker/creation-index-schema.ts';
+import {claimIndexJob} from '../worker/creation-index-schema.ts';
 import {runCreationMaintenance,eraseCreationIndex,publishIndexSource} from '../worker/creation-index-maintenance.ts';
 import {sameWorkerCreationSearch} from '../worker/creation-index-search.ts';
 import {sourcePassages,CREATION_REPRESENTATION as R,CREATION_VECTOR_PREFIX} from '../worker/creation-vectors.ts';

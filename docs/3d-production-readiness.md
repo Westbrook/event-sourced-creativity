@@ -29,6 +29,20 @@ remains unchanged. The earlier unpublished 19-statement local receipt is
 accepted only with its exact original identity and a successfully verified
 current schema; its history is never rewritten.
 
+## Current validation reconciliation — September 30, 2026
+
+The hold below records the original candidate's qualification scope. The current
+user-authorized validation-efficiency implementation releases the offline synthetic
+harness regressions for infrastructure qualification, including their full-file
+consumers. It does not release actual-account/archive, hosted migration-executor,
+GPU or physical/AT acceptance gates. The integration owner coordinates synthetic
+runs; QA-001 retains the missing human/hosted qualification. See
+[validation ownership](validation-qualification.md) and the machine-readable
+`historicalHolds` entry in `tests/validation-registry.json`.
+
+Current publishing preserves the already approved migration set. This work does
+not change historical SQL or use a local test to authorize a new migration.
+
 ## Qualification boundaries
 
 The disposable local D1 test uses Wrangler's pinned Miniflare/workerd binding,
@@ -49,11 +63,11 @@ English and Arabic. Its delayed save is explicitly an in-memory fixture port.
 It does not replace the existing account/archive-based native suite, durable
 persistence qualification or hardware GPU testing.
 
-All ten previously held Source, Scene and private-media test families remain
-held, including equivalent behavior in other files. In particular, whole
+At the original candidate checkpoint, all ten Source, Scene and private-media
+test families were held, including equivalent behavior in other files. In particular, whole
 `model3d-document-jobs`, `model3d-store-integration` and `model3d-generation-ui`
-files require the owning task's scope release. Do not substitute filtered tests
-or a broad test glob. Preserve the established full native account/archive
+files required the owning task's scope release. The current synthetic release is
+recorded above; it does not permit filtered substitutes for native acceptance. Preserve the established full native account/archive
 gate, its original data and unchanged visibility observer.
 
 Build, localization, generated-component metadata, TypeScript and the explicitly

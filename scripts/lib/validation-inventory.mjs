@@ -25,9 +25,9 @@ export function dependencies(root, file, seen = new Set()) {
   if (seen.has(file) || !existsSync(resolve(root, file))) return seen;
   seen.add(file);
   const text = readFileSync(resolve(root, file), 'utf8');
-  for (const match of text.matchAll(/["'`]((?:\.{1,2}\/|(?:src|worker|tests|scripts|db|build)\/)[^"'`\s${}]+)["'`]/gu)) {
+  for (const match of text.matchAll(/["'`]((?:\.{1,2}\/|\/?(?:src|worker|tests|scripts|db|build)\/)[^"'`\s${}]+)["'`]/gu)) {
     const name = match[1].split('?')[0];
-    const base = name.startsWith('.') ? resolve(root, dirname(file), name) : resolve(root, name);
+    const base = name.startsWith('.') ? resolve(root, dirname(file), name) : resolve(root, name.replace(/^\//u, ""));
     if (!base.startsWith(root + '/')) continue;
     const target = [base, ...(!extname(base) ? ['.ts', '.mjs', '.js'].map(s => base + s) : [])].find(p => existsSync(p) && /\.(?:ts|mjs|js)$/u.test(p));
     if (target) {
@@ -89,6 +89,10 @@ export function verifyInventory(root, registry) {
   }
   for (const [name, command] of Object.entries(current.commands)) if (registry.commands[name] !== command) errors.push(`Command changed/unregistered: ${name}`);
   for (const name of Object.keys(registry.commands)) if (!current.commands[name]) errors.push(`Removed command: ${name}`);
+  for (const file of current.files) {
+    if (!registry.execution?.[file]?.owner || !registry.execution[file].command) errors.push(`Missing execution owner/command: ${file}`);
+    for (const config of registry.execution?.[file]?.configs ?? []) if (!current.configs.includes(config)) errors.push(`Missing browser config: ${config}`);
+  }
   for (const [file, lane] of Object.entries(registry.tests)) if (!['source', 'runtime', 'artifact', 'browser'].includes(lane)) errors.push(`Invalid lane: ${file}`);
   return errors;
 }

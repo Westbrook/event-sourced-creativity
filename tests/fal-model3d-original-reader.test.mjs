@@ -88,7 +88,7 @@ test("missing, foreign, pending and altered original receipt/preparation refuse 
     o => delete o.submission.providerRequestId, o => o.submission.providerRequestId = "../foreign", o => o.submission.clientRequestId = "",
     o => o.submission.provider = "openai", o => o.submission.model = "foreign", o => o.submission.requestDigest = "0".repeat(64),
     o => o.prepared.requestDigest = "0".repeat(64), o => o.prepared.settings.tier = "Gen-2",
-    o => { o.prepared.referenceInputs = Array(1); }, o => { Object.defineProperty(o.submission, "providerRequestId", { enumerable: true, get() { assert.fail("accessor invoked"); } }); },
+    o => { o.prepared.referenceInputs = Array(1); }, o => { Object.defineProperty(o.submission, "providerRequestId", { enumerable: true, get() { return assert.fail("accessor invoked"); } }); },
     o => { o.submission.status = "completed"; o.submission.costMicrousd = 0; o.submission.totalTokens = 0; }];
   for (const change of changes) {
     const f = await fixture(); change(f.original);

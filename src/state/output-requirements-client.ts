@@ -85,7 +85,7 @@ const message = (body: unknown, fallback: string) => {
 
 /** Prefer the server's UTF-8 name while refusing paths, controls, and directional spoofing. */
 export function outputDownloadFilename(disposition: string | null): string {
-  const safe = (value: string | undefined) => value && value.length <= 180 && value.trim() === value && !/[\/\\\p{Cc}\p{Cf}]/u.test(value) && !/^\.{1,2}$/.test(value) ? value : null;
+  const safe = (value: string | undefined) => value && value.length <= 180 && value.trim() === value && !/[/\\\p{Cc}\p{Cf}]/u.test(value) && !/^\.{1,2}$/.test(value) ? value : null;
   const extended = disposition?.match(/(?:^|;)\s*filename\*\s*=\s*UTF-8'[^']*'([^;]+)/i)?.[1]?.trim();
   if (extended) {
     try { const name = safe(decodeURIComponent(extended)); if (name) return name; }

@@ -13,7 +13,6 @@ const [domain, planning, harness, requirements] = await Promise.all([
 ]);
 const { binding, controllerFixture, deferred, eventHandlers, handler, loadController, outputFixtureFocusDocument, region, submitEvent, templates } = harness;
 const tagged = (part, key) => part.values.some((value) => typeof value === "string" && value.includes(`output.delivery.${key}`));
-const attributes = (part, key) => part.values.filter((value, index) => part.strings[index].trimEnd().endsWith(`${key}=`));
 const scope = "fixture-actor:project:1\u0000doc-a";
 
 function configure(snapshot) {

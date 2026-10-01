@@ -34,7 +34,7 @@ async function exactViewer({ approved = false, shared = true, actor = "reviewer"
   const f = artifactViewerFixture("create", { artifact: true, locale });
   const completed = f.state.events.find((event) => event.type === "DocumentRenderCompleted");
   completed.payload.artifact_kind = kind;
-  if (retainedSlide) {
+  if (retainedSlide || kind === "slides") {
     assert.equal(kind, "slides");
     const items = [{ id: "native-slide-a", title: "Exact retained slide", body: "Exact retained evidence", notes: "", image_prompt: "", context_group_ids: [] }];
     completed.payload.items = items;
@@ -148,7 +148,7 @@ test("the governed artifact dialog exposes reversible focused viewing for every 
   assert.match(artifacts, /@cancel=\$\{this\.#cancelViewer\}/);
   assert.match(artifacts, /#cancelViewer\(event:Event,exitFocus=true\)\{/);
   assert.match(artifacts, /if\(this\.#activeId&&Boolean\(this\.#viewerCurrent\?\.\(\)\)&&this\.#editingId===this\.#activeId\)\{/, "ordinary dismissal belongs only to the current correction");
-  assert.match(artifacts, /if\(!exitFocus\|\|!this\.#viewerFocused\)return true;\s*event\.preventDefault\(\);event\.stopPropagation\(\);this\.#setViewerFocus\(false\);return false;/, "without a correction, native Escape still exits focus before closing");
+  assert.match(artifacts, /if\(!exitFocus\|\|!this\.#viewerFocused\)\{this\.#retireSelectedOutputShare\(\);return true;\}\s*event\.preventDefault\(\);event\.stopPropagation\(\);this\.#setViewerFocus\(false\);return false;/, "without a correction, native Escape still exits focus before closing");
   assert.match(artifacts, /class="icon-button artifact-viewer-focus-toggle"[^>]*aria-label=\$\{focusLabel\}[^>]*aria-pressed=\$\{this\.#viewerFocused\}/);
   assert.match(artifacts, /this\.i18n\.system\(this\.#viewerFocused\?"Exit focus":"Focus view"\)/);
   assert.match(artifacts, /\?disabled=\$\{editing\}/, "focused viewing must never strand unsaved direct edits");
@@ -248,8 +248,15 @@ test("review, production disclosure, private inputs, and exact export gates rema
   assert.match(artifacts, /class="artifact-review-status artifact-review-|class=\$\{`artifact-review-status artifact-review-/);
   for (const locale of ["en", "fr", "ar", "ja"]) for (const kind of ["short_story", "slides"]) {
     const review = await exactViewer({ locale, kind });
-    const details = review.renderer.ownNodes(review.host, "details").find((node) => node.classList.contains("artifact-viewer-details"));
-    assert.ok(details); assert.equal(Object.hasOwn(details.attributes, "open"), false, "production evidence starts closed");
+    if (kind === "slides") {
+      const evidence=review.renderer.query(review.host,"forma-ui-popover").find(node=>node.attributes.class==="artifact-viewer-evidence-popover");
+      assert.ok(evidence);
+      const panel=review.renderer.ownNodes(evidence,"section").find(node=>node.attributes.popover==="auto");
+      assert.ok(panel);assert.equal(panel.matches(":popover-open"),false,"production evidence starts closed");
+    } else {
+      const details = review.renderer.ownNodes(review.host, "details").find((node) => node.classList.contains("artifact-viewer-details"));
+      assert.ok(details); assert.equal(Object.hasOwn(details.attributes, "open"), false, "production evidence starts closed");
+    }
     assert.ok(review.renderer.markup.includes(review.exactContentSha256), "the actual retained byte hash is inspectable");
     const reviewControl = assertIntentControl(review, { intent: "review", action: "review" });
     assertExportGate(review, false, kind);
@@ -435,7 +442,12 @@ function actualSlideExport(f) {
   assert.ok(end >= start);
   const contents = f.renderer.markup.slice(start, end), bodyStart = contents.indexOf(body.full);
   assert.ok(bodyStart >= 0);
-  assert.match(contents.slice(0, bodyStart), /^\s*<span>[^<]*<\/span>\s*$/u, "the actions body is directly in the current footer");
+  const beforeActions=contents.slice(0,bodyStart);
+  assert.match(beforeActions, /^\s*<span>[^<]*<\/span>/u);
+  const evidence=f.renderer.query(f.host,"forma-ui-popover").filter(item=>item.attributes.class==="artifact-viewer-evidence-popover");
+  assert.equal(evidence.length,1,"Slides has one separate production-evidence disclosure");
+  assert.match(beforeActions, /class="artifact-viewer-evidence-popover"/u);
+  assert.ok(beforeActions.trimEnd().endsWith("</forma-ui-popover>"),"evidence ends before the direct History actions");
   const direct = contents.slice(bodyStart + body.full.length).trim();
   assert.ok(direct.startsWith(history.full), "the actual History control is directly in that actions body");
   assert.match(direct.slice(history.full.length), /^[^<]+<\/button>\s*<\/div>$/u,

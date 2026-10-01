@@ -108,12 +108,19 @@ export async function loadController(Base, bindings = {}) {
       store.outputRequirements.withholdCommandBody = receipts.withholdCommandBody.bind(receipts);
     }
   } }
+  const projectIdeas = await import(pathToFileURL(resolve(sourceRoot, "src/model/project-ideas.ts")).href);
+  const recordedPackage = await import(pathToFileURL(resolve(sourceRoot, "src/components/output-recorded-package.ts")).href);
   const globals = {
     FormaElement: SourceOwnerBase, html: template, nothing: null,
+    // Template-only scenarios do not report viewport visibility. Browser tests
+    // own IntersectionObserver delivery and automatic visible-image reads.
+    IntersectionObserver: class { observe() {} disconnect() {} },
     repeat: (rows, _key, render) => [...rows].map(render),
     compileOutputPlan: () => { throw new Error("This boundary test must not compile a second fake output plan."); },
     customElements: { get: () => true },
     window: { addEventListener() {}, removeEventListener() {}, dispatchEvent() {} },
+    ...recordedPackage,
+    ...projectIdeas,
     ...deliveryMessages,
     ...recovery,
     ...planning,
@@ -245,6 +252,9 @@ export async function controllerFixture(overrides = {}) {
       this.i18n = { locale: "en", direction: "ltr", number: String, system: String, t: (key, fallback, values = {}) =>
         `${key} ${fallback.replace(/\{(\w+)\}/gu, (_, name) => String(values[name] ?? ""))}` };
     }
+    addEventListener(type, listener) { ((this.listeners ??= {})[type] ??= new Set()).add(listener); }
+    removeEventListener(type, listener) { this.listeners?.[type]?.delete(listener); }
+    querySelectorAll() { return []; } // This fixture renders templates, not mounted preview regions.
     requestUpdate() {}
     connectedCallback() { this.isConnected = true; }
     disconnectedCallback() { this.isConnected = false; }

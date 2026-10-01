@@ -40,6 +40,7 @@ export type ExperiencePlanIdentity = Readonly<{
 const safeId = (value: unknown): value is string => typeof value === "string"
   && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,147}$/u.test(value);
 const identity = (value: unknown): value is string => typeof value === "string"
+  // eslint-disable-next-line no-control-regex -- Reject literal control characters at the input boundary.
   && value.trim().length > 0 && value === value.trim() && !/[\u0000-\u001f\u007f]/u.test(value);
 const record = (value: unknown): value is Record<string, unknown> => value !== null
   && typeof value === "object" && !Array.isArray(value)
