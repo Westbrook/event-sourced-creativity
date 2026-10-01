@@ -1027,7 +1027,7 @@ test("D337 recipe entry, draft and retained card share the direct Document pane 
 
 test("D337 delivery inset uses the same logical parent rule at all existing postures", () => {
   const { rule, selector } = d337OutputPaneGutter();
-  const outputSibling = ".output-column > :is(forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form)";
+  const outputSibling = ".output-column > :is(.document-result-generation, forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form)";
   assert.ok(rule.selectors.includes(outputSibling), "the other original pane consumers remain in their unchanged shared rule");
   assert.equal(rule.selectors.length, 2); assert.equal(rule.parent.type, "root",
     "pane spacing is not restricted to a phone, pointer, direction or recipe-state condition");
