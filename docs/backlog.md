@@ -766,6 +766,18 @@ historical suite, paid provider work or live-account acceptance is claimed.
 Evidence is retained under `outputs/creator-alignment-shared/` and the managed
 validation receipts. Hosted activation and user review remain distinct.
 
+### Compact Library navigation — 2026-10-01
+
+**Implemented and qualified; publication pending — follow-up to published567.** Restore the shared
+bottom primary navigation for compact Library pages and keep Ask Forma in a
+persistent dock cell. Remove the content-side gutter fallback at this posture;
+retain project identity above the content and the short-landscape side rail.
+Qualification extends the registered scroll lane down to 320px, including the
+664px screenshot width, both writing directions, pointer/touch, native keyboard
+focus and opening/closing assistance. All 52 browser cases and 268 focused
+source/runtime tests pass, along with type checking, lint and production build.
+Publication and review remain separate.
+
 ### Library scroll stability — 2026-10-01
 
 **Done — published567; user review pending.** [Release receipt](evidence/library-scroll-release-2026-10-01.json). Main `c17ee218` and release `fad858ba` preserve the published566 sidebar changes. On wide Creator

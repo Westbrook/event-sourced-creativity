@@ -5,7 +5,7 @@ import {installSyntheticNetwork} from './helpers/synthetic-network.mjs';
 // focus and opening/closing guidance do not submit a request or write account data.
 for(const touch of [false,true]) test.describe(touch?'touch':'pointer',()=>{
   test.use({hasTouch:touch});
-  for(const width of [768,1024,1280,1715,2048]) test(`Library width survives scroll at ${width}`,async({page,context,baseURL},testInfo)=>{
+  for(const width of [320,360,390,664,681,767,768,1024,1280,1715,2048]) test(`Library width survives scroll at ${width}`,async({page,context,baseURL},testInfo)=>{
     await installSyntheticNetwork(context,baseURL);
     await page.setViewportSize({width,height:925});
     await page.goto('/library?document=doc-atmosphere',{waitUntil:'domcontentloaded'});
@@ -18,6 +18,8 @@ for(const touch of [false,true]) test.describe(touch?'touch':'pointer',()=>{
       return {scroll:scrollY,padding:getComputedStyle(document.querySelector('#main-content')).paddingInlineEnd,
         body:rect('.library-body'),header:rect('.page-header--library'),card:rect('.library-output'),
         nav:rect('.application-task-navigation'),topbar:rect('.topbar'),button:rect('.forma-assistant-launcher'),
+        navPosition:getComputedStyle(document.querySelector('.application-task-navigation')).position,
+        main:rect('#main-content'),viewportHeight:innerHeight,
         headerPosition:getComputedStyle(document.querySelector('.page-header--library')).position,
         overflow:document.documentElement.scrollWidth-innerWidth,lane:document.querySelector('forma-assistant-panel').dataset.browseLane};
     });
@@ -33,7 +35,10 @@ for(const touch of [false,true]) test.describe(touch?'touch':'pointer',()=>{
       expect(sample.button.left).toBeGreaterThanOrEqual(sample.nav.left);expect(sample.button.right).toBeLessThanOrEqual(sample.nav.right);
       expect(sample.button.top).toBeGreaterThanOrEqual(Math.max(0,sample.nav.top,sample.topbar.bottom));
       expect(sample.button.bottom).toBeLessThanOrEqual(sample.nav.bottom);
-      if(sample.headerPosition==='sticky')expect(sample.header.top).toBeGreaterThanOrEqual(sample.nav.bottom);
+      if(width<768){
+        expect(sample.navPosition).toBe('fixed');expect(sample.nav.bottom).toBeCloseTo(sample.viewportHeight,1);
+        expect(sample.main.width).toBeCloseTo(width,1);
+      }else if(sample.headerPosition==='sticky')expect(sample.header.top).toBeGreaterThanOrEqual(sample.nav.bottom);
     };
     verify(initial);
     await page.mouse.move(width/2,700);
@@ -51,7 +56,7 @@ for(const touch of [false,true]) test.describe(touch?'touch':'pointer',()=>{
     await page.keyboard.press('Enter');await expect(page.locator('.forma-assistant-panel[role="dialog"]')).toBeVisible();
     const open=await page.locator('.library-body').boundingBox();expect(open.x).toBeCloseTo(initial.body.x,1);expect(open.width).toBeCloseTo(initial.body.width,1);
     await page.keyboard.press('Escape');await expect(launcher).toBeFocused();await frame();verify(await measure());
-    if(width===1715&&!touch)await page.screenshot({path:testInfo.outputPath('library-stable-navigation.png')});
+    if([360,664,1715].includes(width)&&!touch)await page.screenshot({path:testInfo.outputPath('library-stable-navigation.png')});
     await testInfo.attach('scroll-widths',{contentType:'application/json',body:JSON.stringify({locale:testInfo.project.use.locale,touch,observations,scope:'Fictional renderer and native scroll/focus; no production or provider acceptance.'})});
   });
 });

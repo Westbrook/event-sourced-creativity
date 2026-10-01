@@ -64,8 +64,7 @@ for (const target of pages) test(target.name + ' shares the Creator leading gutt
     await page.keyboard.press('Enter');
     await expect(button).toHaveAttribute('aria-expanded','true');
     const panel=page.locator('.resource-memory-panel');await expect(panel).toBeVisible();
-    // Compact Library reserves a trailing navigation rail; compare its content
-    // column, not the full viewport. Both panel edges must match search.
+    // The disclosure stays aligned with the search content above the bottom dock.
     const panelBounds=await panel.boundingBox(), searchBounds=await page.locator(target.body).boundingBox();
     expect(panelBounds.x).toBeCloseTo(searchBounds.x,0);
     expect(panelBounds.x+panelBounds.width).toBeCloseTo(searchBounds.x+searchBounds.width,0);
