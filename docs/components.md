@@ -25,7 +25,7 @@ This does not call a provider or modify history. Slides scale their complete
 native layout inside the common frame; text/audio/3D summaries remain icon and
 copy previews. Full image and artifact viewers retain their original presentation.
 Thumbnail sizing stays scoped to Library previews. The ArtifactSummary catalog
-example mounts the real component with fictional inline artwork.
+example illustrates the frame and focal placement with isolated fictional artwork.
 
 Before creating an interface, inspect the live reference, this guide,
 `DESIGN.md`, and `custom-elements.json`. Reuse an exact production component
