@@ -106,10 +106,13 @@ export function renderApplicationPatternPreview(tag: string, messages: PatternMe
       </figure>`;
 
     case "forma-artifact-summary":
-      return html`<div class="component-pattern component-pattern-artifact" role="group" aria-label=${t("pattern.artifact", "Example story outcome")}>
-        <div class="component-pattern-actions"><forma-ui-icon name="story" .label=${t("sample.story", "Written story")}></forma-ui-icon><forma-ui-badge .label=${t("sample.story", "Story")} tone="accent"></forma-ui-badge></div>
-        <h4>${t("pattern.quietBeginning", "A quieter beginning")}</h4>
-        <p>${t("pattern.quietDetail", "A short opening about finding space for the unexpected.")}</p>
+      return html`<div class="library-output component-pattern" role="group" aria-label=${t("pattern.referenceImage", "Authorized source reference with its focal point in the upper right")}>
+        <div class="library-artifact-open"><div class="artifact-summary" style="aspect-ratio:3/2;min-height:0">
+          <div class="artifact-summary-frames" style="min-height:0">
+            ${sampleArtwork(t("pattern.referenceImage", "Authorized source reference with its focal point in the upper right"), "reference")}
+            ${sampleArtwork(t("pattern.outputImage", "Soft blue generated concept with warm morning light"), "output")}
+          </div>
+        </div></div>
       </div>`;
 
     case "forma-prompt-fan-visual":

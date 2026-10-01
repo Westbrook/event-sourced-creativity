@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import { documentArtifactDefinition, type DocumentArtifact } from "../model/document-artifacts";
+import { positionImageAtFocalPoint } from "../model/image-focus";
 import { focalPointCss } from "../model/focal-point";
 import { icon } from "./icons";
 import { FormaPresentationalElement } from "./presentational-element";
@@ -12,15 +13,19 @@ export class FormaArtifactSummary extends FormaPresentationalElement {
   static properties = { artifact: { attribute: false }, compact: { type: Boolean } };
   artifact?: DocumentArtifact; compact = false;
 
+  private readonly coverLoaded = { capture: true, handleEvent: (event: Event) => {
+    if (event.target instanceof HTMLImageElement) positionImageAtFocalPoint(event.target);
+  } };
+
   override render() {
     const artifact = this.artifact;
     if (!artifact) return nothing;
     const definition = documentArtifactDefinition(artifact.kind);
     const first = artifact.items[0];
     const media = artifact.kind === "video" && artifact.mediaUrl
-      ? html`<forma-video-cover .source=${artifact.mediaUrl} .label=${artifact.title}></forma-video-cover>`
+      ? html`<forma-video-cover .source=${artifact.mediaUrl} .label=${artifact.title} @load=${this.coverLoaded}></forma-video-cover>`
       : artifact.kind === "storyboard" && artifact.items.some((item) => item.mediaUrl)
-        ? html`<div class="artifact-summary-frames">${artifact.items.filter((item) => item.mediaUrl).slice(0, 4).map((item) => html`<img src=${item.mediaUrl!} alt=${item.title} loading="lazy" decoding="async" style=${focalPointCss(item.focalPoint)}>` )}</div>`
+        ? html`<div class="artifact-summary-frames">${artifact.items.filter((item) => item.mediaUrl).slice(0, 4).map((item) => html`<img src=${item.mediaUrl!} alt=${item.title} loading="lazy" decoding="async" style=${focalPointCss(item.focalPoint)} @load=${(event: Event) => positionImageAtFocalPoint(event.currentTarget as HTMLImageElement, item.focalPoint)}>` )}</div>`
         : artifact.kind === "slides" && first
           ? html`<forma-presentation-slide .item=${{ title: first.title, body: first.body, notes: first.notes, image_prompt: first.imagePrompt, slide: first.slide }} .presentation=${artifact.presentation} .index=${0} .total=${artifact.itemCount} .compact=${true}></forma-presentation-slide>`
           : html`<div class="artifact-summary-copy"><span aria-hidden="true">${icon(artifact.kind === "audio" ? "audio" : artifact.kind === "scene" ? "scene" : "story")}</span><p>${artifact.summary}</p></div>`;

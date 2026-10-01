@@ -1554,7 +1554,7 @@ export const FORMA_DEFAULT_MESSAGES: FormaMessageCatalog = {
   "component.forma-area-navigation.title": "Area navigation",
   "component.forma-video-cover.title": "Video cover",
   "component.forma-video-cover.summary": "Display a saved WebP cover for a video.",
-  "component.forma-artifact-summary.summary": "Summarize a document-derived story, presentation, storyboard, or motion outcome.",
+  "component.forma-artifact-summary.summary": "Summarize creative outcomes with focal-aware image previews.",
   "component.forma-artifact-summary.title": "Artifact summary",
   "component.forma-collection-tree.summary": "Browse and manage authored project collections and their contextual actions.",
   "component.forma-collection-tree.title": "Collection tree",

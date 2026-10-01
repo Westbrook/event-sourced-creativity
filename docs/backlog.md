@@ -28,7 +28,7 @@ TODO. Ongoing work in other branches must be reconciled before reimplementing it
 
 | ID | Status | Owner | Remaining work / next action | Done when |
 | --- | --- | --- | --- | --- |
-| LIB-THUMB-001 | Done — qualified release; publication tracked in report | Library thumbnail task | Responsive 3:2 image frames and focal-aware cover cropping for standalone and fan previews. See [component guidance](components.md) and [browser receipt](evidence/library-thumbnails-browser-2026-10-01.json). Publication is tracked in the independent project report; user review remains separate. | Typecheck, lint, 10 focal-point tests, 5 release-preflight tests, production build and Chromium 151 checks against that build at 1440/768/390/320px pass; full-image dialog retains contain. |
+| LIB-THUMB-001 | Done — cross-media qualification; publication tracked in report | Library thumbnail task | One responsive 3:2 frame for images, fans, video covers, storyboards and native artifact summaries. Raster previews use saved or locally calculated focal points with cover cropping. See [component guidance](components.md). | Chromium checks at 1440/768/390/320px cover frame parity, video placeholders, saved/local focal placement, retained WebP covers, and uncropped full-image dialogs. Publication and user review remain distinct in the report. |
 
 ## Validation efficiency
 
@@ -748,6 +748,27 @@ match; the existing 41 approved migrations are preserved. See the
 [release receipt](evidence/creator-shared-gutters-release-2026-10-01.json).
 
 The
+original document-only alignment omitted Library and other Creator browse
+pages. Creator page containers now supply the same bounded pane inset to
+Projects, project overview, Library, Activity and Deliver. Shell identity,
+project rail and desktop navigation follow the shared rule; Library Resource
+Memory aligns with the heading and search, including its expanded panel.
+
+Verification: types/full lint, all 45 responsive source tests, and the registered
+`creator-gutters` Playwright lane pass. Its eight tests cover four actual pages
+(Library, Projects, project overview and Document), nine viewports and English/
+Arabic (72 geometry cases), plus native Library disclosure keyboard/focus checks.
+Activity and Deliver inherit the shared container rule but were not separately
+browser-replayed. The first run exposed an incorrect viewport-width expectation
+in the new test: compact Library reserves a trailing navigation rail. The final
+assertion compares both panel edges with search in the content column. No full
+historical suite, paid provider work or live-account acceptance is claimed.
+Evidence is retained under `outputs/creator-alignment-shared/` and the managed
+validation receipts. Hosted activation and user review remain distinct.
+
+### Shared Creator page gutters — 2026-10-01
+
+**Implementation complete; publication authorized and in preparation.** The
 original document-only alignment omitted Library and other Creator browse
 pages. Creator page containers now supply the same bounded pane inset to
 Projects, project overview, Library, Activity and Deliver. Shell identity,

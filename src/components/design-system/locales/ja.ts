@@ -2019,7 +2019,7 @@ const messages: Record<string, string> = {
   "component.forma-reference-image.summary": "参照画像を構図や利用権限とともに表示します。",
   "component.forma-video-cover.title": "動画カバー",
   "component.forma-video-cover.summary": "動画の保存済みWebPカバー画像を表示します。",
-  "component.forma-artifact-summary.summary": "成果物の内容、ステータス、関連するメタデータを要約します。",
+  "component.forma-artifact-summary.summary": "焦点に合わせた画像プレビューでクリエイティブな成果を要約します。",
   "component.forma-prompt-fan-visual.summary": "複数のクリエイティブな方向性を視覚的に比較します。",
   "component.forma-prompt-fan-review.summary": "クリエイティブな方向性を確認して選択できます。",
   "component.forma-presentation-slide.summary": "プロジェクトのコンテンツから作成されたスライドを表示します。",
