@@ -24,6 +24,12 @@ TODO. Ongoing work in other branches must be reconciled before reimplementing it
   newly discovered work here and link its detailed issue or guide. Keep proposals
   separate from accepted delivery requirements in the linked decision records.
 
+## Library thumbnails
+
+| ID | Status | Owner | Remaining work / next action | Done when |
+| --- | --- | --- | --- | --- |
+| LIB-THUMB-001 | Done — local implementation; publication separate | Library thumbnail task | Responsive 3:2 image frames and focal-aware cover cropping for standalone and fan previews. See [component guidance](components.md) and [browser receipt](../outputs/library-thumbnails/receipt.json). Hosted activation and user review remain unverified. | Typecheck, 10 focal-point tests, manifest check and Chromium 151 checks at 1440/768/390/320px pass; full-image dialog retains contain. |
+
 ## Validation efficiency
 
 | ID | Status | Owner | Remaining work / next action | Done when |
@@ -144,6 +150,7 @@ remain in Git and the independent report.
 
 | Completed scope | Closure evidence and boundary |
 | --- | --- |
+| UI-RESULTS-GUTTERS · Results column alignment | **Done locally, 2026-10-01; user review and deployment pending.** Generation controls now share the heading/media pane inset, with no extra Image-button offset. [Spacing rule](../src/responsive-foundation.css) and [responsive contracts](../tests/responsive-product.test.mjs). Typecheck, scoped lint, inventory and eight isolated Playwright geometry cases pass (320–1000px, LTR/RTL). Responsive suite: 44/45 pass; existing D428 narrow-container assertion conflicts with the unchanged rendered-posture selector. No full application browser journey or release claimed. |
 | ST-MOTION-001 · Still toolbar adoption | **Done — reviewed, integrated and deployed as Sites552, 2026-09-29.** Cushion, Infusion and Thread retain their selected behavior. Build/typecheck/changed-file lint,42 focused unit checks and11 app browser checks pass. The hosted release preserves restored550 backend, workspace access and41 approved migrations. [Contract and release receipt](still-toolbar-motion-2026-09-28.md). Live user review remains separate; no paid provider execution. |
 | Eight technical live journeys; ordinary signed-in custody, authorization, caps and original-result recovery | [Acceptance account](forma-mini-app-original-plan-status-2026-09-17.md#requirement-to-evidence-account). Image, Short story, Scene, Slides, Storyboard, Video, Audio and text-only 3D retain generated results, same-Document editing/reopening and downloaded files. Do not repeat them. |
 | Bounded audit repairs and governed maintenance | Memory/harness repairs in 369; review/governance/UI/localization/startup work through 374; image-mode 3D recovery in 375; upload lifetime in 389; subsequent fork/Project, focus, Slides and current Image model/API repairs included by R22/421. Exact scope is in the [acceptance account](forma-mini-app-original-plan-status-2026-09-17.md#requirement-to-evidence-account). |
@@ -712,3 +719,28 @@ schema effects were installed through the fixed atomic D1 repair instead.
 [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md) retain
 separate service-dependent and activation work. No repair is still pending for
 these31 journaled migrations.
+
+
+### Creator document leading-edge alignment — 2026-10-01
+
+**Implemented locally; user review pending.** Shell and project identity marks,
+document headings, Studio family labels, pane-switch labels, and context headings
+use the existing bounded pane gutter (16–20px at the default font size). Rails
+retain their own column; compact bottom navigation retains equal-width cells.
+The short-landscape document title retains clearance for its project toggle.
+
+Verification: TypeScript and the 161-element CEM check passed; Playwright measured
+18 English/Arabic width/height cases, native Tab focus, and page overflow with
+synthetic data. The responsive source suite passed 44/45: D428 still expects
+a container-query task-strip rule already absent from HEAD; reconcile that
+assertion with the existing measured-posture owner separately. Screenshots and
+geometry receipts are in `outputs/creator-alignment/`. No hosted activation.
+
+The document context/results heading rows now share a minimum control-height
+title area and top alignment, including when titles or result actions wrap.
+This completes the header-to-column spacing follow-up locally. TypeScript,
+scoped workspace lint, and 14 actual-renderer Playwright cases passed across
+320–1600px and short landscape, English/Arabic, including narrow-pane switching.
+Screenshots and geometry are in `outputs/workbench-spacing/`; the same pre-existing
+D428 source assertion remains the only failure (44/45 pass). No deployment or
+live-account acceptance is claimed.

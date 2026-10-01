@@ -89,12 +89,6 @@ forma-generation-actions,
   max-inline-size: 100%;
 }
 
-/* The inline Image entry precedes the compact action row. Keep its native
- * focus ring inside the independently scrolling result pane. */
-.document-result-generation .generation-actions-shell > .native-image-entry {
-  margin-inline: var(--forma-focus-clearance);
-}
-
 /* Output-pane controls wrap by their own available width. Keep the composer
  * and expanded configuration/dialog rows on their existing contracts. */
 .document-result-generation .generation-actions.compact {
@@ -214,8 +208,20 @@ forma-project-contents .studio-main > .page-header--document > .page-header-acti
 .context-column > .section-heading,
 .output-column > .section-heading {
   min-inline-size: 0;
+  align-items: flex-start;
   flex-wrap: wrap;
   padding-inline: var(--forma-pane-inset);
+}
+
+/* Both titles occupy the same first row, even when the results actions wrap. */
+:is(.context-column, .output-column) > .section-heading > div:first-child {
+  display: flex;
+  align-items: flex-start;
+  min-block-size: var(--forma-hit-target);
+}
+
+.context-column > .section-heading > .health-pill {
+  align-self: center;
 }
 
 .context-column > .context-next-actions > button,
@@ -240,7 +246,7 @@ forma-project-contents .studio-main > .page-header--document > .page-header-acti
 }
 
 .context-column > :is(.blank-context, .add-block, .document-insight, .context-provenance, forma-output-requirements),
-.output-column > :is(forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form) {
+.output-column > :is(.document-result-generation, forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form) {
   margin-inline: var(--forma-pane-inset);
 }
 
@@ -5813,5 +5819,43 @@ dialog.document-artifact-view[data-artifact-kind="slides"] .presentation-deck-st
     border: 0;
     border-block-start: 1px solid var(--forma-color-border);
     border-radius: 0;
+  }
+}
+
+/* Document chrome and reading content share the pane's bounded leading edge.
+ * Full-width separators stay on their containers; control backgrounds hang
+ * into the gutter so their labels, rather than their boxes, align with copy. */
+.application-creative[data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document {
+  padding-inline: var(--forma-pane-inset);
+}
+
+html:not([data-document-focus]) .application-creative[data-layout-intent="workbench"] > .topbar {
+  padding-inline-start: max(var(--forma-pane-inset), var(--forma-safe-inline-start));
+  padding-inline-end: max(var(--forma-pane-inset), var(--forma-safe-inline-end));
+}
+
+html:not([data-document-focus]) .application-creative[data-layout-intent="workbench"] > .topbar > .brand {
+  justify-content: flex-start;
+  padding-inline: 0;
+}
+
+.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-nav-posture="expanded"]) .project-rail:is(.collapsed, .expanded) > .rail-toolbar {
+  padding-inline-start: max(var(--forma-pane-inset), var(--forma-safe-inline-start));
+  padding-inline-end: max(var(--forma-pane-inset), var(--forma-safe-inline-end));
+}
+
+.application-creative[data-layout-intent="workbench"] forma-studio-mode-nav > .studio-mode-nav {
+  padding-inline-start: calc(max(var(--forma-pane-inset), var(--forma-safe-inline-start)) - .55rem - 1px);
+  padding-inline-end: max(var(--forma-pane-inset), var(--forma-safe-inline-end));
+}
+
+.application-creative[data-layout-intent="workbench"] .document-workbench-tasks {
+  padding-inline-start: calc(var(--forma-pane-inset) - var(--forma-control-inset-inline) - 1px);
+  padding-inline-end: var(--forma-pane-inset);
+}
+
+@media (min-width: 48rem) {
+  .application-creative[data-layout-intent="workbench"]:not([data-nav-posture="compact"])[data-short-height="false"] > .application-task-navigation .ui-audience-navigation-list {
+    padding-inline: calc(var(--forma-pane-inset) - var(--forma-space-3, .75rem));
   }
 }
