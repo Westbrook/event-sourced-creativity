@@ -7,10 +7,13 @@ The living reference is `/knowledge/design-system`;
 `/knowledge/guidance` publishes privacy, accessibility, and localization rules.
 Every example is fictional and store-independent.
 
-Creator’s document workbench composes the existing shell, ProjectRail and Studio
-navigation around `--forma-pane-inset`. Heading text, first navigation labels,
+Creator pages compose the existing shell, ProjectRail and page containers
+around `--forma-pane-inset`. Heading text, first navigation labels,
 and identity marks share that logical leading edge; backgrounds and separators
-keep their own full-width boundaries. This is application layout, with no new
+keep their own full-width boundaries. Projects, project overview, Library,
+Activity and Deliver reuse the same bounded page gutter as the document
+workbench. Library’s Resource Memory disclosure aligns with its search control.
+This is application layout, with no new
 component API or translated copy. The compact dock keeps its equal-width cells.
 
 Library output thumbnails use a consistent responsive 3:2 frame for individual
