@@ -145,14 +145,14 @@ test("runtime calculation accesses only audience-safe timing and never private p
   assert.ok(!accessed.some((field) => /latency|provider|cost|owner|input|receipt|document|media/i.test(field)));
 });
 
-test("the audience-facing footer separates audio playback and estimates from generation latency", () => {
+test("the audience-facing footer preserves labeled audio and video duration and omits non-media processing latency", () => {
   assert.match(source, /playbackSeconds\s*=\s*documentArtifactPlaybackSeconds\(artifact\)/u);
   assert.match(source, /viewerDuration\s*=\s*artifact\.kind\s*===\s*"audio"/u);
   assert.match(source, /audioTiming=artifact\.kind==="audio"\?audioPlaybackTiming\(artifact\.settings,artifact\.mediaUrl\)/u);
   assert.match(source, /audio\.duration\.\$\{audioTiming\.basis\}/u);
   assert.match(source, /:artifact\.kind==="video"\?\(playbackSeconds===null\?""/u);
   assert.match(source, /this\.i18n\.number\(playbackSeconds\)/u);
-  assert.match(source, /Math\.round\(artifact\.latency\s*\/\s*1000\)/u);
+  assert.match(source, /:artifact\.kind==="video"\?\(playbackSeconds===null\?"":` · \$\{this\.i18n\.number\(playbackSeconds\)\}s`\):"";/u);
 
   const footer = /<footer\s+data-actions-open=[\s\S]*?<\/span>/u.exec(source)?.[0];
   assert.ok(footer, "the actual output-reader footer is still rendered");

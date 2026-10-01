@@ -889,3 +889,249 @@ for (const boundary of ["source-retirement-event", "authorization", "native-clos
     unchanged(x);
   });
 }
+
+// Additive E narration presentation only. Retained synthetic fixture content
+// and inert media metadata are not a generated/played/approved audio result.
+import { readWorkspaceEvents } from "../worker/runtime.ts";
+import { storePrivateContent } from "../worker/pilot-policy.ts";
+
+const narrationFixtureText = "\n  Speaker 1: Keep the complete authored direction & the <quiet> pause.\n\nSpeaker 2: 元の言葉と段落を保持します。\nالراوي: تبقى الكلمات الأصلية كاملة.\n";
+const narrationCompanionText = "Separate playback companion.\nIts independent listening notes remain available.";
+const narrationIncludedText = "Provider-included reference transcript.\nDo not play this reference a second time.";
+async function narrationPresentationHost(t, {
+  locale = "en", markdown = narrationFixtureText, role = "voice",
+  mediaUrl = "/api/media/narration-presentation-fixture.wav", lyrics = "",
+  companions = false, latencyMs = 15_321, requestedSeconds = 61, deliveredSeconds = 382.25,
+} = {}) {
+  const x = await createReviewHost(t, { locale, artifactKind: "audio" }), { f, h, worker } = x;
+  const original = currentArtifact(f);
+  const source = (await readWorkspaceEvents(worker.env, worker.streamId))
+    .find(event => event.eventId === original.sourceEventId);
+  assert.ok(source && !("_private_ref" in source.payload), "reuse the existing fixture's actual hydrated original event");
+  const content = JSON.parse(worker.content);
+  content.title = "Retained synthetic audio — café العربية 日本語";
+  content.summary = "Fixture text and metadata, not measured or reviewed media.";
+  content.content_markdown = markdown;
+  content.items = [{ ...content.items[0], title: "One retained part", body: markdown }];
+  const raw = JSON.stringify(content);
+  const stored = await storePrivateContent(worker.env, worker.owner, "document-artifact", raw);
+  f.artifactId = "narration-presentation-" + locale;
+  const soundtracks = companions ? [
+    { label: "Separate fixture companion", media_url: "/api/media/narration-companion.wav", media_type: "audio/wav",
+      inclusion: "separate-playback-companion", provider_audio_transmitted: false, transcript: narrationCompanionText,
+      cues: [{ start_seconds: 2, label: "Opening", emotional_intent: "Keep the original cue." }] },
+    { label: "Included fixture reference", media_url: "/api/media/narration-included.wav", media_type: "audio/wav",
+      inclusion: "provider-soundtrack-reference", provider_audio_transmitted: true, transcript: narrationIncludedText },
+  ] : [];
+  await appendAuditEvent(worker.env, worker.streamId, "worker:renderer", "DocumentRenderCompleted", {
+    ...source.payload, artifact_id: f.artifactId, artifact_kind: "audio", title: content.title, summary: content.summary,
+    content_ref: stored.contentId, content_expires_at: stored.expiresAt,
+    item_count: 1, items: [{ id: f.artifactId + "-part", title: content.items[0].title }],
+    media_url: mediaUrl, media_type: mediaUrl ? "audio/wav" : null, latency_ms: latencyMs,
+    settings: { ...source.payload.settings, audio_role: role, audio_goal: role === "voice" ? "narration" : "music",
+      audio_profile: { role, duration_seconds: requestedSeconds }, duration_seconds: deliveredSeconds,
+      lyrics, audio_synthid_watermarked: companions, soundtrack_assets: soundtracks },
+  });
+  await h.store.refreshEvents({ fromStart: true }); f.draw(); await openGallery(f);
+  f.tree = () => tree(f);
+  x.native = installOutputNavigationFocusNative(t, f, { documentPort: f.host.ownerDocument });
+  assert.equal(currentArtifact(f).kind, "audio");
+  assert.equal(h.store.content.get()[currentArtifact(f).contentRef], raw, "the real private read exposes this exact retained fixture content");
+  x.beforeEvents = structuredClone(h.store.events.get()); x.beforeContent = structuredClone(h.store.content.get());
+  x.beforeFinance = finance(worker); x.beforeRequests = h.requests.length; x.original = structuredClone(currentArtifact(f));
+  return { ...x, markdown, mediaUrl, lyrics, soundtracks, latencyMs, requestedSeconds, deliveredSeconds };
+}
+
+function narrationLeafText(f, node) {
+  // Existing text(f,node) finds the first equal opening string. Anonymous
+  // summary/p siblings need their exact current renderer/token ordinal.
+  assert.ok(["summary", "pre", "p", "span", "b"].includes(node.tag));
+  const own = f.renderer.nodes.filter(value => value.owner === f.host), index = own.indexOf(node);
+  assert.ok(index >= 0 && node.isConnected, "the leaf belongs to this current actual host");
+  const tokens = [...f.renderer.markup.matchAll(/<!--[\s\S]*?-->|<\/?[\w-]+\b[^>]*>/gu)]
+    .filter(match => !match[0].startsWith("<!--") && !match[0].startsWith("</"));
+  assert.equal(tokens.length, own.length);
+  assert.equal(tokens[index][0], node.full, "exact emitted leaf, not another same-looking disclosure");
+  const start = tokens[index].index + tokens[index][0].length;
+  const end = f.renderer.markup.indexOf("</" + node.tag + ">", start);
+  assert.ok(end >= start);
+  return f.renderer.markup.slice(start, end).replace(/<[^>]*>/gu, "")
+    .replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">");
+}
+function narrationSurface(x) {
+  const current = tree(x.f), results = current.visible("section").filter(row => hasClass(row, "artifact-audio-result"));
+  assert.equal(results.length, 1, "one current actual audio result");
+  const result = results[0];
+  return { current, result, rows: current.nodes.filter(row => row === result || within(row, parent => parent === result)) };
+}
+function narrationNativePlayer(x, row, url) {
+  assert.ok(row && row.port.isConnected);
+  assert.equal(row.tag, "audio"); assert.equal(row.attributes.src, url);
+  assert.equal(row.attributes.preload, "none"); assert.ok(Object.hasOwn(row.attributes, "controls"));
+  assert.equal(Object.hasOwn(row.attributes, "autoplay"), false);
+  assert.equal(Object.hasOwn(row.port.properties, "autoplay"), false);
+  assert.equal(row.attributes["aria-label"], x.f.i18n.t("audio.player.label", "Play {name}",
+    { name: row.attributes.src === x.mediaUrl ? currentArtifact(x.f).title : "Separate fixture companion" }));
+}
+function narrationOuter(x, surface) {
+  const outer = surface.rows.filter(row => row.tag === "details" && row.parent === surface.result);
+  assert.equal(outer.length, 1, "the retained outer textual equivalent is still present");
+  const prose = outer[0].children.filter(row => row.tag === "pre");
+  assert.equal(prose.length, 1); assert.ok(hasClass(prose[0], "artifact-prose"));
+  assert.equal(prose[0].attributes.dir, "auto");
+  assert.equal(narrationLeafText(x.f, prose[0].port), x.markdown, "every original line survives in the existing preformatted reader");
+  const summary = outer[0].children.filter(row => row.tag === "summary");
+  assert.equal(summary.length, 1);
+  return { disclosure: outer[0], prose: prose[0], summary: summary[0] };
+}
+function narrationUnchanged(x) {
+  unchanged(x);
+  assert.deepEqual(x.worker.counts(), x.initialCounts);
+  assert.equal(x.h.requests.some(request => /\/api\/media\/|\/api\/shared\//u.test(String(request.url))), false,
+    "these finite renderer checks never load audio or infer playability");
+}
+
+for (const locale of ["en", "ja"]) test("audio narration keeps one complete transcript and independent companions " + locale, async t => {
+  const x = await narrationPresentationHost(t, { locale, companions: true }), { f } = x;
+  const surface = narrationSurface(x), outer = narrationOuter(x, surface);
+  const ownPlayers = surface.rows.filter(row => row.tag === "audio");
+  assert.equal(ownPlayers.length, 1); narrationNativePlayer(x, ownPlayers[0], x.mediaUrl);
+  const watermark = surface.rows.filter(row => row.tag === "p" && hasClass(row, "artifact-audio-watermark"));
+  assert.equal(watermark.length, 1);
+  assert.equal(narrationLeafText(f, watermark[0].port), f.i18n.t("audio.generation.watermark"));
+  const companion = surface.current.nodes.filter(row => row.tag === "section" && hasClass(row, "forma-soundtrack-companions"));
+  const included = surface.current.nodes.filter(row => row.tag === "section" && hasClass(row, "forma-included-audio-transcripts"));
+  assert.equal(companion.length, 1); assert.equal(included.length, 1);
+  const companionRows = surface.current.nodes.filter(row => within(row, parent => parent === companion[0]));
+  const includedRows = surface.current.nodes.filter(row => within(row, parent => parent === included[0]));
+  const companionPlayers = companionRows.filter(row => row.tag === "audio");
+  assert.equal(companionPlayers.length, 1); narrationNativePlayer(x, companionPlayers[0], x.soundtracks[0].media_url);
+  assert.equal(includedRows.filter(row => row.tag === "audio").length, 0, "provider-included reference is not played again");
+  assert.equal(companionRows.filter(row => row.tag === "p" && narrationLeafText(f, row.port) === narrationCompanionText).length, 1);
+  assert.equal(includedRows.filter(row => row.tag === "p" && narrationLeafText(f, row.port) === narrationIncludedText).length, 1);
+  assert.equal(companionRows.filter(row => row.tag === "details" && hasClass(row, "forma-audio-cues")).length, 1);
+  assert.equal(surface.current.nodes.filter(row => row.tag === "audio").length, 2, "only original audio and separate companion have players");
+  narrationUnchanged(x); // Before the desired baseline failure: no hidden work, read or fiscal effect.
+  assert.equal(surface.rows.filter(row => row.tag === "summary").length, 1, "the original narration transcript is disclosed once, not twice");
+  assert.equal(narrationLeafText(f, outer.summary.port), f.i18n.t("audio.reference.transcript"));
+  assert.ok(hasClass(outer.disclosure, "forma-audio-transcript"), "the survivor reuses the existing summary target-style contract");
+});
+
+for (const [name, mediaUrl] of [["absent", null], ["unsupported", "https://example.invalid/unloaded-narration.wav"]]) {
+  test("audio narration retains its full transcript with " + name + " player URL", async t => {
+    const x = await narrationPresentationHost(t, { mediaUrl }), surface = narrationSurface(x), outer = narrationOuter(x, surface);
+    assert.equal(surface.rows.filter(row => row.tag === "audio").length, 0);
+    assert.equal(surface.rows.filter(row => row.tag === "summary").length, 1);
+    assert.equal(narrationLeafText(x.f, outer.summary.port), x.f.i18n.t("audio.reference.transcript"));
+    narrationUnchanged(x);
+    assert.ok(hasClass(outer.disclosure, "forma-audio-transcript"), "unavailable media does not remove the survivor's summary target contract");
+  });
+}
+
+test("audio voice without retained Markdown keeps its original lyrics fallback", async t => {
+  const lyrics = "Retained fallback words.\nA second complete line.";
+  const x = await narrationPresentationHost(t, { markdown: "", lyrics, mediaUrl: "/api/shared/fixture/audio" });
+  const surface = narrationSurface(x), players = surface.rows.filter(row => row.tag === "audio");
+  assert.equal(players.length, 1); narrationNativePlayer(x, players[0], x.mediaUrl);
+  assert.equal(surface.rows.filter(row => row.tag === "pre").length, 0);
+  const summaries = surface.rows.filter(row => row.tag === "summary");
+  assert.equal(summaries.length, 1); assert.ok(hasClass(summaries[0].parent, "forma-audio-transcript"));
+  assert.equal(narrationLeafText(x.f, summaries[0].port), x.f.i18n.t("audio.reference.transcript"));
+  const words = surface.rows.filter(row => row.tag === "p");
+  assert.equal(words.length, 1); assert.equal(words[0].attributes.dir, "auto");
+  assert.equal(narrationLeafText(x.f, words[0].port), lyrics);
+  narrationUnchanged(x);
+});
+
+test("audio nonvoice keeps distinct lyrics and complete production notes", async t => {
+  const lyrics = "Original lyric, first line.\nDifferent lyric, second line.";
+  const markdown = "Production notes:\nKeep a quiet opening.\nDo not infer a measured duration.";
+  const x = await narrationPresentationHost(t, { role: "score", lyrics, markdown }), surface = narrationSurface(x);
+  const outer = narrationOuter(x, surface), players = surface.rows.filter(row => row.tag === "audio");
+  assert.equal(players.length, 1); narrationNativePlayer(x, players[0], x.mediaUrl);
+  assert.equal(surface.rows.filter(row => row.tag === "summary").length, 2, "distinct lyrics and notes are not deduplicated");
+  assert.equal(narrationLeafText(x.f, outer.summary.port), x.f.i18n.t("audio.generation.lyrics"));
+  const words = surface.rows.filter(row => row.tag === "p");
+  assert.equal(words.length, 1); assert.equal(narrationLeafText(x.f, words[0].port), lyrics);
+  narrationUnchanged(x);
+  assert.ok(hasClass(outer.disclosure, "forma-audio-transcript"), "complete production notes reuse the existing summary target-style contract");
+});
+
+for (const locale of ["en", "ar"]) test("audio footer never presents processing latency as playback duration " + locale, async t => {
+  const x = await narrationPresentationHost(t, { locale, role: "score" }), { f } = x;
+  const artifact = currentArtifact(f), surface = narrationSurface(x);
+  assert.equal(artifact.latency, 15_321); assert.equal(artifact.settings.audio_profile.duration_seconds, 61);
+  assert.equal(artifact.settings.duration_seconds, 382.25);
+  narrationOuter(x, surface);
+  narrationNativePlayer(x, surface.rows.find(row => row.tag === "audio"), x.mediaUrl);
+  const footers = surface.current.visible("footer").filter(row => Object.hasOwn(row.attributes, "data-actions-open"));
+  assert.equal(footers.length, 1);
+  const summaries = footers[0].children.filter(row => row.tag === "span");
+  assert.equal(summaries.length, 1);
+  const actual = narrationLeafText(f, summaries[0].port);
+  narrationUnchanged(x); // Preserve custody before checking the already-integrated recorded-duration disclosure.
+  const recordedDuration = f.i18n.t("audio.duration.recorded", "", { seconds: f.i18n.number(x.deliveredSeconds) });
+  assert.equal(actual, "1 " + f.i18n.system("part") + " · " + recordedDuration,
+    "legacy retained duration stays explicitly recorded; latency, requested length and measured playback are not substituted");
+});
+
+// Append only after the original artifact38, Slides2 and frozen narration8.
+// Synthetic retained timing metadata is initialization, not generated media.
+async function siblingFooterHost(t, locale, kind) {
+  const x = await createReviewHost(t, { locale, artifactKind: kind }), { f, h, worker } = x;
+  const original = currentArtifact(f);
+  const source = (await readWorkspaceEvents(worker.env, worker.streamId))
+    .find(event => event.eventId === original.sourceEventId);
+  assert.ok(source && !("_private_ref" in source.payload));
+  f.artifactId = "post-r2-footer-" + kind + "-" + locale;
+  const completed = await appendAuditEvent(worker.env, worker.streamId, "worker:renderer", "DocumentRenderCompleted", {
+    ...source.payload, artifact_id: f.artifactId, artifact_kind: kind,
+    title: "Retained " + kind + " timing fixture " + locale, latency_ms: 108_321,
+    settings: { ...source.payload.settings, video_seconds: 99 },
+  });
+  await h.store.refreshEvents({ fromStart: true }); f.draw(); await openGallery(f);
+  f.tree = () => tree(f);
+  x.native = installOutputNavigationFocusNative(t, f, { documentPort: f.host.ownerDocument });
+  assert.equal(currentArtifact(f).sourceEventId, completed.eventId);
+  x.beforeEvents = structuredClone(h.store.events.get()); x.beforeContent = structuredClone(h.store.content.get());
+  x.beforeFinance = finance(worker); x.beforeRequests = h.requests.length; x.original = structuredClone(currentArtifact(f));
+  return x;
+}
+
+for (const [kind, locale, quantity] of [
+  ["slides", "en", "slides"], ["storyboard", "ja", "frames"],
+  ["short_story", "ar", "part"], ["scene", "fr", "part"],
+]) test("non-video reader quantity omits processing latency " + kind + "/" + locale, async t => {
+  const x = await siblingFooterHost(t, locale, kind), { f, h, worker } = x;
+  const artifact = currentArtifact(f), current = tree(f), content = JSON.parse(worker.content);
+  assert.equal(artifact.kind, kind); assert.equal(artifact.latency, 108_321);
+  assert.equal(artifact.settings.video_seconds, 99); assert.equal(artifact.itemCount, 1);
+  assert.equal(h.store.content.get()[artifact.contentRef], worker.content, "the complete retained private content is unchanged");
+  assert.equal(currentDelivery(f).canRead, true); assert.equal(currentDelivery(f).revision, 0);
+  const dialogs = current.visible("dialog").filter(row => hasClass(row, "document-artifact-view"));
+  assert.equal(dialogs.length, 1); assert.equal(dialogs[0].attributes["data-artifact-kind"], kind);
+  assert.ok(primary(f)?.isConnected && typeof primary(f).handlers.click === "function");
+  assert.equal(menuState(f).panel.matches(":popover-open"), false);
+  if (kind === "slides") {
+    const decks = f.renderer.query(f.host, "forma-presentation-deck").filter(value => value.isConnected);
+    assert.equal(decks.length, 1); assert.ok(decks[0] instanceof f.renderer.registry["forma-presentation-deck"]);
+    assert.equal(decks[0].preferenceKey, artifact.id); assert.equal(decks[0].documentId, artifact.documentId);
+    assert.equal(decks[0].items.length, content.items.length);
+    assert.deepEqual(decks[0].items.map(item => [item.title, item.body, item.notes]), content.items.map(item => [item.title, item.body, item.notes]));
+  } else if (kind === "storyboard") {
+    const boards = current.visible("ol").filter(row => hasClass(row, "artifact-storyboard"));
+    assert.equal(boards.length, 1);
+    assert.equal(boards[0].children.filter(row => row.tag === "li").length, content.items.length);
+    const paragraphs = current.nodes.filter(row => row.tag === "p" && within(row, parent => parent === boards[0]));
+    assert.equal(paragraphs.length, 1); assert.equal(narrationLeafText(f, paragraphs[0].port), content.items[0].body);
+  } else {
+    const prose = current.visible("pre").filter(row => hasClass(row, "artifact-prose"));
+    assert.equal(prose.length, 1); assert.equal(narrationLeafText(f, prose[0].port), content.content_markdown);
+  }
+  const footers = current.visible("footer").filter(row => Object.hasOwn(row.attributes, "data-actions-open"));
+  assert.equal(footers.length, 1);
+  const summaries = footers[0].children.filter(row => row.tag === "span"); assert.equal(summaries.length, 1);
+  const actual = narrationLeafText(f, summaries[0].port);
+  narrationUnchanged(x); // Healthy retained bytes, original events/requests and fiscal rows precede the desired failure.
+  assert.equal(actual, "1 " + f.i18n.system(quantity), "processing time and an unrelated video setting are not viewing or reading duration");
+});
