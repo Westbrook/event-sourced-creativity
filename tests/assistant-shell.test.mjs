@@ -276,7 +276,7 @@ test("E3 Studio utility reserves real space only beside an eligible current floa
   for (const declaration of ['--forma-assistant-studio-slot: 1;', 'display: grid;',
     'grid-template-columns: minmax(0, 1fr) var(--forma-assistant-studio-control);',
     'column-gap: var(--forma-focus-clearance, .5rem);',
-    'padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));'])
+    'padding-inline-end: max(var(--forma-pane-inset, 1rem), var(--forma-safe-inline-end, 0px));'])
     assert.ok(reservation.includes(declaration), declaration);
   assert.equal(reservation.includes('max-block-size:'), false, 'a control minimum is not a row ceiling');
   assert.equal(reservation.includes('overflow:'), false, 'the utility host must not acquire another scroll clip');

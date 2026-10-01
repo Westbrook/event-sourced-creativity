@@ -275,6 +275,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   #modalReady = false;
   #dismissedSpecialistId = "";
   #positionFrame = 0;
+  #workbenchHeading: HTMLElement | null = null;
+  #workbenchResize: ResizeObserver | null = null;
   #browseLane: { main: HTMLElement; owner: HTMLElement; shell: HTMLElement; route: string; scope: string;
     direction: string; posture: string | null; shortHeight: string | null; stable: boolean;
     value: string; priority: string; written: string } | null = null;
@@ -353,6 +355,10 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   }
 
   override disconnectedCallback() {
+    this.#workbenchResize?.disconnect();
+    this.#workbenchResize = null;
+    this.#workbenchHeading = null;
+    this.style.removeProperty("--forma-assistant-workbench-end");
     this.#clearStudioLauncher();
     this.#clearBrowseLauncher();
     this.#clearBrowseLane();
@@ -423,6 +429,34 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   #clearStudioLauncher() {
     delete this.dataset.studioLauncher;
     for (const name of ["left", "top", "size"]) this.style.removeProperty(`--forma-assistant-studio-${name}`);
+  }
+
+  #alignWorkbenchLauncher() {
+    const owner = this.parentElement;
+    const shell = owner?.closest(".application-creative");
+    const heading = owner?.matches("forma-creative-assistant")
+      && shell?.getAttribute("data-layout-intent") === "workbench"
+      && shell.getAttribute("data-nav-posture") !== "compact"
+      && shell.getAttribute("data-short-height") !== "true"
+      ? shell.querySelector<HTMLElement>("#main-content .studio-grid > .output-column > .section-heading") : null;
+    if (heading !== this.#workbenchHeading) {
+      this.#workbenchResize?.disconnect();
+      this.#workbenchHeading = heading;
+      if (heading && typeof ResizeObserver !== "undefined") {
+        this.#workbenchResize ??= new ResizeObserver(this.#schedulePosition);
+        this.#workbenchResize.observe(heading);
+      }
+    }
+    if (!heading || !heading.getClientRects().length) {
+      this.style.removeProperty("--forma-assistant-workbench-end");
+      return;
+    }
+    // Measure the content edge so the inspector and reserved scrollbar gutter
+    // participate in the same alignment as the Results heading and controls.
+    const bounds = heading.getBoundingClientRect(), style = getComputedStyle(heading);
+    const inset = Number.parseFloat(style.paddingInlineEnd);
+    const end = style.direction === "rtl" ? bounds.left + inset : window.innerWidth - bounds.right + inset;
+    if (Number.isFinite(end)) this.style.setProperty("--forma-assistant-workbench-end", `${Math.max(0, end)}px`);
   }
 
   #clearBrowseLauncher(reservation = true) {
@@ -1100,6 +1134,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     }
     const launcher = this.querySelector<HTMLButtonElement>(".forma-assistant-launcher");
     const focused = document.activeElement;
+    this.#alignWorkbenchLauncher();
     this.#clearStudioLauncher();
     this.#clearBrowseLauncher();
     const stable = this.#browseLane?.stable === true && this.#positionInBrowseLane(launcher ?? undefined);

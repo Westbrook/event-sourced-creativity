@@ -12,6 +12,10 @@ navigation around `--forma-pane-inset`. Heading text, first navigation labels,
 and identity marks share that logical leading edge; backgrounds and separators
 keep their own full-width boundaries. This is application layout, with no new
 component API or translated copy. The compact dock keeps its equal-width cells.
+The collapsed Ask Forma launcher shares the Results heading’s trailing content
+edge, including the inspector and reserved scrollbar gutter. Its compact Studio
+utility slot uses the same pane inset. Existing bottom clearance, obstacle
+avoidance, and the open assistant panel’s viewport placement remain unchanged.
 
 Library output thumbnails use a consistent responsive 3:2 frame for individual
 images and prompt-fan previews. Images fill their thumbnail with `object-fit:
