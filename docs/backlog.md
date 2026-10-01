@@ -801,6 +801,11 @@ acceptance remains separate; no further implementation or publication remains.
 
 ### Ask Forma trailing alignment — 2026-10-01
 
+**Published as Site563.** Main implementation `ed23b17a`; release
+`bf2db728` preserves the concurrent Creator562 publication. Native deployment
+succeeded with environment16 and workspace access7. Exact622-file archive and
+41 approved migrations verified; receipts: `outputs/ask-gutter/release563/`.
+
 Implemented the requested follow-up to document gutters: the floating Ask Forma
 launcher tracks the Results content edge, including inspector resizing and
 reserved scrollbar space. Compact Studio uses the shared pane inset for its
