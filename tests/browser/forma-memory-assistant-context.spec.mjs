@@ -46,6 +46,9 @@ for(const creation of [false,true,'output','profile','image'])for(const surface 
  test.use({geometry:{viewport:{width:locale==='ar'?320:1280,height:900},zoom:1,locale}});
  test('historical result retires its private modal without a new purchase',async({page,context,baseURL})=>{
   expect(syntheticNetworkEnabled(baseURL)).toBe(true);
+  // Exercise the real browser expiry callback without waiting a wall-clock
+  // minute for every locale/surface variant. Native cadence has separate proof.
+  if(boundary==='expiry')await page.clock.install({time:Date.now()});
   const {syntheticReadBody}=await import('./helpers/synthetic-network.mjs');
   const documentPath='/document/doc-atmosphere/atmosphere-studies',routePath=documentPath+(surface==='chat'?'/view/chat':''),query=new URLSearchParams({route:documentPath,projectId:'project-atmosphere'}),errors=[],calls=[];
   if(surface==='chat'||boundary==='apply')await context.route('**/api/session',request=>{const body=JSON.parse(syntheticReadBody('/api/session'));body.provider.plannerConfigured=true;if(boundary==='apply')body.assistant.phase='actions';return request.fulfill({json:body});});
@@ -76,7 +79,7 @@ for(const creation of [false,true,'output','profile','image'])for(const surface 
   let validUntil='';const presentation=()=>({version:'semantic-memory-answer-v1',validUntil,independentEvidence:false});
   const task=()=>({id:quote.executionId,executionId:quote.executionId,turnId:originalRequest.turnId,bindingHash:quote.bindingHash,kind:'clarify',model:'gpt-5.6-luna',status:'completed',submission:'settled',canExecute:false,certifiedCompleted:true,completedReview:{turnId:originalRequest.turnId,executionId:quote.executionId,quote,originalRequest,result,memory:presentation()}});
   await context.route('**/api/assistant?*',async request=>{
-   expect(request.request().method()).toBe('GET');validUntil=new Date(Date.now()+10000).toISOString();
+   expect(request.request().method()).toBe('GET');validUntil=new Date(Date.now()+60000).toISOString();
    const body=JSON.parse(syntheticReadBody('/api/assistant?'+query));body.context.surface=assistantSurfaceForRoute(routePath);body.tasks=[task()];await request.fulfill({json:body});
   });
   await context.route('**/api/assistant/specialist?*',async request=>{
@@ -144,6 +147,7 @@ for(const creation of [false,true,'output','profile','image'])for(const surface 
   }
   if(boundary==='apply'&&creation!=='image'){await expect(editReview).toContainText(ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationDetail':creation?'creationDetail':'editPublishDetail')]);await editReview.getByRole('button',{name:ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationApply':creation?'creationApply':'editApply')],exact:true}).click();}
   if(boundary==='blur')await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
+  if(boundary==='expiry'){await expect(dialog).toContainText(result.reply);await page.clock.fastForward(60001);}
   await expect(dialog).not.toContainText(result.reply,{timeout:15000});await expect(dialog).not.toContainText('Synthetic private approved Memory context');await expect(dialog).not.toContainText(privateText);if(!creation)await expect(dialog).not.toContainText(result.editReview.edits[0].beforeExcerpt);
   await page.keyboard.press('Escape');await expect(draft).toHaveValue('Unsent local draft');
   if(surface==='chat'){

@@ -5,6 +5,6 @@ export default defineConfig({
   testDir: './tests/browser',
   testMatch: ['forma-memory-assistant-context.spec.mjs', 'forma-memory-resource.spec.mjs', 'forma-memory-scope-recall.spec.mjs', 'forma-project-containment.spec.mjs'],
   workers: 1, fullyParallel: false, retries: 0, forbidOnly: true, timeout: 90000,
-  expect: { timeout: 10000 }, use: { baseURL: SYNTHETIC_NETWORK_ORIGIN },
+  expect: { timeout: 10000 }, use: { baseURL: SYNTHETIC_NETWORK_ORIGIN, pinnedFonts: true },
   webServer: { command: 'node scripts/content-first-test-preview.mjs --built', url: SYNTHETIC_NETWORK_ORIGIN, reuseExistingServer: false, timeout: 30000 },
 });

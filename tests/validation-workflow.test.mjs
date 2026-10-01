@@ -145,6 +145,18 @@ test('download admission retains exact project, file and positive scenario bound
   assert.equal(admittedBrowserDownload({project:'arbitrary',file:'forma-memory-purposes.spec.mjs',title:'Memory purposes: explicit inactive controls in en',synthetic:false}),false);
 });
 
+test('pinned font transport preserves families and rejects unrelated requests', async () => {
+  const {installPinnedFonts}=await import('./browser/helpers/pinned-fonts.mjs');
+  const routes=[];const record=await installPinnedFonts({route:async(match,handler)=>routes.push({match,handler})},'http://127.0.0.1:48286');
+  const stylesheet=new URL('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+  assert.equal(routes[0].match(stylesheet),true);assert.equal(routes[0].match(new URL('https://fonts.googleapis.com/css2?family=Unreviewed')),false);
+  let response;await routes[0].handler({request:()=>({method:()=> 'GET',resourceType:()=> 'stylesheet'}),fulfill:async value=>{response=value;}});
+  assert.match(response.body,/font-family:"Manrope"/u);assert.match(response.body,/font-weight:200 800/u);assert.match(response.body,/DMMono-Medium.ttf/u);
+  assert.equal(record.fonts.length,3);assert.ok(record.fonts.every(font=>/^[a-f0-9]{64}$/u.test(font.sha256)));
+  assert.equal(routes[1].match(new URL('https://fonts.gstatic.com/l/font?unreviewed=1')),false);
+  let refused=false;await routes[1].handler({request:()=>({method:()=> 'POST',resourceType:()=> 'font'}),fallback:async()=>{refused=true;}});assert.equal(refused,true);
+});
+
 test('real type errors surface a timed negative before dependent stages start', async t => {
   const { root, put } = sandbox(t), started = [];
   put('bad.ts', 'export const wrong: number = "injected failure";');

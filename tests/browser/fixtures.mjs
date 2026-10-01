@@ -26,7 +26,8 @@ export const test = base.extend({
   publicMarketing: [false, { option: true }],
   publicJavaScript: [true, { option: true }],
   acceptDownloads: [false, { option: true }],
-  context: async ({ ordinaryBrowser, geometry, baseURL, publicMarketing, publicJavaScript, acceptDownloads }, use, testInfo) => {
+  pinnedFonts: [false, { option: true }],
+  context: async ({ ordinaryBrowser, geometry, baseURL, publicMarketing, publicJavaScript, acceptDownloads, pinnedFonts }, use, testInfo) => {
     const synthetic = syntheticNetworkEnabled(baseURL);
     const admittedDownloadCase = dirname(testInfo.file) === directory && admittedBrowserDownload({
       project: testInfo.project.name, file: testInfo.file, title: testInfo.title, synthetic,
@@ -64,6 +65,8 @@ export const test = base.extend({
       const network = await guardReadOnlyNetwork(context, baseURL);
       const publicNetwork = publicMarketing ? await installPublicMarketingNetwork(context, baseURL) : null;
       const syntheticNetwork = synthetic && !publicMarketing ? await installSyntheticNetwork(context, baseURL) : null;
+      if (pinnedFonts && !syntheticNetwork) throw new Error('Pinned fonts require the declared synthetic network lane');
+      const fontReceipt = pinnedFonts ? await (await import('./helpers/pinned-fonts.mjs')).installPinnedFonts(context, baseURL) : null;
       if (syntheticNetwork) testInfo.annotations.push({ type: "synthetic-network", description: syntheticNetworkProvenance.authority });
       if (publicNetwork) testInfo.annotations.push({ type: "public-marketing-network", description: publicMarketingProvenance.authority });
       await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
@@ -74,6 +77,7 @@ export const test = base.extend({
         const tracePath = testInfo.outputPath("trace.zip");
         await context.tracing.stop({ path: tracePath });
         await testInfo.attach("browser-trace", { path: tracePath, contentType: "application/zip" });
+        if (fontReceipt) await testInfo.attach('pinned-fonts', { body: JSON.stringify(fontReceipt), contentType: 'application/json' });
         if (testInfo.status !== testInfo.expectedStatus) {
           const page = context.pages()[0];
           if (page && !page.isClosed()) {
