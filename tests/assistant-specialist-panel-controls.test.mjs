@@ -28,7 +28,7 @@ const panelSource = read(panelPath);
 const panelTree = ts.createSourceFile(panelPath, panelSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const panelClass = panelTree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "FormaAssistantPanel");
 const sourceWithProbe = panelSource.slice(0, panelClass.end - 1)
-  + "\nset draftForTest(value: string){this.#draft=value;}get draftForTest(){return this.#draft;}\n"
+  + "\nset draftForTest(value: string){this.#draft=value;}get draftForTest(){return this.#draft;}alignWorkbenchForTest(){this.#alignWorkbenchLauncher();}\n"
   + panelSource.slice(panelClass.end - 1);
 const compile = source => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const panelCode = compile(sourceWithProbe), previewCode = compile(read("src/components/consequential-preview.ts"));
@@ -3907,4 +3907,31 @@ for(const locale of ['en','fr','ar','ja'])test('cross-scope profile review is lo
  f.setReview(state);const shown=f.render();assert.ok(shown.markup.includes(ASSISTANT_MESSAGES[locale]['assistant.specialist.profileSynthesisTitle']));assert.match(shown.markup,/&lt;script&gt;private&lt;\/script&gt;/u);assert.match(shown.markup,/PRIVATE_ORIGINAL_QUOTATION/u);
  assert.equal(shown.buttons.some(b=>['assistant.specialist.creationApply','assistant.specialist.editApply'].some(k=>ASSISTANT_MESSAGES[locale][k]===b.label)),false);
  state.semanticMemory=undefined;assert.doesNotMatch(f.render().markup,/PRIVATE_ORIGINAL_QUOTATION/u);
+});
+
+// Native geometry inputs exercise the actual production placement method;
+// responsive CSS and scrollbar rendering are verified separately in Chromium.
+test("Workbench launcher follows the Results content edge and clears stale geometry", t => {
+  const previousStyle = globalThis.getComputedStyle;
+  t.after(() => { globalThis.getComputedStyle = previousStyle; });
+  const f = fixture("en", { innerWidth: 1600 });
+  const values = new Map();
+  f.panel.style.setProperty = (name, value) => values.set(name, value);
+  f.panel.style.removeProperty = name => values.delete(name);
+  let rtl = false, present = true, intent = "workbench";
+  const heading = { getClientRects: () => present ? [{}] : [],
+    getBoundingClientRect: () => ({ left: 300, right: 1280 }) };
+  const shell = { getAttribute: name => name === "data-layout-intent" ? intent : null,
+    querySelector: selector => { assert.equal(selector, "#main-content .studio-grid > .output-column > .section-heading"); return heading; } };
+  f.panel.parentElement = { matches: value => value === "forma-creative-assistant", closest: () => shell };
+  globalThis.getComputedStyle = () => ({ direction: rtl ? "rtl" : "ltr", paddingInlineEnd: "20px" });
+  f.panel.alignWorkbenchForTest();
+  assert.equal(values.get("--forma-assistant-workbench-end"), "340px");
+  rtl = true; f.panel.alignWorkbenchForTest();
+  assert.equal(values.get("--forma-assistant-workbench-end"), "320px");
+  present = false; f.panel.alignWorkbenchForTest();
+  assert.equal(values.has("--forma-assistant-workbench-end"), false);
+  present = true; f.panel.alignWorkbenchForTest(); intent = "browse"; f.panel.alignWorkbenchForTest();
+  assert.equal(values.has("--forma-assistant-workbench-end"), false);
+  assert.deepEqual(f.emitted, []);
 });

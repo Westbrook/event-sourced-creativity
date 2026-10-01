@@ -750,3 +750,21 @@ production build and 14 built-renderer English/Arabic cases pass. The uploaded
 workspace access revision7 and environment16. Evidence and the successful native
 deployment receipt are in `outputs/workbench-spacing/release/`. Live human visual
 acceptance remains separate; no further implementation or publication remains.
+
+### Ask Forma trailing alignment — 2026-10-01
+
+Implemented the requested follow-up to document gutters: the floating Ask Forma
+launcher tracks the Results content edge, including inspector resizing and
+reserved scrollbar space. Compact Studio uses the shared pane inset for its
+existing utility slot. Bottom clearance, open-panel placement, and focus return
+are preserved. No new component API or translated copy; generated manifests
+remain unchanged.
+
+Verification: types/full lint and build pass; all 218 assistant placement/runtime
+checks pass. Chromium 151 passes 36 built-renderer geometry cases across seven
+sizes, English/Arabic, and fine/coarse pointer modes, plus open/Escape focus
+return at 1600px and 320px. Evidence: `outputs/ask-gutter/`. The assistant-shell
+source suite has four pre-existing failures, reproduced on Site561's unchanged
+source: shell-mount text pattern, checkbox exclusion, and two stale placement
+text assertions. Those assertions remain a separate validation-maintenance
+backlog item; they were not weakened or excluded. Live review remains pending.

@@ -495,6 +495,11 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   .forma-assistant-specialist { border: 1px solid CanvasText; }
 }
 
+/* The collapsed workbench launcher shares the Results content edge. */
+.application-creative[data-layout-intent="workbench"] > forma-creative-assistant > forma-assistant-panel:has(> .forma-assistant-launcher) {
+  inset-inline-end: max(var(--forma-assistant-workbench-end, var(--forma-pane-inset, 1rem)), var(--forma-safe-inline-end, 0px));
+}
+
 /* Reserve actual space beside, not inside, the compact Studio scrollport.
    The same floating owner keeps this width while its panel is open. */
 .application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-short-height="true"]):has(> forma-creative-assistant > forma-assistant-panel) .studio-header-stack > forma-studio-mode-nav {
@@ -504,7 +509,7 @@ forma-assistant-panel[data-compact-launcher="true"] .forma-assistant-launcher > 
   grid-template-columns: minmax(0, 1fr) var(--forma-assistant-studio-control);
   column-gap: var(--forma-focus-clearance, .5rem);
   align-items: center;
-  padding-inline-end: max(var(--forma-focus-clearance, .5rem), var(--forma-safe-inline-end, 0px));
+  padding-inline-end: max(var(--forma-pane-inset, 1rem), var(--forma-safe-inline-end, 0px));
   box-sizing: border-box;
 }
 
