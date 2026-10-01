@@ -89,12 +89,6 @@ forma-generation-actions,
   max-inline-size: 100%;
 }
 
-/* The inline Image entry precedes the compact action row. Keep its native
- * focus ring inside the independently scrolling result pane. */
-.document-result-generation .generation-actions-shell > .native-image-entry {
-  margin-inline: var(--forma-focus-clearance);
-}
-
 /* Output-pane controls wrap by their own available width. Keep the composer
  * and expanded configuration/dialog rows on their existing contracts. */
 .document-result-generation .generation-actions.compact {
@@ -240,7 +234,7 @@ forma-project-contents .studio-main > .page-header--document > .page-header-acti
 }
 
 .context-column > :is(.blank-context, .add-block, .document-insight, .context-provenance, forma-output-requirements),
-.output-column > :is(forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form) {
+.output-column > :is(.document-result-generation, forma-document-artifacts, forma-output-card, .output-card, .output-filmstrip, .reference-picker-form) {
   margin-inline: var(--forma-pane-inset);
 }
 
