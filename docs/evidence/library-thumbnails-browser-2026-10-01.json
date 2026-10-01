@@ -1,0 +1,303 @@
+{
+  "browser": "151.0.7922.34",
+  "receipts": [
+    {
+      "width": 1440,
+      "cards": [
+        {
+          "frame": {
+            "width": 525.609375,
+            "height": 350.40625
+          },
+          "image": {
+            "width": 525.609375,
+            "height": 350.40625
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            1000,
+            1000
+          ]
+        },
+        {
+          "frame": {
+            "width": 525.609375,
+            "height": 350.40625
+          },
+          "image": {
+            "width": 525.609375,
+            "height": 350.40625
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            1600,
+            800
+          ]
+        },
+        {
+          "frame": {
+            "width": 525.609375,
+            "height": 350.40625
+          },
+          "image": {
+            "width": 525.609375,
+            "height": 350.40625
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            800,
+            1600
+          ]
+        }
+      ],
+      "fan": [
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "cards": [
+        {
+          "frame": {
+            "width": 484.03125,
+            "height": 322.6875
+          },
+          "image": {
+            "width": 484.03125,
+            "height": 322.6875
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            1000,
+            1000
+          ]
+        },
+        {
+          "frame": {
+            "width": 484.03125,
+            "height": 322.6875
+          },
+          "image": {
+            "width": 484.03125,
+            "height": 322.6875
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            1600,
+            800
+          ]
+        },
+        {
+          "frame": {
+            "width": 484.03125,
+            "height": 322.6875
+          },
+          "image": {
+            "width": 484.03125,
+            "height": 322.6875
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            800,
+            1600
+          ]
+        }
+      ],
+      "fan": [
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "cards": [
+        {
+          "frame": {
+            "width": 352,
+            "height": 234.65625
+          },
+          "image": {
+            "width": 352,
+            "height": 234.65625
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            1000,
+            1000
+          ]
+        },
+        {
+          "frame": {
+            "width": 352,
+            "height": 234.65625
+          },
+          "image": {
+            "width": 352,
+            "height": 234.65625
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            1600,
+            800
+          ]
+        },
+        {
+          "frame": {
+            "width": 352,
+            "height": 234.65625
+          },
+          "image": {
+            "width": 352,
+            "height": 234.65625
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            800,
+            1600
+          ]
+        }
+      ],
+      "fan": [
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "width": 320,
+      "cards": [
+        {
+          "frame": {
+            "width": 218,
+            "height": 145.328125
+          },
+          "image": {
+            "width": 218,
+            "height": 145.328125
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            1000,
+            1000
+          ]
+        },
+        {
+          "frame": {
+            "width": 218,
+            "height": 145.328125
+          },
+          "image": {
+            "width": 218,
+            "height": 145.328125
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            1600,
+            800
+          ]
+        },
+        {
+          "frame": {
+            "width": 218,
+            "height": 145.328125
+          },
+          "image": {
+            "width": 218,
+            "height": 145.328125
+          },
+          "fit": "cover",
+          "position": "75% 25%",
+          "natural": [
+            800,
+            1600
+          ]
+        }
+      ],
+      "fan": [
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        },
+        {
+          "fit": "cover",
+          "position": "75% 25%"
+        }
+      ],
+      "overflow": false
+    }
+  ],
+  "dialogFit": "contain",
+  "errors": [],
+  "networkForbidden": [
+    {
+      "method": "GET",
+      "origin": "http://127.0.0.1:48289",
+      "path": "/api/memory/resource-settings",
+      "resourceType": "fetch"
+    }
+  ]
+}

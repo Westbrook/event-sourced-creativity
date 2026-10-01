@@ -7,6 +7,12 @@ The living reference is `/knowledge/design-system`;
 `/knowledge/guidance` publishes privacy, accessibility, and localization rules.
 Every example is fictional and store-independent.
 
+Library output thumbnails use a consistent responsive 3:2 frame for individual
+images and prompt-fan previews. Images fill their thumbnail with `object-fit:
+cover`, using the shared OutputVisual's generated focal-point coordinates for
+`object-position` (center fallback). Full-image dialogs keep their uncropped
+presentation; thumbnail styling must stay scoped to the preview, not the dialog.
+
 Before creating an interface, inspect the live reference, this guide,
 `DESIGN.md`, and `custom-elements.json`. Reuse an exact production component
 first, extend the closest shared contract second, and create a new component
