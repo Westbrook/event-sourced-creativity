@@ -17,10 +17,67 @@ See the [original review and plans](still-jev-action-surfaces-review-2026-09-30.
 [Still developer guide](../src/still/README.md), and
 [validation workflow](validation.md) for the surrounding contracts.
 
-## Implemented Still enhancement release
+## Workflow and outcome continuation
 
-Policy `still-24`, branch `codex/still-action-outcomes`, based on `63bad27`.
-The implementation adds:
+The local continuation builds on `0451de43` and `2168fc05` from current `main`.
+Policy `still-25` separates source-state fixes from empirical quality claims.
+The [workflow/API contract](still-workflow-observations.md) defines opt-in creation
+review observations, exact operation references, and independently versioned
+outcome and quality-assessment series. It uses the existing `0074` tables; this
+slice adds no migration and changes no existing database.
+
+Creation records explicit presentation, approval and invalidation, final review,
+backtracking, help, preservation/discard, failures, and operation reconciliation.
+Attempt and confirmation are distinct. A retained draft ID identifies the workflow;
+target revisions, causal parents, occurrence time and server recording time retain
+their separate meanings. These diagnostics do not establish understanding,
+abandonment, regret, or acceptance.
+
+A job acknowledgment, job completion, browser file handoff, and explicit acceptance
+are separate evidence. Optional quality checks at final review use the remembered
+goal's stated criteria and default to unknown. Goal and suggestions also offers a
+retained review for delayed assessment, correction, or withdrawal. Each correction
+appends a revision against the original target and observation window; it does not
+change creative approval. The settings panel selects the most recent retained
+review episode in its bounded history. Expired, erased, unavailable, or unobserved
+episodes are not reconstructed as negative outcomes.
+
+New workflow, outcome, and assessment records remain diagnostic/evaluation evidence
+and are excluded from Jev's decision-context retrieval. Existing verified commits,
+failures/cancellations, and active explicit corrections retain their bounded
+retrieval rules. Retention remains at most 30 days, possibly shorter by source,
+goal, consent, parent, or workspace policy. Later delivery/correction cannot renew
+the original episode's lifetime.
+
+The [v2 evaluation record](still-action-quality-evaluation-v2.md) preserves the
+original fictional cases and failure receipts, adds all eight supported toolbar
+views and a separate holdout, and inventories the surfaces that replay does not
+cover. The [redacted episode intake](still-action-quality-intake.md) requests real
+evidence and an event dictionary without authorizing an export. The
+[rollout checklist](still-action-quality-rollout.md) covers migration 0074, shadow
+comparison, monitoring, rollback, and a predeclared study within retention limits.
+Engineering verification, deployment, measured benefit, and user acceptance remain
+separate. Creation clarity, Viewer journeys, and load-failure recovery remain three
+open product-review items.
+
+The [local verification receipt](still-action-quality-verification-2026-10-01.md)
+records selected checks, retained failures and untested areas.
+
+## Authorized release preparation — 2026-10-01
+
+The continuation is committed as `45cf36bd`. The user then authorized publication
+of this work and its required still-24 foundation. Qualification preserves the
+41 packaged migrations and the historical Memory repair manifest; only the
+source-journal metadata recognizes the exact0074 append. The server bootstrap
+creates four empty Still tables and four indexes on its first auth-required
+request. Recording remains an explicit personal, scoped opt-in. Paid evaluations,
+actual-data exports and real-user experiments are outside this publication.
+The terminal release/source/archive receipt will establish publication separately.
+
+## Foundation implementation and retained baseline
+
+The historical foundation used policy `still-24`, branch
+`codex/still-action-outcomes`, based on `63bad27`. It introduced:
 
 - A versioned action metadata catalog describing selection effects, submission,
   cost class, reversibility, prerequisites, and observable outcomes.
@@ -53,21 +110,23 @@ schema are equivalent in isolated SQLite tests. No existing application database
 or deployed service was changed during this work. Existing local attention remains
 observe-only; optional semantic recording has a visible scope and erasure control.
 
-Verification receipts are retained under `outputs/still-actions/` and
+Foundation verification receipts are retained under `outputs/still-actions/` and
 `outputs/validation/`. The source-based browser fixture uses a fresh fictional
 account and an owned ephemeral server, without rebuilding a shared `dist`.
 The suite covers remembered/session goals, scoped feedback and erasure, final-only
 streaming, interrupted-stream recovery, navigation, Viewer controls and startup
 recovery at desktop and 320-pixel widths.
 
-The final 12-case replay contains 108 policy/ablation comparisons. For the full
-scored and Next Best policies, the supplied judgments produce no labeled unwanted
-invitations; all 12 primary-appropriateness labels pass. This is **synthetic policy
-verification**, not measured Jev calibration or user benefit. The local fallback
-still offers three rubric-disfavored invitations across preservation, uncertain
-payment and undo/review scenarios. Those baseline findings remain in the receipt;
-local fallback does not semantically interpret free-text goals. They are retained
-for subsequent outcome-based tuning, not hidden by relabeling the cases.
+The historical `still-24` final 12-case replay contains 108 policy/ablation
+comparisons. Its full scored and Next Best policies produced no labeled unwanted
+invitations; all 12 primary-appropriateness labels passed. This is **synthetic
+policy verification**, not measured Jev calibration or user benefit. That local
+fallback offered three rubric-disfavored invitations across preservation,
+uncertain payment and undo/review scenarios. Those baseline failures and their
+labels remain unchanged. The [v2 investigation and replay](still-action-quality-evaluation-v2.md)
+records the subsequent state/eligibility fixes and remaining findings under
+`still-25`; the three historical failures are not its current result. Local
+fallback still does not semantically interpret arbitrary free-text goals.
 
 The prior replay is preserved as
 `outputs/still-actions/quality-replay-baseline-before-zero-useful-gate.json`;
@@ -157,7 +216,7 @@ an experiment or reconstruct answers for changed inputs.
 
 Outcome observations use stable `outcomeId` plus increasing `revision`, `caseId`,
 `actionId`, source, occurrence/recording times, and `horizonMs`. Status is
-`observed`, `pending`, `censored`, or `revoked`. Optional success, quality, regret,
+`observed`, `pending`, `censored`, `unknown`, or `revoked`. Optional success, quality, regret,
 cost, duration, and independently declared `predictedSuccess` must remain absent
 when unknown. Exposure identifies an invocation and whether assignment was
 `randomized`, `observational`, or `direct`, with decision/impression IDs,
@@ -401,38 +460,64 @@ original operation. See [Still's generation handler](../src/still/app.ts),
 
 Opt-in semantic observations now connect a shown recommendation and selected
 action to an invocation, reported failure/cancellation, and acknowledged event
-or job references. Unified creation completion connects its committed operation
-to canonical event IDs. The server verifies reference ownership/scope and
-existence; that verification does not prove the recommendation caused the work
-or that the work was good. A generation receipt can describe admission while
-the output is still pending. Exposure/selection are kept for attribution, while
-bounded useful outcomes and active corrections can inform later decisions.
+or job references. Directly entered workflows use a direct context receipt rather
+than a fabricated suggestion exposure. The
+[versioned observation contract](still-workflow-observations.md) adds creation
+workflow reports, operational outcomes, and explicit quality assessments to the
+existing observation table, outside the creative event head.
 
 `SurfaceContext` supplies the semantic surface, coarse workflow step, dirty/pending
 state, review blocker, selected parameters/targets, readiness hints, return view,
-and interaction lock. It is a current bounded snapshot, not a durable record of
-every creation review transition. Creation drafts already retain version-bound
-presentation and approval state, but the new observation stream does not yet
-provide a complete per-stage history of Continue review, Approve, Final review,
-help opened, unchanged-receipt recovery, or why the user went back. Internal
-subflow failures are not guaranteed to produce a top-level failure observation.
-Do not claim a fully instrumented friction funnel from the current stream.
+and interaction lock as a bounded current snapshot. Separate durable workflow
+reports use the creation draft ID across resume/reconciliation, stages, explicit
+transitions and blockers, exact draft/node/use revisions, causal parents, and
+distinct occurrence/recording times. The production creation path reports
+presentation, approval/invalidation, final review, backtracking, help,
+preservation/discard, internal failures, and original-operation reconciliation.
+Attempts, blocked/failed transitions, and confirmations retain separate statuses.
+Client-reported presentation or approval remains a diagnostic UI report; it does
+not establish comprehension or replace the creation API's approval checks.
 
-The next diagnostic addition should link a workflow instance and stage to
-explicit transitions and blocker categories, with exact target/approval revisions
-and operation IDs. Retain semantic timestamps and optional user-reported reasons;
-keep draft text, keystrokes, passive attention, and assumed emotion out of this
-measurement. Separate acknowledged commit, completed job, successful file
-retrieval, user acceptance, and criteria-based quality assessment. In particular,
-a verified export event precedes file delivery and cannot prove that the file
-was successfully received.
+Confirmed finalization requires the exact applied creation operation and its
+matching retained draft/preview/approval receipt. Operational outcomes separately
+identify acknowledged commit, completed job, client-reported file retrieval or
+handoff, and explicit user acceptance. Their canonical evidence is checked against
+the authorized actor, scope, target revision and applicable event/job/operation
+references. An admission receipt does not establish completion; an export receipt
+does not establish retrieval; browser retrieval/handoff does not prove that the
+person saved, used, or accepted a file. None establishes that a suggestion caused
+the work or improved its quality.
 
-Use the added explicit corrections and “Helped my work”/“Did not help my work”
-feedback as scoped user reports. They are not complete independent quality
-rubrics. A permissioned, bounded review of the actual creation journey should
-compare the steps above with user expectations before changing labels or
-collapsing review gates. No empirical friction reduction or quality improvement
-has been established by these code changes or the fictional replay.
+Optional final-review assessments bind the exact reviewed creation version to a
+retained remembered goal and its criterion indexes. Each criterion can be met,
+not met, or unknown, independently of accepted/needs-work/unknown acceptance.
+Session goals are not silently persisted. Delayed assessment and correction can
+use the same retained review; a changed content revision requires a new series.
+Corrections append the next revision and preserve the original target, goal,
+horizon, and supersession chain. Withdrawal removes the assessment's contribution
+without treating it as negative feedback. The broader “Helped my work”/“Did not
+help my work” feedback remains a scoped user report, not an independent rubric.
+
+All three new observation kinds remain diagnostic/evaluation evidence and are
+excluded from Jev's decision-context retrieval. Existing bounded verified commits,
+failures/cancellations, and active explicit corrections keep their retrieval
+rules; exposure/selection remain attribution evidence. Current authorization,
+consent epochs, source/goal availability, erasure and expiry apply to every read
+and write. Retention is at most 30 days and can be shorter; neither delayed
+delivery nor correction renews the original episode's lifetime.
+
+The production job/export observer uses a 24-hour horizon from its original
+acknowledgment and existing authorized reads/app updates, without background
+polling. Creation outcome/assessment controls declare seven-day horizons, subject
+to the same shorter retention limits. Pending, censored, unknown, and revoked
+results remain distinct. A closed session can leave pending or missing evidence;
+it does not manufacture a terminal failure or acceptance. Opt-out, bounded history,
+delivery interruption, expiry and withdrawn access prevent a complete friction
+funnel. Missing observations remain unknown, and backtracking/help/preservation
+do not reveal why the person acted, abandonment, or regret. These checks establish
+the tested local contract; no empirical friction reduction or quality improvement
+has been established. Review the actual journey with authorized users before
+changing labels or collapsing review gates.
 
 Three existing feedback items remain open for review: creation
 approval/finalization clarity, the viewer experience, and load-failure recovery.

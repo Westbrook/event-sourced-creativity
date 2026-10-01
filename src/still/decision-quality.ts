@@ -5,12 +5,21 @@ import { finalNextBest } from './decision-coherence.ts';
 import { inspectAnswer } from './diagnostics.ts';
 import { presentActions, presentToolbar, type EmphasisEvidence } from './presentation.ts';
 import type { CreativeEvent } from '../model/events.ts';
+import type { DocumentJob } from '../model/document-jobs.ts';
+import { generationDecisionContext } from './generation-decision.ts';
 
 /** Offline judgments evaluate an invitation. They do not establish realized user benefit. */
-export const QUALITY_REPLAY_VERSION = 'still-action-quality-v1';
+export const QUALITY_REPLAY_VERSION = 'still-action-quality-v2';
 export const QUALITY_POLICIES = ['local', 'scored', 'next-best'] as const;
 export const QUALITY_ABLATIONS = ['full', 'without-next-best', 'without-support'] as const;
 export const QUALITY_REPLAY_VIEWS = ['projects','documents','ideas','document','results','artifact','generation','rejection'] as const;
+export const QUALITY_UNSUPPORTED_SURFACES = {
+  palette: 'finder.ts paletteActions and app.ts refreshPalette own query, complete catalog, passed-over order, utilities and execution review.',
+  formats: 'decisions.ts rankAllFormats and app.ts renderGenerationDock own authored preferences, format order and reserved controls.',
+  workflow: 'workflow-toolbar.ts and creation/context/use-in flows own required review, save, preserve/discard and recovery commands.',
+  more: 'finder.ts nextToolbarActions and app.ts renderDock own previous visible actions, density, utility slots and secondary-only presentation.',
+  renderedToolbar: 'app.ts renderDock and toolbar-fit.ts own responsive capacity, document return, utility reservation and recovery replacement; replay covers recommendation policy only.',
+} as const;
 export type QualityPolicy = typeof QUALITY_POLICIES[number];
 export type QualityAblation = typeof QUALITY_ABLATIONS[number];
 export type QualityLabels = {
@@ -31,6 +40,8 @@ export type QualityCase = {
   events: CreativeEvent[];
   evidence: { coverage: 'complete' | 'partial' | 'unknown'; omissions: string[]; revoked: string[] };
   answers: Record<string, Answer>;
+  /** Optional canonical fictional job, resolved through the production state contract. */
+  generationJob?: DocumentJob;
   finalEvidenceChanged?: string;
   labels: QualityLabels;
 };
@@ -41,7 +52,7 @@ export type QualityOutcome = {
   caseId: string;
   actionId: string;
   source: 'fictional' | 'user' | 'expert';
-  status: 'observed' | 'pending' | 'censored' | 'revoked';
+  status: 'observed' | 'pending' | 'censored' | 'unknown' | 'revoked';
   occurredAt: string;
   recordedAt: string;
   horizonMs: number;
@@ -77,6 +88,8 @@ export type QualityFixture = {
   frozenAt: string;
   freezeSha256: string;
   provenance: { kind: 'fictional' | 'authorized-redacted'; authorizationReference?: string };
+  partition?: 'development' | 'holdout';
+  parent?: { id: string; version: string; freezeSha256: string };
   cases: QualityCase[];
   outcomes: QualityOutcome[];
 };
@@ -101,6 +114,8 @@ export function assertQualityFixture(input: unknown): asserts input is QualityFi
   require(typeof f.freezeSha256 === 'string' && /^[a-f0-9]{64}$/.test(f.freezeSha256), 'frozen content hash');
   require(['fictional', 'authorized-redacted'].includes(f.provenance?.kind), 'provenance');
   require(f.provenance.kind !== 'authorized-redacted' || typeof f.provenance.authorizationReference === 'string' && !!f.provenance.authorizationReference.trim(), 'redacted-data authorization reference');
+  require(f.partition === undefined || ['development','holdout'].includes(f.partition), 'evaluation partition');
+  require(f.parent === undefined || typeof f.parent.id === 'string' && !!f.parent.id && typeof f.parent.version === 'string' && !!f.parent.version && /^[a-f0-9]{64}$/.test(f.parent.freezeSha256), 'parent frozen identity');
   require(Array.isArray(f.cases) && f.cases.length > 0 && f.cases.length <= 500, '1–500 cases required');
   const ids = new Set<string>();
   for (const c of f.cases) {
@@ -110,6 +125,7 @@ export function assertQualityFixture(input: unknown): asserts input is QualityFi
     require(c.abilities && ['author','generate','projectCreate'].every(key => typeof c.abilities[key as keyof Abilities] === 'boolean') && stringList(c.abilities.formats), `${c.id}: abilities`);
     require(Array.isArray(c.events) && c.events.every(e => typeof e.type === 'string' && typeof e.eventId === 'string' && Number.isInteger(e.sequence) && e.payload && typeof e.payload === 'object'), `${c.id}: events`);
     require(c.answers && typeof c.answers === 'object' && !Array.isArray(c.answers), `${c.id}: supplied answers`);
+    require(c.generationJob === undefined || c.generationJob.jobId === c.position.outputId && c.generationJob.documentId === c.position.documentId && ['generation','rejection'].includes(c.position.view) && typeof c.generationJob.kind === 'string' && typeof c.generationJob.status === 'string', `${c.id}: canonical generation job scope`);
     require(stringList(c.tags) && c.evidence && ['complete','partial','unknown'].includes(c.evidence.coverage) && stringList(c.evidence.omissions) && stringList(c.evidence.revoked), `${c.id}: evidence coverage`);
     require(c.finalEvidenceChanged === undefined || typeof c.finalEvidenceChanged === 'string' && !!c.finalEvidenceChanged.trim(), `${c.id}: final evidence change`);
     const l = c.labels;
@@ -123,7 +139,7 @@ export function assertQualityFixture(input: unknown): asserts input is QualityFi
   for (const o of f.outcomes) {
     require(o && typeof o.outcomeId === 'string' && o.outcomeId && Number.isInteger(o.revision) && o.revision > 0 && !revisions.has(`${o.outcomeId}:${o.revision}`), 'unique outcome revision');
     revisions.add(`${o.outcomeId}:${o.revision}`);
-    require(ids.has(o.caseId) && typeof o.actionId === 'string' && ['fictional','user','expert'].includes(o.source) && ['observed','pending','censored','revoked'].includes(o.status), 'outcome scope and status');
+    require(ids.has(o.caseId) && typeof o.actionId === 'string' && ['fictional','user','expert'].includes(o.source) && ['observed','pending','censored','unknown','revoked'].includes(o.status), 'outcome scope and status');
     require(Number.isFinite(Date.parse(o.occurredAt)) && Number.isFinite(Date.parse(o.recordedAt)) && bounded(o.horizonMs, Number.MAX_SAFE_INTEGER), 'outcome timing');
     require(o.success === undefined || typeof o.success === 'boolean', 'outcome success');
     require(o.regret === undefined || typeof o.regret === 'boolean', 'outcome regret');
@@ -137,14 +153,17 @@ export function assertQualityFixture(input: unknown): asserts input is QualityFi
 
 /** Hash this exact value when binding a normalized capture to its frozen replay case. */
 export function qualityInput(c: QualityCase) {
-  return { events: c.events, position: c.position, abilities: c.abilities, goal: c.goal, evidence: c.evidence, finalEvidenceChanged: c.finalEvidenceChanged };
+  return { events: c.events, position: c.position, abilities: c.abilities, goal: c.goal, evidence: c.evidence, finalEvidenceChanged: c.finalEvidenceChanged, generationJob: c.generationJob };
 }
+
+const replayPosition = (c: QualityCase): Position => c.generationJob ? {...c.position,generation:generationDecisionContext(c.generationJob)} : c.position;
 
 /** This is the replay question/candidate contract, not a reconstructed server exchange. */
 export function qualityQuestionContract(c: QualityCase) {
   const head = Math.max(0, ...c.events.map(e => e.sequence));
-  const { state, candidates } = buildDecisionState(c.events, c.position, c.abilities, head);
-  return { policy: POLICY_VERSION, candidates, questions: questionsFor(candidates, c.position, state.selectedWork?.kind, state.active.blocks) };
+  const position=replayPosition(c);
+  const { state, candidates } = buildDecisionState(c.events, position, c.abilities, head);
+  return { policy: POLICY_VERSION, candidates, questions: questionsFor(candidates, position, state.selectedWork?.kind, state.active.blocks) };
 }
 
 export function replayQualityCase(c: QualityCase, policy: QualityPolicy, ablation: QualityAblation = 'full', capturedAnswers?: Record<string, Answer>) {
@@ -154,14 +173,15 @@ export function replayQualityCase(c: QualityCase, policy: QualityPolicy, ablatio
   // how Jev would answer after removing history, constraints, or goal evidence.
   if (ablation === 'without-support') for (const key of Object.keys(answers)) if (!key.startsWith('use_') && key !== 'next_best_action') delete answers[key];
   const head = Math.max(0, ...c.events.map(e => e.sequence));
-  const { candidates, projection } = buildDecisionState(c.events, c.position, c.abilities, head);
-  const evaluation = policy === 'local' ? evaluateLocalActions(candidates, projection, c.position) : evaluateActions(candidates, c.position, answers, projection);
+  const position=replayPosition(c);
+  const { candidates, projection } = buildDecisionState(c.events, position, c.abilities, head);
+  const evaluation = policy === 'local' ? evaluateLocalActions(candidates, projection, position) : evaluateActions(candidates, position, answers, projection);
   const evidence: Record<string, EmphasisEvidence> = policy === 'local' ? {} : presentActions(candidates.map(a => a.id), answers);
   const raw = answers.next_best_action;
-  const nextQuestion = questionsFor(candidates, c.position).next_best_action;
+  const nextQuestion = questionsFor(candidates, position).next_best_action;
   const inspected = raw && nextQuestion ? inspectAnswer(nextQuestion, raw) : undefined;
   const nomination: NextBestAnswer | undefined = inspected ? { status: inspected.status, quality: inspected.quality, choice: inspected.choice, confidence: inspected.confidence, probabilities: inspected.probabilities } : undefined;
-  const restricted = c.position.generation?.mayDuplicateCharge ? ['generate-again','refresh-generation'] : [];
+  const restricted = position.generation?.mayDuplicateCharge ? ['generate-again','refresh-generation'] : [];
   const finalNomination = finalNextBest(nomination, evaluation.selected.map(a => a.id), c.finalEvidenceChanged);
   const assessment = assessNextBest(finalNomination, evaluation.selected.map(a => a.id), evidence, policy === 'next-best' && ablation !== 'without-next-best', restricted);
   const selected = nextBestOrder(evaluation.selected, evaluation.ranked, assessment);
@@ -182,7 +202,7 @@ export function replayQualityCase(c: QualityCase, policy: QualityPolicy, ablatio
       usefulRecall: ratio(usefulSelected.length, c.labels.useful.length), retrievalRecall: ratio(c.labels.useful.filter(id => candidates.some(a => a.id === id)).length, c.labels.useful.length),
       complementaryGroupRecall: ratio(c.labels.complementaryGroups.filter(g => usefulGroups.includes(g as typeof usefulGroups[number])).length, c.labels.complementaryGroups.length),
       groupDiversity: ratio(groups.length, ids.length), constraintViolations: violations.length,
-      primaryAppropriate: primary ? c.labels.primary.acceptable.includes(primary) : c.labels.primary.abstention !== 'unexpected',
+      primaryAppropriate: primary ? !known.has(primary)&&c.labels.primary.abstention!=='required' ? null : c.labels.primary.acceptable.includes(primary) : c.labels.primary.abstention !== 'unexpected',
       abstained: primary === null, unwantedInvitationProxy: ratio(violations.length, ids.length),
     },
     violations,
@@ -226,7 +246,7 @@ export function summarizeQualityOutcomes(observations: QualityOutcome[]) {
   const measured = (key: 'costUsd' | 'elapsedMs') => { const samples = observed.filter(o => o[key] !== undefined); return { count: samples.length, mean: ratio(samples.reduce((n,o) => n + o[key]!, 0), samples.length) }; };
   return {
     revisions: observations.length, outcomes: rows.length, observed: observed.length,
-    pending: rows.filter(o => o.status === 'pending').length, censored: rows.filter(o => o.status === 'censored').length, revoked: rows.filter(o => o.status === 'revoked').length,
+    pending: rows.filter(o => o.status === 'pending').length, censored: rows.filter(o => o.status === 'censored').length, unknown: rows.filter(o => o.status === 'unknown').length, revoked: rows.filter(o => o.status === 'revoked').length,
     unknownSuccess: rows.filter(o => o.status !== 'revoked' && (o.status !== 'observed' || typeof o.success !== 'boolean')).length,
     success: { count: success.length, rate: ratio(success.filter(o => o.success).length, success.length) },
     quality: { count: quality.length, mean: ratio(quality.reduce((n,o) => n + o.quality!, 0), quality.length) },
@@ -252,7 +272,9 @@ export function summarizeQualityReplays(rows: QualityReplay[]) {
     count: rows.length,
     usefulSetPrecision: average('usefulSetPrecision'), usefulRecall: average('usefulRecall'), retrievalRecall: average('retrievalRecall'),
     labelCoverage: average('labelCoverage'), groupDiversity: average('groupDiversity'), complementaryGroupRecall: average('complementaryGroupRecall'),
-    primaryAppropriateness: ratio(rows.filter(r => r.metrics.primaryAppropriate).length, rows.length),
+    primaryAppropriateness: ratio(rows.filter(r => r.metrics.primaryAppropriate === true).length, rows.filter(r=>r.metrics.primaryAppropriate !== null).length),
+    primaryJudged: rows.filter(r=>r.metrics.primaryAppropriate !== null).length,
+    primaryUnknown: rows.filter(r=>r.metrics.primaryAppropriate === null).length,
     abstentionRate: ratio(rows.filter(r => r.metrics.abstained).length, rows.length),
     constraintViolations: rows.reduce((n,r) => n + r.metrics.constraintViolations, 0), unwantedInvitationProxy: average('unwantedInvitationProxy'),
     usefulnessCalibration: calibrationSummary(rows.flatMap(r => r.usefulnessSamples)),

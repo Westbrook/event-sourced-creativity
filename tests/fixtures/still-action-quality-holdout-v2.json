@@ -1,0 +1,854 @@
+{
+  "schemaVersion": 1,
+  "id": "still-action-quality-holdout",
+  "version": "2.0.0",
+  "labelVersion": "fictional-rubric-2",
+  "frozenAt": "2026-10-01T16:00:00.000Z",
+  "provenance": {
+    "kind": "fictional"
+  },
+  "partition": "holdout",
+  "parent": {
+    "id": "still-action-quality",
+    "version": "1.0.0",
+    "freezeSha256": "d3dbadaf9725fdbfd25f258635630ad380dfc642295da5dc05723bb19b01a987"
+  },
+  "cases": [
+    {
+      "id": "holdout-excluded-idea",
+      "tags": [
+        "document",
+        "excluded",
+        "holdout"
+      ],
+      "goal": {
+        "id": "goal-holdout-excluded-idea",
+        "revision": 1,
+        "description": "Inspect and deliberately include or revise an excluded source idea.",
+        "criteria": [
+          "Preserve current authorization and mandatory controls.",
+          "Keep unknown evidence and judgments explicit."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Inspect and deliberately include or revise an excluded source idea.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-v2-5",
+          "streamId": "fictional-personal",
+          "sequence": 5,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockWeightSet",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "weight": 0
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_toggle-context": {
+          "type": "score",
+          "score": 2,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 1,
+            "3": 0
+          }
+        },
+        "use_edit-block": {
+          "type": "score",
+          "score": 2,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 1,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 1,
+            "3": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "toggle-context",
+          "edit-block",
+          "context"
+        ],
+        "neutral": [],
+        "unacceptable": [],
+        "primary": {
+          "acceptable": [
+            "toggle-context",
+            "edit-block",
+            "context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [],
+        "rationale": "Inspect and deliberately include or revise an excluded source idea."
+      }
+    },
+    {
+      "id": "holdout-results-viewer",
+      "tags": [
+        "results",
+        "permission-restricted",
+        "holdout"
+      ],
+      "goal": {
+        "id": "goal-holdout-results-viewer",
+        "revision": 1,
+        "description": "Inspect result sources in a shared workspace after authoring permission is removed.",
+        "criteria": [
+          "Preserve current authorization and mandatory controls.",
+          "Keep unknown evidence and judgments explicit."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "",
+        "outputId": "",
+        "view": "results",
+        "intent": "Inspect result sources in a shared workspace after authoring permission is removed.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": false,
+        "generate": false,
+        "projectCreate": false,
+        "formats": []
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-v2-5",
+          "streamId": "fictional-personal",
+          "sequence": 5,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "system:fictional-worker",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentRenderCompleted",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "artifact_id": "fictional-story",
+            "artifact_kind": "short_story",
+            "title": "A fictional river story",
+            "items": [
+              {
+                "id": "fictional-section",
+                "title": "River",
+                "body": "A lantern drifted toward the bridge."
+              }
+            ]
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_context": {
+          "type": "score",
+          "score": 2,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 1,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "context"
+        ],
+        "neutral": [],
+        "unacceptable": [
+          "create"
+        ],
+        "primary": {
+          "acceptable": [
+            "context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [],
+        "rationale": "Inspect result sources in a shared workspace after authoring permission is removed."
+      }
+    },
+    {
+      "id": "holdout-generation-known-not-submitted",
+      "tags": [
+        "generation",
+        "recovery",
+        "multiple-useful",
+        "holdout"
+      ],
+      "goal": {
+        "id": "goal-holdout-generation-known-not-submitted",
+        "revision": 1,
+        "description": "Inspect a failed request known not to have been submitted; a new reviewed attempt remains possible.",
+        "criteria": [
+          "Preserve current authorization and mandatory controls.",
+          "Keep unknown evidence and judgments explicit."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "",
+        "outputId": "holdout-not-submitted",
+        "view": "generation",
+        "intent": "Inspect a failed request known not to have been submitted; a new reviewed attempt remains possible.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_inspect-rejection": {
+          "type": "score",
+          "score": 2,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 1,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 1,
+            "3": 0
+          }
+        },
+        "use_refresh-generation": {
+          "type": "score",
+          "score": 2,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 1,
+            "3": 0
+          }
+        },
+        "use_generate-again": {
+          "type": "score",
+          "score": 2,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 1,
+            "3": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "inspect-rejection",
+          "context",
+          "refresh-generation",
+          "generate-again"
+        ],
+        "neutral": [],
+        "unacceptable": [],
+        "primary": {
+          "acceptable": [
+            "inspect-rejection",
+            "context",
+            "refresh-generation",
+            "generate-again"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [],
+        "rationale": "Inspect a failed request known not to have been submitted; a new reviewed attempt remains possible."
+      },
+      "generationJob": {
+        "jobId": "holdout-not-submitted",
+        "documentId": "fictional-document",
+        "kind": "generate",
+        "status": "failed",
+        "attemptCount": 1,
+        "members": [],
+        "result": {
+          "generationReceipt": {
+            "provider_request_status": "not_submitted"
+          }
+        },
+        "errorDetail": {
+          "code": "temporary_before_dispatch",
+          "category": "network",
+          "message": "Fictional transient interruption",
+          "retryable": true
+        },
+        "requestedAt": "2026-10-01T12:00:00.000Z",
+        "updatedAt": "2026-10-01T12:01:00.000Z"
+      }
+    },
+    {
+      "id": "holdout-artifact-unjudged-alternatives",
+      "tags": [
+        "artifact",
+        "unknown-judgments",
+        "holdout"
+      ],
+      "goal": {
+        "id": "goal-holdout-artifact-unjudged-alternatives",
+        "revision": 1,
+        "description": "Consider a saved story when only source review has an independent usefulness judgment.",
+        "criteria": [
+          "Preserve current authorization and mandatory controls.",
+          "Keep unknown evidence and judgments explicit."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "",
+        "outputId": "fictional-story",
+        "view": "artifact",
+        "intent": "Consider a saved story when only source review has an independent usefulness judgment.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-v2-5",
+          "streamId": "fictional-personal",
+          "sequence": 5,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "system:fictional-worker",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentRenderCompleted",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "artifact_id": "fictional-story",
+            "artifact_kind": "short_story",
+            "title": "A fictional river story",
+            "items": [
+              {
+                "id": "fictional-section",
+                "title": "River",
+                "body": "A lantern drifted toward the bridge."
+              }
+            ]
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_context": {
+          "type": "score",
+          "score": 2,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 1,
+            "3": 0
+          }
+        },
+        "use_export": {
+          "type": "score",
+          "score": 3,
+          "confidence": 0.85,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0,
+            "3": 1
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "context"
+        ],
+        "neutral": [],
+        "unacceptable": [],
+        "primary": {
+          "acceptable": [
+            "context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [],
+        "rationale": "Consider a saved story when only source review has an independent usefulness judgment."
+      }
+    }
+  ],
+  "outcomes": [],
+  "freezeSha256": "d4dad215065b02f81a662a3efbbae101b5b76b0c0868b19fb99ee61d7f44f81d"
+}

@@ -15,6 +15,50 @@ const session = {user:{userId:'test',role:'creator',displayName:'Test creator'},
 const json = (body,status=200) => new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
 function client() { operationJournal.clearWrite('test:personal'); operationJournal.clearGeneration('test:personal','d'); const c = new StillClient(); c.session=structuredClone(session);c.events=structuredClone(events);c.head=4;c.position={...position};return c; }
 
+test('new relevant source evidence retires completion continuity without treating undo as a preference',async()=>{
+  const saved=globalThis.fetch;
+  try{
+    for(const partial of [false,true]){
+      const c=client();c.historyComplete=!partial;
+      c.position.recentActions=['edit-block','format-choice:image','completed:edit-block'];
+      const undo={...input('BlockPropertyEdited',{project_id:'p',block_id:'b',property_path:'text',old_value:'Revised idea',new_value:'Restored idea'},5),compensatesEventId:'external-edit',causationId:'external-edit',actor:'user:collaborator'};
+      globalThis.fetch=async url=>url==='/api/session?profile=still'?json(session):json({events:partial?[...events,undo]:[undo],head:5,nextAfter:5,hasMore:false});
+      await c.refresh();
+      assert.deepEqual(c.position.recentActions,['edit-block','format-choice:image']);
+      assert.equal(c.projection.blocks.find(b=>b.id==='b').properties.text,'Restored idea');
+      assert.ok(!selectActions(eligibleActions(c.projection,c.position,abilities),c.position,{},c.projection).some(a=>a.id==='create'));
+      c.position.recentActions.push('completed:edit-block');
+      await c.refresh();
+      assert.ok(c.position.recentActions.includes('completed:edit-block'),'duplicate delivery does not retire a later completion');
+    }
+  }finally{globalThis.fetch=saved;}
+});
+test('unrelated history preserves completion, while a late shared-source change invalidates it',async()=>{
+  const c=client(),saved=globalThis.fetch;c.position.recentActions=['completed:edit-block'];c.head=7;
+  const other=input('DocumentRenamed',{project_id:'other',document_id:'other',title:'Other'},8);
+  let incoming=[other,input('DocumentOpened',{project_id:'p',document_id:'d'},7)];
+  globalThis.fetch=async url=>url==='/api/session?profile=still'?json(session):json({events:incoming,head:8,nextAfter:8,hasMore:false});
+  try{
+    await c.refresh();assert.deepEqual(c.position.recentActions,['completed:edit-block']);
+    incoming=[input('BlockPropertyEdited',{project_id:'p',document_id:'elsewhere',block_id:'b',property_path:'text',new_value:'Shared source changed'},6)];
+    await c.refresh();assert.deepEqual(c.position.recentActions,[]);
+  }finally{globalThis.fetch=saved;}
+});
+test('acknowledged writes retire older completion before the caller records fresh continuity',async()=>{
+  const c=client(),saved=globalThis.fetch;c.position.recentActions=['completed:compose','format-choice:image'];
+  globalThis.fetch=async(url,init)=>{
+    if(url==='/api/session?profile=still')return json(session);
+    const body=JSON.parse(init.body),event=input(body.event.type,body.event.payload,5);
+    return json({appended:[event],head:5});
+  };
+  try{
+    await c.append([{type:'BlockWeightSet',payload:{block_id:'b',previous_weight:.8,weight:.5}}]);
+    assert.deepEqual(c.position.recentActions,['format-choice:image']);
+    c.position.recentActions.push('completed:edit-block');
+    assert.ok(c.position.recentActions.includes('completed:edit-block'));
+  }finally{globalThis.fetch=saved;}
+});
+
 test('permission eligibility and rendering budget remain deterministic under arbitrary model replies',()=>{
   const p=foldEvents(events,Infinity,'d','p');
   const readOnly=eligibleActions(p,position,{author:false,generate:false,projectCreate:false,formats:[]});

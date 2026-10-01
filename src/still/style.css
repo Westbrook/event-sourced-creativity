@@ -355,6 +355,12 @@ still-app .creation-stages [aria-current="step"], still-app .creation-outline [a
 still-app .creation-review-summary .eyebrow { margin-bottom:10px; }
 still-app .creation-review-summary p, still-app .creation-review-status { color:var(--en-color-text-muted); font-size:13px; }
 still-app .creation-map { margin-block:20px; border-block:1px solid var(--en-color-line); padding-block:15px; }
+still-app .creation-quality { margin-block:24px; border-block:1px solid var(--en-color-line); padding-block:16px; }
+still-app .creation-quality summary { cursor:pointer; padding-block:8px; }
+still-app .creation-quality fieldset { min-inline-size:0; display:grid; gap:16px; border:0; padding:0; }
+still-app .creation-quality label { display:grid; gap:8px; overflow-wrap:anywhere; }
+still-app .creation-quality select { max-inline-size:100%; min-inline-size:0; min-block-size:44px; font:inherit; color:var(--en-color-text); background:var(--en-color-surface); border:1px solid var(--en-color-line); border-radius:5px; padding:8px; }
+still-app .creation-quality :focus-visible { outline:2px solid var(--en-color-focus); outline-offset:3px; }
 still-app .creation-map summary, still-app .creation-body-edit summary { cursor:pointer; padding:8px 0; }
 still-app .creation-map ul { list-style:none; padding-left:0; }
 still-app .creation-map li { margin:10px 0; }

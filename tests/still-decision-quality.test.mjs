@@ -7,13 +7,51 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   assertQualityFixture, qualityInput, qualityQuestionContract, replayQualityCase, calibrationSummary,
-  summarizeQualityOutcomes, summarizeQualityOutcomesBySource, summarizeQualityReplays, QUALITY_POLICIES, QUALITY_ABLATIONS,
+  summarizeQualityOutcomes, summarizeQualityOutcomesBySource, summarizeQualityReplays, QUALITY_POLICIES, QUALITY_ABLATIONS, QUALITY_REPLAY_VIEWS,
 } from '../src/still/decision-quality.ts';
 
 const fixturePath = new URL('./fixtures/still-action-quality-v1.json', import.meta.url);
 const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
 const hash = value => createHash('sha256').update(value).digest('hex');
 const scenario = id => structuredClone(fixture.cases.find(c => c.id === id));
+const expanded=JSON.parse(readFileSync(new URL('./fixtures/still-action-quality-v2.json',import.meta.url),'utf8'));
+const holdout=JSON.parse(readFileSync(new URL('./fixtures/still-action-quality-holdout-v2.json',import.meta.url),'utf8'));
+
+test('v2 freezes every supported toolbar view and keeps holdout and original evidence separate',()=>{
+  assert.equal(fixture.freezeSha256,'d3dbadaf9725fdbfd25f258635630ad380dfc642295da5dc05723bb19b01a987');
+  assert.equal(fixture.cases.length,12);
+  for(const release of [expanded,holdout]){
+    assertQualityFixture(release);
+    const {freezeSha256,...frozen}=release;assert.equal(hash(JSON.stringify(frozen)),freezeSha256);
+    assert.equal(release.parent.freezeSha256,fixture.freezeSha256);
+    assert.ok(release.cases.every(c=>!fixture.cases.some(old=>old.id===c.id)));
+  }
+  assert.equal(expanded.partition,'development');assert.equal(holdout.partition,'holdout');
+  assert.deepEqual([...new Set(expanded.cases.map(c=>c.position.view))].sort(),[...QUALITY_REPLAY_VIEWS].sort());
+  const tags=new Set(expanded.cases.flatMap(c=>c.tags));
+  for(const tag of ['sparse','incomplete-history','stale-history','collaborator','permission-restricted','interrupted','review','recovery','no-primary'])assert.ok(tags.has(tag),tag);
+  assert.ok(holdout.cases.every(c=>!expanded.cases.some(other=>other.id===c.id)));
+});
+
+test('canonical jobs determine replay eligibility even when supplied derived context contradicts the job',()=>{
+  const c=structuredClone(expanded.cases.find(c=>c.id==='v2-generation-uncertain-canonical'));
+  c.position.generation={canStartNew:true,active:false,mayDuplicateCharge:false};
+  for(const policy of QUALITY_POLICIES){
+    const row=replayQualityCase(c,policy);
+    assert.ok(!row.candidates.includes('generate-again'));
+    assert.ok(row.candidates.includes('refresh-generation'));
+  }
+  const mismatched=structuredClone(expanded);mismatched.cases.find(c=>c.generationJob).generationJob.documentId='elsewhere';
+  assert.throws(()=>assertQualityFixture(mismatched),/canonical generation job scope/);
+});
+
+test('an emphasized unjudged action remains unknown unless the case requires abstention',()=>{
+  const c=scenario('cold-start');c.labels.useful=[];c.labels.primary.acceptable=[];c.labels.primary.abstention='allowed';
+  const row=replayQualityCase(c,'next-best');assert.equal(row.primary,'new-project');
+  assert.equal(row.metrics.primaryAppropriate,null);
+  const summary=summarizeQualityReplays([row]);assert.equal(summary.primaryAppropriateness,null);assert.equal(summary.primaryUnknown,1);assert.equal(summary.primaryJudged,0);
+  c.labels.primary.abstention='required';assert.equal(replayQualityCase(c,'next-best').metrics.primaryAppropriate,false);
+});
 
 test('frozen fictional inventory labels goals, quality, missing evidence, and the required difficult journeys', () => {
   assertQualityFixture(fixture);
@@ -72,24 +110,25 @@ test('unlabeled selections remain unknown and empty calibration never means perf
   assert.equal(calibration.bins.reduce((n,b) => n + b.count, 0), 2);
 });
 
-test('late, censored, pending, withdrawn, and direct outcomes keep separate denominators', () => {
+test('late, censored, pending, unknown, withdrawn, and direct outcomes keep separate denominators', () => {
   const base = { outcomeId: 'o', revision: 1, caseId: 'cold-start', actionId: 'new-project', source: 'fictional', status: 'pending', occurredAt: '2026-09-28T12:00:00Z', recordedAt: '2026-09-28T12:00:00Z', horizonMs: 86_400_000, exposure: { invocationId: 'invoke', assignment: 'observational', alternatives: ['new-project'] } };
   const outcomes = [
     base,
     { ...base, revision: 2, status: 'observed', success: true, quality: .9, predictedSuccess: .8, regret: false, recordedAt: '2026-09-30T12:00:00Z' },
     { ...base, outcomeId: 'censored', status: 'censored', success: false, predictedSuccess: .7 },
     { ...base, outcomeId: 'pending' },
+    { ...base, outcomeId: 'unknown', status: 'unknown', success: true },
     { ...base, outcomeId: 'withdrawn', status: 'observed', success: false },
     { ...base, outcomeId: 'withdrawn', revision: 2, status: 'revoked', success: false },
     { ...base, outcomeId: 'direct', status: 'observed', exposure: { invocationId: 'direct', assignment: 'direct', alternatives: [] } },
   ];
   const summary = summarizeQualityOutcomes(outcomes);
-  assert.equal(summary.outcomes, 5);
-  assert.equal(summary.revisions, 7);
+  assert.equal(summary.outcomes, 6);
+  assert.equal(summary.revisions, 8);
   assert.deepEqual(summary.success, { count: 1, rate: 1 });
-  assert.equal(summary.unknownSuccess, 3);
+  assert.equal(summary.unknownSuccess, 4);assert.equal(summary.unknown, 1);
   assert.equal(summary.censored, 1); assert.equal(summary.pending, 1); assert.equal(summary.revoked, 1);
-  assert.equal(summary.late, 1); assert.equal(summary.direct, 1); assert.equal(summary.observational, 4);
+  assert.equal(summary.late, 1); assert.equal(summary.direct, 1); assert.equal(summary.observational, 5);
   assert.equal(summary.successCalibration.count, 1);
   assert.deepEqual(summary.costUsd, { count: 0, mean: null });
   assert.match(summary.inference, /No selection-bias correction/);
@@ -126,6 +165,11 @@ test('offline CLI retains reproducible identities and rejects stale captures and
     const receipt = JSON.parse(readFileSync(out, 'utf8'));
     assert.equal(receipt.cases.length, fixture.cases.length * 6);
     assert.equal(receipt.fixture.freezeSha256, fixture.freezeSha256);
+    assert.equal(receipt.fixture.partition,'legacy-unspecified');
+    assert.equal(receipt.coverage.kind,'toolbar-recommendation-policy');
+    assert.equal(receipt.coverage.views.artifact,0);
+    for(const surface of ['palette','formats','workflow','more','renderedToolbar'])assert.ok(receipt.coverage.unsupported[surface]);
+    assert.ok(receipt.cohorts['local/full']['partial-evidence']);
     for (const path of ['scripts/evaluate-still-actions.mjs','src/still/decision-quality.ts','src/still/decisions.ts','src/still/decision-coherence.ts','pnpm-lock.yaml']) assert.match(receipt.sources[path], /^[a-f0-9]{64}$/);
     assert.ok(receipt.limits.some(line => line.includes('No provider calls')));
     const capture = join(directory, 'capture.json');
