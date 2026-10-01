@@ -801,8 +801,13 @@ acceptance remains separate; no further implementation or publication remains.
 
 ### Project sidebar spacing — 2026-10-01
 
-Implemented locally: project copy, section headings, and navigation icon cells
-share a logical inset; Documents and Library use the same centered icon/label
+**Committed to main; saved as Site565, awaiting live-deployment authorization.**
+Main commit `6cfb79e2`; release source `9a723204`. Automatic approval review
+blocked deployment because the requested preview would update the live shared
+site. [Release receipt](evidence/project-sidebar-release-2026-10-01.json).
+
+Project copy, section headings, and navigation icon cells share a logical inset;
+Documents and Library use the same centered icon/label
 layout. Section boundaries use a single divider and consistent vertical spacing.
 TypeScript, scoped lint, CEM checks, and 12 synthetic Chromium geometry cases
 pass (320–1600px, short landscape, English/Arabic). Visual evidence and focused
