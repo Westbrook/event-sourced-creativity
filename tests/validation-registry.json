@@ -95,6 +95,7 @@
     "tests/browser/forma-assistant-studio-slot.spec.mjs": "browser",
     "tests/browser/forma-audio-reviewed-download.spec.mjs": "browser",
     "tests/browser/forma-context-return-reading.spec.mjs": "browser",
+    "tests/browser/forma-creator-gutters.spec.mjs": "browser",
     "tests/browser/forma-deliver-containment.spec.mjs": "browser",
     "tests/browser/forma-deliver-reader-denial.spec.mjs": "browser",
     "tests/browser/forma-e11-copy-locales.spec.mjs": "browser",
@@ -1533,13 +1534,14 @@
       "reason": "Replaces the imported fixture dist worker reference with worker/index.ts before executing it."
     }
   },
-  "classificationInput": "929875d334f64f5c0c984ff544bda211420c5c3d16b96af65622cc169558067d",
+  "classificationInput": "e9f374f0078b3927d303025e34439a1355d7ba89ce50b6cf24947519ffd6b937",
   "browserConfigs": [
     "playwright.a11y.config.mjs",
     "playwright.activity-accounting-lifetime.config.mjs",
     "playwright.activity-receipt-focus.config.mjs",
     "playwright.content-first.config.mjs",
     "playwright.context-return-reading.config.mjs",
+    "playwright.creator-gutters.config.mjs",
     "playwright.deliver-containment.config.mjs",
     "playwright.deliver-reader-denial.config.mjs",
     "playwright.e9-cancel-header.config.mjs",
@@ -2333,6 +2335,16 @@
         "playwright.context-return-reading.config.mjs"
       ],
       "command": "FORMA_BROWSER_CONFIGS=context-return-reading pnpm test:browser",
+      "resource": "config-owned browser batch; isolated context; true zoom remains a dedicated profile",
+      "prerequisites": "Config opt-ins and fixture/account/archive requirements in tests/browser/README.md; no automatic account or provider work"
+    },
+    "tests/browser/forma-creator-gutters.spec.mjs": {
+      "owner": "Forma browser maintainer",
+      "lane": "browser",
+      "configs": [
+        "playwright.creator-gutters.config.mjs"
+      ],
+      "command": "FORMA_BROWSER_CONFIGS=creator-gutters pnpm test:browser",
       "resource": "config-owned browser batch; isolated context; true zoom remains a dedicated profile",
       "prerequisites": "Config opt-ins and fixture/account/archive requirements in tests/browser/README.md; no automatic account or provider work"
     },
