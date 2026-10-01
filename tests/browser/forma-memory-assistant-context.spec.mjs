@@ -47,14 +47,14 @@ for(const creation of [false,true,'output','profile','image'])for(const surface 
  test('historical result retires its private modal without a new purchase',async({page,context,baseURL})=>{
   expect(syntheticNetworkEnabled(baseURL)).toBe(true);
   // Exercise the real browser expiry callback without waiting a wall-clock
-  // minute for every locale/surface variant. Native cadence has separate proof.
+  // interval for every locale/surface variant. Native cadence has separate proof.
   if(boundary==='expiry')await page.clock.install({time:Date.now()});
   const {syntheticReadBody}=await import('./helpers/synthetic-network.mjs');
   const documentPath='/document/doc-atmosphere/atmosphere-studies',routePath=documentPath+(surface==='chat'?'/view/chat':''),query=new URLSearchParams({route:documentPath,projectId:'project-atmosphere'}),errors=[],calls=[];
   if(surface==='chat'||boundary==='apply')await context.route('**/api/session',request=>{const body=JSON.parse(syntheticReadBody('/api/session'));body.provider.plannerConfigured=true;if(boundary==='apply')body.assistant.phase='actions';return request.fulfill({json:body});});
   page.on('pageerror',error=>errors.push(error.message));
   const originalRequest={turnId:'synthetic-semantic-turn',route:routePath,projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,selectedItemIds:[],locale,model:'gpt-5.6-luna',taskKind:'clarify',sourceHash:'a'.repeat(64),conversationTurnIds:['synthetic-semantic-turn']};
-  const quote={executionId:'synthetic-semantic-execution',bindingHash:'synthetic-binding',operation:'assistant-specialist',status:'completed',actorLabel:'Synthetic principal',workspaceId:null,period:'2026-09',projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,blockId:'',sourceHash:'a'.repeat(64),provider:'openai',models:['gpt-5.6-luna'],maximumMicrousd:15000,maximumTokens:1600,providerCalls:1,searchCalls:0,publicQuery:'',privateInput:{source:'Synthetic private approved Memory context'},expiresAt:new Date(Date.now()+600000).toISOString(),providerAvailable:false,canExecute:false};
+  const quote={executionId:'synthetic-semantic-execution',bindingHash:'synthetic-binding',operation:'assistant-specialist',status:'completed',actorLabel:'Synthetic principal',workspaceId:null,period:'2026-09',projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,blockId:'',sourceHash:'a'.repeat(64),provider:'openai',models:['gpt-5.6-luna'],maximumMicrousd:15000,maximumTokens:1600,providerCalls:1,searchCalls:0,publicQuery:'',privateInput:{source:'Synthetic private approved Memory context'},expiresAt:new Date(Date.now()+200000).toISOString(),providerAvailable:false,canExecute:false};
   const result={reply:'Synthetic retained Memory guidance <script>not executable</script>',sourceStatus:'semantic-memory-assisted',
    editReview:{version:'memory-edit-review-v1',executionId:quote.executionId,turnId:originalRequest.turnId,projectId:originalRequest.projectId,
     documentId:originalRequest.documentId,sourceHash:originalRequest.sourceHash,locale,mode:'review-only',independentEvidence:false,
@@ -79,7 +79,7 @@ for(const creation of [false,true,'output','profile','image'])for(const surface 
   let validUntil='';const presentation=()=>({version:'semantic-memory-answer-v1',validUntil,independentEvidence:false});
   const task=()=>({id:quote.executionId,executionId:quote.executionId,turnId:originalRequest.turnId,bindingHash:quote.bindingHash,kind:'clarify',model:'gpt-5.6-luna',status:'completed',submission:'settled',canExecute:false,certifiedCompleted:true,completedReview:{turnId:originalRequest.turnId,executionId:quote.executionId,quote,originalRequest,result,memory:presentation()}});
   await context.route('**/api/assistant?*',async request=>{
-   expect(request.request().method()).toBe('GET');validUntil=new Date(Date.now()+60000).toISOString();
+   expect(request.request().method()).toBe('GET');validUntil=new Date(Date.now()+20000).toISOString();
    const body=JSON.parse(syntheticReadBody('/api/assistant?'+query));body.context.surface=assistantSurfaceForRoute(routePath);body.tasks=[task()];await request.fulfill({json:body});
   });
   await context.route('**/api/assistant/specialist?*',async request=>{
@@ -147,7 +147,7 @@ for(const creation of [false,true,'output','profile','image'])for(const surface 
   }
   if(boundary==='apply'&&creation!=='image'){await expect(editReview).toContainText(ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationDetail':creation?'creationDetail':'editPublishDetail')]);await editReview.getByRole('button',{name:ASSISTANT_MESSAGES[locale]['assistant.specialist.'+(creation==='output'?'outputCreationApply':creation?'creationApply':'editApply')],exact:true}).click();}
   if(boundary==='blur')await page.evaluate(()=>window.dispatchEvent(new Event('blur')));
-  if(boundary==='expiry'){await expect(dialog).toContainText(result.reply);await page.clock.fastForward(60001);}
+  if(boundary==='expiry'){await expect(dialog).toContainText(result.reply);await page.clock.fastForward(20001);}
   await expect(dialog).not.toContainText(result.reply,{timeout:15000});await expect(dialog).not.toContainText('Synthetic private approved Memory context');await expect(dialog).not.toContainText(privateText);if(!creation)await expect(dialog).not.toContainText(result.editReview.edits[0].beforeExcerpt);
   await page.keyboard.press('Escape');await expect(draft).toHaveValue('Unsent local draft');
   if(surface==='chat'){
@@ -241,7 +241,7 @@ for(const locale of ['en','ar'])test.describe('Fresh Memory field generation '+l
   });
   await context.route('**/api/assistant/specialist?*',request=>{
    const input=request.request().postDataJSON();calls.push(input);expect(input).toEqual({action:'quote',turnId:savedTurn.id,memory:'saved'});
-   const quote={executionId:'fresh-field-execution',bindingHash:'a'.repeat(64),operation:'assistant-specialist',status:'quoted',actorLabel:'Synthetic principal',workspaceId:null,period:'2026-09',projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,blockId:'',sourceHash:'b'.repeat(64),provider:'openai',models:['gpt-5.6-luna'],maximumMicrousd:15000,maximumTokens:1600,providerCalls:1,searchCalls:0,publicQuery:'',privateInput:{source:'Synthetic approved Memory'},expiresAt:new Date(Date.now()+600000).toISOString(),providerAvailable:true,budgetAvailable:true,canExecute:true,availableMicrousd:100000,unavailableReasons:[]};
+   const quote={executionId:'fresh-field-execution',bindingHash:'a'.repeat(64),operation:'assistant-specialist',status:'quoted',actorLabel:'Synthetic principal',workspaceId:null,period:'2026-09',projectId:'project-atmosphere',documentId:'doc-atmosphere',canvasId:null,blockId:'',sourceHash:'b'.repeat(64),provider:'openai',models:['gpt-5.6-luna'],maximumMicrousd:15000,maximumTokens:1600,providerCalls:1,searchCalls:0,publicQuery:'',privateInput:{source:'Synthetic approved Memory'},expiresAt:new Date(Date.now()+200000).toISOString(),providerAvailable:true,budgetAvailable:true,canExecute:true,availableMicrousd:100000,unavailableReasons:[]};
    return request.fulfill({json:{turnId:savedTurn.id,executionId:quote.executionId,quote,originalRequest:{...savedTurn.originalRequest,model:'gpt-5.6-luna',taskKind:'clarify',sourceHash:quote.sourceHash,conversationTurnIds:[savedTurn.id]},memory:{version:'semantic-memory-answer-v1',validUntil:new Date(Date.now()+30000).toISOString(),independentEvidence:false},noAutomaticRetry:true}});
   });
   await page.goto('/document/doc-atmosphere/atmosphere-studies');await expect(page.locator('forma-workspace')).toBeVisible();
