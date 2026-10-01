@@ -4423,7 +4423,7 @@ forma-ui-button .button { max-width: 100%; }
 .library-index-disclosure > summary { min-height: 2.75rem; align-content: center; color: var(--muted); cursor: pointer; font-size: var(--type-small); }
 .library-index-disclosure > .index-health { margin-top: .5rem; }
 .library-artifact-output { display: grid; align-content: start; gap: 1rem; min-width: 0; }
-.library-artifact-open { display: grid; gap: .8rem; min-width: 0; }
+.library-artifact-open { display: grid; gap: .8rem; min-width: 0; scroll-margin-block: var(--forma-focus-clearance, .5rem); }
 .library-artifact-open > div { display: grid; gap: .3rem; }
 .library-artifact-open > div > span,.library-artifact-open small { color: var(--muted); font-size: var(--type-caption); }
 .library-artifact-open h3,.library-artifact-open p { margin: 0; overflow-wrap: anywhere; }

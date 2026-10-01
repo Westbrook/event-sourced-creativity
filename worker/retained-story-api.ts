@@ -9,6 +9,7 @@ import { MAX_MANUAL_PRESENTATION_SLIDES } from "../src/model/presentation-count-
 import { parseNativeSlidesCompletionUrl, validateNativeSlidesCompletion, type NativeSlidesHandle } from "../src/model/native-slides-completion.ts";
 import { documentJobMaxAttempts } from "../src/model/document-jobs.ts";
 import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
+import { parseAudioMediaRevision } from "../src/model/document-artifacts.ts";
 import { parseNativeSceneCompletionUrl, validateNativeSceneCompletion, type NativeSceneHandle } from "../src/model/native-scene-completion.ts";
 import { parseNativeStoryCompletionUrl, validateNativeStoryCompletion, type NativeStoryHandle } from "../src/model/native-short-story-generation.ts";
 import {
@@ -212,7 +213,9 @@ function selectNative(rows: EventRow[], selection: { documentId:string; artifact
   // private. Bind the actual public count without reading private_json.
   if (requestedItemCount !== undefined && payload.item_count !== requestedItemCount) throw unavailable();
   return Object.freeze({ projectId, contentId, sceneMedium,
-    completionId: completion.row.event_id, completionItemCount: payload.item_count, completionInputRef: payload.input_ref });
+    completionId: completion.row.event_id, completionItemCount: payload.item_count, completionInputRef: payload.input_ref,
+    latestEditId: edits.at(-1)?.row.event_id ?? null,
+    editContentHashes: Object.freeze(edits.map(edit => edit.payload.content_sha256 as string)) });
 }
 
 const storyboardReceiptGuard = () => `private_event_id=? AND owner_id=? AND document_id=? AND project_id=?
@@ -338,6 +341,57 @@ async function audioReceipt(env: WorkerEnv, native: ReturnType<typeof selectNati
     if (!key.startsWith(`${ownerMediaNamespace(ownerId)}/generated/`)) throw unavailable();
   }
   return { bindings, raw: row.private_json, payload };
+}
+
+// Current Audio bytes are selected by the latest exact authored edit receipt.
+// The immutable completion still supplies original input, lyrics and provenance.
+// No object read occurs here: the existing explicit media reader verifies bytes.
+async function audioEditReceipt(env: WorkerEnv, native: ReturnType<typeof selectNative>, ownerId: string,
+  selection: { documentId: string; artifactId: string; revision: number; contentSha256: string },
+  body: Record<string, unknown>, original: Awaited<ReturnType<typeof audioReceipt>>) {
+  const hasBodyRevision = Object.hasOwn(body, "audio_revision");
+  if (!native.latestEditId) {
+    if (selection.revision !== 0 || hasBodyRevision) throw unavailable();
+    return null;
+  }
+  const bindings = [native.latestEditId, ownerId, selection.documentId, native.projectId];
+  const row = await env.DB.prepare(`SELECT private_json FROM event_private_payloads WHERE ${audioReceiptGuard()}`)
+    .bind(...bindings).first<{ private_json: string }>();
+  if (!row || typeof row.private_json !== "string" || bytes(row.private_json) > EVENT_BYTES) throw unavailable();
+  const payload = record(JSON.parse(row.private_json));
+  if (!payload || payload.document_id !== selection.documentId || payload.project_id !== native.projectId
+    || payload.artifact_id !== selection.artifactId || payload.content_ref !== native.contentId
+    || payload.edited_by_user_id !== ownerId || payload.revision !== selection.revision
+    || payload.content_sha256 !== selection.contentSha256
+    || payload.artifact_kind !== undefined && payload.artifact_kind !== "audio") throw unavailable();
+  const hasReceiptRevision = Object.hasOwn(payload, "audio_revision");
+  if (!hasReceiptRevision) {
+    // Legacy text-only edits preserve original audio, never an unbound override.
+    if (hasBodyRevision) throw unavailable();
+    return { bindings, raw: row.private_json, revision: undefined };
+  }
+  if (payload.artifact_kind !== "audio") throw unavailable();
+  if (payload.audio_revision === null) {
+    if (hasBodyRevision || payload.revision_action !== "restore" || payload.source_surface !== "document-artifact-history"
+      || !Number.isSafeInteger(payload.restored_from_revision) || Number(payload.restored_from_revision) < 0
+      || Number(payload.restored_from_revision) >= selection.revision) throw unavailable();
+    return { bindings, raw: row.private_json, revision: undefined };
+  }
+  const revision = parseAudioMediaRevision(payload.audio_revision);
+  const authored = hasBodyRevision ? parseAudioMediaRevision(body.audio_revision) : null;
+  if (!revision || !authored || JSON.stringify(revision) !== JSON.stringify(authored)
+    || revision.source.revision >= selection.revision) throw unavailable();
+  const prefix = `${ownerMediaNamespace(ownerId)}/generated/`;
+  for (const url of [revision.media.url, revision.source.url]) {
+    let key: string;
+    try { key = decodeURIComponent(url.slice("/api/media/".length)); } catch { throw unavailable(); }
+    if (!key.startsWith(prefix)) throw unavailable();
+  }
+  if (revision.source.revision === 0) {
+    if (revision.source.url !== original.payload.media_url
+      || revision.source.sha256 !== record(original.payload.settings)?.source_media_sha256) throw unavailable();
+  } else if (revision.source.contentSha256 !== native.editContentHashes[revision.source.revision - 1]) throw unavailable();
+  return { bindings, raw: row.private_json, revision };
 }
 
 function personalContentGuard() {
@@ -762,10 +816,12 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
     const body = record(JSON.parse(source.content));
     if (!body || typeof body.title !== "string" || typeof body.content_markdown !== "string"
       || !Array.isArray(body.items)) throw unavailable();
+    const audioEdit = audio ? await audioEditReceipt(env, native, identity.userId, selection, body, audio) : null;
     const outputTarget = nativeCompletion ? { output: nativeCompletion.output, selection } : nativeOutput;
     const dto = outputTarget
       ? projectNativeRetainedOutput(outputTarget, body, source.expires_at, native.sceneMedium, {
-        storyboardItems: storyboard?.items ?? null, model3dReceipt: model3d?.payload ?? null, audioReceipt: audio?.payload ?? null, videoReceipt: video?.payload ?? null })
+        storyboardItems: storyboard?.items ?? null, model3dReceipt: model3d?.payload ?? null, audioReceipt: audio?.payload ?? null,
+        ...(audioEdit?.revision ? { audioRevision: audioEdit.revision } : {}), videoReceipt: video?.payload ?? null })
       : validateRetainedStoryDto({ schemaVersion: 1, kind: "native-retained-short-story",
         selection, title: body.title, contentMarkdown: body.content_markdown, expiresAt: source.expires_at }, selection);
     if (!dto || nativeCompletion?.output === "scene" && body.items.length !== 1
@@ -822,8 +878,9 @@ async function readCurrentRetainedNative(request: Request, env: WorkerEnv, nativ
         ${model3d?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${model3dReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${video?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${videoReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${audio?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${audioReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
+        ${audioEdit?`AND EXISTS(SELECT 1 FROM event_private_payloads WHERE ${audioReceiptGuard()} AND CAST(private_json AS BLOB)=CAST(? AS BLOB))`:""}
         ${completionInput?`AND EXISTS(SELECT 1 FROM private_content WHERE ${audioInputGuard()} AND CAST(content AS BLOB)=CAST(? AS BLOB) AND expires_at=?)`:""}`)
-      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(video?[...video.bindings,video.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(completionInput?[...completionInput.bindings,completionInput.raw,completionInput.expiresAt]:[]))
+      .bind(...auth.bindings, streamId, ...(job?.bindings??[]), snapshot, ...contentBindings, source.content, source.expires_at, principal.auth_json, ...(job?[job.snapshot]:[]), ...(storyboard?[...storyboard.bindings,storyboard.raw]:[]), ...(model3d?[...model3d.bindings,model3d.raw]:[]), ...(video?[...video.bindings,video.raw]:[]), ...(audio?[...audio.bindings,audio.raw]:[]), ...(audioEdit?[...audioEdit.bindings,audioEdit.raw]:[]), ...(completionInput?[...completionInput.bindings,completionInput.raw,completionInput.expiresAt]:[]))
       .first<{ admitted: number }>();
     if (final?.admitted !== 1 || Date.parse(source.expires_at) <= Date.now() || job && Date.parse(job.expiresAt) <= Date.now()
       || completionInput && Date.parse(completionInput.expiresAt) <= Date.now()) throw unavailable();

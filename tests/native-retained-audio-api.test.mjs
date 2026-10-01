@@ -5,11 +5,11 @@ import { outputTestDatabase, registerOutputSourceImports } from "./output-server
 
 const imports = registerOutputSourceImports();
 let handleRetainedStoryRead, ensureSchema, appendAuditEvent, retainedStoryRequestPath;
-let handleNativeRetainedOutputRead, nativeRetainedOutputRequestPath;
+let handleNativeRetainedOutputRead, nativeRetainedOutputRequestPath, projectNativeRetainedOutput;
 try {
   ({ handleRetainedStoryRead } = await import("../worker/retained-story-api.ts"));
   ({ handleNativeRetainedOutputRead } = await import("../worker/retained-story-api.ts"));
-  ({ nativeRetainedOutputRequestPath } = await import("../src/model/native-retained-output.ts"));
+  ({ nativeRetainedOutputRequestPath, projectNativeRetainedOutput } = await import("../src/model/native-retained-output.ts"));
   ({ ensureSchema, appendAuditEvent } = await import("../worker/runtime.ts"));
   ({ retainedStoryRequestPath } = await import("../src/model/retained-short-story.ts"));
 } finally { imports.deregister(); }
@@ -171,4 +171,142 @@ test("native Audio final witness rejects selected media/input replacement and pr
   });
   assert.equal((await f.readNative("audio")).status,404);assert.equal(entered,1);assert.equal(f.changes(),afterMutation);
  });
+});
+
+const trimmedRevision = (sourceContentSha256) => ({
+ schemaVersion:1,operation:"trim",
+ media:{url:audioUrl().replace("audio.wav","trim-1.wav"),mediaType:"audio/wav",sha256:"d".repeat(64),byteLength:24044},
+ source:{url:audioUrl(),sha256:"b".repeat(64),revision:0,contentSha256:sourceContentSha256,frameCount:22000},
+ startFrame:4000,endFrame:16000,sampleRate:8000,channels:1,bitsPerSample:16,frameCount:12000,durationSeconds:1.5,
+});
+const privatePayload = (f,eventId) => f.sqlite.prepare("SELECT private_json FROM event_private_payloads WHERE private_event_id=?").get(eventId)?.private_json;
+const changePrivatePayload = (f,eventId,change) => {
+ const payload=JSON.parse(privatePayload(f,eventId));change(payload);
+ f.sqlite.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?").run(JSON.stringify(payload),eventId);
+};
+async function retainTrim(f,revision=trimmedRevision(digest(f.raw())),number=1,body) {
+ f.replace(body??{...JSON.parse(f.raw()),audio_revision:revision});
+ const event=await f.append("DocumentArtifactEdited",{artifact_id:ARTIFACT,artifact_kind:"audio",content_ref:CONTENT,
+  revision:number,content_sha256:digest(f.raw()),edited_by_user_id:OWNER,audio_revision:revision,source_surface:"document-artifact-editor"});
+ return {revision,event};
+}
+
+// Synthetic retained edit envelopes qualify read custody and projection only.
+// The persistence suite separately exercises actual PCM edits and retained bytes.
+test("native Audio selects exact authored trim media and measured duration while preserving immutable completion identity",async t=>{
+ const f=await audioFixture(t),original=privatePayload(f,f.completion.eventId),{revision}=await retainTrim(f),before=f.changes();
+ const response=await f.readNative("audio",f.select(1));assert.equal(response.status,200);
+ const dto=await response.json();assert.deepEqual(dto.selection,f.select(1));
+ assert.deepEqual(dto.content.media,{url:revision.media.url,mediaType:"audio/wav",sha256:revision.media.sha256});
+ assert.deepEqual(dto.content.timing,{seconds:1.5,basis:"measured"});
+ assert.equal(dto.content.inputRef,"original-audio-input");assert.equal(dto.content.lyrics,audioSettings().lyrics);
+ assert.equal(dto.content.role,"voice");assert.equal(dto.content.synthIdWatermarked,true);
+ assert.equal(privatePayload(f,f.completion.eventId),original);assert.equal(f.changes(),before);
+ assert.equal(f.calls.length,6);assert.equal(f.calls.filter(sql=>sql.startsWith("SELECT private_json")).length,2);
+ assert.equal((f.calls.at(-1).match(/CAST\(private_json AS BLOB\)=CAST\(\? AS BLOB\)/gu)??[]).length,2);
+ assert.equal((await f.readNative("audio",f.select(0))).status,404);
+});
+
+test("native Audio refuses unbound, malformed, foreign or incoherent authored media without original-media fallback",async t=>{
+ for(const fault of ["revision-zero","missing-event-field","missing-body-field","null-body","malformed","different-record","foreign-media",
+  "foreign-source","future-source-revision","original-source-hash","original-source-url","private-identity","private-digest","missing-receipt","redacted-receipt"])
+ await t.test(fault,async child=>{
+  const f=await audioFixture(child);let revision=1;
+  if(fault==="revision-zero"){f.replace({...initialBody(),audio_revision:trimmedRevision(digest(f.raw()))});revision=0;}
+  else {
+   const mediaRevision=trimmedRevision(digest(f.raw()));
+   if(fault==="foreign-media")mediaRevision.media.url=`/api/media/${ownerMediaNamespace("other")}%2Fgenerated%2Ftrim.wav`;
+   if(fault==="foreign-source")mediaRevision.source.url=`/api/media/${ownerMediaNamespace("other")}%2Fgenerated%2Faudio.wav`;
+   if(fault==="future-source-revision")mediaRevision.source.revision=1;
+   if(fault==="original-source-hash")mediaRevision.source.sha256="e".repeat(64);
+   if(fault==="original-source-url")mediaRevision.source.url=audioUrl().replace("audio.wav","other-original.wav");
+   const retained=await retainTrim(f,mediaRevision,1,fault==="missing-body-field"?initialBody():fault==="null-body"?{...initialBody(),audio_revision:null}:undefined),id=retained.event.eventId;
+   if(fault==="missing-event-field")changePrivatePayload(f,id,p=>{delete p.audio_revision;});
+   if(fault==="malformed")changePrivatePayload(f,id,p=>p.audio_revision.media.sha256="invalid");
+   if(fault==="different-record")changePrivatePayload(f,id,p=>p.audio_revision.media.sha256="e".repeat(64));
+   if(fault==="private-identity")changePrivatePayload(f,id,p=>p.artifact_id="other");
+   if(fault==="private-digest")changePrivatePayload(f,id,p=>p.content_sha256="e".repeat(64));
+   if(fault==="missing-receipt")f.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(id);
+   if(fault==="redacted-receipt")f.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run("2030-01-01T00:00:00.000Z",id);
+  }
+  const before=f.changes(),response=await f.readNative("audio",f.select(revision));assert.equal(response.status,404);
+  assert.equal(f.changes(),before);assert.equal(f.calls.some(sql=>sql.includes("expected_events AS")),false);
+ });
+});
+
+test("native Audio binds later trim source content to its earlier public revision including legacy text-only sources",async t=>{
+ for(const source of ["trim","legacy-text"])
+ await t.test(source,async child=>{
+  const f=await audioFixture(child);
+  if(source==="trim")await retainTrim(f);
+  else {
+   f.replace({...initialBody(),content_markdown:"Revised text, original file."});
+   await f.append("DocumentArtifactEdited",{artifact_id:ARTIFACT,content_ref:CONTENT,revision:1,content_sha256:digest(f.raw()),edited_by_user_id:OWNER});
+  }
+  const first=JSON.parse(f.raw()).audio_revision,revision=trimmedRevision(digest(f.raw()));
+  revision.media.url=audioUrl().replace("audio.wav","trim-2.wav");revision.media.sha256="e".repeat(64);
+  revision.source={url:first?.media.url??audioUrl(),sha256:first?.media.sha256??"b".repeat(64),revision:1,contentSha256:digest(f.raw()),frameCount:first?.frameCount??22000};
+  revision.startFrame=2000;revision.endFrame=6000;revision.frameCount=4000;revision.durationSeconds=.5;revision.media.byteLength=8044;
+  await retainTrim(f,revision,2);assert.equal((await f.readNative("audio",f.select(2))).status,200);
+  const invalidRevision=structuredClone(revision);invalidRevision.source.contentSha256="f".repeat(64);
+  await retainTrim(f,invalidRevision,3);assert.equal((await f.readNative("audio",f.select(3))).status,404);
+ });
+});
+
+test("native Audio restores original and retained edited media through new revisions without rewriting completion",async t=>{
+ const f=await audioFixture(t),original=privatePayload(f,f.completion.eventId),{revision}=await retainTrim(f);
+ f.replace(initialBody());
+ await f.append("DocumentArtifactEdited",{artifact_id:ARTIFACT,artifact_kind:"audio",content_ref:CONTENT,revision:2,content_sha256:digest(f.raw()),edited_by_user_id:OWNER,
+  audio_revision:null,revision_action:"restore",restored_from_revision:0,source_surface:"document-artifact-history"});
+ const restored=await f.readNative("audio",f.select(2));assert.equal(restored.status,200);assert.equal((await restored.json()).content.media.url,audioUrl());
+ f.replace({...initialBody(),audio_revision:revision});
+ await f.append("DocumentArtifactEdited",{artifact_id:ARTIFACT,artifact_kind:"audio",content_ref:CONTENT,revision:3,content_sha256:digest(f.raw()),edited_by_user_id:OWNER,
+  audio_revision:revision,revision_action:"restore",restored_from_revision:1,source_surface:"document-artifact-history"});
+ const edited=await f.readNative("audio",f.select(3));assert.equal(edited.status,200);assert.equal((await edited.json()).content.media.url,revision.media.url);
+ assert.equal(privatePayload(f,f.completion.eventId),original);
+});
+
+test("native Audio accepts null media override only as a bound original-history restore marker",async t=>{
+ for(const fault of ["ordinary-edit","missing-history-surface","missing-source-revision","future-source-revision"])
+ await t.test(fault,async child=>{
+  const f=await audioFixture(child);await retainTrim(f);f.replace(initialBody());
+  const payload={artifact_id:ARTIFACT,artifact_kind:"audio",content_ref:CONTENT,revision:2,content_sha256:digest(f.raw()),edited_by_user_id:OWNER,
+   audio_revision:null,revision_action:"restore",restored_from_revision:0,source_surface:"document-artifact-history"};
+  if(fault==="ordinary-edit")delete payload.revision_action;
+  if(fault==="missing-history-surface")delete payload.source_surface;
+  if(fault==="missing-source-revision")delete payload.restored_from_revision;
+  if(fault==="future-source-revision")payload.restored_from_revision=2;
+  await f.append("DocumentArtifactEdited",payload);assert.equal((await f.readNative("audio",f.select(2))).status,404);
+ });
+});
+
+test("native Audio final witness binds complete current edit bytes and receipt custody",async t=>{
+ for(const fault of ["media","source","private-extra","private-byte-order","owner","redaction","deletion"])
+ await t.test(fault,async child=>{
+  const f=await audioFixture(child),{event}=await retainTrim(f);let entered=0,afterMutation;
+  f.setBeforeRead(sql=>{
+   if(!sql.includes("expected_events AS"))return;entered++;
+   if(fault==="media")changePrivatePayload(f,event.eventId,p=>p.audio_revision.media.sha256="f".repeat(64));
+   if(fault==="source")changePrivatePayload(f,event.eventId,p=>p.audio_revision.source.contentSha256="f".repeat(64));
+   if(fault==="private-extra")changePrivatePayload(f,event.eventId,p=>p.extra="replacement");
+   if(fault==="private-byte-order")f.sqlite.prepare("UPDATE event_private_payloads SET private_json=? WHERE private_event_id=?").run(` ${privatePayload(f,event.eventId)}`,event.eventId);
+   if(fault==="owner")f.sqlite.prepare("UPDATE event_private_payloads SET owner_id=? WHERE private_event_id=?").run("other",event.eventId);
+   if(fault==="redaction")f.sqlite.prepare("UPDATE event_private_payloads SET redacted_at=? WHERE private_event_id=?").run("2030-01-01T00:00:00.000Z",event.eventId);
+   if(fault==="deletion")f.sqlite.prepare("DELETE FROM event_private_payloads WHERE private_event_id=?").run(event.eventId);
+   afterMutation=f.changes();
+  });
+  assert.equal((await f.readNative("audio",f.select(1))).status,404);assert.equal(entered,1);assert.equal(f.changes(),afterMutation);
+ });
+});
+
+test("native Audio projector requires an exact independently supplied edit witness",async t=>{
+ const f=await audioFixture(t),{revision}=await retainTrim(f),body=JSON.parse(f.raw()),audioReceipt=JSON.parse(privatePayload(f,f.completion.eventId));
+ const target={output:"audio",selection:f.select(1)};
+ assert.equal(projectNativeRetainedOutput(target,body,EXPIRY,null,{audioReceipt}),null);
+ assert.equal(projectNativeRetainedOutput(target,body,EXPIRY,null,{audioReceipt,audioRevision:null}),null);
+ assert.equal(projectNativeRetainedOutput(target,{...body,audio_revision:null},EXPIRY,null,{audioReceipt,audioRevision:revision}),null);
+ assert.equal(projectNativeRetainedOutput({...target,selection:f.select(0)},body,EXPIRY,null,{audioReceipt,audioRevision:revision}),null);
+ assert.equal(projectNativeRetainedOutput(target,initialBody(),EXPIRY,null,{audioReceipt,audioRevision:revision}),null);
+ const dto=projectNativeRetainedOutput(target,body,EXPIRY,null,{audioReceipt,audioRevision:revision});
+ assert.equal(dto.content.media.sha256,revision.media.sha256);assert.equal(dto.content.timing.seconds,revision.durationSeconds);
 });

@@ -1119,6 +1119,93 @@
     },
     {
       "kind": "javascript-module",
+      "path": "src/components/audio-trim-editor.ts",
+      "declarations": [
+        {
+          "kind": "class",
+          "name": "AudioTrimEditor",
+          "tagName": "forma-audio-trim-editor",
+          "customElement": true,
+          "summary": "Audio trim editor application interface.",
+          "description": "The host owns private access and Save. This leaf only displays verified PCM\nbytes and creates an explicitly requested local preview of its exact range.",
+          "superclass": {
+            "name": "FormaPresentationalElement",
+            "module": "src/components/presentational-element.ts"
+          },
+          "members": [
+            {
+              "kind": "field",
+              "name": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "attribute": "disabled",
+              "description": "Whether user interaction is disabled."
+            },
+            {
+              "kind": "field",
+              "name": "selection",
+              "type": {
+                "text": "Readonly<{ bytes: Uint8Array; info: PcmWavInfo; startFrame: number; endFrame: number; }> | null"
+              }
+            }
+          ],
+          "attributes": [
+            {
+              "name": "disabled",
+              "fieldName": "disabled",
+              "type": {
+                "text": "boolean"
+              },
+              "default": "false",
+              "description": "Whether user interaction is disabled."
+            }
+          ],
+          "events": [
+            {
+              "name": "audio-trim-change",
+              "type": {
+                "text": "CustomEvent<{ startFrame: number; endFrame: number; }>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            },
+            {
+              "name": "audio-trim-invalid",
+              "type": {
+                "text": "CustomEvent<null>"
+              },
+              "description": "Bubbles and crosses component boundaries."
+            }
+          ],
+          "x-forma": {
+            "category": "application",
+            "renderRoot": "light",
+            "stateful": false
+          }
+        }
+      ],
+      "exports": [
+        {
+          "kind": "custom-element-definition",
+          "name": "forma-audio-trim-editor",
+          "declaration": {
+            "name": "AudioTrimEditor",
+            "module": "src/components/audio-trim-editor.ts"
+          }
+        },
+        {
+          "kind": "js",
+          "name": "AudioTrimEditor",
+          "declaration": {
+            "name": "AudioTrimEditor",
+            "module": "src/components/audio-trim-editor.ts"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "javascript-module",
       "path": "src/components/collection-tree.ts",
       "declarations": [
         {
