@@ -11,7 +11,7 @@ forma-audio-trim-editor { display: block; min-width: 0; }
 .audio-trim-ranges label { display: grid; gap: .5rem; min-width: 0; }
 .audio-trim-ranges label > span { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; }
 .audio-trim-ranges output { font-variant-numeric: tabular-nums; }
-.audio-trim-ranges input { width: 100%; min-width: 0; min-height: 2.75rem; margin: 0; accent-color: var(--accent); }
+.audio-trim-ranges input { width: 100%; min-width: 0; min-height: 2.75rem; margin: 0; scroll-margin-block: var(--forma-focus-clearance, .5rem); accent-color: var(--accent); }
 .audio-trim-duration { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem 1rem; }
 .audio-trim-duration small { color: var(--muted); }
 .audio-trim-preview { justify-self: start; max-width: 100%; white-space: normal; }

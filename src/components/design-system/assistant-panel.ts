@@ -177,7 +177,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
   #modalReady = false;
   #dismissedSpecialistId = "";
   #positionFrame = 0;
-  #browseLane: { main: HTMLElement; direction: string; posture: string | null; shortHeight: string | null;
+  #browseLane: { main: HTMLElement; owner: HTMLElement; shell: HTMLElement; route: string; scope: string;
+    direction: string; posture: string | null; shortHeight: string | null; stable: boolean;
     value: string; priority: string; written: string } | null = null;
   #browseLaneRefusal: { main: HTMLElement; focus: Element | null; layout: string } | null = null;
   #browsePointer: MediaQueryList | null = null;
@@ -322,7 +323,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     // Scroll alone does not retry an unchanged rejected width reservation.
     return { main, focus: document.activeElement,
       layout: [innerWidth, innerHeight, bounds.width, bounds.height, getComputedStyle(main).direction,
-        shell?.getAttribute("data-nav-posture"), shell?.getAttribute("data-short-height")].join("|") };
+        shell?.getAttribute("data-nav-posture"), shell?.getAttribute("data-short-height"),
+        this.ownerDocument?.location?.href, this.conversationScope].join("|") };
   }
 
   #refuseBrowseLane() {
@@ -331,7 +333,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     if (main) this.#browseLaneRefusal = this.#browseLaneLayout(main);
   }
 
-  #positionInBrowseLane(launcher?: HTMLButtonElement) {
+  #positionInBrowseLane(launcher?: HTMLButtonElement, stable = false) {
     // This is space in the current main's padding, not another floating search
     // over its content. Keep the same reservation while its Assistant is open.
     const owner = this.parentElement, shell = owner?.closest<HTMLElement>(".application-creative");
@@ -354,8 +356,11 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       this.#clearBrowseLane(); return false;
     }
     const posture = shell.getAttribute("data-nav-posture"), shortHeight = shell.getAttribute("data-short-height");
-    if (this.#browseLane && (this.#browseLane.main !== main || this.#browseLane.direction !== direction
-      || this.#browseLane.posture !== posture || this.#browseLane.shortHeight !== shortHeight)) {
+    const route = this.ownerDocument?.location?.href ?? "", scope = this.conversationScope;
+    if (this.#browseLane && (this.#browseLane.main !== main || this.#browseLane.owner !== owner
+      || this.#browseLane.shell !== shell || this.#browseLane.route !== route || this.#browseLane.scope !== scope
+      || this.#browseLane.direction !== direction || this.#browseLane.posture !== posture
+      || this.#browseLane.shortHeight !== shortHeight)) {
       this.#clearBrowseLane(); return false;
     }
     const property = "--forma-assistant-browse-lane-base-inset";
@@ -365,7 +370,8 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       if (refused?.main === current.main && refused.focus === current.focus && refused.layout === current.layout) return false;
       const base = Number.parseFloat(direction === "rtl" ? style.paddingLeft : style.paddingRight);
       if (!Number.isFinite(base) || base < 0 || !launcher) return false;
-      this.#browseLane = { main, direction, posture, shortHeight, value: main.style.getPropertyValue(property),
+      this.#browseLane = { main, owner, shell, route, scope, direction, posture, shortHeight, stable,
+        value: main.style.getPropertyValue(property),
         priority: main.style.getPropertyPriority(property), written: `${base}px` };
       main.style.setProperty(property, this.#browseLane.written);
       this.dataset.browseLane = "true";
@@ -834,6 +840,57 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     return obstacles;
   }
 
+  #captureBrowseLaneFocus(focused: Element | null) {
+    if (!(focused instanceof HTMLElement) || this.#browseLane
+      || !focused.matches("a[href], button, input, textarea, select, summary")
+      || !focused.matches(":focus-visible")) return null;
+    const document = focused.ownerDocument, view = document.defaultView;
+    const owner = this.parentElement, shell = owner?.closest<HTMLElement>(".application-creative");
+    const main = focused.closest<HTMLElement>("#main-content");
+    if (!view || !owner || !shell || !main || main.parentElement !== shell
+      || owner.parentElement !== shell || !main.contains(focused)) return null;
+    const context = this.context, scope = this.conversationScope, href = view.location.href;
+    const focus = captureOutputNavigationFocus(document);
+    return {
+      reveal: () => {
+        const lane = this.#browseLane;
+        const current = () => Boolean(lane?.stable && this.#browseLane === lane && lane.main === main
+          && this.isConnected && this.parentElement === owner && owner.parentElement === shell
+          && main.isConnected && main.parentElement === shell && shell.querySelector("#main-content") === main
+          && main.getAttribute("aria-busy") !== "true" && !main.closest("[hidden], [inert], [aria-hidden='true']")
+          && shell.getAttribute("data-layout-intent") === "browse"
+          && shell.getAttribute("data-nav-posture") === lane.posture
+          && shell.getAttribute("data-short-height") === lane.shortHeight
+          && view.getComputedStyle(main).direction === lane.direction
+          && view.getComputedStyle(this).direction === lane.direction
+          && this.context === context && this.conversationScope === scope && view.location.href === href
+          && focused.isConnected && focused.ownerDocument === document && focused.closest("#main-content") === main
+          && !focused.matches(":disabled") && !focused.closest("[hidden], [inert], [aria-hidden='true']")
+          && document.activeElement === focused && document.hasFocus() && document.visibilityState === "visible"
+          && focus.current());
+        if (!current() || focused.getClientRects().length !== 1) return;
+        const box = focused.getBoundingClientRect(), style = view.getComputedStyle(focused);
+        const extent = ["none", "hidden"].includes(style.outlineStyle) ? 0
+          : Math.max(0, (Number.parseFloat(style.outlineWidth) || 0) + (Number.parseFloat(style.outlineOffset) || 0));
+        if (![box.left, box.top, box.right, box.bottom, box.width, box.height, extent,
+          view.innerWidth, view.innerHeight].every(Number.isFinite)
+          || box.width <= 0 || box.height <= 0 || style.display === "none" || style.visibility !== "visible"
+          || Number(style.opacity) === 0 || box.width + 2 * extent > view.innerWidth
+          || box.height + 2 * extent > view.innerHeight) return;
+        if (box.left >= extent && box.top >= extent && box.right <= view.innerWidth - extent
+          && box.bottom <= view.innerHeight - extent) return;
+        // Late main readiness can make the first reservation follow native Tab.
+        // Reveal only this still-owned, previously complete control once. The
+        // native nearest operation honors its existing CSS scroll margins.
+        if (current()) {
+          try { focused.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" }); }
+          catch { /* Existing placement validation still runs; never replace focus. */ }
+        }
+      },
+      dispose: () => focus.dispose(),
+    };
+  }
+
   #positionLauncher(allowReservation = true) {
     if (this.open) {
       if (this.dataset.browseSlot === "true") {
@@ -844,19 +901,27 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
       return;
     }
     const launcher = this.querySelector<HTMLButtonElement>(".forma-assistant-launcher");
+    const focused = document.activeElement;
     this.#clearStudioLauncher();
     this.#clearBrowseLauncher();
-    // Following the same reserved cell is layout reflow, even under its own
-    // focus/hover. No collision search or lane change runs in that cell.
-    if (launcher && (this.#positionInStudioSlot() || this.#positionInBrowseSlot(launcher))) {
+    const stable = this.#browseLane?.stable === true && this.#positionInBrowseLane(launcher ?? undefined);
+    const shell = this.parentElement?.closest(".application-creative");
+    const preferStableLane = stable || Boolean(allowReservation && launcher
+      && getComputedStyle(this).getPropertyValue?.("--forma-assistant-browse-lane-available")?.trim() === "1"
+      && shell?.getAttribute("data-layout-intent") === "browse"
+      && shell.getAttribute("data-nav-posture") === "compact"
+      && !launcher.contains(focused) && !launcher.matches(":hover"));
+    // An accepted compact browse gutter belongs to the current main, not to a
+    // temporary floating gap or a navigation cell that can scroll out of view.
+    // Other postures keep following their existing reserved cell.
+    if (launcher && (this.#positionInStudioSlot() || !preferStableLane && this.#positionInBrowseSlot(launcher))) {
       const reserved = this.dataset.browseLane === "true";
       this.#clearBrowseLane();
       this.#browseLaneRefusal = null;
       if (reserved) this.#positionLauncher(false);
       return;
     }
-    const reserved = this.dataset.browseLane === "true" && this.#positionInBrowseLane(launcher ?? undefined);
-    const focused = document.activeElement;
+    const reserved = stable || this.dataset.browseLane === "true" && this.#positionInBrowseLane(launcher ?? undefined);
     if (!launcher || this.open || launcher.contains(focused) && !reserved) return;
     const hovered = launcher.matches(":hover");
 
@@ -938,6 +1003,25 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     const placementIntersections = (box: Pick<DOMRect, "left" | "top" | "right" | "bottom">) =>
       placementObstacles.filter(({ box: obstacle }) => box.left < obstacle.right && box.right > obstacle.left
         && box.top < obstacle.bottom && box.bottom > obstacle.top);
+    if (!reserved && preferStableLane) {
+      const main = shell?.querySelector("#main-content");
+      const mainFocus = Boolean(focused && main?.contains(focused));
+      const currentFocus = controls.find(control => control.element === focused);
+      const reveal = allowReservation && exactFocusPaint && mainFocus && currentFocus?.completeFocus
+        && currentFocus.paint === focused ? this.#captureBrowseLaneFocus(focused) : null;
+      try {
+        // Reserve before the first compact browse traversal, even when a
+        // floating gap currently fits. A late main may already own native
+        // focus; preserve only that exact, previously complete control once.
+        if (allowReservation && exactFocusPaint && (!mainFocus || reveal)
+          && this.#positionInBrowseLane(launcher, true)) {
+          reveal?.reveal();
+          this.#positionLauncher(false);
+          return;
+        }
+      } finally { reveal?.dispose(); }
+      if (this.#positionInBrowseSlot(launcher)) return;
+    }
     if (reserved) {
       // Native Tab may leave page focus at a viewport edge. Keep the real gutter
       // when its complete, untrimmed focus envelope is clear of the inline lane;
@@ -974,7 +1058,7 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     this.dataset.compactLauncher = "true";
     // Reserve real browse space before accepting a temporary compact gap.
     // Native Tab can scroll different controls through that floating gap.
-    if (allowReservation && exactFocusPaint && this.#positionInBrowseLane(launcher)) {
+    if (allowReservation && !preferStableLane && exactFocusPaint && this.#positionInBrowseLane(launcher)) {
       this.#positionLauncher(false);
       return;
     }
