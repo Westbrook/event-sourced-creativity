@@ -13,6 +13,12 @@ and identity marks share that logical leading edge; backgrounds and separators
 keep their own full-width boundaries. This is application layout, with no new
 component API or translated copy. The compact dock keeps its equal-width cells.
 
+Library output thumbnails use a consistent responsive 3:2 frame for individual
+images and prompt-fan previews. Images fill their thumbnail with `object-fit:
+cover`, using the shared OutputVisual's generated focal-point coordinates for
+`object-position` (center fallback). Full-image dialogs keep their uncropped
+presentation; thumbnail styling must stay scoped to the preview, not the dialog.
+
 Before creating an interface, inspect the live reference, this guide,
 `DESIGN.md`, and `custom-elements.json`. Reuse an exact production component
 first, extend the closest shared contract second, and create a new component
