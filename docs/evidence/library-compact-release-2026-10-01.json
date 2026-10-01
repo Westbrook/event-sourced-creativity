@@ -1,0 +1,109 @@
+{
+  "date": "2026-10-01",
+  "change": "Compact Library uses shared bottom navigation; Ask Forma owns a persistent dock cell and cannot add a page-width gutter.",
+  "mainCommit": "53798e9a6d23c579ee9d5a32b67f26ce00e90f91",
+  "releaseCommit": "abfae9fecd5e5da280f4f56b8ae8e368b22a0d43",
+  "baseline": {
+    "version": 568,
+    "commit": "309a43e6889443fcd802915fca1a3f4e71e2eb50"
+  },
+  "savedVersion": {
+    "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_4f7b85891e048191a36158436945fa7d",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version_number": 569,
+    "source": {
+      "commit_sha": "abfae9fecd5e5da280f4f56b8ae8e368b22a0d43"
+    },
+    "archive_storage": {
+      "archive_format": "tar",
+      "sediment_file_id": "file_00000000e4bc81f59e2fad3ff5af774e",
+      "content_hash": "sha256:01f48783a6cf21db1a9f7eaf73d8dca0ed5b4867db733b2815b849d5c9ae198c",
+      "size_bytes": 44759040,
+      "file_count": 621
+    },
+    "screenshot_url": null,
+    "deployment_id": null
+  },
+  "deployment": {
+    "id": "appgdep_6abe7f6f142c81918522747abc50bbeb",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_4f7b85891e048191a36158436945fa7d",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-10-01T15:42:55.560162+00:00"
+  },
+  "access": {
+    "mode": "workspace_all",
+    "revision": 7,
+    "changed": false
+  },
+  "validation": {
+    "types": "passed",
+    "fullLint": "passed",
+    "inventory": "passed",
+    "build": "passed; generated manifests unchanged",
+    "source": {
+      "passed": 45,
+      "failed": 0
+    },
+    "runtime": {
+      "passed": 223,
+      "failed": 0
+    },
+    "browser": {
+      "passed": 52,
+      "failed": 0,
+      "scrollCases": 44,
+      "leadingEdgeMeasurements": 72,
+      "widths": [
+        320,
+        360,
+        390,
+        664,
+        681,
+        767,
+        768,
+        1024,
+        1280,
+        1715,
+        2048
+      ],
+      "locales": [
+        "en-US",
+        "ar"
+      ],
+      "inputs": [
+        "pointer",
+        "touch"
+      ],
+      "behaviors": [
+        "Fixed compact bottom navigation",
+        "Full-width compact main content",
+        "Stable header/card/body geometry through native scrolling",
+        "Ask Forma target inside navigation",
+        "Native keyboard focus and Enter/Escape dialog open/close"
+      ],
+      "receipt": "outputs/library-compact/validation/browser-run-346201db-028b-41a4-89d6-38dcc18d8769/receipt.json"
+    },
+    "priorAttempt": "52 cases passed, but input-change guard rejected the receipt after documentation was edited during the run. Final committed-source rerun passed; both retained.",
+    "unverified": [
+      "Full repository suite",
+      "Real-account/provider acceptance",
+      "User review and acceptance"
+    ]
+  },
+  "archive": {
+    "files": 621,
+    "migrations": 41,
+    "savedReceiptVerified": true
+  },
+  "evidenceDirectory": "outputs/library-compact",
+  "next": "User review of the published compact Library."
+}

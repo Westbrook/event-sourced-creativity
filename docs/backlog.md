@@ -768,7 +768,7 @@ validation receipts. Hosted activation and user review remain distinct.
 
 ### Compact Library navigation — 2026-10-01
 
-**Implemented and qualified; publication pending — follow-up to published567.** Restore the shared
+**Done — published569; user review pending.** [Release receipt](evidence/library-compact-release-2026-10-01.json). Main `53798e9a` / release `abfae9fe`. Restored the shared
 bottom primary navigation for compact Library pages and keep Ask Forma in a
 persistent dock cell. Remove the content-side gutter fallback at this posture;
 retain project identity above the content and the short-landscape side rail.
