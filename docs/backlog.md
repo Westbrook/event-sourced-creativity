@@ -24,6 +24,12 @@ TODO. Ongoing work in other branches must be reconciled before reimplementing it
   newly discovered work here and link its detailed issue or guide. Keep proposals
   separate from accepted delivery requirements in the linked decision records.
 
+## Library thumbnails
+
+| ID | Status | Owner | Remaining work / next action | Done when |
+| --- | --- | --- | --- | --- |
+| LIB-THUMB-001 | Done — qualified release; publication tracked in report | Library thumbnail task | Responsive 3:2 image frames and focal-aware cover cropping for standalone and fan previews. See [component guidance](components.md) and [browser receipt](evidence/library-thumbnails-browser-2026-10-01.json). Publication is tracked in the independent project report; user review remains separate. | Typecheck, lint, 10 focal-point tests, 5 release-preflight tests, production build and Chromium 151 checks against that build at 1440/768/390/320px pass; full-image dialog retains contain. |
+
 ## Validation efficiency
 
 | ID | Status | Owner | Remaining work / next action | Done when |
