@@ -679,13 +679,16 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
     // A failed measurement restores the original five-link layout in this pass.
     if (!this.isConnected) return false;
     const posture = getComputedStyle(this).getPropertyValue?.("--forma-assistant-browse-slot")?.trim();
-    const rail = posture === "rail";
-    if (!rail && posture !== "1") return false;
+    const rail = posture === "rail", wide = posture === "wide";
+    if (!rail && !wide && posture !== "1") return false;
     const owner = this.parentElement, shell = owner?.closest<HTMLElement>(".application-creative");
     if (!owner?.matches("forma-creative-assistant") || !shell
-      || shell.getAttribute("data-layout-intent") !== "browse" || (shell.getAttribute("data-nav-posture") !== "compact"
-        && (!rail || shell.getAttribute("data-nav-posture") !== "rail"
-          || shell.getAttribute("data-short-height") !== "true"))) return false;
+      || shell.getAttribute("data-layout-intent") !== "browse"
+      || (wide ? !["rail", "expanded"].includes(shell.getAttribute("data-nav-posture") ?? "")
+        || shell.getAttribute("data-short-height") !== "false"
+        : shell.getAttribute("data-nav-posture") !== "compact"
+          && (!rail || shell.getAttribute("data-nav-posture") !== "rail"
+            || shell.getAttribute("data-short-height") !== "true"))) return false;
     const panels = [...shell.querySelectorAll("forma-assistant-panel")]
       .filter(panel => panel.closest(".application-creative") === shell);
     const main = shell.querySelector<HTMLElement>("#main-content");
@@ -744,7 +747,10 @@ export class FormaAssistantPanel extends FormaPresentationalElement {
           ? Number.parseFloat(style.borderLeftWidth) + Number.parseFloat(style.paddingLeft)
           : Number.parseFloat(style.borderRightWidth) + Number.parseFloat(style.paddingRight);
         if (!Number.isFinite(inset) || inset < 0) return false;
-        left = style.direction === "rtl" ? bounds.left + inset : bounds.right - inset - size;
+        // The wide grid may quantize a fluid pane inset to a fractional CSS
+        // pixel. Anchor to its rendered first track, not unrounded padding.
+        left = wide ? style.direction === "rtl" ? navBox.left - gap - size : navBox.right + gap
+          : style.direction === "rtl" ? bounds.left + inset : bounds.right - inset - size;
         // The navigation row excludes its host's bottom safe-area padding.
         top = navBox.top + (navBox.height - size) / 2;
       }

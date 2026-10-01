@@ -3935,3 +3935,18 @@ test("Workbench launcher follows the Results content edge and clears stale geome
   assert.equal(values.has("--forma-assistant-workbench-end"), false);
   assert.deepEqual(f.emitted, []);
 });
+
+for (const rtl of [false, true]) test('Wide browse navigation owns Ask without a page gutter / ' + (rtl ? 'RTL' : 'LTR'), { concurrency: false }, t => {
+  const x = fBrowseSlot(t, {rtl}), attributes = x.shell.getAttribute;
+  x.state.top = 64;
+  x.shell.getAttribute = name => name === 'data-nav-posture' ? 'expanded' : attributes(name);
+  const style = getComputedStyle;
+  globalThis.getComputedStyle = element => ({...style(element), ...(element === x.f.panel ? {
+    getPropertyValue: name => name === '--forma-assistant-browse-slot' ? 'wide' : '0',
+  } : {})});
+  x.run();
+  assert.equal(x.f.panel.dataset.browseLauncher, 'true');
+  assert.equal(x.f.panel.dataset.browseLane, undefined);
+  assert.deepEqual(x.launcher.getBoundingClientRect(), x.expectedBrowse());
+  assert.equal(x.f.document.activeElement, x.more);
+});

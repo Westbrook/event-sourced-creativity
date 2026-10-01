@@ -259,6 +259,15 @@ guidance-only; public share pages never mount an assistant. Authored session
 intentions, individual creative decisions, sources, reviews, and search remain
 distinct nonconversational forms.
 
+On wide Creator browse pages without an account or impersonation banner, the
+existing Ask Forma launcher owns a permanent cell at the trailing end of the
+sticky navigation row. Its real 44px (48px touch) target stays beside the five
+destinations while Library scrolls. The page never acquires a side gutter because
+a floating gap closes. The open panel retains its existing dialog, draft and
+focus behavior. Compact/short postures and banner-bearing shells keep their
+existing placement policies. This is layout of existing controls, with no new
+component API, strings, permissions or conversation owner.
+
 ## Selection-scoped context controls
 
 Document decisions keep their complete authored wording, protected phrases, type,
