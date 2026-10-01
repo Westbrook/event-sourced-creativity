@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 const selected = (process.env.FORMA_BROWSER_CONFIGS ?? '').split(',').filter(Boolean);
 if (!selected.length) throw Error('Set FORMA_BROWSER_CONFIGS to registered config suffixes; no implicit account or acceptance run.');
 const registry = JSON.parse(readFileSync(new URL('./tests/validation-registry.json', import.meta.url), 'utf8'));
-const projects = [], servers = new Map(), failureLimits = [];
+const projects = [], projectNames = new Set(), servers = new Map(), failureLimits = [];
 const output = process.env.FORMA_VALIDATION_BROWSER_OUTPUT ?? `outputs/validation/browser-${randomUUID()}`;
 for (const name of [...new Set(selected)]) {
   const file = `playwright.${name}.config.mjs`;
@@ -15,9 +15,15 @@ for (const name of [...new Set(selected)]) {
   const { default: config } = await import(new URL(file, import.meta.url));
   const { testDir, testMatch, testIgnore, timeout, expect, use, fullyParallel } = config;
   if (config.maxFailures) failureLimits.push(config.maxFailures);
-  for (const project of config.projects ?? [{ name }]) projects.push({ testDir, testMatch, testIgnore, timeout, expect, fullyParallel,
-    ...project, name: `${name}/${project.name}`, use: { ...use, ...project.use },
-    outputDir: `${output}/${name}/${project.name}` });
+  for (const project of config.projects ?? [{ name }]) {
+    // Project names are fixture contracts (including exact download admission).
+    // Namespace artifact paths, not the identity observed by a test.
+    if (projectNames.has(project.name)) throw Error(`Conflicting browser project identity: ${project.name}; select separate batches.`);
+    projectNames.add(project.name);
+    projects.push({ testDir, testMatch, testIgnore, timeout, expect, fullyParallel,
+      ...project, use: { ...use, ...project.use },
+      outputDir: `${output}/${name}/${project.name}` });
+  }
   for (const server of config.webServer ? [config.webServer].flat() : []) {
     const origin = new URL(server.url).origin, previous = servers.get(origin);
     const identity = value => JSON.stringify([value.command, value.cwd ?? null, Object.entries(value.env ?? {}).sort()]);

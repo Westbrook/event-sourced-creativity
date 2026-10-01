@@ -117,14 +117,32 @@ test('retired evaluation CLI fails without reading environment files or executin
 
 test('browser batches keep one compatible server and reject conflicting source/build lifecycles', () => {
   const config = new URL('../playwright.validation.config.mjs', import.meta.url).href;
-  const script = `const {default:c}=await import(${JSON.stringify(config)}); console.log(JSON.stringify({servers:c.webServer.length,projects:c.projects.length}));`;
+  const script = `const {default:c}=await import(${JSON.stringify(config)}); console.log(JSON.stringify({servers:c.webServer.length,projects:c.projects.map(p=>p.name)}));`;
   const run = selected => spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30000,
     env: { ...process.env, FORMA_BROWSER_CONFIGS: selected, FORMA_A11Y_SYNTHETIC_NETWORK: '1' } });
   const compatible = run('output-footer,context-return-reading');
   assert.equal(compatible.status, 0, compatible.stderr);
-  assert.deepEqual(JSON.parse(compatible.stdout), { servers: 1, projects: 2 });
+  assert.deepEqual(JSON.parse(compatible.stdout), { servers: 1, projects: ['output-footer','context-return-reading'] });
+  const download = run('story-revision-download');
+  assert.equal(download.status, 0, download.stderr);
+  assert.deepEqual(JSON.parse(download.stdout), { servers: 0, projects: ['story-revision-download'] });
   const conflicting = run('content-first,output-footer');
   assert.equal(conflicting.status, 1); assert.match(conflicting.stderr, /Incompatible source\/built servers/u);
+  const repeatedProject = run('content-first,deliver-containment');
+  assert.equal(repeatedProject.status, 1); assert.match(repeatedProject.stderr, /Conflicting browser project identity: desktop/u);
+});
+
+test('download admission retains exact project, file and positive scenario boundaries', async () => {
+  const { admittedBrowserDownload } = await import('./browser/helpers/download-admission.mjs');
+  for (const [kind, title] of [
+    ['audio','Audio declared reviewed original WAV downloads once and reopens as exact retained bytes'],
+    ['slides','Slides declared reviewed revision one downloads one audience PowerPoint file'],
+  ]) {
+    const input = {project:`${kind}-reviewed-download`,file:`forma-${kind}-reviewed-download.spec.mjs`,title,synthetic:false};
+    assert.equal(admittedBrowserDownload(input),true);
+    for (const field of ['project','file','title']) assert.equal(admittedBrowserDownload({...input,[field]:'unreviewed'}),false);
+  }
+  assert.equal(admittedBrowserDownload({project:'arbitrary',file:'forma-memory-purposes.spec.mjs',title:'Memory purposes: explicit inactive controls in en',synthetic:false}),false);
 });
 
 test('real type errors surface a timed negative before dependent stages start', async t => {

@@ -9,6 +9,7 @@ import { guardReadOnlyNetwork } from "./helpers/read-only-network.mjs";
 import { installSyntheticNetwork, syntheticNetworkEnabled, syntheticNetworkProvenance, syntheticEvidence } from "./helpers/synthetic-network.mjs";
 
 import { installPublicMarketingNetwork, publicMarketingProvenance, publicMarketingEvidence } from "./helpers/public-marketing-network.mjs";
+import { admittedBrowserDownload } from "./helpers/download-admission.mjs";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const extensionPath = resolve(directory, "zoom-extension");
@@ -27,10 +28,9 @@ export const test = base.extend({
   acceptDownloads: [false, { option: true }],
   context: async ({ ordinaryBrowser, geometry, baseURL, publicMarketing, publicJavaScript, acceptDownloads }, use, testInfo) => {
     const synthetic = syntheticNetworkEnabled(baseURL);
-    const admittedDownloadCase = testInfo.project.name === "story-revision-download"
-      && testInfo.title === "Story revision one: approved synthetic source downloads the exact Markdown file"
-      || synthetic && testInfo.file === resolve(directory, "forma-memory-purposes.spec.mjs")
-        && ["Memory purposes: explicit inactive controls in en", "Memory purposes: explicit inactive controls in ar"].includes(testInfo.title);
+    const admittedDownloadCase = dirname(testInfo.file) === directory && admittedBrowserDownload({
+      project: testInfo.project.name, file: testInfo.file, title: testInfo.title, synthetic,
+    });
     if (acceptDownloads === true && !admittedDownloadCase)
       throw new Error("Downloads require the exact admitted project and positive test title");
     // Native zoom requires an extension-enabled persistent profile. Ordinary
