@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readShortStoryExecutionRequest } from "../worker/short-story-execution-policy.ts";
 import { applySlideStylePreset, defaultSlidePresentation, documentArtifactValidationIssues, DOCUMENT_ARTIFACT_KINDS, normalizeSlideDeckItems, normalizeSlideItem, normalizeSlidePresentation, normalizeSlideVisual, parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, SLIDE_LAYOUTS, SLIDE_STYLE_PRESETS, SLIDE_VISUAL_KINDS, slideCopyIsDistinct, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIsDistinct, slideDeckCopyIssues, slidePrecisionIssues, slideSourceIds, slideVisualIsComplete } from "../src/model/document-artifacts.ts";
 import { isVideoDurationSeconds, normalizeVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT, VIDEO_DURATION_SECONDS } from "../src/model/video-adapter.ts";
 import { buildPresentationSourceContract } from "../src/model/presentation-source.ts";
@@ -8,7 +10,7 @@ import { selectArtifactProductionKind } from "../src/model/managed-production.ts
 import { foldEvents } from "../src/model/events.ts";
 import { buildComprehensiveScenario, SCENARIO_EVENT_TYPES } from "../src/model/scenarios.ts";
 import { evaluateReplayCoverage } from "../src/model/replay-coverage.ts";
-import { generateCreativeVideo, generateDocumentArtifact, PRESENTATION_ADAPTER_VERSION } from "../worker/openai-adapter.ts";
+import { generateCreativeVideo, generateDocumentArtifact, prepareInitialShortStoryRequest, preparePresentationComparisonRequest, PRESENTATION_ADAPTER_VERSION } from "../worker/openai-adapter.ts";
 import { artifactGenerationInputInspection, outputGenerationInputInspection } from "../src/model/generation-inputs.ts";
 
 const event=(sequence,type,payload,actor=type.startsWith("DocumentRender")?"worker:renderer":"user")=>({eventId:`e${sequence}`,streamId:"s",sequence,occurredAt:"2026-08-19T12:00:00.000Z",recordedAt:"2026-08-19T12:00:00.000Z",actor,clientId:"test",correlationId:"c",causationId:null,compensatesEventId:null,schemaVersion:1,type,payload});
@@ -816,4 +818,676 @@ test("replay laboratory semantically covers every document artifact",()=>{
   assert.equal(repetitiveCoverage.checks.find((item)=>item.key==="document-artifact-rendering")?.passed,false);
   const repeatedAcrossSlides=events.map((entry)=>entry.type!=="DocumentRenderCompleted"||entry.payload.artifact_kind!=="slides"?entry:{...entry,payload:{...entry.payload,items:entry.payload.items.map((item,index,items)=>index===1?{...item,body:items[0].body}:item)}});const repeatedDeckCoverage=evaluateReplayCoverage(repeatedAcrossSlides,SCENARIO_EVENT_TYPES);
   assert.equal(repeatedDeckCoverage.checks.find((item)=>item.key==="document-artifact-rendering")?.passed,false);
+});
+
+
+test("C2 offline Short story preparation: bounded source and legacy dispatch controls", async (context) => {
+  const safety = "synthetic-c2-safety";
+  const invalid = "short_story_preparation_input_invalid";
+  const limit = "short_story_preparation_input_limit";
+  const policyInvalid = "short_story_preparation_request_policy_invalid";
+  const canonicalInvalid = "short_story_preparation_noncanonical_json";
+  const base = () => ({documentTitle:"Field study",snapshot:{facts:[],relationships:[]}});
+  const fact = (id="private-source",properties={text:"A bell sounded."}) => ({block_id:id,type:"message",properties});
+  const inactive = (properties={}) => ({documentTitle:"Field study",snapshot:{facts:[{...fact("inactive-source",properties),active:false}],relationships:[]}});
+  const digest = (value) => createHash("sha256").update(value,"utf8").digest("hex");
+  const liveSafety = (value) => "forma_"+digest(value).slice(0,32);
+  const bytes = (value) => Buffer.byteLength(value,"utf8");
+  const prepare = (value,identifier=safety) => prepareInitialShortStoryRequest(JSON.stringify(value),identifier);
+  const rejectsCode = (run,code) => assert.rejects(run,(error)=>{assert.ok(error instanceof RangeError);assert.equal(error.message,code);return true;});
+  const schema = (maximum=12) => ({
+    type:"object",additionalProperties:false,required:["title","summary","content_markdown","items"],
+    properties:{
+      title:{type:"string"},summary:{type:"string"},content_markdown:{type:"string"},
+      items:{type:"array",minItems:1,maxItems:maximum,items:{type:"object",additionalProperties:false,
+        required:["title","body","notes","image_prompt","context_group_ids"],
+        properties:{title:{type:"string"},body:{type:"string"},notes:{type:"string"},image_prompt:{type:"string"},context_group_ids:{type:"array",maxItems:24,items:{type:"string"}}}}},
+    },
+  });
+  const initialInput = () => ({document_title:"Field study",creative_context:{facts:[],relationships:[]},combined_context_plan:[],audience:"general",tone:"derived from the document"});
+  // This oracle fixes envelope ordering/defaults/omissions. Long shared prompt strings
+  // and the full Slides schema are opaque payloads with separate assertions below.
+  const envelope = (instructions,input,outputSchema,name,{model="gpt-5.6-terra",effort="low",maximum=6000,identifier=safety,slides=false,offline=false}={}) => JSON.stringify({
+    model,instructions,input,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:outputSchema}},
+    reasoning:{effort},max_output_tokens:maximum,store:false,safety_identifier:identifier,
+    ...(slides||offline?{service_tier:"default",prompt_cache_options:{mode:"explicit"}}:{}),
+    ...(offline?{truncation:"disabled"}:{}),
+  });
+  const deepFrozen = (value) => {
+    if(value&&typeof value==="object"){assert.equal(Object.isFrozen(value),true);for(const child of Object.values(value))deepFrozen(child);}
+  };
+  const invalidArtifact = {code:"invalid_json",path:"$",message:"The provider response was not a valid artifact object."};
+  const story = {title:"Field study",summary:"A complete story",content_markdown:"# Field study\n\nA bell sounded.",items:[{title:"Opening",body:"A bell sounded.",notes:"",image_prompt:"",context_group_ids:[]}]};
+  const deck = {
+    title:"Field study",summary:"A resolved deck",content_markdown:"# Field study\n\nOne clear progression.",
+    presentation:{...presentation,footer_label:"Field study"},
+    items:[{title:"Protect the opening",body:"A second exact direction stays available.",notes:"Explain the available evidence.",image_prompt:"No raster image.",context_group_ids:[],
+      slide:{layout:"statement",kicker:"Evidence",bullets:[],visual:{kind:"hero-type",label:"Open field",value:"One distinct authored field remains visible.",data:[]}}}],
+  };
+  const originalFetch = globalThis.fetch;
+  const uuidDescriptor = Object.getOwnPropertyDescriptor(globalThis.crypto,"randomUUID");
+  let uuidCalls=0,blockedFetchCalls=0;
+  Object.defineProperty(globalThis.crypto,"randomUUID",{configurable:true,writable:true,value:()=>{uuidCalls++;return "00000000-0000-4000-8000-"+String(uuidCalls).padStart(12,"0");}});
+  globalThis.fetch=async()=>{blockedFetchCalls++;throw new Error("C2 test forbids real transport");};
+  const syntheticResponse = (request,raw,id) => Response.json({id,model:request.model,status:"completed",service_tier:"default",output_text:raw,usage:{input_tokens:100,output_tokens:50,total_tokens:150}});
+  const legacy = async (kind) => {
+    const requests=[],trace=[],submissions=[],observerErrors=[];
+    const previousFetch=globalThis.fetch;
+    const stage=(key)=>key.endsWith("repair")?"repair":"initial";
+    const env={OPENAI_API_KEY:"synthetic-key",OPENAI_MODEL:"gpt-5.6-terra",...(kind==="slides"?{OPENAI_SLIDES_COMPOSITION_REASONING_EFFORT:"medium",OPENAI_SLIDES_REPAIR_MODEL:"gpt-5.6-sol",OPENAI_SLIDES_REPAIR_REASONING_EFFORT:"high"}:{})};
+    globalThis.fetch=async(url,init)=>{
+      try{
+        assert.equal(url,"https://api.openai.com/v1/responses");assert.equal(init.method,"POST");assert.equal(typeof init.body,"string");
+        assert.equal(init.headers.authorization,"Bearer synthetic-key");
+        const request=JSON.parse(init.body),phase=request.text.format.name.endsWith("_repair")?"repair":"initial";
+        trace.push("fetch:"+phase);requests.push({raw:init.body,request,phase,clientId:init.headers["X-Client-Request-Id"]});
+        return syntheticResponse(request,requests.length===1?"{}":JSON.stringify(kind==="slides"?deck:story),"synthetic-response-"+requests.length);
+      }catch(error){observerErrors.push(error);throw error;}
+    };
+    try{
+      const result=await generateDocumentArtifact(env,"synthetic-live-user",kind,{...base(),options:{
+        itemCount:1,
+        onBeforeProviderAttempt:(attempt)=>trace.push("before:"+stage(attempt.logicalCallKey)),
+        onProviderSubmission:(call)=>{submissions.push({...call});trace.push("submission:"+call.status+":"+stage(call.unitId)+(kind==="slides"&&call.status==="completed"?":"+call.validationStatus:""));},
+        onBeforeProviderDispatch:()=>trace.push("dispatch:"+(requests.length?"repair":"initial")),
+        onProviderResponse:(receipt)=>{const phase=stage(receipt.call.unitId);trace.push("response:"+phase);return{responseRef:"synthetic-stored-"+phase};},
+        onProviderAttempt:(receipt)=>trace.push("attempt:"+(receipt.responseIds.length===1?"initial":"repair")),
+      }});
+      return{result,requests,trace,submissions};
+    }finally{globalThis.fetch=previousFetch;assert.deepEqual(observerErrors,[],"transport observer failures must remain sticky");}
+  };
+  try{
+    await context.test("fixed initial envelope, one-item schema and independent request digest",async()=>{
+      const raw=JSON.stringify(base()),first=await prepareInitialShortStoryRequest(raw,safety),second=await prepareInitialShortStoryRequest(raw,safety);
+      assert.equal(first.qualification,"offline-initial-preparation-only");
+      assert.equal(first.requestBody,second.requestBody);assert.equal(first.requestDigest,second.requestDigest);
+      assert.equal(first.requestDigest,digest(first.requestBody));assert.match(first.requestDigest,/^[a-f0-9]{64}$/u);
+      assert.equal(first.byteLength,bytes(first.requestBody));assert.equal(first.inputAllowance,first.byteLength+4096);
+      assert.equal(first.maximumOutputTokens,6000);assert.equal(first.formatName,"document_short_story");assert.equal(first.capturedInput,raw);
+      const wire=JSON.parse(first.requestBody);
+      assert.deepEqual(Object.keys(wire),["model","instructions","input","text","reasoning","max_output_tokens","store","safety_identifier","service_tier","prompt_cache_options","truncation"]);
+      assert.deepEqual(Object.keys(wire.text),["verbosity","format"]);assert.deepEqual(Object.keys(wire.text.format),["type","name","strict","schema"]);
+      assert.deepEqual(wire.text.format.schema,schema(1));assert.equal(wire.input,JSON.stringify(initialInput()));
+      assert.equal(first.requestBody,envelope(wire.instructions,JSON.stringify(initialInput()),schema(1),"document_short_story",{offline:true}));
+      assert.match(wire.instructions,/Write a polished short story, not a treatment\./u);
+      assert.match(wire.instructions,/For stories and scenes, place a group's members at the same narrative moments or aspects\./u);
+      assert.match(wire.instructions,/Preserve the original language and exact text/u);
+      assert.match(wire.instructions,/Return exactly 1/u);
+      assert.deepEqual(readShortStoryExecutionRequest(first.requestBody),{disposition:"eligible",reasons:[],serializedRequest:first.requestBody,byteLength:first.byteLength,inputAllowance:first.inputAllowance,formatName:"document_short_story"});
+      for(const key of ["tools","files","stream","background","previous_response_id","metadata"])assert.equal(Object.hasOwn(wire,key),false,key);
+    });
+
+    await context.test("genuine supplied-context aliases remain context rather than authority",async()=>{
+      const membership={context_set_id:"private-group",name:"Crossing",role:"character",target:"Courier",application:"isolate",relativity:.8};
+      const input={documentTitle:"Crossing",snapshot:{facts:[
+        {...fact("private-source-1",{label:"Courier",text:"Keeps a brass compass.",combined_context_memberships:[{...membership,member_order:0}]}),document_id:"private-document",source_event_refs:["private-event"]},
+        fact("private-source-2",{label:"Rain",text:"Arrives before dusk.",combined_context_memberships:[{...membership,member_order:1}]}),
+      ],relationships:[{relation_id:"private-relation",from_block_id:"private-source-1",to_block_id:"private-source-2",kind:"contrasts",properties:{note:"A held direction."}}]}};
+      const prepared=await prepare(input),wire=JSON.parse(prepared.requestBody),payload=JSON.parse(wire.input);
+      deepFrozen(prepared);assert.throws(()=>{prepared.contextGroupContracts[0].alias="injected";},TypeError);
+      assert.deepEqual(prepared.contextGroupContracts,[{id:"private-group",alias:"context_group_1"}]);
+      assert.equal(payload.combined_context_plan.length,1);const group=payload.combined_context_plan[0];
+      assert.deepEqual(Object.keys(group),["context_key","name","role","target","application","relativity","members","instruction"]);
+      assert.equal(group.context_key,"context_group_1");assert.equal(group.name,"Crossing");assert.equal(group.target,"Courier");assert.equal(group.application,"isolate");
+      assert.deepEqual(group.members.map(({label,order})=>({label,order})),[{label:"Courier",order:0},{label:"Rain",order:1}]);
+      assert.deepEqual(payload.creative_context.facts.map(({decision_key})=>decision_key),["decision_1","decision_2"]);
+      assert.equal(payload.creative_context.facts[0].properties.text,"Keeps a brass compass.");
+      assert.deepEqual(payload.creative_context.relationships,[{from_decision:"decision_1",from_label:"Courier",to_decision:"decision_2",to_label:"Rain",kind:"contrasts",properties:{note:"A held direction."}}]);
+      for(const id of ["private-group","private-source-1","private-source-2","private-document","private-event","private-relation"])assert.equal(wire.input.includes(id),false,id);
+      assert.equal(prepared.sourceCustody,false);assert.equal(prepared.currentOriginalAuthority,false);assert.equal(prepared.liveRequestParity,false);
+      assert.equal(prepared.capturedInput,JSON.stringify(input),"private supplied bytes remain a snapshot, not public certification");
+    });
+
+    await context.test("whole serialized request accepts 53904 bytes and rejects 53905 without trimming",async()=>{
+      const prefix='Élan 雪 😀 "quoted" \\path\n';
+      const value={documentTitle:"Field study",snapshot:{facts:[fact("a",{label:"First",text:prefix}),fact("b",{label:"Second",text:""})],relationships:[]}};
+      const baseline=await prepare(value),padding=53904-baseline.byteLength;
+      assert.ok(padding>0&&padding<65000);
+      value.snapshot.facts[0].properties.text=prefix+"x".repeat(Math.min(40000,padding));
+      value.snapshot.facts[1].properties.text="y".repeat(padding-Math.min(40000,padding));
+      assert.ok(value.snapshot.facts.every(row=>row.properties.text.length<=49152));
+      const raw=JSON.stringify(value);assert.ok(bytes(raw)<=65536);
+      const prepared=await prepareInitialShortStoryRequest(raw,safety);
+      assert.equal(prepared.byteLength,53904);assert.equal(prepared.inputAllowance,58000);assert.equal(bytes(prepared.requestBody),53904);
+      const payload={document_title:"Field study",creative_context:{facts:[
+        {decision_key:"decision_1",type:"message",properties:{label:"First",text:value.snapshot.facts[0].properties.text},order:1},
+        {decision_key:"decision_2",type:"message",properties:{label:"Second",text:value.snapshot.facts[1].properties.text},order:2},
+      ],relationships:[]},combined_context_plan:[],audience:"general",tone:"derived from the document"};
+      const wire=JSON.parse(prepared.requestBody);
+      assert.equal(wire.input,JSON.stringify(payload));
+      assert.equal(prepared.requestBody,envelope(wire.instructions,JSON.stringify(payload),schema(1),"document_short_story",{offline:true}));
+      assert.equal(prepared.capturedInput,raw);assert.ok(bytes(prefix)>prefix.length);
+      assert.ok(prepared.requestBody.includes("\\\\path"),"nested JSON escaping contributes to the complete wire size");
+      value.snapshot.facts[1].properties.text+="z";payload.creative_context.facts[1].properties.text+="z";
+      const oversized=envelope(wire.instructions,JSON.stringify(payload),schema(1),"document_short_story",{offline:true});
+      assert.equal(bytes(oversized),53905);assert.equal(readShortStoryExecutionRequest(oversized).disposition,"invalid");
+      await rejectsCode(()=>prepare(value),policyInvalid);
+    });
+
+    await context.test("primitive safety and input capture invoke no getters or coercion hooks",async()=>{
+      const effects={get:0,ownKeys:0,descriptor:0,coerce:0};
+      const hostile=new Proxy({},{get(){effects.get++;throw new Error("getter");},ownKeys(){effects.ownKeys++;throw new Error("keys");},getOwnPropertyDescriptor(){effects.descriptor++;throw new Error("descriptor");}});
+      const coercible={[Symbol.toPrimitive](){effects.coerce++;throw new Error("coerce");},toString(){effects.coerce++;throw new Error("toString");},toJSON(){effects.coerce++;throw new Error("toJSON");}};
+      for(const supplied of [null,undefined,0,1n,true,Symbol("input"),[],{},new String("{}"),hostile,coercible]){
+        let promise;assert.doesNotThrow(()=>{promise=prepareInitialShortStoryRequest(supplied,safety);});
+        assert.ok(promise instanceof Promise);await rejectsCode(()=>promise,invalid);
+      }
+      for(const identifier of [""," leading","trailing ","x".repeat(201),null,0,{},hostile,coercible]){
+        await rejectsCode(()=>prepareInitialShortStoryRequest(hostile,identifier),"short_story_preparation_safety_identifier_invalid");
+      }
+      for(const identifier of ["x","x".repeat(200),"é".repeat(200),"\ud800"]){
+        const prepared=await prepare(base(),identifier);assert.equal(JSON.parse(prepared.requestBody).safety_identifier,identifier);
+      }
+      assert.deepEqual(effects,{get:0,ownKeys:0,descriptor:0,coerce:0});
+    });
+
+    await context.test("closed structural fields and noncanonical JSON reject configuration ambiguity",async()=>{
+      const forbidden=["options","env","model","schema","route","candidateRaw","repair","onProviderSubmission","onBeforeProviderDispatch","capture"];
+      for(const key of forbidden){
+        await rejectsCode(()=>prepare({...base(),[key]:"not executable configuration"}),invalid);
+        await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{...base().snapshot,[key]:"not executable configuration"}}),invalid);
+      }
+      for(const key of ["standing_constraints","pins","tail","blocks"])await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{...base().snapshot,[key]:[]}}),invalid);
+      for(const key of ["__proto__","constructor","prototype","decision_key"]){
+        const properties={};Object.defineProperty(properties,key,{enumerable:true,value:{ignored:false}});
+        await rejectsCode(()=>prepare(inactive(properties)),invalid);
+      }
+      for(const raw of [
+        '{"documentTitle":"first","documentTitle":"Field study","snapshot":{"facts":[],"relationships":[]}}',
+        ' {"documentTitle":"Field study","snapshot":{"facts":[],"relationships":[]}}',
+        '{"documentTitle":"Field\\u0020study","snapshot":{"facts":[],"relationships":[]}}',
+        '{"documentTitle":"Field study","snapshot":{"facts":[{"block_id":"a","type":"message","properties":{"value":1e0},"active":false}],"relationships":[]}}',
+        '{"documentTitle":"Field study","snapshot":{"facts":[{"block_id":"a","type":"message","properties":{"value":-0},"active":false}],"relationships":[]}}',
+      ])await rejectsCode(()=>prepareInitialShortStoryRequest(raw,safety),canonicalInvalid);
+      for(const raw of ["{","null","[]",'{"documentTitle":"x","snapshot":{"facts":null}}','{"documentTitle":"\\ud800","snapshot":{"facts":[]}}',JSON.stringify(base())+"\ud800"]){
+        await rejectsCode(()=>prepareInitialShortStoryRequest(raw,safety),invalid);
+      }
+      for(const change of [
+        value=>{value.snapshot.facts=[fact("same"),fact("same")];},
+        value=>{value.snapshot.facts=[fact("a")];value.snapshot.relationships=[{from_block_id:"a",to_block_id:"missing",kind:"contrasts",properties:{}}];},
+        value=>{value.snapshot.facts=[{...fact(),position:{x:"1",y:2}}];},
+        value=>{value.snapshot.facts=[{...fact(),active:"false"}];},
+        value=>{value.snapshot.facts=[{...fact(),properties:[]}];},
+        value=>{value.snapshot.facts=[{...fact(),block_id:" padded"}];},
+      ]){const value=base();change(value);await rejectsCode(()=>prepare(value),invalid);}
+      const canonicalMembership=()=>({context_set_id:"known-group",name:"Known group",role:"custom",target:"Target",application:"isolate",relativity:.5,member_order:0});
+      const grouped=()=>({documentTitle:"Field study",snapshot:{facts:[fact("a",{label:"A",combined_context_memberships:[canonicalMembership()]})],relationships:[]}});
+      await prepare(grouped());
+      for(const change of [
+        value=>{value.snapshot.facts[0].properties.combined_context_memberships={};},
+        value=>{value.snapshot.facts[0].properties.combined_context=canonicalMembership();},
+        value=>{delete value.snapshot.facts[0].properties.combined_context_memberships[0].name;},
+        value=>{value.snapshot.facts[0].properties.combined_context_memberships[0].role="unknown";},
+        value=>{value.snapshot.facts[0].properties.combined_context_memberships[0].application="unknown";},
+        value=>{value.snapshot.facts[0].properties.combined_context_memberships[0].name=" padded";},
+        value=>{value.snapshot.facts[0].properties.combined_context_memberships[0].source_canvas_id=" padded";},
+        value=>{value.snapshot.facts[0].properties.combined_context_memberships[0].extra=true;},
+        value=>{value.snapshot.facts[0].properties.combined_context_memberships.push(canonicalMembership());},
+        value=>{value.snapshot.facts.push(fact("b",{combined_context_memberships:[{...canonicalMembership(),name:"Conflicting name",member_order:1}]}));},
+      ]){const value=grouped();change(value);await rejectsCode(()=>prepare(value),invalid);}
+      for(const relativity of ["0.5",null,-.01,1.01]){const value=grouped();value.snapshot.facts[0].properties.combined_context_memberships[0].relativity=relativity;await rejectsCode(()=>prepare(value),invalid);}
+      for(const order of ["0",null,-1,.5,Number.MAX_SAFE_INTEGER+1]){const value=grouped();value.snapshot.facts[0].properties.combined_context_memberships[0].member_order=order;await rejectsCode(()=>prepare(value),invalid);}
+      const weighted=grouped();weighted.snapshot.facts[0].properties.combined_context_memberships[0].relativity=.2;
+      weighted.snapshot.facts.push(fact("b",{label:"B",combined_context_memberships:[{...canonicalMembership(),relativity:.8,member_order:128,source_canvas_id:""}]}));
+      const weightedPlan=JSON.parse(JSON.parse((await prepare(weighted)).requestBody).input).combined_context_plan[0];
+      assert.equal(weightedPlan.relativity,.8);assert.deepEqual(weightedPlan.members.map(({relativity,order})=>({relativity,order})),[{relativity:.2,order:0},{relativity:.8,order:128}]);
+      for(const key of ["context_set_id","contextSetId","copied_as_context_set","reference_set_kind","combinedContext","combinedContextMemberships","contextGroup","context_groups","context_group_ids","contextGroupIds"]){
+        await rejectsCode(()=>prepare(inactive({[key]:key==="copied_as_context_set"?true:[]})),invalid);
+      }
+      const connected=()=>({documentTitle:"Field study",snapshot:{facts:[fact("a",{label:"A"}),fact("b",{label:"B"})],relationships:[{from_block_id:"a",to_block_id:"b",kind:"context_contains",properties:{member_order:0,relativity:.5}}]}});
+      await prepare(connected());
+      const typedGroup=connected();typedGroup.snapshot.facts[0].properties.context_group={name:"Named",role:"custom",target:"Target",application:"isolate",relativity:1};await prepare(typedGroup);
+      for(const change of [
+        value=>{value.snapshot.relationships[0].removed=true;},
+        value=>{value.snapshot.relationships[0].properties.removed=true;},
+        value=>{value.snapshot.relationships[0].properties.order=0;},
+        value=>{value.snapshot.relationships[0].properties.context_set_id="legacy";},
+        value=>{value.snapshot.relationships[0].properties.extra=true;},
+        value=>{value.snapshot.relationships[0].properties.member_order="0";},
+        value=>{value.snapshot.relationships[0].properties.relativity="0.5";},
+        value=>{value.snapshot.relationships[0].to_block_id="a";},
+        value=>{value.snapshot.relationships.push({...value.snapshot.relationships[0],kind:"combined_context_member"});},
+        value=>{value.snapshot.relationships.push({from_block_id:"b",to_block_id:"a",kind:"context_contains",properties:{}});},
+        value=>{value.snapshot.facts[1].active=false;},
+        value=>{value.snapshot.facts[1].properties.active=false;},
+        value=>{value.snapshot.facts[1].properties.weight=0;},
+        value=>{value.snapshot.facts[0].properties.combined_context={...canonicalMembership(),context_set_id:"a"};},
+        value=>{value.snapshot.facts[0].properties.context_group={name:"Missing fields"};},
+      ]){const value=connected();change(value);await rejectsCode(()=>prepare(value),invalid);}
+      const authoredWords="model schema repair onProviderSubmission OPENAI_API_KEY are authored words";
+      const words={documentTitle:"Field study",snapshot:{facts:[fact("words",{text:authoredWords,model:"untrusted-model",schema:{kind:"untrusted"},onBeforeProviderDispatch:"not a function"})],relationships:[]}};
+      const wordsWire=JSON.parse((await prepare(words)).requestBody);
+      assert.equal(wordsWire.model,"gpt-5.6-terra");assert.equal(JSON.parse(wordsWire.input).creative_context.facts[0].properties.text,authoredWords);
+      assert.equal((await prepare(base())).capturedInput,JSON.stringify(base()));
+    });
+
+    await context.test("canonical activity rejects supplied consent and unsupported audio-transfer structures",async()=>{
+      const canonicalTypes=["direction","audience","message","emotion","subject","environment","action","motion","scale","composition","camera","lighting","style","material","palette","typography","audio","format","output","brand","exclusion","accessibility","reference","model3d","sketch"];
+      const typed={documentTitle:"Field study",snapshot:{facts:canonicalTypes.map((type,index)=>({...fact("kind-"+index,{text:"Plain authored direction "+index}),type})),relationships:[]}};
+      const typedFacts=JSON.parse(JSON.parse((await prepare(typed)).requestBody).input).creative_context.facts;
+      assert.deepEqual(typedFacts.map(({type})=>type),canonicalTypes.filter(type=>type!=="output"));
+      for(const type of ["text","Message"," message","audio ","OUTPUT","unknown","t".repeat(80)]){
+        await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{facts:[{...fact(),type}]}}),invalid);
+      }
+      await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{facts:[{...fact(),type:"t".repeat(81)}]}}),limit);
+      for(const role of ["Audio","AUDIO"," audio","audio ","\taudio\n"]){
+        await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{facts:[{...fact(),role}]}}),invalid);
+      }
+      for(const role of ["audio","audio engineer"]){
+        const prepared=await prepare({documentTitle:"Field study",snapshot:{facts:[{...fact(),role}]}});
+        assert.equal(JSON.parse(JSON.parse(prepared.requestBody).input).creative_context.facts.length,1);
+      }
+      for(const role of ["output"," Output ","OUTPUT"]){
+        const prepared=await prepare({documentTitle:"Field study",snapshot:{facts:[{...fact(),role}]}});
+        assert.equal(JSON.parse(JSON.parse(prepared.requestBody).input).creative_context.facts.length,0,"the existing output exclusion is not replaced");
+      }
+      assert.equal(JSON.parse(JSON.parse((await prepare({documentTitle:"Field study",snapshot:{facts:[fact("nested-role",{text:"Still source text",role:"output"})]}})).requestBody).input).creative_context.facts.length,1);
+      await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{facts:[{...fact(),Type:"OUTPUT"}]}}),invalid);
+      for(const key of ["active","removed","locked"]){
+        for(const value of [null,0,"false",{}])await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{facts:[{...fact(),[key]:value}]}}),invalid);
+      }
+      for(const value of [null,0,"false",{}])await rejectsCode(()=>prepare(inactive({active:value})),invalid);
+      for(const weight of [null,false,"0",-1,1.01])await rejectsCode(()=>prepare(inactive({weight})),invalid);
+      const filtered={documentTitle:"Field study",snapshot:{facts:[
+        {...fact("top-disabled"),active:false},{...fact("removed"),removed:true},fact("property-disabled",{active:false,text:"Disabled"}),fact("zero-weight",{weight:0,text:"Disabled"}),
+        {...fact("included",{active:true,weight:.25,text:"Still active under the genuine predicate"}),active:true,removed:false,locked:false},
+      ],relationships:[]}};
+      const filteredFacts=JSON.parse(JSON.parse((await prepare(filtered)).requestBody).input).creative_context.facts;
+      assert.equal(filteredFacts.length,1);assert.equal(filteredFacts[0].properties.text,"Still active under the genuine predicate");
+      const forbidden=["inform_generation","informGeneration","include_in_output","includeInOutput","allow_provider_audio_transfer","allowProviderAudioTransfer","source_mime_type","sourceMimeType","media_type","mediaType","media_url","mediaUrl","audio_role","audioRole"];
+      const controlled=()=>({documentTitle:"Field study",snapshot:{facts:[fact("a"),fact("b")],relationships:[{from_block_id:"a",to_block_id:"b",kind:"contrasts",properties:{}}]}});
+      const implicitNeighbor={documentTitle:"Field study",snapshot:{facts:[fact("non-audio-neighbor",{text:"A bell sounded."})],relationships:[]}};
+      const neighborPrepared=await prepare(implicitNeighbor);assert.equal(JSON.parse(JSON.parse(neighborPrepared.requestBody).input).creative_context.facts.length,1);
+      const implicitAudio=structuredClone(implicitNeighbor);implicitAudio.snapshot.facts[0].properties.source_mime_type="audio/wav";
+      await rejectsCode(()=>prepare(implicitAudio),invalid);
+      for(const key of forbidden){
+        for(const place of [
+          value=>{value[key]=false;},value=>{value.snapshot[key]=false;},value=>{value.snapshot.facts[0][key]=false;},
+          value=>{value.snapshot.facts[0].properties[key]=false;},value=>{value.snapshot.facts[0].properties.details=[{[key]:false}];},
+          value=>{value.snapshot.relationships[0][key]=false;},value=>{value.snapshot.relationships[0].properties[key]=false;},
+          value=>{value.snapshot.relationships[0].properties.details=[{nested:{[key]:false}}];},
+        ]){const value=controlled();place(value);await rejectsCode(()=>prepare(value),invalid);}
+        for(const value of [true,null,0,"",[],{}])await rejectsCode(()=>prepare(inactive({[key]:value})),invalid);
+      }
+      const audio=(properties={text:"  Sparse footsteps.  "})=>({documentTitle:"Field study",snapshot:{facts:[{...fact("authored-audio",properties),type:"audio"}],relationships:[]}});
+      const plain=await prepare(audio()),plainFacts=JSON.parse(JSON.parse(plain.requestBody).input).creative_context.facts;
+      assert.equal(plainFacts.length,1);assert.equal(plainFacts[0].properties.text,"  Sparse footsteps.  ");assert.equal(plain.capturedInput,JSON.stringify(audio()));
+      const extraDescription=audio();extraDescription.snapshot.facts[0].properties.description="An otherwise plain authored audio description.";
+      await rejectsCode(()=>prepare(extraDescription),invalid);
+      for(const text of ["","   "]){const prepared=await prepare(audio({text}));assert.equal(JSON.parse(JSON.parse(prepared.requestBody).input).creative_context.facts.length,0);}
+      for(const key of ["text","label"])for(const value of [null,0,false,[],{}])await rejectsCode(()=>prepare(audio({text:"Authored sound",[key]:value})),invalid);
+      for(const key of ["description","details","reference","file","bytes","url","rights","transcript","source","metadata"]){
+        await rejectsCode(()=>prepare(audio({text:"Authored sound",[key]:{rhythm:"Sparse"}})),invalid);
+        const roleAudio={documentTitle:"Field study",snapshot:{facts:[{...fact("role-audio",{text:"Authored sound",[key]:null}),role:"audio"}]}};
+        await rejectsCode(()=>prepare(roleAudio),invalid);
+      }
+      const nonAudio={documentTitle:"Field study",snapshot:{facts:[fact("inert-data",{text:"A media_url or inform_generation word is authored prose, not a control.",details:[{fileName:"synthetic.wav",rhythm:"Sparse"}],reference:{rights:"Supplied text only"}})],relationships:[]}};
+      const inertPrepared=await prepare(nonAudio);assert.equal(inertPrepared.capturedInput,JSON.stringify(nonAudio));assert.equal(inertPrepared.sourceCustody,false);
+      const member={context_set_id:"audio-group",name:"Footsteps",role:"custom",target:"Scene",application:"isolate",relativity:.5,member_order:0};
+      const grouped=audio({text:"Sparse footsteps.",label:"Footsteps",active:true,weight:1,combined_context:member});
+      const groupedPrepared=await prepare(grouped);assert.equal(groupedPrepared.contextGroupContracts.length,1);assert.equal(JSON.parse(JSON.parse(groupedPrepared.requestBody).input).creative_context.facts.length,1);
+      const sourceMarked=audio({text:"Sparse footsteps.",combined_context:{...member,source_canvas_id:""}}),sourceMarkedPrepared=await prepare(sourceMarked);
+      assert.equal(sourceMarkedPrepared.capturedInput,JSON.stringify(sourceMarked));assert.deepEqual(sourceMarkedPrepared.contextGroupContracts,[]);
+      assert.equal(JSON.parse(JSON.parse(sourceMarkedPrepared.requestBody).input).creative_context.facts.length,0,"allowed source metadata still invokes the genuine recursive exclusion");
+      const eventMarked=audio();eventMarked.snapshot.facts[0].source_event_refs=[];
+      assert.equal(JSON.parse(JSON.parse((await prepare(eventMarked)).requestBody).input).creative_context.facts.length,0);
+      const link=(value)=>{value.snapshot.facts.push(fact("other"));value.snapshot.relationships.push({from_block_id:"other",to_block_id:"authored-audio",kind:"context_contains",properties:{}});return value;};
+      await prepare(link(audio()));await rejectsCode(()=>prepare(link(sourceMarked)),invalid);
+      for(const key of ["text","label"]){
+        const value=audio({text:"Authored sound",[key]:"s".repeat(49152)});value.snapshot.facts[0].active=false;await prepare(value);
+        value.snapshot.facts[0].properties[key]+="s";await rejectsCode(()=>prepare(value),limit);
+      }
+    });
+
+    await context.test("finite transport, depth, node, collection and field limits stay independent",async()=>{
+      const nodeCount=(value)=>1+(value&&typeof value==="object"?Object.values(value).reduce((sum,child)=>sum+nodeCount(child),0):0);
+      const atNodes=(target)=>{
+        const value=inactive({payload:[]}),rows=value.snapshot.facts[0].properties.payload;
+        let remaining=target-nodeCount(value);
+        while(remaining>0){const children=Math.min(128,remaining-1);assert.ok(children>=0);rows.push(Array(children).fill(0));remaining-=children+1;}
+        assert.equal(nodeCount(value),target);assert.ok(rows.length<=128);return value;
+      };
+      await prepare(atNodes(8192));await rejectsCode(()=>prepare(atNodes(8193)),limit);
+      const atDepth=(maximum)=>{let payload=0;for(let depth=5;depth<maximum;depth++)payload={n:payload};return inactive({payload});};
+      await prepare(atDepth(16));await rejectsCode(()=>prepare(atDepth(17)),limit);
+      const membership=(index)=>({context_set_id:"declared-"+index,name:"Group "+index,role:"custom",target:"Target",application:"isolate",relativity:.5,member_order:0});
+      for(const form of ["array","direct","legacy","empty-legacy"]){
+        const declarations=(count)=>({documentTitle:"Field study",snapshot:{facts:form==="array"
+          ?[fact("member",{label:"n",combined_context_memberships:Array.from({length:count},(_,index)=>membership(index))})]
+          :Array.from({length:count},(_,index)=>fact("member-"+index,{label:"n",...(form==="direct"?{combined_context:membership(index)}:{combined_context_memberships:[],context_set_id:form==="empty-legacy"?"":"declared-"+index,copied_as_context_set:true})})),relationships:[]}});
+        if(form==="array"||form==="direct"){const prepared=await prepare(declarations(24));assert.equal(prepared.contextGroupContracts.length,24);}
+        else await rejectsCode(()=>prepare(declarations(24)),invalid);
+        await rejectsCode(()=>prepare(declarations(25)),limit);
+      }
+      const repeated=(count)=>inactive({combined_context_memberships:Array.from({length:count},()=>membership(0))});
+      await rejectsCode(()=>prepare(repeated(24)),invalid);await rejectsCode(()=>prepare(repeated(25)),limit);
+      const chain=(edges,kind="context_contains")=>({documentTitle:"Field study",snapshot:{
+        facts:Array.from({length:edges+1},(_,index)=>fact("chain-"+index,{label:"n"})),
+        relationships:Array.from({length:edges},(_,index)=>({from_block_id:"chain-"+index,to_block_id:"chain-"+(index+1),kind,properties:{}})),
+      }});
+      const independentEdges=(edges,kind)=>({documentTitle:"Field study",snapshot:{
+        facts:Array.from({length:edges*2},(_,index)=>fact("pair-"+index,{label:"n"})),
+        relationships:Array.from({length:edges},(_,index)=>({from_block_id:"pair-"+(index*2),to_block_id:"pair-"+(index*2+1),kind,properties:{}})),
+      }});
+      for(const kind of ["context_contains","combined_context_member"]){
+        const prepared=await prepare(independentEdges(24,kind));assert.equal(prepared.contextGroupContracts.length,24);
+        await rejectsCode(()=>prepare(independentEdges(25,kind)),limit);
+        assert.equal((await prepare(chain(3,kind))).contextGroupContracts.length,3);
+      }
+      const combined=independentEdges(24,"context_contains");combined.snapshot.facts[47].properties.combined_context=membership("extra");
+      await rejectsCode(()=>prepare(combined),"short_story_preparation_context_group_limit");
+      const properties128=Object.fromEntries(Array.from({length:128},(_,index)=>["key"+index,index]));
+      await prepare(inactive(properties128));await rejectsCode(()=>prepare(inactive({...properties128,extra:0})),limit);
+      await prepare(inactive({payload:Array(128).fill(0)}));await rejectsCode(()=>prepare(inactive({payload:Array(129).fill(0)})),limit);
+      const facts128=Array.from({length:128},(_,index)=>({...fact("source-"+index,{}),active:false}));
+      await prepare({documentTitle:"Field study",snapshot:{facts:facts128}});
+      await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{facts:[...facts128,{...fact("source-128",{}),active:false}]}}),limit);
+      const links=Array.from({length:128},(_,index)=>({relation_id:"relation-"+index,from_block_id:"source-0",to_block_id:"source-1",kind:"contrasts",properties:{}}));
+      await prepare({documentTitle:"Field study",snapshot:{facts:facts128.slice(0,2),relationships:links}});
+      await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{facts:facts128.slice(0,2),relationships:[...links,{...links[0],relation_id:"extra"}]}}),limit);
+      const references=Array.from({length:128},(_,index)=>"event-"+index);
+      await prepare({documentTitle:"Field study",snapshot:{facts:[{...facts128[0],source_event_refs:references}]}});
+      await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{facts:[{...facts128[0],source_event_refs:[...references,"extra"]}]}}),limit);
+      for(const [at,over] of [
+        [inactive({["k".repeat(128)]:0}),inactive({["k".repeat(129)]:0})],
+        [inactive({payload:"s".repeat(49152)}),inactive({payload:"s".repeat(49153)})],
+        [{...base(),documentTitle:"t".repeat(1024)},{...base(),documentTitle:"t".repeat(1025)}],
+        [{documentTitle:"",snapshot:{facts:[{...fact("i".repeat(200),{}),active:false}]}},{documentTitle:"",snapshot:{facts:[{...fact("i".repeat(201),{}),active:false}]}}],
+      ]){await prepare(at);await rejectsCode(()=>prepare(over),limit);}
+      for(const key of ["document_id","role","intent","handle","effect","authority"]){
+        const value=inactive();value.snapshot.facts[0][key]="m".repeat(200);await prepare(value);
+        value.snapshot.facts[0][key]+="m";await rejectsCode(()=>prepare(value),limit);
+      }
+      const relationValue={documentTitle:"Field study",snapshot:{facts:[{...fact("a",{}),active:false},{...fact("b",{}),active:false}],relationships:[{relation_id:"r".repeat(200),from_block_id:"a",to_block_id:"b",kind:"k".repeat(80),properties:{},source_event_refs:["e".repeat(200)]}]}};
+      await prepare(relationValue);
+      for(const key of ["relation_id","kind"]){const changed=structuredClone(relationValue);changed.snapshot.relationships[0][key]+="x";await rejectsCode(()=>prepare(changed),limit);}
+      const tooLongRef=structuredClone(relationValue);tooLongRef.snapshot.relationships[0].source_event_refs[0]+="x";await rejectsCode(()=>prepare(tooLongRef),limit);
+      for(const key of ["name","target"]){
+        const at=inactive({combined_context:{...membership(0),[key]:"m".repeat(160)}});await prepare(at);
+        at.snapshot.facts[0].properties.combined_context[key]+="m";await rejectsCode(()=>prepare(at),limit);
+      }
+      const sized=(target,multibyte)=>{
+        const value=inactive({left:multibyte?"雪".repeat(15000):"",right:""}),props=value.snapshot.facts[0].properties;
+        const remaining=target-bytes(JSON.stringify(value));assert.ok(remaining>0);
+        const leftAddition=Math.min(49000-props.left.length,remaining);props.left+="a".repeat(leftAddition);props.right="b".repeat(remaining-leftAddition);
+        const raw=JSON.stringify(value);assert.equal(bytes(raw),target);return raw;
+      };
+      for(const multibyte of [false,true]){
+        const raw=sized(65536,multibyte);assert.ok(raw.length<=65536);await prepareInitialShortStoryRequest(raw,safety);
+        const over=sized(65537,multibyte);if(multibyte)assert.ok(over.length<65536);
+        await rejectsCode(()=>prepareInitialShortStoryRequest(over,safety),limit);
+      }
+      await rejectsCode(()=>prepareInitialShortStoryRequest(" ".repeat(65537),safety),limit);
+    });
+
+    await context.test("owned preparation snapshots are deeply frozen and grant no actions",async()=>{
+      const value=base(),raw=JSON.stringify(value),pending=prepareInitialShortStoryRequest(raw,safety);
+      value.documentTitle="Changed outside";value.snapshot.facts.push(fact("late"));
+      const prepared=await pending;
+      assert.equal(prepared.capturedInput,raw);assert.equal(JSON.parse(prepared.requestBody).input,JSON.stringify(initialInput()));
+      assert.deepEqual(Object.keys(prepared).sort(),["qualification","authorizations","sourceCustody","currentOriginalAuthority","liveRequestParity","requestBody","requestDigest","byteLength","inputAllowance","contextGroupContracts","maximumOutputTokens","formatName","capturedInput"].sort());
+      assert.deepEqual(prepared.authorizations,{dispatch:false,settlement:false,publication:false,certifiedRecovery:false});
+      assert.equal(prepared.sourceCustody,false);assert.equal(prepared.currentOriginalAuthority,false);assert.equal(prepared.liveRequestParity,false);
+      deepFrozen(prepared);assert.throws(()=>{prepared.authorizations.dispatch=true;},TypeError);
+      assert.throws(()=>prepared.contextGroupContracts.push({id:"injected",alias:"injected"}),TypeError);
+      assert.throws(()=>{prepared.requestBody="mutated";},TypeError);
+      assert.equal((await prepare(base())).requestBody,prepared.requestBody);
+    });
+
+    await context.test("offline success and capture, serialization or hashing failures attempt no paid effects",async()=>{
+      const beforeUuid=uuidCalls,beforeFetch=blockedFetchCalls,effects={credentialReads:0,modelReads:0,callbacks:0};
+      const priorKey=Object.getOwnPropertyDescriptor(Object.prototype,"OPENAI_API_KEY"),priorModel=Object.getOwnPropertyDescriptor(Object.prototype,"OPENAI_MODEL");
+      const effectStop=new Error("unexpected offline paid effect");
+      Object.defineProperty(Object.prototype,"OPENAI_API_KEY",{configurable:true,get(){effects.credentialReads++;throw effectStop;}});
+      Object.defineProperty(Object.prototype,"OPENAI_MODEL",{configurable:true,get(){effects.modelReads++;throw effectStop;}});
+      try{
+        await prepare(base());
+        await rejectsCode(()=>prepareInitialShortStoryRequest({get options(){effects.callbacks++;throw effectStop;}},safety),invalid);
+        await rejectsCode(()=>prepareInitialShortStoryRequest("{",safety),invalid);
+        await rejectsCode(()=>prepare({...base(),options:{onProviderSubmission:"forbidden"}}),invalid);
+        const stringify=JSON.stringify;
+        for(const phase of ["provider-input","provider-envelope"]){
+          const stop=new Error("synthetic "+phase+" serialization failure"),raw=stringify(base());
+          JSON.stringify=function(value,...rest){
+            if(value&&typeof value==="object"&&(phase==="provider-input"?Object.hasOwn(value,"document_title"):Object.hasOwn(value,"model")&&Object.hasOwn(value,"text")))throw stop;
+            return stringify(value,...rest);
+          };
+          try{await assert.rejects(()=>prepareInitialShortStoryRequest(raw,safety),(error)=>error===stop);}
+          finally{JSON.stringify=stringify;}
+        }
+        const subtle=globalThis.crypto.subtle,ownDigest=Object.getOwnPropertyDescriptor(subtle,"digest"),hashStop=new Error("synthetic pre-capture digest failure");
+        Object.defineProperty(subtle,"digest",{configurable:true,writable:true,value:()=>{throw hashStop;}});
+        try{await assert.rejects(()=>prepare(base()),(error)=>error===hashStop);}
+        finally{if(ownDigest)Object.defineProperty(subtle,"digest",ownDigest);else delete subtle.digest;}
+        const freeze=Object.freeze,captureStop=new Error("synthetic final owned capture freeze failure");let finalFreezeAttempts=0;
+        Object.freeze=function(value){
+          const qualification=value&&typeof value==="object"?Object.getOwnPropertyDescriptor(value,"qualification"):null;
+          if(qualification&&Object.hasOwn(qualification,"value")&&qualification.value==="offline-initial-preparation-only"){finalFreezeAttempts++;throw captureStop;}
+          return freeze(value);
+        };
+        try{await assert.rejects(()=>prepare(base()),(error)=>error===captureStop);assert.equal(finalFreezeAttempts,1);}
+        finally{Object.freeze=freeze;}
+      }finally{
+        if(priorKey)Object.defineProperty(Object.prototype,"OPENAI_API_KEY",priorKey);else delete Object.prototype.OPENAI_API_KEY;
+        if(priorModel)Object.defineProperty(Object.prototype,"OPENAI_MODEL",priorModel);else delete Object.prototype.OPENAI_MODEL;
+        assert.deepEqual(effects,{credentialReads:0,modelReads:0,callbacks:0});assert.equal(uuidCalls,beforeUuid);assert.equal(blockedFetchCalls,beforeFetch);
+      }
+    });
+
+    await context.test("public fifth arguments reject as Promises before any property read",async()=>{
+      const reads={environment:0,input:0,fifth:0,capture:0};
+      const env=new Proxy({},{get(){reads.environment++;throw new Error("environment read");}});
+      const input=new Proxy({},{get(){reads.input++;throw new Error("input read");}});
+      const fifth=new Proxy({},{get(){reads.fifth++;throw new Error("fifth getter");},ownKeys(){reads.fifth++;throw new Error("fifth keys");},getOwnPropertyDescriptor(){reads.fifth++;throw new Error("fifth descriptor");}});
+      const beforeUuid=uuidCalls,beforeFetch=blockedFetchCalls;
+      for(const supplied of [null,false,0,"",Symbol("mode"),()=>{},[],{},fifth,{candidateRaw:"{}",candidateIssues:[],capture(){reads.capture++;throw new Error("forged capture");}}]){
+        let pending;assert.doesNotThrow(()=>{pending=generateDocumentArtifact(env,"synthetic","short_story",input,supplied);});
+        assert.ok(pending instanceof Promise);await rejectsCode(()=>pending,"document_artifact_preparation_not_public");
+      }
+      assert.deepEqual(reads,{environment:0,input:0,fifth:0,capture:0});assert.equal(uuidCalls,beforeUuid);assert.equal(blockedFetchCalls,beforeFetch);
+    });
+
+    await context.test("ordinary four-argument delegation preserves check order and original errors",async()=>{
+      const trace=[],keyStop=new Error("synthetic credential getter"),inputStop=new Error("synthetic options getter");
+      const input=new Proxy({},{get(){trace.push("input");throw inputStop;}});
+      const env=new Proxy({},{get(_target,key){trace.push(String(key));throw keyStop;}});
+      let pending;assert.doesNotThrow(()=>{pending=generateDocumentArtifact(env,"synthetic","short_story",input);});
+      assert.ok(pending instanceof Promise);assert.deepEqual(trace,["OPENAI_API_KEY"]);
+      await assert.rejects(()=>pending,(error)=>error===keyStop);
+      trace.length=0;await assert.rejects(()=>generateDocumentArtifact(env,"synthetic","model3d",input),/model3d_dedicated_adapter_required/u);assert.deepEqual(trace,[]);
+      await assert.rejects(()=>generateDocumentArtifact({},"synthetic","short_story",input),/provider_not_configured/u);assert.deepEqual(trace,[]);
+      assert.doesNotThrow(()=>{pending=generateDocumentArtifact({OPENAI_API_KEY:"synthetic"},"synthetic","short_story",input,undefined);});
+      assert.deepEqual(trace,["input"]);await assert.rejects(()=>pending,(error)=>error===inputStop);
+    });
+
+    await context.test("legacy source activity stays outside the offline C2 input rules",async()=>{
+      // These two source shapes intentionally remain legacy-only; C2 must not
+      // turn its narrower supplied-context profile into live consent policy.
+      const sources=[{...fact("legacy-kind",{text:"Legacy free-form source type"}),type:"text"},
+        {...fact("legacy-audio",{text:"Legacy opted-in authored sound",inform_generation:true,source_mime_type:"audio/wav",media_url:"/synthetic/legacy.wav"}),type:"audio"}];
+      for(const source of sources)await rejectsCode(()=>prepare({documentTitle:"Field study",snapshot:{facts:[source],relationships:[]}}),invalid);
+      const previousFetch=globalThis.fetch,observerErrors=[],beforeUuid=uuidCalls;let fetched=0;
+      globalThis.fetch=async(url,init)=>{
+        try{
+          fetched++;assert.equal(url,"https://api.openai.com/v1/responses");assert.equal(typeof init.body,"string");
+          const request=JSON.parse(init.body),input=JSON.parse(request.input);
+          assert.equal(request.text.format.name,"document_short_story");assert.equal(input.creative_context.facts.length,2);
+          assert.deepEqual(input.creative_context.facts.map(({type})=>type),["text","audio"]);
+          assert.deepEqual(input.creative_context.facts.map(({properties})=>properties.text),["Legacy free-form source type","Legacy opted-in authored sound"]);
+          return syntheticResponse(request,JSON.stringify(story),"legacy-source-activity");
+        }catch(error){observerErrors.push(error);throw error;}
+      };
+      try{
+        const result=await generateDocumentArtifact({OPENAI_API_KEY:"synthetic"},"synthetic","short_story",{documentTitle:"Field study",snapshot:{facts:sources,relationships:[]},options:{itemCount:1}});
+        assert.equal(result.inputReceipt.validation.repair_attempted,false);assert.equal(fetched,1);assert.equal(uuidCalls-beforeUuid,1);
+      }finally{globalThis.fetch=previousFetch;assert.deepEqual(observerErrors,[],"legacy source observer failures remain sticky");}
+    });
+
+    await context.test("trusted same-file Slides preparation retains initial and repair modes",async()=>{
+      const beforeUuid=uuidCalls,beforeFetch=blockedFetchCalls;
+      const input={...base(),options:{itemCount:1}},candidate=structuredClone(deck);
+      candidate.items[0].body=candidate.items[0].slide.visual.value;
+      const raw=JSON.stringify(candidate),initial=await preparePresentationComparisonRequest({},"synthetic-live-user",input);
+      const repair=await preparePresentationComparisonRequest({},"synthetic-live-user",input,raw);
+      assert.equal(initial.phase,"composition");assert.equal(initial.candidateDigest,null);assert.deepEqual(initial.candidateIssues,[]);
+      assert.equal(repair.phase,"validation-repair");assert.equal(repair.candidateDigest,digest(raw));
+      assert.ok(repair.candidateIssues.some(issue=>issue.code==="duplicate_slide_copy"));
+      for(const prepared of [initial,repair]){
+        const wire=JSON.parse(prepared.requestBody);
+        assert.equal(prepared.requestDigest,digest(prepared.requestBody));assert.equal(prepared.maximumInputTokens,bytes(prepared.requestBody)+4096);
+        assert.equal(prepared.maximumOutputTokens,6500);assert.equal(wire.text.format.schema.properties.items.minItems,1);assert.equal(wire.text.format.schema.properties.items.maxItems,1);
+        assert.equal(Object.hasOwn(wire,"truncation"),false);assert.equal(wire.safety_identifier,liveSafety("synthetic-live-user"));
+      }
+      assert.equal(JSON.parse(initial.requestBody).text.format.name,"document_slides");
+      const repairWire=JSON.parse(repair.requestBody);assert.equal(repairWire.text.format.name,"document_slides_repair");assert.equal(JSON.parse(repairWire.input).original_artifact,raw);
+      await assert.rejects(()=>preparePresentationComparisonRequest({},"synthetic-live-user",input,JSON.stringify(deck)),/comparison_candidate_has_no_editorial_issue/u);
+      let callbacks=0;await assert.rejects(()=>preparePresentationComparisonRequest({},"synthetic-live-user",{...input,options:{itemCount:1,onProviderSubmission(){callbacks++;}}}));
+      assert.equal(callbacks,0);assert.equal(uuidCalls,beforeUuid);assert.equal(blockedFetchCalls,beforeFetch);
+    });
+
+    await context.test("legacy non-Slides initial and repair retain independent raw-envelope expectations",async()=>{
+      const beforeUuid=uuidCalls,{result,requests,trace,submissions}=await legacy("short_story");
+      assert.equal(requests.length,2);assert.equal(uuidCalls-beforeUuid,2);assert.deepEqual(result.usage,{inputTokens:200,outputTokens:100,totalTokens:300});
+      const expectedInitial=initialInput(),expectedRepair={...initialInput(),original_artifact:"{}",validation_issues:[invalidArtifact]};
+      for(const [index,expected] of [expectedInitial,expectedRepair].entries()){
+        const {raw,request}=requests[index],name=index?"document_short_story_repair":"document_short_story";
+        assert.deepEqual(request.text.format.schema,schema(12));assert.equal(request.input,JSON.stringify(expected));
+        assert.equal(raw,envelope(request.instructions,JSON.stringify(expected),schema(12),name,{identifier:liveSafety("synthetic-live-user")}));
+        assert.deepEqual(Object.keys(request),["model","instructions","input","text","reasoning","max_output_tokens","store","safety_identifier"]);
+        for(const key of ["service_tier","prompt_cache_options","truncation","tools","stream","background"])assert.equal(Object.hasOwn(request,key),false,key);
+      }
+      assert.match(requests[0].request.instructions,/Write a polished short story, not a treatment\./u);
+      assert.match(requests[1].request.instructions,/Repair the complete structured short story artifact/u);
+      assert.deepEqual(trace,["before:initial","submission:pending:initial","dispatch:initial","fetch:initial","response:initial","submission:completed:initial","attempt:initial","before:repair","submission:pending:repair","dispatch:repair","fetch:repair","response:repair","submission:completed:repair","attempt:repair"]);
+      assert.deepEqual(submissions.filter(call=>call.status==="completed").map(call=>call.responseRef),["synthetic-stored-initial","synthetic-stored-repair"]);
+      const offline=await prepare(base());assert.deepEqual(JSON.parse(offline.requestBody).text.format.schema,schema(1));
+      assert.equal(JSON.parse(offline.requestBody).instructions,requests[0].request.instructions,"both paths share genuine initial prompt construction");
+    });
+
+    await context.test("legacy Slides initial and repair retain route fields and callback ordering",async()=>{
+      const {result,requests,trace,submissions}=await legacy("slides");assert.equal(requests.length,2);assert.equal(result.inputReceipt.validation.repair_attempted,true);
+      for(const [index,{raw,request}] of requests.entries()){
+        const outputSchema=request.text.format.schema;
+        assert.deepEqual(Object.keys(request),["model","instructions","input","text","reasoning","max_output_tokens","store","safety_identifier","service_tier","prompt_cache_options"]);
+        assert.deepEqual(outputSchema.required,["title","summary","content_markdown","items","presentation"]);
+        assert.deepEqual(outputSchema.properties.items.items.required,["title","body","notes","image_prompt","context_group_ids","slide"]);
+        assert.equal(outputSchema.properties.title.minLength,1);assert.equal(outputSchema.properties.content_markdown.minLength,1);assert.equal(outputSchema.properties.items.items.properties.title.minLength,1);
+        assert.equal(outputSchema.properties.items.minItems,1);assert.equal(outputSchema.properties.items.maxItems,1);assert.equal(outputSchema.additionalProperties,false);
+        assert.equal(raw,envelope(request.instructions,request.input,outputSchema,index?"document_slides_repair":"document_slides",{model:index?"gpt-5.6-sol":"gpt-5.6-terra",effort:index?"high":"medium",maximum:6500,identifier:liveSafety("synthetic-live-user"),slides:true}));
+        assert.equal(Object.hasOwn(request,"truncation"),false);assert.equal(Object.hasOwn(request,"tools"),false);
+      }
+      const first=JSON.parse(requests[0].request.input),second=JSON.parse(requests[1].request.input);
+      assert.deepEqual(Object.keys(first),["document_title","creative_context","combined_context_plan","audience","tone","presentation_source"]);
+      assert.equal(first.document_title,"Field study");assert.deepEqual(first.creative_context,{facts:[],relationships:[]});assert.deepEqual(first.combined_context_plan,[]);assert.equal(first.audience,"general");assert.equal(first.tone,"derived from the document");
+      assert.deepEqual(Object.keys(second),["document_title","audience","tone","original_artifact","validation_issues","required_context_groups","original_creative_context","presentation_source"]);
+      assert.equal(second.document_title,"Field study");assert.equal(second.audience,"general");assert.equal(second.tone,"derived from the document");assert.equal(second.original_artifact,"{}");
+      assert.deepEqual(second.validation_issues,[invalidArtifact]);assert.deepEqual(second.required_context_groups,[]);assert.deepEqual(second.original_creative_context,{facts:[],relationships:[]});assert.deepEqual(second.presentation_source,first.presentation_source);
+      assert.deepEqual(trace,["before:initial","submission:pending:initial","dispatch:initial","fetch:initial","response:initial","submission:completed:initial:pending","attempt:initial","submission:completed:initial:invalid","before:repair","submission:pending:repair","dispatch:repair","fetch:repair","response:repair","submission:completed:repair:pending","attempt:repair","submission:completed:repair:valid"]);
+      assert.equal(submissions.length,6);assert.equal(submissions.filter(call=>call.status==="pending").length,2);
+    });
+
+    await context.test("final synchronous dispatch guard remains adjacent to fetch and retains failure ordering",async()=>{
+      const previousFetch=globalThis.fetch,observerErrors=[];
+      try{
+        const trace=[];let queued=false,fetches=0;
+        globalThis.fetch=async(_url,init)=>{
+          try{trace.push("fetch");fetches++;assert.equal(queued,false);assert.deepEqual(trace,["dispatch","fetch"]);return syntheticResponse(JSON.parse(init.body),JSON.stringify(story),"adjacency");}
+          catch(error){observerErrors.push(error);throw error;}
+        };
+        await generateDocumentArtifact({OPENAI_API_KEY:"synthetic"},"synthetic","short_story",{...base(),options:{itemCount:1,onBeforeProviderDispatch(){trace.push("dispatch");queueMicrotask(()=>{queued=true;trace.push("microtask");});}}});
+        assert.equal(fetches,1);assert.deepEqual(trace,["dispatch","fetch","microtask"]);
+        for(const phase of ["before","pending","dispatch","repair-dispatch"]){
+          const stop=new Error("synthetic "+phase+" stop"),events=[],calls=[];let sent=0;
+          globalThis.fetch=async(_url,init)=>{sent++;events.push("fetch");return syntheticResponse(JSON.parse(init.body),"{}","stop-"+sent);};
+          await assert.rejects(()=>generateDocumentArtifact({OPENAI_API_KEY:"synthetic"},"synthetic","short_story",{...base(),options:{
+            itemCount:1,
+            onBeforeProviderAttempt(){events.push("before");if(phase==="before")throw stop;},
+            onProviderSubmission(call){calls.push({...call});events.push(call.status);if(phase==="pending"&&call.status==="pending")throw stop;},
+            onBeforeProviderDispatch(){events.push("dispatch");if(phase==="dispatch"||phase==="repair-dispatch"&&sent===1)throw stop;},
+          }}),(error)=>error===stop);
+          assert.equal(sent,phase==="repair-dispatch"?1:0);
+          assert.equal(calls.some(call=>call.status==="rejected"),false,"a local stop is never a zero-price provider rejection");
+          if(phase==="before")assert.deepEqual(events,["before"]);
+          if(phase==="pending")assert.deepEqual(events,["before","pending"]);
+          if(phase==="dispatch")assert.deepEqual(events,["before","pending","dispatch"]);
+          if(phase==="repair-dispatch")assert.deepEqual(events,["before","pending","dispatch","fetch","completed","before","pending","dispatch"]);
+        }
+        const responseStop=new Error("synthetic response persistence failure"),events=[];let calls=0;
+        globalThis.fetch=async(_url,init)=>{calls++;events.push("fetch");return syntheticResponse(JSON.parse(init.body),JSON.stringify(story),"retention-failure");};
+        await assert.rejects(()=>generateDocumentArtifact({OPENAI_API_KEY:"synthetic"},"synthetic","short_story",{...base(),options:{
+          itemCount:1,onProviderSubmission(call){events.push(call.status);},
+          onProviderResponse(){events.push("response");throw responseStop;},onProviderAttempt(){events.push("attempt");},
+        }}),(error)=>{assert.notEqual(error,responseStop);assert.match(error.preparedPrompt,/Document short_story instructions:/u);return true;});
+        assert.equal(calls,1);assert.deepEqual(events,["pending","fetch","response","completed"]);
+      }finally{globalThis.fetch=previousFetch;assert.deepEqual(observerErrors,[],"an observer assertion cannot be hidden by adapter error handling");}
+    });
+
+    await context.test("all fact text and label fields require primitive strings without changing authored content",async()=>{
+      const beforeIds=uuidCalls;
+      const authored={text:"  Élan stays exact: "+"x".repeat(180)+"\n  ",label:" \tA held label: "+"y".repeat(180)+"  \n",details:{cadence:"Sparse"}};
+      assert.ok(authored.text.length>160&&authored.label.length>160);
+      const value={...base(),snapshot:{facts:[fact("r2-authored-source",authored)],relationships:[]}};
+      const prepared=await prepare(value),payload=JSON.parse(JSON.parse(prepared.requestBody).input);
+      assert.equal(payload.creative_context.facts.length,1);
+      assert.deepEqual(payload.creative_context.facts[0].properties,authored,"source strings are not coerced, trimmed or limited to group-label length");
+      assert.equal(prepared.capturedInput,JSON.stringify(value));
+      for(const properties of [{},{text:""},{label:""},{text:" \t\n ",label:"  \n\t"}]){
+        const optional={...base(),snapshot:{facts:[fact("optional-fields",properties)],relationships:[]}};
+        const result=await prepare(optional),projected=JSON.parse(JSON.parse(result.requestBody).input).creative_context.facts;
+        assert.equal(projected.length,1);assert.deepEqual(projected[0].properties,properties);
+      }
+      const malformed=[null,0,false,[],{}, {toString:"not callable"}];
+      for(const field of ["text","label"]){
+        for(const supplied of malformed){
+          for(const activity of ["active","fact-inactive","removed","properties-inactive","zero-weight"]){
+            const row=fact("typed-source",{[field]:supplied});
+            if(activity==="fact-inactive")row.active=false;
+            if(activity==="removed")row.removed=true;
+            if(activity==="properties-inactive")row.properties.active=false;
+            if(activity==="zero-weight")row.properties.weight=0;
+            const input={...base(),snapshot:{facts:[row],relationships:[]}};
+            await rejectsCode(()=>prepare(input),invalid);
+          }
+        }
+        const boundary=inactive({[field]:"z".repeat(49152)});
+        const accepted=await prepare(boundary);
+        assert.deepEqual(JSON.parse(JSON.parse(accepted.requestBody).input).creative_context.facts,[]);
+        assert.equal(accepted.capturedInput,JSON.stringify(boundary));
+        boundary.snapshot.facts[0].properties[field]+="z";
+        await rejectsCode(()=>prepare(boundary),limit);
+      }
+      assert.equal(uuidCalls,beforeIds,"text and label validation has no call-identity allocation");
+    });
+
+    await context.test("reference selectors reject recursively without dropping valid neighboring context",async()=>{
+      const beforeIds=uuidCalls;
+      const selectors=["block_references","blockReferences","subject_block_id","subjectBlockId"];
+      const neighbor=()=>({...base(),snapshot:{facts:[
+        fact("source-message",{text:"  A reed moves.  ",label:"Reed",details:{note:"Still"},sequence:[{note:"After"}]}),
+        {...fact("source-subject",{text:"A copper reed.",label:"Subject"}),type:"subject"},
+      ],relationships:[]}});
+      for(const key of selectors){
+        const supplied=key==="block_references"||key==="blockReferences"?[{handle:"@subject",role:"subject"}]:"source-subject";
+        for(const placement of ["direct","nested-object","nested-array"]){
+          const control=neighbor(),prepared=await prepare(control);
+          const projected=JSON.parse(JSON.parse(prepared.requestBody).input).creative_context.facts;
+          assert.equal(projected.length,2);
+          assert.deepEqual(projected.map(row=>row.properties),control.snapshot.facts.map(row=>row.properties));
+          assert.equal(prepared.capturedInput,JSON.stringify(control));
+          const changed=JSON.parse(JSON.stringify(control)),properties=changed.snapshot.facts[0].properties;
+          if(placement==="direct")properties[key]=supplied;
+          if(placement==="nested-object")properties.details[key]=supplied;
+          if(placement==="nested-array")properties.sequence[0][key]=supplied;
+          await rejectsCode(()=>prepare(changed),invalid);
+        }
+        const presentFalse=neighbor();presentFalse.snapshot.facts[0].properties.details[key]=false;
+        await rejectsCode(()=>prepare(presentFalse),invalid);
+      }
+      assert.equal(uuidCalls,beforeIds,"unsupported references cannot allocate a call identity");
+    });
+    assert.equal(blockedFetchCalls,0,"only explicitly installed synthetic transports may be attempted");
+  }finally{
+    globalThis.fetch=originalFetch;
+    if(uuidDescriptor)Object.defineProperty(globalThis.crypto,"randomUUID",uuidDescriptor);else delete globalThis.crypto.randomUUID;
+  }
 });

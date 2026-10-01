@@ -70,3 +70,22 @@ The initial fixture imported about **586 kB CSS and 1,094 kB JavaScript** before
 Stage 1B now provides authenticated personal canonical intake, native context binding, immutable retained drafts, current authority checks and exact same-Document setup handoff. **Generation, persisted paid jobs and read-only output viewers remain unimplemented.** Public guest intake, sponsor grants, custody/claim, output-only sharing and paid-output qualification require their own gates. Personal Memory remains inactive; product-learning evidence must not become private memory or publishing authority.
 
 The isolated implementation branch adds application routes and shared components, but no migration, provider/account setting, release access or deployment has changed. This standalone harness retains its no-network/no-canonical-write boundary.
+
+## Short story reader fixture — September 3
+
+`reader.html` is a separate synthetic presentation fixture for the actual `src/experiences/results/short-story-reader.ts` and its stylesheet. It has no live result transport, Document custody, generation or Edit in Forma action. Six local samples exercise standard, literal, long-line, RTL, maximum-length and blank-title content. The labels and native controls belong only to the test fixture.
+
+Run the isolated browser checks from the repository root with the installed Chromium tooling:
+
+```sh
+pnpm exec tsc --noEmit -p tests/fixtures/experience-runtime/reader.tsconfig.json
+pnpm exec playwright test --config tests/fixtures/experience-runtime/reader.playwright.config.mjs
+```
+
+The runner owns a loopback-only static server on port 4193 and refuses to reuse an existing server. It omits application plugins and env files, scans only this reader entry, and blocks browser requests outside the local static module set. Browser contexts contain no production session. Reports default to `outputs/experience-reader-browser`; set `FORMA_READER_EVIDENCE_DIR` to a fresh directory to preserve an independent run. Do not reuse a frozen evidence directory.
+
+The final selected run passed **10/10 checks**, covering actual literal DOM content, full 512,000-byte text, 320px/RTL/long-line reflow, doubled CSS text, fixture dark colors, native mouse selection, keyboard controls and CDP-touch page scrolling. Screenshots and source bookends are retained with the report. The earlier contract suite passed **53/53** separately.
+
+CSS text size is not browser chrome zoom. Emulated touch/viewport changes are not physical-device rotation or long-press selection. System-font fixture geometry does not qualify production typography, IME, screen readers, trusted transport, exact handoff or release availability. The eight-output setup fixture's earlier verification limits remain unchanged.
+
+A separate desktop Chromium check used the repository's existing zoom extension and helpers to verify actual browser zoom at 200%: factor 2 read-back, doubled DPR, halved CSS viewport and unchanged root font/CSS zoom/pinch scale. All six samples retained exact text and avoided horizontal overflow; native Tab navigation passed. Evidence is retained in `/private/tmp/forma-reader-browser-zoom.EAGGuE`. This is a separate qualification result, not an additional case in the 10-test command above, and does not qualify mobile hardware or the integrated product host.

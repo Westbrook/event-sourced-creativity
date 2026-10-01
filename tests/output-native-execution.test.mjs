@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {deflateSync} from 'node:zlib';
+import {createHash} from 'node:crypto';
 import {outputTestDatabase,registerOutputSourceImports} from './output-execution-test-helpers.mjs';
 import {snapshot,outputFor,flexible} from './output-presentation-fixtures.mjs';
 registerOutputSourceImports();
@@ -579,4 +580,303 @@ test('mixed slideshow success and failure label each charged model and current t
    }
   }finally{context.mock.restoreAll();f.sqlite.close();}
  }
+});
+
+test('C3 native Short story preparation: materialized binding remains unavailable',async context=>{
+ const {prepareOutputShortStoryTarget}=await import('../worker/output-document-execution.ts');
+ const {prepareNativeInitialShortStoryRequest}=await import('../worker/openai-adapter.ts');
+ const {outputDigest,outputTargetContractDigest}=await import('../worker/output-requirements-api.ts');
+ const {documentGenerationRevision}=await import('../src/model/document-jobs.ts');
+ const {combinedContextGroups}=await import('../src/model/combined-context.ts');
+ const {promptFactIsActive}=await import('../src/model/prompt-policy.ts');
+ const digest=value=>createHash('sha256').update(value,'utf8').digest('hex');
+ const title='  Native title: Élan\nSecond line  ';
+ const sourceText='A courier carries a sealed brass compass.';
+ const instructionText='Return one complete story. Target-only sentinel.';
+ const audioSentinels={'c3-audio-inactive':'Inactive native audio sentinel.','c3-audio-provenance':'Provenance-excluded native audio sentinel.'};
+ const authorities={admission:false,dispatch:false,repair:false,settlement:false,publication:false,certifiedRecovery:false};
+ const authoredScopes={
+  'c3-courier':{schema_version:1,kind:'path',coordinate_space:'document-normalized',path:[{x:.2,y:.2},{x:.8,y:.2},{x:.7,y:.8}],feather:0,falloff:'hard',polarity:'inside'},
+  'c3-rain':{schema_version:1,kind:'region',coordinate_space:'document-normalized',region:'left',instruction:'North gate',feather:.2,falloff:'contextual',polarity:'inside'},
+  'c3-light':{schema_version:1,kind:'aabb',coordinate_space:'document-normalized',aabb:{x:.2,y:.2,width:.6,height:.6},feather:0,falloff:'hard',polarity:'inside'},
+ };
+ let fetchCalls=0;
+ context.mock.method(globalThis,'fetch',async()=>{fetchCalls++;throw new Error('C3 preparation must not transmit');});
+ const f=await fixture([
+  {block_id:'c3-courier',type:'subject',properties:{label:'Courier',text:sourceText,spatial_scope:authoredScopes['c3-courier']}},
+  {block_id:'c3-rain',type:'environment',properties:{label:'Rain',text:'Rain reaches the north gate.',spatial_scope:authoredScopes['c3-rain']}},
+  {block_id:'c3-light',type:'lighting',properties:{label:'Light',text:'Warm light remains behind the courier.',spatial_scope:authoredScopes['c3-light']}},
+  {block_id:'c3-inactive',type:'message',properties:{label:'Inactive',text:'Inactive-only sentinel.'}},
+  {block_id:'c3-audio-inactive',type:'audio',properties:{label:'Inactive audio',text:audioSentinels['c3-audio-inactive']}},
+  {block_id:'c3-audio-provenance',type:'audio',properties:{label:'Provenance audio',text:audioSentinels['c3-audio-provenance']}},
+ ]);
+ context.after(()=>f.sqlite.close());
+ const append=(type,payload)=>appendAuditEvent(f.env,stream,'user',type,{document_id:f.documentId,project_id:'project-atmosphere',...payload});
+ await append('DocumentRenamed',{new_title:title});
+ for(const [block_id,new_value]of [['c3-courier','z9'],['c3-rain','a2'],['c3-light','b5']])await append('BlockPropertyEdited',{block_id,property_path:'position',new_value});
+ await append('BlockWeightSet',{block_id:'c3-inactive',weight:0});
+ await append('BlockWeightSet',{block_id:'c3-audio-inactive',weight:0});
+ await append('BlockRelationAdded',{relation_id:'c3-membership',from_block_id:'c3-courier',to_block_id:'c3-rain',kind:'context_contains',properties:{member_order:0}});
+ const spec={schema_version:1,id:'c3-story-output',label:'Story',original_text:instructionText,
+  deliverables:[{id:'c3-story-deliverable',label:'Story',media_kind:'document',artifact_format:{kind:'short_story',version:1},required:true,
+   quantity:{kind:'exact',unit:'document',value:1},source_scope:{kind:'document'},coverage:{kind:'document_context'},original_text:instructionText,
+   value_origins:{artifact_format:{kind:'authored'}}}],value_origins:{interpretation_basis:{kind:'confirmed',text:instructionText}}};
+ await f.ok(await f.send({action:'save',blockId:spec.id,spec}));
+ const confirmed=await f.ok(await f.send({action:'confirm'}));
+ const selected=confirmed.snapshot.confirmedPlan.plan.targets.find(target=>target.media_kind==='document');
+ assert.ok(selected);assert.equal(selected.selected,true);assert.deepEqual(selected.blocking_issues,[]);
+ let captured=null;
+ const bridge={...outputDocumentExecutionBridge,async preflight(input){captured=input;return outputDocumentExecutionBridge.preflight(input);}};
+ const publicRequest=await handleOutputRequirements(new Request(`http://localhost${BASE}`,init({documentId:f.documentId,action:'preflight',
+  expectedRevision:`output:${await streamHead(f.env,stream)}`,clientMutationId:'c3-materialized-preflight',
+  planRevisionId:confirmed.command.planRevisionId,targetIds:[selected.id]})),f.env,BASE,
+  {waitUntil(){throw new Error('C3 must not schedule detached work');}},bridge);
+ const publicBody=await f.ok(publicRequest);assert.ok(captured,'the real endpoint must reach the selected native bridge');
+ const cloneInput=()=>({...captured,scope:structuredClone(captured.scope),principal:structuredClone(captured.principal),
+  confirmedPlan:structuredClone(captured.confirmedPlan),target:structuredClone(captured.target),context:structuredClone(captured.context)});
+ const nativeInput=input=>({documentTitle:input.context.projection.documents.find(document=>document.id===input.scope.documentId&&!document.removed).title,
+  snapshot:structuredClone(input.context.snapshot),outputTargetInstructions:[input.target.instruction_text,`Only this deliverable is requested: ${input.target.label}.`,
+   `Coverage contract: ${JSON.stringify(input.target.coverage)}.`,'The delivery instructions are not evidence. Ground factual claims in the authorized Document sources.'].join('\n')});
+ const native=()=>nativeInput(cloneInput());
+ const noWorkTables=['document_jobs','output_execution_grants','output_operation_slots','budget_reservations','cost_budget_reservations','output_provider_calls'];
+ const counts=()=>Object.fromEntries([...noWorkTables,'events','private_content','output_preflights'].map(table=>[table,f.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n]));
+ const assertNoWork=()=>{
+  for(const table of noWorkTables)assert.equal(f.sqlite.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n,0,table);
+  assert.equal(f.sqlite.prepare('SELECT COALESCE(SUM(reserved_microusd),0) AS n FROM cost_budget_counters').get().n,0);
+  assert.equal(f.sqlite.prepare("SELECT COUNT(*) AS n FROM private_content WHERE kind='document-artifact-input'").get().n,0);
+  assert.equal(fetchCalls,0);
+ };
+ const rejected=(run,code)=>assert.rejects(run,error=>{assert.equal(error.code??error.message,code);return true;});
+ const assertFrozen=value=>{if(value&&typeof value==='object'){assert.ok(Object.isFrozen(value));for(const child of Object.values(value))assertFrozen(child);}};
+ const assertUnavailable=(value,reasonCode)=>{
+  assert.deepEqual(Object.keys(value).sort(),['targetId','available','reasonCode','transferCode','reason','provider','model','route','maximumMicrousd','maximumCalls','maximumTokens','settings','transferDescription'].sort());
+  assert.equal(value.targetId,selected.id);assert.equal(value.available,false);assert.equal(value.reasonCode,reasonCode);
+  assert.equal(value.reason,'Generation unavailable');assert.equal(value.transferDescription,'No transfer');
+  for(const key of ['provider','model','route'])assert.equal(value[key],null,key);
+  for(const key of ['maximumMicrousd','maximumCalls','maximumTokens'])assert.equal(value[key],0,key);
+  assert.deepEqual(value.settings,{});
+  const raw=JSON.stringify(value);
+  for(const secret of [title,sourceText,instructionText,'requestBody','requestDigest','capturedInput','sourceSnapshotDigest','targetContractDigest','authorizations'])assert.equal(raw.includes(secret),false,secret);
+ };
+ try{
+  await context.test('actual materialization preserves title, string positions, provenance and ordered groups',async()=>{
+   const input=cloneInput(),before=counts(),prepared=await prepareOutputShortStoryTarget(input);
+   assert.deepEqual(counts(),before,'the preparer itself performs no fixture DB writes');
+   assert.equal(prepared.qualification,'native-initial-preparation-only');assertFrozen(prepared);
+   assert.deepEqual(prepared.authorizations,authorities);assert.equal(prepared.sourceCustody,false);assert.equal(prepared.currentOriginalAuthority,false);assert.equal(prepared.liveRequestParity,false);
+   const privateInput=JSON.parse(prepared.preparation.capturedInput),snapshot=input.context.snapshot;
+   assert.equal(privateInput.documentTitle,title);assert.deepEqual(privateInput.snapshot,snapshot);
+   assert.deepEqual(snapshot.context_groups,combinedContextGroups(snapshot));assert.ok(snapshot.context_groups.length>0);
+   assert.equal(snapshot.relationships[0].kind,'context_contains');assert.ok(snapshot.relationships[0].source_event_refs.length>0);
+   const positions=new Map(snapshot.facts.map(fact=>[fact.block_id,fact.position]));
+   assert.equal(positions.get('c3-courier'),'z9');assert.equal(positions.get('c3-rain'),'a2');assert.equal(positions.get('c3-light'),'b5');
+   for(const fact of snapshot.facts){assert.equal(typeof fact.position,'string');assert.ok(fact.source_event_refs.length>0);
+    if(authoredScopes[fact.block_id])assert.deepEqual(fact.properties.spatial_scope,authoredScopes[fact.block_id]);
+    else assert.equal(fact.properties.spatial_scope.kind,'document');
+   }
+   const wire=JSON.parse(prepared.preparation.requestBody),payload=JSON.parse(wire.input);
+   assert.equal(payload.document_title,title);assert.equal(wire.safety_identifier,'forma_'+digest(input.scope.actorUserId).slice(0,32));
+   assert.deepEqual(payload.creative_context.facts.map(fact=>fact.properties.text),snapshot.facts.filter(promptFactIsActive).map(fact=>fact.properties.text));
+   assert.deepEqual(payload.creative_context.facts.map(fact=>fact.properties.spatial_scope),snapshot.facts.filter(promptFactIsActive).map(fact=>fact.properties.spatial_scope));
+   for(const [id,sentinel]of Object.entries(audioSentinels)){
+    const audio=snapshot.facts.find(fact=>fact.block_id===id),retained=privateInput.snapshot.facts.find(fact=>fact.block_id===id);
+    assert.ok(audio);assert.equal(audio.type,'audio');assert.equal(audio.properties.text,sentinel);
+    assert.equal(audio.active,id==='c3-audio-provenance');assert.equal(audio.properties.weight,id==='c3-audio-provenance'?1:0);
+    assert.ok(audio.source_event_refs.length>0);assert.equal(promptFactIsActive(audio),false);
+    assert.deepEqual(audio.properties.spatial_scope,{schema_version:1,kind:'document',coordinate_space:'document-normalized',feather:0,falloff:'hard',polarity:'inside'});
+    assert.deepEqual(retained,audio,'native audio scope and provenance are retained without deleting metadata to force inclusion');
+    assert.equal(wire.input.includes(sentinel),false);assert.equal(wire.input.includes(id),false);
+   }
+   assert.equal(wire.input.includes('Inactive-only sentinel.'),false);
+   for(const id of ['c3-courier','c3-rain','c3-light','c3-membership',f.documentId])assert.equal(wire.input.includes(id),false,id);
+   assert.equal(payload.combined_context_plan.length,snapshot.context_groups.length);
+   assert.equal(prepared.preparation.requestDigest,digest(prepared.preparation.requestBody));
+   const binding=prepared.binding;
+   for(const [key,value]of Object.entries({ownerUserId:input.scope.ownerUserId,actorUserId:input.scope.actorUserId,streamId:input.principal.streamId,
+    projectId:input.scope.projectId,documentId:input.scope.documentId,scopeKey:input.scope.key,targetId:input.target.id,
+    planRevisionId:input.confirmedPlan.revisionId,planRevision:input.confirmedPlan.revision,sourceDigest:input.sourceDigest,
+    requirementsDigest:input.requirementsDigest,documentRevision:input.context.documentRevision,requestDigest:prepared.preparation.requestDigest}))assert.equal(binding[key],value,key);
+   assert.equal(binding.sourceSnapshotDigest,await outputDigest(snapshot));assert.equal(binding.documentTitleDigest,await outputDigest(title));
+   assert.equal(binding.fullTargetDigest,await outputDigest(input.target));assert.equal(binding.targetContractDigest,await outputTargetContractDigest(input.target,input.sourceDigest));
+   assert.equal(binding.instructionsDigest,await outputDigest(privateInput.outputTargetInstructions));
+   assertNoWork();
+  });
+
+  await context.test('full retained target comparison rejects labels and ordinals omitted by the legacy contract hash',async()=>{
+   for(const mutate of [target=>{target.label='Forged target-only label';},target=>{target.ordinal++;}]){
+    const input=cloneInput();mutate(input.target);
+    assert.equal(await outputTargetContractDigest(input.target,input.sourceDigest),input.confirmedPlan.targetContractDigests[input.target.id]);
+    await rejected(()=>prepareOutputShortStoryTarget(input),'output_native_short_story_target_mismatch');
+   }
+   assertNoWork();
+  });
+
+  await context.test('all needed data is isolated before hashing and opaque request or environment objects are untouched',async()=>{
+   const expected=await prepareOutputShortStoryTarget(cloneInput()),input=cloneInput();let reads=0;
+   Object.defineProperty(input,'request',{get(){reads++;throw new Error('request must stay opaque');}});
+   Object.defineProperty(input,'env',{get(){reads++;throw new Error('environment must stay opaque');}});
+   const pending=prepareOutputShortStoryTarget(input);
+   input.scope.ownerUserId='changed-owner';input.principal.userId='changed-user';input.target.label='changed-target';
+   input.confirmedPlan.revision++;input.context.projection.documents.find(document=>document.id===f.documentId).title='changed-title';
+   input.context.snapshot.facts[0].properties.text='changed-source';input.context.snapshot.facts.reverse();input.context.snapshot.context_groups.length=0;
+   const result=await pending;assert.deepEqual(result,expected);assert.equal(reads,0);assertFrozen(result);
+   const direct=native(),expectedDirect=await prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,direct),original=JSON.stringify(direct);
+   const directPending=prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,direct);
+   direct.documentTitle='changed';direct.outputTargetInstructions='changed';direct.snapshot.facts[0].properties.text='changed';
+   const actual=await directPending;assert.deepEqual(actual,expectedDirect);assert.equal(actual.capturedInput,original);assertFrozen(actual);
+   assertNoWork();
+  });
+
+  await context.test('personal ownership and one exact live Document are required without granting custody',async()=>{
+   for(const mutate of [input=>{input.scope.kind='project';},input=>{input.scope.actorUserId='other';},input=>{input.scope.ownerUserId='other';},
+    input=>{input.scope.contextId='shared';},input=>{input.principal.streamId='creative:other';},input=>{input.principal.userId='other';},
+    input=>{input.scope.key='personal:forged';},input=>{input.principal.fictional=true;},input=>{input.principal.projectExecution={projectId:'shared'};},
+    input=>{input.principal.billingUserId='other';},input=>{input.principal.role='viewer';}]){
+    const input=cloneInput();mutate(input);await rejected(()=>prepareOutputShortStoryTarget(input),'output_native_short_story_scope_mismatch');
+   }
+   for(const mutate of [documents=>{documents.length=0;},documents=>{documents.push(structuredClone(documents.find(document=>document.id===f.documentId)));},
+    documents=>{documents.find(document=>document.id===f.documentId).removed=true;},documents=>{documents.find(document=>document.id===f.documentId).projectId='other-project';}]){
+    const input=cloneInput();mutate(input.context.projection.documents);await rejected(()=>prepareOutputShortStoryTarget(input),'output_native_short_story_document_mismatch');
+   }
+   assertNoWork();
+  });
+
+  await context.test('source and target revision failures do not reuse a same-ID preparation',async()=>{
+   for(const mutate of [input=>{input.sourceDigest='0'.repeat(64);},input=>{input.requirementsDigest='0'.repeat(64);},
+    input=>{input.context.documentRevision='changed';},input=>{input.context.snapshot.facts[0].properties.text='changed';},
+    input=>{input.context.sourceBlockVersions[0].version++;}]){
+    const input=cloneInput();mutate(input);await rejected(()=>prepareOutputShortStoryTarget(input),'output_native_short_story_source_mismatch');
+   }
+   for(const mutate of [target=>{target.selected=false;},target=>{target.artifact_format={kind:'short_story',version:2};},
+    target=>{target.source_scope={kind:'blocks',block_ids:['c3-courier']};},target=>{target.aspect_ratio={width:1,height:1};},
+    target=>{target.content_quantity={kind:'exact',unit:'word',value:100};},target=>{target.count_policy={kind:'exact',value:1};},target=>{target.suggested_count=1;}]){
+    const input=cloneInput();mutate(input.target);await rejected(()=>prepareOutputShortStoryTarget(input),'output_native_short_story_target_unsupported');
+   }
+   assertNoWork();
+  });
+
+  await context.test('native roots reject changed groups, pins, tail and unsupported scope instead of dropping them',async()=>{
+   const wrongGroups=native();wrongGroups.snapshot.context_groups=[];
+   await rejected(()=>prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,wrongGroups),'short_story_native_preparation_context_groups_changed');
+   for(const mutate of [snapshot=>{snapshot.pins=['owned-output'];},snapshot=>{snapshot.tail=[{text:'hidden-tail'}];},
+    snapshot=>{snapshot.canvas={canvas_id:'board',context_set_id:'set'};},snapshot=>{snapshot.context_scope={kind:'character',root_block_id:'c3-courier'};},
+    snapshot=>{snapshot.character_study={format:'headshot'};},snapshot=>{snapshot.extra_root='do not discard';},
+    snapshot=>{snapshot.facts[0].properties.allow_provider_audio_transfer=true;},snapshot=>{snapshot.facts[0].properties.spatial_scope={kind:'document'};},
+    snapshot=>{snapshot.facts.find(fact=>fact.block_id==='c3-audio-provenance').properties.allow_provider_audio_transfer=true;},
+    snapshot=>{snapshot.facts.find(fact=>fact.block_id==='c3-audio-provenance').properties.unsupported_audio_property='do not discard';},
+    snapshot=>{snapshot.facts[0].properties.spatial_scope={schema_version:1,kind:'subject',coordinate_space:'document-normalized',subject_block_id:'c3-courier',subject_relation:'around',feather:.2,falloff:'contextual',polarity:'inside'};}]){
+    const input=native();mutate(input.snapshot);
+    await rejected(()=>prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,input),'short_story_native_preparation_input_invalid');
+   }
+   assertNoWork();
+  });
+
+  await context.test('dense arrays and own data descriptors reject without getters or coercion hooks',async()=>{
+   let effects=0;
+   for(const mutate of [input=>{Object.defineProperty(input,'documentTitle',{enumerable:true,get(){effects++;return title;}});},
+    input=>{Object.defineProperty(input.snapshot.facts[0].properties,'text',{enumerable:true,get(){effects++;return sourceText;}});},
+    input=>{input.snapshot.facts[0].properties.toJSON=()=>{effects++;return {};};},
+    input=>{input.snapshot.facts[0].properties.value={toString(){effects++;return 'value';}};},
+    input=>{delete input.snapshot.facts[0];},input=>{input.snapshot.facts.extra='extra';},
+    input=>{input.snapshot.relationships[Symbol('extra')]=true;},input=>{input.snapshot.context_groups.length++;}]){
+    const input=native();mutate(input);
+    await rejected(()=>prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,input),'short_story_native_preparation_input_invalid');
+   }
+   for(const mutate of [input=>{Object.defineProperty(input.scope,'ownerUserId',{enumerable:true,get(){effects++;return 'owner';}});},
+    input=>{Object.defineProperty(input.target,'label',{enumerable:true,get(){effects++;return 'label';}});},
+    input=>{delete input.context.projection.documents[0];}]){
+    const input=cloneInput();mutate(input);await rejected(()=>prepareOutputShortStoryTarget(input),'output_native_short_story_input_invalid');
+   }
+   // Restore the prototype synchronously before awaiting or entering the assertion library.
+   for(const prototype of [Object.prototype,Array.prototype])for(const hook of [
+    {value(){effects++;throw new Error('Inherited serializer must not run');}},
+    {get(){effects++;throw new Error('Inherited serializer getter must not run');}},
+   ]){
+    const input=cloneInput(),direct=native(),previous=Object.getOwnPropertyDescriptor(prototype,'toJSON');let pending,directPending;
+    try{
+     Object.defineProperty(prototype,'toJSON',{configurable:true,...hook});
+     pending=prepareOutputShortStoryTarget(input);
+     directPending=prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,direct);
+    }finally{if(previous)Object.defineProperty(prototype,'toJSON',previous);else delete prototype.toJSON;}
+    await Promise.all([rejected(()=>pending,'output_native_short_story_input_invalid'),rejected(()=>directPending,'short_story_native_preparation_input_invalid')]);
+   }
+   assert.equal(effects,0);assertNoWork();
+  });
+
+  await context.test('native instruction whitespace survives the genuine serializer and complete wire bounds',async()=>{
+   const instructions=' \tTarget only: Élan 雪 "quoted" \\path\n  ';
+   const input=native();input.outputTargetInstructions=instructions;
+   const prepared=await prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,input),wire=JSON.parse(prepared.requestBody),payload=JSON.parse(wire.input);
+   assert.equal(JSON.parse(prepared.capturedInput).outputTargetInstructions,instructions);
+   assert.deepEqual(payload.output_requirements,{instructions,source_evidence:false});
+   assert.equal(prepared.requestDigest,digest(prepared.requestBody));assert.equal(prepared.byteLength,Buffer.byteLength(prepared.requestBody));
+   assert.equal(prepared.maximumOutputTokens,6000);assert.deepEqual(prepared.authorizations,authorities);
+   assert.equal(prepared.sourceCustody,false);assert.equal(prepared.currentOriginalAuthority,false);assert.equal(prepared.liveRequestParity,false);
+   const bounded=native();bounded.outputTargetInstructions='Target only.';
+   bounded.snapshot.relationships=[];bounded.snapshot.context_groups=[];
+   bounded.snapshot.facts=bounded.snapshot.facts.filter(promptFactIsActive).slice(0,2);
+   for(const [index,fact]of bounded.snapshot.facts.entries()){fact.properties.label=`Source ${index+1}`;fact.properties.text='';}
+   const baseline=await prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,bounded),padding=53904-baseline.byteLength;
+   assert.ok(padding>0&&padding<60000);
+   bounded.snapshot.facts[0].properties.text='x'.repeat(Math.min(40000,padding));
+   bounded.snapshot.facts[1].properties.text='y'.repeat(padding-Math.min(40000,padding));
+   assert.ok(Buffer.byteLength(JSON.stringify(bounded))<=65536);
+   const atLimit=await prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,bounded);
+   assert.equal(atLimit.byteLength,53904);assert.equal(atLimit.inputAllowance,58000);assert.equal(Buffer.byteLength(atLimit.requestBody),53904);
+   bounded.snapshot.facts[1].properties.text+='z';
+   await rejected(()=>prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,bounded),'short_story_preparation_request_policy_invalid');
+   const tooLarge=native();tooLarge.snapshot.facts[0].properties.text='x'.repeat(49153);
+   await rejected(()=>prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,tooLarge),'short_story_native_preparation_input_limit');
+   for(const mutate of [value=>{value.documentTitle='x'.repeat(1025);},
+    value=>{value.snapshot.facts=Array.from({length:129},()=>structuredClone(value.snapshot.facts[0]));},
+    value=>{let nested={};value.snapshot.facts[0].properties.deep=nested;for(let index=0;index<17;index++){nested.child={};nested=nested.child;}},
+    value=>{value.snapshot.facts[0].properties.text='x'.repeat(40000);value.snapshot.facts[1].properties.text='y'.repeat(30000);}]){
+    const value=native();mutate(value);await rejected(()=>prepareNativeInitialShortStoryRequest(captured.scope.actorUserId,value),'short_story_native_preparation_input_limit');
+   }
+   assertNoWork();
+  });
+
+  await context.test('source and target instructions retain separate digests and never confer original authority',async()=>{
+   const input=cloneInput(),initial=await prepareOutputShortStoryTarget(input),changed=cloneInput();
+   changed.target.label='Second target-only sentinel';
+   changed.confirmedPlan.plan.targets=changed.confirmedPlan.plan.targets.map(target=>target.id===changed.target.id?structuredClone(changed.target):target);
+   const next=await prepareOutputShortStoryTarget(changed);
+   assert.equal(next.binding.sourceDigest,initial.binding.sourceDigest);assert.equal(next.binding.sourceSnapshotDigest,initial.binding.sourceSnapshotDigest);
+   assert.equal(next.binding.targetContractDigest,initial.binding.targetContractDigest);
+   assert.notEqual(next.binding.fullTargetDigest,initial.binding.fullTargetDigest);assert.notEqual(next.binding.instructionsDigest,initial.binding.instructionsDigest);assert.notEqual(next.binding.requestDigest,initial.binding.requestDigest);
+   const firstPayload=JSON.parse(JSON.parse(initial.preparation.requestBody).input),nextPayload=JSON.parse(JSON.parse(next.preparation.requestBody).input);
+   assert.deepEqual(firstPayload.creative_context,nextPayload.creative_context);assert.equal(nextPayload.output_requirements.source_evidence,false);
+   assert.equal(JSON.stringify(nextPayload.creative_context).includes('Second target-only sentinel'),false);
+   assert.deepEqual(next.authorizations,authorities);assert.equal(next.sourceCustody,false);assert.equal(next.currentOriginalAuthority,false);
+   // Changing a supplied snapshot without the materializer's revision is a failure, not a new source proof.
+   const stale=cloneInput();stale.context.snapshot.facts[0].properties.text='Unbound source';
+   assert.notEqual(documentGenerationRevision({snapshot:stale.context.snapshot,sourceBlockVersions:stale.context.sourceBlockVersions,documentId:stale.scope.documentId}),stale.context.documentRevision);
+   await rejected(()=>prepareOutputShortStoryTarget(stale),'output_native_short_story_source_mismatch');assertNoWork();
+  });
+
+  await context.test('successful and failed public preparation remain content-free with no executable work',async()=>{
+   assertUnavailable(publicBody.command.preflight.targets[0],'output_native_short_story_execution_disabled');
+   assertUnavailable(await outputDocumentExecutionBridge.preflight(cloneInput()),'output_native_short_story_execution_disabled');
+   const invalid=cloneInput();invalid.context.snapshot.pins=['private-pin-sentinel'];
+   const before=counts();
+   assertUnavailable(await outputDocumentExecutionBridge.preflight(invalid),'output_native_short_story_preparation_unavailable');
+   assert.deepEqual(counts(),before,'the native preparer does not persist a failure');
+   let effects=0;
+   const opaque=cloneInput();Object.defineProperty(opaque,'env',{get(){effects++;throw new Error('Native preflight does not read the environment');}});
+   assertUnavailable(await outputDocumentExecutionBridge.preflight(opaque),'output_native_short_story_execution_disabled');
+   for(const mutate of [input=>{Object.defineProperty(input,'target',{enumerable:true,get(){effects++;return captured.target;}});},
+    input=>{Object.defineProperty(input.target,'media_kind',{enumerable:true,get(){effects++;return 'document';}});},
+    input=>{Object.defineProperty(input.target,'id',{enumerable:true,get(){effects++;return selected.id;}});},
+    input=>{Object.defineProperty(input.target,'artifact_format',{enumerable:true,get(){effects++;return {kind:'short_story',version:1};}});},
+    input=>{Object.defineProperty(input.target.artifact_format,'kind',{enumerable:true,get(){effects++;return 'short_story';}});},
+    input=>{Object.defineProperty(input.target.artifact_format,'version',{enumerable:true,get(){effects++;return 1;}});},
+    input=>{input.target.id={toString(){effects++;return 'private-object-target';}};},input=>{input.target.id=42;},
+    input=>{input.target.id='private target';},input=>{input.target.id='private\ntarget';},input=>{input.target.id='x'.repeat(201);}]){
+    const input=cloneInput();mutate(input);await rejected(()=>outputDocumentExecutionBridge.preflight(input),'output_native_short_story_input_invalid');
+   }
+   assert.equal(effects,0);assert.deepEqual(counts(),before);
+   assert.ok(f.sqlite.prepare('SELECT COUNT(*) AS n FROM output_preflights').get().n>=1,'the enclosing existing API does persist its ordinary preflight record');
+   assertNoWork();
+  });
+ }finally{assertNoWork();}
 });

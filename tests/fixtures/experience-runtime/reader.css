@@ -1,0 +1,43 @@
+/* Fixture-only values from the main Forma token contract, with system fonts.
+   This is not the still-pending shared public stylesheet extraction. */
+:root {
+  color-scheme: light dark;
+  --forma-color-text: light-dark(#171717, #f3f3ef);
+  --forma-color-surface: light-dark(#fff, #191a18);
+  --forma-color-canvas: light-dark(#f7f7f4, #10110f);
+  --forma-color-border: light-dark(#deded8, #343530);
+  --forma-color-accent: light-dark(#2445af, #abc0ff);
+  --serif: ui-sans-serif, system-ui, sans-serif;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  color: var(--forma-color-text);
+  background: var(--forma-color-canvas);
+}
+
+:root[data-text-size="200"] { font-size: 200%; }
+body { margin: 0; }
+.reader-fixture-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 1rem;
+  padding: 1rem max(1rem, env(safe-area-inset-right)) 1rem max(1rem, env(safe-area-inset-left));
+  border-block-end: 1px solid var(--forma-color-border);
+}
+.reader-fixture-controls h1 { flex: 1 1 14rem; margin: 0; font-size: 1rem; font-weight: 600; }
+.reader-fixture-controls h1 span { font-weight: 400; }
+.reader-fixture-controls label { display: grid; flex: 0 1 12rem; min-inline-size: 0; gap: .375rem; }
+.reader-fixture-controls select {
+  box-sizing: border-box;
+  min-block-size: 44px;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  inline-size: 100%;
+  padding: .5rem;
+  font: inherit;
+  color: var(--forma-color-text);
+  background: var(--forma-color-surface);
+  border: 1px solid var(--forma-color-border);
+  border-radius: .375rem;
+}
+.reader-fixture-controls select:focus-visible { outline: 2px solid var(--forma-color-accent); outline-offset: 3px; }
+#reader-result { min-inline-size: 0; }

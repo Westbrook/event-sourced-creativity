@@ -33,6 +33,26 @@ test("keeps route shells intrinsically containable without hiding page overflow"
   assert.match(design, /:where\(h1, h2, h3, h4, p, dd, code, pre, small, strong\)\s*\{\s*overflow-wrap:\s*anywhere/);
 });
 
+
+test("keeps compact workspace focus inside its scrolling link without covering text", async () => {
+  const [styles, design] = await Promise.all([
+    read("../src/styles.css"),
+    read("../src/design-system.css"),
+  ]);
+  const compact = design.match(/\.ui-workspace-switcher\.application-switcher\s*\{([^}]*)\}/)?.[1] ?? "";
+  const focus = design.match(/\.ui-workspace-switcher\.application-switcher > a:focus-visible\s*\{([^}]*)\}/)?.[1] ?? "";
+
+  assert.match(compact, /padding:\s*var\(--forma-space-1,\s*\.25rem\);/);
+  assert.match(compact, /overflow-x:\s*auto;/);
+  assert.match(focus, /outline:\s*var\(--forma-focus-ring-width,\s*\.1875rem\) solid currentColor;/);
+  assert.match(focus, /outline-offset:\s*calc\(-1 \* var\(--forma-focus-ring-width,\s*\.1875rem\)\);/);
+  // The existing text insets exceed the full ring width; targets and colors are retained.
+  assert.match(styles, /\.application-switcher a\s*\{[^}]*padding:\s*6px 9px;/);
+  assert.match(design, /\.ui-workspace-switcher a,[\s\S]*?\.ui-audience-navigation a\s*\{[^}]*min-block-size:\s*var\(--forma-control-min-size,\s*2\.75rem\);[^}]*padding-inline:\s*var\(--forma-space-3,\s*\.75rem\);/);
+  assert.match(design, /\.application-switcher a\[aria-current="page"\]\s*\{[^}]*color:\s*var\(--on-strong\);[^}]*background:\s*var\(--ink\);/);
+  assert.match(design, /@media \(forced-colors: active\)\s*\{[\s\S]*?\.ui-workspace-switcher a\[aria-current="page"\]\s*\{[^}]*background:\s*Highlight;[^}]*color:\s*HighlightText;/);
+});
+
 test("keeps every account control reachable inside the current viewport", async () => {
   const [styles, design, shell] = await Promise.all([
     read("../src/styles.css"),

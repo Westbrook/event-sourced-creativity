@@ -9,7 +9,7 @@ import { normalizeImageFormat, validateProviderImageSize } from "../src/model/im
 import { buildReplayDevelopmentStages, type CreativeStudyKind, type ReplayDevelopmentStage } from "../src/model/replay-development.ts";
 import { moderateExactImagePrompt } from "./openai-moderation.ts";
 import { documentArtifactValidationIssues, parseDocumentArtifactContent, resolveDocumentArtifactContextGroups, slideCopyIsNearDuplicate, slideCopyIssues, slideDeckCopyIssues, slideVisualIsComplete, SLIDE_LAYOUTS, SLIDE_STYLE_PRESET_IDS, SLIDE_VISUAL_KINDS, type DocumentArtifactContextGroupContract, type DocumentArtifactDraft, type DocumentArtifactKind, type DocumentArtifactValidationIssue, type SlidePresentation, type SlideStylePresetId, type SlideVisualData, type SlideVisualDatum } from "../src/model/document-artifacts.ts";
-import { combinedContextGroups, combinedContextPromptDirectives } from "../src/model/combined-context.ts";
+import { combinedContextGroups, combinedContextPromptDirectives, isContextCompositionRelation, COMBINED_CONTEXT_ROLES, COMBINED_CONTEXT_APPLICATIONS } from "../src/model/combined-context.ts";
 import { creativeEvaluationPromptGuardrails, creativePromptGuardrails, promptFactIsActive, providerFacingCreativeContext, providerFacingRenderingContext } from "../src/model/prompt-policy.ts";
 import { REPLAY_EXPERIENCE_PROFILES, replayExperienceDefinition, type ReplayExperienceId } from "../src/model/replay-experiences.ts";
 import { DEFAULT_REFERENCE_VIDEO_MODEL, DEFAULT_VIDEO_MODEL, isVideoAudioMode, isVideoDurationSeconds, VIDEO_ADAPTER_CONTRACT, type VideoAudioMode, type VideoDurationSeconds } from "../src/model/video-adapter.ts";
@@ -29,6 +29,8 @@ import { definitiveProviderRejection, type PaidProviderSubmission, type PaidProv
 import { priceImageUsageBreakdownMicrousd, priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { resolvePresentationModelRoutes, selectPresentationModelRoute, type PresentationModelRoute, type PresentationModelRoutes, type PresentationPlanningPhase } from "./presentation-model-routing.ts";
 import { priceCurrentOpenAITextUsage, readOpenAITextUsage } from "./openai-text-cost.ts";
+import { SHORT_STORY_EXECUTION_POLICY, readShortStoryExecutionRequest } from "./short-story-execution-policy.ts";
+import { normalizeSpatialScope } from "../src/model/spatial-scope.ts";
 
 type OpenAIError = { message?: string; type?: string; code?: string | null; param?: string | null };
 type OpenAIResponse = { id?: string; model?: string; service_tier?:string; status?: string; incomplete_details?:{reason?:string}; output_text?: string; output?: Array<{ type?:string; content?: Array<{ type?: string; text?: string; refusal?:string }> }>; usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number; input_tokens_details?:{cached_tokens?:number;cache_write_tokens?:number};output_tokens_details?:{reasoning_tokens?:number} }; error?: OpenAIError };
@@ -968,6 +970,477 @@ type PresentationRequestPreparation = {
   candidateIssues:DocumentArtifactValidationIssue[];
   capture:(request:Omit<PreparedPresentationRequest,"candidateDigest"|"candidateIssues">)=>never;
 };
+const PRESENTATION_REQUEST_PREPARATION = Symbol("presentation-request-preparation");
+const SHORT_STORY_REQUEST_PREPARATION = Symbol("short-story-request-preparation");
+type PrivatePresentationRequestPreparation = PresentationRequestPreparation & { identity:typeof PRESENTATION_REQUEST_PREPARATION };
+type InitialShortStoryRequestBytes = {
+  requestBody:string;requestDigest:string;byteLength:number;inputAllowance:number;
+  contextGroupContracts:readonly Readonly<DocumentArtifactContextGroupContract>[];
+};
+type PrivateShortStoryRequestPreparation = {
+  identity:typeof SHORT_STORY_REQUEST_PREPARATION;
+  safetyIdentifier:string;
+  nativeOutputTargetInstructions?:string;
+  capture:(request:InitialShortStoryRequestBytes)=>never;
+};
+
+export type PreparedInitialShortStoryRequest = Readonly<InitialShortStoryRequestBytes & {
+  qualification:"offline-initial-preparation-only";
+  authorizations:Readonly<{dispatch:false;settlement:false;publication:false;certifiedRecovery:false}>;
+  sourceCustody:false;currentOriginalAuthority:false;liveRequestParity:false;
+  maximumOutputTokens:6000;formatName:"document_short_story";capturedInput:string;
+}>;
+
+export type PreparedNativeInitialShortStoryRequest = Readonly<InitialShortStoryRequestBytes & {
+  qualification:"native-initial-preparation-only";
+  authorizations:Readonly<{admission:false;dispatch:false;repair:false;settlement:false;publication:false;certifiedRecovery:false}>;
+  sourceCustody:false;currentOriginalAuthority:false;liveRequestParity:false;
+  maximumOutputTokens:6000;formatName:"document_short_story";capturedInput:string;
+}>;
+
+// This is a bounded supplied-data profile, not a native snapshot or event proof.
+// Inert properties are JSON content; the surrounding records are closed. In
+// particular, standing constraints, pins, tail and execution options are not
+// supported here and must never be silently omitted from an accepted input.
+const SHORT_STORY_PREPARATION_LIMITS = Object.freeze({
+  inputCodeUnits:65_536,inputBytes:65_536,depth:16,nodes:8_192,
+  collectionEntries:128,keyCodeUnits:128,stringCodeUnits:49_152,titleCodeUnits:1_024,
+  identityCodeUnits:200,kindCodeUnits:80,compositionRelations:24,membershipDeclarations:24,contextGroups:24,
+});
+// Finite unsupported selectors, not a detector for arbitrarily encoded media.
+const SHORT_STORY_UNSUPPORTED_INPUT_SELECTORS = new Set([
+  "inform_generation","informGeneration","include_in_output","includeInOutput",
+  "allow_provider_audio_transfer","allowProviderAudioTransfer",
+  "source_mime_type","sourceMimeType","media_type","mediaType",
+  "media_url","mediaUrl","audio_role","audioRole",
+  "block_references","blockReferences","subject_block_id","subjectBlockId",
+]);
+const shortStoryPreparationInvalid=()=>new RangeError("short_story_preparation_input_invalid");
+const shortStoryPreparationLimit=()=>new RangeError("short_story_preparation_input_limit");
+
+function shortStoryWellFormedText(value:string){
+  for(let index=0;index<value.length;index++){
+    const unit=value.charCodeAt(index);
+    if(unit>=0xd800&&unit<=0xdbff){
+      const next=value.charCodeAt(++index);
+      if(!(next>=0xdc00&&next<=0xdfff))return false;
+    }else if(unit>=0xdc00&&unit<=0xdfff)return false;
+  }
+  return true;
+}
+
+function inspectShortStoryPreparationJson(value:unknown){
+  let nodes=0;
+  const inspect=(node:unknown,depth:number):void=>{
+    if(depth>SHORT_STORY_PREPARATION_LIMITS.depth||++nodes>SHORT_STORY_PREPARATION_LIMITS.nodes)throw shortStoryPreparationLimit();
+    if(typeof node==="string"){
+      if(node.length>SHORT_STORY_PREPARATION_LIMITS.stringCodeUnits)throw shortStoryPreparationLimit();
+      if(!shortStoryWellFormedText(node))throw shortStoryPreparationInvalid();
+      return;
+    }
+    if(node===null||typeof node==="boolean")return;
+    if(typeof node==="number"){if(!Number.isFinite(node))throw shortStoryPreparationInvalid();return;}
+    if(!node||typeof node!=="object")throw shortStoryPreparationInvalid();
+    if(Array.isArray(node)){
+      if(node.length>SHORT_STORY_PREPARATION_LIMITS.collectionEntries)throw shortStoryPreparationLimit();
+      for(const child of node)inspect(child,depth+1);
+      return;
+    }
+    const entries=Object.entries(node);
+    if(entries.length>SHORT_STORY_PREPARATION_LIMITS.collectionEntries)throw shortStoryPreparationLimit();
+    for(const [key,child]of entries){
+      if(key.length>SHORT_STORY_PREPARATION_LIMITS.keyCodeUnits)throw shortStoryPreparationLimit();
+      if(!shortStoryWellFormedText(key)||key==="__proto__"||key==="constructor"||key==="prototype"||key==="decision_key"||SHORT_STORY_UNSUPPORTED_INPUT_SELECTORS.has(key))throw shortStoryPreparationInvalid();
+      inspect(child,depth+1);
+    }
+  };
+  inspect(value,0);
+}
+
+function shortStoryPreparationRecord(value:unknown,required:readonly string[],optional:readonly string[]=[]):Record<string,unknown>{
+  if(!value||typeof value!=="object"||Array.isArray(value))throw shortStoryPreparationInvalid();
+  const record=value as Record<string,unknown>,keys=Object.keys(record);
+  if(required.some(key=>!Object.hasOwn(record,key))||keys.some(key=>!required.includes(key)&&!optional.includes(key)))throw shortStoryPreparationInvalid();
+  return record;
+}
+function shortStoryPreparationString(value:unknown,maximum:number,identity=false):string{
+  if(typeof value!=="string")throw shortStoryPreparationInvalid();
+  if(value.length>maximum)throw shortStoryPreparationLimit();
+  if(identity&&(!value||value.trim()!==value))throw shortStoryPreparationInvalid();
+  return value;
+}
+function shortStoryPreparationReferences(value:unknown){
+  if(!Array.isArray(value))throw shortStoryPreparationInvalid();
+  for(const reference of value)shortStoryPreparationString(reference,SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits,true);
+}
+function shortStoryPreparationRelativity(value:unknown){
+  if(typeof value!=="number"||!Number.isFinite(value)||value<0||value>1)throw shortStoryPreparationInvalid();
+}
+function shortStoryPreparationOrder(value:unknown){
+  if(typeof value!=="number"||!Number.isSafeInteger(value)||value<0)throw shortStoryPreparationInvalid();
+}
+function shortStoryPreparationGroupMetadata(value:unknown,membership:boolean){
+  const fields=["name","role","target","application","relativity"];
+  const metadata=shortStoryPreparationRecord(value,membership?["context_set_id",...fields,"member_order"]:fields,membership?["source_canvas_id"]:[]);
+  for(const field of ["name","target"])shortStoryPreparationString(metadata[field],160,true);
+  if(!COMBINED_CONTEXT_ROLES.includes(metadata.role as typeof COMBINED_CONTEXT_ROLES[number])
+    ||!COMBINED_CONTEXT_APPLICATIONS.includes(metadata.application as typeof COMBINED_CONTEXT_APPLICATIONS[number]))throw shortStoryPreparationInvalid();
+  shortStoryPreparationRelativity(metadata.relativity);
+  if(membership){
+    shortStoryPreparationString(metadata.context_set_id,SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits,true);
+    shortStoryPreparationOrder(metadata.member_order);
+    if(Object.hasOwn(metadata,"source_canvas_id")){
+      const canvas=shortStoryPreparationString(metadata.source_canvas_id,SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits);
+      if(canvas.trim()!==canvas)throw shortStoryPreparationInvalid();
+    }
+  }
+  return metadata;
+}
+
+function validateShortStoryPreparationBehavior(snapshot:Record<string,unknown>,nativeSpatialScopesValidated=false){
+  // Typed behavioral fields may select shared compiler behavior. Other bounded
+  // properties remain inert source content; legacy and competing encodings are
+  // rejected rather than silently normalized into another group definition.
+  const facts=snapshot.facts as Record<string,unknown>[];
+  const factById=new Map(facts.map(fact=>[fact.block_id as string,fact]));
+  const groupMetadata=new Map<string,Record<string,unknown>>();
+  const unsupportedFactKeys=["context_set_id","contextSetId","copied_as_context_set","reference_set_kind","combinedContext","combinedContextMemberships","contextGroup","context_groups","context_group_ids","contextGroupIds"];
+  for(const fact of facts){
+    const properties=fact.properties as Record<string,unknown>;
+    if(unsupportedFactKeys.some(key=>Object.hasOwn(properties,key)))throw shortStoryPreparationInvalid();
+    for(const key of ["text","label"])if(Object.hasOwn(properties,key))shortStoryPreparationString(properties[key],SHORT_STORY_PREPARATION_LIMITS.stringCodeUnits);
+    if(fact.type==="audio"||fact.role==="audio"){
+      shortStoryPreparationRecord(properties,[],["text","label","active","weight","combined_context_memberships","combined_context","context_group",...(nativeSpatialScopesValidated?["spatial_scope"]:[])]);
+      // This only validates the supplied shape. The genuine predicate below and
+      // in shared compilation still decides inclusion, including its recursive
+      // reference-metadata exclusion (for example a nested source_canvas_id).
+    }
+    if(Object.hasOwn(properties,"active")&&typeof properties.active!=="boolean")throw shortStoryPreparationInvalid();
+    if(Object.hasOwn(properties,"weight"))shortStoryPreparationRelativity(properties.weight);
+    if(Object.hasOwn(properties,"context_group"))shortStoryPreparationGroupMetadata(properties.context_group,false);
+    const arrayPresent=Object.hasOwn(properties,"combined_context_memberships"),directPresent=Object.hasOwn(properties,"combined_context");
+    if(arrayPresent&&directPresent)throw shortStoryPreparationInvalid();
+    if(arrayPresent&&!Array.isArray(properties.combined_context_memberships))throw shortStoryPreparationInvalid();
+    const memberships=arrayPresent?properties.combined_context_memberships as unknown[]:directPresent?[properties.combined_context]:[];
+    const seen=new Map<string,Set<number>>();
+    for(const value of memberships){
+      const membership=shortStoryPreparationGroupMetadata(value,true);
+      const id=membership.context_set_id as string,order=membership.member_order as number;
+      const orders=seen.get(id)??new Set<number>();
+      if(orders.has(order))throw shortStoryPreparationInvalid();
+      orders.add(order);seen.set(id,orders);
+      const previous=groupMetadata.get(id);
+      if(previous&&["name","role","target","application"].some(key=>previous[key]!==membership[key]))throw shortStoryPreparationInvalid();
+      // Per-member relativity is deliberately not a conflict: the genuine
+      // compiler preserves member weights and computes the group's maximum.
+      if(!previous)groupMetadata.set(id,membership);
+    }
+  }
+  const children=new Map<string,Set<string>>();
+  for(const relation of (snapshot.relationships??[]) as Record<string,unknown>[]){
+    const properties=relation.properties as Record<string,unknown>;
+    if(["removed","active","order","context_set_id","contextSetId","combined_context","combined_context_memberships","context_group"].some(key=>Object.hasOwn(properties,key)))throw shortStoryPreparationInvalid();
+    if(Object.hasOwn(properties,"member_order"))shortStoryPreparationOrder(properties.member_order);
+    if(Object.hasOwn(properties,"relativity"))shortStoryPreparationRelativity(properties.relativity);
+    if(!isContextCompositionRelation(relation.kind))continue;
+    shortStoryPreparationRecord(properties,[],["member_order","relativity"]);
+    const from=relation.from_block_id as string,to=relation.to_block_id as string;
+    if(from===to||!promptFactIsActive(factById.get(from))||!promptFactIsActive(factById.get(to))||groupMetadata.has(from))throw shortStoryPreparationInvalid();
+    const targets=children.get(from)??new Set<string>();
+    if(targets.has(to))throw shortStoryPreparationInvalid();
+    targets.add(to);children.set(from,targets);
+  }
+  const active=new Set<string>(),complete=new Set<string>();
+  const visit=(id:string):void=>{
+    if(active.has(id))throw shortStoryPreparationInvalid();
+    if(complete.has(id))return;
+    active.add(id);
+    for(const child of children.get(id)??[])visit(child);
+    active.delete(id);complete.add(id);
+  };
+  for(const id of children.keys())visit(id);
+}
+function freezeShortStoryPreparation<T>(value:T):T{
+  if(value&&typeof value==="object"){
+    for(const child of Object.values(value))freezeShortStoryPreparation(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+function readInitialShortStoryPreparationInput(serializedInput:unknown){
+  if(typeof serializedInput!=="string")throw shortStoryPreparationInvalid();
+  if(serializedInput.length>SHORT_STORY_PREPARATION_LIMITS.inputCodeUnits)throw shortStoryPreparationLimit();
+  if(!shortStoryWellFormedText(serializedInput))throw shortStoryPreparationInvalid();
+  if(new TextEncoder().encode(serializedInput).byteLength>SHORT_STORY_PREPARATION_LIMITS.inputBytes)throw shortStoryPreparationLimit();
+  let parsed:unknown;
+  try{parsed=JSON.parse(serializedInput);}catch{throw shortStoryPreparationInvalid();}
+  inspectShortStoryPreparationJson(parsed);
+  const input=shortStoryPreparationRecord(parsed,["documentTitle","snapshot"]);
+  const documentTitle=shortStoryPreparationString(input.documentTitle,SHORT_STORY_PREPARATION_LIMITS.titleCodeUnits);
+  const snapshot=shortStoryPreparationRecord(input.snapshot,["facts"],["relationships"]);
+  if(!Array.isArray(snapshot.facts))throw shortStoryPreparationInvalid();
+  const factMetadata=["document_id","role","intent","handle","effect","authority"] as const;
+  const factIds=new Set<string>();
+  let membershipDeclarations=0,compositionRelations=0;
+  for(const value of snapshot.facts){
+    const fact=shortStoryPreparationRecord(value,["block_id","type","properties"],[...factMetadata,"position","locked","active","removed","source_event_refs"]);
+    const blockId=shortStoryPreparationString(fact.block_id,SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits,true);
+    if(factIds.has(blockId))throw shortStoryPreparationInvalid();
+    factIds.add(blockId);
+    shortStoryPreparationString(fact.type,SHORT_STORY_PREPARATION_LIMITS.kindCodeUnits,true);
+    if(!BLOCK_TYPES.some(definition=>definition.type===fact.type))throw shortStoryPreparationInvalid();
+    if(!fact.properties||typeof fact.properties!=="object"||Array.isArray(fact.properties))throw shortStoryPreparationInvalid();
+    // Bound work before either shared group expansion. Count raw declarations,
+    // including inactive facts and semantically duplicate/invalid memberships;
+    // never normalize or discard source to make the quota fit. Match the shared
+    // array/direct selection, conservatively charging a declared legacy fallback
+    // even when its ID would later normalize to an empty or unusable value.
+    const properties=fact.properties as Record<string,unknown>;
+    const declared=Array.isArray(properties.combined_context_memberships)?properties.combined_context_memberships.length:properties.combined_context?1:0;
+    const legacyFallback=declared===0&&Object.hasOwn(properties,"context_set_id")
+      &&(properties.copied_as_context_set===true||properties.reference_set_kind==="storyboard");
+    membershipDeclarations+=declared||(legacyFallback?1:0);
+    if(membershipDeclarations>SHORT_STORY_PREPARATION_LIMITS.membershipDeclarations)throw shortStoryPreparationLimit();
+    for(const key of factMetadata)if(Object.hasOwn(fact,key))shortStoryPreparationString(fact[key],SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits);
+    if(typeof fact.role==="string"&&fact.role.trim().toLowerCase()==="audio"&&fact.role!=="audio")throw shortStoryPreparationInvalid();
+    for(const key of ["locked","active","removed"])if(Object.hasOwn(fact,key)&&typeof fact[key]!=="boolean")throw shortStoryPreparationInvalid();
+    if(Object.hasOwn(fact,"source_event_refs"))shortStoryPreparationReferences(fact.source_event_refs);
+    if(Object.hasOwn(fact,"position")){
+      const position=shortStoryPreparationRecord(fact.position,["x","y"]);
+      if(typeof position.x!=="number"||!Number.isFinite(position.x)||typeof position.y!=="number"||!Number.isFinite(position.y))throw shortStoryPreparationInvalid();
+    }
+  }
+  if(Object.hasOwn(snapshot,"relationships")){
+    if(!Array.isArray(snapshot.relationships))throw shortStoryPreparationInvalid();
+    for(const value of snapshot.relationships){
+      const relation=shortStoryPreparationRecord(value,["from_block_id","to_block_id","kind","properties"],["relation_id","source_event_refs"]);
+      for(const key of ["from_block_id","to_block_id"]){
+        const blockId=shortStoryPreparationString(relation[key],SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits,true);
+        if(!factIds.has(blockId))throw shortStoryPreparationInvalid();
+      }
+      shortStoryPreparationString(relation.kind,SHORT_STORY_PREPARATION_LIMITS.kindCodeUnits,true);
+      if(isContextCompositionRelation(relation.kind)&&++compositionRelations>SHORT_STORY_PREPARATION_LIMITS.compositionRelations)throw shortStoryPreparationLimit();
+      if(Object.hasOwn(relation,"relation_id"))shortStoryPreparationString(relation.relation_id,SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits,true);
+      if(Object.hasOwn(relation,"source_event_refs"))shortStoryPreparationReferences(relation.source_event_refs);
+      if(!relation.properties||typeof relation.properties!=="object"||Array.isArray(relation.properties))throw shortStoryPreparationInvalid();
+    }
+  }
+  validateShortStoryPreparationBehavior(snapshot);
+  // The accepted transport is exactly JSON.stringify-compatible data, not an
+  // arbitrary JSON spelling. This also rejects duplicate keys without a parser
+  // fork or a misleading claim that JSON.parse preserves their original values.
+  if(JSON.stringify(parsed)!==serializedInput)throw new RangeError("short_story_preparation_noncanonical_json");
+  freezeShortStoryPreparation(parsed);
+  return {documentTitle,snapshot,capturedInput:serializedInput};
+}
+
+/** Offline supplied-context preparation only; no credentials, provider or custody authority. */
+export async function prepareInitialShortStoryRequest(serializedInput:unknown,safetyIdentifier:unknown):Promise<PreparedInitialShortStoryRequest>{
+  if(typeof safetyIdentifier!=="string"||!safetyIdentifier||safetyIdentifier.length>200||safetyIdentifier.trim()!==safetyIdentifier)throw new RangeError("short_story_preparation_safety_identifier_invalid");
+  const identifier=safetyIdentifier,input=readInitialShortStoryPreparationInput(serializedInput);
+  const ownedInput=Object.freeze({documentTitle:input.documentTitle,snapshot:input.snapshot,options:Object.freeze({itemCount:SHORT_STORY_EXECUTION_POLICY.itemCount})});
+  let prepared:PreparedInitialShortStoryRequest|undefined;
+  const stop=new Error("short_story_request_prepared_offline");
+  try{
+    await generateDocumentArtifactCore({} as WorkerEnv,"","short_story",ownedInput,undefined,{
+      identity:SHORT_STORY_REQUEST_PREPARATION,safetyIdentifier:identifier,
+      capture:request=>{
+        prepared=freezeShortStoryPreparation({
+          qualification:"offline-initial-preparation-only" as const,
+          authorizations:{dispatch:false as const,settlement:false as const,publication:false as const,certifiedRecovery:false as const},
+          sourceCustody:false as const,currentOriginalAuthority:false as const,liveRequestParity:false as const,
+          ...request,maximumOutputTokens:SHORT_STORY_EXECUTION_POLICY.maxOutputTokens,
+          formatName:"document_short_story" as const,capturedInput:input.capturedInput,
+        });
+        throw stop;
+      },
+    });
+  }catch(error){if(error!==stop)throw error;}
+  if(!prepared)throw new Error("short_story_preparation_capture_failed");
+  return prepared;
+}
+
+const nativeShortStoryInvalid=()=>new RangeError("short_story_native_preparation_input_invalid");
+const nativeShortStoryLimit=()=>new RangeError("short_story_native_preparation_input_limit");
+
+/** Copy data descriptors, never supplied accessors, serialization hooks or prototypes. */
+function captureNativeShortStoryData(value:unknown):unknown{
+  if(Object.getOwnPropertyDescriptor(Object.prototype,"toJSON")!==undefined
+    ||Object.getOwnPropertyDescriptor(Array.prototype,"toJSON")!==undefined)throw nativeShortStoryInvalid();
+  let nodes=0,bytes=0;
+  const active=new Set<object>();
+  const charge=(length:number)=>{bytes+=length;if(bytes>SHORT_STORY_PREPARATION_LIMITS.inputBytes)throw nativeShortStoryLimit();};
+  const stringBytes=(text:string)=>new TextEncoder().encode(JSON.stringify(text)).byteLength;
+  const copy=(item:unknown,depth:number):unknown=>{
+    if(depth>SHORT_STORY_PREPARATION_LIMITS.depth||++nodes>SHORT_STORY_PREPARATION_LIMITS.nodes)throw nativeShortStoryLimit();
+    if(typeof item==="string"){
+      if(item.length>SHORT_STORY_PREPARATION_LIMITS.stringCodeUnits)throw nativeShortStoryLimit();
+      if(!shortStoryWellFormedText(item))throw nativeShortStoryInvalid();
+      charge(stringBytes(item));return item;
+    }
+    if(item===null){charge(4);return null;}
+    if(typeof item==="boolean"){charge(item?4:5);return item;}
+    if(typeof item==="number"){
+      if(!Number.isFinite(item))throw nativeShortStoryInvalid();
+      charge(JSON.stringify(item).length);return item;
+    }
+    if(typeof item!=="object"||!item||active.has(item))throw nativeShortStoryInvalid();
+    const array=Array.isArray(item),prototype=Object.getPrototypeOf(item);
+    if(array?prototype!==Array.prototype:prototype!==Object.prototype&&prototype!==null)throw nativeShortStoryInvalid();
+    const keys=Reflect.ownKeys(item);
+    if(keys.some(key=>typeof key!=="string"||key==="toJSON"||key==="__proto__"||key==="constructor"||key==="prototype"))throw nativeShortStoryInvalid();
+    active.add(item);
+    try{
+      if(array){
+        const length=Object.getOwnPropertyDescriptor(item,"length");
+        if(!length||!("value" in length)||!Number.isSafeInteger(length.value)||length.value<0)throw nativeShortStoryInvalid();
+        if(length.value>SHORT_STORY_PREPARATION_LIMITS.collectionEntries)throw nativeShortStoryLimit();
+        if(keys.length!==length.value+1||keys.some(key=>key!=="length"&&(!/^(0|[1-9]\d*)$/u.test(String(key))||Number(key)>=length.value)))throw nativeShortStoryInvalid();
+        charge(2+Math.max(0,length.value-1));
+        const result:unknown[]=[];
+        // A supplied prototype hook cannot become a serializer for the owned copy.
+        Object.defineProperty(result,"toJSON",{value:undefined,enumerable:false});
+        for(let index=0;index<length.value;index++){
+          const descriptor=Object.getOwnPropertyDescriptor(item,String(index));
+          if(!descriptor||!("value" in descriptor)||!descriptor.enumerable)throw nativeShortStoryInvalid();
+          result.push(copy(descriptor.value,depth+1));
+        }
+        return result;
+      }
+      if(keys.length>SHORT_STORY_PREPARATION_LIMITS.collectionEntries)throw nativeShortStoryLimit();
+      charge(2+Math.max(0,keys.length-1));
+      const result:Record<string,unknown>=Object.create(null);
+      for(const key of keys as string[]){
+        if(key.length>SHORT_STORY_PREPARATION_LIMITS.keyCodeUnits)throw nativeShortStoryLimit();
+        if(!shortStoryWellFormedText(key))throw nativeShortStoryInvalid();
+        const descriptor=Object.getOwnPropertyDescriptor(item,key);
+        if(!descriptor||!("value" in descriptor)||!descriptor.enumerable)throw nativeShortStoryInvalid();
+        charge(stringBytes(key)+1);result[key]=copy(descriptor.value,depth+1);
+      }
+      return result;
+    }finally{active.delete(item);}
+  };
+  return copy(value,0);
+}
+
+/** Compare canonical materialized scope; never repair or replace authored scope. */
+function validateNativeShortStorySpatialScope(value:unknown){
+  const base=["schema_version","kind","coordinate_space","feather","falloff","polarity"];
+  const scope=shortStoryPreparationRecord(value,base,["region","instruction","aabb","path"]);
+  if(scope.schema_version!==1||scope.coordinate_space!=="document-normalized"
+    ||typeof scope.kind!=="string"||!["document","region","aabb","path"].includes(scope.kind)
+    ||typeof scope.falloff!=="string"||!["hard","soft","contextual"].includes(scope.falloff)
+    ||typeof scope.polarity!=="string"||!["inside","outside"].includes(scope.polarity))throw nativeShortStoryInvalid();
+  shortStoryPreparationRecord(scope,[...base,...(scope.kind==="region"?["region","instruction"]:scope.kind==="aabb"?["aabb"]:scope.kind==="path"?["path"]:[])]);
+  shortStoryPreparationRelativity(scope.feather);
+  if(scope.kind==="region"){
+    if(typeof scope.region!=="string"||!["left","right","top","bottom","center","foreground","background","edges","custom"].includes(scope.region))throw nativeShortStoryInvalid();
+    shortStoryPreparationString(scope.instruction,SHORT_STORY_PREPARATION_LIMITS.stringCodeUnits);
+  }
+  if(scope.kind==="aabb"){
+    const box=shortStoryPreparationRecord(scope.aabb,["x","y","width","height"]);
+    for(const field of ["x","y","width","height"])shortStoryPreparationRelativity(box[field]);
+  }
+  if(scope.kind==="path"){
+    if(!Array.isArray(scope.path)||scope.path.length<3||scope.path.length>64)throw nativeShortStoryInvalid();
+    for(const point of scope.path){const position=shortStoryPreparationRecord(point,["x","y"]);shortStoryPreparationRelativity(position.x);shortStoryPreparationRelativity(position.y);}
+  }
+  if(JSON.stringify(scope)!==JSON.stringify(normalizeSpatialScope(scope)))throw nativeShortStoryInvalid();
+}
+
+function readNativeInitialShortStoryPreparationInput(value:unknown){
+  try{
+    const owned=captureNativeShortStoryData(value);
+    inspectShortStoryPreparationJson(owned);
+    const input=shortStoryPreparationRecord(owned,["documentTitle","snapshot","outputTargetInstructions"]);
+    const documentTitle=shortStoryPreparationString(input.documentTitle,SHORT_STORY_PREPARATION_LIMITS.titleCodeUnits);
+    const outputTargetInstructions=shortStoryPreparationString(input.outputTargetInstructions,SHORT_STORY_PREPARATION_LIMITS.stringCodeUnits);
+    if(!outputTargetInstructions.length)throw nativeShortStoryInvalid();
+    const snapshot=shortStoryPreparationRecord(input.snapshot,["facts","relationships","context_groups","pins","tail"]);
+    for(const key of ["facts","relationships","context_groups","pins","tail"])if(!Array.isArray(snapshot[key]))throw nativeShortStoryInvalid();
+    if((snapshot.pins as unknown[]).length||(snapshot.tail as unknown[]).length)throw nativeShortStoryInvalid();
+    if((snapshot.context_groups as unknown[]).length>SHORT_STORY_PREPARATION_LIMITS.contextGroups)throw nativeShortStoryLimit();
+    const factIds=new Set<string>();let membershipDeclarations=0,compositionRelations=0;
+    for(const value of snapshot.facts as unknown[]){
+      const fact=shortStoryPreparationRecord(value,["block_id","document_id","type","role","intent","handle","position","locked","active","effect","properties","authority","source_event_refs"],["removed"]);
+      const id=shortStoryPreparationString(fact.block_id,SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits,true);
+      if(factIds.has(id))throw nativeShortStoryInvalid();factIds.add(id);
+      shortStoryPreparationString(fact.document_id,SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits,true);
+      shortStoryPreparationString(fact.type,SHORT_STORY_PREPARATION_LIMITS.kindCodeUnits,true);
+      if(!BLOCK_TYPES.some(definition=>definition.type===fact.type))throw nativeShortStoryInvalid();
+      for(const key of ["role","intent","handle","position","effect","authority"])shortStoryPreparationString(fact[key],SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits);
+      if(typeof fact.role==="string"&&fact.role.trim().toLowerCase()==="audio"&&fact.role!=="audio")throw nativeShortStoryInvalid();
+      for(const key of ["locked","active"])if(typeof fact[key]!=="boolean")throw nativeShortStoryInvalid();
+      if(Object.hasOwn(fact,"removed")&&typeof fact.removed!=="boolean")throw nativeShortStoryInvalid();
+      shortStoryPreparationReferences(fact.source_event_refs);
+      if(!fact.properties||typeof fact.properties!=="object"||Array.isArray(fact.properties))throw nativeShortStoryInvalid();
+      const properties=fact.properties as Record<string,unknown>;
+      validateNativeShortStorySpatialScope(properties.spatial_scope);
+      const declared=Array.isArray(properties.combined_context_memberships)?properties.combined_context_memberships.length:properties.combined_context?1:0;
+      const legacyFallback=declared===0&&Object.hasOwn(properties,"context_set_id")&&(properties.copied_as_context_set===true||properties.reference_set_kind==="storyboard");
+      membershipDeclarations+=declared||(legacyFallback?1:0);
+      if(membershipDeclarations>SHORT_STORY_PREPARATION_LIMITS.membershipDeclarations)throw nativeShortStoryLimit();
+    }
+    for(const value of snapshot.relationships as unknown[]){
+      const relation=shortStoryPreparationRecord(value,["relation_id","from_block_id","to_block_id","kind","properties","source_event_refs"]);
+      shortStoryPreparationString(relation.relation_id,SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits,true);
+      for(const key of ["from_block_id","to_block_id"]){const id=shortStoryPreparationString(relation[key],SHORT_STORY_PREPARATION_LIMITS.identityCodeUnits,true);if(!factIds.has(id))throw nativeShortStoryInvalid();}
+      shortStoryPreparationString(relation.kind,SHORT_STORY_PREPARATION_LIMITS.kindCodeUnits,true);
+      shortStoryPreparationReferences(relation.source_event_refs);
+      if(!relation.properties||typeof relation.properties!=="object"||Array.isArray(relation.properties))throw nativeShortStoryInvalid();
+      if(isContextCompositionRelation(relation.kind)&&++compositionRelations>SHORT_STORY_PREPARATION_LIMITS.compositionRelations)throw nativeShortStoryLimit();
+    }
+    // Every native fact's canonical spatial scope was checked above, including
+    // inactive audio. Retain it and provenance for the genuine activity predicate.
+    validateShortStoryPreparationBehavior(snapshot,true);
+    const groups=combinedContextGroups(snapshot);
+    if(groups.length>SHORT_STORY_PREPARATION_LIMITS.contextGroups)throw nativeShortStoryLimit();
+    if(JSON.stringify(snapshot.context_groups)!==JSON.stringify(groups))throw new RangeError("short_story_native_preparation_context_groups_changed");
+    const capturedInput=JSON.stringify(input);
+    if(capturedInput.length>SHORT_STORY_PREPARATION_LIMITS.inputCodeUnits||new TextEncoder().encode(capturedInput).byteLength>SHORT_STORY_PREPARATION_LIMITS.inputBytes)throw nativeShortStoryLimit();
+    freezeShortStoryPreparation(input);
+    return {documentTitle,snapshot,outputTargetInstructions,capturedInput};
+  }catch(error){
+    if(error instanceof RangeError&&error.message==="short_story_preparation_input_limit")throw nativeShortStoryLimit();
+    if(error instanceof RangeError&&error.message==="short_story_preparation_input_invalid")throw nativeShortStoryInvalid();
+    throw error;
+  }
+}
+
+/** Native server-data preparation only. Structural capture does not authorize execution. */
+export async function prepareNativeInitialShortStoryRequest(userId:string,input:{documentTitle:string;snapshot:Record<string,unknown>;outputTargetInstructions:string}):Promise<PreparedNativeInitialShortStoryRequest>{
+  if(typeof userId!=="string"||!userId||userId.length>200||userId.trim()!==userId)throw new RangeError("short_story_native_preparation_user_invalid");
+  const captured=readNativeInitialShortStoryPreparationInput(input);
+  const ownedInput=Object.freeze({documentTitle:captured.documentTitle,snapshot:captured.snapshot,options:Object.freeze({itemCount:SHORT_STORY_EXECUTION_POLICY.itemCount})});
+  // All source/target values are owned and frozen before this first await.
+  const identifier=await safetyIdentifier(userId);
+  let prepared:PreparedNativeInitialShortStoryRequest|undefined;
+  const stop=new Error("short_story_native_request_prepared");
+  try{
+    await generateDocumentArtifactCore({} as WorkerEnv,"","short_story",ownedInput,undefined,{
+      identity:SHORT_STORY_REQUEST_PREPARATION,safetyIdentifier:identifier,nativeOutputTargetInstructions:captured.outputTargetInstructions,
+      capture:request=>{
+        prepared=freezeShortStoryPreparation({
+          qualification:"native-initial-preparation-only" as const,
+          authorizations:{admission:false as const,dispatch:false as const,repair:false as const,settlement:false as const,publication:false as const,certifiedRecovery:false as const},
+          sourceCustody:false as const,currentOriginalAuthority:false as const,liveRequestParity:false as const,
+          ...request,maximumOutputTokens:SHORT_STORY_EXECUTION_POLICY.maxOutputTokens,
+          formatName:"document_short_story" as const,capturedInput:captured.capturedInput,
+        });
+        throw stop;
+      },
+    });
+  }catch(error){if(error!==stop)throw error;}
+  if(!prepared)throw new Error("short_story_native_preparation_capture_failed");
+  return prepared;
+}
+
+/** Same insertion order and conditional omissions as the original live envelope. */
+function serializeDocumentArtifactRequest(model:string,instructions:string,input:string,name:string,
+  schema:ReturnType<typeof documentArtifactSchema>,reasoningEffort:string,maxOutputTokens:number,identifier:string,
+  conditionalFields:Record<string,unknown>){
+  return JSON.stringify({model,instructions,input,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema}},reasoning:{effort:reasoningEffort},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier,...conditionalFields});
+}
 
 /** Offline-only evaluation seam. No API key, submission receipt, HTTP, or automatic repair call. */
 export async function preparePresentationComparisonRequest(
@@ -990,15 +1463,22 @@ export async function preparePresentationComparisonRequest(
   let prepared:Omit<PreparedPresentationRequest,"candidateDigest"|"candidateIssues">|undefined;
   const stop=new Error("presentation_request_prepared_offline");
   try{
-    await generateDocumentArtifact(env,userId,"slides",frozen,{candidateRaw,candidateIssues,capture:request=>{prepared=request;throw stop;}});
+    await generateDocumentArtifactCore(env,userId,"slides",frozen,{identity:PRESENTATION_REQUEST_PREPARATION,candidateRaw,candidateIssues,capture:request=>{prepared=request;throw stop;}});
   }catch(error){if(error!==stop)throw error;}
   if(!prepared)throw new Error("presentation_request_preparation_failed");
   return {...prepared,candidateDigest:candidateRaw===undefined?null:await sha256Bytes(new TextEncoder().encode(candidateRaw)),candidateIssues};
 }
 
-export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},preparation?:PresentationRequestPreparation) {
+export function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},preparation?:PresentationRequestPreparation) {
+  if(preparation!==undefined)return Promise.reject(new RangeError("document_artifact_preparation_not_public"));
+  return generateDocumentArtifactCore(env,userId,kind,input);
+}
+
+async function generateDocumentArtifactCore(env:WorkerEnv,userId:string,kind:DocumentArtifactKind,input:{documentTitle:string;snapshot:Record<string,unknown>;options?:DocumentArtifactOptions},preparation?:PrivatePresentationRequestPreparation,shortStoryPreparation?:PrivateShortStoryRequestPreparation) {
+  if(preparation!==undefined&&preparation.identity!==PRESENTATION_REQUEST_PREPARATION)throw new Error("document_artifact_preparation_identity_invalid");
+  if(shortStoryPreparation!==undefined&&(shortStoryPreparation.identity!==SHORT_STORY_REQUEST_PREPARATION||kind!=="short_story"||preparation!==undefined))throw new Error("document_artifact_preparation_identity_invalid");
   if(kind==="model3d")throw new Error("model3d_dedicated_adapter_required");
-  if(!preparation&&!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
+  if(!preparation&&!shortStoryPreparation&&!env.OPENAI_API_KEY)throw new Error("provider_not_configured");
   const started=Date.now();
   if(kind==="slides"&&input.options?.productionPage&&input.options.slideCountPolicy?.kind==="flexible")throw new RangeError("Managed presentation pages do not support flexible count policies.");
   const countRequest=kind==="slides"&&!input.options?.productionPage?resolvePresentationCountRequest(input.options??{}):undefined;
@@ -1008,6 +1488,7 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
   const videoSourceScope=kind==="video"?videoOutputScopedContext(input.snapshot):null;
   const {groups,plan:providerGroups}=providerFacingCombinedContextPlan(videoSourceScope?.snapshot??input.snapshot,kind);
   const groupContracts:DocumentArtifactContextGroupContract[]=groups.map((group,index)=>({id:group.id,alias:`context_group_${index+1}`}));
+  if(shortStoryPreparation&&groupContracts.length>SHORT_STORY_PREPARATION_LIMITS.contextGroups)throw new RangeError("short_story_preparation_context_group_limit");
   const audioMode=input.options?.videoAudioMode??VIDEO_ADAPTER_CONTRACT.defaultAudioMode;
   const sceneConfiguration=kind==="scene"?input.options?.sceneConfiguration??createSceneConfiguration(input.options?.sceneMedium??"visual"):null;
   const audioScene=sceneConfiguration?.medium==="audio";
@@ -1051,7 +1532,8 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     ? ` Each assigned scene is a separate ${VIDEO_ADAPTER_CONTRACT.supportedDurations[0]}–${VIDEO_ADAPTER_CONTRACT.supportedDurations.at(-1)} second provider generation in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}; the complete production may be much longer. Respect the assigned per-scene duration and chronological source beat. Do not compress the complete narrative into one clip. ${audioMode==="original_ambient"?"Only original nonmelodic environmental ambience is allowed.":"Every clip is silent; communicate rhythm through visible action and light."}`
     : ` The requested output is exactly ${input.options?.videoSeconds??4} seconds in ${input.options?.videoSize==="720x1280"?"9:16 portrait":"16:9 landscape"}. The motion prompt must fit that duration; do not claim or imply a different runtime. Preserve every ordered storyboard shot as chronology, including description-only frames, compressing their beats into the available runtime without dropping named subjects or continuity. ${audioMode==="original_ambient"?"Original nonmelodic, in-scene environmental ambience is explicitly allowed; describe it only as visible natural sources, never as music, dialogue, voices, or a recorded work.":"This is a picture-only silent render. Do not invent or request any soundtrack, score, music, voice, dialogue, or other audio. Translate their implied dramatic rhythm into visible motion and light."}`:"";
   const pageDirection=page?` This is ${page.phase} page ${page.pageIndex+1} of ${page.pageCount}, covering global items ${page.globalStartIndex+1}–${page.globalStartIndex+itemCount} of ${page.totalItems}. ${page.pageIndex>0?audioScene?"Continue directly from the prior audible ending; never restart the soundscape, reintroduce its characters, or repeat earlier sound cues and spoken lines.":"Continue directly from the prior ending; never restart the story, reintroduce its characters, repeat the cover, or duplicate previously visible copy.":"Establish the opening exactly once."} ${page.pageIndex<page.pageCount-1?audioScene?"Do not write the final resolution or end the soundscape yet.":"Do not write a final resolution or closing slide yet.":"Deliver the one definitive resolution or closing."} ${kind==="scene"&&page.pageIndex>0?audioScene?"Continue the same audio scene while preserving its ordered sound cues, acoustic perspective, voice continuity, and intentional silence.":"Continue the same screenplay scene without repeating its slugline.":""}${page.lockedPresentation?" Preserve every locked presentation theme, footer, style, mode, and palette value exactly.":""}${page.repairIssues?.length?` Correct these whole-work issues without repeating earlier pages: ${page.repairIssues.join("; ")}.`:""}`:"";
-  const outputInstructions=input.options?.outputTargetInstructions?.trim();
+  const outputInstructions=shortStoryPreparation?.nativeOutputTargetInstructions!==undefined
+    ?shortStoryPreparation.nativeOutputTargetInstructions:input.options?.outputTargetInstructions?.trim();
   const selectedOutputDirection=outputInstructions?" The separate output_requirements field describes only the selected deliverable and its acceptance conditions. Follow it as instructions, never as factual evidence, a source citation, or audience copy. Do not create sibling deliverables.":"";
   const instructions=`You transform a durable creative document into a ${kind.replaceAll("_"," ")} for an end user. Write only newly created, user-facing system copy in the user's selected language (${responseLocale}). Preserve the original language and exact text of user-authored document titles, document content, slide outlines and headings, direct quotations, names, facts, and creative decisions verbatim; do not translate or rewrite them. Never translate machine identifiers, enum values, request-local aliases, source IDs, or structured field names. ${formatInstructions}${sourceDirection}${protectedMessageDirection}${videoContract}${managedDirection?` ${managedDirection}`:""}${pageDirection} ${creativePromptGuardrails()} Treat include and prefer blocks as positive direction; treat avoid and prohibit blocks as negative constraints, never as subjects to feature. Respect every block's spatial scope and authority. Combined contexts are binding authorial units, not tags: keep their members isolated to the named target, co-located or ordered as requested, and weighted by group relativity. For stories and scenes, place a group's members at the same narrative moments or aspects. For slides, assign each group to one slide or contiguous chapter rather than applying it deck-wide. For storyboards and video, bind each group to the same subject, location, or shot range. Every item must return context_group_ids containing only the supplied context_key aliases that shaped that item; use an empty array when no group applies, never invent a key, cover every supplied key at least once, and keep repeated slide assignments contiguous. Context keys are request-local references, not end-user content. Do not mention blocks, events, schemas, context keys, or internal implementation in end-user copy. ${presentationCountInstruction(slideCountPolicy,itemCount)}${selectedOutputDirection}`;
   const sharedContinuity=managedPlan?audioScene?audioSceneContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):providerFacingProductionContinuity({claims:managedPlan.claims.filter((claim)=>!claim.contextGroupIds.length)}):null;
@@ -1104,6 +1586,27 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
     ...(specialistAudio?{audio:{goal:specialistAudio.goal,role:specialistAudio.role,destination:specialistAudio.destination,provider_contract:audioConstraints,...(specialistAudio.durationSeconds?{duration_seconds:specialistAudio.durationSeconds}:{}),...(specialistAudio.speakerCount?{speaker_count:specialistAudio.speakerCount}:{}),...(specialistAudio.requireInstrumental?{prefer_instrumental:true}:{}),...(specialistAudio.transcript?{approved_spoken_script:specialistAudio.transcript}:{})}}:{}),
     ...(managed?{production:{team:(audioScene?productionTeamFor("scene","audio"):managedPlan?.team)?.specialists.map((member)=>({role:member.label,deliverable:member.deliverable})),continuity_bible:sharedContinuity,assigned_scenes:providerScenes,...(providerPage?{page:providerPage}:{})}}:{}),
   });
+  if(shortStoryPreparation){
+    // Reuse the genuine initial prompt/context above, but do not enter the live
+    // route, user-ID hashing, paid-call state or run/repair machinery below.
+    // This schema is a fresh value; the shared/live short-story bounds stay 1–12.
+    const schema=documentArtifactSchema("short_story");
+    const itemSchema=schema.properties.items as Record<string,unknown>;
+    itemSchema.minItems=SHORT_STORY_EXECUTION_POLICY.itemCount;
+    itemSchema.maxItems=SHORT_STORY_EXECUTION_POLICY.itemCount;
+    const requestBody=serializeDocumentArtifactRequest(
+      SHORT_STORY_EXECUTION_POLICY.model,instructions,providerInput,"document_short_story",schema,
+      SHORT_STORY_EXECUTION_POLICY.effort,SHORT_STORY_EXECUTION_POLICY.maxOutputTokens,shortStoryPreparation.safetyIdentifier,
+      {service_tier:SHORT_STORY_EXECUTION_POLICY.serviceTier,prompt_cache_options:{mode:SHORT_STORY_EXECUTION_POLICY.promptCacheMode},truncation:SHORT_STORY_EXECUTION_POLICY.truncation},
+    );
+    const assessed=readShortStoryExecutionRequest(requestBody);
+    if(assessed.disposition!=="eligible"||assessed.formatName!=="document_short_story"
+      ||typeof assessed.byteLength!=="number"||typeof assessed.inputAllowance!=="number")throw new RangeError("short_story_preparation_request_policy_invalid");
+    const contextGroupContracts=Object.freeze(groupContracts.map(contract=>Object.freeze({id:contract.id,alias:contract.alias})));
+    const requestDigest=await sha256Bytes(new TextEncoder().encode(requestBody));
+    shortStoryPreparation.capture({requestBody,requestDigest,byteLength:assessed.byteLength,inputAllowance:assessed.inputAllowance,contextGroupContracts});
+    throw new Error("short_story_preparation_capture_returned");
+  }
   // Resolve both permitted routes before dispatch; callers may supply only the
   // server-frozen admission routes, never client-controlled model settings.
   const presentationRoutes=kind==="slides"?(input.options?.presentationModelRoutes??resolvePresentationModelRoutes(env)):null;
@@ -1132,13 +1635,14 @@ export async function generateDocumentArtifact(env:WorkerEnv,userId:string,kind:
       const route=presentationRoutes?selectPresentationModelRoute(presentationRoutes,phase):null;
       const callModel=route?.model??model;
       const reasoningEffort=route?.reasoningEffort??"low";
-      const requestBody=JSON.stringify({model:callModel,instructions:requestInstructions,input:requestInput,text:{verbosity:"medium",format:{type:"json_schema",name,strict:true,schema:documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints,schemaCountPolicy)}},reasoning:{effort:reasoningEffort},max_output_tokens:maxOutputTokens,store:false,safety_identifier:identifier,...(route?{service_tier:"default",prompt_cache_options:{mode:"explicit"}}:{})});
+      const requestBody=serializeDocumentArtifactRequest(callModel,requestInstructions,requestInput,name,documentArtifactSchema(kind,page?.lockedPresentation,selectedStyle,itemCount,audioConstraints,schemaCountPolicy),reasoningEffort,maxOutputTokens,identifier,route?{service_tier:"default",prompt_cache_options:{mode:"explicit"}}:{});
       if(preparation){
         if(kind!=="slides"||!route||phase!=="composition"&&phase!=="validation-repair")throw new Error("invalid_presentation_preparation_phase");
         const comparable=JSON.parse(requestBody) as Record<string,unknown>;
         delete comparable.model;
         delete (comparable.reasoning as Record<string,unknown>).effort;
         preparation.capture({requestBody,requestDigest:await sha256Bytes(new TextEncoder().encode(requestBody)),comparisonDigest:await sha256Bytes(new TextEncoder().encode(JSON.stringify(comparable))),maximumInputTokens:new TextEncoder().encode(requestBody).byteLength+4096,maximumOutputTokens:maxOutputTokens,route,phase});
+        throw new Error("presentation_request_preparation_capture_returned");
       }
       const clientRequestId=`forma-${kind}-${crypto.randomUUID()}`;
       // A managed whole-work rewrite is a distinct authorized call, not a replay

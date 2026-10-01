@@ -62,6 +62,25 @@ export type OutputAssetInspection = {
   limitationCodes?: string[];
   errors: string[];
 };
+
+/**
+ * Explicit native-document byte profile; never returned by inspectOutputAsset.
+ * Its facts do not authorize native adoption or establish retained lineage.
+ */
+export type OutputShortStoryMarkdownInspection = {
+  readonly status: "inspected";
+  readonly profile: "forma.short-story.markdown@1";
+  readonly kind: "document";
+  readonly mimeType: "text/markdown; charset=utf-8";
+  readonly extension: "md";
+  readonly byteLength: number;
+  readonly sha256: string;
+  readonly facts: { readonly encoding: "utf-8" };
+  readonly checks: readonly string[];
+  readonly limitations: readonly string[];
+  readonly errors: readonly [];
+};
+
 type ParsedAsset = Pick<OutputAssetInspection, "kind" | "mimeType" | "extension" | "facts" | "checks" | "limitations">;
 class InspectionFailure extends Error {
   readonly code: string;

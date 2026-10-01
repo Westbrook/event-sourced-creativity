@@ -12,6 +12,8 @@ import { sendsReferencePixels } from "../src/model/block-types.ts";
 import { minimumPresentationSlideCount } from "../src/model/managed-production.ts";
 import { buildPresentationSourceContract } from "../src/model/presentation-source.ts";
 import { documentRenderTokenReservation } from "../src/model/generation-budget.ts";
+import { documentGenerationRevision } from "../src/model/document-jobs.ts";
+import type { OutputPlanTarget } from "../src/model/output-plan.ts";
 import { manualPresentationMaximumOutputTokens, resolvePresentationCountRequest } from "../src/model/presentation-count-policy.ts";
 import { prepareOutputDocumentJob, type PreparedOutputDocumentJob } from "./document-jobs-api.ts";
 import { prepareBudgetReservation, prepareCostBudgetReservation, type PilotUser } from "./pilot-policy.ts";
@@ -20,7 +22,8 @@ import { outputImageBudget } from "./output-image-budget.ts";
 import { hasKnownTextModelPricing, priceTextUsageBreakdownMicrousd } from "./replay-cost.ts";
 import { estimateOpenAITextCallMaximumMicrousd, OpenAITextAccountingError } from "./openai-text-cost.ts";
 import { resolvePresentationModelRoutes, PresentationModelConfigurationError, type PresentationModelRoute } from "./presentation-model-routing.ts";
-import { outputDigest, type OutputBridgeTargetInput, type OutputExecutionBridge, type OutputPreparedAdmission } from "./output-requirements-api.ts";
+import { canonicalOutputJson, outputDigest, outputTargetContractDigest, type OutputBridgeTargetInput, type OutputExecutionBridge, type OutputPreparedAdmission } from "./output-requirements-api.ts";
+import { prepareNativeInitialShortStoryRequest, type PreparedNativeInitialShortStoryRequest } from "./openai-adapter.ts";
 import { OutputConflictError, type OutputOperationSlot, type OutputScope, type OutputSqlAssertion } from "./output-requirements-ledger.ts";
 import { resolveOutputNativeResult } from "./output-native-result.ts";
 import { cleanupExpiredOrRevokedOutputWork } from "./output-execution-control.ts";
@@ -65,16 +68,217 @@ export function outputExactImageRender(ratio:{width:number;height:number}):{form
  if(!validateProviderImageDimensions(width,height).valid)return null;
  return {format:{schema_version:1,aspect_ratio:{width:w,height:h},dimensions:{width,height,unit:"px"}},size:`${width}x${height}`};
 }
-function providerInputInstructions(input:OutputBridgeTargetInput){
+function providerInputInstructions(input:Pick<OutputBridgeTargetInput,"target">){
  return [input.target.instruction_text,`Only this deliverable is requested: ${input.target.label}.`,
   `Coverage contract: ${JSON.stringify(input.target.coverage)}.`,
   "The delivery instructions are not evidence. Ground factual claims in the authorized Document sources."].join("\n");
+}
+
+const shortStoryPreparationFailure=(code:string):never=>{throw new OutputConflictError("output_native_short_story_"+code);};
+function shortStoryOwnData(value:unknown,key:string,optional=false):unknown{
+ if(!value||typeof value!=="object"||Array.isArray(value)
+  ||![Object.prototype,null].includes(Object.getPrototypeOf(value)))return shortStoryPreparationFailure("input_invalid");
+ const descriptor=Object.getOwnPropertyDescriptor(value,key);
+ if(!descriptor){if(optional)return undefined;return shortStoryPreparationFailure("input_invalid");}
+ if(!descriptor.enumerable||!("value" in descriptor))return shortStoryPreparationFailure("input_invalid");
+ return descriptor.value;
+}
+function shortStoryDenseData(value:unknown):unknown[]{
+ if(!Array.isArray(value)||Object.getPrototypeOf(value)!==Array.prototype)return shortStoryPreparationFailure("input_invalid");
+ const length=Object.getOwnPropertyDescriptor(value,"length")?.value;
+ if(!Number.isSafeInteger(length)||length<0||length>256)return shortStoryPreparationFailure("input_limit");
+ const keys=Reflect.ownKeys(value);
+ if(keys.length!==length+1)return shortStoryPreparationFailure("input_invalid");
+ const result:unknown[]=[];
+ for(let index=0;index<length;index++){
+  const descriptor=Object.getOwnPropertyDescriptor(value,String(index));
+  if(!descriptor?.enumerable||!("value" in descriptor))return shortStoryPreparationFailure("input_invalid");
+  result.push(descriptor.value);
+ }
+ return result;
+}
+/** Copy required server data only. Never visit Request/env/DB or call data accessors. */
+function ownShortStoryPreparationData(value:unknown):unknown{
+ // The owned copy uses standard prototypes so it can enter the native decoder.
+ // Reject inherited serializers by descriptor, without reading or invoking them.
+ if(Object.getOwnPropertyDescriptor(Object.prototype,"toJSON")||Object.getOwnPropertyDescriptor(Array.prototype,"toJSON"))
+  return shortStoryPreparationFailure("input_invalid");
+ let nodes=0,characters=0;
+ const active=new Set<object>();
+ const copy=(item:unknown,depth:number):unknown=>{
+  if(++nodes>16_384||depth>24)return shortStoryPreparationFailure("input_limit");
+  if(item===null||typeof item==="boolean")return item;
+  if(typeof item==="string"){
+   characters+=item.length;
+   if(item.length>65_536||characters>131_072)return shortStoryPreparationFailure("input_limit");
+   for(let index=0;index<item.length;index++){
+    const unit=item.charCodeAt(index);
+    if(unit>=0xd800&&unit<=0xdbff){const next=item.charCodeAt(++index);if(!(next>=0xdc00&&next<=0xdfff))return shortStoryPreparationFailure("input_invalid");}
+    else if(unit>=0xdc00&&unit<=0xdfff)return shortStoryPreparationFailure("input_invalid");
+   }
+   return item;
+  }
+  if(typeof item==="number"){if(!Number.isFinite(item))return shortStoryPreparationFailure("input_invalid");return item;}
+  if(!item||typeof item!=="object"||active.has(item))return shortStoryPreparationFailure("input_invalid");
+  active.add(item);
+  let result:unknown;
+  if(Array.isArray(item))result=shortStoryDenseData(item).map(entry=>copy(entry,depth+1));
+  else{
+   if(![Object.prototype,null].includes(Object.getPrototypeOf(item)))return shortStoryPreparationFailure("input_invalid");
+   const keys=Reflect.ownKeys(item);
+   if(keys.length>256)return shortStoryPreparationFailure("input_limit");
+   const entries:Array<[string,unknown]>=[];
+   for(const key of keys){
+    if(typeof key!=="string"||key.length>200||["__proto__","prototype","constructor","toJSON"].includes(key))return shortStoryPreparationFailure("input_invalid");
+    entries.push([key,copy(shortStoryOwnData(item,key),depth+1)]);
+   }
+   result=Object.fromEntries(entries);
+  }
+  active.delete(item);
+  return Object.freeze(result);
+ };
+ const captured=copy(value,0);
+ if(new TextEncoder().encode(JSON.stringify(captured)).byteLength>262_144)return shortStoryPreparationFailure("input_limit");
+ return captured;
+}
+const shortStoryIdentity=(value:unknown):value is string=>typeof value==="string"&&value.length>0&&value.length<=200&&value.trim()===value;
+const shortStoryTargetIdentity=(value:unknown):value is string=>typeof value==="string"&&/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
+
+export type PreparedOutputShortStoryTarget=Readonly<{
+ qualification:"native-initial-preparation-only";
+ preparation:PreparedNativeInitialShortStoryRequest;
+ binding:Readonly<{
+  ownerUserId:string;actorUserId:string;streamId:string;projectId:string;documentId:string;scopeKey:string;
+  planRevisionId:string;planRevision:number;targetId:string;sourceDigest:string;requirementsDigest:string;
+  documentRevision:string;sourceSnapshotDigest:string;documentTitleDigest:string;fullTargetDigest:string;
+  targetContractDigest:string;instructionsDigest:string;requestDigest:string;
+ }>;
+ authorizations:Readonly<{admission:false;dispatch:false;repair:false;settlement:false;publication:false;certifiedRecovery:false}>;
+ sourceCustody:false;currentOriginalAuthority:false;liveRequestParity:false;
+}>;
+
+/** Read-only preparation evidence, never a grant, job payload or current-authority certificate. */
+export async function prepareOutputShortStoryTarget(input:OutputBridgeTargetInput):Promise<PreparedOutputShortStoryTarget>{
+ const rawScope=shortStoryOwnData(input,"scope"),rawPrincipal=shortStoryOwnData(input,"principal");
+ const rawContext=shortStoryOwnData(input,"context"),rawPlan=shortStoryOwnData(input,"confirmedPlan");
+ const rawDefinition=shortStoryOwnData(rawPlan,"plan"),rawProjection=shortStoryOwnData(rawContext,"projection");
+ const rawDocumentId=shortStoryOwnData(rawScope,"documentId"),rawProjectId=shortStoryOwnData(rawScope,"projectId");
+ const documents=shortStoryDenseData(shortStoryOwnData(rawProjection,"documents")).filter(document=>
+  shortStoryOwnData(document,"id")===rawDocumentId&&shortStoryOwnData(document,"projectId")===rawProjectId
+   &&shortStoryOwnData(document,"removed")===false);
+ if(documents.length!==1)return shortStoryPreparationFailure("document_mismatch");
+ const document=documents[0];
+ const captured=ownShortStoryPreparationData({
+  scope:rawScope,
+  principal:{
+   userId:shortStoryOwnData(rawPrincipal,"userId"),streamId:shortStoryOwnData(rawPrincipal,"streamId"),
+   role:shortStoryOwnData(rawPrincipal,"role"),fictional:shortStoryOwnData(rawPrincipal,"fictional",true)??false,
+   projectExecution:shortStoryOwnData(rawPrincipal,"projectExecution",true)??null,
+   billingUserId:shortStoryOwnData(rawPrincipal,"billingUserId",true)??shortStoryOwnData(rawPrincipal,"userId"),
+  },
+  document:{id:shortStoryOwnData(document,"id"),projectId:shortStoryOwnData(document,"projectId"),title:shortStoryOwnData(document,"title")},
+  snapshot:shortStoryOwnData(rawContext,"snapshot"),sourceBlockVersions:shortStoryOwnData(rawContext,"sourceBlockVersions"),
+  documentRevision:shortStoryOwnData(rawContext,"documentRevision"),target:shortStoryOwnData(input,"target"),
+  sourceDigest:shortStoryOwnData(input,"sourceDigest"),requirementsDigest:shortStoryOwnData(input,"requirementsDigest"),
+  plan:{
+   id:shortStoryOwnData(rawPlan,"id"),revisionId:shortStoryOwnData(rawPlan,"revisionId"),revision:shortStoryOwnData(rawPlan,"revision"),
+   sourceDigest:shortStoryOwnData(rawPlan,"sourceDigest"),requirementsDigest:shortStoryOwnData(rawPlan,"requirementsDigest"),
+   documentId:shortStoryOwnData(rawDefinition,"document_id"),sourceRevision:shortStoryOwnData(rawDefinition,"source_revision"),
+   requirementRevision:shortStoryOwnData(rawDefinition,"requirement_revision"),targets:shortStoryOwnData(rawDefinition,"targets"),
+   targetContractDigests:shortStoryOwnData(rawPlan,"targetContractDigests"),
+  },
+ }) as {
+  scope:OutputScope;principal:{userId:string;streamId:string;role:string;fictional:unknown;projectExecution:unknown;billingUserId:string};
+  document:{id:string;projectId:string;title:string};snapshot:Record<string,unknown>;sourceBlockVersions:unknown;
+  documentRevision:string;target:OutputPlanTarget;sourceDigest:string;requirementsDigest:string;
+  plan:{id:string;revisionId:string;revision:number;sourceDigest:string;requirementsDigest:string;documentId:string;
+   sourceRevision:string;requirementRevision:string;targets:OutputPlanTarget[];targetContractDigests:Record<string,string>};
+ };
+ // Everything subsequently read is captured own data. No mutable bridge input is reread after an await.
+ const {scope,principal,target,plan,snapshot,sourceDigest,requirementsDigest,documentRevision}=captured;
+ if(!scope||typeof scope!=="object"||Array.isArray(scope)||!target||typeof target!=="object"||Array.isArray(target)
+  ||!snapshot||typeof snapshot!=="object"||Array.isArray(snapshot)||!Array.isArray(plan.targets)
+  ||!plan.targetContractDigests||typeof plan.targetContractDigests!=="object"||Array.isArray(plan.targetContractDigests))
+  return shortStoryPreparationFailure("input_invalid");
+ if(!["key","ownerUserId","actorUserId","projectId","documentId"].every(key=>shortStoryIdentity(scope[key as keyof OutputScope]))
+  ||scope.kind!=="personal"||scope.key!=="personal:"+scope.ownerUserId+":"+scope.projectId
+  ||scope.organizationId!==null||scope.projectAccessId!==null||scope.contextId!==null
+  ||principal.userId!==scope.ownerUserId||scope.actorUserId!==scope.ownerUserId
+  ||principal.streamId!=="creative:"+scope.ownerUserId||principal.billingUserId!==scope.ownerUserId
+  ||principal.fictional!==false||principal.projectExecution!==null||!["creator","admin"].includes(principal.role))
+  return shortStoryPreparationFailure("scope_mismatch");
+ if(captured.document.id!==scope.documentId||captured.document.projectId!==scope.projectId
+  ||typeof captured.document.title!=="string"||captured.document.title.length>1024)return shortStoryPreparationFailure("document_mismatch");
+ if(!shortStoryTargetIdentity(target.id)||target.media_kind!=="document"
+  ||canonicalOutputJson(target.artifact_format)!==canonicalOutputJson({kind:"short_story",version:1})
+  ||target.selected!==true||!Array.isArray(target.blocking_issues)||target.blocking_issues.length
+  ||canonicalOutputJson(target.quantity)!==canonicalOutputJson({kind:"exact",unit:"document",value:1})
+  ||canonicalOutputJson(target.source_scope)!==canonicalOutputJson({kind:"document"})
+  ||target.aspect_ratio!==null||target.content_quantity!==null||target.count_policy!==null||target.suggested_count!==null
+  ||typeof target.label!=="string"||!target.label.trim()||typeof target.instruction_text!=="string"||!target.instruction_text.trim()
+  ||!target.coverage||!["document_context","document_outline","topics"].includes(target.coverage.kind))
+  return shortStoryPreparationFailure("target_unsupported");
+ const retained=plan.targets.filter(candidate=>record(candidate).id===target.id);
+ if(retained.length!==1||canonicalOutputJson(retained[0])!==canonicalOutputJson(target))
+  return shortStoryPreparationFailure("target_mismatch");
+ if(plan.id!==scope.documentId||plan.documentId!==scope.documentId||!shortStoryIdentity(plan.revisionId)
+  ||!Number.isSafeInteger(plan.revision)||plan.revision<1
+  ||![sourceDigest,requirementsDigest,plan.targetContractDigests[target.id]].every(value=>typeof value==="string"&&/^[a-f0-9]{64}$/.test(value))
+  ||plan.sourceDigest!==sourceDigest||plan.sourceRevision!==sourceDigest||target.source_revision!==sourceDigest
+  ||plan.requirementsDigest!==requirementsDigest||plan.requirementRevision!==requirementsDigest||target.requirement_revision!==requirementsDigest
+  ||!Array.isArray(captured.sourceBlockVersions)||!Array.isArray(snapshot.facts)
+  ||snapshot.facts.some(fact=>record(fact).document_id!==scope.documentId)
+  ||documentRevision!==documentGenerationRevision({snapshot,sourceBlockVersions:captured.sourceBlockVersions,documentId:scope.documentId}))
+  return shortStoryPreparationFailure("source_mismatch");
+ const sourceIds=new Set<string>();
+ for(const value of captured.sourceBlockVersions){
+  const version=record(value);
+  if(Object.keys(version).length!==2||!shortStoryIdentity(version.block_id)||sourceIds.has(version.block_id)
+   ||!Number.isSafeInteger(version.version)||Number(version.version)<1)return shortStoryPreparationFailure("source_mismatch");
+  sourceIds.add(version.block_id);
+ }
+ if(snapshot.facts.some(fact=>{const id=record(fact).block_id;return !shortStoryIdentity(id)||!sourceIds.has(id);}))
+  return shortStoryPreparationFailure("source_mismatch");
+ const instructions=providerInputInstructions({target});
+ const targetContractDigest=await outputTargetContractDigest(target,sourceDigest);
+ if(targetContractDigest!==plan.targetContractDigests[target.id])return shortStoryPreparationFailure("target_mismatch");
+ const [preparation,sourceSnapshotDigest,documentTitleDigest,fullTargetDigest,instructionsDigest]=await Promise.all([
+  prepareNativeInitialShortStoryRequest(scope.ownerUserId,{documentTitle:captured.document.title,snapshot,outputTargetInstructions:instructions}),
+  outputDigest(snapshot),outputDigest(captured.document.title),outputDigest(target),outputDigest(instructions),
+ ]);
+ return Object.freeze({
+  qualification:"native-initial-preparation-only" as const,preparation,
+  binding:Object.freeze({ownerUserId:scope.ownerUserId,actorUserId:scope.actorUserId,streamId:principal.streamId,
+   projectId:scope.projectId,documentId:scope.documentId,scopeKey:scope.key,planRevisionId:plan.revisionId,
+   planRevision:plan.revision,targetId:target.id,sourceDigest,requirementsDigest,documentRevision,sourceSnapshotDigest,
+   documentTitleDigest,fullTargetDigest,targetContractDigest,instructionsDigest,requestDigest:preparation.requestDigest}),
+  authorizations:Object.freeze({admission:false as const,dispatch:false as const,repair:false as const,
+   settlement:false as const,publication:false as const,certifiedRecovery:false as const}),
+  sourceCustody:false as const,currentOriginalAuthority:false as const,liveRequestParity:false as const,
+ });
+}
+
+async function preflightOutputShortStoryTarget(input:OutputBridgeTargetInput,targetId:string):Promise<OutputNativeTargetPreflight>{
+ let reasonCode="output_native_short_story_execution_disabled";
+ try{await prepareOutputShortStoryTarget(input);}catch{reasonCode="output_native_short_story_preparation_unavailable";}
+ // The ordinary endpoint persists this object; never attach private preparation or error data.
+ return {targetId,available:false,reasonCode,reason:"Generation unavailable",transferCode:"output_transfer_none_owned_adoption",
+  provider:null,model:null,route:null,maximumMicrousd:0,maximumCalls:0,maximumTokens:0,settings:{},transferDescription:"No transfer"};
 }
 export function outputJobUser(principal:PilotUser,scope:OutputScope):PilotUser{
  return scope.kind==="project"?{...principal,streamId:`creative:${scope.ownerUserId}`,projectExecution:{organizationId:scope.organizationId!,projectAccessId:scope.projectAccessId!,projectId:scope.projectId,ownerUserId:scope.ownerUserId,actorUserId:scope.actorUserId}}:principal;
 }
 
 export async function preflightOutputNativeTarget(input:OutputBridgeTargetInput):Promise<OutputNativeTargetPreflight>{
+ const candidate=shortStoryOwnData(input,"target");
+ if(shortStoryOwnData(candidate,"media_kind")==="document"){
+  const format=shortStoryOwnData(candidate,"artifact_format",true);
+  if(format!==undefined&&shortStoryOwnData(format,"kind")==="short_story"&&shortStoryOwnData(format,"version")===1){
+   const targetId=shortStoryOwnData(candidate,"id");
+   if(!shortStoryTargetIdentity(targetId))return shortStoryPreparationFailure("input_invalid");
+   return preflightOutputShortStoryTarget(input,targetId);
+  }
+ }
  const {target,env}=input;
  if(!target.selected||target.blocking_issues.length)return unavailable(target.id,target.blocking_issues[0]?.code??"output_native_target_not_selected",target.blocking_issues[0]?.message??"Select this resolved target before creating it.");
  if(target.source_scope.kind!=="document")return unavailable(target.id,"output_native_document_scope_required","Native creation currently requires the full authorized Document. Scoped targets can be completed with a verified owned file.");

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { nothing } from "lit";
 import {
   validateExperienceResult, RESULT_JSON_MAX_BYTES, RESULT_MARKDOWN_MAX_BYTES,
   RESULT_ITEM_TEXT_MAX_BYTES, RESULT_MAX_ITEMS, RESULT_SLIDE_MAX_BULLETS, RESULT_SLIDE_MAX_DATA,
 } from "../src/experiences/results/contracts.ts";
 import { experienceResultViewers } from "../src/experiences/results/registry.ts";
+import { renderExperienceShortStory } from "../src/experiences/results/short-story-reader.ts";
 import {
   isResultMediaPathForNamespace, RESULT_ASSET_MAX_BYTES, RESULT_MODEL3D_MAX_BYTES,
   RESULT_MAX_DIMENSION, RESULT_MAX_DURATION_SECONDS,
@@ -170,6 +172,54 @@ test("full narrative byte ceilings preserve ASCII and multibyte writing without 
     assert.equal(valid(input, expected(kind)).content.content_markdown, writing);
     input.content.content_markdown += "x";
     invalid(input, expected(kind));
+  }
+});
+
+// Actual Lit template contracts only; these do not qualify browser rendering,
+// current custody, result transport, mobile layout, or native continuation.
+test("Short story reader keeps complete title and narrative in literal text parts", () => {
+  const input = fixture("short_story");
+  input.title = '  <img src="https://example.invalid/title" onerror="run()"> & 終わり  ';
+  input.content.content_markdown = writing + '\n![Remote](https://example.invalid/image)\n<a href="javascript:run()">Literal</a>';
+  const result = valid(input, expected("short_story"));
+  const rendered = renderExperienceShortStory(result);
+  assert.equal(rendered._$litType$, 1);
+  assert.equal(rendered.values.length, 2);
+  assert.equal(rendered.values[1], input.content.content_markdown);
+  const heading = rendered.values[0];
+  assert.equal(heading._$litType$, 1);
+  assert.deepEqual(heading.values, [input.title]);
+  assert.deepEqual([...heading.strings], ['<h2 class="experience-short-story-title" dir="auto">', '</h2>']);
+  assert.deepEqual([...rendered.strings], [
+    '<article class="experience-short-story-reader" aria-label="Short story">\n    ',
+    '\n    <pre class="experience-short-story-content" dir="auto">',
+    '</pre>\n  </article>',
+  ]);
+});
+
+test("Short story reader preserves maximum narrative bytes through repeated rendering", t => {
+  t.mock.method(globalThis, "fetch", () => assert.fail("Read-only template must not fetch"));
+  const input = fixture("short_story");
+  input.content.content_markdown = '\ufeff\r\n' + "界".repeat(170_663) + '終\n  ';
+  assert.equal(encode.encode(input.content.content_markdown).length, RESULT_MARKDOWN_MAX_BYTES);
+  const result = valid(input, expected("short_story"));
+  const before = JSON.stringify(result);
+  const first = renderExperienceShortStory(result), second = renderExperienceShortStory(result);
+  assert.deepEqual(first.values[0].values, [result.title]);
+  assert.equal(first.values[1], input.content.content_markdown);
+  assert.deepEqual(second.values, first.values);
+  assert.equal(first.values.filter(value => value === input.content.content_markdown).length, 1);
+  assert.equal(JSON.stringify(result), before);
+  frozen(result);
+});
+
+test("Short story reader omits blank headings without inventing a title or losing text", () => {
+  for (const title of ["", " \t\r\n "]) {
+    const input = fixture("short_story"); input.title = title;
+    const result = valid(input, expected("short_story"));
+    const rendered = renderExperienceShortStory(result);
+    assert.deepEqual(rendered.values, [nothing, writing]);
+    assert.equal(result.title, title);
   }
 });
 

@@ -363,7 +363,12 @@ forma-ui-audience-navigation { display: block; min-inline-size: 0; }
 forma-ui-workspace-switcher:empty,
 forma-ui-audience-navigation:empty { display: none; }
 .ui-workspace-switcher { max-inline-size: 100%; }
-.ui-workspace-switcher.application-switcher { display: inline-flex; max-inline-size: min(35rem, 54vw); overflow-x: auto; overscroll-behavior-inline: contain; }
+.ui-workspace-switcher.application-switcher { display: inline-flex; max-inline-size: min(35rem, 54vw); padding: var(--forma-space-1, .25rem); overflow-x: auto; overscroll-behavior-inline: contain; }
+/* Keep the full ring inside the link, clear of scrollport edges and adjacent links. */
+.ui-workspace-switcher.application-switcher > a:focus-visible {
+  outline: var(--forma-focus-ring-width, .1875rem) solid currentColor;
+  outline-offset: calc(-1 * var(--forma-focus-ring-width, .1875rem));
+}
 .ui-workspace-switcher a,
 .ui-workspace-switcher-trigger,
 .ui-audience-navigation a { display: inline-flex; min-block-size: var(--forma-control-min-size, 2.75rem); align-items: center; justify-content: center; padding-inline: var(--forma-space-3, .75rem); font-size: var(--forma-font-size-supporting, var(--type-small)); text-decoration: none; }

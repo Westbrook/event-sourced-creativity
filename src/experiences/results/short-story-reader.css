@@ -1,0 +1,35 @@
+/* A future authorized result host loads this sheet with the reader. No nested
+   scroller, fixed height, gesture handler, selection lock, or zoom override. */
+.experience-short-story-reader {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  inline-size: 100%;
+  max-inline-size: 75ch;
+  margin-inline: auto;
+  padding-block: clamp(1.5rem, 4vi, 3rem) max(2rem, env(safe-area-inset-bottom));
+  padding-inline: clamp(1rem, 4vi, 3rem);
+  color: var(--forma-color-text, var(--ink));
+  background: var(--forma-color-surface, var(--paper));
+  overflow-wrap: anywhere;
+}
+
+.experience-short-story-reader > .experience-short-story-title {
+  min-inline-size: 0;
+  margin-block: 0 1.5rem;
+  font: 500 clamp(1.75rem, 4vi, 2.75rem)/1.2 var(--serif, serif);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.experience-short-story-reader > .experience-short-story-content {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  font: 400 1.05rem/1.75 var(--serif, serif);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  unicode-bidi: plaintext;
+}

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { inspectOutputAsset, MAX_OUTPUT_ASSET_BYTES, validOutputAssetName } from "../src/model/output-asset-inspection.ts";
 import { jpeg, join, mp3, mp4, png, pngChunk, presentationEntries, utf8, wav, zip } from "./output-asset-fixtures.mjs";
+import { encodeShortStoryMarkdown, readShortStoryMarkdown } from "../src/model/short-story-markdown.ts";
 
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const rejected = result => { assert.notEqual(result.status, "inspected"); assert.deepEqual(result.facts, {}); assert.ok(result.errors.length); };
@@ -149,4 +150,166 @@ test("inspection exposes stable localized limitation codes without replacing aut
     assert.equal(result.limitations.length, 2);
   }
   for (const bytes of [new Uint8Array(), utf8("unsupported"), png().slice(0, -1)]) assert.deepEqual((await inspectOutputAsset(bytes)).limitationCodes, ["output_inspection_not_acceptance"]);
+});
+
+
+// These are pure encoding facts for supplied bytes, not native lineage,
+// acceptance, retained-record correspondence or delivery evidence.
+const markdownFailure = code => error => error instanceof Error && error.message === code;
+const markdownEnvelope = () => utf8('{"content_markdown":"Retained envelope input","items":[]}');
+const rereadMarkdown = (encoded, envelope, overrides = {}) => readShortStoryMarkdown(
+  overrides.artifactId ?? "artifact-1", overrides.bytes ?? encoded.bytes,
+  overrides.byteLength ?? encoded.inspection.byteLength, overrides.sha256 ?? encoded.inspection.sha256,
+  overrides.envelope ?? envelope, overrides.envelopeSha256 ?? encoded.artifactJsonSha256,
+);
+
+test("Short story Markdown preserves complete Unicode, BOM, whitespace and newline bytes", async () => {
+  const narratives = [
+    "A complete story", "  A complete story  ", "A\rB", "A\nB\n", "A\r\nB\r\n",
+    "\ufeffA complete story", "\ufeff\ufeffA complete story", "caf\u00e9", "cafe\u0301", "A \ud83e\udded story", "A\ufffdB",
+  ];
+  const hashes = new Map();
+  for (const narrative of narratives) {
+    const envelope = markdownEnvelope(), encoded = await encodeShortStoryMarkdown("artifact-1", narrative, envelope);
+    assert.equal(encoded.name, "short-story-artifact-1.md");
+    assert.equal(encoded.contentMarkdown, narrative); assert.deepEqual(encoded.bytes, utf8(narrative));
+    assert.deepEqual({ profile: encoded.inspection.profile, kind: encoded.inspection.kind, mimeType: encoded.inspection.mimeType, extension: encoded.inspection.extension },
+      { profile: "forma.short-story.markdown@1", kind: "document", mimeType: "text/markdown; charset=utf-8", extension: "md" });
+    assert.equal(encoded.inspection.byteLength, utf8(narrative).length); assert.equal(encoded.inspection.sha256, digest(utf8(narrative)));
+    assert.deepEqual(encoded.inspection.facts, { encoding: "utf-8" });
+    assert.equal(encoded.artifactJsonByteLength, envelope.length); assert.equal(encoded.artifactJsonSha256, digest(envelope));
+    const restored = await rereadMarkdown(encoded, envelope);
+    assert.equal(restored.contentMarkdown, narrative); assert.deepEqual(restored.bytes, utf8(narrative));
+    hashes.set(narrative, encoded.inspection.sha256);
+  }
+  assert.notEqual(hashes.get("caf\u00e9"), hashes.get("cafe\u0301"), "normalization forms remain distinct");
+  assert.deepEqual([...utf8("\ufeffA").slice(0, 3)], [239, 187, 191], "authored BOM has explicit bytes");
+});
+
+test("Short story Markdown rejects blank text and lone UTF-16 surrogates without replacement", async () => {
+  for (const value of ["", " \t\r\n ", "\ufeff", "\ufeff \r\n"]) {
+    await assert.rejects(encodeShortStoryMarkdown("artifact-1", value, markdownEnvelope()), markdownFailure("short_story_markdown_blank"));
+  }
+  for (const value of ["\ud800", "\udc00", "A\ud800B", "A\udc00B", "\ud800\ud800"]) {
+    await assert.rejects(encodeShortStoryMarkdown("artifact-1", value, markdownEnvelope()), markdownFailure("short_story_markdown_ill_formed_utf16"));
+  }
+  await assert.rejects(encodeShortStoryMarkdown("artifact-1", null, markdownEnvelope()), markdownFailure("short_story_markdown_invalid_text"));
+});
+
+test("Short story Markdown filename uses the literal safe artifact identity", async () => {
+  const envelope = markdownEnvelope(), retained = await encodeShortStoryMarkdown("artifact-1", "Story", envelope);
+  for (const id of ["artifact-1", "r\u00e9sum\u00e9-1", "artifact.part-1"]) {
+    const result = await encodeShortStoryMarkdown(id, "Story", markdownEnvelope());
+    assert.equal(result.name, `short-story-${id}.md`); assert.equal(validOutputAssetName(result.name), true);
+  }
+  for (const id of ["", " ", "../escape", "a/b", "a\\b", ".hidden", "CON", "a\n", "a\u202e", "cafe\u0301", "x".repeat(180), "\ud800", "\udc00", "artifact-\ud800"]) {
+    await assert.rejects(encodeShortStoryMarkdown(id, "Story", markdownEnvelope()), markdownFailure("short_story_markdown_invalid_artifact_id"));
+    await assert.rejects(rereadMarkdown(retained, envelope, { artifactId: id }), markdownFailure("short_story_markdown_invalid_artifact_id"));
+  }
+});
+
+test("Short story Markdown narrative bound uses exact UTF-8 bytes for encoding and rereading", async () => {
+  for (const narrative of ["A".repeat(512_000), "\ud83e\udded".repeat(512_000 / 4)]) {
+    const envelope = markdownEnvelope(), encoded = await encodeShortStoryMarkdown("artifact-1", narrative, envelope);
+    assert.equal(encoded.inspection.byteLength, 512_000);
+    assert.equal((await rereadMarkdown(encoded, envelope)).contentMarkdown, narrative);
+    await assert.rejects(encodeShortStoryMarkdown("artifact-1", narrative + "A", envelope), markdownFailure("short_story_markdown_too_large"));
+    const excessive = utf8(narrative + "A");
+    await assert.rejects(readShortStoryMarkdown("artifact-1", excessive, 512_000, digest(excessive), envelope, digest(envelope)), markdownFailure("short_story_markdown_too_large"));
+  }
+});
+
+test("Short story Markdown supplied JSON-envelope budget has independent exact and overflow boundaries", async () => {
+  const prefix = utf8('{"padding":"'), suffix = utf8('"}');
+  const envelope = new Uint8Array(1_000_000).fill(32);
+  envelope.set(prefix); envelope.set(suffix, envelope.length - suffix.length);
+  const result = await encodeShortStoryMarkdown("artifact-1", "Story", envelope);
+  assert.equal(result.artifactJsonByteLength, 1_000_000);
+  assert.equal(result.artifactJsonSha256, digest(envelope));
+  assert.equal((await rereadMarkdown(result, envelope)).contentMarkdown, "Story");
+  const excessive = join(envelope, utf8(" "));
+  await assert.rejects(encodeShortStoryMarkdown("artifact-1", "Story", excessive), markdownFailure("short_story_artifact_json_too_large"));
+  await assert.rejects(readShortStoryMarkdown("artifact-1", result.bytes, result.bytes.length, result.inspection.sha256, excessive, digest(excessive)), markdownFailure("short_story_artifact_json_too_large"));
+});
+
+test("Short story Markdown rereading rejects malformed UTF-8 instead of replacing bytes", async () => {
+  for (const values of [[255], [128], [192, 175], [237, 160, 128], [240, 159, 146], [244, 144, 128, 128]]) {
+    const bytes = Uint8Array.from(values), envelope = markdownEnvelope();
+    await assert.rejects(readShortStoryMarkdown("artifact-1", bytes, bytes.length, digest(bytes), envelope, digest(envelope)), markdownFailure("short_story_markdown_invalid_utf8"));
+  }
+});
+
+test("Short story Markdown rereading requires exact length and file digest", async () => {
+  const envelope = markdownEnvelope(), encoded = await encodeShortStoryMarkdown("artifact-1", "Byte proof", envelope);
+  for (const length of [-1, 1.5, Number.NaN]) {
+    await assert.rejects(readShortStoryMarkdown("artifact-1", encoded.bytes, length, encoded.inspection.sha256, envelope, encoded.artifactJsonSha256), markdownFailure("short_story_markdown_invalid_expected_length"));
+  }
+  await assert.rejects(rereadMarkdown(encoded, envelope, { byteLength: encoded.bytes.length + 1 }), markdownFailure("short_story_markdown_length_mismatch"));
+  const changed = encoded.bytes.slice(); changed[0] = 67;
+  await assert.rejects(rereadMarkdown(encoded, envelope, { bytes: changed }), markdownFailure("short_story_markdown_hash_mismatch"));
+  await assert.rejects(rereadMarkdown(encoded, envelope, { sha256: "0".repeat(64) }), markdownFailure("short_story_markdown_hash_mismatch"));
+  for (const hash of [null, "", "sha256:" + encoded.inspection.sha256]) {
+    await assert.rejects(readShortStoryMarkdown("artifact-1", encoded.bytes, encoded.bytes.length, hash, envelope, encoded.artifactJsonSha256), markdownFailure("short_story_markdown_invalid_expected_hash"));
+  }
+});
+
+test("Short story Markdown keeps the supplied JSON digest separate from the file digest", async () => {
+  const envelope = markdownEnvelope(), encoded = await encodeShortStoryMarkdown("artifact-1", "Story", envelope);
+  assert.notEqual(encoded.artifactJsonSha256, encoded.inspection.sha256);
+  await assert.rejects(rereadMarkdown(encoded, envelope, { envelopeSha256: encoded.inspection.sha256 }), markdownFailure("short_story_artifact_json_hash_mismatch"));
+  const changedEnvelope = envelope.slice(); changedEnvelope[1] = 32;
+  await assert.rejects(rereadMarkdown(encoded, envelope, { envelope: changedEnvelope }), markdownFailure("short_story_artifact_json_hash_mismatch"));
+  for (const hash of [null, "", "sha256:" + encoded.artifactJsonSha256]) {
+    await assert.rejects(readShortStoryMarkdown("artifact-1", encoded.bytes, encoded.bytes.length, encoded.inspection.sha256, envelope, hash), markdownFailure("short_story_artifact_json_invalid_expected_hash"));
+  }
+});
+
+test("Short story Markdown encoding snapshots the supplied envelope before asynchronous hashing", async t => {
+  const nativeDigest = crypto.subtle.digest.bind(crypto.subtle);
+  let release, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  // Delay the real hash invocation so Web Crypto's own input copy cannot mask
+  // a missing codec snapshot. No successful hash response is fabricated.
+  t.mock.method(crypto.subtle, "digest", async (algorithm, data) => { calls++; await gate; return nativeDigest(algorithm, data); });
+  t.after(() => release());
+  const envelope = markdownEnvelope(), original = envelope.slice();
+  const pending = encodeShortStoryMarkdown("artifact-1", "Story", envelope);
+  t.after(async () => { release(); await pending.catch(() => {}); });
+  assert.ok(calls > 0); envelope.fill(255); release();
+  const encoded = await pending;
+  assert.equal(encoded.artifactJsonSha256, digest(original)); assert.equal(encoded.artifactJsonByteLength, original.length);
+  assert.deepEqual(encoded.bytes, utf8("Story"));
+});
+
+test("Short story Markdown rereading snapshots both byte views before asynchronous hashing", async t => {
+  const envelope = markdownEnvelope(), encoded = await encodeShortStoryMarkdown("artifact-1", "Story", envelope);
+  const backing = join(utf8("prefix"), encoded.bytes, utf8("suffix"));
+  const view = backing.subarray(6, 6 + encoded.bytes.length), originalFile = view.slice(), originalEnvelope = envelope.slice();
+  const nativeDigest = crypto.subtle.digest.bind(crypto.subtle);
+  let release, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  t.mock.method(crypto.subtle, "digest", async (algorithm, data) => { calls++; await gate; return nativeDigest(algorithm, data); });
+  t.after(() => release());
+  const pending = readShortStoryMarkdown("artifact-1", view, view.length, encoded.inspection.sha256, envelope, encoded.artifactJsonSha256);
+  t.after(async () => { release(); await pending.catch(() => {}); });
+  assert.ok(calls > 0); backing.fill(255); envelope.fill(255); release();
+  const restored = await pending;
+  assert.deepEqual(restored.bytes, originalFile); assert.equal(restored.contentMarkdown, "Story");
+  assert.equal(restored.inspection.sha256, digest(originalFile)); assert.equal(restored.artifactJsonSha256, digest(originalEnvelope));
+});
+
+test("Short story Markdown refuses non-byte inputs without treating them as encoded content", async () => {
+  const envelope = markdownEnvelope(), encoded = await encodeShortStoryMarkdown("artifact-1", "Story", envelope);
+  await assert.rejects(encodeShortStoryMarkdown("artifact-1", "Story", []), markdownFailure("short_story_artifact_json_invalid_bytes"));
+  await assert.rejects(readShortStoryMarkdown("artifact-1", [], encoded.bytes.length, encoded.inspection.sha256, envelope, encoded.artifactJsonSha256), markdownFailure("short_story_markdown_invalid_bytes"));
+  await assert.rejects(readShortStoryMarkdown("artifact-1", encoded.bytes, encoded.bytes.length, encoded.inspection.sha256, [], encoded.artifactJsonSha256), markdownFailure("short_story_artifact_json_invalid_bytes"));
+});
+
+test("generic asset inspection still denies Markdown and forged native MIME or profile claims", async () => {
+  const bytes = utf8("A complete short story.");
+  for (const name of ["story.md", "story.png", "story.glb"]) {
+    const result = await inspectOutputAsset(bytes, name, { mimeType: "text/markdown; charset=utf-8", profile: "forma.short-story.markdown@1", origin: "native", native: true });
+    assert.equal(result.status, "unsupported"); rejected(result);
+    assert.equal(result.kind, null); assert.equal(result.sha256, digest(bytes));
+  }
 });
