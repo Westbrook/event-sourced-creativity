@@ -1533,7 +1533,7 @@
       "reason": "Replaces the imported fixture dist worker reference with worker/index.ts before executing it."
     }
   },
-  "classificationInput": "ddc708177ed4735c06788993e900d32cfe0de003404a0cf07380a3080cbe117f",
+  "classificationInput": "f39c052145a588bb7f1f2baac8f71fe195a6be337aa7baacfb7e27189f3d5fab",
   "browserConfigs": [
     "playwright.a11y.config.mjs",
     "playwright.activity-accounting-lifetime.config.mjs",
@@ -1589,31 +1589,57 @@
     "test:still-toolbar:browser": "node scripts/test-still-toolbar.mjs --browser-only"
   },
   "entrypoints": [
+    "scripts/activity-receipt-test-preview.mjs",
+    "scripts/audit-static-html-localization.mjs",
     "scripts/check-generation-execution-bridge.mjs",
     "scripts/check-generation-integrated-release-v2.mjs",
     "scripts/check-generation-integrated-release.mjs",
     "scripts/check-recorded-package-browser.mjs",
     "scripts/check-system-localization.mjs",
+    "scripts/content-first-test-preview.mjs",
     "scripts/evaluate-memory-persistence.mjs",
     "scripts/evaluate-memory-review-jobs.mjs",
     "scripts/evaluate-memory-shadow.mjs",
+    "scripts/experience-review.mjs",
     "scripts/generate-custom-elements-manifest.mjs",
     "scripts/generate-marketing-persona-assets.mjs",
     "scripts/generate-marketing-persona-videos.mjs",
     "scripts/generate-memory-schema-repair.mjs",
+    "scripts/generate-scene-font-metrics.py",
     "scripts/generate-still-icons.mjs",
+    "scripts/image-adapter-eval-cache.mjs",
+    "scripts/lint.mjs",
+    "scripts/measure-validation.py",
     "scripts/migrate-local.mjs",
+    "scripts/optimize-marketing-persona-videos.mjs",
+    "scripts/package-disabled-memory-release.mjs",
+    "scripts/presentation-comparison.mjs",
+    "scripts/preview-still-toolbar-motion.mjs",
+    "scripts/qualify-event-save-depth.py",
+    "scripts/qualify-event-save-expressions.py",
+    "scripts/qualify-memory-migrations.mjs",
+    "scripts/replay.mjs",
     "scripts/run-generation-reliability-eval.mjs",
     "scripts/run-ideogram-v9-diagnostic.mjs",
     "scripts/run-image-adapter-cycle-search.mjs",
     "scripts/run-image-adapter-eval.mjs",
     "scripts/run-seedance-reference-control.mjs",
+    "scripts/score-still-search-qualification.mjs",
+    "scripts/setup-local-encryption-root.mjs",
     "scripts/test-output-scene-sponsored-handoff.mjs",
     "scripts/test-still-toolbar.mjs",
+    "scripts/validation-browser.mjs",
+    "scripts/validation-cost.mjs",
+    "scripts/validation.mjs",
+    "scripts/vendor-still-primitives.mjs",
     "scripts/verify-site-release.mjs",
     "evals/generation-reliability/native-host/check-schema.mjs",
     "evals/generation-reliability/preparation/check-evidence.mjs",
-    "evals/generation-reliability/preparation/check-schema.mjs"
+    "evals/generation-reliability/preparation/check-schema.mjs",
+    "build/clean-dist.mjs",
+    "build/memory-migration-release.json",
+    "build/release-migrations.ts",
+    "build/sites-vite-plugin.ts"
   ],
   "testImportExceptions": {
     "tests/experience-guest-image-result-claim-d1.test.mjs -> ./experience-guest-image-result-copy-writer.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
@@ -12525,6 +12551,14 @@
       "file": "scripts/check-recorded-package-browser.mjs",
       "flags": [
         "FORMA_RECOVERY_EVIDENCE_DIR"
+      ],
+      "owner": "Maintainer of the named test/config/tool",
+      "policy": "Explicit input; unset defaults remain unchanged. A disabled or missing variant is unverified, never a pass."
+    },
+    {
+      "file": "scripts/lib/synthetic-preview.mjs",
+      "flags": [
+        "FORMA_SYNTHETIC_PREVIEW_PORT"
       ],
       "owner": "Maintainer of the named test/config/tool",
       "policy": "Explicit input; unset defaults remain unchanged. A disabled or missing variant is unverified, never a pass."

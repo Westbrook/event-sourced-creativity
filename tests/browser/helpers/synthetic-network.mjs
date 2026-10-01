@@ -1,7 +1,8 @@
+import { syntheticPreviewAddress } from "../../../scripts/lib/synthetic-preview.mjs";
 import { classifyTestRequest, localTestOrigin } from "./read-only-network.mjs";
 
 export const SYNTHETIC_NETWORK_MARKER = "e6-full-pc-r1";
-export const SYNTHETIC_NETWORK_ORIGIN = "http://127.0.0.1:4186";
+export const SYNTHETIC_NETWORK_ORIGIN = syntheticPreviewAddress().origin;
 export const syntheticNetworkProvenance = Object.freeze({
   mode: "finite-synthetic-network", version: SYNTHETIC_NETWORK_MARKER,
   authority: "Synthetic personal-author declarations, not authentication or permission evidence",
@@ -17,7 +18,7 @@ export function syntheticNetworkEnabled(baseURL) {
   if (flag === undefined || flag === "0") return false;
   if (flag !== "1") throw new Error("FORMA_A11Y_SYNTHETIC_NETWORK must be unset, 0 or 1");
   if (localTestOrigin(baseURL) !== SYNTHETIC_NETWORK_ORIGIN) {
-    throw new Error("Finite synthetic transport requires the exclusive source preview on 127.0.0.1:4186");
+    throw new Error(`Finite synthetic transport requires the exclusive preview on ${SYNTHETIC_NETWORK_ORIGIN}`);
   }
   return true;
 }

@@ -12,7 +12,7 @@ for(const [name,value] of [['error with results',{error:{code:'server_error'},re
     await assert.rejects(()=>generateCreativeImage(env,'user',{facts:[]},{},{onEvidence:e=>evidence.push(e)}),e=>e.detail.code==='moderation_response_invalid');
   });assert.equal(requests,1);assert.equal(evidence.at(-1).safety.verdict,'unknown');assert.equal(evidence.at(-1).safety.validity,'invalid');
 });
-for(const raw of ['not JSON','{"results":[{"flagged":true,"flagged":false,"categories":{}}]}',JSON.stringify({results:[result],padding:'x'.repeat(65536)})])test('malformed, duplicate-key or oversized moderation does not pass',async()=>withFetch(async()=>new Response(raw),async()=>{
+for(const [kind,raw] of [['malformed','not JSON'],['duplicate-key','{"results":[{"flagged":true,"flagged":false,"categories":{}}]}'],['oversized',JSON.stringify({results:[result],padding:'x'.repeat(65536)})]])test(`${kind} moderation does not pass`,async()=>withFetch(async()=>new Response(raw),async()=>{
   await assert.rejects(()=>moderateExactImagePrompt(env,'exact',[]),e=>e.detail.code==='moderation_response_invalid');
 }));
 test('single checks allow absent scores as unknown, with a complete explicit flag/categories result',()=>{

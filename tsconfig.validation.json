@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
-  "compilerOptions": { "allowJs": true, "checkJs": false },
+  "compilerOptions": { "allowJs": true, "checkJs": false, "incremental": true, "tsBuildInfoFile": "./outputs/validation/types.tsbuildinfo" },
   "include": ["src/**/*.ts", "worker/**/*.ts", "workers/**/*.ts", "db/**/*.ts", "build/**/*.ts", "tests/**/*.test.ts", "vite.config.ts", "drizzle.config.ts", "cloudflare.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

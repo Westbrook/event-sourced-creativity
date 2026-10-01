@@ -116,12 +116,12 @@ for (const action of ["read", "command", "upload", "download"]) for (const statu
   });
 }
 
-for (const response of [
-  () => Response.json({ error: "service_unavailable" }, { status: 503 }),
-  () => new Response("{", { status: 503 }),
-  () => new Error("transport unavailable"),
-  () => Response.json({ schemaVersion: 999, documentId: "doc-a" }),
-]) test("non-authoritative refresh failure keeps the authorized last-known denominator, never an empty completed plan", async () => {
+for (const [kind, response] of [
+  ["server unavailable", () => Response.json({ error: "service_unavailable" }, { status: 503 })],
+  ["malformed server body", () => new Response("{", { status: 503 })],
+  ["transport unavailable", () => new Error("transport unavailable")],
+  ["unsupported schema", () => Response.json({ schemaVersion: 999, documentId: "doc-a" })],
+]) test(`${kind}: non-authoritative refresh failure keeps the authorized last-known denominator, never an empty completed plan`, async () => {
   const state = fixture(); await state.warm(); state.enqueue(response());
   const result = await start(state, "read");
   assert.equal(result.state, "unavailable"); assert.equal(result.snapshot.revision, "1");

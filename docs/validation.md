@@ -29,6 +29,16 @@ controls Node process concurrency (default min(2, available CPU parallelism)).
 pass through the browser command. Browser default stays one worker: calibrations
 at 2/4 workers do not qualify shared-account lanes for parallel execution.
 
+TypeScript keeps its incremental graph in ignored `outputs/validation/types.tsbuildinfo`;
+ESLint keeps a content cache beside it. Preserve these across edits. The compiler
+and linter still revalidate changed inputs; a warm cache is not a test result.
+
+`memory-synthetic` supports an explicitly allocated loopback port through
+`FORMA_SYNTHETIC_PREVIEW_PORT` (for example, 48286). Its network guard and preview
+share that origin and strict port binding fails on collision. Historical configs
+with fixed URLs retain their original port; do not apply the override to those
+configs without port-equivalence evidence. No port owner is killed or adopted.
+
 Run one CPU/memory budget across concurrent Node, browser, Vite and workerd jobs.
 Independent reads can run together. Build consumers, shared profiles, shared
 accounts and mutable fixtures require ownership and ordering. Node process

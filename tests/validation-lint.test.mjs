@@ -59,3 +59,10 @@ test('extracted class dependency completion preserves actual transitive guards a
   const Subject=new Function('return '+code)();assert.equal(new Subject().read(),false);
   assert.throws(()=>completeClassFixture(tree,'Actual','(class { read(){return this.#invented();}})'),/Unknown private/);
 });
+
+
+test('synthetic preview port selection stays loopback and fails before browser startup on invalid input', async () => {
+  const {syntheticPreviewAddress} = await import('../scripts/lib/synthetic-preview.mjs');
+  assert.deepEqual(syntheticPreviewAddress('48286'), {port:48286,origin:'http://127.0.0.1:48286'});
+  for (const input of ['0','80','65536','https://example.invalid','4186junk','1.5']) assert.throws(()=>syntheticPreviewAddress(input),/owned loopback port/);
+});

@@ -14,13 +14,22 @@ specs. Conditional environment inputs are inventoried without evaluating modules
 or enabling their flags. Browser owners must supply the named prerequisites;
 a missing account/archive/backend is an unavailable variant, not a skipped pass.
 
-The confirmed automation boundary is the repository graph and Sites source/archive
-release workflow. There are no tracked GitHub/GitLab workflows or configured local
-Git hooks. An external CI service is not identified in this project. Its activation
-is therefore not a rollout prerequisite or an implied action. If an external
-runner is attached later, its integration owner must call `pnpm validate` with the
-same explicit selection and prerequisite graph, not introduce a second build/test
-sequence. A local receipt does not certify an unobserved external runner.
+The current Forma Site release uses this repository's graph and the Sites
+source/archive workflow. There are no tracked GitHub/GitLab workflows or configured
+local Git hooks in this checkout. The report also identifies the separate
+[`reve-ai/still-platform-pilot` verification gate](https://github.com/reve-ai/still-platform-pilot/actions/runs/36322751152):
+its successful run belongs to commit `2409a32da23625520f840db4846da548326b0264`,
+not this checkout. Its `.github/workflows/still-core.yml` owns the GKE pilot's
+core/focus jobs and an explicitly dispatched `full_forma_audit`. It does not
+qualify or deploy this Site's current source.
+
+That pilot integration owner must adopt the same staged graph when these changes
+are ported to that separate repository. Its independently provisioned core/focus
+jobs currently each build; sharing an immutable artifact is a future pilot-CI
+optimization, not permission to reuse a mutable build across isolated runners or
+to modify its protected release gate here. No workflow was dispatched and no
+pilot deployment was changed by this task. The external ownership question is
+resolved without pretending a local receipt is a successful external CI run.
 
 The managed Node runner supplies this checkout as `FORMA_SOURCE_ROOT`. An explicit
 alternate source tree is rejected: diagnostic cross-checkout runs must use direct
@@ -67,10 +76,36 @@ shared cache or reinstalls packages. RSS is the operating system's child-process
 high-water mark, not aggregate simultaneous memory of the process tree. Samples
 on a shared workstation are exploratory; they do not establish p95 or a flake rate.
 
+On the measured workstation, the review targets for the fixed 25-leaf pilot are
+under 25 seconds cold and 12 seconds warm at two workers. These are comparison
+targets for this workload, not universal timing assertions in normal tests.
+
 The default remains two Node processes and one browser worker for shared-resource
 lanes. Four-worker calibration is permission to measure an isolated workload,
 not a global concurrency recommendation. Independent background work consumes the
 same machine budget; do not multiply each nested runner's worker count.
+
+## Broad diagnostic census
+
+The stable source-lane diagnostic on the repaired harness reported 10,567 Node
+records: 10,456 passed, 111 failed, no skips/cancellations/timeouts, in 358 seconds.
+Its first visible negative arrived at 7.97 seconds. The previous diagnostic used
+a different lane membership and changing fixtures, so its longer wall time is
+not a valid whole-suite before/after comparison.
+
+The cost reporter identified 10,509 distinct leaf identities and two generated
+name collisions (three malformed moderation responses and four refresh-failure
+variants). Those are distinct inputs, not evidence to delete tests. Each variant
+now has a unique descriptive title. The longest measured suite was Document-scoped
+Output names (51.3 seconds of assertions), followed by responsive-product (33.6
+seconds, one existing failure). Controller paid-intent, queued-grant and preflight
+binding followed at 20.1, 15.3 and 14.8 seconds. Their different authority and
+stale-callback failure mechanisms are retained; no arbitrary file split repeats
+fixture initialization.
+
+The unchanged historical assertion failures remain engineering debt. Full source
+coverage was measured to expose that debt; it is not the acceptance result for
+a selected infrastructure change and is not reported as green.
 
 ## Remaining evidence boundaries
 

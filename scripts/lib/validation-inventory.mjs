@@ -52,7 +52,7 @@ export function census(root) {
   const files = walk(root, 'tests').filter(p => /\.(?:test|spec)\.(?:mjs|ts)$/u.test(p));
   const configs = readdirSync(root).filter(p => /^playwright.*\.config\.mjs$/u.test(p)).sort();
   const commands = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).scripts;
-  const entrypoints = [...walk(root, 'scripts'), ...walk(root, 'evals')].filter(p => /\/(?:check-|verify-|run-|test-|evaluate-|generate-|migrate-)[^/]+\.mjs$/u.test(p));
+  const entrypoints = [...walk(root, 'scripts'), ...walk(root, 'evals'), ...walk(root, 'build')].filter(p => /^scripts\/[^/]+\.(?:mjs|py)$/u.test(p) || /\/(?:check-|verify-|run-|test-|evaluate-|generate-|migrate-)[^/]+\.mjs$/u.test(p) || p.startsWith('build/'));
   return { files, configs, commands, entrypoints };
 }
 
