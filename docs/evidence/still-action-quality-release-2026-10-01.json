@@ -1,0 +1,94 @@
+{
+  "date": "2026-10-01",
+  "scope": "ST-ACTIONS-001: Still workflow and outcome evidence, policy still-25, including required still-24 foundation",
+  "implementationCommit": "45cf36bd",
+  "mainIntegration": "19c7d4c444193290b378e53492fb78e8a88bc1af",
+  "productionVersion": 568,
+  "sourceCommit": "309a43e6889443fcd802915fca1a3f4e71e2eb50",
+  "preservedProductionBaseline": {
+    "version": 567,
+    "source": "fad858ba265b7ba02efd516aafd299d0dd6c5485"
+  },
+  "savedVersion": {
+    "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_3b97c64677f88191b7fdf4f328544b0c",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version_number": 568,
+    "source": {
+      "commit_sha": "309a43e6889443fcd802915fca1a3f4e71e2eb50"
+    },
+    "archive_storage": {
+      "archive_format": "tar",
+      "sediment_file_id": "file_0000000022c8820e85fd825632ce54e2",
+      "content_hash": "sha256:bf826a1554f2e299426b79d8a21dd1b2c342242d2935f4a666db29b46bab50c4",
+      "size_bytes": 44748800,
+      "file_count": 621
+    },
+    "screenshot_url": null,
+    "deployment_id": null
+  },
+  "deployment": {
+    "id": "appgdep_6abe7d8b75908191ade4cb45c932a5db",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_3b97c64677f88191b7fdf4f328544b0c",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-10-01T15:35:12.307916+00:00"
+  },
+  "audience": {
+    "mode": "workspace_all",
+    "revision": 7,
+    "changed": false
+  },
+  "archive": {
+    "path": "/Users/westbrook/Documents/repos/codex/outputs/still-actions/release/still-309a43e6-held.tar",
+    "rawSha256": "6202d01142ebdb5b2a8e84fa69e4687fc09512518b815cdf7f0a0fa91e394db6",
+    "normalizedSha256": "bf826a1554f2e299426b79d8a21dd1b2c342242d2935f4a666db29b46bab50c4",
+    "files": 621,
+    "migrations": 41,
+    "savedReceiptVerified": true
+  },
+  "verification": {
+    "typesAndFullLint": "outputs/still-actions/release/evidence/validation/2026-10-01T15-31-27-798Z-0e7804e1/receipt.json",
+    "build": "outputs/still-actions/release/evidence/validation/2026-10-01T15-32-32-956Z-f03d9ae7/receipt.json",
+    "sourceRuntime": {
+      "source": 136,
+      "runtime": 99,
+      "receipt": "outputs/still-actions/release/evidence/validation/2026-10-01T15-14-15-416Z-fd3355e7/receipt.json"
+    },
+    "toolbar": {
+      "units": 44,
+      "browser": 98,
+      "engines": [
+        "Chromium",
+        "Firefox",
+        "WebKit"
+      ],
+      "nativeZoom": "200% Chromium",
+      "receipt": "outputs/still-actions/release/evidence/validation/toolbar-e1c0990c-f02b-4526-bada-e1b19e5294e0/receipt.json"
+    },
+    "actionBrowser": {
+      "scenarios": 8,
+      "nodeTestCount": 9,
+      "log": "outputs/still-actions/release/logs/still-release-action-browser.log"
+    },
+    "reuse": "Scoped source/runtime and browser receipts retain their original tested inputs. Later merges changed only published sidebar/Library/Assistant owners and registry metadata; Still product/test/helper/release-tooling inputs were unchanged. Final types, full lint, build and archive verification bind the exact published source.",
+    "frozenReplayComparisons": 288
+  },
+  "boundaries": [
+    "Packaged41 migrations and historical Memory repair manifest retained. Exact0074 source-journal qualification only; held migrations not activated.",
+    "Ordinary server bootstrap creates four empty additive Still tables and four indexes when needed. Collection remains explicit personal scoped opt-in.",
+    "No paid provider evaluations, actual-data exports, live app journey or real-user study performed. Native deployment success does not establish user benefit or acceptance.",
+    "Creation clarity, Viewer journeys and failure recovery remain three open product reviews. Full repository test suite and actual-account/archive accessibility acceptance were not run for this release."
+  ],
+  "preservedFailures": [
+    "Initial toolbar fixture failure retained; explicit action-attribution fixture corrected,44 units then passed.",
+    "First qualified source push was rejected when Production567 advanced concurrently; its source was merged and final candidate rebuilt. No force push."
+  ]
+}

@@ -63,7 +63,7 @@ open product-review items.
 The [local verification receipt](still-action-quality-verification-2026-10-01.md)
 records selected checks, retained failures and untested areas.
 
-## Authorized release preparation — 2026-10-01
+## Production release — 2026-10-01
 
 The continuation is committed as `45cf36bd`. The user then authorized publication
 of this work and its required still-24 foundation. Qualification preserves the
@@ -72,7 +72,15 @@ source-journal metadata recognizes the exact0074 append. The server bootstrap
 creates four empty Still tables and four indexes on its first auth-required
 request. Recording remains an explicit personal, scoped opt-in. Paid evaluations,
 actual-data exports and real-user experiments are outside this publication.
-The terminal release/source/archive receipt will establish publication separately.
+Published as **Sites568**, source `309a43e6`, with main integration `19c7d4c4`.
+The native deployment succeeded at15:35:12 UTC, retaining workspace access
+revision7 and environment16. The [release receipt](evidence/still-action-quality-release-2026-10-01.json)
+binds the pushed source,621-file archive and unchanged41 packaged migrations.
+235 focused source/runtime cases,44 toolbar units,98 cross-browser/native-zoom
+checks and eight action workflow scenarios passed; final types, full lint and
+build passed. Reused scoped receipts retain their original inputs; the later
+merges preserve published sidebar, Library and Assistant changes. Publication
+does not close the three product reviews or establish real-user benefit.
 
 ## Foundation implementation and retained baseline
 

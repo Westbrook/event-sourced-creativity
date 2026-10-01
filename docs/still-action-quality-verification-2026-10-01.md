@@ -1,4 +1,8 @@
-# Still workflow and outcome evidence: local verification
+# Still workflow and outcome evidence: historical local verification
+
+The later [Production568 release receipt](evidence/still-action-quality-release-2026-10-01.json)
+records the committed source, expanded release checks and successful publication.
+The remainder preserves the earlier local checkpoint and its narrower coverage.
 
 This receipt covers the local continuation of ST-ACTIONS-001 on 2026-10-01.
 Both `0451de43` and `2168fc05` are ancestors of the current `main` checkout.
