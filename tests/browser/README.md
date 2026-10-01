@@ -569,10 +569,17 @@ that these physical/manual checks passed.
 
 ## Creator leading gutters
 
-`FORMA_BROWSER_CONFIGS=creator-gutters pnpm test:browser` runs the actual Creator
+After `pnpm build`, `FORMA_BROWSER_CONFIGS=creator-gutters pnpm test:browser` runs the actual Creator
 shell and Library, Projects, project overview and Document pages against finite
 fictional network responses. It covers nine viewport sizes/postures in English
 and Arabic, page overflow, and native Library Resource Memory keyboard focus
 and disclosure. Set `FORMA_SYNTHETIC_PREVIEW_PORT` to an unused loopback port when
 needed. The config owns its server and uses the repository-pinned Playwright
 Chromium; it never reads a real account or invokes a provider.
+
+The same `creator-gutters` lane also checks Library scroll stability at
+768, 1024, 1280, 1715 and 2048 CSS pixels in English/Arabic with fine/coarse
+pointers. Native wheel scrolling, keyboard travel, assistant open/Escape-close,
+and hit-target measurements must preserve the initial header/card/body widths.
+This lane consumes the qualified production bundle with an owned preview,
+avoiding development optimizer reloads and validating the artifact to publish.

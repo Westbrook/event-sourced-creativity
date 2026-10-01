@@ -677,3 +677,64 @@ forma-assistant-panel[data-embedded="true"] .forma-assistant-transcript {
 .forma-assistant-memory-edit-review :is(h4, dd) { overflow-wrap: anywhere; }
 .forma-assistant-memory-edit-review dd { margin-inline-start: 0; white-space: pre-wrap; }
 .forma-assistant-memory-edit-review dt { font-weight: 600; margin-block-start: .5rem; }
+
+/* Wide Creator browsing gives Ask a permanent navigation cell. Scroll must
+   never add a side gutter to the content just because a floating gap closes.
+   Reserve from the actual owner, including while the assistant is open. */
+@media (min-width: 48rem) {
+  .application-creative[data-layout-intent="browse"]:not([data-nav-posture="compact"])[data-short-height="false"]:not(:has(> .impersonation-banner)):has(> forma-creative-assistant > forma-assistant-panel) {
+    --forma-assistant-navigation-target: max(44px, var(--forma-control-min-size, 2.75rem));
+  }
+
+  .application-creative[data-layout-intent="browse"]:not([data-nav-posture="compact"])[data-short-height="false"]:not(:has(> .impersonation-banner)) > forma-creative-assistant > forma-assistant-panel {
+    --forma-assistant-browse-slot: wide;
+    --forma-assistant-browse-lane-available: 0;
+  }
+
+  .application-creative[data-layout-intent="browse"]:not([data-nav-posture="compact"])[data-short-height="false"]:not(:has(> .impersonation-banner)):has(> forma-creative-assistant > forma-assistant-panel) > forma-ui-audience-navigation.application-task-navigation[data-primary-navigation="true"] {
+    position: sticky;
+    top: var(--forma-topbar-height);
+    z-index: 52;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--forma-assistant-navigation-target);
+    column-gap: var(--forma-focus-clearance, .5rem);
+    align-items: center;
+    padding-inline-end: max(var(--forma-pane-inset), var(--forma-safe-inline-end, 0px));
+    box-sizing: border-box;
+    background: var(--forma-color-surface, var(--panel));
+    border-block-end: 1px solid var(--forma-color-border, var(--line));
+  }
+
+  .application-creative[data-layout-intent="browse"]:not([data-nav-posture="compact"])[data-short-height="false"]:not(:has(> .impersonation-banner)):has(> forma-creative-assistant > forma-assistant-panel) > .application-task-navigation > .ui-audience-navigation {
+    grid-column: 1;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    border-block-end: 0;
+  }
+
+  .application-creative[data-layout-intent="browse"]:not([data-nav-posture="compact"])[data-short-height="false"]:not(:has(> .impersonation-banner)):has(> forma-creative-assistant > forma-assistant-panel) > .application-task-navigation .ui-audience-navigation a {
+    min-block-size: var(--forma-assistant-navigation-target);
+  }
+
+  /* Keep the existing wide Library heading below both sticky shell rows. */
+  .application-creative[data-layout-intent="browse"][data-nav-posture="expanded"][data-short-height="false"]:not(:has(> .impersonation-banner)):has(> forma-creative-assistant > forma-assistant-panel) forma-library .page-header--library {
+    top: calc(var(--forma-topbar-height) + var(--forma-assistant-navigation-target) + 1px);
+  }
+
+  @media (pointer: coarse) {
+    .application-creative[data-layout-intent="browse"]:not([data-nav-posture="compact"])[data-short-height="false"]:not(:has(> .impersonation-banner)):has(> forma-creative-assistant > forma-assistant-panel) {
+      --forma-assistant-navigation-target: max(48px, var(--forma-control-min-size, 2.75rem), var(--forma-hit-target-coarse, 3rem));
+    }
+  }
+}
+
+/* Library and spatial browsing let the tall rail's account header scroll away. */
+@media (min-width: 48rem) {
+  .application-creative[data-layout-intent="browse"][data-nav-posture="rail"][data-short-height="false"]:not(:has(> .impersonation-banner)):has(> #main-content > forma-creative-application > :is(forma-library, forma-reality-layers)):has(> forma-creative-assistant > forma-assistant-panel) > .application-task-navigation[data-primary-navigation="true"] {
+    top: 0;
+  }
+
+  html:has(.application-creative[data-layout-intent="browse"]:not([data-nav-posture="compact"])[data-short-height="false"]:not(:has(> .impersonation-banner)) > forma-creative-assistant > forma-assistant-panel) {
+    scroll-padding-block-start: calc(var(--forma-topbar-height) + max(48px, var(--forma-control-min-size, 2.75rem)) + var(--forma-focus-clearance, .5rem));
+  }
+}

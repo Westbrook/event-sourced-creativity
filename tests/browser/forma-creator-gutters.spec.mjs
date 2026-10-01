@@ -41,6 +41,7 @@ for (const target of pages) test(target.name + ' shares the Creator leading gutt
     await expect.poll(async()=>{
       const result=await measure();return Math.abs(signed(result.body-result.main)-inset);
     }).toBeLessThan(1);
+    await expect.poll(()=>page.evaluate(()=>document.getAnimations().filter(a=>a.playState==='running'&&Number.isFinite(a.effect?.getComputedTiming().endTime)).length)).toBe(0);
     const result=await measure();
     expect(result.rtl).toBe(testInfo.project.use.locale==='ar');
     expect(result.overflow).toBeLessThanOrEqual(0);
