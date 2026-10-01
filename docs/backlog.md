@@ -741,10 +741,12 @@ settings, and the preserved 41-migration package. Main integration: `a0d4d0d6`.
 
 ### Document column heading alignment — 2026-10-01
 
-Implemented locally and authorized for publication. Context and results titles
-share a control-height first row and top alignment when titles or actions wrap.
-The shared pane gutters retain the related Creator alignment and results inset
-work. Typecheck and scoped lint pass; 14 synthetic renderer cases cover
-320–1600px, short landscape, English/Arabic and narrow-pane switching.
-Evidence: `outputs/workbench-spacing/geometry.json`. User review and hosted
-activation remain distinct from local verification.
+**Published as Site561.** Context and results titles share a control-height
+first row and top alignment when titles or actions wrap. Local main implementation
+is `0213436f`; release source is `e1c93e9f`. The release preserves Results558,
+Library559 and leading-edge560. Types/full lint, all 45 responsive checks, the
+production build and 14 built-renderer English/Arabic cases pass. The uploaded
+622-file archive matches the build and retains the 41 approved migrations,
+workspace access revision7 and environment16. Evidence and the successful native
+deployment receipt are in `outputs/workbench-spacing/release/`. Live human visual
+acceptance remains separate; no further implementation or publication remains.
