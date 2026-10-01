@@ -70,3 +70,17 @@ are tracked separately in the Progress Report. See the
 [workflow contract](still-workflow-observations.md),
 [action-quality guide](still-action-quality.md), and
 [release checks](still-toolbar-release-checks.md).
+
+## Publication and verification
+
+Published as **Production 570**, source `0a548533`, and included in `main`.
+The [native release receipt](evidence/still-goal-settings-release-2026-10-01.json)
+binds the pushed source and inspected archive. Workspace audience revision 7 and
+runtime environment 16 are unchanged. 188 focused source/runtime checks, 44 toolbar
+units, 98 cross-browser/native-zoom checks and 10 goal/settings browser scenarios
+passed. Final types, full lint, inventory, build, generated manifests, localization,
+migration preview and exact saved-archive verification passed. Initial failures
+and scoped rerun receipts remain available; no failed case is counted as a pass.
+
+Publication does not close the three existing product reviews or establish
+real-user benefit. The tests used fictional data and no paid provider calls.

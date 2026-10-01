@@ -1,0 +1,107 @@
+{
+  "date": "2026-10-01",
+  "scope": "ST-ACTIONS-001: Your goal and User settings Command Palette actions, policy still-26, default-on suggestion history with durable account-wide opt-out",
+  "implementationCommit": "5644f528",
+  "sourceCommit": "0a54853351cd6c1bebea6d3ccb343c683124a65d",
+  "mainIntegration": "0a54853351cd6c1bebea6d3ccb343c683124a65d",
+  "productionVersion": 570,
+  "preservedProductionBaseline": {
+    "version": 569,
+    "source": "abfae9fecd5e5da280f4f56b8ae8e368b22a0d43"
+  },
+  "savedVersion": {
+    "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_5e0740073d448191b7240a6d31af178d",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version_number": 570,
+    "source": {
+      "commit_sha": "0a54853351cd6c1bebea6d3ccb343c683124a65d"
+    },
+    "archive_storage": {
+      "archive_format": "tar",
+      "sediment_file_id": "file_000000000f9081f58190e65d848e4582",
+      "content_hash": "sha256:6deeff39b82ab1c2771d1fa0256e2439c58510cfb8fe95dc378eb32c76ddf637",
+      "size_bytes": 44759040,
+      "file_count": 621
+    },
+    "deployment_id": null
+  },
+  "deployment": {
+    "id": "appgdep_6abe88fc232881919b4e4b93a1c7a6e2",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_5e0740073d448191b7240a6d31af178d",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-10-01T16:23:40.804370+00:00"
+  },
+  "audience": {
+    "mode": "workspace_all",
+    "revision": 7,
+    "changed": false
+  },
+  "archive": {
+    "archive": "/Users/westbrook/Documents/repos/codex/outputs/still-settings/release/still-settings-0a548533-held.tar",
+    "archiveSha256": "e9bb8a7f6716339761d6e7858e8ed04c42b9fadba2791ff1f87bf435bfdbe3ef",
+    "normalizedSha256": "6deeff39b82ab1c2771d1fa0256e2439c58510cfb8fe95dc378eb32c76ddf637",
+    "files": 621,
+    "migrations": 41,
+    "savedReceiptVerified": true
+  },
+  "verification": {
+    "build": "evidence/validation/2026-10-01T16-21-56-026Z-57043a43/receipt.json",
+    "typesAndFullLint": "evidence/validation/2026-10-01T16-16-32-911Z-f5700f07/receipt.json",
+    "sourceRuntime": {
+      "source": 102,
+      "runtime": 86,
+      "receipt": "evidence/validation/2026-10-01T16-11-45-416Z-489fbff4/receipt.json"
+    },
+    "toolbar": {
+      "units": 44,
+      "browser": 98,
+      "engines": [
+        "Chromium",
+        "Firefox",
+        "WebKit"
+      ],
+      "nativeZoom": "200% Chromium",
+      "receipt": "evidence/validation/toolbar-9bcb830b-0378-4e63-a08f-8aa19cfb5152/receipt.json"
+    },
+    "goalSettingsBrowser": {
+      "contextScenarios": 9,
+      "workflowScenarios": 1,
+      "observations": 33,
+      "assessmentRevisions": 4,
+      "contextReceipts": [
+        "evidence/still-actions-browser/2026-10-01T16-12-07.850Z/receipt.json",
+        "evidence/still-actions-browser/2026-10-01T16-15-18.142Z/receipt.json"
+      ],
+      "workflowReceipt": "evidence/still-actions-browser/2026-10-01T16-13-45.799Z/workflow/receipt.json"
+    },
+    "releaseQualification": {
+      "cases": 10,
+      "logs": [
+        "checks/release-preflight.log",
+        "checks/release-preflight-journal-qualified.log"
+      ]
+    },
+    "reuse": "The source/runtime selection passed on the same product source as the final candidate. Later changes corrected only browser fixture scoping/menu readiness and registry classification. Initial six context passes and real Worker journey remain qualified; all three affected context cases were rerun successfully. Final types/full lint, toolbar and build qualify the committed release."
+  },
+  "boundaries": [
+    "Suggestion diagnostics remain private, bounded and erasable; creative Event Log is unchanged. History defaults on after authorization, with durable account opt-out. Remembered goals remain explicit and independent.",
+    "Packaged 41 migrations and original 31-migration Memory repair manifest remain unchanged. Exact 0075 source-journal qualification and additive settings-table bootstrap only; held Memory migrations not activated.",
+    "Missing old scoped preferences cannot distinguish prior opt-out from never-enabled history; new durable explicit opt-outs persist.",
+    "Fictional test data only. No paid evaluation, actual-data export, live account journey or real-user study. Full repository test suite and actual-account/archive accessibility acceptance were not run.",
+    "Three existing Creation, Viewer and failure-recovery product reviews remain open; native publication and passing tests do not establish user acceptance."
+  ],
+  "preservedFailures": [
+    "Initial preflight active-SQL guard accidentally included proposal SQL; guard corrected to top-level executable migrations, affected cases pass.",
+    "Initial three browser failures captured startup root context rather than document context or checked before menu rendering; corrected fixture scopes/readiness, all affected cases pass.",
+    "Native source opening found divergence; both histories reconciled with normal merge, preserving published Library status and current registry. No force push."
+  ]
+}
