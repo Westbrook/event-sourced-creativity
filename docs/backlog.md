@@ -741,7 +741,13 @@ settings, and the preserved 41-migration package. Main integration: `a0d4d0d6`.
 
 ### Shared Creator page gutters — 2026-10-01
 
-**Implementation complete; publication authorized and in preparation.** The
+**Integrated into main (`73dc48f8`) and published as Sites562.** Deployment
+`appgdep_6abe7337c998819180da92754ebb78cf` succeeded with environment16 and
+unchanged workspace access revision7. The exact source and 622-file archive
+match; the existing 41 approved migrations are preserved. See the
+[release receipt](evidence/creator-shared-gutters-release-2026-10-01.json).
+
+The
 original document-only alignment omitted Library and other Creator browse
 pages. Creator page containers now supply the same bounded pane inset to
 Projects, project overview, Library, Activity and Deliver. Shell identity,

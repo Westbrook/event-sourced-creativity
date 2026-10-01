@@ -1,0 +1,106 @@
+{
+  "mainImplementationCommit": "73dc48f8146d9379b2fb6968698526e15d559a2d",
+  "version": {
+    "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_f013b00eb0a0819189f8dedd48c84c45",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version_number": 562,
+    "source": {
+      "commit_sha": "fa8ec51762579497d0a85acb29fc0270811dcdee"
+    },
+    "archive_storage": {
+      "archive_format": "tar",
+      "sediment_file_id": "file_0000000009fc81f586638294b069d9e4",
+      "content_hash": "sha256:c25b90e08b0b166431a903ca6fdaa959f57cdaba67bdf1785363ff67410bb4ce",
+      "size_bytes": 44574720,
+      "file_count": 622
+    },
+    "screenshot_url": null,
+    "deployment_id": null
+  },
+  "deployment": {
+    "id": "appgdep_6abe7337c998819180da92754ebb78cf",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_f013b00eb0a0819189f8dedd48c84c45",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-10-01T14:50:50.174918+00:00"
+  },
+  "release": {
+    "candidateCommit": "fa8ec51762579497d0a85acb29fc0270811dcdee",
+    "baselineCommit": "e1c93e9faddda2b782f122e0c133b57eaadb59f2",
+    "projectId": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "changed": [
+      "DESIGN.md",
+      "docs/backlog.md",
+      "docs/components.md",
+      "playwright.creator-gutters.config.mjs",
+      "src/responsive-foundation.css",
+      "tests/browser/README.md",
+      "tests/browser/forma-creator-gutters.spec.mjs",
+      "tests/validation-registry.json"
+    ],
+    "archive": "/private/tmp/forma-shared-gutters-qualified-20261001.tar",
+    "archiveSha256": "89b8c5cdc53a9ee2349767f68614e614d2494e885c7e85fc540f0353e3f711e4",
+    "normalizedSha256": "c25b90e08b0b166431a903ca6fdaa959f57cdaba67bdf1785363ff67410bb4ce",
+    "files": 622,
+    "migrations": 41,
+    "savedReceiptVerified": true,
+    "hostedActions": 0
+  },
+  "verification": {
+    "sourceTests": {
+      "pass": 45,
+      "fail": 0,
+      "skip": 0
+    },
+    "browser": {
+      "tests": 8,
+      "pass": 8,
+      "geometryCases": 72,
+      "pages": [
+        "Library",
+        "Projects",
+        "Project overview",
+        "Document"
+      ],
+      "locales": [
+        "en-US",
+        "ar"
+      ],
+      "viewports": [
+        "320x800",
+        "360x800",
+        "681x991",
+        "767x991",
+        "768x991",
+        "1024x991",
+        "1280x991",
+        "1600x991",
+        "844x390"
+      ],
+      "nativeKeyboard": "Library Resource Memory focus and disclosure",
+      "initialFailure": "New test expected viewport width instead of the content column beside compact trailing navigation; both edges now assert alignment with search. Initial failed run retained."
+    },
+    "types": "passed",
+    "lint": "passed",
+    "build": "passed",
+    "inventory": "passed"
+  },
+  "limitations": [
+    "Synthetic renderer verification, no real-account or live browser acceptance.",
+    "Activity and Deliver inherit the shared container rule but were not separately browser-replayed.",
+    "Full historical suite not repeated."
+  ],
+  "evidence": "outputs/creator-alignment-shared/release",
+  "accessPolicy": {
+    "mode": "workspace_all",
+    "revision": 7
+  }
+}
