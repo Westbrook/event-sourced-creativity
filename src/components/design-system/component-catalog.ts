@@ -3,6 +3,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { icon } from "../icons";
 import { FormaPresentationalElement } from "../presentational-element";
+import "../artifact-summary";
 import { renderApplicationPatternPreview } from "./application-pattern-previews";
 import { copyInterfaceText } from "./clipboard";
 import { componentCatalog, componentLevels, type ComponentCatalogEntry, type ComponentLevel } from "./catalog";
@@ -180,6 +181,11 @@ export class FormaComponentCatalog extends FormaPresentationalElement {
     if (!entry.preview) return nothing;
     const choices = this.#catalog().choices;
     switch (entry.tag) {
+      case "forma-artifact-summary": {
+        const title = this.i18n.t("pattern.referenceImage", "Authorized source reference with its focal point in the upper right");
+        const mediaUrl = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000"><rect width="800" height="1000" fill="#a9c5c5"/><circle cx="600" cy="250" r="110" fill="#d66a3d"/></svg>')}`;
+        return html`<div class="library-output"><div class="library-artifact-open"><forma-artifact-summary .artifact=${{ kind: "storyboard", title, summary: title, items: [{ id: "fictional-frame", title, mediaUrl, focalPoint: { x: .75, y: .25, confidence: .9, method: "attention-region-v2", sampleWidth: 24, sampleHeight: 16 } }] }}></forma-artifact-summary></div></div>`;
+      }
       case "forma-output-requirement-card": {
         const label = this.i18n.t("output.delivery.demo.title", "Executive summary example");
         const content = this.i18n.t("output.delivery.demo.requirement", "One presentation, 5–15 slides, outlining the Document.");

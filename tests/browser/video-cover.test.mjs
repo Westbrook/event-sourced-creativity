@@ -25,6 +25,7 @@ test('actual MP4 capture saves WebP; Forma and Still preview reloads request no 
     });
     const origin=`http://127.0.0.1:${server.httpServer.address().port}`;
     const mount=async(sourceUrl=source.url)=>{
+      await page.setViewportSize({width:1000,height:800});
       await page.goto(origin+'/fixture');
       await page.evaluate(async source=>{
         const {html,render}=await import('/node_modules/lit/index.js');
@@ -56,6 +57,48 @@ test('actual MP4 capture saves WebP; Forma and Still preview reloads request no 
       assert.equal(requests.filter(r=>r.method==='POST'||!r.url.includes('?')).length,0);
       assert.ok(requests.every(r=>r.url.endsWith('?video-cover=webp')));
       await page.screenshot({path:'/private/tmp/forma-webp-video-covers.png',fullPage:true});
+    });
+    await t.test('Library image, video, storyboard and native artifact previews share responsive frames and focal crops',async()=>{
+      await page.setViewportSize({width:1000,height:800});
+      await page.goto(origin+'/fixture');
+      await page.evaluate(async source=>{
+        const {html,render}=await import('/node_modules/lit/index.js');
+        await Promise.all([import('/src/components/artifact-summary.ts'),import('/src/components/output-visual.ts'),import('/src/styles.css'),import('/src/design-system.css')]);
+        const canvas=document.createElement('canvas');canvas.width=800;canvas.height=1200;
+        const ctx=canvas.getContext('2d');ctx.fillStyle='#345';ctx.fillRect(0,0,800,1200);ctx.fillStyle='#fa3';ctx.fillRect(540,180,140,180);
+        const url=canvas.toDataURL(),point={x:.75,y:.25,confidence:.9,method:'attention-region-v2',sampleWidth:24,sampleHeight:16};
+        const output={id:'fictional-image',title:'Fictional portrait',mediaUrl:url,focalPoint:point,quality:'full'};
+        const item={id:'fictional-frame',title:'Coastal light',body:'A fictional opening',mediaUrl:url,focalPoint:point};
+        const artifacts=['video','storyboard','slides','audio','model3d','short_story','scene'].map(kind=>({kind,title:kind,summary:'Fictional preview',mediaUrl:kind==='video'?source:undefined,itemCount:2,items:kind==='storyboard'?[item,{...item,id:'local-focal',focalPoint:undefined}]:[item]}));
+        render(html`<style>main{padding:20px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}body{margin:0}</style>
+          <article class="library-output" data-kind="image"><div class="output-card"><div class="output-art"><forma-output-visual .output=${output} .readOnly=${true}></forma-output-visual></div></div></article>
+          ${artifacts.map(artifact=>html`<article class="library-output" data-kind=${artifact.kind}><a class="library-artifact-open"><forma-artifact-summary .artifact=${artifact}></forma-artifact-summary></a></article>`)}
+          <article class="library-output" data-kind="pending"><a class="library-artifact-open"><forma-artifact-summary .artifact=${{kind:'video',mediaUrl:'/pending-cover.mp4',title:'Pending video',items:[]}}></forma-artifact-summary></a></article>`,document.querySelector('main'));
+      },source.url);
+      await page.waitForFunction(()=>document.querySelector('[data-kind="video"] img')?.style.getPropertyValue('--focal-x')&&document.querySelectorAll('[data-kind="storyboard"] img')[1]?.style.getPropertyValue('--focal-x'));
+      for(const width of [1440,768,390,320]){
+        await page.setViewportSize({width,height:900});
+        await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+        const frames=await page.locator('.library-output').evaluateAll(cards=>cards.map(card=>{
+          const frame=card.querySelector('.output-art,.artifact-summary'),rect=frame.getBoundingClientRect();
+          return {kind:card.dataset.kind,width:rect.width,height:rect.height,images:[...frame.querySelectorAll('img')].map(img=>({fit:getComputedStyle(img).objectFit,position:getComputedStyle(img).objectPosition,x:img.style.getPropertyValue('--focal-x'),y:img.style.getPropertyValue('--focal-y'),width:img.getBoundingClientRect().width,height:img.getBoundingClientRect().height}))};
+        }));
+        for(const frame of frames){assert.ok(Math.abs(frame.width/frame.height-1.5)<.005,`${width}: ${JSON.stringify(frame)}`);assert.ok(Math.abs(frame.width-frames[0].width)<1,`${frame.kind} has equal inset`);}
+        for(const frame of frames.filter(frame=>['image','video','storyboard'].includes(frame.kind))){
+          for(const img of frame.images){assert.equal(img.fit,'cover');assert.equal(img.position,`${img.x} ${img.y}`);}
+          if(frame.kind==='image'||frame.kind==='storyboard')assert.equal(frame.images[0].position,'75% 25%');
+          if(frame.kind==='video'){assert.ok(Math.abs(frame.images[0].width-frame.width)<1);assert.ok(Math.abs(frame.images[0].height-frame.height)<1);}
+        }
+        assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      }
+      await page.screenshot({path:'/private/tmp/forma-library-media-parity.png',fullPage:true});
+      // Thumbnail constraints must not crop the full image dialog.
+      await page.locator('[data-kind="image"] forma-output-visual').evaluate(async visual=>{visual.interactive=true;await visual.updateComplete;});
+      await page.locator('[data-kind="image"] .generated-output-trigger').click();
+      await page.locator('dialog[open]').waitFor();
+      assert.equal(await page.locator('dialog[open] img').evaluate(img=>getComputedStyle(img).objectFit),'contain');
+      await page.keyboard.press('Escape');
+      assert.equal(await page.locator('dialog[open]').count(),0);
     });
     await t.test('a transient upload failure retries without a preview video element',async()=>{
       const retry=await storeGeneratedMedia(h.env,h.owner,'browser-cover-retry',mp4,'fixture','video/mp4');

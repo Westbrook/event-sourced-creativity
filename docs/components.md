@@ -7,11 +7,19 @@ The living reference is `/knowledge/design-system`;
 `/knowledge/guidance` publishes privacy, accessibility, and localization rules.
 Every example is fictional and store-independent.
 
-Library output thumbnails use a consistent responsive 3:2 frame for individual
-images and prompt-fan previews. Images fill their thumbnail with `object-fit:
-cover`, using the shared OutputVisual's generated focal-point coordinates for
-`object-position` (center fallback). Full-image dialogs keep their uncropped
-presentation; thumbnail styling must stay scoped to the preview, not the dialog.
+Library output thumbnails use one responsive 3:2 frame with equal border insets
+for individual images, prompt fans, video covers, storyboard summaries, and other
+artifact summaries. Loading video placeholders reserve the same frame. Raster
+previews fill their available area with `object-fit: cover` and focal-aware
+`object-position`; storyboard frames retain their individual saved Focus Points.
+OutputVisual and ArtifactSummary use the shared local image analyzer when a
+saved point is absent. Video analysis uses the actual saved WebP cover, never a
+scene's potentially different source image. Unreadable pixels fall back to center.
+This does not call a provider or modify history. Slides scale their complete
+native layout inside the common frame; text/audio/3D summaries remain icon and
+copy previews. Full image and artifact viewers retain their original presentation.
+Thumbnail sizing stays scoped to Library previews. The ArtifactSummary catalog
+example mounts the real component with fictional inline artwork.
 
 Before creating an interface, inspect the live reference, this guide,
 `DESIGN.md`, and `custom-elements.json`. Reuse an exact production component

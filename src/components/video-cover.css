@@ -2,7 +2,7 @@ forma-video-cover { display: block; width: 100%; min-width: 0; overflow: hidden;
 forma-video-cover > img { display: block; width: 100%; height: auto; }
 forma-video-cover > .video-cover-placeholder { display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9; color: inherit; background: color-mix(in srgb, currentColor 5%, transparent); }
 .artifact-summary > forma-video-cover { height: 100%; }
-.artifact-summary > forma-video-cover > img { height: 100%; object-fit: cover; }
+.artifact-summary > forma-video-cover > img { height: 100%; object-fit: cover; object-position: var(--focal-x,50%) var(--focal-y,50%); }
 .canvas-document-artifact-preview > forma-video-cover,
 .canvas-document-artifact-preview > forma-video-cover > img { height: 100%; object-fit: cover; }
 .canvas-standalone-artifact > forma-video-cover { min-height: 8rem; }

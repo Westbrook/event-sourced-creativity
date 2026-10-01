@@ -1045,7 +1045,7 @@
           "tagName": "forma-artifact-summary",
           "customElement": true,
           "summary": "Artifact summary application interface.",
-          "description": "One reusable visual summary for every non-image creative result.",
+          "description": "One reusable visual summary for every non-image creative result, with focal-aware image previews.",
           "superclass": {
             "name": "FormaPresentationalElement",
             "module": "src/components/presentational-element.ts"
