@@ -133,6 +133,7 @@
     "tests/browser/isolated-presentation-owners.spec.mjs": "browser",
     "tests/browser/n6-source-advisory-review.test.mjs": "browser",
     "tests/browser/still-action-context.test.mjs": "browser",
+    "tests/browser/still-action-workflow.test.mjs": "browser",
     "tests/browser/still-block-navigation.test.mjs": "browser",
     "tests/browser/still-creation-help.test.mjs": "browser",
     "tests/browser/still-document-scroll.test.mjs": "browser",
@@ -1360,6 +1361,7 @@
     "tests/stable-localized-template-contract.test.mjs": "runtime",
     "tests/still-action-context-client.test.ts": "source",
     "tests/still-action-metadata.test.mjs": "source",
+    "tests/still-action-operation-evidence.test.ts": "source",
     "tests/still-action-outcomes-authorization.test.mjs": "runtime",
     "tests/still-action-outcomes.test.mjs": "runtime",
     "tests/still-api.test.mjs": "source",
@@ -1421,6 +1423,7 @@
     "tests/still-palette.test.mjs": "source",
     "tests/still-pending-results.test.mjs": "runtime",
     "tests/still-presentation.test.mjs": "source",
+    "tests/still-quality-review.test.ts": "source",
     "tests/still-refresh-repair.test.mjs": "runtime",
     "tests/still-rejection-evidence.test.mjs": "source",
     "tests/still-rejection.test.mjs": "source",
@@ -2722,6 +2725,13 @@
       "owner": "Forma browser maintainer",
       "lane": "browser",
       "command": "node --import tsx --test --test-concurrency=1 tests/browser/still-action-context.test.mjs",
+      "resource": "owned fixture server and pinned Playwright browser; fresh scenario state",
+      "prerequisites": "Installed bundled browser; local port/process permission. Suite owns its explicit fixture startup. See tests/browser/README.md."
+    },
+    "tests/browser/still-action-workflow.test.mjs": {
+      "owner": "Forma browser maintainer",
+      "lane": "browser",
+      "command": "node --import tsx --test --test-concurrency=1 tests/browser/still-action-workflow.test.mjs",
       "resource": "owned fixture server and pinned Playwright browser; fresh scenario state",
       "prerequisites": "Installed bundled browser; local port/process permission. Suite owns its explicit fixture startup. See tests/browser/README.md."
     },
@@ -11320,6 +11330,13 @@
       "resource": "isolated Node process",
       "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
     },
+    "tests/still-action-operation-evidence.test.ts": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "source",
+      "command": "node scripts/validation.mjs source tests/still-action-operation-evidence.test.ts",
+      "resource": "isolated Node process",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
     "tests/still-action-outcomes-authorization.test.mjs": {
       "owner": "Forma domain maintainer: still",
       "lane": "runtime",
@@ -11744,6 +11761,13 @@
       "owner": "Forma domain maintainer: still",
       "lane": "source",
       "command": "node scripts/validation.mjs source tests/still-presentation.test.mjs",
+      "resource": "isolated Node process",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-quality-review.test.ts": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "source",
+      "command": "node scripts/validation.mjs source tests/still-quality-review.test.ts",
       "resource": "isolated Node process",
       "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
     },
@@ -13010,6 +13034,15 @@
       "policy": "Explicit input; unset defaults remain unchanged. A disabled or missing variant is unverified, never a pass."
     },
     {
+      "file": "tests/browser/still-action-workflow.test.mjs",
+      "flags": [
+        "CREATION_PLAYWRIGHT_MODULE",
+        "CREATION_TEST_BROWSER"
+      ],
+      "owner": "Maintainer of the named test/config/tool",
+      "policy": "Explicit input; unset defaults remain unchanged. A disabled or missing variant is unverified, never a pass."
+    },
+    {
       "file": "tests/browser/still-creation-help.test.mjs",
       "flags": [
         "CREATION_PLAYWRIGHT_MODULE",
@@ -14263,5 +14296,5 @@
     "tests/browser/README.md"
   ],
   "exclusions": {},
-  "classificationInput": "2ec677663ce3a03679e2fb835fefb371b2c4e08fdf2b4bc4a07a4e994b392c39"
+  "classificationInput": "a846bc7cba24c3f3fa4da56a0bd888fec233fdeaae829a4efc0f165acb5052b4"
 }

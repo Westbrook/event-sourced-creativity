@@ -132,3 +132,89 @@ test('interactive latency belongs to the first exposed final delivery, including
   assert.deepEqual(rows.map(row=>row.interactiveLatencyMs),[170,undefined,12,48,undefined]);
   assert.ok(rows.every(row=>!('deliveryKey' in row)));
 });
+
+test('workflow observations preserve invocation, version and attempt linkage without passive inference',async()=>{
+  const {controller,observations}=setup();await tick();
+  controller.select('add-context',undefined,'document','direct');
+  const workflow={version:'still-workflow-v1' as const,instanceId:'draft-one',stage:'ideas' as const,transition:'approved' as const,status:'attempted' as const,target:{kind:'creation-node' as const,id:'node-one',revision:'hash-one'},draftRevision:3,occurredAt:new Date().toISOString()};
+  const attempt=controller.workflow('add-context',workflow);
+  controller.workflow('add-context',{...workflow,status:'confirmed'},attempt);
+  workflow.target.revision='later-hash';await controller.flush();
+  const rows=observations(),attemptRow=rows.find(row=>row.id===attempt)!;
+  assert.equal(attemptRow.parentId,rows.find(row=>row.kind==='invocation')!.id);
+  assert.equal(attemptRow.workflow!.target.revision,'hash-one');
+  assert.equal(rows.at(-1)!.parentId,attempt);assert.equal(rows.at(-1)!.workflow!.status,'confirmed');
+  assert.ok(rows.every(row=>!row.assessment&&!row.outcome));
+});
+
+test('lost observation response retries the identical id before delivering its dependent transition',async()=>{
+  const calls:ActionObservationInput[]=[];const retained=new Map<string,ActionObservationInput>();let fail=true;
+  const controller=new StillActionContext(async <T>(path:string,body?:unknown)=>{
+    if(path==='/api/still/action-observations'){const row=body as ActionObservationInput;calls.push(structuredClone(row));if(!retained.has(row.id))retained.set(row.id,structuredClone(row));if(fail){fail=false;throw new Error('Lost response after server saved');}return {observation:{...retained.get(row.id)!,recordedAt:new Date().toISOString(),expiresAt:expiresAt()}} as T;}
+    return {enabled:true,expiresAt:expiresAt(),directDecisionId:'direct-context',directContextExpiresAt:expiresAt()} as T;
+  });
+  controller.enter('actor-one',scope);await tick();
+  const workflow={version:'still-workflow-v1' as const,instanceId:'draft-one',stage:'final-review' as const,transition:'final-review' as const,status:'confirmed' as const,target:{kind:'creation-draft' as const,id:'draft-one',revision:'3'},draftRevision:3,occurredAt:new Date().toISOString()};
+  const first=controller.workflow('add-context',workflow);controller.workflow('add-context',{...workflow,transition:'presented'});await controller.flush();
+  assert.equal(calls.length,3);assert.equal(retained.size,2);assert.deepEqual(calls[0],calls[1]);assert.equal(calls[2]!.parentId,first);
+});
+
+test('late initial context reads cannot resurrect disabled or erased history',async()=>{
+  for(const mutation of ['disable','erase'] as const){
+    const initial=deferred<ActionContext>();
+    const controller=new StillActionContext(async <T>(_path:string,_body?:unknown,method?:string)=>method?{enabled:false} as T:await initial.promise as T);
+    controller.enter('actor-one',scope);
+    if(mutation==='disable')await controller.setEnabled(false);else await controller.erase();
+    initial.resolve({enabled:true,expiresAt:expiresAt(),directDecisionId:'old-context',directContextExpiresAt:expiresAt()});await tick();
+    assert.equal(controller.value.enabled,false);assert.equal(controller.value.directDecisionId,undefined);
+  }
+});
+
+test('explicit assessments remain unknown by default and corrected evidence appends to its exact parent',async()=>{
+  const calls:ActionObservationInput[]=[];
+  const controller=new StillActionContext(async <T>(path:string,body?:unknown)=>{
+    if(path==='/api/still/action-observations'){const row=body as ActionObservationInput;calls.push(row);return {observation:{...row,recordedAt:new Date().toISOString(),expiresAt:expiresAt()}} as T;}
+    return {enabled:true,expiresAt:expiresAt(),directDecisionId:'direct-context',directContextExpiresAt:expiresAt()} as T;
+  });
+  controller.enter('actor-one',scope);await tick();const now=new Date().toISOString();
+  const parent=controller.workflow('add-context',{version:'still-workflow-v1',instanceId:'draft-one',stage:'final-review',transition:'final-review',status:'confirmed',target:{kind:'creation-draft',id:'draft-one',revision:'3'},draftRevision:3,occurredAt:now});
+  const assessment={version:'still-quality-assessment-v1' as const,assessmentId:'assessment-one',revision:1,target:{kind:'creation-draft' as const,id:'draft-one',revision:'review-hash'},goalId:'goal-one',criteria:[{index:0,result:'unknown' as const}],acceptance:'unknown' as const,workflowInstanceId:'draft-one',occurredAt:now,horizonStartedAt:now,horizonMs:7*86400000};
+  const saved=await controller.assess('add-context',assessment);
+  const corrected=await controller.assess('add-context',{...assessment,revision:2,supersedesId:saved.id,criteria:[{index:0,result:'met'}],acceptance:'accepted'});
+  assert.equal(saved.parentId,parent);assert.equal(corrected.parentId,saved.id);assert.equal(saved.assessment!.acceptance,'unknown');assert.equal(corrected.assessment!.acceptance,'accepted');
+  assert.equal(calls.filter(row=>row.kind==='assessment').length,2);assert.equal(calls.some(row=>row.kind==='commit'||row.kind==='outcome'),false);
+});
+
+test('a permanently lost transition is disclosed and a later workflow resumes with a fresh direct anchor',async()=>{
+  const calls:ActionObservationInput[]=[];let unavailable=true;
+  const controller=new StillActionContext(async <T>(path:string,body?:unknown)=>{
+    if(path==='/api/still/action-observations'){
+      const row=body as ActionObservationInput;calls.push(row);
+      if(unavailable)throw new Error('Offline');
+      return {observation:{...row,recordedAt:new Date().toISOString(),expiresAt:expiresAt()}} as T;
+    }
+    return {enabled:true,expiresAt:expiresAt(),directDecisionId:'direct-context',directContextExpiresAt:expiresAt()} as T;
+  });
+  controller.enter('actor-one',scope);await tick();
+  const workflow={version:'still-workflow-v1' as const,instanceId:'draft-one',stage:'ideas' as const,transition:'presented' as const,status:'confirmed' as const,target:{kind:'creation-draft' as const,id:'draft-one',revision:'3'},draftRevision:3,occurredAt:new Date().toISOString()};
+  controller.workflow('add-context',workflow);controller.workflow('add-context',{...workflow,transition:'approved'});await controller.flush();
+  assert.match(controller.error,/could not be saved/);assert.equal(calls.length,4);
+  unavailable=false;const resumed=controller.workflow('add-context',{...workflow,transition:'resumed'});await controller.flush();
+  assert.equal(calls.at(-1)!.id,resumed);assert.equal(calls.at(-1)!.parentId,undefined);assert.equal(calls.at(-1)!.source,'direct');assert.equal(controller.value.observations?.at(-1)?.workflow?.transition,'resumed');
+});
+
+test('workflow outcomes cannot borrow an unrelated latest commit attribution',async()=>{
+  const calls:ActionObservationInput[]=[];
+  const controller=new StillActionContext(async <T>(path:string,body?:unknown)=>{
+    if(path==='/api/still/action-observations'){const row=body as ActionObservationInput;calls.push(row);return {observation:{...row,recordedAt:new Date().toISOString(),expiresAt:expiresAt()}} as T;}
+    return {enabled:true,expiresAt:expiresAt(),directDecisionId:'direct-context',directContextExpiresAt:expiresAt()} as T;
+  });
+  controller.enter('actor-one',scope);await tick();
+  controller.select('edit-block',undefined,'document','direct');controller.commit({eventIds:['unrelated-edit']});await controller.flush();controller.finish();
+  const unrelated=controller.latestCommit!,now=new Date().toISOString();
+  const finalize=controller.workflow('add-context',{version:'still-workflow-v1',instanceId:'draft-one',stage:'finalized',transition:'finalize',status:'confirmed',target:{kind:'creation-draft',id:'draft-one',revision:'7'},draftRevision:7,operationId:'operation-one',occurredAt:now});
+  const outcome=controller.outcome({version:'still-outcome-v1',outcomeId:'creation:operation-one:acknowledged-commit',revision:1,type:'acknowledged-commit',status:'observed',target:{kind:'creation-draft',id:'draft-one',revision:'approval-hash'},workflowInstanceId:'draft-one',operationId:'operation-one',occurredAt:now,horizonStartedAt:now,horizonMs:7*86400000});
+  await controller.flush();const row=calls.find(item=>item.id===outcome)!;
+  assert.equal(row.actionId,'add-context');assert.equal(row.parentId,finalize);assert.notEqual(row.parentId,unrelated.id);assert.equal(row.eventIds,undefined);assert.equal(row.jobId,undefined);
+  assert.equal(controller.outcome({...row.outcome!,workflowInstanceId:'missing-workflow'}),undefined,'An unknown workflow cannot fall back to an unrelated commit');
+});

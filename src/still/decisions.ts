@@ -14,7 +14,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-24';
+export const POLICY_VERSION = 'still-25';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback; generation?:GenerationDecisionContext; surfaceContext?:SurfaceContext; goal?:ExplicitGoal };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -69,7 +69,7 @@ export function evaluateEligibility(p: CreativeProjection, pos: Position, abilit
       if (a.id === 'inspect-rejection') return pos.view === 'rejection' ? 'Already inspecting rejection' : job.inspectable ? '' : 'Select a failed generation';
       if (a.id === 'view-output') return pos.view === 'rejection' ? '' : 'Already viewing generation';
       if (a.id === 'refresh-generation') return job.active ? 'Status updates automatically while running' : '';
-      if (!job.canStartNew || job.needsAcknowledgement) return 'This attempt is not ready for a separate generation';
+      if (!job.canStartNew || job.needsAcknowledgement || job.outcomeKind === 'unknown-submission' || job.failureCode === 'provider_submission_uncertain') return 'This attempt is not ready for a separate generation';
       return !abilities.generate ? 'Generation permission required' : !abilities.formats.includes(job.format) ? 'Provider unavailable' : '';
     }
     if (a.id === 'projects') return pos.view === 'projects' ? 'Already viewing projects' : '';

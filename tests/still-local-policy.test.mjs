@@ -16,7 +16,8 @@ test('page facts supply useful defaults without filling the toolbar',()=>{
  assert.deepEqual(ids(evaluate({...projection,blocks:[],libraryBlocks:[]},pos)),['add-context','documents']);
  assert.deepEqual(ids(evaluate(projection,{...pos,blockId:'b'})),['edit-block','context','compose','use-in']);
  const locked=structuredClone(projection);locked.blocks[0].locked=true;
- assert.deepEqual(ids(evaluate(locked,{...pos,blockId:'b'})),['unlock','context']);
+ assert.deepEqual(ids(evaluate(locked,{...pos,blockId:'b'})),['context']);
+ assert.ok(eligibleActions(locked,{...pos,blockId:'b'},abilities).some(a=>a.id==='unlock'));
  const excluded=structuredClone(projection);excluded.blocks[0].properties.weight=0;
  assert.deepEqual(ids(evaluate(excluded,{...pos,blockId:'b'})),['toggle-context','edit-block','context']);
  const read=evaluate(projection,{...pos,blockId:'b'},{...abilities,author:false,generate:false});
@@ -35,7 +36,20 @@ test('only completed work changes continuity; cancelled clicks do not',()=>{
 });
 test('uncertain generation favors status and context without proposing automatic submission',()=>{
  const position={...pos,view:'generation',outputId:'job',generation:{jobId:'job',documentId:'d',format:'image',active:false,mayDuplicateCharge:true,canStartNew:true}};
- assert.deepEqual(ids(evaluate(projection,position)),['refresh-generation','context','generate-again']);
+ assert.deepEqual(ids(evaluate(projection,position)),['refresh-generation','context']);
+ assert.ok(eligibleActions(projection,position,abilities).some(a=>a.id==='generate-again'));
+ assert.deepEqual(ids(evaluate(projection,{...position,generation:{...position.generation,inspectable:true}})),['inspect-rejection','refresh-generation','context']);
+ assert.ok(ids(evaluate(projection,{...position,generation:{...position.generation,mayDuplicateCharge:false}})).includes('generate-again'));
+ for(const state of [{failureCode:'provider_submission_uncertain'},{outcomeKind:'unknown-submission'}]){
+  assert.ok(!eligibleActions(projection,{...position,generation:{...position.generation,...state}},abilities).some(a=>a.id==='generate-again'),'contradictory canStartNew cannot bypass explicit uncertainty');
+ }
+});
+test('locked project ideas retain review and deliberate unlock discovery without a document selection',()=>{
+ const locked=structuredClone(projection);locked.blocks=[];locked.libraryBlocks[0].locked=true;
+ const position={...pos,view:'ideas',documentId:'',blockId:'b'};
+ assert.deepEqual(ids(evaluate(locked,position)),['ideas']);
+ assert.ok(eligibleActions(locked,position,abilities).some(a=>a.id==='unlock'));
+ assert.ok(!ids(evaluate(locked,{...position,intent:'I want to unlock this'})).includes('unlock'),'free text is not a local intent interpreter');
 });
 test('local format preferences stay explicit, document scoped and subordinate to Jev',()=>{
  assert.equal(explicitLocalFormat('Generate a 3D model'),'model3d');

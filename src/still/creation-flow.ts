@@ -21,13 +21,19 @@ import type {StillClient} from './client.ts';
 import type {WorkflowAction,WorkflowToolbar} from './workflow-toolbar.ts';
 import {isCreationReplacementRangeValid,suggestCreationReplacementRange,prepareCreationReplacement,decorateCreationReplacements,acceptCreationReplacements,type CreationReplacementPreview} from './creation-replacement.ts';
 import {CreationController} from './creation-controller.ts';
+import type {StillActionContext} from './action-context-client.ts';
+import type {ActionObservation,QualityAssessment} from './action-outcomes.ts';
+import {creationQualityCopy} from './creation-quality-copy.ts';
 import {draftIdeaChoices} from './creation-draft-ideas.ts';
 import {creationTokenImporter} from './creation-token-import.ts';
 import {CreationCorrectionsController,renderCreationCorrections} from './creation-corrections.ts';
 
 /** One capture surface and an explicit, version-bound review of its retained graph. */
 export class StillCreationFlow extends LitElement {
-  static properties={client:{attribute:false},entryKind:{type:String}};
+  static properties={client:{attribute:false},entryKind:{type:String},actionContext:{attribute:false}};
+  declare actionContext?:StillActionContext;
+  private qualityKey='';private qualityPresented='';private qualityBusy=false;private qualityMessage='';
+  private qualityResults:QualityAssessment['criteria']=[];private qualityAcceptance:QualityAssessment['acceptance']='unknown';private qualitySaved?:ActionObservation;
   declare client:StillClient;
   entryKind:CreationEntryKind='idea';
   private flow?:CreationController;
@@ -67,9 +73,10 @@ export class StillCreationFlow extends LitElement {
   disconnectedCallback(){super.disconnectedCallback();window.removeEventListener('beforeunload',this.beforeUnload);window.removeEventListener('keydown',this.helpSaveShortcut,true);this.flow?.dispose();this.clearEditor();}
   protected firstUpdated(){
     const session=this.client.session;if(!session)return;
-    this.flow=new CreationController({entryKind:this.entryKind,scope:{actorUserId:session.user.userId,projectId:this.entryKind==='project'?null:this.client.position.projectId||null,documentId:this.entryKind==='idea'?this.client.position.documentId||null:null,custodyKey:session.projectContext?.organizationId??'personal',permissionEpoch:session.permissionEpoch??''},request:this.client.creationRequest.bind(this.client),onChange:()=>this.requestUpdate()});
+    this.flow=new CreationController({entryKind:this.entryKind,scope:{actorUserId:session.user.userId,projectId:this.entryKind==='project'?null:this.client.position.projectId||null,documentId:this.entryKind==='idea'?this.client.position.documentId||null:null,custodyKey:session.projectContext?.organizationId??'personal',permissionEpoch:session.permissionEpoch??''},request:this.client.creationRequest.bind(this.client),onChange:()=>this.requestUpdate(),onWorkflow:(observation,parentId)=>this.actionContext?.workflow(this.creationActionId,observation,parentId)});
     void this.flow.start();
   }
+  private get creationActionId(){return this.entryKind==='project'?'new-project':this.entryKind==='document'?'new-document':'add-context';}
   protected updated(){
     this.dispatchEvent(new Event('workflow-toolbar-change',{bubbles:true}));this.connectEditor();
     const flow=this.flow,key=flow?.plan?`${flow.currentStage}:${flow.currentId}`:'input';
@@ -78,6 +85,7 @@ export class StillCreationFlow extends LitElement {
     if(contentKey!==this.fullContentKey){this.fullContentKey=contentKey;this.contentReached=false;this.requestUpdate();}
     const body=this.querySelector<HTMLElement>('.creation-full-content');
     if(body&&!this.contentReached&&body.scrollHeight<=body.clientHeight+body.scrollTop+2){this.contentReached=true;this.requestUpdate();}
+    this.updateQualityReview();
     if(flow?.receipt&&flow.receipt.operationId!==this.deliveredReceipt)this.done(flow.receipt);
   }
   private clearEditor(){this.editorDisposers.forEach(dispose=>dispose());this.editorDisposers=[];this.registeredEditor=undefined;}
@@ -127,7 +135,7 @@ export class StillCreationFlow extends LitElement {
     actions.push(back);return {...semantic,actions,status:flow.status,pending:flow.busy,recovery:!!flow.error};
   }
   private async run(work:()=>unknown){const flow=this.flow;if(!flow||flow.busy||this.composing||this.helpOpen)return;flow.busy=true;flow.error='';this.requestUpdate();try{await work();}catch(error){flow.reportFailure(error);}finally{flow.busy=false;this.requestUpdate();if(flow.error&&!flow.plan){await this.updateComplete;this.querySelector<EnRichTextEditor>('#creation-input')?.focus();}}}
-  private done(receipt:CreationReceipt){if(receipt.operationId===this.deliveredReceipt)return;this.deliveredReceipt=receipt.operationId;this.dispatchEvent(new CustomEvent<CreationReceipt>('creation-done',{bubbles:true,detail:receipt}));}
+  private done(receipt:CreationReceipt){if(receipt.operationId===this.deliveredReceipt)return;this.deliveredReceipt=receipt.operationId;if(receipt.status==='committed'&&this.flow){const now=new Date().toISOString();this.actionContext?.outcome({version:'still-outcome-v1',outcomeId:`creation:${receipt.operationId}:acknowledged-commit`,revision:1,type:'acknowledged-commit',status:'observed',target:{kind:'creation-draft',id:this.flow.draft.id,revision:receipt.approvalHash},workflowInstanceId:this.flow.draft.id,operationId:receipt.operationId,occurredAt:now,horizonStartedAt:now,horizonMs:7*86400000});}this.dispatchEvent(new CustomEvent<CreationReceipt>('creation-done',{bubbles:true,detail:receipt}));}
   private move(delta:number){const flow=this.flow;if(!flow?.stageItems.length)return;const index=flow.stageItems.findIndex(item=>item.id===flow.currentId);flow.navigate(flow.stageItems[(index+delta+flow.stageItems.length)%flow.stageItems.length].id);}
   private nextUnseen(){const flow=this.flow;if(!flow)return;for(const stage of flow.stages){flow.stage(stage);const next=flow.stageItems.find(item=>item.node?flow.review.nodes[item.id]?.presentedHash!==flow.hashes.nodeHashes[item.id]:item.uses.some(use=>flow.review.uses[use.id]?.presentedHash!==flow.hashes.useHashes[use.id]));if(next){flow.navigate(next.id);return;}}}
   private nextIncomplete(){const flow=this.flow;if(!flow)return;for(const stage of flow.stages){flow.stage(stage);const next=flow.stageItems.find(item=>item.node?!flow.review.nodes[item.id]?.complete:item.uses.some(use=>!flow.review.uses[use.id]?.complete));if(next){flow.navigate(next.id);return;}}}
@@ -154,7 +162,7 @@ export class StillCreationFlow extends LitElement {
   private labelFor(id:string){const node=this.flow?.plan?.nodes.find(node=>node.id===id);if(node)return node.title.trim()||`Untitled ${node.kind==='idea'?'Idea':node.kind==='document'?'Document':'Project'}`;return String(this.availableBlocks.find(block=>block.id===id)?.properties.label??this.client.projection.documents.find(document=>document.id===id)?.title??id);}
   private async openHelp(event:MouseEvent){
     (event.currentTarget as HTMLElement).focus({preventScroll:true});
-    this.helpOpen=true;this.requestUpdate();
+    this.helpOpen=true;this.flow?.observeWorkflow('help-opened');this.requestUpdate();
     await this.updateComplete;
     await this.querySelector<LitElement>('.creation-help-dialog')?.updateComplete;
     // Slotted autofocus differs across engines; establish the same reading start
@@ -228,12 +236,53 @@ export class StillCreationFlow extends LitElement {
    else{await flow.acceptReferenceSelection(data.selection,data.sourceBodies);editor.disabled=false;try{if(this.referencePicker){if(!this.referencePicker.commit({id:preview.id,label:'Selected Ideas',insert:preview.runs}))throw new Error('The reference picker changed. Choose the Document again.');this.referencePicker=undefined;}else{const decisions=acceptCreationReplacements(editor,[preview],data.selection);flow.recordDecisions(decisions);}}finally{editor.disabled=flow.busy;}}
    await flow.flush();this.cancelReplacement();}
   private renderReplacement(){const preview=this.replacement,flow=this.flow;if(!preview||!flow)return nothing;return html`<section class="creation-replacement-preview" aria-label="Review exact reference replacement"><h3>${preview.passage?'Review this passage':'Insert at your selected position'}</h3><h4>Draft passage</h4><blockquote>${preview.passage||'Insertion point — no supplied text will be removed.'}</blockquote><h4>Included source content and dependencies</h4>${preview.sources.map(source=>html`<article><h4>${source.title}${source.root?'':' · included dependency'}</h4><p class="creation-review-prose">${source.text}</p><small>Source revision ${source.revision}</small></article>`)}<label>Keep these details<textarea .value=${live(this.remainingText)} rows="4" ?disabled=${flow.busy} @input=${(event:Event)=>{this.remainingText=(event.target as HTMLTextAreaElement).value;this.updateReplacement();}}></textarea></label><p>All selected text is kept by default. Remove words only when the disclosed references fully preserve their meaning and qualifications.</p><h4>Resulting passage</h4><p class="creation-review-prose">${this.partialMode?'Independent '+this.partialTitle+': '+this.partialExcerpt:preview.resultingText}</p><button type="button" ?disabled=${flow.busy} @click=${()=>void this.applyReplacement().catch(e=>flow.reportFailure(e))}>Apply reviewed references</button><button type="button" ?disabled=${flow.busy} @click=${()=>this.cancelReplacement()}>Cancel replacement</button></section>`;}
+  private updateQualityReview(){
+    const flow=this.flow,goal=this.actionContext?.value.goal;
+    if(!flow?.plan||flow.currentStage!=='final')return;
+    const key=`${flow.draft.id}/${flow.hashes.approvalHash}/${goal?.id??''}`;
+    if(key!==this.qualityKey&&!this.qualityBusy){
+      this.qualityKey=key;this.qualityMessage='';this.qualitySaved=this.actionContext?.value.observations?.filter(row=>row.assessment?.workflowInstanceId===flow.draft.id&&row.assessment.target.revision===flow.hashes.approvalHash&&row.assessment.goalId===goal?.id).sort((a,b)=>b.assessment!.occurredAt.localeCompare(a.assessment!.occurredAt)||b.assessment!.revision-a.assessment!.revision)[0];
+      this.qualityResults=goal?.criteria.map((_,index)=>({index,result:this.qualitySaved?.assessment?.criteria.find(value=>value.index===index)?.result??'unknown'}))??[];
+      this.qualityAcceptance=this.qualitySaved?.assessment?.acceptance??'unknown';this.requestUpdate();
+    }
+    // The stage transition is separate from the actual, interactive review presentation.
+    if(this.qualityPresented!==key&&!flow.busy&&this.actionContext?.loaded&&this.actionContext.value.enabled){
+      if(flow.observeWorkflow('presented'))this.qualityPresented=key;
+    }
+  }
+  private async saveQuality(withdraw=false){
+    const flow=this.flow,context=this.actionContext,goal=context?.value.goal,copy=creationQualityCopy(this.locale.locale);
+    if(!flow?.plan||flow.currentStage!=='final'||!context?.value.enabled||!goal?.criteria.length||this.qualityBusy)return;
+    const revision=flow.hashes.approvalHash,key=this.qualityKey,previous=this.qualitySaved?.assessment;
+    this.qualityBusy=true;this.qualityMessage='';this.requestUpdate();
+    try{
+      await flow.flush();await flow.refreshHashes();
+      if(!this.isConnected||this.flow!==flow||flow.currentStage!=='final'||revision!==flow.hashes.approvalHash||key!==`${flow.draft.id}/${flow.hashes.approvalHash}/${context.value.goal?.id??''}`)throw new Error(copy.stale);
+      if(!previous)flow.observeWorkflow('final-review');
+      const now=new Date().toISOString();
+      const assessment:QualityAssessment={version:'still-quality-assessment-v1',assessmentId:previous?.assessmentId??crypto.randomUUID(),revision:(previous?.revision??0)+1,...(this.qualitySaved?{supersedesId:this.qualitySaved.id}:{}),target:{kind:'creation-draft',id:flow.draft.id,revision},workflowInstanceId:flow.draft.id,goalId:goal.id,criteria:withdraw||this.qualityAcceptance==='revoked'?[]:structuredClone(this.qualityResults),acceptance:withdraw?'revoked':this.qualityAcceptance,occurredAt:now,horizonStartedAt:previous?.horizonStartedAt??now,horizonMs:previous?.horizonMs??7*86400000};
+      this.qualitySaved=await context.assess(this.creationActionId,assessment);
+      this.qualityAcceptance=assessment.acceptance;this.qualityMessage=withdraw?copy.withdrawn:previous?copy.savedCorrection:copy.saved;
+    }catch(error){this.qualityMessage=error instanceof Error&&error.message===copy.stale?copy.stale:copy.error;}
+    finally{this.qualityBusy=false;this.requestUpdate();}
+  }
+  private renderQuality(){
+    const context=this.actionContext,goal=context?.value.goal,copy=creationQualityCopy(this.locale.locale);
+    return html`<details class="creation-quality" lang=${this.locale.locale} dir=${this.locale.direction}><summary>${copy.title}</summary><p>${copy.intro}</p>
+      ${!context?.value.enabled?html`<p>${copy.optIn}</p>`:!goal?.criteria.length?html`<p>${copy.rememberCriteria}</p>`:html`
+        <fieldset ?disabled=${this.qualityBusy||!!this.flow?.busy}><legend>${copy.ratingLabel}</legend>
+          ${goal.criteria.map((criterion,index)=>html`<label>${criterion}<select .value=${live(this.qualityResults.find(value=>value.index===index)?.result??'unknown')} @change=${(event:Event)=>{this.qualityResults=this.qualityResults.map(value=>value.index===index?{index,result:(event.target as HTMLSelectElement).value as QualityAssessment['criteria'][number]['result']}:value);}}><option value="unknown">${copy.unknown}</option><option value="met">${copy.met}</option><option value="not-met">${copy.notMet}</option></select></label>`)}
+          <label>${copy.acceptanceLabel}<select .value=${live(this.qualityAcceptance)} @change=${(event:Event)=>{this.qualityAcceptance=(event.target as HTMLSelectElement).value as QualityAssessment['acceptance'];}}><option value="unknown">${copy.unknown}</option><option value="accepted">${copy.accepted}</option><option value="needs-work">${copy.needsWork}</option>${this.qualitySaved?html`<option value="revoked">${copy.revoked}</option>`:nothing}</select></label>
+          <button type="button" @click=${()=>void this.saveQuality()}>${this.qualitySaved?copy.correction:copy.save}</button>${this.qualitySaved&&this.qualityAcceptance!=='revoked'?html`<button type="button" @click=${()=>void this.saveQuality(true)}>${copy.withdraw}</button>`:nothing}
+        </fieldset>`}
+      ${this.qualityBusy||this.qualityMessage?html`<p role="status">${this.qualityBusy?copy.busy:this.qualityMessage}</p>`:nothing}</details>`;
+  }
   private async copyDraft(){try{if(this.flow?.draft)await navigator.clipboard.writeText(this.flow.rescueDraft());}catch{this.flow?.setError('Copy is unavailable. Select the draft text and copy it before leaving.');}}
   private renderReview(){const flow=this.flow,plan=flow?.plan;if(!flow||!plan)return nothing;if(flow.noChange||!plan.nodes.some(node=>node.disposition==='retained')&&!plan.uses.some(use=>use.disposition==='retained'))return html`<h1>${flow.noChange?.documentId?'Already in this Document':'Already in your Project'}</h1><p>The selected Ideas keep their existing identity. No new records or uses are needed. Open the existing work, or return to your saved draft.</p>`;const counts=this.reviewCounts(),item=flow.currentItem,node=item?.node;return html`
     <div class="creation-review-summary"><span class="eyebrow">Review your ${this.entryKind}</span><p>${counts.records} new ${counts.records===1?'record':'records'}${counts.newUses?` · ${counts.newUses} new ${counts.newUses===1?'use':'uses'} of existing Ideas`:''}</p></div>
     <nav class="creation-stages" aria-label="Review stages">${flow.stages.map(stage=>html`<button type="button" aria-current=${flow.currentStage===stage?'step':'false'} ?disabled=${flow.busy} @click=${()=>flow.stage(stage)}>${stage==='ideas'?'Ideas':stage==='documents'?'Documents':'Project'}</button>`)}</nav>
     <details class="creation-map" open><summary>Plan overview</summary><ul>${plan.nodes.filter(node=>node.disposition==='retained').map(node=>html`<li><span>${node.kind}</span> ${node.title||'Untitled'}${node.kind==='idea'?html`<small>Used in ${plan.uses.filter(use=>use.disposition==='retained'&&use.ideaId===node.id).map(use=>this.labelFor(use.documentId)).join(', ')||'Project library'}</small>`:nothing}</li>`)}</ul></details>
-    ${flow.currentStage==='final'?html`<h1>Ready to save</h1><p>${counts.records?`${counts.records} new records`:'The selected use'} will be saved together${plan.scope.documentId?` in ${this.labelFor(plan.scope.documentId)}`:''}. Documents remain adaptable to any Output.</p><p role="status">${counts.unseen?`${counts.unseen} items still need to be presented.`:counts.incomplete?`${counts.incomplete} items need missing information.`:counts.unapproved?`${counts.unapproved} items await approval.`:'Every retained record and use is complete, presented and approved.'}</p>`:html`
+    ${flow.currentStage==='final'?html`<h1>Ready to save</h1><p>${counts.records?`${counts.records} new records`:'The selected use'} will be saved together${plan.scope.documentId?` in ${this.labelFor(plan.scope.documentId)}`:''}. Documents remain adaptable to any Output.</p><p role="status">${counts.unseen?`${counts.unseen} items still need to be presented.`:counts.incomplete?`${counts.incomplete} items need missing information.`:counts.unapproved?`${counts.unapproved} items await approval.`:'Every retained record and use is complete, presented and approved.'}</p>${this.renderQuality()}`:html`
       <nav class="creation-outline" aria-label="Items in this review stage">${flow.stageItems.map(entry=>html`<button type="button" aria-current=${entry.id===flow.currentId?'true':'false'} ?disabled=${flow.busy} @click=${()=>this.jump(entry.id)}>${entry.node?entry.title||'Untitled':this.labelFor(entry.id)}</button>`)}</nav>
       ${item?keyed(item.id,html`<article class="creation-review-card"><h1>${node?.kind==='idea'?'Review Idea':node?.kind==='project'?'Review Project':node?'Review Document':'Review attachment'}</h1>
       ${node?html`<en-text-field label="Title" .value=${live(node.title)} .disabled=${flow.busy} @en-input=${(event:CustomEvent<{value:string;isComposing:boolean}>)=>{this.composing=!!event.detail.isComposing;flow.setComposing(this.composing);this.edit(node,{title:event.detail.value});}}></en-text-field>`:html`<h2>${this.labelFor(item.id)}</h2><p>This existing destination keeps its current title and content.</p>`}

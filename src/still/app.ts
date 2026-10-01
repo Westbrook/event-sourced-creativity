@@ -77,7 +77,11 @@ import type { StillContextFlow } from './context-flow.ts';
 import type { CreativeProjection } from '../model/events.ts';
 import { cleanExplicitGoal, cleanSurfaceContext } from './workflow-state.ts';
 import { StillActionContext } from './action-context-client.ts';
-import type { ActionObservation, ActionObservationInput } from './action-outcomes.ts';
+import { ActionOperationEvidence, type FileRetrievalTicket } from './action-operation-evidence.ts';
+import type { ActionObservation, ActionObservationInput, QualityAssessment } from './action-outcomes.ts';
+import { qualityReviewCandidate, qualityReviewAssessment } from './quality-review.ts';
+import { creationQualityCopy } from './creation-quality-copy.ts';
+import { FormaLocaleController } from '../components/design-system/localization.ts';
 
 const REPORT_URL = 'http://127.0.0.1:4187';
 const FORMATS: Record<string, string> = { image: 'Image', short_story: 'Short story', scene: 'Scene', slides: 'Presentation', storyboard: 'Storyboard', video: 'Video', audio: 'Audio', model3d: '3D model' };
@@ -91,6 +95,9 @@ export class StillApp extends LitElement {
   private actionContext=new StillActionContext(async <T>(path:string,body?:unknown,method?:string)=>{
     const check=this.client.fence();const result=await api<T>(path,body,method,8000);check();return result;
   },()=>this.changed());
+  private actionOperations=new ActionOperationEvidence(this.actionContext);
+  private actionOperationFiles:FileRetrievalTicket[]=[];
+  private actionOperationSnapshot(){const c=this.client;return {jobs:c.jobs,events:c.events,jobsLoaded:c.jobsLoaded,jobsError:c.jobsError};}
   private actionSettingsOpen=false;
   private appliedDecisionId:string|undefined;
   private appliedPaletteDecisionId:string|undefined;
@@ -108,6 +115,10 @@ export class StillApp extends LitElement {
   private actionContextNeedsRefresh=false;
   private actionSettingsBusy=false;
   private actionSettingsMessage='';
+  private qualityLocale=new FormaLocaleController(this);
+  private qualityReview:ActionObservation|undefined;
+  private qualityAcceptance:QualityAssessment['acceptance']='unknown';
+  private qualityCriteria:QualityAssessment['criteria']=[];
   private actionContextScope(){const p=this.client.position;return {...(p.projectId?{projectId:p.projectId}:{}),...(p.documentId&&p.projectId?{documentId:p.documentId}:{})};}
   private semanticSurface(){
     const c=this.client,p=c.position,workflow=this.toolbarWorkflow();
@@ -455,7 +466,7 @@ export class StillApp extends LitElement {
     try{this.listDisplay=new ListDisplay(localStorage);}catch{/* Storage may be unavailable in private browsing. */}
     try{this.onboarding=readOnboardingFlag(location.href,localStorage);}catch{this.onboarding=new URL(location.href).searchParams.has('onboarding');}
     this.client.onChange = () => { this.retireChangedDecisions(); if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
-    this.client.onCommitted=receipt=>this.actionContext.commit(receipt);
+    this.client.onCommitted=receipt=>{const parents=this.actionContext.commit(receipt);this.actionOperationFiles=this.actionOperations.committed(this.interactionScope(),parents,this.actionOperationSnapshot());};
     this.desktop.addEventListener('change', this.developerViewportChanged);
     window.addEventListener('keydown', this.paletteShortcut);
     window.addEventListener('popstate', this.popstate);
@@ -478,6 +489,7 @@ export class StillApp extends LitElement {
   }
   protected updated() {
     this.actionContext.enter(this.client.session?.policy.accepted&&!this.client.session.impersonation?`${this.client.epoch}/${this.client.scopeKey}`:'',this.actionContextScope());
+    this.actionOperations.reconcile(this.interactionScope(),this.actionOperationSnapshot());
     this.toolbarMotion?.attach();
     this.observeExposedActions();
     if(this.toolbarContextWaiting&&!this.toolbarContextPending()){this.toolbarContextWaiting=false;this.decide();}
@@ -860,6 +872,10 @@ export class StillApp extends LitElement {
     this.feedbackDecisionId=this.paletteOpen?this.appliedPaletteDecisionId:this.appliedDecisionId;
     this.feedbackActionIds=this.paletteOpen?this.paletteOptions().filter(action=>ACTIONS.some(a=>a.id===action.id)).map(action=>action.id):this.visibleToolbarActions();
     this.feedbackReceipt=this.actionContext.latestCommit;
+    const goal=this.actionContext.value.goal;
+    this.qualityReview=qualityReviewCandidate(this.actionContext.value.observations??[],goal);
+    this.qualityAcceptance=this.qualityReview?.assessment?.acceptance??'unknown';
+    this.qualityCriteria=goal?.criteria.map((_,index)=>({index,result:this.qualityReview?.assessment?.criteria.find(row=>row.index===index)?.result??'unknown'}))??[];
     this.feedbackAction=this.feedbackActionIds[0]??(this.feedbackReceipt?'receipt:'+this.feedbackReceipt.id:'');this.feedbackChoice='not-useful-now';this.actionSettingsMessage='';
     this.actionSettingsOpen=true;this.dockTouched=true;this.changed();
   }
@@ -874,6 +890,25 @@ export class StillApp extends LitElement {
     try{await work();this.actionSettingsMessage=message;this.actionContextNeedsRefresh=true;}
     catch(error){this.actionSettingsMessage=error instanceof Error?error.message:'Could not save this preference.';}
     finally{this.actionSettingsBusy=false;this.changed();}
+  }
+  private async saveQualityReview(revoke=false){
+    const row=this.qualityReview,goal=this.actionContext.value.goal;
+    if(!row?.actionId||!goal)throw new Error('This review is no longer available.');
+    const assessment=qualityReviewAssessment(row,goal,revoke?'revoked':this.qualityAcceptance,this.qualityCriteria);
+    this.qualityReview=await this.actionContext.assess(row.actionId,assessment,row.id);
+    if(revoke){this.qualityAcceptance='revoked';this.qualityCriteria=goal.criteria.map((_,index)=>({index,result:'unknown'}));}
+  }
+  private renderQualityReview(disabled:boolean){
+    const row=this.qualityReview,goal=this.actionContext.value.goal;
+    if(!this.actionContext.value.enabled||!row||!goal||!this.actionContext.value.observations?.some(item=>item.id===row.id)||row.assessment&&row.assessment.goalId!==goal.id||Date.parse(row.expiresAt)<=Date.now()||Date.parse(goal.expiresAt)<=Date.now())return nothing;
+    const copy=creationQualityCopy(this.qualityLocale.locale);
+    return html`<details lang=${this.qualityLocale.locale} dir=${this.qualityLocale.direction}><summary>${copy.title}</summary>
+      <p>${copy.reviewedAt.replace('{date}',new Date(row.assessment?.horizonStartedAt??row.workflow!.occurredAt).toLocaleString(this.qualityLocale.locale))}</p>
+      ${goal.criteria.map((criterion,index)=>html`<en-select class="select-label" label=${criterion} .value=${this.qualityCriteria.find(item=>item.index===index)?.result??'unknown'} ?disabled=${disabled} @en-change=${(event:CustomEvent<{proposed:QualityAssessment['criteria'][number]['result']}>)=>{this.qualityCriteria=this.qualityCriteria.map(item=>item.index===index?{index,result:event.detail.proposed}:item);this.changed();}}><en-select-option value="unknown">${copy.unknown}</en-select-option><en-select-option value="met">${copy.met}</en-select-option><en-select-option value="not-met">${copy.notMet}</en-select-option></en-select>`)}
+      <en-select class="select-label" label=${copy.acceptanceLabel} .value=${this.qualityAcceptance} ?disabled=${disabled} @en-change=${(event:CustomEvent<{proposed:QualityAssessment['acceptance']}>)=>{this.qualityAcceptance=event.detail.proposed;this.changed();}}><en-select-option value="unknown">${copy.unknown}</en-select-option><en-select-option value="accepted">${copy.accepted}</en-select-option><en-select-option value="needs-work">${copy.needsWork}</en-select-option>${this.qualityAcceptance==='revoked'?html`<en-select-option value="revoked">${copy.revoked}</en-select-option>`:nothing}</en-select>
+      <p>${copy.window}</p>
+      <div class="form-actions"><en-button variant="secondary" ?disabled=${disabled||this.qualityAcceptance==='revoked'} @click=${()=>void this.updateActionSettings(()=>this.saveQualityReview(),copy.saved)}>${row.assessment?copy.correction:copy.save}</en-button>${row.assessment&&row.assessment.acceptance!=='revoked'?html`<en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(()=>this.saveQualityReview(true),copy.withdrawn)}>${copy.withdraw}</en-button>`:nothing}</div>
+    </details>`;
   }
   private async finishGoal(status:'completed'|'abandoned'|'clear'){
     await this.actionContext.finishGoal(status);this.client.position.intent='';this.client.position.goal=undefined;
@@ -903,6 +938,7 @@ export class StillApp extends LitElement {
           <p>Applies to ${scope}. Other actions remain available in Find action.</p>
           <en-button variant="secondary" ?disabled=${disabled||!this.feedbackAction} @click=${()=>void this.updateActionSettings(()=>this.saveActionFeedback(),'Feedback saved for future suggestions.')}>Save feedback</en-button>
         `:nothing}
+        ${this.renderQualityReview(disabled)}
         <div class="form-actions"><en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(async()=>{await this.actionContext.erase();this.client.position.intent='';this.client.position.goal=undefined;},'Saved suggestion history and remembered goal erased.')}>Erase saved suggestion history and goal</en-button></div>
         ${this.actionSettingsMessage||this.actionContext.error?html`<p role="status">${this.actionSettingsMessage||this.actionContext.error}</p>`:nothing}
       </section><en-button slot="footer" variant="secondary" ?disabled=${this.actionSettingsBusy} @click=${()=>this.closeActionSettings()}>Done</en-button>
@@ -1116,15 +1152,24 @@ export class StillApp extends LitElement {
     if (artifact && this.client.session?.projectContext && !retained) throw new Error('Retained content and approval are required to download.');
     const digest = retained ? Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(retained))), b => b.toString(16).padStart(2, '0')).join('') : '';
     check();
+    const previousFiles=this.actionOperationFiles;
     await this.client.append([{ type: artifact ? 'DocumentArtifactExported' : 'ObjectExported', payload: artifact ? { artifact_id: id, artifact_kind: artifact.kind, document_id: artifact.documentId, format: model?.mimeType ?? artifact.mediaType ?? 'markdown', artifact_revision: revision, ...(digest ? {content_sha256:digest} : {}) } : { object_id: id, document_id: output?.documentId, format: output?.mediaType ?? 'image/png' } }]);
-    check();
-    if (id !== this.client.position.outputId || artifact && (revision !== documentArtifactRevision(this.client.events, id) || retained !== this.client.content[artifact.contentRef ?? ''])) throw new Error('Result changed. Reopen before downloading.');
-    let blob: Blob;
-    if (url) { const response = await fetch(url); if (!response.ok) throw new Error('File unavailable.'); blob = await response.blob(); }
-    else if (artifact) { const content = parseDocumentArtifactContent(artifact.contentRef ? this.client.content[artifact.contentRef] : undefined); blob = new Blob([content?.content_markdown || artifact.items.map(i => `${i.title}\n\n${i.body}`).join('\n\n')], { type: 'text/markdown' }); }
-    else throw new Error('Select a result to download.');
-    await this.client.verifyScope(); check();
-    const href = URL.createObjectURL(blob), a = document.createElement('a'); a.href = href; a.download = model?.fileName ?? `${artifact?.title ?? output?.title ?? 'creative-work'}.${url ? blob.type.includes('png') ? 'png' : blob.type.includes('video') ? 'mp4' : blob.type.includes('audio') ? 'mp3' : 'jpg' : 'md'}`; a.click(); setTimeout(() => URL.revokeObjectURL(href), 1000);
+    const ticket=this.actionOperationFiles!==previousFiles?this.actionOperationFiles.find(file=>file.target.id===id&&file.target.kind===(artifact?'artifact':'output')&&(!artifact||file.target.revision===String(revision))):undefined;
+    const current=()=>{
+      check();const currentOutput=this.client.projection.outputs.find(candidate=>candidate.id===id);
+      if(id!==this.client.position.outputId||artifact&&(revision!==documentArtifactRevision(this.client.events,id)||retained!==this.client.content[artifact.contentRef??''])||output&&(currentOutput?.mediaUrl!==output.mediaUrl||currentOutput?.imageRevision?.editEventId!==output.imageRevision?.editEventId))throw new Error('Result changed. Reopen before downloading.');
+    };
+    try{
+      current();
+      let blob: Blob;
+      if (url) { const response = await fetch(url); if (!response.ok) throw new Error('File unavailable.'); blob = await response.blob(); }
+      else if (artifact) { const content = parseDocumentArtifactContent(artifact.contentRef ? this.client.content[artifact.contentRef] : undefined); blob = new Blob([content?.content_markdown || artifact.items.map(i => `${i.title}\n\n${i.body}`).join('\n\n')], { type: 'text/markdown' }); }
+      else throw new Error('Select a result to download.');
+      await this.client.verifyScope();current();
+      const href = URL.createObjectURL(blob), a = document.createElement('a'); a.href = href; a.download = model?.fileName ?? `${artifact?.title ?? output?.title ?? 'creative-work'}.${url ? blob.type.includes('png') ? 'png' : blob.type.includes('video') ? 'mp4' : blob.type.includes('audio') ? 'mp3' : 'jpg' : 'md'}`;
+      try{a.click();}finally{setTimeout(() => URL.revokeObjectURL(href), 1000);}
+      this.actionOperations.fileHandedOff(ticket);
+    }catch(error){this.actionOperations.fileUnavailable(ticket);throw error;}
   }
   private prose(value: string): TemplateResult { return html`${value.split(/\n\s*\n/).map(part => /^#{1,6}\s/.test(part) ? html`<h2>${part.replace(/^#{1,6}\s*/, '')}</h2>` : html`<p>${part}</p>`)}`; }
   private renderArtifact(a: DocumentArtifact) {
@@ -1274,7 +1319,7 @@ export class StillApp extends LitElement {
   }
   private renderMode() {
     const mode = this.mode, p = this.client.projection;
-    if(this.unifiedCreation())return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${mode}`,html`<still-creation-flow data-toolbar-scope=${this.workflowScope()} .client=${this.client} .entryKind=${mode==='new-project'?'project':mode==='new-document'?'document':'idea'} @workflow-toolbar-change=${()=>this.changed()} @creation-back=${()=>this.closeMode()} @creation-open=${(event:CustomEvent<{id:string;kind:string;projectId:string;locations?:{documentId?:string}[]}>)=>{const item=event.detail;void this.run(async()=>{const shared=this.client.session?.projects?.find(project=>project.projectId===item.projectId);if(shared&&this.client.session?.projectContext?.projectId!==item.projectId)await this.client.switchWorkspace(shared);this.navigate(item.kind==='project'?'documents':item.kind==='document'?'document':'ideas',{projectId:item.projectId,documentId:item.kind==='document'?item.id:'',blockId:item.kind==='idea'?item.id:''});});}} @creation-done=${(event:CustomEvent<import('../model/creation.ts').CreationReceipt>)=>{const receipt=event.detail;void this.run(async()=>{await this.client.refresh();if(receipt.status==='committed'){const correlation=`creation:${this.client.session?.user.userId}:${receipt.operationId}`;this.actionContext.commit({eventIds:this.client.events.filter(event=>event.correlationId===correlation).map(event=>event.eventId)});}this.navigate(receipt.primaryDocumentId?'document':mode==='new-project'?'documents':'ideas',{projectId:receipt.projectId,documentId:receipt.primaryDocumentId??'',blockId:''});this.notice='Saved.';});}}></still-creation-flow>`);
+    if(this.unifiedCreation())return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${mode}`,html`<still-creation-flow data-toolbar-scope=${this.workflowScope()} .client=${this.client} .actionContext=${this.actionContext} .entryKind=${mode==='new-project'?'project':mode==='new-document'?'document':'idea'} @workflow-toolbar-change=${()=>this.changed()} @creation-back=${()=>this.closeMode()} @creation-open=${(event:CustomEvent<{id:string;kind:string;projectId:string;locations?:{documentId?:string}[]}>)=>{const item=event.detail;void this.run(async()=>{const shared=this.client.session?.projects?.find(project=>project.projectId===item.projectId);if(shared&&this.client.session?.projectContext?.projectId!==item.projectId)await this.client.switchWorkspace(shared);this.navigate(item.kind==='project'?'documents':item.kind==='document'?'document':'ideas',{projectId:item.projectId,documentId:item.kind==='document'?item.id:'',blockId:item.kind==='idea'?item.id:''});});}} @creation-done=${(event:CustomEvent<import('../model/creation.ts').CreationReceipt>)=>{const receipt=event.detail;void this.run(async()=>{await this.client.refresh();if(receipt.status==='committed'){const correlation=`creation:${this.client.session?.user.userId}:${receipt.operationId}`;this.actionContext.commit({eventIds:this.client.events.filter(event=>event.correlationId===correlation).map(event=>event.eventId)});}this.navigate(receipt.primaryDocumentId?'document':mode==='new-project'?'documents':'ideas',{projectId:receipt.projectId,documentId:receipt.primaryDocumentId??'',blockId:''});this.notice='Saved.';});}}></still-creation-flow>`);
     if (mode==='edit-artifact' && this.missingWriting()) return this.renderWritingLoad();
     if(mode==='use-in')return keyed(`${this.interactionScope()}/${this.client.position.blockId}/use-in`,html`<still-use-in-flow data-toolbar-scope=${this.workflowScope()} @workflow-toolbar-change=${()=>this.changed()} .client=${this.client} .suggestedTarget=${this.useInTarget} @context-back=${()=>this.closeMode()} @use-in-done=${(e:CustomEvent<{projectId:string;documentId:string;blockId:string}>)=>{this.navigate('document',{projectId:e.detail.projectId,documentId:e.detail.documentId,blockId:e.detail.blockId});this.notice='Saved.';}}></still-use-in-flow>`);
     if (['split-context','research-context','find-references','supply-reference','compose'].includes(mode)) return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${this.client.position.blockId}/${mode}`,html`<still-context-flow data-toolbar-scope=${this.workflowScope()} @workflow-toolbar-change=${()=>this.changed()} .client=${this.client} .action=${mode} .suggestedTarget=${this.suggestionTargets[mode]??''} @context-select=${(e:CustomEvent<string>)=>{this.navigate('document',{blockId:e.detail});this.begin(mode);}} @context-back=${()=>this.closeMode()} @context-done=${()=>{this.rememberCompletion(mode);this.notice='Saved.';this.closeMode();}}></still-context-flow>`);

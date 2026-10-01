@@ -4,7 +4,7 @@ import { dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   assertQualityFixture, qualityInput, qualityQuestionContract, replayQualityCase, summarizeQualityReplays, summarizeQualityOutcomes, summarizeQualityOutcomesBySource,
-  QUALITY_REPLAY_VERSION, QUALITY_POLICIES, QUALITY_ABLATIONS,
+  QUALITY_REPLAY_VERSION, QUALITY_POLICIES, QUALITY_ABLATIONS, QUALITY_REPLAY_VIEWS, QUALITY_UNSUPPORTED_SURFACES,
 } from '../src/still/decision-quality.ts';
 
 // Replay never calls an API, persists user observations, changes product flags,
@@ -69,12 +69,14 @@ for (const ablation of ablations) for (const policy of policies) for (const c of
 const groups = [...new Set(rows.map(r => `${r.policy}/${r.ablation}`))];
 const receipt = {
   schemaVersion: 1, evaluator: QUALITY_REPLAY_VERSION, createdAt: new Date().toISOString(),
-  fixture: { id: fixture.id, version: fixture.version, labelVersion: fixture.labelVersion, frozenAt: fixture.frozenAt, freezeSha256, fileSha256: hash(fixtureText), provenance: fixture.provenance },
+  fixture: { id: fixture.id, version: fixture.version, labelVersion: fixture.labelVersion, frozenAt: fixture.frozenAt, freezeSha256, fileSha256: hash(fixtureText), provenance: fixture.provenance, partition: fixture.partition ?? 'legacy-unspecified', parent: fixture.parent ?? null },
   runtime: { node: process.version, platform: process.platform, arch: process.arch },
   sources, sourceSha256: hash(JSON.stringify(sources)), capture: captureReceipt ?? null,
   policies, ablations,
+  coverage: { kind: 'toolbar-recommendation-policy', views: Object.fromEntries(QUALITY_REPLAY_VIEWS.map(view=>[view,fixture.cases.filter(c=>c.position.view===view).length])), unsupported: QUALITY_UNSUPPORTED_SURFACES },
   summaries: Object.fromEntries(groups.map(group => [group, summarizeQualityReplays(rows.filter(r => `${r.policy}/${r.ablation}` === group))])),
   surfaces: Object.fromEntries(groups.map(group => [group, Object.fromEntries([...new Set(rows.map(r => r.surface))].map(surface => [surface, summarizeQualityReplays(rows.filter(r => `${r.policy}/${r.ablation}` === group && r.surface === surface))]))])),
+  cohorts: Object.fromEntries(groups.map(group => [group, Object.fromEntries([...new Set(fixture.cases.flatMap(c=>c.tags))].map(tag=>[tag,summarizeQualityReplays(rows.filter(r=>`${r.policy}/${r.ablation}`===group&&r.tags.includes(tag)))]))])),
   outcomes: summarizeQualityOutcomes(fixture.outcomes),
   outcomesBySource: summarizeQualityOutcomesBySource(fixture.outcomes),
   cases: rows,

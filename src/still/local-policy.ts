@@ -39,25 +39,27 @@ export function localFormatRules(p:CreativeProjection,pos:Position):LocalRule[]{
 export function localActionRules(p:CreativeProjection,pos:Position):LocalRule[]{
   const rules:LocalRule[]=[];const add=(id:string,reason:string)=>{if(!rules.some(r=>r.id===id))rules.push({id,reason});};
   const blocks=p.blocks.filter(b=>!b.removed),active=blocks.filter(b=>Number(b.properties.weight??1)>0);
-  const block=blocks.find(b=>b.id===pos.blockId),hasResults=p.outputs.some(o=>!o.discarded)||p.artifacts.length>0;
+  const block=(pos.view==='ideas'?p.libraryBlocks:blocks).find(b=>b.id===pos.blockId&&!b.removed),hasResults=p.outputs.some(o=>!o.discarded)||p.artifacts.length>0;
   const reusable=p.libraryBlocks.some(b=>!b.removed&&!p.blocks.some(used=>used.id===b.id));
   const done=pos.recentActions.findLast(id=>id.startsWith('completed:'))?.slice(10);
   if(pos.view==='projects'){add('new-project',p.projects.length?'Start another project':'Your workspace has no projects');return rules;}
-  if(pos.view==='ideas'){if(pos.blockId){if(block?.locked)add('unlock','Unlock this shared project idea');add('edit-block','Edit the shared project idea');add('use-in','Use this idea in a document');add('ideas','Browse every idea in the project');}else{add('add-context','Keep a new project idea without choosing a document');add('documents','Browse this project’s documents');}return rules;}
+  if(pos.view==='ideas'){if(pos.blockId){add('edit-block','Edit the shared project idea');add('use-in','Use this idea in a document');add('ideas','Browse every idea in the project');}else{add('add-context','Keep a new project idea without choosing a document');add('documents','Browse this project’s documents');}return rules;}
   if(pos.view==='documents'){add('ideas','Browse and reuse ideas across this project');add('new-document',p.documents.some(d=>!d.removed)?'Add a document to this project':'This project has no documents');add('projects','Browse another project');return rules;}
   if(pos.view==='rejection'){
     add('context','Review and revise the source document');add('view-output','Return to this attempt');add('clarify','Clarify the intended request');add('add-context','Change the contributing ideas');add('create','Consider another output');add('generate-again','Deliberately start another paid attempt');return rules;
   }
   if(pos.view==='generation'){
-    if(pos.generation?.rejected)add('inspect-rejection','Investigate the rejected request before another purchase');
+    if(pos.generation?.inspectable)add('inspect-rejection','Inspect retained failure evidence before another purchase');
     if(pos.generation?.mayDuplicateCharge){add('refresh-generation','Original request is unconfirmed; check saved status');add('context','Inspect the source before another request');}
     else{add('context',pos.generation?.active?'Work on the source while generation continues':'Inspect or revise the source');add('refresh-generation','Check the saved generation status');}
-    add('results','Review existing results');add('generate-again','Explicitly start a separate generation');return rules;
+    add('results','Review existing results');if(!pos.generation?.mayDuplicateCharge)add('generate-again','Explicitly start a separate generation');return rules;
   }
   if(pos.view==='artifact'){add('export','A result is selected');add('edit-artifact','Selected writing can be revised');add('context','Return to the source ideas');add('create','Explore another output from this document');return rules;}
   if(pos.view==='results'){add('context',hasResults?'Review the source behind these results':'Add or review source ideas');add(active.length?'create':'add-context',active.length?'Create another output from active context':'This document has no active context');return rules;}
   if(!blocks.length){add('add-context','This document has no context');if(reusable)add('reuse','Reusable ideas exist in another document');add('documents','Return to this project’s documents');return rules;}
-  if(block?.locked){add('unlock','Selected idea is locked');add('context','Review the whole document');add('use-in','Reuse this idea elsewhere');return rules;}
+  // A lock expresses a preserved constraint, not a request to change it. Unlock
+  // remains eligible for deliberate discovery and model-supported suggestions.
+  if(block?.locked){add('context','Review the whole document with its locked constraint');add('use-in','Reuse this idea elsewhere');return rules;}
   if(block&&Number(block.properties.weight??1)<=0){add('toggle-context','Selected idea is excluded from generation');add('edit-block','Revise the excluded idea');add('context','Review the active document context');return rules;}
   if(done==='split-context'){add('context','Review the smaller ideas you just saved');add('compose','Arrange the saved pieces');add('edit-block','Refine the shared source direction');}
   else if(done==='find-references'||done==='research-context'||done==='supply-reference'){add('context','Review the reference or research you just saved');add('use-in','Use the enriched idea elsewhere');add('create','Try the updated context in an output');}

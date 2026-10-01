@@ -1,3 +1,5 @@
+import { mayReadSemanticObservation } from './still-action-outcomes-evidence.ts';
+import type { CreativeProjection } from '../src/model/events.ts';
 import { ACTION_METADATA_VERSION } from '../src/still/action-metadata.ts';
 import { ACTION_CONTEXT_VERSION, ACTION_RETENTION_MS, type ActionObservation, type ActionScope, type StillActionContext, type StillGoal } from '../src/still/action-outcomes.ts';
 import type { PilotUser } from './pilot-policy.ts';
@@ -8,10 +10,10 @@ export const actionScopeKey = (position: ActionScope, scope?: ProjectRequestCont
 const nowIso = () => new Date().toISOString();
 export const emptyActionContext = (): StillActionContext => ({version:ACTION_CONTEXT_VERSION,enabled:false,observations:[],coverage:{status:'complete',limit:40,returned:0,hasMore:false,interpretation:'Semantic reports are evidence of interaction, not proof of quality. Absence is unknown.'}});
 export async function actionPreference(env:WorkerEnv,userId:string,key:string) {
-  return env.DB.prepare('SELECT epoch,expires_at FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND expires_at>?').bind(userId,key,nowIso()).first<{epoch:string;expires_at:string}>();
+  return env.DB.prepare('SELECT epoch,expires_at,created_at FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND expires_at>?').bind(userId,key,nowIso()).first<{epoch:string;expires_at:string;created_at:string}>();
 }
 /** Call only after fresh resource authorization. Authored text stays in private_content. */
-export async function readStillActionContext(env:WorkerEnv,user:PilotUser,position:ActionScope,scope?:ProjectRequestContext,forDecision=false):Promise<StillActionContext> {
+export async function readStillActionContext(env:WorkerEnv,user:PilotUser,position:ActionScope,scope?:ProjectRequestContext,forDecision=false,projection?:CreativeProjection):Promise<StillActionContext> {
   const result=emptyActionContext(),key=actionScopeKey(position,scope),now=nowIso();
   try {
     const preference=await actionPreference(env,user.userId,key);
@@ -29,6 +31,12 @@ export async function readStillActionContext(env:WorkerEnv,user:PilotUser,positi
         result.observations.push(...feedback.results.slice(0,16).map(row=>JSON.parse(row.body) as ActionObservation));
         result.coverage.feedback={limit:16,returned:Math.min(16,feedback.results.length),hasMore:feedback.results.length>16};
         result.coverage.hasMore ||= feedback.results.length>16;
+      }
+      if(!forDecision){
+        const authorized:ActionObservation[]=[],cache=new Map<string,Promise<boolean>>();
+        for(const observation of result.observations){if(await mayReadSemanticObservation(env,user,position,scope,observation,projection,cache))authorized.push(observation);else result.coverage.withheld=(result.coverage.withheld??0)+1;}
+        result.observations=authorized;
+        if(result.coverage.withheld)result.coverage.interpretation+=' Canonical target access is unavailable for some retained reports; those observations are withheld and their outcome is unknown.';
       }
       result.observations.sort((a,b)=>a.recordedAt.localeCompare(b.recordedAt)||a.id.localeCompare(b.id));result.coverage.returned=result.observations.length;
     }

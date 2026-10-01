@@ -1,3 +1,4 @@
+import { verifySemanticObservation, verifyOutcomeTarget, mayReadSemanticObservation } from './still-action-outcomes-evidence.ts';
 import { ACTIONS } from '../src/still/decisions.ts';
 import { cleanActionObservation, cleanActionScope, validActionIdentifier, type ActionObservation, type ActionScope, type StillGoal } from '../src/still/action-outcomes.ts';
 import { requireConsent, requireUser, type PilotUser } from './pilot-policy.ts';
@@ -27,7 +28,7 @@ function purgeScope(env:WorkerEnv,owner:string,key:string,goals:boolean) {
 }
 function clearGoals(env:WorkerEnv,owner:string,key:string,id?:string) {
   const now=new Date().toISOString(),where=`owner_id=? AND scope_key=?${id?' AND goal_id=?':''}`,bindings=[owner,key,...(id?[id]:[])];
-  return [env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND kind='still-goal' AND content_id IN(SELECT content_id FROM still_action_goals WHERE ${where})`).bind(now,owner,...bindings),env.DB.prepare(`DELETE FROM still_action_goals WHERE ${where}`).bind(...bindings)];
+  return [env.DB.prepare(`DELETE FROM still_action_observations WHERE owner_id=? AND scope_key=? AND kind='assessment' AND json_extract(body,'$.assessment.goalId') IN(SELECT goal_id FROM still_action_goals WHERE ${where})`).bind(owner,key,...bindings),env.DB.prepare(`UPDATE private_content SET content='',redacted_at=? WHERE owner_id=? AND kind='still-goal' AND content_id IN(SELECT content_id FROM still_action_goals WHERE ${where})`).bind(now,owner,...bindings),env.DB.prepare(`DELETE FROM still_action_goals WHERE ${where}`).bind(...bindings)];
 }
 export const handleStillActionOutcomes=createStillActionOutcomesHandler(authorizeStillActionScope);
 export function createStillActionOutcomesHandler(authorize:typeof authorizeStillActionScope) { return async (request:Request,env:WorkerEnv):Promise<Response> => {
@@ -43,7 +44,7 @@ export function createStillActionOutcomesHandler(authorize:typeof authorizeStill
   if(access instanceof Response)return access;
   const {user,shared}=access,owner=user.userId,key=actionScopeKey(scope,shared),now=new Date().toISOString();
   const contextResponse=async()=>{
-    const context=await readStillActionContext(env,user,scope,shared);
+    const context=await readStillActionContext(env,user,scope,shared,false,access.projection);
     if(context.enabled){const receipt=await createStillDecisionReceipt(env,user,{position:scope,scope:shared,stateFingerprint:'0'.repeat(64),policy:'still-direct-context-v1',head:0,response:{source:'context',candidateIds:ACTIONS.map(action=>action.id)}});if(receipt){context.directDecisionId=receipt.decisionId;context.directContextExpiresAt=receipt.contextWindowExpiresAt;}}
     return context;
   };
@@ -88,15 +89,16 @@ export function createStillActionOutcomesHandler(authorize:typeof authorizeStill
     const existing=await env.DB.prepare('SELECT body FROM still_action_observations WHERE owner_id=? AND observation_id=? AND scope_key=? AND consent_epoch=? AND expires_at>?').bind(owner,input.id,key,preference.epoch,now).first<{body:string}>();
     if(existing){const observation=JSON.parse(existing.body) as ActionObservation;const previous=cleanActionObservation(observation,ACTIONS.map(action=>action.id),Date.parse(observation.recordedAt));
       if(JSON.stringify(previous)!==JSON.stringify(input))return reply({error:'observation_identity_conflict'},409);
+      if(!await mayReadSemanticObservation(env,user,scope,shared,observation,access.projection))return reply({error:'observation_target_unavailable'},409);
       return reply({observation,replayed:true});}
     const count=await env.DB.prepare('SELECT count(*) AS count FROM still_action_observations WHERE owner_id=? AND scope_key=? AND expires_at>?').bind(owner,key,now).first<{count:number}>();
     if((count?.count??0)>=5000)return reply({error:'observation_capacity'},429);
-    let decisionCreatedAt:string|undefined;
+    let decisionCreatedAt:string|undefined,decisionExpiresAt:string|undefined;
     if(input.decisionId) {
-      const decision=await env.DB.prepare('SELECT body FROM still_action_receipts WHERE decision_id=? AND owner_id=? AND scope_key=? AND consent_epoch=? AND expires_at>?').bind(input.decisionId,owner,key,preference.epoch,now).first<{body:string}>();
+      const decision=await env.DB.prepare('SELECT body,expires_at FROM still_action_receipts WHERE decision_id=? AND owner_id=? AND scope_key=? AND consent_epoch=? AND expires_at>?').bind(input.decisionId,owner,key,preference.epoch,now).first<{body:string;expires_at:string}>();
       if(!decision)return reply({error:'decision_unavailable'},409);
-      const receipt=JSON.parse(decision.body) as {candidateIds:string[];createdAt:string;kind?:string;contextWindowExpiresAt?:string};decisionCreatedAt=receipt.createdAt;
-      if(receipt.kind==='context'&&['selection','invocation'].includes(input.kind)&&(!receipt.contextWindowExpiresAt||receipt.contextWindowExpiresAt<=now))return reply({error:'context_window_expired'},409);
+      const receipt=JSON.parse(decision.body) as {candidateIds:string[];createdAt:string;kind?:string;contextWindowExpiresAt?:string};decisionCreatedAt=receipt.createdAt;decisionExpiresAt=decision.expires_at;
+      if(receipt.kind==='context'&&(['selection','invocation'].includes(input.kind)||input.kind==='workflow'&&!input.parentId)&&(!receipt.contextWindowExpiresAt||receipt.contextWindowExpiresAt<=now))return reply({error:'context_window_expired'},409);
       if(receipt.kind==='context'&&input.source!=='direct')return reply({error:'context_receipt_is_not_a_suggestion'},409);
       if([...(input.displayedActionIds??[]),...(input.actionId?[input.actionId]:[])].some(id=>!receipt.candidateIds.includes(id)))return reply({error:'action_not_in_decision'},409);
     } else return reply({error:'decision_required'},400);
@@ -109,15 +111,35 @@ export function createStillActionOutcomesHandler(authorize:typeof authorizeStill
     if(input.kind==='selection'&&input.source!=='direct'&&(parent?.kind!=='exposure'||!parent.displayedActionIds?.includes(input.actionId!)))return reply({error:'exposure_required'},409);
     if(input.kind==='invocation'&&input.source!=='direct'&&parent?.kind!=='selection')return reply({error:'selection_required'},409);
     if(['commit','cancellation','failure'].includes(input.kind)&&parent?.kind!=='invocation')return reply({error:'invocation_required'},409);
-    const expiresAt=[preference.expires_at,input.feedbackExpiresAt??preference.expires_at,await actionRetentionUntil(env,shared)].sort()[0];
-    const observation:ActionObservation={...input,recordedAt:now,expiresAt};
+    const semantic=await verifySemanticObservation(env,access,scope,input,parent,key,preference.epoch,now);
+    if(semantic.error)return reply({error:semantic.error},409);
+    const occurrence=input.workflow?.occurredAt??input.outcome?.occurredAt??input.assessment?.occurredAt;
+    if(occurrence&&Date.parse(occurrence)<Date.parse(preference.created_at))return reply({error:'observation_predates_consent'},409);
+    const expiries=[preference.expires_at,decisionExpiresAt!,input.feedbackExpiresAt??preference.expires_at,parent?.expiresAt??preference.expires_at,semantic.expiresAt??preference.expires_at,await actionRetentionUntil(env,shared),...(occurrence?[await actionRetentionUntil(env,shared,Date.parse(input.outcome?.horizonStartedAt??input.assessment?.horizonStartedAt??occurrence))]:[])];
+    const observation:ActionObservation={...input,recordedAt:now,expiresAt:expiries.sort()[0],...(['workflow','outcome','assessment'].includes(input.kind)?{interpretation:semantic.interpretation,...(semantic.reviewedDraftRevision?{reviewedDraftRevision:semantic.reviewedDraftRevision}:{}),...(semantic.evidence?{evidence:semantic.evidence}:{}),...(semantic.horizonEndsAt?{horizonEndsAt:semantic.horizonEndsAt,late:semantic.late}:{})}:{})};
     if(input.kind==='commit') {
       const evidence=await verifyCommitEvidence(env,access,scope,input.eventIds??[],input.jobId,decisionCreatedAt!);
       if(!evidence)return reply({error:'commit_evidence_unavailable'},409);observation.evidence=evidence;
     }
-    const result=await env.DB.prepare(`INSERT INTO still_action_observations(observation_id,owner_id,scope_key,consent_epoch,decision_id,parent_id,kind,created_at,expires_at,body)
-      SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND epoch=? AND expires_at>?)`).bind(input.id,owner,key,preference.epoch,input.decisionId??null,input.parentId??null,input.kind,now,expiresAt,JSON.stringify(observation),owner,key,preference.epoch,now).run();
-    return result.meta.changes?reply({observation},201):reply({error:'observation_consent_required'},409);
+    if(input.kind==='outcome'){
+      if((input.eventIds?.length||input.jobId)&&input.outcome?.status!=='revoked'){
+        const evidence=await verifyCommitEvidence(env,access,scope,input.eventIds??[],input.jobId,decisionCreatedAt!);
+        if(!evidence)return reply({error:'outcome_evidence_unavailable'},409);
+        observation.evidence={...evidence,...(semantic.evidence??{}),eventIds:evidence.eventIds,eventTypes:evidence.eventTypes,correlationIds:evidence.correlationIds};
+      }else if(!observation.evidence&&parent?.evidence)observation.evidence=parent.evidence;
+      const verified=await verifyOutcomeTarget(env,input,parent,observation.evidence,now);
+      if(verified.error)return reply({error:verified.error},409);
+      if(verified.expiresAt)observation.expiresAt=[observation.expiresAt,verified.expiresAt].sort()[0];
+      if(input.outcome?.status==='observed'&&['acknowledged-commit','completed-job'].includes(input.outcome.type))observation.interpretation='verified-operation';
+    }
+    if(!await mayReadSemanticObservation(env,user,scope,shared,observation,access.projection))return reply({error:'observation_target_unavailable'},409);
+    if(observation.expiresAt<=now)return reply({error:'observation_window_expired'},409);
+    const result=await env.DB.prepare(`INSERT OR IGNORE INTO still_action_observations(observation_id,owner_id,scope_key,consent_epoch,decision_id,parent_id,kind,created_at,expires_at,body)
+      SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND epoch=? AND expires_at>?) ${semantic.seriesGuard?'AND ('+semantic.seriesGuard.sql+')':''}`).bind(input.id,owner,key,preference.epoch,input.decisionId??null,input.parentId??null,input.kind,now,observation.expiresAt,JSON.stringify(observation),owner,key,preference.epoch,now,...(semantic.seriesGuard?.bindings??[])).run();
+    if(result.meta.changes)return reply({observation},201);
+    const raced=await env.DB.prepare('SELECT body FROM still_action_observations WHERE observation_id=? AND owner_id=? AND scope_key=? AND consent_epoch=? AND expires_at>?').bind(input.id,owner,key,preference.epoch,now).first<{body:string}>();
+    if(raced){const prior=JSON.parse(raced.body) as ActionObservation;if(JSON.stringify(cleanActionObservation(prior,ACTIONS.map(action=>action.id),Date.parse(prior.recordedAt)))===JSON.stringify(input)&&await mayReadSemanticObservation(env,user,scope,shared,prior,access.projection))return reply({observation:prior,replayed:true});}
+    return reply({error:semantic.seriesGuard?'observation_revision_conflict':'observation_identity_conflict'},409);
   } catch { return reply({error:'action_context_unavailable'},503); }
 }; }
 

@@ -107,8 +107,25 @@ export class StillClient {
   private mergeEvents(incoming: CreativeEvent[]) {
     const ids = new Set(this.events.map(e => e.eventId));
     const added = incoming.filter(e => { if (ids.has(e.eventId)) return false; ids.add(e.eventId); return true; });
-    if (added.length) this.events = [...this.events, ...added].sort((a, b) => a.sequence - b.sequence);
+    if (added.length) { this.invalidateCompletion(added); this.events = [...this.events, ...added].sort((a, b) => a.sequence - b.sequence); }
     return added.length > 0;
+  }
+  /** A completion describes the source then, not permission to promote later work. */
+  private invalidateCompletion(incoming: CreativeEvent[]) {
+    if (!this.position.recentActions.some(action => action.startsWith('completed:'))) return;
+    const {documentId,blockId,outputId}=this.position;
+    const blocks=new Set(this.projection.blocks.map(block=>block.id));
+    const relations=new Set(this.projection.blockRelations.map(relation=>relation.id));
+    if(blockId)blocks.add(blockId);
+    const relevant=incoming.some(event=>{
+      const p=event.payload;
+      if(!event.type.startsWith('Block')&&!event.type.startsWith('Extraction')&&!['ChipEdited','DocumentRenamed','DocumentRemoved','DocumentRestored','DocumentRenderCompleted','DocumentArtifactEdited','GenerationCompleted','GeneratedImageEdited','OutputRenamed','ObjectDiscarded'].includes(event.type))return false;
+      return !!documentId&&p.document_id===documentId
+        || !!outputId&&(p.artifact_id===outputId||p.output_id===outputId||p.object_id===outputId)
+        || typeof p.relation_id==='string'&&relations.has(p.relation_id)
+        || ['block_id','source_block_id','target_block_id','parent_block_id','child_block_id','from_block_id','to_block_id'].some(key=>typeof p[key]==='string'&&blocks.has(p[key] as string));
+    });
+    if(relevant)this.position={...this.position,recentActions:this.position.recentActions.filter(action=>!action.startsWith('completed:'))};
   }
   private applyReceipt(result: { appended: CreativeEvent[]; head?: number; content?: Record<string, string> }) {
     this.mergeEvents(result.appended);
@@ -224,7 +241,7 @@ export class StillClient {
         hydrated = page.content;
       }
       check();
-      if(partial){this.events=[...incoming,...this.events.filter(e=>e.sequence>target!)].sort((a,b)=>a.sequence-b.sequence);this.projected=null;this.historyComplete=true;}
+      if(partial){const known=new Set(this.events.map(event=>event.eventId));this.invalidateCompletion(incoming.filter(event=>!known.has(event.eventId)));this.events=[...incoming,...this.events.filter(e=>e.sequence>target!)].sort((a,b)=>a.sequence-b.sequence);this.projected=null;this.historyComplete=true;}
       const changed = partial||this.mergeEvents(incoming), advanced = target! > this.head;
       if (hydrated && contentRead > this.contentApplied) {
         this.contentApplied = contentRead;

@@ -218,3 +218,19 @@ test('routed personal privacy erasure removes Still evidence and private goals w
   assert.equal(after.legacyAuthoredEvents, 0);
   assert.equal(after.governedAuthoredEvents, 0);
 });
+
+test('semantic workflow replay and reads recheck real shared permission after recording', options, async t => {
+  const f=await fixture(t,true),scope={projectId:f.projectId,documentId:f.documentId};
+  const send=(path,method,body)=>f.request(path,{method,headers:{origin:'http://localhost','content-type':'application/json',...f.sharing.headers},...(body?{body:JSON.stringify(body)}:{})});
+  const enabled=await send('/api/still/action-context','PUT',{scope,enabled:true});
+  assert.equal(enabled.status,200,await enabled.clone().text());
+  const context=await enabled.json(),occurredAt=new Date().toISOString();
+  const report={scope,id:'shared-workflow',kind:'workflow',actionId:'compose',source:'direct',surface:'creation-review',decisionId:context.directDecisionId,workflow:{version:'still-workflow-v1',instanceId:'fictional-draft',stage:'final-review',transition:'final-review',status:'confirmed',target:{kind:'creation-draft',id:'fictional-draft',revision:'1'},draftRevision:1,occurredAt}};
+  const recorded=await send('/api/still/action-observations','POST',report);assert.equal(recorded.status,201,await recorded.clone().text());
+  const eventsBefore=f.sqlite.prepare('SELECT count(*) AS count FROM events').get().count;
+  f.sqlite.prepare('UPDATE organization_memberships SET revoked_at=? WHERE organization_id=? AND user_id=?').run(occurredAt,f.sharing.organizationId,f.owner);
+  assert.equal((await send('/api/still/action-observations','POST',report)).status,403,'Duplicate replay must still have live resource access');
+  const query=new URLSearchParams(scope);
+  assert.equal((await send('/api/still/action-context?'+query,'GET')).status,403,'Retained diagnostics do not bypass current read authorization');
+  assert.equal(f.sqlite.prepare('SELECT count(*) AS count FROM events').get().count,eventsBefore,'Semantic reports never advance creative history');
+});
