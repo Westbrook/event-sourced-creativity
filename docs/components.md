@@ -15,6 +15,10 @@ Activity and Deliver reuse the same bounded page gutter as the document
 workbench. Library’s Resource Memory disclosure aligns with its search control.
 This is application layout, with no new
 component API or translated copy. The compact dock keeps its equal-width cells.
+The collapsed Ask Forma launcher shares the Results heading’s trailing content
+edge, including the inspector and reserved scrollbar gutter. Its compact Studio
+utility slot uses the same pane inset. Existing bottom clearance, obstacle
+avoidance, and the open assistant panel’s viewport placement remain unchanged.
 
 Library output thumbnails use one responsive 3:2 frame with equal border insets
 for individual images, prompt fans, video covers, storyboard summaries, and other
