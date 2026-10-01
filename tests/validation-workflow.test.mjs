@@ -149,3 +149,12 @@ test('case reporter distinguishes nested leaves, parent results and explicit ski
   assert.deepEqual(rows.filter(row=>!row.parent).map(row=>row.name),['one','two','independent']);
   assert.equal(rows.find(row=>row.name==='two').skip,'fixture unavailable');
 });
+
+test('expected compiler diagnostics in TAP comments are not early negatives', async t => {
+  const { root } = sandbox(t), negatives = [];
+  const result = await runProcess(process.execPath, ['-e', 'console.log("# bad.ts(1,1): error TS2322: expected fault probe\\nok 1 - rejects invalid types");'], {
+    cwd: root, log: join(root, 'expected-diagnostic.log'), onFailure: () => negatives.push('negative'),
+  });
+  assert.equal(result.code, 0); assert.equal(result.firstNegativeMs, null);
+  assert.deepEqual(negatives, []);
+});

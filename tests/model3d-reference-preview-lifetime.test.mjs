@@ -50,7 +50,10 @@ async function checkPreviewLifetime(output) {
       const doc = { createElement(tag) { return new Element(tag, this); }, activeElement: null,
         decode() { return phase === "decode" && failed ? new Promise(resolve => { lateDecode = resolve; }) : Promise.resolve(); } };
       doc.body = new Element("body", doc); doc.activeElement = doc.body; globalThis.document = doc;
-      crypto.subtle.digest = (...args) => phase === "hash" && failed ? never() : digest(...args);
+      // The hash port tests lifecycle ownership, not native crypto scheduling.
+      // A real thread-pool digest can outlive an arbitrary microtask flush under
+      // load. Preserve exact SHA-256 bytes with deterministic port completion.
+      crypto.subtle.digest = async (...args) => phase === "hash" && failed ? never() : Uint8Array.from(createHash("sha256").update(args[1]).digest()).buffer;
       const changes = [], requests = [];
       const fetcher = async (path, init) => {
         requests.push({ path, method: init?.method ?? "GET" });

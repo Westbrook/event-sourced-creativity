@@ -43,7 +43,9 @@ export async function runProcess(command, args, { cwd, log, env = {}, timeoutMs 
   const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, detached: grouped, stdio: ['ignore', 'pipe', 'pipe'] });
   const consume = data => {
     output.write(data); tail = (tail + data.toString()).slice(-16000);
-    if (!failureAnnounced && /(?:^|\n)(?:not ok |.*error TS\d+:)/u.test(tail)) { failureAnnounced = true; firstNegativeMs = Math.round(performance.now() - started); onFailure(log); }
+    // TAP comments can contain deliberately injected compiler failures. Only an
+    // actual TAP failure or an unquoted compiler diagnostic is a negative.
+    if (!failureAnnounced && /(?:^|\n)(?:not ok |(?!#)[^\n]*error TS\d+:)/u.test(tail)) { failureAnnounced = true; firstNegativeMs = Math.round(performance.now() - started); onFailure(log); }
   };
   child.stdout.on('data', consume); child.stderr.on('data', consume);
   let terminated = false;
