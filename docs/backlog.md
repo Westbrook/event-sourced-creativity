@@ -834,6 +834,12 @@ The selected Node run passed 84/91 tests. All seven native-navigation fixture
 failures also reproduce with the original ProjectRail component (focus ownership
 and the collection-create request count); they remain outside this visual fix.
 
+**Follow-up published as Site566.** The New reusable block button now shares
+the document-row outer edges and icon/text columns, while the project heading
+and summary retain their inner inset. Main `a2a6a0b8`, release `dfaee700`; types,
+full lint, 48 focused checks, 12 responsive Chromium cases, and production build
+passed. [Publication receipt](evidence/project-sidebar-button-release-2026-10-01.json).
+
 ### Ask Forma trailing alignment — 2026-10-01
 
 **Published as Site563.** Main implementation `ed23b17a`; release

@@ -1,0 +1,54 @@
+{
+  "status": "published",
+  "version": 566,
+  "mainCommit": "a2a6a0b8756aa4d079598dc6bd7ec5a6a3d88d0d",
+  "releaseCommit": "dfaee7005d3ee2aaf775ac72cbd3ffe1532e699e",
+  "deployment": {
+    "id": "appgdep_6abe7af947c881918dcf50815a7a190e",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_f57cc87431088191a78424a6cff994b6",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-10-01T15:23:56.078873+00:00"
+  },
+  "scope": "Align the New reusable block button outer edges and icon/label columns with sidebar navigation; retain heading and summary inner insets.",
+  "verification": [
+    "TypeScript and full lint passed",
+    "48 focused source tests passed, zero failures/skips",
+    "12 Chromium geometry cases passed: desktop/mobile/short landscape, English/Arabic; button edges, icon and label align with document rows",
+    "Production build passed; CEM, i18n and schema checks passed",
+    "Saved archive exactly matched qualified source/build:622 files,41 migration prefix; workspace access revision7 and environment16 retained"
+  ],
+  "preflight": {
+    "candidateCommit": "dfaee7005d3ee2aaf775ac72cbd3ffe1532e699e",
+    "baselineCommit": "9a723204cfb84c3d00d227c1219107d0ca6b44b7",
+    "projectId": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "changed": [
+      "docs/components.md",
+      "src/components/project-rail.ts",
+      "src/design-system.css",
+      "src/responsive-foundation.css"
+    ],
+    "archive": "/private/tmp/forma-sidebar-button-qualified-20261001.tar",
+    "archiveSha256": "f6861f7b0c12abf9f314a40f9051e64bfc2514ff63bb3c500da3c0225b077a68",
+    "normalizedSha256": "88a01a96ac6c8917dac4e39d5862527fef139aa889169c44c1681cb53a5d7359",
+    "files": 622,
+    "migrations": 41,
+    "savedReceiptVerified": true,
+    "hostedActions": 0
+  },
+  "evidence": "outputs/sidebar-spacing/followup/",
+  "limitations": [
+    "Fictional browser data; no live-account or user-acceptance claim",
+    "Initial measurement selected icon wrapper; corrected direct-label selector",
+    "Transition measurement caught intermediate expanded width; checks now await finite native animations"
+  ],
+  "next": "User visual review on Production; no implementation or publication remains."
+}
