@@ -264,8 +264,10 @@ existing Ask Forma launcher owns a permanent cell at the trailing end of the
 sticky navigation row. Its real 44px (48px touch) target stays beside the five
 destinations while Library scrolls. The page never acquires a side gutter because
 a floating gap closes. The open panel retains its existing dialog, draft and
-focus behavior. Compact/short postures and banner-bearing shells keep their
-existing placement policies. This is layout of existing controls, with no new
+focus behavior. Compact Library uses the shared fixed bottom navigation and
+reserves its height below the content. Ask Forma owns a persistent dock cell,
+including while open, without a content-width gutter. Short landscape retains
+the existing side rail; wide banner-bearing shells keep their placement policy. This is layout of existing controls, with no new
 component API, strings, permissions or conversation owner.
 
 ## Selection-scoped context controls
