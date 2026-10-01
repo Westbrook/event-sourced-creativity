@@ -768,7 +768,7 @@ validation receipts. Hosted activation and user review remain distinct.
 
 ### Library scroll stability — 2026-10-01
 
-**Implementation complete; publication tracked separately.** On wide Creator
+**Done — published567; user review pending.** [Release receipt](evidence/library-scroll-release-2026-10-01.json). Main `c17ee218` and release `fad858ba` preserve the published566 sidebar changes. On wide Creator
 browse pages, Ask Forma now uses a persistent trailing navigation cell. Scrolling
 no longer turns its collision avoidance into a 64px content gutter. The navigation
 stays reachable, the Library heading clears it, and opening/closing guidance

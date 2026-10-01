@@ -1,0 +1,96 @@
+{
+  "date": "2026-10-01",
+  "change": "Keep Creator Library content width stable through scrolling and Ask Forma open/close.",
+  "mainCommit": "c17ee218216a938d6bf618d2e8b1a006211c8178",
+  "releaseCommit": "fad858ba265b7ba02efd516aafd299d0dd6c5485",
+  "baseline": {
+    "version": 566,
+    "commit": "dfaee7005d3ee2aaf775ac72cbd3ffe1532e699e"
+  },
+  "savedVersion": {
+    "id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_856fd415ec348191b89abbbb00f418a7",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "version_number": 567,
+    "source": {
+      "commit_sha": "fad858ba265b7ba02efd516aafd299d0dd6c5485"
+    },
+    "archive_storage": {
+      "archive_format": "tar",
+      "sediment_file_id": "file_00000000ddd881f6a251d363622f036b",
+      "content_hash": "sha256:df34bc8f30cdafa3e2c04a703a30d2293986f22f2cc62a105ac76ec53854bb18",
+      "size_bytes": 44574720,
+      "file_count": 622
+    },
+    "screenshot_url": null,
+    "deployment_id": null
+  },
+  "deployment": {
+    "id": "appgdep_6abe7c5a439481919d3537b23a810ab4",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_856fd415ec348191b89abbbb00f418a7",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-10-01T15:29:47.307937+00:00"
+  },
+  "access": {
+    "mode": "workspace_all",
+    "revision": 7,
+    "changed": false
+  },
+  "migrationCount": 41,
+  "qualification": {
+    "typesAndFullLint": "passed",
+    "productionBuild": "passed; generated manifests unchanged",
+    "browser": {
+      "status": "passed",
+      "tests": 28,
+      "scrollCases": 20,
+      "leadingEdgeMeasurements": 72,
+      "widths": [
+        768,
+        1024,
+        1280,
+        1715,
+        2048
+      ],
+      "locales": [
+        "en-US",
+        "ar"
+      ],
+      "inputs": [
+        "pointer",
+        "touch"
+      ],
+      "receipt": "outputs/library-scroll/validation/browser-run-5d5fe7ac-df39-4dee-8edc-bd9a696ba556/receipt.json"
+    },
+    "assistantRuntime": {
+      "passed": 223,
+      "receipt": "outputs/library-scroll/validation/2026-10-01T15-14-50-482Z-d031e9b9/receipt.json"
+    },
+    "responsiveSource": {
+      "passed": 45,
+      "receipt": "outputs/library-scroll/validation/2026-10-01T15-22-01-255Z-0c7e2e5d/receipt.json"
+    },
+    "baselineFailures": {
+      "count": 4,
+      "file": "tests/assistant-shell.test.mjs",
+      "evidence": "outputs/library-scroll/diagnostics/assistant-shell-baseline.log",
+      "note": "Same four source assertions fail on unchanged Site564. Sites565/566 did not alter the implicated assistant contracts. Assertions remain enabled and unchanged."
+    },
+    "unverified": [
+      "Real-account/paid-provider acceptance",
+      "Full repository suite",
+      "User review and acceptance"
+    ]
+  },
+  "archiveVerification": "622 files, saved archive hash matched tested build; held 41-migration prefix retained.",
+  "evidenceDirectory": "outputs/library-scroll",
+  "next": "User review of the published Library."
+}
