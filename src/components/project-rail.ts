@@ -281,7 +281,7 @@ export class ProjectRail extends FormaElement {
 
         ${surface!=="library"&&libraryLinks.length?html`<nav class="rail-links rail-library-links" aria-label=${this.i18n.t("projects.railLibrary","Project library")}>
           <span class="rail-label">${this.i18n.t("projects.railSectionLibrary","Library")}</span>
-          ${libraryLinks.map((link)=>html`<a href=${libraryRoute} @click=${(event:MouseEvent)=>this.#openLibrary(event,link.view)}><span><i aria-hidden="true">${icon(link.iconName)}</i> ${link.label}</span><small>${this.i18n.number(link.count)}</small></a>`)}
+          ${libraryLinks.map((link)=>html`<a href=${libraryRoute} @click=${(event:MouseEvent)=>this.#openLibrary(event,link.view)}><span><i aria-hidden="true">${icon(link.iconName)}</i><span>${link.label}</span></span><small>${this.i18n.number(link.count)}</small></a>`)}
         </nav>`:nothing}
 
         ${!quiet&&(offline||synchronizing)?html`<footer class="rail-stream" role="status"><div><b>${offline?this.i18n.system("Offline"):this.i18n.system("Synchronizing changes")}</b><small>${offline?this.i18n.system("Reconnect to receive project updates"):this.i18n.system("Checking the latest project state")}</small></div></footer>`:nothing}
