@@ -10,10 +10,10 @@ const cAlternativeCalmCheckpoint=(phase,detail={})=>{
     process.stderr.write("C_ALTERNATIVE_CALM "+JSON.stringify({phase,at:Date.now(),...detail})+"\n");
 };
 cAlternativeCalmCheckpoint("helper-prefix-start");
-const fixtureUrl=new URL("../inactive-generation-dialog-host.test.mjs",import.meta.url);
+const fixtureUrl=new URL("../inactive-generation-dialog-fixture.mjs",import.meta.url);
 const fixtureText=fs.readFileSync(fixtureUrl,"utf8");
 const fixtureTree=ts.createSourceFile(fixtureUrl.pathname,fixtureText,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
-const firstTest=fixtureTree.statements.find(node=>ts.isExpressionStatement(node)&&ts.isCallExpression(node.expression)&&node.expression.expression.getText(fixtureTree)==="test");
+const firstTest=fixtureTree.statements.find(node => ts.isExportAssignment(node));
 assert.ok(firstTest,"existing full-class fixture ends before test registration");
 const fixtureFactory=fixtureTree.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="fixture");
 assert.ok(fixtureFactory&&fixtureFactory.pos<firstTest.pos,"reuse renderer declarations, not the old mock application factory");

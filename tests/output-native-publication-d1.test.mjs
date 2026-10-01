@@ -3,7 +3,7 @@ import {readFileSync,realpathSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import {publicationParts,predicateTree} from './output-native-publication-depth.test.mjs';
+import {publicationParts,predicateTree} from './output-native-publication-fixture.mjs';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const require=createRequire(realpathSync(root+'node_modules/wrangler/package.json'));
 const {Miniflare}=require('miniflare');

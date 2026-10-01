@@ -223,10 +223,10 @@ test("production workspace and Canvas routes never eagerly preload PDF or Office
 // Reuse the complete actual component/native-port fixture. Only test registration
 // is omitted. Its two lazy converter dependencies are the real modules; no export,
 // cancellation, authorization, or native-popover production method is replaced.
-const exportFixtureUrl = new URL("./inactive-generation-dialog-host.test.mjs", import.meta.url);
+const exportFixtureUrl = new URL("./inactive-generation-dialog-fixture.mjs", import.meta.url);
 const exportFixtureSource = await readFile(exportFixtureUrl, "utf8");
 const exportFixtureTree = ts.createSourceFile(exportFixtureUrl.pathname, exportFixtureSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-const exportFixtureFirstTest = exportFixtureTree.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(exportFixtureTree) === "test");
+const exportFixtureFirstTest = exportFixtureTree.statements.find(node => ts.isExportAssignment(node));
 assert.ok(exportFixtureFirstTest);
 let exportFixtureModule = exportFixtureSource.slice(0, exportFixtureFirstTest.getFullStart());
 const exportDependencySeam = "  const code = ts.transpileModule(sourceText(relative),";

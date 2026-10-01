@@ -3,7 +3,7 @@ import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import './storyboard-r8-imports.mjs';
-import {fixture,oneFunction,canonicalJson} from './output-storyboard-source-route.test.mjs';
+import {fixture,oneFunction,canonicalJson} from './output-storyboard-source-fixture.mjs';
 const {readStoryboardExecutionOffer}=await import('../src/model/output-storyboard-offer.ts');
 const {outputTerms}=await import('../src/experiences/output-terms.ts');
 const {outputDigest}=await import(process.env.FORMA_SOURCE_ROOT+'/worker/output-disclosure-proof.ts');

@@ -177,7 +177,7 @@ test("later operational events do not invalidate exact Video source; same-value 
   // Comparator regression only. Full canonical folding and live evidence remain
   // separate: these later operational events leave source blocks unchanged.
   const { plan, receipt, current } = fixture();
-  plan.release.output.output = "video";
+  Object.assign(plan.release.output, { output: "video" });
   for (const [index, type] of ["ContextCompiled", "DocumentRenderRequested", "BudgetReserved", "DocumentRenderFailed", "GenerationUsageRecorded"].entries()) {
     current.events.push({ eventId: `run-event-${index}`, streamId: plan.streamId, actor: "worker:renderer", sequence: 100 + index,
       type, payload: { document_id: plan.documentId, artifact_kind: "video", reason: "provider_submission_uncertain" } });

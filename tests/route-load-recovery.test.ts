@@ -4,7 +4,8 @@ import { installRouteLoadRecovery, routeLoadRecoveryCopy } from "../src/route-lo
 
 test("missing route prompts one explicit refresh without replacing content or moving focus", () => {
   const listeners = new Map<string, () => void>(); let reloads = 0;
-  function node() {
+  interface TestNode { isConnected: boolean; attributes: Map<string, string>; children: TestNode[]; textContent: string; className: string; type: string; events: Map<string, () => void>; shown: number; setAttribute(key: string, value: string): void; removeAttribute(key: string): void; append(...values: TestNode[]): void; addEventListener(key: string, callback: () => void): void; showPopover(): void }
+  function node(): TestNode {
     return { isConnected: true, attributes: new Map(), children: [] as ReturnType<typeof node>[], textContent: "", className: "", type: "",
       events: new Map<string, () => void>(), shown: 0,
       setAttribute(key: string, value: string) { this.attributes.set(key, value); },

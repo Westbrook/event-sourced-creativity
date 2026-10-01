@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixture} from './scene-admission-original-proof.test.mjs';
+import {fixture} from './scene-admission-original-fixture.mjs';
 const {runDocumentJob}=await import('../worker/document-jobs-api.ts');
 const {requireUser}=await import('../worker/pilot-policy.ts');
 const {makeEvent,eventWriteBindings,EVENT_WRITE_COLUMNS}=await import('../worker/event-write-primitives.ts');

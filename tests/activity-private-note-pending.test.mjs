@@ -3,7 +3,7 @@ import test from "node:test";
 import { createSceneCostFixture } from "./helpers/scene-cost-fixture.mjs";
 import { createSceneStoreHost, sceneDeferred } from "./helpers/scene-cost-store-host.mjs";
 import { loadActual, settle } from "./helpers/artifact-review-host.mjs";
-const { fixture } = await import(new URL("./inactive-generation-dialog-host.test.mjs?artifact-review-full-host", import.meta.url));
+const { fixture } = await import(new URL("./inactive-generation-dialog-fixture.mjs?artifact-review-full-host", import.meta.url));
 const { FormaActivity } = await loadActual("src/components/forma-activity.ts");
 const { FormaActivityIssuePanel } = await loadActual("src/components/forma-activity-issue-panel.ts");
 const { localizeTemplateResult } = await loadActual("src/components/design-system/localized-template.ts");

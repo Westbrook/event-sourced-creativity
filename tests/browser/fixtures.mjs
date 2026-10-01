@@ -15,11 +15,17 @@ const extensionPath = resolve(directory, "zoom-extension");
 const captureSessions = new WeakMap();
 
 export const test = base.extend({
+  ordinaryBrowser: [async ({ playwright }, use) => {
+    let instance;
+    try {
+      await use(async () => instance ??= await playwright.chromium.launch({ channel: "chromium", headless: process.env.FORMA_A11Y_HEADED !== "1" }));
+    } finally { await instance?.close(); }
+  }, { scope: "worker" }],
   geometry: [{ viewport: { width: 1280, height: 900 }, zoom: 1 }, { option: true }],
   publicMarketing: [false, { option: true }],
   publicJavaScript: [true, { option: true }],
   acceptDownloads: [false, { option: true }],
-  context: async ({ geometry, baseURL, publicMarketing, publicJavaScript, acceptDownloads }, use, testInfo) => {
+  context: async ({ ordinaryBrowser, geometry, baseURL, publicMarketing, publicJavaScript, acceptDownloads }, use, testInfo) => {
     const synthetic = syntheticNetworkEnabled(baseURL);
     const admittedDownloadCase = testInfo.project.name === "story-revision-download"
       && testInfo.title === "Story revision one: approved synthetic source downloads the exact Markdown file"
@@ -27,10 +33,13 @@ export const test = base.extend({
         && ["Memory purposes: explicit inactive controls in en", "Memory purposes: explicit inactive controls in ar"].includes(testInfo.title);
     if (acceptDownloads === true && !admittedDownloadCase)
       throw new Error("Downloads require the exact admitted project and positive test title");
-    const profile = await mkdtemp(resolve(tmpdir(), "forma-a11y-"));
+    // Native zoom requires an extension-enabled persistent profile. Ordinary
+    // cases reuse the runner's browser but always receive a fresh context.
+    const nativeZoom = geometry.zoom !== 1 || geometry.viewport === null;
+    const profile = nativeZoom ? await mkdtemp(resolve(tmpdir(), "forma-a11y-")) : null;
     let context;
     try {
-      context = await chromium.launchPersistentContext(profile, {
+      const options = {
         channel: "chromium",
         headless: process.env.FORMA_A11Y_HEADED !== "1",
         viewport: geometry.viewport,
@@ -45,7 +54,13 @@ export const test = base.extend({
           `--load-extension=${extensionPath}`,
           ...(geometry.window ? [`--window-size=${geometry.window.width},${geometry.window.height}`] : []),
         ],
-      });
+      };
+      context = nativeZoom ? await chromium.launchPersistentContext(profile, options)
+        : await (await ordinaryBrowser()).newContext({ viewport: geometry.viewport, baseURL,
+          locale: geometry.locale ?? "en-US", serviceWorkers: "block",
+          acceptDownloads: acceptDownloads === true,
+          ...(publicMarketing ? { javaScriptEnabled: publicJavaScript } : {}),
+          ...(geometry.hasTouch === true ? { hasTouch: true } : {}) });
       const network = await guardReadOnlyNetwork(context, baseURL);
       const publicNetwork = publicMarketing ? await installPublicMarketingNetwork(context, baseURL) : null;
       const syntheticNetwork = synthetic && !publicMarketing ? await installSyntheticNetwork(context, baseURL) : null;
@@ -82,7 +97,7 @@ export const test = base.extend({
       }
     } finally {
       await context?.close();
-      await rm(profile, { recursive: true, force: true });
+      if (profile) await rm(profile, { recursive: true, force: true });
     }
   },
   page: async ({ context }, use) => {
@@ -152,6 +167,12 @@ export async function captureViewport(page, testInfo, name, { assertStable = tru
 
 /** Shared native zoom assertions, with the normal Playwright receipt attachment. */
 export async function applyBrowserZoom(page, context, factor, testInfo) {
+  if (factor === 1 && testInfo.project.use.geometry?.viewport !== null) {
+    const metrics = await browserMetrics(page);
+    expect(metrics.visualScale).toBe(1);
+    await attachJSON(testInfo, "browser-zoom-100", { mechanism: "fresh isolated context; native zoom unchanged", metrics });
+    return;
+  }
   return verifyBrowserZoom(page, context, factor, (name, receipt) => attachJSON(testInfo, name, receipt));
 }
 

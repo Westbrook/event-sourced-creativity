@@ -8,10 +8,10 @@ test("Video custody diagnostics disclose only fixed reasons and cannot replace f
     console.warn = (...args: unknown[]) => { seen.push(args); };
     recordVideoCustodyFailure(Object.assign(new Error("video_reference_snapshot_unavailable"), { snapshotReason: "fields" }));
     recordVideoCustodyFailure(new Error("private authored data"));
-    recordVideoCustodyFailure({ get code() { assert.fail("getter must not run"); } });
+    recordVideoCustodyFailure({ get code(): never { return assert.fail("getter must not run"); } });
     recordVideoCustodyFailure(new ProviderRequestError({ code: "derived_reference_source_changed", message: "private source",
       category: "provider", scope: "request", action: "edit_request", retryable: false, retryAfterMs: null, requestId: null, httpStatus: 403 }));
-    recordVideoCustodyFailure({ get detail() { assert.fail("detail getter must not run"); } });
+    recordVideoCustodyFailure({ get detail(): never { return assert.fail("detail getter must not run"); } });
     assert.deepEqual(seen, [
       ["video_reference_custody_refused", { code: "video_reference_snapshot_unavailable", reason: "fields" }],
       ["video_reference_custody_refused", { code: "unknown", reason: "unspecified" }],

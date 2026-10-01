@@ -22,7 +22,7 @@ async function frontendPorts() {
   assert.equal(backend.length, 1, "exact unused backend import seam");
   assert.equal(backend[0].importClause.namedBindings.elements.length, 1);
   assert.equal(backend[0].importClause.namedBindings.elements[0].name.text, "createSceneStoreHost");
-  const originalFixture = new URL("./inactive-generation-dialog-host.test.mjs", import.meta.url);
+  const originalFixture = new URL("./inactive-generation-dialog-fixture.mjs", import.meta.url);
   const fixtureTree = ts.createSourceFile(originalFixture.pathname, fs.readFileSync(originalFixture, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const dependencies = Object.fromEntries([...new Set([tree, fixtureTree].flatMap(value => value.statements
     .filter(node => ts.isImportDeclaration(node) && !node.moduleSpecifier.text.startsWith("."))

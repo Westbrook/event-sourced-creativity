@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fixture } from "./inactive-generation-dialog-host.test.mjs";
+import { fixture } from "./inactive-generation-dialog-fixture.mjs";
 import { retainNativeSubmitForms, retainNativeClickDialogs } from "./helpers/deferred-focus-invokers.mjs";
 import { DEFAULT_MODEL3D_SETTINGS } from "../src/model/model3d.ts";
 import { adaptDocumentToModel3d, model3dAdaptationReceipt } from "../src/model/model3d-prompt-adapter.ts";

@@ -22,11 +22,11 @@ test('recorded terminal projection is guarded: '+mutation,()=>{
   if(mutation)db.exec(mutation);
   const before=db.prepare('SELECT * FROM document_jobs').get();
   assert.equal(db.prepare(query.sql).run(...query.bindings).changes,mutation?0:1);
-  const after=db.prepare('SELECT * FROM document_jobs').get();
+  const after=db.prepare('SELECT * FROM document_jobs').get();assert.ok(after);
   if(mutation)assert.deepEqual(after,before);else{assert.equal(after.status,'completed');assert.equal(after.attempt_count,1);assert.equal(db.prepare(query.sql).run(...query.bindings).changes,0);}
  }finally{db.close();}
 });
-test('a recorded failure racing interruption wins',()=>{const db=fixture();try{const query=expiredOriginalSceneJobFailure(snapshot,now);db.exec("INSERT INTO events VALUES('stream','job:attempt:1','DocumentRenderFailed')");assert.equal(db.prepare(query.sql).run(...query.bindings).changes,0);}finally{db.close();}});
+test('a recorded failure racing interruption wins',()=>{const db=fixture();try{const query=expiredOriginalSceneJobFailure(snapshot,now);assert.ok(query);db.exec("INSERT INTO events VALUES('stream','job:attempt:1','DocumentRenderFailed')");assert.equal(db.prepare(query.sql).run(...query.bindings).changes,0);}finally{db.close();}});
 test('conflicting terminal receipts never choose a favorable result',()=>assert.equal(expiredOriginalSceneJobFailure(snapshot,now,[terminal,{...terminal,event_id:'other',type:'DocumentRenderFailed'}]),null));
 
 for(const call of ['pending','uncertain','completed'])test('native Audio interruption preserves original claim and provider allowance: '+call,()=>{

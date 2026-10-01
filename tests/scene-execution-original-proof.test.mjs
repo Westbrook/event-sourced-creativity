@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {fixture} from './scene-admission-original-proof.test.mjs';
+import {fixture} from './scene-admission-original-fixture.mjs';
 const {requireUser}=await import('../worker/pilot-policy.ts');
 const {loadOutputJobBinding,createOutputEventExecution}=await import('../worker/output-execution-control.ts');
 const {prepareSceneJobSourceClaim}=await import('../worker/scene-job-source-witness.ts');

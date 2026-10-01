@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { cachedCompile } from "./sqlite-compile-cache.mjs";
 
 // Node's SQLite defaults to depth 1000. D1 allows 100. Compile the actual request
 // statement in a fresh in-memory SQLite connection before the fixture can execute it.
@@ -97,6 +98,11 @@ const functionSignatures = sqlite => sqlite.prepare("PRAGMA function_list").all(
   .map(({ name, narg, type, flags }) => ({ name, narg, type, flags }))
   .sort((a, b) => a.name.localeCompare(b.name) || a.narg - b.narg || a.type.localeCompare(b.type));
 
+/**
+ * @param {import('node:sqlite').DatabaseSync} sqlite
+ * @param {string} sql
+ * @param {{limit?: number, schema?: string[], bindings?: unknown[], functions?: Array<{name: string, narg: number, type: string, flags: number}>, queryLimits?: {functionArguments: number, parameters: number, sqlBytes: number}}} options
+ */
 export function compileSqliteExpressionDepth(sqlite, sql, { limit = 100, schema = schemaSql(sqlite), bindings, functions = functionSignatures(sqlite), queryLimits } = {}) {
   const started = performance.now();
   if (queryLimits !== undefined) {
@@ -104,7 +110,9 @@ export function compileSqliteExpressionDepth(sqlite, sql, { limit = 100, schema 
     assert.ok(Object.values(queryLimits).every(value => Number.isSafeInteger(value) && value > 0));
   }
   const input = JSON.stringify({ schema, sql, limit, functions, ...(queryLimits === undefined ? {} : { queryLimits }), ...(bindings === undefined ? {} : { bindings }) });
-  const compiled = spawnSync(process.env.FORMA_SQLITE_PYTHON ?? "python3", ["-I", "-S", "-B", "-c", COMPILE, String(Buffer.byteLength(input, "utf8"))], {
+  const python = process.env.FORMA_SQLITE_PYTHON ?? "python3";
+  return cachedCompile(python, COMPILE, input, () => {
+  const compiled = spawnSync(python, ["-I", "-S", "-B", "-c", COMPILE, String(Buffer.byteLength(input, "utf8"))], {
     input, encoding: "utf8", maxBuffer: 4 * 1024 * 1024, timeout: 30_000,
   });
   try {
@@ -123,6 +131,7 @@ export function compileSqliteExpressionDepth(sqlite, sql, { limit = 100, schema 
     }));
     throw error;
   }
+  });
 }
 
 // Only reuse a completed compile for identical SQL, schema, function signatures and limits. The

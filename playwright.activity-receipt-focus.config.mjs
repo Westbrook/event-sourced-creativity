@@ -13,6 +13,6 @@ export default defineConfig({
   webServer:{command:"node scripts/activity-receipt-test-preview.mjs",
     url:url.origin+"/tests/activity-receipt-focus.fixture.html",reuseExistingServer:false,timeout:60000},
   use:{baseURL:url.origin,viewport:{width:681,height:991},deviceScaleFactor:2,
-    locale:"en-US",browserName:"chromium",channel:"chrome",serviceWorkers:"block",
+    locale:"en-US",browserName:"chromium",channel:"chromium",serviceWorkers:"block",
     acceptDownloads:false,trace:"on",screenshot:"only-on-failure"},
 });

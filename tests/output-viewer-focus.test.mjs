@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import ts from "typescript";
 import { createHash } from "node:crypto";
-import { fixture as artifactViewerFixture } from "./inactive-generation-dialog-host.test.mjs";
+import { fixture as artifactViewerFixture } from "./inactive-generation-dialog-fixture.mjs";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const [artifacts, workspace, deck, output, outputCard, canvas, shared, styles, canvasStyles, design, responsive, visualFixture] = await Promise.all([

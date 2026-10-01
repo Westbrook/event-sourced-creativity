@@ -30,10 +30,10 @@ const boundViewerLoad = 'loadActual("src/components/document-artifacts.ts", new 
 assert.equal(hostSource.split(prefixExpression).length, 2, "one existing declaration-prefix extraction");
 const qualifiedHostSource = hostSource.replace(prefixExpression,
   prefixExpression + ".replace(" + JSON.stringify(viewerLoad) + ", " + JSON.stringify(boundViewerLoad) + ")");
-const nativePrefixUrl = new URL("../inactive-generation-dialog-host.test.mjs", hostUrl);
+const nativePrefixUrl = new URL("../inactive-generation-dialog-fixture.mjs", hostUrl);
 const nativePrefixSource = fs.readFileSync(nativePrefixUrl, "utf8");
 const nativeTree = ts.createSourceFile(nativePrefixUrl.pathname, nativePrefixSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-const firstTest = nativeTree.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(nativeTree) === "test");
+const firstTest = nativeTree.statements.find(node => ts.isExportAssignment(node));
 assert.ok(firstTest);
 assert.equal(nativePrefixSource.slice(0, firstTest.getStart(nativeTree)).split(viewerLoad).length, 2, "only the existing viewer's first load gains its declared Office import");
 const hostHook = registerHooks({ load(url, context, next) {

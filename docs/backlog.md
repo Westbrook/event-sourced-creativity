@@ -24,6 +24,13 @@ TODO. Ongoing work in other branches must be reconciled before reimplementing it
   newly discovered work here and link its detailed issue or guide. Keep proposals
   separate from accepted delivery requirements in the linked decision records.
 
+## Validation efficiency
+
+| ID | Status | Owner | Remaining work / next action | Done when |
+| --- | --- | --- | --- | --- |
+| VAL-001 | Implemented — local infrastructure; baseline failures remain visible | Validation maintainer | Staged runners, complete file census, expanded types, extracted fixtures, qualified build/static receipts, shared browser/server/compiler infrastructure and current AGENTS scheduling are implemented. See [implementation receipt](validation-implementation-2026-09-30.md) and [validation guide](validation.md). | Types first; 28 infrastructure checks, native zoom/isolation, three-engine toolbar run, build reuse and stale-output rejection verified. No live/paid acceptance or external CI activation. Remaining coverage/ownership and baseline repairs are VAL-002 and QA-001. |
+| VAL-002 | Open — observed baseline and qualification gaps | Domain owners; CI/qualification owner unassigned | Repair existing dialog/Storyboard/experience runtime failures and repository lint debt; qualify the six unassigned Playwright specs and remaining standalone browser prerequisites; confirm external CI ownership. Continue value/cost review using run receipts before changing wider concurrency or deleting tests. | Preserve named negative coverage; do not hide failures, fabricate retained fixtures or reopen accepted QA-002 journeys. Native account/archive/hardware/hosted evidence remains under QA-001. Full green baseline and broader cold/warm/flake/RSS measurements are not claimed by VAL-001. |
+
 ## Video provenance follow-up
 
 | ID | Status | Owner | Remaining work / next action | Done when |

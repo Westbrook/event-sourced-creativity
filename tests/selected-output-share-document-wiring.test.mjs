@@ -10,12 +10,10 @@ import { ownerMediaNamespace } from "../src/model/media-ownership.ts";
 // Execute the complete, actual DocumentArtifacts module using the existing
 // finite native fixture ports. Only this suite runs: accepted fixture tests are
 // excluded at their first top-level test declaration, never production methods.
-const fixtureUrl = new URL("./inactive-generation-dialog-host.test.mjs", import.meta.url);
+const fixtureUrl = new URL("./inactive-generation-dialog-fixture.mjs", import.meta.url);
 const text = fs.readFileSync(fixtureUrl, "utf8");
 const tree = ts.createSourceFile(fixtureUrl.pathname, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-const firstTest = tree.statements.find(node => ts.isExpressionStatement(node)
-  && ts.isCallExpression(node.expression) && ts.isIdentifier(node.expression.expression)
-  && node.expression.expression.text === "test");
+const firstTest = tree.statements.find(node => ts.isExportAssignment(node));
 assert.ok(firstTest);
 const fixtureTree = ts.createSourceFile(fixtureUrl.pathname, text.slice(0, firstTest.getFullStart()), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
 const transformed = ts.transform(fixtureTree, [context => {

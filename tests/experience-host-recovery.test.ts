@@ -103,6 +103,7 @@ test("output-block revision notification can abort pending acknowledgment and re
   requestRevision = sourceRevision; await client.read();
   assert.ok("original" in client.state && client.state.original);
   const recovered = client.state;
+  assert.ok(recovered.original);
   assert.equal(recovered.status, "queued"); assert.deepEqual(recovered.permitted, { prepare: false, authorize: false, run: false, resumeRun: false });
   for (const key of ["grantId", "slotId", "jobId", "correlationId"] as const) assert.equal(recovered.original[key], authorized.original![key]);
   assert.equal(observed.paidSourceCurrent, false);

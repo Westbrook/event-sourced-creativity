@@ -14,9 +14,14 @@ for safe tar inspection; application runtime and browser tests remain Node-based
    plan outside the checkout. Do not populate the allowlist blindly from a diff.
    The baseline need not be an ancestor: hosted history may include a later
    reverted qualification branch. Only the explicitly reviewed tree delta passes.
-3. Commit the candidate, run `pnpm test:still-toolbar`, typecheck and the production
-   build on that exact source. No source changes may follow without rechecking and
-   rebuilding. Use the repository's held-migration packager, which packages the
+3. Commit the candidate. On that exact source, run `pnpm validate:fast` first,
+   then focused toolbar units/browser coverage (`pnpm test:still-toolbar`) and
+   `pnpm build` once. If the unit cases already passed on matching inputs in the
+   Node graph, use `pnpm test:still-toolbar:browser` for the remaining browser lane.
+   Reuse a matching qualified build; do not clean it just to repeat a command.
+   Source changes invalidate affected checks/build evidence and must be reverified
+   before packaging. Documentation-only changes do not invalidate runtime behavior
+   but the release source/archive comparisons still need the exact candidate. Use the repository's held-migration packager, which packages the
    verified build rather than copying unqualified source migrations over it:
 
    ```sh

@@ -158,10 +158,10 @@ test("managed presentation requests reject unsupported counts, prevent duplicate
 
 // Reuse the existing actual component/native-port fixture without registering its
 // unrelated tests or changing any production method, authorization guard, or port.
-const nativeFixtureUrl = new URL("./inactive-generation-dialog-host.test.mjs", import.meta.url);
+const nativeFixtureUrl = new URL("./inactive-generation-dialog-fixture.mjs", import.meta.url);
 const nativeFixtureSource = await readFile(nativeFixtureUrl, "utf8");
 const nativeFixtureTree = ts.createSourceFile(nativeFixtureUrl.pathname, nativeFixtureSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-const firstFixtureTest = nativeFixtureTree.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression) && node.expression.expression.getText(nativeFixtureTree) === "test");
+const firstFixtureTest = nativeFixtureTree.statements.find(node => ts.isExportAssignment(node));
 assert.ok(firstFixtureTest, "the existing full-component fixture is separated from its tests");
 const nativeFixtureHasExport = nativeFixtureTree.statements
   .slice(0, nativeFixtureTree.statements.indexOf(firstFixtureTest))

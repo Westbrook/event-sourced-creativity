@@ -20,7 +20,7 @@ test("custody graph retains all fields and detects mutation or replacement witho
 });
 
 test("custody capture refuses exotic data and accessors without executing them", () => {
-  const root = { get privateText(): never { assert.fail("getter must not run"); } };
+  const root = { get privateText(): never { return assert.fail("getter must not run"); } };
   assert.throws(() => captureVideoCustodySnapshot(root), /snapshot_unavailable/);
   assert.throws(() => captureVideoCustodySnapshot({ value: new Date() }), /snapshot_unavailable/);
   const values = Array(2), unchanged = captureVideoCustodySnapshot({ values });

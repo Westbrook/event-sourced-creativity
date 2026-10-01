@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 const root = process.env.FORMA_SOURCE_ROOT ?? new URL('..', import.meta.url).pathname.replace(/\/$/, '');
 const source = path => pathToFileURL(`${root}/${path}`).href;
 const { model3dRecoveryFixture: fixture, model3dRecoverySnapshot: snapshot } = await import(source('tests/helpers/output-model3d-recovery-fixture.mjs'));
-const { predicateTree } = await import(source('tests/output-native-publication-depth.test.mjs'));
+const { predicateTree } = await import(source('tests/output-native-publication-fixture.mjs'));
 const { outputModel3dRecoveryAssertions: original } = await import(source('worker/output-model3d-recovery-lease.ts'));
 const { compactModel3dRecoveryAssertions: compact } = await import(source('worker/output-model3d-recovery-assertions.ts'));
 const savedFetch = globalThis.fetch; let fetches = 0;

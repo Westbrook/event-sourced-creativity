@@ -4,6 +4,32 @@ Current E7 membership is recorded in [E7 title and optional localized controls](
 Earlier journey summaries and numerical snapshots below retain their original
 phase context; they do not define the current project membership.
 
+## Current scheduling rules
+
+Run types and relevant source/runtime tests before browser setup. Follow
+[the validation guide](../../docs/validation.md) for current developer regression
+selection. Historical full-baseline/phase sequences below document acceptance
+at that time; they do not prohibit focused local regressions or require replay
+of unchanged accepted journeys. Changed shared behavior still needs all affected
+consumers and any explicitly required release/acceptance evidence.
+
+Group compatible standalone configs with, for example,
+`FORMA_A11Y_SYNTHETIC_NETWORK=1 FORMA_BROWSER_CONFIGS=output-footer,context-return-reading pnpm test:browser`.
+This keeps one owned server for the batch, requires a matching build receipt for
+`--built` fixtures, and locks that output while it is consumed. Mixed source/built
+servers on one origin fail. Existing account previews retain their prerequisites;
+a listening port alone never establishes safe ownership or artifact identity.
+
+Ordinary shared-fixture tests reuse one Chromium per worker with a fresh context
+per test; cookies, globals and storage stay isolated. True zoom retains a fresh
+persistent profile and actual extension zoom. Default workers remain one for
+shared/account lanes. Calibration-only 1/2/4-worker observations are not evidence
+that every account or zoom lane can run concurrently. Keep required traces.
+
+`pnpm test:still-toolbar:browser` runs only the browser half after matching unit
+coverage; both toolbar commands now keep one identified synthetic Vite server
+for their batch and retain its dependency cache. No mutable account data is shared.
+
 Run these against the existing local Forma preview and its normal, already
 onboarded local account. The suite reuses `doc-atmosphere` and its five saved
 articles: four creative decisions and the existing legacy output. It does not seed/reset the database, accept onboarding terms, save a
@@ -17,6 +43,7 @@ changes before crediting a replay to those changes.
 ```sh
 pnpm install
 pnpm exec playwright install chromium
+pnpm validate:fast
 pnpm build
 # Keep this running in another terminal (or reuse the existing preview):
 pnpm start --host 127.0.0.1 --port 4178 --strictPort

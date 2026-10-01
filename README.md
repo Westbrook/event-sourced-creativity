@@ -64,7 +64,7 @@ Ephemeral cross-account live cursor presence is not implemented or claimed.
 
 ## Local development
 
-Requires Node.js 22.13 or newer.
+Use the Node and pnpm versions declared in `package.json`.
 
 ```bash
 pnpm install
@@ -74,12 +74,14 @@ pnpm dev
 Validation:
 
 ```bash
-pnpm build
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm cem:check
+pnpm validate:fast  # early types, then lint
+# After fixing cheap failures, choose focused checks or the complete Node graph:
+pnpm test          # types → lint → source → runtime → one build → artifact tests
 ```
+
+The [validation guide](docs/validation.md) explains focused lanes, build reuse,
+receipts, discovery, and bounded parallelism. A prior unchanged successful fast
+check need not be repeated manually immediately before the full graph.
 
 Native keyboard, focus visibility, and genuine Chromium browser-zoom checks
 run with `pnpm test:a11y` against the existing local preview. See

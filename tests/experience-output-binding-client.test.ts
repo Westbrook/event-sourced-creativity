@@ -81,7 +81,8 @@ function state(status: ExperienceNativeState["status"] = "absent", output: "imag
 }
 
 function response(value: unknown, path = basePath, options: { status?: number; headers?: Record<string, string>; url?: string; redirected?: boolean; raw?: Uint8Array | string } = {}) {
-  const result = new Response(options.raw ?? JSON.stringify(value), {
+  const raw = options.raw instanceof Uint8Array ? new Uint8Array(options.raw) : options.raw;
+  const result = new Response(raw ?? JSON.stringify(value), {
     status: options.status ?? 200, headers: { "content-type": "application/json", ...options.headers },
   });
   Object.defineProperty(result, "url", { value: options.url ?? new URL(path, origin).href });
@@ -879,7 +880,7 @@ test('Video recovery refuses changed provider policy and preserves completed rec
     const bad=structuredClone(value);Object.assign(bad.preflight!.targets[0],patch);bad.grant!.disclosure=structuredClone(bad.preflight!);
     assert.equal(decodeExperienceBinding(bad,videoIdentity),null);
   }
-  const missing=structuredClone(value);delete missing.preflight!.targets[0].settings;missing.grant!.disclosure=structuredClone(missing.preflight!);
+  const missing=structuredClone(value);Reflect.deleteProperty(missing.preflight!.targets[0], "settings");missing.grant!.disclosure=structuredClone(missing.preflight!);
   assert.equal(decodeExperienceBinding(missing,videoIdentity),null);
   for(const patch of [{requestId:'video-'+'0'.repeat(64)},{actorUserId:'different-owner'},{projectId:'different-project'},
     {documentId:'different-document'},{sourceDigest:'0'.repeat(64)},{requirementsDigest:'0'.repeat(64)}]) {

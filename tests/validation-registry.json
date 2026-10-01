@@ -1,0 +1,2464 @@
+{
+  "schemaVersion": 1,
+  "owner": "Repository validation maintainer; domain contracts stay with their code owners",
+  "tests": {
+    "tests/account-cache-retirement-regression.test.mjs": "source",
+    "tests/account-cache-retirement.test.mjs": "source",
+    "tests/activity-accounting-lifetime.test.mjs": "source",
+    "tests/activity-assigned-review-identity.test.mjs": "runtime",
+    "tests/activity-context-departure.test.mjs": "runtime",
+    "tests/activity-correction-group-lifetime.test.mjs": "runtime",
+    "tests/activity-correction-read-continuity.test.mjs": "runtime",
+    "tests/activity-correction-refresh.test.mjs": "source",
+    "tests/activity-delivery-artifact-identity-port.test.mjs": "runtime",
+    "tests/activity-delivery-artifact-name-port.test.mjs": "runtime",
+    "tests/activity-delivery-exact-destinations.test.mjs": "runtime",
+    "tests/activity-delivery-image-destinations.test.mjs": "runtime",
+    "tests/activity-inline-review-pending.test.mjs": "runtime",
+    "tests/activity-issues.test.mjs": "source",
+    "tests/activity-navigation.test.mjs": "runtime",
+    "tests/activity-notification-identity.test.mjs": "runtime",
+    "tests/activity-private-note-pending.test.mjs": "runtime",
+    "tests/activity-recovery-open-navigation.test.mjs": "runtime",
+    "tests/activity-review-inbox.test.mjs": "runtime",
+    "tests/activity-stateful-row-identity.test.mjs": "runtime",
+    "tests/adaptive-cold-recovery.test.mjs": "runtime",
+    "tests/adaptive-original-source-bridge.test.mjs": "runtime",
+    "tests/adaptive-planning-adapter.test.mjs": "source",
+    "tests/adaptive-planning-consent-host.test.mjs": "runtime",
+    "tests/adaptive-planning-job-recovery-host.test.mjs": "source",
+    "tests/adaptive-planning-preview.test.mjs": "source",
+    "tests/adaptive-proposal-application.test.mjs": "source",
+    "tests/adaptive-proposal-close-focus.test.mjs": "runtime",
+    "tests/adaptive-proposal-host.test.mjs": "source",
+    "tests/adaptive-proposal-noop.test.mjs": "runtime",
+    "tests/adaptive-proposal-receipt-truth.test.mjs": "runtime",
+    "tests/adaptive-proposal-target-refusal-native.test.mjs": "runtime",
+    "tests/adaptive-proposal-target-refusal.test.mjs": "runtime",
+    "tests/adaptive-recovery-native.test.mjs": "runtime",
+    "tests/advisory-moderation-boundary.test.mjs": "source",
+    "tests/alternative-command-origin-continuity.test.mjs": "runtime",
+    "tests/alternative-exit-admission-source.test.mjs": "source",
+    "tests/analytics.test.mjs": "source",
+    "tests/application-boundaries.test.mjs": "artifact",
+    "tests/architecture.test.mjs": "artifact",
+    "tests/artifact-changed-source-custody.test.mjs": "runtime",
+    "tests/artifact-delivery-facts.test.mjs": "source",
+    "tests/artifact-delivery-ui-lifecycle.test.mjs": "runtime",
+    "tests/artifact-disabled-export-reason.test.mjs": "runtime",
+    "tests/artifact-edit-d1-ack.test.mjs": "runtime",
+    "tests/artifact-exact-delivery.test.mjs": "runtime",
+    "tests/artifact-history-layout.test.mjs": "source",
+    "tests/artifact-media-export-title.test.mjs": "runtime",
+    "tests/artifact-noop-save.test.mjs": "runtime",
+    "tests/artifact-review-edit-intent.test.mjs": "runtime",
+    "tests/artifact-review-reachability.test.mjs": "runtime",
+    "tests/artifact-source-aware-revision.test.mjs": "artifact",
+    "tests/artifact-viewer-evidence-copy.test.mjs": "runtime",
+    "tests/assigned-review-action-ownership.test.mjs": "runtime",
+    "tests/assigned-review-navigation.test.mjs": "runtime",
+    "tests/assigned-review-route-module.test.mjs": "runtime",
+    "tests/assistant-idea-guard.test.mjs": "source",
+    "tests/assistant-model-policy.test.mjs": "source",
+    "tests/assistant-panel-default-focus.test.mjs": "runtime",
+    "tests/assistant-proposals.test.mjs": "source",
+    "tests/assistant-provider-consent.test.mjs": "source",
+    "tests/assistant-provider.test.mjs": "source",
+    "tests/assistant-route-policy.test.mjs": "source",
+    "tests/assistant-runtime.test.mjs": "runtime",
+    "tests/assistant-schema-migrations.test.mjs": "runtime",
+    "tests/assistant-shell.test.mjs": "source",
+    "tests/assistant-specialist-consent-host.test.mjs": "runtime",
+    "tests/assistant-specialist-panel-controls.test.mjs": "runtime",
+    "tests/attention-publication.test.ts": "source",
+    "tests/attention.test.mjs": "source",
+    "tests/audio-edit-persistence.test.mjs": "runtime",
+    "tests/audio-local-conversion-store.test.mjs": "source",
+    "tests/audio-local-conversion.test.mjs": "source",
+    "tests/audio-original-recovery.test.mjs": "source",
+    "tests/audio-review-file.test.mjs": "runtime",
+    "tests/audio-share-mp3-envelope.test.mjs": "source",
+    "tests/audio-share-mp3-failure-lifecycle.test.mjs": "runtime",
+    "tests/audio-share-mp3-vite.test.mjs": "runtime",
+    "tests/audio-specialists.test.mjs": "source",
+    "tests/audio-trim-preview-focus.test.mjs": "source",
+    "tests/audio-trim.test.mjs": "source",
+    "tests/audio-v8-provider-result-envelope-identity.test.mjs": "source",
+    "tests/audio-v8-provider-result-observation.test.mjs": "source",
+    "tests/audio-v8-recovery-financial-observation.test.mjs": "runtime",
+    "tests/audio.test.mjs": "source",
+    "tests/authored-output-reveal-d2-ownership.test.mjs": "runtime",
+    "tests/authored-output-reveal.test.mjs": "runtime",
+    "tests/brief.test.mjs": "source",
+    "tests/browser/forma-activity-accounting-lifetime.spec.mjs": "browser",
+    "tests/browser/forma-activity-receipt-focus.spec.mjs": "browser",
+    "tests/browser/forma-assistant-studio-slot.spec.mjs": "browser",
+    "tests/browser/forma-audio-reviewed-download.spec.mjs": "browser",
+    "tests/browser/forma-context-return-reading.spec.mjs": "browser",
+    "tests/browser/forma-deliver-containment.spec.mjs": "browser",
+    "tests/browser/forma-deliver-reader-denial.spec.mjs": "browser",
+    "tests/browser/forma-e11-copy-locales.spec.mjs": "browser",
+    "tests/browser/forma-e7-rename-filter.spec.mjs": "browser",
+    "tests/browser/forma-e9-cancel-header-reading.spec.mjs": "browser",
+    "tests/browser/forma-e9-outputcard-peers.spec.mjs": "browser",
+    "tests/browser/forma-e9-peer-rows.spec.mjs": "browser",
+    "tests/browser/forma-f-banner-rail.spec.mjs": "browser",
+    "tests/browser/forma-generation-accounting.spec.mjs": "browser",
+    "tests/browser/forma-guest-narrow-reading-return.spec.mjs": "browser",
+    "tests/browser/forma-guest-retry-skip-return.spec.mjs": "browser",
+    "tests/browser/forma-keyboard.spec.mjs": "browser",
+    "tests/browser/forma-library-controls-reach.spec.mjs": "browser",
+    "tests/browser/forma-library-import.spec.mjs": "browser",
+    "tests/browser/forma-library-search-first.spec.mjs": "browser",
+    "tests/browser/forma-memory-assistant-context.spec.mjs": "browser",
+    "tests/browser/forma-memory-purposes.spec.mjs": "browser",
+    "tests/browser/forma-memory-resource.spec.mjs": "browser",
+    "tests/browser/forma-memory-scope-recall.spec.mjs": "browser",
+    "tests/browser/forma-narrow-navigation.spec.mjs": "browser",
+    "tests/browser/forma-ordinary-copy.spec.mjs": "browser",
+    "tests/browser/forma-output-footer-clearance.spec.mjs": "browser",
+    "tests/browser/forma-output-footer-ja768.spec.mjs": "browser",
+    "tests/browser/forma-project-containment.spec.mjs": "browser",
+    "tests/browser/forma-project-contents.spec.mjs": "browser",
+    "tests/browser/forma-public-marketing.spec.mjs": "browser",
+    "tests/browser/forma-shallow-navigation.spec.mjs": "browser",
+    "tests/browser/forma-slides-content-first.spec.mjs": "browser",
+    "tests/browser/forma-slides-reviewed-download.spec.mjs": "browser",
+    "tests/browser/forma-story-revision-download.spec.mjs": "browser",
+    "tests/browser/forma-view-menu.spec.mjs": "browser",
+    "tests/browser/forma-workspace-settings.spec.mjs": "browser",
+    "tests/browser/harness-calibration.spec.mjs": "browser",
+    "tests/browser/isolated-e6-noncanvas.spec.mjs": "browser",
+    "tests/browser/isolated-presentation-owners.spec.mjs": "browser",
+    "tests/browser/n6-source-advisory-review.test.mjs": "browser",
+    "tests/browser/still-block-navigation.test.mjs": "browser",
+    "tests/browser/still-creation-help.test.mjs": "browser",
+    "tests/browser/still-document-scroll.test.mjs": "browser",
+    "tests/browser/still-form-toolbar.test.mjs": "browser",
+    "tests/browser/still-generation-service-recovery.test.mjs": "browser",
+    "tests/browser/still-idea-workflows.test.mjs": "browser",
+    "tests/browser/still-image-geometry.test.mjs": "browser",
+    "tests/browser/still-index-workerd.test.mjs": "browser",
+    "tests/browser/still-list-display.test.mjs": "browser",
+    "tests/browser/still-media-layout.test.mjs": "browser",
+    "tests/browser/still-natural-media.test.mjs": "browser",
+    "tests/browser/still-onboarding-copy.test.mjs": "browser",
+    "tests/browser/still-onboarding-state.test.mjs": "browser",
+    "tests/browser/still-output-configuration.test.mjs": "browser",
+    "tests/browser/still-page-title.test.mjs": "browser",
+    "tests/browser/still-quiet-notifications.test.mjs": "browser",
+    "tests/browser/still-save-recovery.test.mjs": "browser",
+    "tests/browser/still-sticky-dock.test.mjs": "browser",
+    "tests/browser/still-toolbar-geometry.test.mjs": "browser",
+    "tests/browser/still-toolbar-interruption.test.mjs": "browser",
+    "tests/browser/still-toolbar-keyboard.test.mjs": "browser",
+    "tests/browser/still-toolbar-motion.test.mjs": "browser",
+    "tests/browser/still-toolbar-orientation.test.mjs": "browser",
+    "tests/browser/still-toolbar-tooltip.test.mjs": "browser",
+    "tests/browser/still-toolbar-zoom.test.mjs": "browser",
+    "tests/browser/still-unified-creation.test.mjs": "browser",
+    "tests/browser/validation-isolation.spec.mjs": "browser",
+    "tests/browser/video-cover.test.mjs": "browser",
+    "tests/budget-hold-preview-ui.test.mjs": "source",
+    "tests/calm-full-page-evidence.test.mjs": "runtime",
+    "tests/campaign-recipe-review-file.test.mjs": "runtime",
+    "tests/canvas-action-focus-ownership.test.mjs": "runtime",
+    "tests/canvas-arrangements.test.mjs": "runtime",
+    "tests/canvas-board-after-handoff-custody.test.mjs": "runtime",
+    "tests/canvas-board-lifecycle-guidance.test.mjs": "runtime",
+    "tests/canvas-board-lifecycle-ownership.test.mjs": "runtime",
+    "tests/canvas-calm-controls-host.test.mjs": "runtime",
+    "tests/canvas-expired-disposition.test.mjs": "runtime",
+    "tests/canvas-native-containment.test.mjs": "runtime",
+    "tests/canvas-ordinary-exit-continuity.test.mjs": "runtime",
+    "tests/canvas-output-refresh-focus.test.mjs": "runtime",
+    "tests/canvas-presence.test.mjs": "source",
+    "tests/canvas-preview-identity-erasure.test.mjs": "runtime",
+    "tests/canvas-preview-identity-positive.test.mjs": "runtime",
+    "tests/canvas-queue-verification.test.mjs": "runtime",
+    "tests/canvas-receipt-result-batched-aba.test.mjs": "runtime",
+    "tests/canvas-receipt-result-model-shapes.test.mjs": "runtime",
+    "tests/canvas-receipt-result-navigation-guards.test.mjs": "runtime",
+    "tests/canvas-receipt-result-navigation.test.mjs": "runtime",
+    "tests/canvas-receipt-result-observation.test.mjs": "runtime",
+    "tests/canvas-receipt-result-source-generation.test.mjs": "runtime",
+    "tests/canvas-receipt-resume.test.mjs": "runtime",
+    "tests/canvas-render-preparation-departure.test.mjs": "runtime",
+    "tests/canvas-retained-disclosure.test.mjs": "runtime",
+    "tests/canvas-selected-preparation-ownership.test.mjs": "runtime",
+    "tests/canvas-source-retired-queue.test.mjs": "source",
+    "tests/canvas-source-retirement.test.mjs": "runtime",
+    "tests/canvas-storage-disclosure.test.mjs": "runtime",
+    "tests/canvas-view-resume-popover-receiver.test.mjs": "runtime",
+    "tests/canvas.test.mjs": "source",
+    "tests/chat-deferred-focus.test.mjs": "runtime",
+    "tests/color-scheme.test.mjs": "source",
+    "tests/combined-context.test.mjs": "source",
+    "tests/command-assigned-review-arrival.test.mjs": "runtime",
+    "tests/command-canvas-origin-continuity.test.mjs": "runtime",
+    "tests/command-context-opening-ownership.test.mjs": "runtime",
+    "tests/command-discovery-layout.test.mjs": "source",
+    "tests/command-discovery.test.mjs": "source",
+    "tests/command-listbox-keyboard.test.mjs": "runtime",
+    "tests/command-origin-draft-continuity.test.mjs": "runtime",
+    "tests/command-output-origin-continuity.test.mjs": "runtime",
+    "tests/component-api-documentation-localization.test.mjs": "source",
+    "tests/component-library.test.mjs": "artifact",
+    "tests/component-manifest-types.test.mjs": "source",
+    "tests/consented-text-pricing.test.mjs": "source",
+    "tests/content-priority.test.mjs": "source",
+    "tests/context-adaptation.test.mjs": "source",
+    "tests/context-composition.test.mjs": "source",
+    "tests/context-consent-state.test.mjs": "source",
+    "tests/context-controls-host.test.mjs": "runtime",
+    "tests/context-creation.test.mjs": "source",
+    "tests/context-focus-continuity.test.mjs": "runtime",
+    "tests/context-focus-handoff.test.mjs": "runtime",
+    "tests/context-health-readiness.test.mjs": "source",
+    "tests/context-intelligence.test.mjs": "source",
+    "tests/context-package-rights.test.mjs": "source",
+    "tests/context-proposal-application.test.mjs": "source",
+    "tests/context-structured-fields.test.mjs": "runtime",
+    "tests/context-structured-source-continuity.test.mjs": "runtime",
+    "tests/context-summary-spacing.test.mjs": "source",
+    "tests/conversation-context.test.mjs": "source",
+    "tests/cost-budget-ledger.test.mjs": "runtime",
+    "tests/creation-api.test.mjs": "runtime",
+    "tests/creation-boundary-acceptance.test.mjs": "runtime",
+    "tests/creation-classification.test.mjs": "source",
+    "tests/creation-contract.test.mjs": "source",
+    "tests/creation-corpus-search.test.mjs": "source",
+    "tests/creation-corpus.test.mjs": "source",
+    "tests/creation-corrections.test.mjs": "source",
+    "tests/creation-delivery-recovery.test.mjs": "runtime",
+    "tests/creation-delivery-workflows.test.mjs": "runtime",
+    "tests/creation-index-capacity.test.mjs": "runtime",
+    "tests/creation-index-lifecycle.test.mjs": "runtime",
+    "tests/creation-index-migration.test.mjs": "runtime",
+    "tests/creation-index-qualification.test.mjs": "source",
+    "tests/creation-interpret.test.mjs": "source",
+    "tests/creation-provider-service.test.mjs": "runtime",
+    "tests/creation-release-candidates.test.mjs": "runtime",
+    "tests/creation-retained-security.test.mjs": "runtime",
+    "tests/creation-search-delivery.test.mjs": "runtime",
+    "tests/creation-search-index.test.mjs": "runtime",
+    "tests/creation-search-performance.test.mjs": "runtime",
+    "tests/creation-search.test.mjs": "source",
+    "tests/creation-security.test.mjs": "source",
+    "tests/creation-store.test.mjs": "runtime",
+    "tests/creation-use-acceptance.test.mjs": "runtime",
+    "tests/creative-editor-command-departure.test.mjs": "runtime",
+    "tests/creative-editor-model3d-ingress.test.mjs": "runtime",
+    "tests/creative-editor.test.mjs": "source",
+    "tests/creative-next-action-activity-draft.test.mjs": "runtime",
+    "tests/creative-next-action-assigned-review.test.mjs": "runtime",
+    "tests/creative-next-action-consumers.test.mjs": "runtime",
+    "tests/creative-next-action-explicit-media.test.mjs": "runtime",
+    "tests/creative-next-action-format-diagnostic.test.mjs": "runtime",
+    "tests/creative-next-action-job-promotion.test.mjs": "runtime",
+    "tests/creative-next-action-opening.test.mjs": "runtime",
+    "tests/creative-next-action-output-navigation.test.mjs": "runtime",
+    "tests/creator-shell-deferred-focus.test.mjs": "runtime",
+    "tests/creator-workspace-command-departure.test.mjs": "runtime",
+    "tests/cross-media-native-storyboard-journey.test.mjs": "runtime",
+    "tests/cross-media-planner-outcome.test.mjs": "source",
+    "tests/cross-media-request-parity.test.mjs": "runtime",
+    "tests/custom-element-registration.test.mjs": "artifact",
+    "tests/d1-expression-depth-transport.test.mjs": "runtime",
+    "tests/d1-query-limits.test.mjs": "runtime",
+    "tests/data-loading-performance.test.mjs": "artifact",
+    "tests/deliver-command-origin-continuity.test.mjs": "runtime",
+    "tests/deliver-summary-scope.test.mjs": "runtime",
+    "tests/delivery-identity-copy.test.mjs": "runtime",
+    "tests/derived-reference-guard.test.mjs": "source",
+    "tests/document-artifact-cost-panel.test.mjs": "runtime",
+    "tests/document-artifact-dialog-layout.test.mjs": "source",
+    "tests/document-artifact-toolbar-responsive.test.mjs": "source",
+    "tests/document-artifact-video-duration.test.mjs": "source",
+    "tests/document-artifacts.test.mjs": "source",
+    "tests/document-copy-backend-boundaries.test.mjs": "runtime",
+    "tests/document-copy-erasure-completion.test.mjs": "runtime",
+    "tests/document-copy-erasure-identity.test.mjs": "runtime",
+    "tests/document-copy-erasure-ownership.test.mjs": "runtime",
+    "tests/document-copy-erasure-ui.test.mjs": "runtime",
+    "tests/document-copy-guarded-continuity.test.mjs": "runtime",
+    "tests/document-copy-guarded-ownership.test.mjs": "runtime",
+    "tests/document-copy-operation-identity.test.mjs": "runtime",
+    "tests/document-copy-reader-guidance.test.mjs": "runtime",
+    "tests/document-copy-recovery-identity.test.mjs": "runtime",
+    "tests/document-copy-recovery-protocol.test.mjs": "runtime",
+    "tests/document-copy-recovery-ui.test.mjs": "runtime",
+    "tests/document-copy-refusal-continuity.test.mjs": "runtime",
+    "tests/document-copy-refusal-read-ownership.test.mjs": "runtime",
+    "tests/document-copy-refusal-read-recovery.test.mjs": "runtime",
+    "tests/document-copy-revision-draft.test.mjs": "runtime",
+    "tests/document-copy-source-retirement.test.mjs": "runtime",
+    "tests/document-copy-ui.test.mjs": "runtime",
+    "tests/document-copy-unknown-alert.test.mjs": "runtime",
+    "tests/document-copy-winner-continuity.test.mjs": "runtime",
+    "tests/document-duplication-api.test.mjs": "runtime",
+    "tests/document-duplication.test.mjs": "source",
+    "tests/document-generation-reliability.test.mjs": "artifact",
+    "tests/document-job-ack-provenance.test.mjs": "artifact",
+    "tests/document-job-inspection-ownership.test.mjs": "runtime",
+    "tests/document-job-source-order.test.mjs": "artifact",
+    "tests/document-job-source-recovery.test.mjs": "artifact",
+    "tests/document-jobs.test.mjs": "runtime",
+    "tests/document-memory-brief-component.test.mjs": "source",
+    "tests/document-output-defaults.test.mjs": "source",
+    "tests/document-output-intent.test.mjs": "source",
+    "tests/document-planning-budget.test.mjs": "source",
+    "tests/document-profile-client.test.mjs": "source",
+    "tests/document-render-suggestions.test.mjs": "source",
+    "tests/document-reservation-recovery.test.mjs": "artifact",
+    "tests/document-slides-content-first-focus.test.mjs": "source",
+    "tests/document-view-signals.test.mjs": "source",
+    "tests/documents.test.mjs": "source",
+    "tests/event-append-acknowledgment.test.mjs": "source",
+    "tests/event-concurrency.test.mjs": "source",
+    "tests/event-save-repair.test.mjs": "artifact",
+    "tests/event-source-retirement-continuations.test.mjs": "runtime",
+    "tests/event-source-retirement-core.test.mjs": "runtime",
+    "tests/event-source-retirement-coverage.test.mjs": "runtime",
+    "tests/event-source-retirement-locales.test.mjs": "runtime",
+    "tests/event-source-retirement-ordering.test.mjs": "runtime",
+    "tests/event-source-retirement-writes.test.mjs": "runtime",
+    "tests/exact-delivery-backend.test.mjs": "runtime",
+    "tests/exact-next-action-host.test.mjs": "source",
+    "tests/exact-next-actions.test.mjs": "source",
+    "tests/executive-deck-recipe-review-file.test.mjs": "runtime",
+    "tests/experience-atomic-intake.test.mjs": "runtime",
+    "tests/experience-audio-bridge.test.mjs": "source",
+    "tests/experience-audio-client.test.mjs": "source",
+    "tests/experience-audio-intake.test.mjs": "source",
+    "tests/experience-audio-renewal-transaction.test.mjs": "runtime",
+    "tests/experience-audio-route.test.mjs": "source",
+    "tests/experience-availability-message.test.ts": "source",
+    "tests/experience-consent-focus-clearance.test.mjs": "source",
+    "tests/experience-consent-summary-new-outputs.test.mjs": "source",
+    "tests/experience-consent-summary.test.mjs": "source",
+    "tests/experience-display-locale.test.mjs": "source",
+    "tests/experience-entry-contract.test.mjs": "source",
+    "tests/experience-existing-principal.test.mjs": "runtime",
+    "tests/experience-fal-checkpoint-atomic.test.mjs": "runtime",
+    "tests/experience-fal-native.test.mjs": "source",
+    "tests/experience-fal-recovery-policy.test.mjs": "runtime",
+    "tests/experience-fal-recovery.test.mjs": "runtime",
+    "tests/experience-fresh-intake-join-native.test.mjs": "runtime",
+    "tests/experience-fresh-intake-join.test.mjs": "runtime",
+    "tests/experience-guest-claim-lease.test.mjs": "runtime",
+    "tests/experience-guest-claimed-image-output-retirement-d1.test.mjs": "runtime",
+    "tests/experience-guest-claimed-image-output-retirement.test.mjs": "runtime",
+    "tests/experience-guest-claimed-image-stage-retirement.test.mjs": "runtime",
+    "tests/experience-guest-context-adoption-d1.test.mjs": "runtime",
+    "tests/experience-guest-context-adoption.test.mjs": "runtime",
+    "tests/experience-guest-context-claim-d1.test.mjs": "runtime",
+    "tests/experience-guest-context-claim.test.mjs": "runtime",
+    "tests/experience-guest-context-client.test.mjs": "source",
+    "tests/experience-guest-context-inventory.test.mjs": "runtime",
+    "tests/experience-guest-context-lease-d1.test.mjs": "runtime",
+    "tests/experience-guest-context-lease.test.mjs": "runtime",
+    "tests/experience-guest-context-view.test.mjs": "source",
+    "tests/experience-guest-draft-retention.test.mjs": "runtime",
+    "tests/experience-guest-http-d1.test.mjs": "runtime",
+    "tests/experience-guest-http.test.mjs": "runtime",
+    "tests/experience-guest-image-admission-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-admission-witness.test.mjs": "runtime",
+    "tests/experience-guest-image-admission.test.mjs": "runtime",
+    "tests/experience-guest-image-authorization.test.mjs": "runtime",
+    "tests/experience-guest-image-claim-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-claim.test.mjs": "runtime",
+    "tests/experience-guest-image-confirmation.test.mjs": "runtime",
+    "tests/experience-guest-image-copy-contract.test.mjs": "runtime",
+    "tests/experience-guest-image-disclosure.test.mjs": "runtime",
+    "tests/experience-guest-image-execution.test.mjs": "runtime",
+    "tests/experience-guest-image-issuer-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-issuer.test.mjs": "runtime",
+    "tests/experience-guest-image-output-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-output-retirement-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-output-retirement.test.mjs": "runtime",
+    "tests/experience-guest-image-output.test.mjs": "runtime",
+    "tests/experience-guest-image-preflight-shape.test.mjs": "runtime",
+    "tests/experience-guest-image-preflight.test.mjs": "runtime",
+    "tests/experience-guest-image-preparation-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-preparation.test.mjs": "runtime",
+    "tests/experience-guest-image-result-claim-contract.test.mjs": "runtime",
+    "tests/experience-guest-image-result-claim-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-result-claim-source-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-result-claim-source.test.mjs": "runtime",
+    "tests/experience-guest-image-result-claim.test.mjs": "runtime",
+    "tests/experience-guest-image-result-contract.test.mjs": "runtime",
+    "tests/experience-guest-image-result-copy-contract.test.mjs": "runtime",
+    "tests/experience-guest-image-result-copy-schema.test.mjs": "runtime",
+    "tests/experience-guest-image-result-copy-writer-d1-r2.test.mjs": "runtime",
+    "tests/experience-guest-image-result-copy-writer.test.mjs": "runtime",
+    "tests/experience-guest-image-result-inventory-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-result-inventory.test.mjs": "runtime",
+    "tests/experience-guest-image-result-media-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-result-media.test.mjs": "runtime",
+    "tests/experience-guest-image-run-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-run.test.mjs": "runtime",
+    "tests/experience-guest-image-stage-ack.test.mjs": "runtime",
+    "tests/experience-guest-image-stage-claim.test.mjs": "runtime",
+    "tests/experience-guest-image-stage-custody-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-stage-custody.test.mjs": "runtime",
+    "tests/experience-guest-image-stage-facts.test.mjs": "runtime",
+    "tests/experience-guest-image-stage-history-d1.test.mjs": "runtime",
+    "tests/experience-guest-image-stage-history-extraction.test.mjs": "source",
+    "tests/experience-guest-image-stage-inventory.test.mjs": "runtime",
+    "tests/experience-guest-image-stage-retirement.test.mjs": "runtime",
+    "tests/experience-guest-image-stage-schema-alternatives.test.mjs": "runtime",
+    "tests/experience-guest-image-stages-d1.test.mjs": "runtime",
+    "tests/experience-guest-plan-custody-api.test.mjs": "runtime",
+    "tests/experience-guest-plan-custody-d1.test.mjs": "runtime",
+    "tests/experience-guest-plan-custody.test.mjs": "runtime",
+    "tests/experience-guest-schema-alternatives-d1.test.mjs": "runtime",
+    "tests/experience-guest-schema-alternatives.test.mjs": "runtime",
+    "tests/experience-guest-source-retirement-custody.test.mjs": "runtime",
+    "tests/experience-guest-source-retirement.test.mjs": "runtime",
+    "tests/experience-guest-source.test.mjs": "runtime",
+    "tests/experience-guest-sponsor-approval-d1.test.mjs": "runtime",
+    "tests/experience-guest-sponsor-approval.test.mjs": "runtime",
+    "tests/experience-guest-sponsor-contract.test.mjs": "runtime",
+    "tests/experience-host-layout-mode.test.mjs": "source",
+    "tests/experience-host-operation.test.ts": "source",
+    "tests/experience-host-recovery.test.ts": "source",
+    "tests/experience-host-route.test.ts": "source",
+    "tests/experience-host-source.test.ts": "source",
+    "tests/experience-image-ratio.test.mjs": "source",
+    "tests/experience-image-retained-host.test.mjs": "source",
+    "tests/experience-image-slides-preflight.test.mjs": "source",
+    "tests/experience-intake-authority.test.mjs": "runtime",
+    "tests/experience-intake-boundary.test.mjs": "runtime",
+    "tests/experience-intake-http-boundary.test.mjs": "runtime",
+    "tests/experience-maintenance-review.test.mjs": "source",
+    "tests/experience-model3d-intake.test.mjs": "source",
+    "tests/experience-model3d-replacement-proof.test.mjs": "runtime",
+    "tests/experience-model3d-replacement.test.mjs": "source",
+    "tests/experience-model3d-route.test.mjs": "source",
+    "tests/experience-native-result-association.test.ts": "source",
+    "tests/experience-navigation-settlement.test.mjs": "source",
+    "tests/experience-output-api-boundary.test.mjs": "source",
+    "tests/experience-output-binding-client.test.ts": "source",
+    "tests/experience-output-binding.test.mjs": "source",
+    "tests/experience-output-command-core.test.mjs": "runtime",
+    "tests/experience-output-command-transaction.test.mjs": "runtime",
+    "tests/experience-output-dispatch.test.mjs": "source",
+    "tests/experience-output-envelope-privacy.test.mjs": "source",
+    "tests/experience-output-originals.test.mjs": "runtime",
+    "tests/experience-output-producer.test.mjs": "runtime",
+    "tests/experience-output-recipe.test.mjs": "source",
+    "tests/experience-output-recovery-boundary.test.mjs": "runtime",
+    "tests/experience-output-terms.test.mjs": "source",
+    "tests/experience-preparation-response.test.mjs": "source",
+    "tests/experience-private-storage.test.mjs": "runtime",
+    "tests/experience-project-request-context.test.mjs": "runtime",
+    "tests/experience-recovered-image-association.test.mjs": "runtime",
+    "tests/experience-result-lifetime-host.test.mjs": "source",
+    "tests/experience-result-read-diagnostics.test.mjs": "source",
+    "tests/experience-retained-draft.test.mjs": "runtime",
+    "tests/experience-saved-view-navigation.test.mjs": "source",
+    "tests/experience-scene-adapter-contract.test.mjs": "source",
+    "tests/experience-scene-consent-client.test.mjs": "source",
+    "tests/experience-scene-context.test.mjs": "source",
+    "tests/experience-scene-font-client.test.mjs": "source",
+    "tests/experience-scene-host.test.mjs": "source",
+    "tests/experience-scene-intent.test.mjs": "source",
+    "tests/experience-scene-native-result.test.mjs": "source",
+    "tests/experience-scene-renewal-proof.test.ts": "runtime",
+    "tests/experience-scene-renewal-transaction.test.mjs": "runtime",
+    "tests/experience-scene-renewal.test.ts": "source",
+    "tests/experience-scene-result.test.mjs": "source",
+    "tests/experience-scene-target.test.mjs": "source",
+    "tests/experience-scene-terms.test.mjs": "source",
+    "tests/experience-shell-shortcut.test.mjs": "source",
+    "tests/experience-shell-startup-route.test.mjs": "source",
+    "tests/experience-short-story-context.test.mjs": "source",
+    "tests/experience-slides-renewal-proof.test.ts": "runtime",
+    "tests/experience-slides-renewal-transaction.test.mjs": "runtime",
+    "tests/experience-sponsor-approval-depth.test.mjs": "runtime",
+    "tests/experience-sponsor-approval.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-actor-evidence.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-authorize.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-contract.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-evidence-boundary.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-evidence-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-evidence.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-financial-sql.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-initial-contracts.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-intake-native.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-issuer.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-output-continuation.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-output-contracts.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-output-native.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-output-review-authorize.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-server-ack-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-server-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-server-native.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-v8-approval.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-v8-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-v8-dispatch-guards.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-v8-native.test.mjs": "runtime",
+    "tests/experience-sponsor-audio-v8-policy.test.mjs": "runtime",
+    "tests/experience-sponsor-campaign.test.mjs": "runtime",
+    "tests/experience-sponsor-driver.test.mjs": "runtime",
+    "tests/experience-sponsor-entitlement.test.mjs": "runtime",
+    "tests/experience-sponsor-erased-receipt.test.mjs": "runtime",
+    "tests/experience-sponsor-execution-boundaries.test.mjs": "runtime",
+    "tests/experience-sponsor-image-confirmation-client.test.mjs": "runtime",
+    "tests/experience-sponsor-image-confirmation.test.mjs": "runtime",
+    "tests/experience-sponsor-image-entry-integration.test.mjs": "runtime",
+    "tests/experience-sponsor-image-entry-mode.test.mjs": "runtime",
+    "tests/experience-sponsor-image-host.test.mjs": "source",
+    "tests/experience-sponsor-image-transport.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-aliases.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-client.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-read-approval.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-read-policy.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-read-sql.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-read-v2-approval.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-read-v2-policy.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-reads.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-resources.test.mjs": "runtime",
+    "tests/experience-sponsor-intake-route.test.mjs": "runtime",
+    "tests/experience-sponsor-intake.test.mjs": "runtime",
+    "tests/experience-sponsor-issuer.test.mjs": "runtime",
+    "tests/experience-sponsor-job-read.test.mjs": "runtime",
+    "tests/experience-sponsor-native-admission.test.mjs": "runtime",
+    "tests/experience-sponsor-native-execution.test.mjs": "runtime",
+    "tests/experience-sponsor-native-image-budget.test.mjs": "runtime",
+    "tests/experience-sponsor-native-image-http.test.mjs": "runtime",
+    "tests/experience-sponsor-native-image-read.test.mjs": "runtime",
+    "tests/experience-sponsor-native-story-read.test.mjs": "runtime",
+    "tests/experience-sponsor-output-asset-read-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-output-asset-read.test.mjs": "runtime",
+    "tests/experience-sponsor-output-read-budget.test.mjs": "runtime",
+    "tests/experience-sponsor-read-approval.test.mjs": "runtime",
+    "tests/experience-sponsor-read-attempts.test.mjs": "runtime",
+    "tests/experience-sponsor-read-image-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-read-image.test.mjs": "runtime",
+    "tests/experience-sponsor-read-policy.test.mjs": "runtime",
+    "tests/experience-sponsor-resources.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-driver-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-driver.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-evidence.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-integration-guards.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-issuer.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-native.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-paid-claim-sql.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-paid-claim.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-paid-proof-shape.test.mjs": "runtime",
+    "tests/experience-sponsor-scene-policy.test.mjs": "runtime",
+    "tests/experience-sponsor-slides-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-slides-driver-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-slides-driver.test.mjs": "runtime",
+    "tests/experience-sponsor-slides-evidence-guards.test.mjs": "runtime",
+    "tests/experience-sponsor-slides-evidence.test.mjs": "runtime",
+    "tests/experience-sponsor-slides-issuer.test.mjs": "runtime",
+    "tests/experience-sponsor-slides-native.test.mjs": "runtime",
+    "tests/experience-sponsor-slides-policy.test.mjs": "runtime",
+    "tests/experience-sponsor-story-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-story-driver-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-story-driver.test.mjs": "runtime",
+    "tests/experience-sponsor-story-evidence-lifetime.test.mjs": "runtime",
+    "tests/experience-sponsor-story-evidence.test.mjs": "runtime",
+    "tests/experience-sponsor-story-intake-classification.test.mjs": "runtime",
+    "tests/experience-sponsor-story-intake-native.test.mjs": "runtime",
+    "tests/experience-sponsor-story-intake-policy.test.mjs": "runtime",
+    "tests/experience-sponsor-story-io-attempts.test.mjs": "runtime",
+    "tests/experience-sponsor-story-io-policy.test.mjs": "runtime",
+    "tests/experience-sponsor-story-issuer.test.mjs": "runtime",
+    "tests/experience-sponsor-story-native.test.mjs": "runtime",
+    "tests/experience-sponsor-story-policy.test.mjs": "runtime",
+    "tests/experience-sponsor-story-read-d1.test.mjs": "runtime",
+    "tests/experience-sponsor-story-read.test.mjs": "runtime",
+    "tests/experience-sponsor-story-status.test.mjs": "runtime",
+    "tests/experience-sponsor-storyboard-evidence.test.mjs": "runtime",
+    "tests/experience-sponsor-storyboard-intent-proof.test.mjs": "runtime",
+    "tests/experience-sponsor-video-actor-intent.test.mjs": "runtime",
+    "tests/experience-sponsor-video-contract.test.mjs": "runtime",
+    "tests/experience-sponsor-video-evidence.test.mjs": "runtime",
+    "tests/experience-sponsor-video-intent-proof.test.mjs": "runtime",
+    "tests/experience-sponsored-audio-actor-intent.test.mjs": "source",
+    "tests/experience-startup-imports.test.mjs": "source",
+    "tests/experience-story-host.test.mjs": "source",
+    "tests/experience-story-result.test.mjs": "source",
+    "tests/experience-storyboard-group-binding.test.mjs": "source",
+    "tests/experience-storyboard-intake.test.mjs": "source",
+    "tests/experience-storyboard-native-result.test.mjs": "source",
+    "tests/experience-storyboard-renewal-transaction.test.mjs": "runtime",
+    "tests/experience-storyboard-server-route.test.mjs": "source",
+    "tests/experience-video-connected-mount.test.mjs": "source",
+    "tests/experience-video-native-result.test.mjs": "runtime",
+    "tests/experience-video-renewal-transaction.test.mjs": "runtime",
+    "tests/experience-video-resolved-target.test.mjs": "source",
+    "tests/experience-view-composition.test.mjs": "source",
+    "tests/extractors.test.mjs": "source",
+    "tests/fal-image-adapter.test.mjs": "source",
+    "tests/fal-model3d-original-reader.test.mjs": "source",
+    "tests/film-composition-draft.test.mjs": "source",
+    "tests/film-composition-recipe-review-file.test.mjs": "runtime",
+    "tests/film-composition.test.mjs": "source",
+    "tests/film-script-recipe-review-file.test.mjs": "runtime",
+    "tests/flare-draft-generation.test.mjs": "runtime",
+    "tests/focal-point-lab.test.mjs": "source",
+    "tests/focal-point.test.mjs": "source",
+    "tests/form-semantics.test.mjs": "source",
+    "tests/forma-dom-focus-visibility.test.mjs": "source",
+    "tests/full-surface-artifact-secondary-actions.test.mjs": "runtime",
+    "tests/full-surface-image-secondary-actions.test.mjs": "runtime",
+    "tests/full-surface-residual-layout-contract.test.mjs": "source",
+    "tests/full-surface-truthful-single-owner.test.mjs": "runtime",
+    "tests/full-surface-view-disclosure.test.mjs": "runtime",
+    "tests/generated-image-claimed-current.test.mjs": "runtime",
+    "tests/generated-image-claimed-edit.test.mjs": "runtime",
+    "tests/generated-image-claimed-local-adoption.test.mjs": "runtime",
+    "tests/generated-image-claimed-personal-ports.test.mjs": "runtime",
+    "tests/generated-image-edit-current.test.mjs": "source",
+    "tests/generated-image-edit.test.mjs": "source",
+    "tests/generated-image-editor.test.mjs": "runtime",
+    "tests/generated-image-event-consumer.test.mjs": "source",
+    "tests/generated-image-output-review-file.test.mjs": "runtime",
+    "tests/generated-image-preparation.test.mjs": "source",
+    "tests/generated-image-read-diagnostics.test.mjs": "source",
+    "tests/generated-image-recovery-url.test.mjs": "source",
+    "tests/generated-image-revision.test.mjs": "source",
+    "tests/generated-image-save.test.mjs": "runtime",
+    "tests/generated-image-witness.test.mjs": "runtime",
+    "tests/generated-model3d-independent-review-file.test.mjs": "runtime",
+    "tests/generation-accounting-acquisition.test.mjs": "runtime",
+    "tests/generation-accounting-dialog.test.mjs": "source",
+    "tests/generation-accounting-inspection.test.mjs": "source",
+    "tests/generation-accounting-preview.test.mjs": "runtime",
+    "tests/generation-accounting-wrapper.test.mjs": "source",
+    "tests/generation-current-source.test.mjs": "artifact",
+    "tests/generation-execution-bridge.test.mjs": "runtime",
+    "tests/generation-execution-evidence.test.mjs": "source",
+    "tests/generation-failure-guidance.test.mjs": "source",
+    "tests/generation-financial-policy.test.mjs": "runtime",
+    "tests/generation-historical-census.test.mjs": "runtime",
+    "tests/generation-historical-scope-proof.test.mjs": "source",
+    "tests/generation-input-receipts.test.mjs": "source",
+    "tests/generation-outcome-evidence.test.mjs": "source",
+    "tests/generation-preparation-financial.test.mjs": "runtime",
+    "tests/generation-preparation-h4.test.mjs": "runtime",
+    "tests/generation-promotion.test.mjs": "source",
+    "tests/generation-reliability-eval.test.mjs": "runtime",
+    "tests/generation-request-parity.test.mjs": "runtime",
+    "tests/generation-safety-diagnostic.test.mjs": "source",
+    "tests/generation-self-healing.test.mjs": "source",
+    "tests/generation-source-freeze-h5.test.mjs": "runtime",
+    "tests/generation-stop-confirmation-copy.test.mjs": "runtime",
+    "tests/generation-study-native.test.mjs": "runtime",
+    "tests/guest-image-claimed-edit-protocol.test.mjs": "source",
+    "tests/guest-image-result-presentation.test.mjs": "source",
+    "tests/honest-output-copy-host.test.mjs": "runtime",
+    "tests/icon-system.test.mjs": "artifact",
+    "tests/idea-body-compatibility.test.mjs": "source",
+    "tests/image-adapter-eval-cache.test.mjs": "source",
+    "tests/image-adapter-eval-reuse.test.mjs": "runtime",
+    "tests/image-adapter-evaluation.test.mjs": "source",
+    "tests/image-adapter-lab.test.mjs": "source",
+    "tests/image-financial-qualification.test.mjs": "source",
+    "tests/image-format.test.mjs": "source",
+    "tests/image-generation-preview-job.test.mjs": "runtime",
+    "tests/image-generation-progress.test.mjs": "source",
+    "tests/image-generation.test.mjs": "source",
+    "tests/image-interruption.test.mjs": "source",
+    "tests/image-operation-capabilities.test.mjs": "source",
+    "tests/image-reference-validation.test.mjs": "source",
+    "tests/image-result-review-file.test.mjs": "runtime",
+    "tests/image-safety-acknowledgement.test.mjs": "runtime",
+    "tests/inactive-generation-dialog-host.test.mjs": "runtime",
+    "tests/indexing.test.mjs": "source",
+    "tests/intent-trajectories.test.mjs": "source",
+    "tests/knowledge-landing-pages.test.mjs": "artifact",
+    "tests/layers-adaptive-command-origin-continuity.test.mjs": "runtime",
+    "tests/library-ack-continuity.test.mjs": "runtime",
+    "tests/library-inspection-arrival-gap.test.mjs": "source",
+    "tests/library-review-subject-identity-render.test.mjs": "runtime",
+    "tests/library-search-return-custody.test.mjs": "runtime",
+    "tests/lifecycle-action-layout.test.mjs": "runtime",
+    "tests/lifecycle-assistant-continuity.test.mjs": "runtime",
+    "tests/lifecycle-assistant-presentation.test.mjs": "runtime",
+    "tests/lifecycle-canvas-handoff-disclosure.test.mjs": "runtime",
+    "tests/lifecycle-deliver-continuity.test.mjs": "runtime",
+    "tests/lifecycle-desk-display-identity.test.mjs": "runtime",
+    "tests/lifecycle-job-choice-identity.test.mjs": "runtime",
+    "tests/lifecycle-library-review-promotion.test.mjs": "runtime",
+    "tests/lifecycle-next-action-presentation.test.mjs": "runtime",
+    "tests/lifecycle-next-action-scope.test.mjs": "runtime",
+    "tests/live-memory-client.test.mjs": "source",
+    "tests/live-replay.test.mjs": "source",
+    "tests/local-migrations.test.mjs": "runtime",
+    "tests/main170-generation-union.test.mjs": "runtime",
+    "tests/main170-paid-safety-union.test.mjs": "runtime",
+    "tests/main170-retention-union.test.mjs": "runtime",
+    "tests/main170-ui-union.test.mjs": "runtime",
+    "tests/managed-presentation-count-compatibility.test.mjs": "source",
+    "tests/managed-production-prompts.test.mjs": "source",
+    "tests/managed-production.test.mjs": "source",
+    "tests/managed-video-reconciliation-client.test.mjs": "source",
+    "tests/managed-video-reconciliation.test.mjs": "runtime",
+    "tests/marketing-audiences.test.mjs": "artifact",
+    "tests/marketing-decision-walkthrough.test.mjs": "artifact",
+    "tests/marketing-gutter-contract.test.mjs": "source",
+    "tests/marketing-landing.test.mjs": "artifact",
+    "tests/media-private-full-shell-retirement.test.mjs": "artifact",
+    "tests/media-private-lifecycle-retirement.test.mjs": "artifact",
+    "tests/media-private-locales-retirement.test.mjs": "artifact",
+    "tests/media-private-presentation-retirement.test.mjs": "artifact",
+    "tests/media-private-scene-full-shell-retirement.test.mjs": "artifact",
+    "tests/media-private-scene-retirement.test.mjs": "artifact",
+    "tests/media-private-viewer-retirement.test.mjs": "artifact",
+    "tests/memory-artifact-view.test.mjs": "runtime",
+    "tests/memory-assistant-context-client.test.mjs": "source",
+    "tests/memory-benchmark-fixtures.test.mjs": "source",
+    "tests/memory-benchmark-ledger.test.mjs": "runtime",
+    "tests/memory-benchmark-native.test.mjs": "runtime",
+    "tests/memory-benchmark-projection.test.mjs": "source",
+    "tests/memory-benchmark-provider.test.mjs": "source",
+    "tests/memory-benchmark-runner.test.mjs": "runtime",
+    "tests/memory-benchmark-workloads.test.mjs": "source",
+    "tests/memory-conversation-capture-schema.test.mjs": "runtime",
+    "tests/memory-conversation.test.mjs": "source",
+    "tests/memory-derivation-client.test.mjs": "source",
+    "tests/memory-document-job-origin-manifest.test.mjs": "source",
+    "tests/memory-document-job-origin-record.test.mjs": "source",
+    "tests/memory-field-completion.test.mjs": "source",
+    "tests/memory-observations.test.mjs": "source",
+    "tests/memory-persistence.test.mjs": "runtime",
+    "tests/memory-read-batch.test.mjs": "source",
+    "tests/memory-recall-boundary.test.mjs": "source",
+    "tests/memory-retirement-json-compat.test.mjs": "runtime",
+    "tests/memory-review-jobs.test.mjs": "runtime",
+    "tests/memory-save-custody.test.mjs": "runtime",
+    "tests/memory-schema-repair.test.mjs": "runtime",
+    "tests/memory-shadow.test.mjs": "runtime",
+    "tests/memory-source-adapter.test.mjs": "runtime",
+    "tests/model3d-archive.test.mjs": "source",
+    "tests/model3d-artifact-edit-persistence.test.mjs": "runtime",
+    "tests/model3d-artifact-revision.test.mjs": "source",
+    "tests/model3d-artifact-scale-editor.test.mjs": "source",
+    "tests/model3d-assets.test.mjs": "source",
+    "tests/model3d-catalog-compatibility.test.mjs": "source",
+    "tests/model3d-context-authoring.test.mjs": "source",
+    "tests/model3d-document-jobs.test.mjs": "runtime",
+    "tests/model3d-durable-http-heartbeat.test.mjs": "runtime",
+    "tests/model3d-event-guards.test.mjs": "source",
+    "tests/model3d-failure-progress-copy.test.mjs": "source",
+    "tests/model3d-generation-ui.test.mjs": "source",
+    "tests/model3d-geometry-edit.test.mjs": "source",
+    "tests/model3d-geometry-persistence.test.mjs": "runtime",
+    "tests/model3d-localization.test.mjs": "source",
+    "tests/model3d-media-custody.test.mjs": "source",
+    "tests/model3d-media-revision.test.mjs": "source",
+    "tests/model3d-mini-app-consent.test.mjs": "source",
+    "tests/model3d-native-contract.test.mjs": "source",
+    "tests/model3d-native-execution.test.mjs": "source",
+    "tests/model3d-native-join.test.mjs": "source",
+    "tests/model3d-native-localization.test.mjs": "source",
+    "tests/model3d-native-preparation.test.mjs": "runtime",
+    "tests/model3d-native-publication.test.mjs": "runtime",
+    "tests/model3d-native/interaction.spec.mjs": "browser",
+    "tests/model3d-navigation-adapter.test.mjs": "source",
+    "tests/model3d-output.test.mjs": "source",
+    "tests/model3d-prepared-document-semantics.test.mjs": "runtime",
+    "tests/model3d-primary-edit-selection.test.mjs": "runtime",
+    "tests/model3d-prompt-adapter.test.mjs": "source",
+    "tests/model3d-publication-head.test.mjs": "runtime",
+    "tests/model3d-reference-custody.test.mjs": "source",
+    "tests/model3d-reference-intake.test.mjs": "source",
+    "tests/model3d-reference-list-refresh.test.mjs": "source",
+    "tests/model3d-reference-preview-lifetime.test.mjs": "source",
+    "tests/model3d-request.test.mjs": "runtime",
+    "tests/model3d-settings-editor.test.mjs": "source",
+    "tests/model3d-static-policy.test.mjs": "source",
+    "tests/model3d-store-integration.test.mjs": "runtime",
+    "tests/model3d-upload-flow.test.mjs": "runtime",
+    "tests/model3d-view.test.mjs": "source",
+    "tests/model3d-viewer-orbit.test.mjs": "source",
+    "tests/moderation-response-validation.test.mjs": "source",
+    "tests/mp3-operation-memory.test.mjs": "runtime",
+    "tests/mp3-operation-workerd.test.mjs": "runtime",
+    "tests/n6-history-eligibility.test.mjs": "artifact",
+    "tests/n6-ordinary-history.test.mjs": "artifact",
+    "tests/n6-source-advisory.test.mjs": "artifact",
+    "tests/n6-source-authority-dependency.test.mjs": "runtime",
+    "tests/n6-source-authority.test.mjs": "artifact",
+    "tests/n7-source-eligibility.test.mjs": "artifact",
+    "tests/native-audio-completion-api.test.mjs": "runtime",
+    "tests/native-audio-completion.test.mjs": "source",
+    "tests/native-audio-open-controls.test.mjs": "source",
+    "tests/native-command-focus-visibility.test.mjs": "source",
+    "tests/native-command-fresh-list.test.mjs": "source",
+    "tests/native-fal-image-accounting.test.mjs": "runtime",
+    "tests/native-focus-preservation.test.mjs": "source",
+    "tests/native-image-controller.test.mjs": "source",
+    "tests/native-image-generation.test.mjs": "source",
+    "tests/native-image-inline-result.test.mjs": "source",
+    "tests/native-image-store-policy.test.mjs": "runtime",
+    "tests/native-image-store.test.mjs": "runtime",
+    "tests/native-image-workspace-integration.test.mjs": "runtime",
+    "tests/native-model3d-completion-api.test.mjs": "runtime",
+    "tests/native-model3d-completion-association.test.mjs": "runtime",
+    "tests/native-model3d-completion.test.mjs": "source",
+    "tests/native-renderer-committed-dom.test.mjs": "runtime",
+    "tests/native-result-followthrough.test.mjs": "source",
+    "tests/native-retained-audio-api.test.mjs": "runtime",
+    "tests/native-retained-audio-media.test.mjs": "source",
+    "tests/native-retained-audio-renderer.test.mjs": "runtime",
+    "tests/native-retained-audio-route.test.mjs": "source",
+    "tests/native-retained-audio.test.mjs": "source",
+    "tests/native-retained-job-feed.test.mjs": "runtime",
+    "tests/native-retained-media-bytes.test.mjs": "runtime",
+    "tests/native-retained-media-custody.test.mjs": "runtime",
+    "tests/native-retained-model3d-renderer.test.mjs": "runtime",
+    "tests/native-retained-output-contract.test.mjs": "source",
+    "tests/native-retained-scene.test.mjs": "source",
+    "tests/native-retained-story-leaf.test.mjs": "source",
+    "tests/native-retained-storyboard-renderer.test.mjs": "runtime",
+    "tests/native-retained-text-custody.test.mjs": "runtime",
+    "tests/native-retained-video-api.test.mjs": "runtime",
+    "tests/native-retained-video-renderer.test.mjs": "runtime",
+    "tests/native-retained-video-route.test.mjs": "source",
+    "tests/native-retained-video.test.mjs": "source",
+    "tests/native-scene-completion-join.test.mjs": "runtime",
+    "tests/native-scene-completion.test.mjs": "source",
+    "tests/native-short-story-controller.test.mjs": "source",
+    "tests/native-short-story-launcher.test.mjs": "source",
+    "tests/native-short-story-store.test.mjs": "runtime",
+    "tests/native-slides-completion-api.test.mjs": "runtime",
+    "tests/native-slides-completion-join.test.mjs": "runtime",
+    "tests/native-slides-completion.test.mjs": "source",
+    "tests/native-slides-open-controls.test.mjs": "source",
+    "tests/native-stable-audio-share-authority.test.mjs": "runtime",
+    "tests/native-stable-audio-share-proof.test.mjs": "runtime",
+    "tests/native-story-completion-association.test.mjs": "runtime",
+    "tests/native-storyboard-completion-api.test.mjs": "runtime",
+    "tests/native-storyboard-completion-association.test.mjs": "runtime",
+    "tests/native-storyboard-completion.test.mjs": "source",
+    "tests/native-storyboard-open-controls.test.mjs": "source",
+    "tests/native-video-completion-api.test.mjs": "runtime",
+    "tests/native-video-completion-association.test.mjs": "runtime",
+    "tests/native-video-completion.test.mjs": "source",
+    "tests/navigation-presentation-admission.test.mjs": "source",
+    "tests/next-action-lifecycle-facts.test.mjs": "source",
+    "tests/office-documents.test.mjs": "source",
+    "tests/ordinary-assigned-review-origin-custody.test.mjs": "runtime",
+    "tests/ordinary-image-queue.test.mjs": "runtime",
+    "tests/ordinary-image-recovery.test.mjs": "runtime",
+    "tests/ordinary-rail-document-handoff.test.mjs": "runtime",
+    "tests/organization-context-binding-completion-ownership.test.mjs": "runtime",
+    "tests/organization-context-publisher-completion-ownership.test.mjs": "runtime",
+    "tests/outcome-arrangement-expired-dispatch.test.mjs": "source",
+    "tests/outcome-arrangement-expired-fresh-owner.test.mjs": "source",
+    "tests/outcome-arrangement-expired-ownership.test.mjs": "source",
+    "tests/outcome-arrangement-expired-recovery.test.mjs": "source",
+    "tests/outcome-arrangement-inverse-continuation.test.mjs": "source",
+    "tests/outcome-arrangement-inverse-winners.test.mjs": "runtime",
+    "tests/outcome-arrangement-late-preparation-privacy.test.mjs": "source",
+    "tests/outcome-arrangement-local-name-continuity.test.mjs": "source",
+    "tests/outcome-arrangement-preparation-confirmation-ownership.test.mjs": "runtime",
+    "tests/outcome-arrangement-preparation-confirmation-winners.test.mjs": "runtime",
+    "tests/outcome-arrangement-preparation-confirmation.test.mjs": "runtime",
+    "tests/outcome-arrangement-refusal-attempts.test.mjs": "source",
+    "tests/outcome-arrangement-refusal-currentness.test.mjs": "source",
+    "tests/outcome-arrangement-refusal-desk-reference.test.mjs": "source",
+    "tests/outcome-arrangement-refusal-dispatch.test.mjs": "source",
+    "tests/outcome-arrangement-refusal-interruption.test.mjs": "source",
+    "tests/outcome-arrangement-refusal-read-ownership.test.mjs": "source",
+    "tests/outcome-arrangement-refused-ownership.test.mjs": "source",
+    "tests/outcome-arrangement-refused-preview.test.mjs": "source",
+    "tests/outcome-arrangement-refused-winners.test.mjs": "runtime",
+    "tests/outcome-desk-canvas-navigation.test.mjs": "runtime",
+    "tests/outcome-desk-continuity.test.mjs": "source",
+    "tests/outcome-desk-focus-causal.test.mjs": "runtime",
+    "tests/outcome-desk-integration.test.mjs": "runtime",
+    "tests/outcome-desk-job-lifecycle-copy.test.mjs": "runtime",
+    "tests/outcome-desk-main170-forward.test.mjs": "runtime",
+    "tests/outcome-desk-store-navigation.test.mjs": "runtime",
+    "tests/outcome-desk-visible-identity.test.mjs": "runtime",
+    "tests/outcome-recipe-drafts.test.mjs": "source",
+    "tests/outcome-recipe-original-save.test.mjs": "runtime",
+    "tests/outcome-recipe-save-host.test.mjs": "runtime",
+    "tests/outcome-recipe-save-recovery.test.mjs": "runtime",
+    "tests/outcome-recipes.test.mjs": "source",
+    "tests/outcome-telemetry-catalog-audit.test.mjs": "source",
+    "tests/outcome-telemetry-cost-boundary.test.mjs": "source",
+    "tests/outcome-telemetry-host.test.mjs": "source",
+    "tests/outcome-telemetry.test.mjs": "runtime",
+    "tests/output-admission-catalog.test.mjs": "runtime",
+    "tests/output-admission-reuse.test.mjs": "runtime",
+    "tests/output-admission-source-order.test.mjs": "runtime",
+    "tests/output-amendment-reason-runtime-localization.test.mjs": "source",
+    "tests/output-asset-inspection.test.mjs": "source",
+    "tests/output-asset-storage-crash.test.mjs": "runtime",
+    "tests/output-atomic-decision-refusal-localization.test.mjs": "source",
+    "tests/output-audio-dispatch.test.mjs": "source",
+    "tests/output-audio-publication.test.mjs": "runtime",
+    "tests/output-audio-recovery-lease.test.mjs": "runtime",
+    "tests/output-audio-recovery-workerd.test.mjs": "runtime",
+    "tests/output-audio-recovery.test.mjs": "source",
+    "tests/output-audio-validation-progress.test.mjs": "runtime",
+    "tests/output-authoring.test.mjs": "source",
+    "tests/output-budget-admission.test.mjs": "runtime",
+    "tests/output-cache-publication-regression.test.mjs": "source",
+    "tests/output-chart-workbook-inspection.test.mjs": "source",
+    "tests/output-client-freshness.test.mjs": "source",
+    "tests/output-command-refusal.test.mjs": "source",
+    "tests/output-context-package-policy.test.mjs": "source",
+    "tests/output-context.test.mjs": "source",
+    "tests/output-contextual-names.test.mjs": "source",
+    "tests/output-continuation.test.mjs": "runtime",
+    "tests/output-controller-fixture-model.test.mjs": "source",
+    "tests/output-controller-lifecycle.test.mjs": "source",
+    "tests/output-controller-paid-intent.test.mjs": "source",
+    "tests/output-controller-preflight-binding.test.mjs": "source",
+    "tests/output-controller-preflight-partial-contract.test.mjs": "source",
+    "tests/output-controller-preflight-refresh.test.mjs": "source",
+    "tests/output-controller-recovery.test.mjs": "source",
+    "tests/output-creation-receipt-normalization.test.mjs": "runtime",
+    "tests/output-delivery-amendments.test.mjs": "source",
+    "tests/output-delivery-archive.test.mjs": "source",
+    "tests/output-delivery-browser-copy-localization.test.mjs": "source",
+    "tests/output-delivery-cycle2-localization.test.mjs": "source",
+    "tests/output-delivery-final-runtime-localization.test.mjs": "source",
+    "tests/output-delivery-governance-localization.test.mjs": "source",
+    "tests/output-delivery-localization.test.mjs": "source",
+    "tests/output-delivery-owed-target-localization.test.mjs": "source",
+    "tests/output-delivery-plan-permission-localization.test.mjs": "source",
+    "tests/output-delivery-preflight-contract-localization.test.mjs": "source",
+    "tests/output-delivery-preflight-selection-localization.test.mjs": "source",
+    "tests/output-delivery-review-eligibility-localization.test.mjs": "source",
+    "tests/output-delivery-runtime-localization.test.mjs": "source",
+    "tests/output-delivery-scaling-localization.test.mjs": "source",
+    "tests/output-delivery-scope.test.mjs": "source",
+    "tests/output-delivery-source-receipt-localization.test.mjs": "source",
+    "tests/output-direct-activation.test.mjs": "source",
+    "tests/output-document-context-names.test.mjs": "source",
+    "tests/output-durable-client.test.mjs": "source",
+    "tests/output-durable-generation.test.mjs": "runtime",
+    "tests/output-editor-focus.test.mjs": "runtime",
+    "tests/output-editor-handoff.test.mjs": "runtime",
+    "tests/output-execution-http-budget.test.mjs": "runtime",
+    "tests/output-expired-audio-runner.test.mjs": "runtime",
+    "tests/output-expired-model3d-runner.test.mjs": "runtime",
+    "tests/output-expired-scene-job.test.ts": "runtime",
+    "tests/output-expired-scene-runner.test.mjs": "runtime",
+    "tests/output-expired-video-runner.test.mjs": "runtime",
+    "tests/output-film-composer-controller.test.mjs": "source",
+    "tests/output-final-disclosure.test.mjs": "runtime",
+    "tests/output-final-dispatch-deadline.test.mjs": "runtime",
+    "tests/output-footer-document-icon.test.mjs": "source",
+    "tests/output-footer-owned-telemetry-native.test.mjs": "artifact",
+    "tests/output-generation-safety-localization.test.mjs": "source",
+    "tests/output-governance-bounded-proof.test.mjs": "runtime",
+    "tests/output-governance-disclosure.test.mjs": "source",
+    "tests/output-governance-native-depth.test.mjs": "runtime",
+    "tests/output-governance-owner-tail.test.mjs": "runtime",
+    "tests/output-governance-proof-size.test.mjs": "runtime",
+    "tests/output-governance-witness.test.mjs": "runtime",
+    "tests/output-governed-native-faults.test.mjs": "runtime",
+    "tests/output-governed-native-journey.test.mjs": "runtime",
+    "tests/output-history-noncommit-client.test.mjs": "runtime",
+    "tests/output-image-prompt-contract.test.mjs": "source",
+    "tests/output-image-provider-health.test.mjs": "runtime",
+    "tests/output-input-context-copy.test.mjs": "runtime",
+    "tests/output-input-reveal-focus.test.mjs": "runtime",
+    "tests/output-job-failure-diagnostic.test.mjs": "source",
+    "tests/output-model3d-asset-inspection.test.mjs": "source",
+    "tests/output-model3d-d1.test.mjs": "runtime",
+    "tests/output-model3d-delivery.test.mjs": "source",
+    "tests/output-model3d-migration.test.mjs": "runtime",
+    "tests/output-model3d-native.test.mjs": "runtime",
+    "tests/output-model3d-recovery-authority.test.mjs": "runtime",
+    "tests/output-model3d-recovery-availability.test.mjs": "runtime",
+    "tests/output-model3d-recovery-checkpoint.test.mjs": "source",
+    "tests/output-model3d-recovery-compact.test.mjs": "runtime",
+    "tests/output-model3d-recovery-depth-workerd.test.mjs": "runtime",
+    "tests/output-model3d-recovery-finite-lease.test.mjs": "runtime",
+    "tests/output-model3d-recovery-lease.test.mjs": "runtime",
+    "tests/output-model3d-recovery-storage.test.mjs": "runtime",
+    "tests/output-model3d-recovery-workerd.test.mjs": "runtime",
+    "tests/output-model3d-recovery.test.mjs": "runtime",
+    "tests/output-model3d-reference-recovery-source.test.mjs": "runtime",
+    "tests/output-model3d-reference-recovery.test.mjs": "runtime",
+    "tests/output-model3d-requirements.test.mjs": "source",
+    "tests/output-naming.test.mjs": "source",
+    "tests/output-narrative-contract.test.mjs": "source",
+    "tests/output-narrative-custody.test.mjs": "runtime",
+    "tests/output-narrative-request.test.mjs": "source",
+    "tests/output-narrative-requirements.test.mjs": "source",
+    "tests/output-native-execution.test.mjs": "runtime",
+    "tests/output-native-project-scope.test.mjs": "runtime",
+    "tests/output-native-publication-d1.test.mjs": "runtime",
+    "tests/output-native-publication-depth.test.mjs": "source",
+    "tests/output-native-recovery.test.mjs": "runtime",
+    "tests/output-native-retention-boundaries.test.mjs": "runtime",
+    "tests/output-native-target-navigation.test.mjs": "runtime",
+    "tests/output-navigation-blocked-d2.test.mjs": "runtime",
+    "tests/output-navigation-blocked.test.mjs": "runtime",
+    "tests/output-navigation-focus.test.mjs": "runtime",
+    "tests/output-navigation-store-history.test.mjs": "runtime",
+    "tests/output-navigation-workspace-focus.test.mjs": "runtime",
+    "tests/output-operation-receipt-privacy.test.mjs": "source",
+    "tests/output-operation-receipt-store.test.mjs": "source",
+    "tests/output-operation-support-receipt.test.mjs": "source",
+    "tests/output-package-history.test.mjs": "source",
+    "tests/output-plan-author-permission.test.mjs": "source",
+    "tests/output-plan-deferred-focus.test.mjs": "runtime",
+    "tests/output-plan-proposal-state.test.mjs": "source",
+    "tests/output-plan-saved-optionals.test.mjs": "source",
+    "tests/output-plan-target-selection.test.mjs": "source",
+    "tests/output-plan.test.mjs": "source",
+    "tests/output-planner-response-inspection.test.mjs": "runtime",
+    "tests/output-planner-response-shape.test.ts": "source",
+    "tests/output-presentation-http.test.mjs": "runtime",
+    "tests/output-presentation-policy.test.mjs": "source",
+    "tests/output-preview-focus-transition.test.mjs": "source",
+    "tests/output-private-certification-external.test.mjs": "runtime",
+    "tests/output-private-certification.test.mjs": "source",
+    "tests/output-project-selector.test.mjs": "runtime",
+    "tests/output-proof-capacity-diagnostic.test.mjs": "source",
+    "tests/output-proof-read-ack.test.mjs": "runtime",
+    "tests/output-queued-grant-controls.test.mjs": "source",
+    "tests/output-reachability.test.mjs": "runtime",
+    "tests/output-read-model-shared-profile.test.mjs": "runtime",
+    "tests/output-receipt-guidance.test.mjs": "runtime",
+    "tests/output-recorded-package-recovery.test.mjs": "source",
+    "tests/output-reference-navigation.test.mjs": "runtime",
+    "tests/output-requirement-copy.test.mjs": "source",
+    "tests/output-requirement-download-localization.test.mjs": "source",
+    "tests/output-requirement-editor.test.mjs": "source",
+    "tests/output-requirement-event-guards.test.mjs": "source",
+    "tests/output-requirement-governance-assertions.test.mjs": "runtime",
+    "tests/output-requirement-labels.test.mjs": "source",
+    "tests/output-requirement-retention.test.mjs": "runtime",
+    "tests/output-requirements-api.test.mjs": "runtime",
+    "tests/output-requirements-client.test.mjs": "source",
+    "tests/output-requirements-ledger.test.mjs": "runtime",
+    "tests/output-requirements-project-read.test.mjs": "runtime",
+    "tests/output-requirements-read-model.test.mjs": "runtime",
+    "tests/output-requirements-schema-parity.test.mjs": "runtime",
+    "tests/output-requirements-schema.test.mjs": "runtime",
+    "tests/output-requirements.test.mjs": "source",
+    "tests/output-retained-witness.test.mjs": "runtime",
+    "tests/output-review-preview.test.mjs": "source",
+    "tests/output-scene-adapter.test.mjs": "source",
+    "tests/output-scene-completion.test.mjs": "source",
+    "tests/output-scene-contract.test.mjs": "source",
+    "tests/output-scene-execution.test.mjs": "source",
+    "tests/output-scene-layout.test.mjs": "source",
+    "tests/output-scene-preflight-contract.test.mjs": "source",
+    "tests/output-scene-request.test.mjs": "source",
+    "tests/output-scene-source-preflight.test.mjs": "source",
+    "tests/output-schema-preflight-d1.test.mjs": "runtime",
+    "tests/output-schema-preflight.test.mjs": "runtime",
+    "tests/output-scope-amendment-api.test.mjs": "runtime",
+    "tests/output-scope-amendment.test.mjs": "source",
+    "tests/output-scoped-naming.test.mjs": "source",
+    "tests/output-snapshot-admission.test.mjs": "runtime",
+    "tests/output-source-evidence-capacity.test.mjs": "runtime",
+    "tests/output-source-proof-capacity-localization.test.mjs": "source",
+    "tests/output-source-readiness.test.mjs": "source",
+    "tests/output-source-refresh.test.mjs": "runtime",
+    "tests/output-store-recovery.test.mjs": "source",
+    "tests/output-storyboard-activation.test.mjs": "source",
+    "tests/output-storyboard-completion.test.mjs": "runtime",
+    "tests/output-storyboard-cost-reservation.test.mjs": "runtime",
+    "tests/output-storyboard-fal.test.mjs": "runtime",
+    "tests/output-storyboard-generation-receipt.test.mjs": "source",
+    "tests/output-storyboard-plan.test.mjs": "source",
+    "tests/output-storyboard-planner.test.mjs": "runtime",
+    "tests/output-storyboard-preflight-localization.test.mjs": "source",
+    "tests/output-storyboard-retained.test.mjs": "runtime",
+    "tests/output-storyboard-source-media.test.mjs": "runtime",
+    "tests/output-storyboard-source-route.test.mjs": "source",
+    "tests/output-sunburst-budget.test.mjs": "runtime",
+    "tests/output-target-contracts-localization.test.mjs": "source",
+    "tests/output-unstarted-job-failure.test.ts": "runtime",
+    "tests/output-video-checkpoint.test.mjs": "runtime",
+    "tests/output-video-completed-observation.test.mjs": "runtime",
+    "tests/output-video-completion.test.mjs": "runtime",
+    "tests/output-video-contract.test.mjs": "source",
+    "tests/output-video-execution.test.mjs": "runtime",
+    "tests/output-video-initial-execution.test.mjs": "runtime",
+    "tests/output-video-original-read.test.mjs": "runtime",
+    "tests/output-video-planner-transport.test.mjs": "runtime",
+    "tests/output-video-planner.test.mjs": "runtime",
+    "tests/output-video-recovery-financial-d1.test.mjs": "runtime",
+    "tests/output-video-recovery-financial.test.mjs": "runtime",
+    "tests/output-video-recovery-lease.test.mjs": "runtime",
+    "tests/output-video-recovery.test.mjs": "runtime",
+    "tests/output-video-resolution.test.mjs": "runtime",
+    "tests/output-video-retained-bytes.test.mjs": "runtime",
+    "tests/output-video-retained-workerd.test.mjs": "runtime",
+    "tests/output-video-retained.test.mjs": "runtime",
+    "tests/output-video-source-route.test.mjs": "runtime",
+    "tests/output-video-stop.test.mjs": "runtime",
+    "tests/output-video-transport-worker.test.mjs": "runtime",
+    "tests/output-viewer-focus.test.mjs": "source",
+    "tests/output-visual-opening-current.test.mjs": "runtime",
+    "tests/output-write-acknowledgment.test.mjs": "runtime",
+    "tests/persona-portfolio.test.mjs": "source",
+    "tests/personal-memory-controls.test.mjs": "source",
+    "tests/personal-slides-private-content-pair.test.mjs": "runtime",
+    "tests/phase4-main170-forward.test.mjs": "runtime",
+    "tests/phase5-output-artifact-coexistence.test.mjs": "runtime",
+    "tests/phase5-private-consumer-retirement.test.mjs": "runtime",
+    "tests/phase5-retirement-localization.test.mjs": "runtime",
+    "tests/phase8-output-ui-forward.test.mjs": "runtime",
+    "tests/phase8-workspace-assistant-handoff-proof.test.mjs": "runtime",
+    "tests/planner-response-outcome.test.mjs": "source",
+    "tests/platform-assistant-departure.test.mjs": "runtime",
+    "tests/platform-delivery-departure.test.mjs": "runtime",
+    "tests/platform-session-ownership.test.mjs": "source",
+    "tests/presentation-accessibility.test.mjs": "source",
+    "tests/presentation-audience-export.test.mjs": "source",
+    "tests/presentation-authoring-contract.test.mjs": "source",
+    "tests/presentation-comparison.test.mjs": "source",
+    "tests/presentation-composer-preflight.test.mjs": "source",
+    "tests/presentation-delivery.test.mjs": "source",
+    "tests/presentation-export.test.mjs": "artifact",
+    "tests/presentation-fidelity.test.mjs": "source",
+    "tests/presentation-guidance-accessibility.test.mjs": "source",
+    "tests/presentation-layout-contract.test.mjs": "source",
+    "tests/presentation-outline-managed.test.mjs": "source",
+    "tests/presentation-outline-provider.test.mjs": "source",
+    "tests/presentation-outline-source.test.mjs": "source",
+    "tests/presentation-pdf-capture.test.mjs": "runtime",
+    "tests/presentation-pdf-scale.test.mjs": "runtime",
+    "tests/presentation-pdf.test.mjs": "runtime",
+    "tests/presentation-private-diagnostics.test.mjs": "source",
+    "tests/presentation-private-receipts.test.mjs": "runtime",
+    "tests/presentation-protected-messages.test.mjs": "source",
+    "tests/presentation-provider.test.mjs": "source",
+    "tests/presentation-security.test.mjs": "source",
+    "tests/presentation-slide.test.mjs": "source",
+    "tests/presentation-source-semantics.test.mjs": "source",
+    "tests/presentation-source.test.mjs": "source",
+    "tests/presentation-store-contract.test.mjs": "source",
+    "tests/presentation-view-posture.test.mjs": "source",
+    "tests/presenter-viewer.test.mjs": "source",
+    "tests/privacy-cache-completion-ownership.test.mjs": "runtime",
+    "tests/private-content-identity-admission-controls.test.mjs": "runtime",
+    "tests/private-content-identity-admission-denied.test.mjs": "runtime",
+    "tests/private-content-identity.test.mjs": "source",
+    "tests/product-delivery-create-acknowledgment.test.mjs": "runtime",
+    "tests/product-delivery-create-dependency-order.test.mjs": "runtime",
+    "tests/product-delivery-create-original-selection-closure.test.mjs": "runtime",
+    "tests/product-delivery-create-ownership.test.mjs": "runtime",
+    "tests/product-delivery-create-receipts.test.mjs": "runtime",
+    "tests/product-delivery-create-selection-admission.test.mjs": "runtime",
+    "tests/product-delivery-create-selection-recovery.test.mjs": "runtime",
+    "tests/product-delivery-create-selection.test.mjs": "runtime",
+    "tests/product-delivery-decision-label-stability.test.mjs": "runtime",
+    "tests/product-delivery-dependency-labels.test.mjs": "runtime",
+    "tests/product-delivery-dependency-summary.test.mjs": "runtime",
+    "tests/product-delivery-edit-density.test.mjs": "runtime",
+    "tests/product-delivery-fragment-custody.test.mjs": "runtime",
+    "tests/product-delivery-fragment-pending.test.mjs": "runtime",
+    "tests/product-delivery-original-retry-selection.test.mjs": "runtime",
+    "tests/product-delivery-owner-identity-boundaries.test.mjs": "runtime",
+    "tests/product-delivery-owner-identity.test.mjs": "runtime",
+    "tests/product-delivery-parallel-report.test.mjs": "runtime",
+    "tests/product-delivery-platform-layout.test.mjs": "runtime",
+    "tests/product-delivery-refresh-continuity.test.mjs": "runtime",
+    "tests/product-delivery-refresh-notices.test.mjs": "runtime",
+    "tests/product-delivery-refresh-style.test.mjs": "source",
+    "tests/product-delivery-response-custody.test.mjs": "runtime",
+    "tests/product-delivery-retry-validity.test.mjs": "runtime",
+    "tests/product-delivery-update-ack.test.mjs": "runtime",
+    "tests/product-delivery-update-draft-boundaries.test.mjs": "runtime",
+    "tests/product-delivery-update-draft.test.mjs": "runtime",
+    "tests/product-foundations.test.mjs": "source",
+    "tests/product-reassessment.test.mjs": "runtime",
+    "tests/production-evidence.test.mjs": "source",
+    "tests/production-summary-cost.test.mjs": "source",
+    "tests/production-workflow-source-freshness.test.mjs": "source",
+    "tests/production-workflow.test.mjs": "runtime",
+    "tests/project-attention-loading.test.mjs": "source",
+    "tests/project-containment.test.mjs": "runtime",
+    "tests/project-contents-close-focus.test.mjs": "runtime",
+    "tests/project-contents-create-continuity.test.mjs": "runtime",
+    "tests/project-contents-review-navigation.test.mjs": "runtime",
+    "tests/project-context-cookie-boundary.test.mjs": "runtime",
+    "tests/project-discovery.test.mjs": "source",
+    "tests/project-document-recovery-layout-contract.test.mjs": "source",
+    "tests/project-ideas-api.test.mjs": "runtime",
+    "tests/project-ideas.test.mjs": "source",
+    "tests/project-intake-availability-source.test.mjs": "runtime",
+    "tests/project-intake-busy-ownership.test.mjs": "runtime",
+    "tests/project-intake-close-label.test.mjs": "runtime",
+    "tests/project-intake-cohort-boundary.test.mjs": "runtime",
+    "tests/project-intake-diagnostic.test.ts": "source",
+    "tests/project-intake-fork-collision.test.mjs": "runtime",
+    "tests/project-intake-fragment-owner.test.mjs": "runtime",
+    "tests/project-intake-held-dismissal.test.mjs": "runtime",
+    "tests/project-intake-original-document.test.mjs": "runtime",
+    "tests/project-intake-paused-original-retry.test.mjs": "runtime",
+    "tests/project-intake-persona-cookie-boundary.test.mjs": "runtime",
+    "tests/project-intake-presentation.test.mjs": "runtime",
+    "tests/project-intake-principal-role-boundary.test.mjs": "runtime",
+    "tests/project-intake-receipts.test.mjs": "runtime",
+    "tests/project-intake-recipe-handoff.test.mjs": "runtime",
+    "tests/project-intake-recovery-lifetime-copy.test.mjs": "runtime",
+    "tests/project-intake-retry-history-copy.test.mjs": "runtime",
+    "tests/project-intake-source-owner-lifetime.test.mjs": "runtime",
+    "tests/project-intake-success-feedback.test.mjs": "runtime",
+    "tests/project-intake.test.mjs": "runtime",
+    "tests/project-navigation-continuity.test.mjs": "runtime",
+    "tests/project-navigation-receipt-continuation.test.mjs": "runtime",
+    "tests/project-rail-native.test.mjs": "runtime",
+    "tests/project-rail.test.mjs": "source",
+    "tests/project-scope-schema-depth-d1.test.mjs": "runtime",
+    "tests/prompt-fan.test.mjs": "source",
+    "tests/prompt-policy.test.mjs": "source",
+    "tests/prompt-provenance-e2a.test.mjs": "source",
+    "tests/prompt-structures.test.mjs": "source",
+    "tests/provider-errors.test.mjs": "source",
+    "tests/queued-notice-presentation.test.mjs": "runtime",
+    "tests/readonly-context-picker-navigation.test.mjs": "runtime",
+    "tests/reference-composition-persistence.test.mjs": "runtime",
+    "tests/reference-composition-real-raster.test.mjs": "runtime",
+    "tests/reference-composition.test.mjs": "source",
+    "tests/reference-compositor-lifecycle.test.mjs": "source",
+    "tests/reference-focal-display.test.mjs": "runtime",
+    "tests/reference-media-surfaces.test.mjs": "source",
+    "tests/reference-media.test.mjs": "source",
+    "tests/rename-filter-control-contract.test.mjs": "runtime",
+    "tests/replay-callback-ownership.test.mjs": "runtime",
+    "tests/replay-cost.test.mjs": "source",
+    "tests/replay-experiences.test.mjs": "source",
+    "tests/replay-fragment-ownership.test.mjs": "runtime",
+    "tests/replay-model-admission.test.mjs": "runtime",
+    "tests/replay-private-read-ownership.test.mjs": "runtime",
+    "tests/replay-reference.test.mjs": "source",
+    "tests/replay-runner.test.mjs": "source",
+    "tests/replay-workflows.test.mjs": "source",
+    "tests/responses-image-experiment.test.mjs": "source",
+    "tests/responsive-layout.test.mjs": "source",
+    "tests/responsive-product.test.mjs": "source",
+    "tests/retained-short-story-client.test.mjs": "source",
+    "tests/retained-story-api.test.mjs": "runtime",
+    "tests/rodin-adapter.test.mjs": "source",
+    "tests/rodin-contract.test.mjs": "source",
+    "tests/route-load-recovery.test.ts": "source",
+    "tests/routes.test.mjs": "source",
+    "tests/saved-storyboard-inspection.test.mjs": "source",
+    "tests/scene-adapter.test.mjs": "source",
+    "tests/scene-admission-original-proof.test.mjs": "runtime",
+    "tests/scene-budget-reservation-assertions.test.mjs": "runtime",
+    "tests/scene-composer-recovery.test.mjs": "runtime",
+    "tests/scene-cost-composer.test.mjs": "runtime",
+    "tests/scene-cost-consent.test.mjs": "runtime",
+    "tests/scene-cost-reservation-cleanup.test.mjs": "source",
+    "tests/scene-cost-store-host.test.mjs": "runtime",
+    "tests/scene-durable-http-journey.test.mjs": "runtime",
+    "tests/scene-execution-original-proof.test.mjs": "runtime",
+    "tests/scene-final-dispatch-deadline.test.mjs": "runtime",
+    "tests/scene-history-proof.test.mjs": "runtime",
+    "tests/scene-history-read-shape.test.mjs": "source",
+    "tests/scene-input-recovery.test.mjs": "runtime",
+    "tests/scene-job-admission.test.mjs": "runtime",
+    "tests/scene-job-source-assertions.test.mjs": "runtime",
+    "tests/scene-job-source-witness.test.mjs": "runtime",
+    "tests/scene-markdown-download-path.test.mjs": "source",
+    "tests/scene-mini-app-consent.test.mjs": "source",
+    "tests/scene-mini-app-server-consent.test.mjs": "source",
+    "tests/scene-pagination.test.mjs": "source",
+    "tests/scene-paid-pilot-dispatch.test.mjs": "runtime",
+    "tests/scene-paid-source-proof-batch.test.mjs": "runtime",
+    "tests/scene-policy-stop-guidance.test.mjs": "runtime",
+    "tests/scene-policy-stop-recovery.test.mjs": "runtime",
+    "tests/scene-preflight.test.mjs": "source",
+    "tests/scene-primary-inspection.test.mjs": "runtime",
+    "tests/scene-read-seam-controls.test.mjs": "runtime",
+    "tests/scene-receipt-localization.test.mjs": "runtime",
+    "tests/scene-retained-state.test.mjs": "source",
+    "tests/scene-revision-review-file.test.mjs": "runtime",
+    "tests/scene-screenplay.test.mjs": "source",
+    "tests/scene-server-recovery.test.mjs": "runtime",
+    "tests/scene-source-generation.test.mjs": "runtime",
+    "tests/scene-store-recovery.test.mjs": "runtime",
+    "tests/scene-text-measurement.test.mjs": "source",
+    "tests/scene-versioned-cost-preparation.test.mjs": "runtime",
+    "tests/scene-versioned-history-read.test.mjs": "runtime",
+    "tests/scoped-memory.test.mjs": "source",
+    "tests/scout.test.mjs": "source",
+    "tests/selected-output-share-audio.test.mjs": "source",
+    "tests/selected-output-share-authority.test.mjs": "runtime",
+    "tests/selected-output-share-c2pa-der.test.mjs": "source",
+    "tests/selected-output-share-client.test.mjs": "runtime",
+    "tests/selected-output-share-d1.test.mjs": "runtime",
+    "tests/selected-output-share-document-wiring.test.mjs": "source",
+    "tests/selected-output-share-entry.test.mjs": "source",
+    "tests/selected-output-share-experience-wiring.test.mjs": "source",
+    "tests/selected-output-share-image.test.mjs": "source",
+    "tests/selected-output-share-lifecycle.test.mjs": "runtime",
+    "tests/selected-output-share-management.test.mjs": "runtime",
+    "tests/selected-output-share-media-authority.test.mjs": "runtime",
+    "tests/selected-output-share-media-candidate.test.mjs": "source",
+    "tests/selected-output-share-media-client.test.mjs": "source",
+    "tests/selected-output-share-media-d1.test.mjs": "runtime",
+    "tests/selected-output-share-media-lifecycle.test.mjs": "runtime",
+    "tests/selected-output-share-media-management.test.mjs": "runtime",
+    "tests/selected-output-share-media-originals-authority.test.mjs": "runtime",
+    "tests/selected-output-share-media-recovered-authority.test.mjs": "runtime",
+    "tests/selected-output-share-media-recovery-parser.test.mjs": "runtime",
+    "tests/selected-output-share-media-routes.test.mjs": "artifact",
+    "tests/selected-output-share-media-view.test.mjs": "source",
+    "tests/selected-output-share-media.test.mjs": "source",
+    "tests/selected-output-share-messages.test.mjs": "source",
+    "tests/selected-output-share-migration.test.mjs": "runtime",
+    "tests/selected-output-share-model3d-projection.test.mjs": "source",
+    "tests/selected-output-share-model3d-restore-custody.test.mjs": "runtime",
+    "tests/selected-output-share-model3d-textured.test.mjs": "source",
+    "tests/selected-output-share-model3d-view.test.mjs": "source",
+    "tests/selected-output-share-model3d.test.mjs": "source",
+    "tests/selected-output-share-mp3-contract.test.mjs": "source",
+    "tests/selected-output-share-mp3-projection.test.mjs": "runtime",
+    "tests/selected-output-share-performance.test.mjs": "source",
+    "tests/selected-output-share-png-derivative.test.mjs": "source",
+    "tests/selected-output-share-png-provenance-review.test.mjs": "source",
+    "tests/selected-output-share-privacy.test.mjs": "runtime",
+    "tests/selected-output-share-readiness-d1.test.mjs": "runtime",
+    "tests/selected-output-share-readiness.test.mjs": "runtime",
+    "tests/selected-output-share-retention.test.mjs": "runtime",
+    "tests/selected-output-share-review.test.mjs": "runtime",
+    "tests/selected-output-share-routes.test.mjs": "artifact",
+    "tests/selected-output-share-stable-mp3-fixture.test.mjs": "runtime",
+    "tests/selected-output-share-stable-mp3-lifecycle.test.mjs": "runtime",
+    "tests/selected-output-share-stable-mp3-workerd.test.mjs": "runtime",
+    "tests/selected-output-share-tombstone.test.mjs": "runtime",
+    "tests/selected-output-share-video-notes-authority.test.mjs": "runtime",
+    "tests/selected-output-share-video-notes-d1.test.mjs": "runtime",
+    "tests/selected-output-share-video-notes-parser.test.mjs": "source",
+    "tests/selected-output-share-video.test.mjs": "source",
+    "tests/selected-output-share.test.mjs": "source",
+    "tests/selected-output-shared-view.test.mjs": "runtime",
+    "tests/shared-control-catalog-actions.test.mjs": "source",
+    "tests/shared-control-layout-contract.test.mjs": "source",
+    "tests/shared-event-reference-visibility.test.mjs": "runtime",
+    "tests/shared-file-action-wrapper.test.mjs": "runtime",
+    "tests/shared-idea-edits.test.mjs": "source",
+    "tests/site-release-preflight.test.mjs": "runtime",
+    "tests/slides-revision-review-file.test.mjs": "runtime",
+    "tests/source-advisory-attribution.test.mjs": "source",
+    "tests/source-documents.test.mjs": "source",
+    "tests/spatial-scope.test.mjs": "source",
+    "tests/specialist-access-fragment.test.mjs": "source",
+    "tests/specialist-access-ownership.test.mjs": "source",
+    "tests/specialist-guidance-localization.test.mjs": "source",
+    "tests/sponsor-audio-review-client.test.mjs": "source",
+    "tests/sponsor-audio-review-transport.test.mjs": "runtime",
+    "tests/sponsor-image-host-session.test.mjs": "runtime",
+    "tests/sqlite-compile-cache.test.mjs": "runtime",
+    "tests/stable-localized-template-contract.test.mjs": "runtime",
+    "tests/still-api.test.mjs": "source",
+    "tests/still-attention.test.mjs": "source",
+    "tests/still-audio-waveform.test.mjs": "source",
+    "tests/still-block-navigation.test.mjs": "source",
+    "tests/still-console-window.test.mjs": "source",
+    "tests/still-context-api.test.mjs": "runtime",
+    "tests/still-context.test.mjs": "source",
+    "tests/still-creation-controller.test.mjs": "source",
+    "tests/still-creation-corrections.test.mjs": "source",
+    "tests/still-creation-draft-ideas.test.mjs": "source",
+    "tests/still-creation-help-copy.test.mjs": "source",
+    "tests/still-creation-marker-identity.test.mjs": "source",
+    "tests/still-creation-replacement.test.mjs": "source",
+    "tests/still-decision-cache-api.test.mjs": "runtime",
+    "tests/still-decision-cache.test.mjs": "source",
+    "tests/still-decision-lab.test.mjs": "source",
+    "tests/still-decision-timing.test.mjs": "source",
+    "tests/still-density.test.mjs": "source",
+    "tests/still-diagnostics-api.test.mjs": "runtime",
+    "tests/still-diagnostics.test.mjs": "source",
+    "tests/still-direct-create.test.mjs": "source",
+    "tests/still-experiment-api.test.mjs": "runtime",
+    "tests/still-fast-reads.test.mjs": "runtime",
+    "tests/still-format-api.test.mjs": "runtime",
+    "tests/still-format-menu.test.mjs": "source",
+    "tests/still-generation-activity.test.mjs": "source",
+    "tests/still-generation-decision.test.mjs": "runtime",
+    "tests/still-generation-options.test.mjs": "source",
+    "tests/still-generation-outcome.test.mjs": "source",
+    "tests/still-generation-recovery.test.mjs": "runtime",
+    "tests/still-generation-review.test.mjs": "runtime",
+    "tests/still-generation-toolbar.test.mjs": "source",
+    "tests/still-history-store.test.mjs": "runtime",
+    "tests/still-history.test.mjs": "source",
+    "tests/still-idea-assessment.test.mjs": "runtime",
+    "tests/still-idea-names.test.mjs": "source",
+    "tests/still-idea-opportunities.test.mjs": "runtime",
+    "tests/still-image-policy.test.mjs": "runtime",
+    "tests/still-latency.test.mjs": "runtime",
+    "tests/still-list-display.test.mjs": "source",
+    "tests/still-local-policy.test.mjs": "source",
+    "tests/still-media.test.mjs": "source",
+    "tests/still-next-actions-api.test.mjs": "runtime",
+    "tests/still-next-actions.test.mjs": "source",
+    "tests/still-next-best.test.mjs": "runtime",
+    "tests/still-notifications.test.mjs": "runtime",
+    "tests/still-onboarding.test.mjs": "runtime",
+    "tests/still-page-title.test.mjs": "source",
+    "tests/still-palette-feedback.test.mjs": "runtime",
+    "tests/still-palette-keyboard.test.mjs": "source",
+    "tests/still-palette.test.mjs": "source",
+    "tests/still-pending-results.test.mjs": "runtime",
+    "tests/still-presentation.test.mjs": "source",
+    "tests/still-refresh-repair.test.mjs": "runtime",
+    "tests/still-rejection-evidence.test.mjs": "source",
+    "tests/still-rejection.test.mjs": "source",
+    "tests/still-remote-panel.test.mjs": "runtime",
+    "tests/still-request-economy.test.mjs": "source",
+    "tests/still-rich-document.test.mjs": "source",
+    "tests/still-routes-server.test.mjs": "artifact",
+    "tests/still-routes.test.mjs": "source",
+    "tests/still-save-recovery.test.mjs": "runtime",
+    "tests/still-stale-generation-status.test.mjs": "runtime",
+    "tests/still-startup.test.mjs": "runtime",
+    "tests/still-storage-readiness.test.mjs": "runtime",
+    "tests/still-thread-timing.test.mjs": "source",
+    "tests/still-toolbar-fit.test.mjs": "source",
+    "tests/still-toolbar-rhythm.test.mjs": "source",
+    "tests/still-toolbar-transport.test.mjs": "source",
+    "tests/still-waveform-cache.test.mjs": "source",
+    "tests/still.test.mjs": "source",
+    "tests/story-revision-review-file.test.mjs": "runtime",
+    "tests/storyboard-audience.test.mjs": "source",
+    "tests/storyboard-context.test.mjs": "source",
+    "tests/storyboard-provider-durability.test.mjs": "artifact",
+    "tests/storyboard-provider-prompt.test.mjs": "source",
+    "tests/storyboard-read-diagnostic.test.mjs": "source",
+    "tests/storyboard-reconcile-provider-route.test.mjs": "runtime",
+    "tests/storyboard-reconcile-provider-ui.test.mjs": "runtime",
+    "tests/storyboard-recovery-model.test.mjs": "source",
+    "tests/storyboard-recovery-route.test.mjs": "runtime",
+    "tests/storyboard-reservation-semantics.test.mjs": "artifact",
+    "tests/storyboard-revision-review-file.test.mjs": "runtime",
+    "tests/storyboard-safe-continuation-route.test.mjs": "artifact",
+    "tests/storyboard-safe-continue-ui.test.mjs": "source",
+    "tests/storyboard-safe-recovery.test.mjs": "source",
+    "tests/streamed-canvas-folds.test.mjs": "source",
+    "tests/streamed-context-authority.test.mjs": "source",
+    "tests/streamed-event-folds.test.mjs": "source",
+    "tests/studio-navigator-ordinary-departure.test.mjs": "runtime",
+    "tests/studio-navigator-selection-continuity.test.mjs": "runtime",
+    "tests/sunburst-financial.test.mjs": "source",
+    "tests/surface-load-focus-host.test.mjs": "runtime",
+    "tests/synthetic-evidence-custody.test.mjs": "source",
+    "tests/system-localization.test.mjs": "runtime",
+    "tests/taste.test.mjs": "source",
+    "tests/themed-confirmation-host.test.mjs": "runtime",
+    "tests/themed-confirmation.test.mjs": "runtime",
+    "tests/typography.test.mjs": "source",
+    "tests/ui-popover-trigger-accessible-name.test.mjs": "runtime",
+    "tests/validation-workflow.test.mjs": "source",
+    "tests/video-cover-api.test.mjs": "runtime",
+    "tests/video-cover.test.mjs": "source",
+    "tests/video-custody-diagnostic.test.ts": "source",
+    "tests/video-custody-snapshot-worker.test.mjs": "runtime",
+    "tests/video-custody-snapshot.test.ts": "source",
+    "tests/video-edit-persistence.test.mjs": "runtime",
+    "tests/video-model-routing.test.mjs": "source",
+    "tests/video-output-source-scope.test.mjs": "source",
+    "tests/video-product-research-prompt.test.mjs": "source",
+    "tests/video-reference-custody.test.mjs": "runtime",
+    "tests/video-reference-provenance.test.mjs": "source",
+    "tests/video-references.test.mjs": "source",
+    "tests/video-trim-editor.test.mjs": "runtime",
+    "tests/video-trim.test.mjs": "source",
+    "tests/workspace-context-work-custody.test.mjs": "runtime",
+    "tests/workspace-fallback-chat-ownership.test.mjs": "runtime",
+    "tests/workspace-generation-readiness.test.mjs": "source",
+    "tests/workspace-lifecycle-next-actions.test.mjs": "source",
+    "tests/workspace-local-proposal-api.test.mjs": "runtime",
+    "tests/workspace-local-proposal-host.test.mjs": "runtime",
+    "tests/workspace-rename-ack-custody.test.mjs": "runtime",
+    "tests/workspace-rendered-lifecycle.test.mjs": "runtime",
+    "tests/workspace-retained-disclosure.test.mjs": "runtime",
+    "tests/workspace-settings-confirmation.test.mjs": "runtime",
+    "tests/workspace-settings-context-departure.test.mjs": "runtime",
+    "tests/workspace-settings-draft-completion.test.mjs": "runtime",
+    "tests/workspace-settings-fragment-custody.test.mjs": "runtime",
+    "tests/workspace-settings-grant-member-identity.test.mjs": "runtime",
+    "tests/workspace-settings-grant-selection-retirement.test.mjs": "runtime",
+    "tests/workspace-settings-grant-selection.test.mjs": "runtime",
+    "tests/workspace-settings-legal-hold-identity.test.mjs": "runtime",
+    "tests/workspace-settings-overview-task-recovery.test.mjs": "runtime",
+    "tests/workspace-settings-overview.test.mjs": "runtime",
+    "tests/workspace-settings-policy-automation-resource.test.mjs": "runtime",
+    "tests/workspace-settings-policy-cross-surface.test.mjs": "runtime",
+    "tests/workspace-settings-policy-draft.test.mjs": "runtime",
+    "tests/workspace-settings-policy-native-boundaries.test.mjs": "runtime",
+    "tests/workspace-settings-policy-resource-boundaries.test.mjs": "runtime",
+    "tests/workspace-settings-policy-resource-read.test.mjs": "runtime",
+    "tests/workspace-settings-policy-unrelated-refresh.test.mjs": "runtime",
+    "tests/workspace-settings-project-member-certificates.test.mjs": "runtime",
+    "tests/workspace-settings-project-member-identity.test.mjs": "runtime",
+    "tests/workspace-settings-project-member-whole-refresh.test.mjs": "runtime",
+    "tests/workspace-settings-response-ownership.test.mjs": "runtime",
+    "tests/workspace-settings-review-subject-identity-render.test.mjs": "runtime",
+    "tests/workspace-settings-task-refresh.test.mjs": "runtime",
+    "tests/workspace-settings-transfer-selection.test.mjs": "runtime",
+    "tests/workspace-settings-whole-read-envelopes.test.mjs": "runtime",
+    "tests/workspace-settings-whole-read-order-locale.test.mjs": "runtime",
+    "tests/workspace-settings-whole-read-recovery.test.mjs": "runtime",
+    "tests/workspace-settings-whole-read-typed-envelopes.test.mjs": "runtime",
+    "tests/workspace-settings-whole-read.test.mjs": "runtime",
+    "tests/workspace-switcher-queued-focus.test.mjs": "runtime",
+    "tests/workspace-transitions.test.mjs": "source",
+    "tests/workspace-upload-input-negatives.test.mjs": "runtime",
+    "tests/workspace-upload-lifetime.test.mjs": "runtime"
+  },
+  "overrides": {
+    "tests/validation-workflow.test.mjs": {
+      "lane": "source",
+      "reason": "Build/dist strings and subprocess failures belong to isolated temporary runner fixtures; no production artifact required."
+    },
+    "tests/audio-share-mp3-vite.test.mjs": {
+      "lane": "runtime",
+      "reason": "Builds a separate Vite fixture with an explicit temporary --outDir; never consumes the main dist."
+    },
+    "tests/site-release-preflight.test.mjs": {
+      "lane": "runtime",
+      "reason": "Creates its fictional Git/build tree under mkdtemp; dist literals refer to that owned temporary fixture."
+    },
+    "tests/presentation-private-receipts.test.mjs": {
+      "lane": "runtime",
+      "reason": "Replaces the imported fixture dist worker reference with worker/index.ts before executing it."
+    }
+  },
+  "classificationInput": "38da215e1d306c68236e161766888408c8c2c6a251ac1918a30cf8d7f4ba5204",
+  "browserConfigs": [
+    "playwright.a11y.config.mjs",
+    "playwright.activity-accounting-lifetime.config.mjs",
+    "playwright.activity-receipt-focus.config.mjs",
+    "playwright.content-first.config.mjs",
+    "playwright.context-return-reading.config.mjs",
+    "playwright.deliver-containment.config.mjs",
+    "playwright.deliver-reader-denial.config.mjs",
+    "playwright.e9-cancel-header.config.mjs",
+    "playwright.f-banner.config.mjs",
+    "playwright.generation-accounting.config.mjs",
+    "playwright.guest-narrow-reading-return.config.mjs",
+    "playwright.guest-retry-skip-return.config.mjs",
+    "playwright.library-controls-reach.config.mjs",
+    "playwright.model3d-native.config.mjs",
+    "playwright.output-footer-ja768.config.mjs",
+    "playwright.output-footer.config.mjs",
+    "playwright.story-revision-download.config.mjs",
+    "playwright.validation-isolation.config.mjs",
+    "playwright.validation.config.mjs"
+  ],
+  "commands": {
+    "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
+    "build": "node scripts/validation.mjs build",
+    "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite preview",
+    "test": "node scripts/validation.mjs test",
+    "test:a11y": "playwright test --config=playwright.a11y.config.mjs",
+    "cem": "node scripts/generate-custom-elements-manifest.mjs",
+    "cem:check": "node scripts/generate-custom-elements-manifest.mjs --check",
+    "i18n:check": "node --experimental-strip-types scripts/check-system-localization.mjs",
+    "typecheck": "tsc --noEmit --project tsconfig.validation.json",
+    "lint": "eslint . --ignore-pattern dist",
+    "setup:local-encryption": "node scripts/setup-local-encryption-root.mjs",
+    "replay": "node --experimental-strip-types scripts/replay.mjs",
+    "eval:image-adapters": "node --experimental-strip-types scripts/run-image-adapter-eval.mjs",
+    "eval:image-adapters:preflight": "node --experimental-strip-types scripts/run-image-adapter-eval.mjs --preflight-only=true",
+    "eval:image-adapters:cycle": "node --experimental-strip-types scripts/run-image-adapter-cycle-search.mjs",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "node scripts/migrate-local.mjs",
+    "test:still-toolbar": "node scripts/test-still-toolbar.mjs",
+    "release:verify": "node --experimental-strip-types scripts/verify-site-release.mjs",
+    "test:node": "node scripts/validation.mjs node",
+    "test:source": "node scripts/validation.mjs source",
+    "test:runtime": "node scripts/validation.mjs runtime",
+    "test:artifact": "node scripts/validation.mjs artifact",
+    "validate": "node scripts/validation.mjs check",
+    "validate:fast": "node scripts/validation.mjs fast",
+    "validate:inventory": "node scripts/validation.mjs inventory",
+    "validate:inventory:update": "node scripts/validation.mjs inventory:update",
+    "test:browser": "node scripts/validation-browser.mjs",
+    "test:still-toolbar:browser": "node scripts/test-still-toolbar.mjs --browser-only"
+  },
+  "entrypoints": [
+    "scripts/check-generation-execution-bridge.mjs",
+    "scripts/check-generation-integrated-release-v2.mjs",
+    "scripts/check-generation-integrated-release.mjs",
+    "scripts/check-recorded-package-browser.mjs",
+    "scripts/check-system-localization.mjs",
+    "scripts/evaluate-memory-persistence.mjs",
+    "scripts/evaluate-memory-review-jobs.mjs",
+    "scripts/evaluate-memory-shadow.mjs",
+    "scripts/generate-custom-elements-manifest.mjs",
+    "scripts/generate-marketing-persona-assets.mjs",
+    "scripts/generate-marketing-persona-videos.mjs",
+    "scripts/generate-memory-schema-repair.mjs",
+    "scripts/generate-still-icons.mjs",
+    "scripts/migrate-local.mjs",
+    "scripts/run-generation-reliability-eval.mjs",
+    "scripts/run-ideogram-v9-diagnostic.mjs",
+    "scripts/run-image-adapter-cycle-search.mjs",
+    "scripts/run-image-adapter-eval.mjs",
+    "scripts/run-seedance-reference-control.mjs",
+    "scripts/test-output-scene-sponsored-handoff.mjs",
+    "scripts/test-still-toolbar.mjs",
+    "scripts/verify-site-release.mjs",
+    "evals/generation-reliability/native-host/check-schema.mjs",
+    "evals/generation-reliability/preparation/check-evidence.mjs",
+    "evals/generation-reliability/preparation/check-schema.mjs"
+  ],
+  "testImportExceptions": {
+    "tests/experience-guest-image-result-claim-d1.test.mjs -> ./experience-guest-image-result-copy-writer.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
+    "tests/experience-guest-image-result-claim-source-d1.test.mjs -> ./experience-guest-image-result-claim-source.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
+    "tests/experience-guest-image-result-claim.test.mjs -> ./experience-guest-image-result-copy-writer.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
+    "tests/experience-guest-image-result-copy-writer-d1-r2.test.mjs -> ./experience-guest-image-result-copy-writer.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
+    "tests/generated-image-claimed-current.test.mjs -> ./experience-guest-image-result-copy-writer.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
+    "tests/generated-image-claimed-edit.test.mjs -> ./experience-guest-image-result-copy-writer.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
+    "tests/generated-image-claimed-edit.test.mjs -> ./generated-image-claimed-local-adoption.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
+    "tests/generated-image-claimed-local-adoption.test.mjs -> ./experience-guest-image-result-copy-writer.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
+    "tests/generated-image-claimed-personal-ports.test.mjs -> ./experience-guest-image-result-copy-writer.test.mjs": "Imported fixture registers scenarios only when directlyInvoked; preserve the explicit guard.",
+    "tests/presentation-source-semantics.test.mjs -> ./presentation-composer-preflight.test.mjs?source-semantics-fixture": "The source-semantics fixture loader replaces node:test registration in these qualified imports.",
+    "tests/presentation-source-semantics.test.mjs -> ./presentation-outline-managed.test.mjs?source-semantics-fixture": "The source-semantics fixture loader replaces node:test registration in these qualified imports.",
+    "tests/presentation-source-semantics.test.mjs -> ./presentation-outline-provider.test.mjs?source-semantics-fixture": "The source-semantics fixture loader replaces node:test registration in these qualified imports."
+  },
+  "historicalHolds": [
+    {
+      "id": "QA-001",
+      "source": "docs/3d-production-readiness.md",
+      "sourceRevision": "ef20f47cc77990e6acc1540179d95f8cdad2dc5e",
+      "status": "Production/native-account qualification remains unresolved; current synthetic harness regressions are within VAL-001 implementation authorization.",
+      "families": [
+        "model3d-document-jobs",
+        "model3d-store-integration",
+        "model3d-generation-ui"
+      ],
+      "owner": "QA-001; production qualification owner unassigned"
+    }
+  ],
+  "conditionalModes": [
+    {
+      "file": "tests/workspace-settings-draft-completion.test.mjs",
+      "flags": [
+        "FORMA_SETTINGS_DRAFT_TRACE"
+      ]
+    },
+    {
+      "file": "tests/output-plan-target-selection.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-requirements-schema.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/document-slides-content-first-focus.test.mjs",
+      "flags": [
+        "FORMA_SLIDES_FOCUS_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-retained-draft.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_RETAINED_DRAFT_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_RETAINED_DRAFT_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/output-queued-grant-controls.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/generation-accounting-dialog.test.mjs",
+      "flags": [
+        "FORMA_ACCOUNTING_CANONICAL_PACKAGE"
+      ]
+    },
+    {
+      "file": "tests/experience-intake-authority.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_INTAKE_AUTHORITY_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_INTAKE_AUTHORITY_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/experience-existing-principal.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_PRINCIPAL_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_PRINCIPAL_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/experience-model3d-intake.test.mjs",
+      "flags": [
+        "FORMA_MODEL3D_INTAKE_SUPPLIER_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-model3d-recovery-compact.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-audio-intake-native.test.mjs",
+      "flags": [
+        "FORMA_AUDIO_INITIAL_D1"
+      ]
+    },
+    {
+      "file": "tests/audio-local-conversion-store.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/campaign-recipe-review-file.test.mjs",
+      "flags": [
+        "FORMA_CAMPAIGN_RECIPE_EVIDENCE_DIR"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-audio-v8-approval.test.mjs",
+      "flags": [
+        "FORMA_AUDIO_V8_APPROVAL_CAPTURE"
+      ]
+    },
+    {
+      "file": "tests/workspace-settings-confirmation.test.mjs",
+      "flags": [
+        "FORMA_WORKSPACE_LATE_CONFIRMATION_TRACE"
+      ]
+    },
+    {
+      "file": "tests/generation-accounting-wrapper.test.mjs",
+      "flags": [
+        "FORMA_ACCOUNTING_INDEX_FILE"
+      ]
+    },
+    {
+      "file": "tests/image-result-review-file.test.mjs",
+      "flags": [
+        "FORMA_IMAGE_REVIEW_OUTPUT"
+      ]
+    },
+    {
+      "file": "tests/creation-index-capacity.test.mjs",
+      "flags": [
+        "STILL_INDEX_CAPACITY_OUTPUT"
+      ]
+    },
+    {
+      "file": "tests/experience-output-producer.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_OUTPUT_PRODUCER_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_OUTPUT_PRODUCER_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/experience-private-storage.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_PRIVATE_STORAGE_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_PRIVATE_STORAGE_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/experience-fresh-intake-join.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_FRESH_INTAKE_JOIN_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_FRESH_INTAKE_JOIN_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/output-footer-owned-telemetry-native.test.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-audio-v8-native.test.mjs",
+      "flags": [
+        "FORMA_AUDIO_V8_NATIVE_DIAGNOSTIC"
+      ]
+    },
+    {
+      "file": "tests/output-governance-disclosure.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-storyboard-planner.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-intake-route.test.mjs",
+      "flags": [
+        "FORMA_POST_NATIVE_FAULT",
+        "FORMA_POST_NATIVE_FAULT_LOG_PREFIX",
+        "FORMA_SPONSOR_ROUTE_SQL_ARTIFACT"
+      ]
+    },
+    {
+      "file": "tests/experience-image-slides-preflight.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_PREFLIGHT_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_PREFLIGHT_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/output-source-readiness.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-result-claim-d1.test.mjs",
+      "flags": [
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-intake-reads.test.mjs",
+      "flags": [
+        "FORMA_INTAKE_READ_SQL_EVIDENCE",
+        "FORMA_NATIVE_READ_FAULT_FACADE",
+        "FORMA_NATIVE_READ_FAULT_MODE"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-result-claim.test.mjs",
+      "flags": [
+        "FORMA_SQLITE_PYTHON"
+      ]
+    },
+    {
+      "file": "tests/experience-output-command-core.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_CORE_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_CORE_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/generated-image-save.test.mjs",
+      "flags": [
+        "FORMA_GENERATED_IMAGE_SAVE_ARTIFACTS"
+      ]
+    },
+    {
+      "file": "tests/output-video-retained-workerd.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-controller-preflight-partial-contract.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-storyboard-cost-reservation.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT",
+        "FORMA_STORYBOARD_COST_BASELINE"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-run.test.mjs",
+      "flags": [
+        "FORMA_RUN_SQL_CAPTURE_DIR"
+      ]
+    },
+    {
+      "file": "tests/experience-output-originals.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_ORIGINALS_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_ORIGINALS_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-admission-d1.test.mjs",
+      "flags": [
+        "FORMA_ADMISSION_D1_SQL_PRECHECK",
+        "FORMA_ADMISSION_D1_SQL_PRECHECK_SHA256",
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/alternative-command-origin-continuity.test.mjs",
+      "flags": [
+        "FORMA_ALTERNATIVE_SETUP_TRACE"
+      ]
+    },
+    {
+      "file": "tests/output-storyboard-completion.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-storyboard-generation-receipt.test.mjs",
+      "flags": [
+        "FORMA_RECEIPT_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-video-intent-proof.test.mjs",
+      "flags": [
+        "FORMA_VIDEO_INTENT_D1_EVIDENCE_PATH"
+      ]
+    },
+    {
+      "file": "tests/output-video-source-route.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-intake-boundary.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_CANONICAL_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-controller-preflight-refresh.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-requirement-labels.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_DEPENDENCY_ROOT"
+      ]
+    },
+    {
+      "file": "tests/generated-image-claimed-personal-ports.test.mjs",
+      "flags": [
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-stage-custody-d1.test.mjs",
+      "flags": [
+        "FORMA_D1_FAILED_QUERY_CAPTURE"
+      ]
+    },
+    {
+      "file": "tests/output-controller-fixture-model.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/slides-revision-review-file.test.mjs",
+      "flags": [
+        "FORMA_SLIDES_REVIEW_OUTPUT"
+      ]
+    },
+    {
+      "file": "tests/assistant-runtime.test.mjs",
+      "flags": [
+        "FORMA_MEMORY_CAPACITY_TRACE",
+        "FORMA_TEST_SQL_TRACE"
+      ]
+    },
+    {
+      "file": "tests/experience-storyboard-native-result.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/model3d-failure-progress-copy.test.mjs",
+      "flags": [
+        "FORMA_FAILURE_COPY_SOURCE"
+      ]
+    },
+    {
+      "file": "tests/output-controller-preflight-binding.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-admission.test.mjs",
+      "flags": [
+        "FORMA_ADMISSION_SQL_CAPTURE_DIR"
+      ]
+    },
+    {
+      "file": "tests/experience-output-envelope-privacy.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_CANONICAL_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-story-intake-classification.test.mjs",
+      "flags": [
+        "FORMA_STORY_INTAKE_D1"
+      ]
+    },
+    {
+      "file": "tests/output-storyboard-activation.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-storyboard-group-binding.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-governance-native-depth.test.mjs",
+      "flags": [
+        "FORMA_SQLITE_PYTHON"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-image-confirmation.test.mjs",
+      "flags": [
+        "FORMA_SPONSOR_CONFIRMATION_PRIVACY_ARTIFACT",
+        "FORMA_SPONSOR_CONFIRMATION_SQL_ARTIFACT"
+      ]
+    },
+    {
+      "file": "tests/output-package-history.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-storyboard-source-media.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/local-migrations.test.mjs",
+      "flags": [
+        "FORMA_MIGRATION_TEST_DIRECTORY"
+      ]
+    },
+    {
+      "file": "tests/output-controller-paid-intent.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-result-media.test.mjs",
+      "flags": [
+        "FORMA_RESULT_MEDIA_SQL_CAPTURE_DIR"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-image-host.test.mjs",
+      "flags": [
+        "FORMA_SPONSOR_HOST_CANDIDATE_SOURCE"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-result-copy-writer-d1-r2.test.mjs",
+      "flags": [
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/experience-scene-renewal-transaction.test.mjs",
+      "flags": [
+        "FORMA_SCENE_RENEWAL_CANDIDATE_ROOT",
+        "FORMA_SCENE_RENEWAL_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/storyboard-revision-review-file.test.mjs",
+      "flags": [
+        "FORMA_STORYBOARD_REVIEW_OUTPUT"
+      ]
+    },
+    {
+      "file": "tests/native-retained-scene.test.mjs",
+      "flags": [
+        "FORMA_SCENE_READER_CANONICAL_ROOT"
+      ]
+    },
+    {
+      "file": "tests/generated-image-claimed-edit.test.mjs",
+      "flags": [
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/output-model3d-recovery-workerd.test.mjs",
+      "flags": [
+        "FORMA_MODEL3D_LARGE_GLB",
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/audio-review-file.test.mjs",
+      "flags": [
+        "FORMA_AUDIO_REVIEW_OUTPUT"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-run-d1.test.mjs",
+      "flags": [
+        "FORMA_RUN_D1_SQL_PRECHECK",
+        "FORMA_RUN_D1_SQL_PRECHECK_SHA256",
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-result-media-d1.test.mjs",
+      "flags": [
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/audio-share-mp3-vite.test.mjs",
+      "flags": [
+        "FORMA_MP3_VITE_EVIDENCE_DIR"
+      ]
+    },
+    {
+      "file": "tests/output-storyboard-fal.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-result-inventory-d1.test.mjs",
+      "flags": [
+        "FORMA_RESULT_INVENTORY_D1_SQL_PRECHECK",
+        "FORMA_RESULT_INVENTORY_D1_SQL_PRECHECK_SHA256",
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/output-storyboard-retained.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-project-request-context.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_PROJECT_CONTEXT_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_PROJECT_CONTEXT_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-scene-integration-guards.test.mjs",
+      "flags": [
+        "FORMA_SCENE_NATIVE_DIAGNOSTIC"
+      ]
+    },
+    {
+      "file": "tests/experience-atomic-intake.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_ATOMIC_INTAKE_CANDIDATE_ROOT",
+        "FORMA_EXPERIENCE_ATOMIC_INTAKE_REVIEWED_MANIFEST"
+      ]
+    },
+    {
+      "file": "tests/generated-image-output-review-file.test.mjs",
+      "flags": [
+        "FORMA_IMAGE_OUTPUT_FILES"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-video-evidence.test.mjs",
+      "flags": [
+        "FORMA_VIDEO_D1_EVIDENCE_PATH"
+      ]
+    },
+    {
+      "file": "tests/experience-output-command-transaction.test.mjs",
+      "flags": [
+        "FORMA_EXPERIENCE_CANONICAL_ROOT"
+      ]
+    },
+    {
+      "file": "tests/model3d-native-publication.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-fresh-intake-join-native.test.mjs",
+      "flags": [
+        "FORMA_FRESH_INTAKE_NATIVE_CONTROL",
+        "FORMA_FRESH_INTAKE_NATIVE_MODE",
+        "FORMA_FRESH_INTAKE_NATIVE_SOURCE_MANIFEST",
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-video-recovery-financial-d1.test.mjs",
+      "flags": [
+        "FORMA_VIDEO_RECOVERY_D1_EVIDENCE"
+      ]
+    },
+    {
+      "file": "tests/output-operation-receipt-store.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_DEPENDENCY_ROOT",
+        "FORMA_OUTPUT_RECEIPT_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-result-claim-source-d1.test.mjs",
+      "flags": [
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/output-footer-document-icon.test.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-scene-native.test.mjs",
+      "flags": [
+        "FORMA_SCENE_NATIVE_DIAGNOSTIC"
+      ]
+    },
+    {
+      "file": "tests/audio-trim-preview-focus.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-audio-output-continuation.test.mjs",
+      "flags": [
+        "FORMA_AUDIO_INITIAL_D1_TRACE",
+        "FORMA_SQLITE_PYTHON"
+      ]
+    },
+    {
+      "file": "tests/executive-deck-recipe-review-file.test.mjs",
+      "flags": [
+        "FORMA_EXECUTIVE_RECIPE_EVIDENCE_DIR"
+      ]
+    },
+    {
+      "file": "tests/sqlite-compile-cache.test.mjs",
+      "flags": [
+        "FORMA_SQLITE_CACHE_DIR"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-story-intake-native.test.mjs",
+      "flags": [
+        "FORMA_STORY_INITIAL_D1"
+      ]
+    },
+    {
+      "file": "tests/output-plan-saved-optionals.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-image-entry-mode.test.mjs",
+      "flags": [
+        "FORMA_SPONSOR_IMAGE_MODE_SQL_ARTIFACT"
+      ]
+    },
+    {
+      "file": "tests/native-result-followthrough.test.mjs",
+      "flags": [
+        "FORMA_HOST_SOURCE"
+      ]
+    },
+    {
+      "file": "tests/d1-expression-depth-transport.test.mjs",
+      "flags": [
+        "FORMA_SQLITE_PYTHON"
+      ]
+    },
+    {
+      "file": "tests/scene-read-seam-controls.test.mjs",
+      "flags": [
+        "FORMA_SCENE_READ_SEAM_ROOT"
+      ]
+    },
+    {
+      "file": "tests/output-plan-author-permission.test.mjs",
+      "flags": [
+        "FORMA_OUTPUT_REGRESSION_ROOT"
+      ]
+    },
+    {
+      "file": "tests/platform-session-ownership.test.mjs",
+      "flags": [
+        "FORMA_SOURCE_ROOT"
+      ]
+    },
+    {
+      "file": "tests/generated-image-claimed-current.test.mjs",
+      "flags": [
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-result-copy-schema.test.mjs",
+      "flags": [
+        "FORMA_TEST_PGID"
+      ]
+    },
+    {
+      "file": "tests/model3d-durable-http-heartbeat.test.mjs",
+      "flags": [
+        "FORMA_MODEL3D_WORKERD_HEARTBEAT",
+        "FORMA_MODEL3D_WORKERD_NATIVE",
+        "FORMA_MODEL3D_WORKERD_RECOVERY"
+      ]
+    },
+    {
+      "file": "tests/experience-guest-image-result-inventory.test.mjs",
+      "flags": [
+        "FORMA_RESULT_INVENTORY_SQL_CAPTURE_DIR"
+      ]
+    },
+    {
+      "file": "tests/experience-sponsor-scene-driver-d1.test.mjs",
+      "flags": [
+        "FORMA_RUN_SCENE_DRIVER_D1"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-e11-copy-locales.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_E11_COPY",
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-output-footer-ja768.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-library-import.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_IMPORT_ARCHIVE",
+        "FORMA_A11Y_IMPORT_ARCHIVE_SHA256"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-ordinary-copy.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_IMPORT_ARCHIVE",
+        "FORMA_A11Y_IMPORT_ARCHIVE_SHA256"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-context-return-reading.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-library-controls-reach.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-e9-outputcard-peers.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK",
+        "FORMA_E6_BASELINE"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-e9-cancel-header-reading.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-public-marketing.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_PUBLIC_PREVIEW_RECEIPTS"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-activity-receipt-focus.spec.mjs",
+      "flags": [
+        "FORMA_ACTIVITY_RECEIPT_FOCUS"
+      ]
+    },
+    {
+      "file": "tests/browser/isolated-e6-noncanvas.spec.mjs",
+      "flags": [
+        "FORMA_E6_BASELINE"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-deliver-reader-denial.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK",
+        "FORMA_DELIVER_SHARED_READER"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-activity-accounting-lifetime.spec.mjs",
+      "flags": [
+        "FORMA_ACTIVITY_ACCOUNTING_LIFETIME"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-output-footer-clearance.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    },
+    {
+      "file": "tests/browser/isolated-presentation-owners.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_E5_CLIP_COMPARE"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-e9-peer-rows.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    },
+    {
+      "file": "tests/browser/forma-f-banner-rail.spec.mjs",
+      "flags": [
+        "FORMA_A11Y_SYNTHETIC_NETWORK"
+      ]
+    }
+  ],
+  "manualGates": [
+    "docs/3d-production-readiness.md",
+    "docs/local-migrations.md",
+    "docs/still-toolbar-release-checks.md",
+    "tests/browser/README.md"
+  ],
+  "exclusions": {}
+}

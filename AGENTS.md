@@ -56,23 +56,52 @@ Read the documentation relevant to the change:
 
 ## Validation
 
-Select checks that cover the changed behavior. Documentation-only edits need
-link, command, and diff checks; they do not require an application build.
+Select checks that cover the changed behavior; use the dependency order in
+[the validation guide](docs/validation.md). Documentation-only changes need link,
+command, and diff checks, not an application build.
 
-- `pnpm typecheck` and `pnpm lint`: TypeScript and lint checks.
-- `pnpm test`: build and repository Node tests.
-- `pnpm build`: production build and build-time consistency checks.
-- `pnpm i18n:check`: system localization consistency.
-- `pnpm cem`, then `pnpm cem:check`: regenerate and verify both manifests when
-  custom-element contracts change. Inspect generated diffs; do not hand-edit them.
-- `pnpm test:a11y`: browser keyboard, focus, and zoom checks. Follow
-  [the browser test guide](tests/browser/README.md) for the preview, bundled
-  Chromium, account, and retained-archive prerequisites. Missing archive setup
-  does not authorize creating, exporting, fabricating, or committing a fixture.
+- Run `pnpm typecheck` as soon as a coherent edit is ready, before costly setup.
+  It covers production, the queue worker, and TypeScript test contracts. Follow
+  with scoped lint and focused source tests; fix cheap failures before widening.
+- `pnpm validate:fast` runs types then full lint. `pnpm test` (also `pnpm validate`)
+  runs types → lint → source tests → runtime tests → one qualified build → artifact
+  tests, stopping between stages on failure. Do not precede it with a separate
+  build. Node file concurrency defaults to two; use `--workers=N` with one total
+  CPU/memory budget across Node, browsers, Vite, workerd, and other active work.
+- Use `pnpm test:source`, `pnpm test:runtime`, or `pnpm test:artifact` with explicit
+  registered file paths while iterating. `pnpm test:node` runs Node lanes and
+  requires an existing matching build for artifact consumers. These focused
+  commands do not independently satisfy types, lint, or unselected coverage.
+- `pnpm build` reuses output only when input and output hashes match; `--force`
+  rebuilds deliberately. It owns CEM generation, localization and schema checks,
+  cleaning, and Vite. Inspect generated manifest diffs. For contract-only work,
+  `pnpm cem` then `pnpm cem:check` remains available; `pnpm i18n:check` is focused.
+- After changing tests/helpers/tooling, run `pnpm validate:inventory:update`, review
+  the registry diff and lane assignments, then `pnpm validate:inventory`. A new
+  `.test.ts` or nested test cannot silently disappear. Never import a registering
+  test module as a fixture; extract a shared helper. Do not weaken assertions or
+  exclude failures to make a run pass.
+- Batch compatible browser checks after relevant cheap checks. Use
+  `FORMA_BROWSER_CONFIGS=<comma-separated config suffixes> pnpm test:browser` for
+  one owned compatible server batch; `pnpm test:still-toolbar:browser` avoids
+  repeating the toolbar units when already verified on matching inputs.
+  Reuse qualified setup and caches, with fresh mutable state per test. Keep true
+  zoom, fresh-process, shared-account, migration, and recovery lanes appropriately
+  isolated. Widen browser workers only after proving independence and measuring.
+- `pnpm test:a11y` retains its native keyboard/focus/zoom and actual account/archive
+  requirements. Follow [the browser guide](tests/browser/README.md). Missing archive
+  setup never authorizes creating, exporting, fabricating, or committing a fixture.
 
-`pnpm build` and `pnpm test` both regenerate manifests and clean/rebuild `dist`.
-Run them sequentially, and coordinate rebuilds with browser verification that
-depends on the preview's build output. Report checks run and any unverified areas.
+Keep one writer to `dist`. Managed builds/artifact batches and combined built
+browser batches use an exclusive lock. Coordinate standalone previews/checkers
+that do not participate in that lock; preserve their active output. Never stop
+an unowned server or rebuild its active `dist` merely to run a check. Keep related
+checks together rather than repeatedly tearing down and re-entering a lane.
+After a fix, rerun the failed and affected checks, then remaining prerequisites;
+reuse still-valid evidence. Preserve run receipts, failure logs and acceptance
+archives. Report selected coverage, skips, disabled modes, failures and unverified
+areas separately. Historical acceptance sequences do not mandate replaying an
+unchanged accepted journey for every local edit.
 
 ## Work continuity
 

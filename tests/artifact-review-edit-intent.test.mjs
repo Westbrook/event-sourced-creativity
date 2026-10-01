@@ -25,7 +25,7 @@ async function declarations(relative, marker, extraExports) {
   try { return await import(sourceURL.href); } finally { hook.deregister(); }
 }
 // Reuse declarations only. No registered old tests or production-method edits.
-const native = await declarations("tests/inactive-generation-dialog-host.test.mjs", '\ntest("inactive create', "DocumentArtifacts, documentPort, windowPort");
+const native = await declarations("tests/inactive-generation-dialog-fixture.mjs", '\nexport default', "DocumentArtifacts, documentPort, windowPort");
 const delivery = await declarations("tests/exact-delivery-backend.test.mjs", '\ntest("exact delivery backend:', "deliveryFixture, body, documentId, projectId, ownerId");
 const { createSceneStoreHost, sceneDeferred } = await import(url("tests/helpers/scene-cost-store-host.mjs").href);
 const { withDocumentInRoute } = await import(url("src/model/routes.ts").href);

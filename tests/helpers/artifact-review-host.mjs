@@ -13,11 +13,10 @@ import { DOCUMENT_PRODUCTION_WORKFLOW_EVENT, recommendProductionWorkflow, produc
 
 // Full current classes and real LocaleController. Only the existing native
 // template/control ports are reused; no production method or crypto replacement.
-const url = new URL("../inactive-generation-dialog-host.test.mjs", import.meta.url);
+const url = new URL("../inactive-generation-dialog-fixture.mjs", import.meta.url);
 const source = fs.readFileSync(url, "utf8");
 const tree = ts.createSourceFile(url.pathname, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-const first = tree.statements.find(node => ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
-  && node.expression.expression.getText(tree) === "test");
+const first = tree.statements.find(node => ts.isExportAssignment(node));
 assert.ok(first);
 const moduleUrl = url.href + "?artifact-review-full-host";
 const hook = registerHooks({ load(candidate, context, next) {
