@@ -6155,4 +6155,9 @@ Object.assign(messages, {
 
 Object.assign(messages, { "system.auto.xi82c4.15": "Temps de génération" });
 
+Object.assign(messages, {
+  "system.auto.1aa0m01.40": "Interface applicative de l’éditeur de découpage audio.",
+  "system.auto.s14phq.151": "Le composant hôte gère l’accès privé et l’enregistrement. Ce composant enfant affiche uniquement les octets PCM vérifiés et crée, sur demande explicite, un aperçu local de la plage exacte sélectionnée.",
+});
+
 export default messages;

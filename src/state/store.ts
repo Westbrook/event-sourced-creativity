@@ -39,7 +39,7 @@ import { OUTCOME_ARRANGEMENT_ENDPOINT, type OutcomeArrangementCommand, type Outc
 import { canvasDocumentTarget, documentJobMatchesSurface } from "../model/canvas-document-target";
 import { canvasProjectId, foldCanvasEvents, type CanvasContextSet, type CanvasProjection } from "../canvas/model";
 import type { GenerationReadiness, GenerationReadinessKind, PromptTechniqueSafetyComparison } from "../model/generation-readiness";
-import { documentArtifactRevision, isDocumentArtifactKind, parseDocumentArtifactContent, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId } from "../model/document-artifacts";
+import { documentArtifactRevision, isDocumentArtifactKind, parseAudioMediaRevision, parseDocumentArtifactContent, type AudioTrimEditRequest, type AudioTrimEditResult, type DocumentArtifactKind, type SlidePresentation, type SlideStylePresetId } from "../model/document-artifacts";
 import { artifactContextEvents, imageOutputContextEvents, model3dArtifactContextReadiness } from "../model/output-context";
 import { outputBlockRemovalEvents as ownedOutputBlockRemovalEvents, outputBlockTextEditEvents, outputInputDraft, outputInputEditEvents, type OutputInputDraft } from "../model/output-authoring";
 import { combinedContextGroups, combinedContextMemberships, combinedContextRoleForBlockType, CONTEXT_CONTAINS_RELATION, isContextCompositionRelation, normalizeActionBlockReferences } from "../model/combined-context";
@@ -170,7 +170,8 @@ export type CanvasSyncResult = { appended:CreativeEvent[]; rejected:Array<{index
 type EventSourceRead = { source:CapturedSourceOwnership; id:number; profile:AccountSnapshotProfile; identity:AccountSnapshotIdentity; cacheFence:AccountSnapshotFence; complete:boolean; from:number; cookieGeneration:number };
 type ProjectContextCookieRequest = { ready:Promise<void>; settled:boolean; admitted:boolean; current:()=>boolean; matches:(session:PilotSession|null)=>boolean; reconciliation:Promise<void>|null };
 type EventSourcePage = { events:CreativeEvent[]; content:Record<string,string>; head:number; read:EventSourceRead };
-type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string };
+type AudioTrimObservation = { artifactId:string; request:AudioTrimEditRequest; contentRef:string; documentId:string; projectId:string; sourceMediaUrl:string; sourceRaw:string; sourceRevision:number };
+type EventWriteObservation = { source:CapturedSourceOwnership|null; read:EventSourceRead|null; receipt:EventWriteAcknowledgment; pending:boolean; delivered:boolean; signature:string|null; attempted:boolean; paused:boolean; streamId:string; actor:string; audioTrim?:AudioTrimObservation };
 const EVENT_WRITE_SCOPE_CAPACITY=32, EVENT_WRITE_STORE_CAPACITY=128;
 export type PilotSession = {
   user: { userId: string; email: string; displayName: string; role: "admin" | "creator" | "agent" | "viewer"; consentVersion: string | null; consentedAt: string | null };
@@ -4168,21 +4169,31 @@ export class FormaStore {
   async append(event:EventInput,options:AppendOptions={}):Promise<CreativeEvent[]>{return this.appendBatch([event],options);}
 
   /** Correct the durable deliverable itself without invoking a generation provider. */
-  async reviseDocumentArtifact(artifactId:string,input:{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}){
+  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest):Promise<AudioTrimEditResult>;
+  async reviseDocumentArtifact(artifactId:string,input:{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<boolean>;
+  async reviseDocumentArtifact(artifactId:string,input:AudioTrimEditRequest|{markdown:string;items?:Array<{index:number;title?:string;body?:string;notes?:string}>;expectedRevision:number}):Promise<AudioTrimEditResult|boolean>{
     const requestInput=JSON.parse(JSON.stringify(input)) as typeof input;
+    const trimInput = "audioTrim" in requestInput ? requestInput : null;
+    const textInput = "markdown" in requestInput ? requestInput : null;
+    const trimFailure = (status: "conflict" | "refused" | "unconfirmed" | "retired", code: "source_changed" | "invalid_range" | "unsupported" | "unavailable" | "access_denied" | "unconfirmed" | "retired") =>
+      ({status,code} as AudioTrimEditResult);
+    const digestText = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value))),byte=>byte.toString(16).padStart(2,"0")).join("");
     // Capture the exact current artifact and retained bytes before admission can yield.
     // Only the dedicated server no-op envelope may certify these same bytes later.
     const artifact=this.projection.get().libraryArtifacts.find(candidate=>candidate.id===artifactId);
     const contentRef=artifact?.contentRef??"",retainedBefore=this.content.get()[contentRef];
     const projectId=this.projection.get().projectId,revisionBefore=documentArtifactRevision(this.events.get(),artifactId);
+    const retainedDraft = parseDocumentArtifactContent(retainedBefore);
     const unchangedContent=(()=>{
+      if (trimInput) return trimInput.audioTrim.startFrame === 0 && trimInput.audioTrim.endFrame === trimInput.audioTrim.sourceFrameCount
+        && trimInput.audioTrim.resultMediaSha256 === trimInput.audioTrim.sourceMediaSha256 && typeof retainedBefore === "string" ? retainedBefore : null;
       if(!artifact||!contentRef||!Number.isSafeInteger(requestInput.expectedRevision)||requestInput.expectedRevision!==revisionBefore
-        ||typeof requestInput.markdown!=="string"||!requestInput.markdown.trim())return null;
+        ||!textInput||typeof textInput.markdown!=="string"||!textInput.markdown.trim())return null;
       const edited=parseDocumentArtifactContent(retainedBefore);if(!edited)return null;
-      edited.content_markdown=requestInput.markdown;
-      if(requestInput.items!==undefined){
-        if(!Array.isArray(requestInput.items))return null;
-        for(const candidate of requestInput.items){
+      edited.content_markdown=textInput.markdown;
+      if(textInput.items!==undefined){
+        if(!Array.isArray(textInput.items))return null;
+        for(const candidate of textInput.items){
           if(!candidate||!Number.isSafeInteger(candidate.index)||candidate.index<0||candidate.index>=edited.items.length)return null;
           for(const field of ["title","body","notes"] as const){
             if(candidate[field]===undefined)continue;
@@ -4190,24 +4201,64 @@ export class FormaStore {
             edited.items[candidate.index]![field]=candidate[field];
           }
         }
-      }else if(edited.items.length===1&&["short_story","scene"].includes(artifact.kind))edited.items[0]!.body=requestInput.markdown;
+      }else if(edited.items.length===1&&["short_story","scene"].includes(artifact.kind))edited.items[0]!.body=textInput.markdown;
       // Reuse the same parser normalization as the existing artifact endpoint.
       // Semantically equal text is insufficient when serialized retained bytes differ.
       return JSON.stringify(edited)===retainedBefore?retainedBefore:null;
     })();
     const sourceOwner=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope();
+    const trimRoute = this.route.get();
+    const trimSourceCurrent = () => {
+      const current = this.projection.get().libraryArtifacts.find(candidate=>candidate.id===artifactId);
+      return this.sourceOwnershipActive(sourceOwner) && this.#scopeStillActive(authorization) && this.route.get() === trimRoute && this.projection.get().projectId === projectId
+        && current?.documentId === artifact?.documentId && current?.kind === artifact?.kind && current?.contentRef === contentRef
+        && current?.mediaUrl === artifact?.mediaUrl && current?.mediaType === artifact?.mediaType
+        && current?.settings.source_media_sha256 === artifact?.settings.source_media_sha256
+        && documentArtifactRevision(this.events.get(),artifactId) === revisionBefore && this.content.get()[contentRef] === retainedBefore;
+    };
+    if (trimInput) {
+      const trim = trimInput.audioTrim, hash = (value: unknown) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+      if (!artifact || artifact.kind !== "audio" || this.session.get()?.projectContext) return trimFailure("refused","unsupported");
+      if (!retainedDraft || typeof retainedBefore !== "string" || !contentRef || !artifact.mediaUrl) return trimFailure("refused","unavailable");
+      if (!trim || !Number.isSafeInteger(trimInput.expectedRevision) || !hash(trimInput.expectedContentSha256)
+        || !hash(trim.sourceMediaSha256) || !hash(trim.resultMediaSha256) || !Number.isSafeInteger(trim.sourceFrameCount)
+        || trim.sourceFrameCount < 1 || !Number.isSafeInteger(trim.startFrame) || !Number.isSafeInteger(trim.endFrame)
+        || trim.startFrame < 0 || trim.startFrame >= trim.endFrame || trim.endFrame > trim.sourceFrameCount) return trimFailure("refused","invalid_range");
+      if (revisionBefore !== trimInput.expectedRevision || artifact.settings.source_media_sha256 !== trim.sourceMediaSha256
+        || await digestText(retainedBefore) !== trimInput.expectedContentSha256) return trimFailure("conflict","source_changed");
+      if (!trimSourceCurrent()) return trimFailure("retired","retired");
+    }
     const admission=await this.#admitEventWrite([{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],"append"),observation=admission.observation;
-    if(!admission.admitted){if(!admission.reused)this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!this.sourceOwnershipActive(sourceOwner)},[],this.sourceOwnershipActive(sourceOwner)?"none":"withheld",{silent:true});return false;}
+    if(!admission.admitted){if(!admission.reused)this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:!this.sourceOwnershipActive(sourceOwner)},[],this.sourceOwnershipActive(sourceOwner)?"none":"withheld",{silent:true});return trimInput ? trimFailure(this.sourceOwnershipActive(sourceOwner)?"unconfirmed":"retired",this.sourceOwnershipActive(sourceOwner)?"unconfirmed":"retired") : false;}
+    if (trimInput) observation.audioTrim = {artifactId,request:trimInput,contentRef,documentId:artifact!.documentId,projectId,
+      sourceMediaUrl:artifact!.mediaUrl!,sourceRaw:retainedBefore!,sourceRevision:revisionBefore};
     const edit=async()=>{
-      if(!this.sourceOwnershipActive(sourceOwner)){this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld");return false;}
+      if(!this.sourceOwnershipActive(sourceOwner)||trimInput&&!trimSourceCurrent()){this.#finishEventWrite(observation,{outcome:"not-attempted",privateUnavailable:true},[],"withheld");return trimInput?trimFailure("retired","retired"):false;}
       this.busy.set("DocumentArtifactEdited");this.notify();let dispatched=false;observation.attempted=true;
       try{
         const response=await this.guardedFetch("/api/artifacts/"+encodeURIComponent(artifactId),{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(requestInput)},"save a correction to this finished output",
-          {current:()=>dispatched||this.sourceOwnershipActive(sourceOwner),onDispatch:()=>{dispatched=true;}});
+          {current:()=>dispatched||(trimInput?trimSourceCurrent():this.sourceOwnershipActive(sourceOwner)),onDispatch:()=>{dispatched=true;}});
         this.#assertAuthorizationScope(authorization);
         const result=await response.json() as {appended?:CreativeEvent[];content?:Record<string,string>;head?:number;revision?:number;error?:string;message?:string};
         this.#assertAuthorizationScope(authorization);
-        if(!response.ok){if(response.status===409&&result.error==="artifact_revision_conflict")throw new Error("Another collaborator changed this output. Your unsaved correction is preserved; reopen the latest version before saving again.");throw new Error(result.message??result.error??"The finished output could not be saved.");}
+        if(!response.ok){
+          if (trimInput) {
+            const refused: AudioTrimEditResult | null = response.status === 409 && ["artifact_revision_conflict","audio_trim_source_changed"].includes(result.error??"") ? trimFailure("conflict","source_changed")
+              : response.status === 400 && result.error === "audio_trim_invalid_range" ? trimFailure("refused","invalid_range")
+              : response.status === 400 && result.error === "audio_trim_unsupported" ? trimFailure("refused","unsupported")
+              : response.status === 400 && ["invalid_artifact_revision","artifact_revision_too_large"].includes(result.error??"") ? trimFailure("refused","unavailable")
+              : response.status === 404 ? trimFailure("refused","unavailable")
+              : response.status === 401 || response.status === 403 ? trimFailure("refused","access_denied") : null;
+            if (refused) {
+              const current = trimSourceCurrent() && !observation.paused;
+              this.#finishEventWrite(observation,{outcome:"observed",committed:[],rejectedIndices:[],observedHead:null,privateUnavailable:!current},[],current?"none":"withheld",{silent:true});
+              this.releaseEventWriteAcknowledgment(observation.receipt.observationId,observation.receipt.owner);
+              return current ? refused : trimFailure("retired","retired");
+            }
+            throw new Error("audio_trim_unconfirmed");
+          }
+          if(response.status===409&&result.error==="artifact_revision_conflict")throw new Error("Another collaborator changed this output. Your unsaved correction is preserved; reopen the latest version before saving again.");throw new Error(result.message??result.error??"The finished output could not be saved.");
+        }
         const currentArtifact=this.projection.get().libraryArtifacts.find(candidate=>candidate.id===artifactId);
         const noChange=response.status===200&&unchangedContent!==null&&result&&typeof result==="object"&&!Array.isArray(result)
           &&Object.keys(result).sort().join(",")==="appended,content,revision"
@@ -4216,33 +4267,94 @@ export class FormaStore {
           &&Object.keys(result.content).length===1&&Object.hasOwn(result.content,contentRef)&&result.content[contentRef]===unchangedContent
           &&this.sourceOwnershipActive(sourceOwner)&&!observation.paused&&this.projection.get().projectId===projectId
           &&currentArtifact?.documentId===artifact?.documentId&&currentArtifact?.kind===artifact?.kind&&currentArtifact?.contentRef===contentRef
-          &&documentArtifactRevision(this.events.get(),artifactId)===revisionBefore&&this.content.get()[contentRef]===unchangedContent;
+          &&documentArtifactRevision(this.events.get(),artifactId)===revisionBefore&&this.content.get()[contentRef]===unchangedContent&&(!trimInput||trimSourceCurrent());
         if(noChange){
           // Administrative completion of this invocation only: no committed event,
           // source publication, head, hash, or revision is manufactured for a no-op.
           this.#finishEventWrite(observation,{outcome:"observed",committed:[],rejectedIndices:[],observedHead:null,privateUnavailable:false},[],"none",{silent:true});
           this.releaseEventWriteAcknowledgment(observation.receipt.observationId,observation.receipt.owner);
+          if (trimInput) return {status:"unchanged",code:"unchanged"} as AudioTrimEditResult;
           this.toast("No changes to this finished output.");return true;
         }
         const receipt=this.#validateEventWriteBody(result,[{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],observation);
         if(!receipt||!receipt.committed.some(event=>event.type==="DocumentArtifactEdited"))throw new Error("The original finished-output change is unconfirmed. It has not been repeated.");
+        let audioSaved: Extract<AudioTrimEditResult,{status:"saved"}> | null = null;
+        if (trimInput) {
+          audioSaved = await this.#validatedAudioTrimSave(observation.audioTrim!, result, receipt.appended);
+          if (!audioSaved) throw new Error("audio_trim_unconfirmed");
+        }
         const current=this.sourceOwnershipActive(sourceOwner)&&!observation.paused;
         const patch:Partial<EventWriteAcknowledgment>={committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,
           outcome:receipt.complete?"observed":"unconfirmed",privateUnavailable:!current};
-        if(!current){this.#finishEventWrite(observation,patch,[],"withheld");return false;}
-        if(!receipt.complete||receipt.rejected.length){this.#finishEventWrite(observation,patch,[],"none",{silent:true});this.toast(this.#systemNotice("The original finished-output change is only partly acknowledged. It has not been repeated."));return false;}
+        if(!current||trimInput&&!trimSourceCurrent()){this.#finishEventWrite(observation,patch,[],"withheld");return trimInput?trimFailure("retired","retired"):false;}
+        if(!receipt.complete||receipt.rejected.length){this.#finishEventWrite(observation,patch,[],"none",{silent:true});if(trimInput)return trimFailure("unconfirmed","unconfirmed");this.toast(this.#systemNotice("The original finished-output change is only partly acknowledged. It has not been repeated."));return false;}
         if(result.content)this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
         this.#mergeConfirmed(receipt.appended,receipt.head);
         this.#finishEventWrite(observation,patch,receipt.appended,"published",{silent:true});
+        if (audioSaved) return audioSaved;
         this.toast("Finished output updated. Request a fresh review before approval.");return true;
       }catch(error){
         if(!dispatched&&error instanceof Error&&error.message==="scene_cost_changed")observation.attempted=false;
         const current=this.sourceOwnershipActive(sourceOwner)&&!observation.paused;
         this.#finishEventWrite(observation,{outcome:observation.attempted?"unconfirmed":"not-attempted",privateUnavailable:!current},[],current?"none":"withheld",{silent:true});
+        if(trimInput)return trimFailure(current?"unconfirmed":"retired",current?"unconfirmed":"retired");
         if(current)this.toast(error instanceof Error?error.message:"The finished output could not be saved.");return false;
       }finally{if(this.sourceOwnershipScopeActive(sourceOwner)){this.busy.set("");this.notify();}}
     };
     const pending=this.#appendPipeline.then(edit,edit);this.#appendPipeline=pending.then(()=>undefined,()=>undefined);return pending;
+  }
+
+  async #validatedAudioTrimSave(snapshot:AudioTrimObservation,result:{content?:Record<string,string>;revision?:number},appended:CreativeEvent[]):Promise<Extract<AudioTrimEditResult,{status:"saved"}>|null>{
+    const input=snapshot.request,raw=result.content?.[snapshot.contentRef],parsed=parseDocumentArtifactContent(raw),audio=parsed?.audio_revision;
+    const original=parseDocumentArtifactContent(snapshot.sourceRaw),event=appended.find(value=>value.type==="DocumentArtifactEdited"&&value.payload.artifact_id===snapshot.artifactId);
+    if(typeof raw!=="string"||!parsed||!audio||!original||!event||appended.length!==1||!result.content||Object.keys(result.content).length!==1
+      ||result.revision!==snapshot.sourceRevision+1||event.payload.revision!==result.revision
+      ||event.payload.document_id!==snapshot.documentId||event.payload.project_id!==snapshot.projectId||event.payload.content_ref!==snapshot.contentRef
+      ||JSON.stringify({...parsed,audio_revision:undefined})!==JSON.stringify({...original,audio_revision:undefined})
+      ||audio.source.url!==snapshot.sourceMediaUrl||audio.source.sha256!==input.audioTrim.sourceMediaSha256||audio.source.revision!==snapshot.sourceRevision
+      ||audio.source.contentSha256!==input.expectedContentSha256||audio.source.frameCount!==input.audioTrim.sourceFrameCount
+      ||audio.startFrame!==input.audioTrim.startFrame||audio.endFrame!==input.audioTrim.endFrame||audio.media.sha256!==input.audioTrim.resultMediaSha256
+      ||JSON.stringify(parseAudioMediaRevision(event.payload.audio_revision))!==JSON.stringify(audio))return null;
+    const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw))),byte=>byte.toString(16).padStart(2,"0")).join("");
+    if(event.payload.content_sha256!==digest)return null;
+    return{status:"saved",code:"saved",revision:result.revision,contentSha256:digest,audioRevision:audio};
+  }
+
+  /** Explicit receipt observation only. This action never resubmits or stages a trim. */
+  async checkAudioTrimOperation(artifactId:string,input:AudioTrimEditRequest):Promise<AudioTrimEditResult>{
+    const unconfirmed:AudioTrimEditResult={status:"unconfirmed",code:"unconfirmed"},retired:AudioTrimEditResult={status:"retired",code:"retired"};
+    let request:AudioTrimEditRequest;
+    try{request=JSON.parse(JSON.stringify(input)) as AudioTrimEditRequest;}catch{return unconfirmed;}
+    const canonical=(value:AudioTrimEditRequest)=>JSON.stringify({expectedRevision:value.expectedRevision,expectedContentSha256:value.expectedContentSha256,
+      audioTrim:{sourceMediaSha256:value.audioTrim.sourceMediaSha256,sourceFrameCount:value.audioTrim.sourceFrameCount,startFrame:value.audioTrim.startFrame,endFrame:value.audioTrim.endFrame,resultMediaSha256:value.audioTrim.resultMediaSha256}});
+    let fingerprintInput:string;
+    try{fingerprintInput=canonical(request);}catch{return unconfirmed;}
+    const observation=[...this.#eventWriteObservations.values()].find(value=>value.audioTrim?.artifactId===artifactId&&canonical(value.audioTrim.request)===fingerprintInput);
+    if(!observation?.audioTrim||observation.pending)return unconfirmed;
+    const snapshot=observation.audioTrim,source=this.captureSourceOwnership(),authorization=this.#activeAuthorizationScope(),route=this.route.get();
+    const current=()=>this.sourceOwnershipActive(source)&&this.sourceOwnershipActive(observation.source)&&!observation.paused&&this.#scopeStillActive(authorization)
+      &&this.route.get()===route&&this.projection.get().projectId===snapshot.projectId&&this.content.get()[snapshot.contentRef]===snapshot.sourceRaw
+      &&documentArtifactRevision(this.events.get(),artifactId)===snapshot.sourceRevision;
+    if(!current())return retired;
+    try{
+      const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(fingerprintInput))),byte=>byte.toString(16).padStart(2,"0")).join("");
+      if(!current())return retired;
+      const response=await this.guardedFetch(`/api/artifacts/${encodeURIComponent(artifactId)}?audioTrimOperation=${fingerprint}&expectedRevision=${request.expectedRevision}`,
+        {method:"GET",cache:"no-store"},"check an existing Audio save",{current});
+      if(!current())return retired;
+      const result=await response.json() as {content?:Record<string,string>;revision?:number;error?:string};
+      if(!current())return retired;
+      if(!response.ok)return response.status===409&&result.error==="artifact_revision_conflict"?{status:"conflict",code:"source_changed"}:unconfirmed;
+      const receipt=this.#validateEventWriteBody(result,[{type:"DocumentArtifactEdited",payload:{artifact_id:artifactId}}],observation);
+      if(!receipt||!receipt.complete||receipt.rejected.length)return unconfirmed;
+      const saved=await this.#validatedAudioTrimSave(snapshot,result,receipt.appended);
+      if(!current())return retired;
+      if(!saved||receipt.appended[0]?.payload.audio_trim_request_sha256!==fingerprint)return unconfirmed;
+      this.content.set({...this.content.get(),...this.#sourceContent(result.content)});
+      this.#mergeConfirmed(receipt.appended,receipt.head);
+      this.#finishEventWrite(observation,{outcome:"observed",committed:receipt.committed,rejectedIndices:receipt.rejectedIndices,observedHead:receipt.head,privateUnavailable:false},receipt.appended,"published",{silent:true});
+      return saved;
+    }catch{return current()?unconfirmed:retired;}
   }
 
   /** Revision bodies stay off the general content hydration path and follow the exact current authorization scope. */

@@ -6155,4 +6155,9 @@ Object.assign(messages, {
 
 Object.assign(messages, { "system.auto.xi82c4.15": "مدة التوليد" });
 
+Object.assign(messages, {
+  "system.auto.1aa0m01.40": "واجهة تطبيق محرّر اقتطاع الصوت.",
+  "system.auto.s14phq.151": "يتولى المكوّن المضيف الوصول الخاص والحفظ. يعرض هذا المكوّن الفرعي بايتات PCM التي تم التحقق منها فقط، وينشئ معاينة محلية للنطاق المحدد بدقة عند طلبها صراحةً.",
+});
+
 export default messages;
