@@ -719,6 +719,21 @@ schema effects were installed through the fixed atomic D1 repair instead.
 separate service-dependent and activation work. No repair is still pending for
 these31 journaled migrations.
 
+### Creator document leading-edge alignment — 2026-10-01
+
+**Implementation complete; publication authorized and in preparation.** Shell and project identity marks,
+document headings, Studio family labels, pane-switch labels, and context headings
+use the existing bounded pane gutter (16–20px at the default font size). Rails
+retain their own column; compact bottom navigation retains equal-width cells.
+The short-landscape document title retains clearance for its project toggle.
+
+Verification: TypeScript and the 161-element CEM check passed; Playwright measured
+18 English/Arabic width/height cases, native Tab focus, and page overflow with
+synthetic data. Release preparation updates the stale D428 container-query
+assertion to enforce the actual shared measured posture, its pane visibility,
+and the existing 62rem boundary. Screenshots and geometry receipts are in
+`outputs/creator-alignment/`; hosted activation is recorded separately.
+
 ### Document column heading alignment — 2026-10-01
 
 Implemented locally and authorized for publication. Context and results titles
