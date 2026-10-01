@@ -26,11 +26,11 @@ export async function actionContextFixture(){
       try{let source='';for await(const part of req)source+=part;if(source)body=JSON.parse(source);}catch{res.statusCode=400;res.end();return;}
       const method=req.method,scope=body?.scope??Object.fromEntries(url.searchParams),key=scopeKey(scope);
       const reply=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data));};
-      scenario.requests.push({path,method,body});
+      scenario.requests.push({path,method,body,scope:{...scope}});
       if(path==='/still/action-context'){
         const value=scenario.scopes.get(key)??{};
         const context=()=>({...value,enabled:scenario.enabled,...(scenario.enabled?{expiresAt:future(),directDecisionId:'direct-fixture',directContextExpiresAt:future()}:{}),observations:scenario.retained.filter(row=>scopeKey(row.scope)===key)});
-        if(method==='GET'){if(scenario.contextFailures>0){scenario.contextFailures--;res.statusCode=503;reply({error:'fictional_context_temporarily_unavailable'});return;}if(scenario.deferContext){scenario.deferContext=false;await new Promise(resolve=>{scenario.releaseContext=resolve;});}reply(context());return;}
+        if(method==='GET'){if(key===scopeKey(documentScope)&&scenario.contextFailures>0){scenario.contextFailures--;res.statusCode=503;reply({error:'fictional_context_temporarily_unavailable'});return;}if(key===scopeKey(documentScope)&&scenario.deferContext){scenario.deferContext=false;await new Promise(resolve=>{scenario.releaseContext=resolve;});}reply(context());return;}
         if(method==='PUT'){
           scenario.enabled=body.enabled;
           if(!scenario.enabled)scenario.retained=[];

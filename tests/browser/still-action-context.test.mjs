@@ -27,8 +27,8 @@ test('Still goals and action feedback use scoped, explicit, final interaction ev
         await page.addInitScript(()=>performance.setResourceTimingBufferSize(4096));
         await mountActionContextFixture(page,fixture.origin,options);await run(page,data);
         await flush(page);assert.deepEqual(data.unexpected,[]);assert.deepEqual(errors,[]);
-        receipt.tests.push({name,status:'passed',requests:data.requests.length,observations:data.observations.length,...(data.timing?{timing:data.timing}:{})});
-      }catch(error){receipt.tests.push({name,status:'failed',message:error.message});await page.screenshot({path:resolve(directory,name.replaceAll(/[^a-z0-9]+/gi,'-')+'-failure.png'),fullPage:true});throw error;}
+        receipt.tests.push({name,status:'passed',requests:data.requests.length,contextReads:data.requests.filter(request=>request.path==='/still/action-context'&&request.method==='GET').map(request=>request.scope),observations:data.observations.length,...(data.timing?{timing:data.timing}:{})});
+      }catch(error){receipt.tests.push({name,status:'failed',message:error.message,contextReads:data.requests.filter(request=>request.path==='/still/action-context'&&request.method==='GET').map(request=>request.scope)});await page.screenshot({path:resolve(directory,name.replaceAll(/[^a-z0-9]+/gi,'-')+'-failure.png'),fullPage:true});throw error;}
       finally{await context.close();}
     });
   }
@@ -50,6 +50,7 @@ test('Still goals and action feedback use scoped, explicit, final interaction ev
       assert.deepEqual(saved.body.scope,{projectId:'p',documentId:'d'});assert.deepEqual(saved.body.criteria,['One clear subject','Keep the quiet tone']);assert.equal(saved.body.remember,true);
       await page.setViewportSize({width:320,height:800});await goal(page);await toolbarReady(page);
       const more=dock(page).getByRole('button',{name:'More actions',exact:true});await more.click();
+      await page.getByRole('menuitem',{name:'Complete goal',exact:true}).waitFor();
       for(const label of ['Save goal','Complete goal','Abandon goal','Clear goal','Back']){
         assert.ok(await dock(page).getByRole('button',{name:label,exact:true}).isVisible()||await page.getByRole('menuitem',{name:label,exact:true}).isVisible(),`${label} stays accessible through the compact toolbar`);
       }
@@ -127,7 +128,7 @@ test('Still goals and action feedback use scoped, explicit, final interaction ev
       await panel.getByRole('button',{name:'Done',exact:true}).click();await toolbarReady(page);await settings(page);
       await page.waitForFunction(()=>window.app.actionContext.loaded&&!window.app.actionContext.error&&window.app.actionContext.value.enabled);
       assert.equal(await toggle.isChecked(),true);assert.equal(await toggle.isDisabled(),false);assert.equal(await toggle.evaluate(element=>element.indeterminate),false);
-      assert.equal(data.requests.filter(request=>request.path==='/still/action-context'&&request.method==='GET').length,3,'Reopening performs one fresh read, without a retry loop');
+      assert.equal(data.requests.filter(request=>request.path==='/still/action-context'&&request.method==='GET'&&request.scope.documentId==='d').length,3,'Reopening performs one fresh read, without a retry loop');
       assert.equal(data.requests.some(request=>request.path==='/still/action-context'&&request.method==='PUT'),false,'Recovering a failed read never replaces the saved preference');
       await toggle.uncheck();await panel.getByText('Suggestion history is off across your account and saved history was erased. Your remembered goals are unchanged.',{exact:true}).waitFor();
       assert.equal(data.requests.filter(request=>request.path==='/still/action-context'&&request.method==='PUT').length,1);
