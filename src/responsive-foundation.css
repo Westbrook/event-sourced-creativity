@@ -5822,24 +5822,28 @@ dialog.document-artifact-view[data-artifact-kind="slides"] .presentation-deck-st
   }
 }
 
-/* Document chrome and reading content share the pane's bounded leading edge.
+/* Creator chrome and page content share the pane's bounded leading edge.
  * Full-width separators stay on their containers; control backgrounds hang
  * into the gutter so their labels, rather than their boxes, align with copy. */
-.application-creative[data-layout-intent="workbench"] .workspace-page[data-workbench="document"] .page-header--document {
+.application-creative :is(.page-pad, .library-main, .studio-main) {
+  --page-gutter: var(--forma-pane-inset);
+}
+
+.application-creative :is(.page-header--document, .page-header--library) {
   padding-inline: var(--forma-pane-inset);
 }
 
-html:not([data-document-focus]) .application-creative[data-layout-intent="workbench"] > .topbar {
+html:not([data-document-focus]) .application-creative[data-nav-posture] > .topbar {
   padding-inline-start: max(var(--forma-pane-inset), var(--forma-safe-inline-start));
   padding-inline-end: max(var(--forma-pane-inset), var(--forma-safe-inline-end));
 }
 
-html:not([data-document-focus]) .application-creative[data-layout-intent="workbench"] > .topbar > .brand {
+html:not([data-document-focus]) .application-creative[data-nav-posture] > .topbar > .brand {
   justify-content: flex-start;
   padding-inline: 0;
 }
 
-.application-creative[data-layout-intent="workbench"]:is([data-nav-posture="compact"], [data-nav-posture="expanded"]) .project-rail:is(.collapsed, .expanded) > .rail-toolbar {
+.application-creative[data-nav-posture]:is([data-nav-posture="compact"], [data-nav-posture="expanded"]) .project-rail:is(.collapsed, .expanded) > .rail-toolbar {
   padding-inline-start: max(var(--forma-pane-inset), var(--forma-safe-inline-start));
   padding-inline-end: max(var(--forma-pane-inset), var(--forma-safe-inline-end));
 }
@@ -5855,7 +5859,12 @@ html:not([data-document-focus]) .application-creative[data-layout-intent="workbe
 }
 
 @media (min-width: 48rem) {
-  .application-creative[data-layout-intent="workbench"]:not([data-nav-posture="compact"])[data-short-height="false"] > .application-task-navigation .ui-audience-navigation-list {
+  .application-creative[data-nav-posture]:not([data-nav-posture="compact"])[data-short-height="false"] > .application-task-navigation .ui-audience-navigation-list {
     padding-inline: calc(var(--forma-pane-inset) - var(--forma-space-3, .75rem));
   }
+}
+
+/* Resource tools are page content, including their optional disclosure panel. */
+.application-creative .library-main > forma-memory-resource-controls {
+  margin-inline: var(--page-gutter);
 }
