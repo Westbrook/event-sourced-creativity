@@ -19,7 +19,11 @@ Inside ProjectRail, section headings, project copy, and navigation icons share
 the same logical inset. Document and Library rows use centered, fixed-width
 icon cells and an explicit label gap; counts keep their own trailing space.
 Each section boundary has one divider with consistent vertical spacing. The
-existing fictional ProjectRail catalog composition and English, French, Arabic,
+New reusable block button shares the document-row outer edges; its icon cell
+and start-aligned label follow the same columns as the navigation rows. Project
+heading and summary copy retain their own inner inset instead of narrowing the
+whole top section. The existing fictional ProjectRail catalog composition and
+English, French, Arabic,
 and Japanese descriptions remain applicable; this adds no component API.
 The collapsed Ask Forma launcher shares the Results heading’s trailing content
 edge, including the inspector and reserved scrollbar gutter. Its compact Studio

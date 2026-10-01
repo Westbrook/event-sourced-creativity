@@ -595,7 +595,7 @@ forma-project-rail {
 .rail-content { padding: .75rem .75rem 4rem; }
 
 .rail-project-card {
-  padding: 0 var(--forma-space-2, .5rem);
+  padding: 0;
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -648,8 +648,8 @@ forma-project-rail {
 .rail-primary-action {
   width: 100%;
   min-height: 2.75rem;
-  justify-content: center;
-  gap: .45rem;
+  justify-content: flex-start;
+  gap: var(--forma-space-2, .5rem);
   margin-top: .85rem;
   white-space: nowrap;
 }
