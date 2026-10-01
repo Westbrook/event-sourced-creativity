@@ -343,7 +343,10 @@ test("presents every alternate Studio lens as the same complete durable document
   assert.match(navigation, /projection\.blocks\.length/); assert.match(navigation, /generationHistoryItems\(projection\.outputs\)/); assert.match(navigation, /Every saved decision and result/);
   assert.match(navigation, /Creative editor/);
   assert.match(navigation, /Add context/);assert.match(navigation, /copyLibraryBlockSet/);assert.match(navigation, /Add context set/);
-  assert.match(generations, /projection\.get\(\)\.outputs/); assert.match(generations, /Results from this document/); assert.match(generations, /"full"\s*\|\s*"compact"\s*\|\s*"canvas"\s*\|\s*"rail"/); assert.match(generations, /interactive/);
+  assert.match(generations, /projection\.get\(\)\.outputs/);
+  assert.ok(generations.includes('<span class="eyebrow">${this.i18n.t("generation.history.imageLabel")}</span>'));
+  assert.ok(generations.includes('<forma-document-artifacts source=${this.view}></forma-document-artifacts>'));
+  assert.match(generations, /"full"\s*\|\s*"compact"\s*\|\s*"canvas"\s*\|\s*"rail"/); assert.match(generations, /interactive/);
   assert.match(navigation, /DOCUMENT_FOCUS_KEY/); assert.match(navigation, /data-document-focus/); assert.match(navigation, /Focus view/); assert.match(navigation, /Exit focus/); assert.match(navigation, /event\.key === "Escape"/); assert.match(navigation, /withDocumentFocusInRoute/); assert.match(navigation, /documentFocusFromRoute/);
   assert.match(styles, /\.creative-editor \{[^}]*grid-template-rows: auto minmax\(0,1fr\)[^}]*height: clamp\(590px,72dvh,780px\)/);
   assert.match(styles, /\.creative-editor-layout \{[^}]*min-height: 0;[^}]*overflow: hidden/);

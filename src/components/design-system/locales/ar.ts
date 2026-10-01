@@ -34,6 +34,8 @@ const messages: Record<string, string> = {
   ...FORMA_RESPONSIVE_MESSAGES.ar,
   ...FORMA_OUTPUT_DELIVERY_MESSAGES.ar,
   ...FORMA_OUTPUT_REQUIREMENT_MESSAGES.ar,
+  "generation.history.imageLabel": "سجل توليد الصور",
+  "generation.history.imageEmpty": "لا توجد عمليات توليد صور في هذا السجل",
   "generation.reservationUncertainty": "الفشل لا يثبت عدم ترتّب تكلفة. قد يبقى الحجز قائمًا ما دام قبول المزوّد أو التكلفة النهائية غير مؤكّد. راجع الإيصال الأصلي.",
   "generation.stopUncertainty": "الإيقاف لا يضمن توقف عمل المزوّد أو تحرير الميزانية المحجوزة. تبقى التكاليف المتكبّدة، وتظل الحجوزات غير المؤكدة قائمة حتى التحقق. راجع الإيصال الأصلي.",
   "generation.capacityNotice": "{notice} تبقّى {remaining} رمزًا. يتطلب التوليد المتشعّب للمسودات {draft}، بينما يتطلب التوليد المتشعّب بالجودة الكاملة {full}.",
