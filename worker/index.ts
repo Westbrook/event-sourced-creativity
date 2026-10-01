@@ -24,6 +24,7 @@ import { handleWorkspaces } from "./workspaces-api";
 import { hasProjectContextCookie, readProjectRequestContext } from "./project-access";
 import { handlePerformanceSample } from "./performance-api";
 import { handleArtifactEdit } from "./artifact-api";
+import { handleGeneratedImageEdit } from "./generated-image-api";
 import { handleAssistant, handleAssistantBillingReconciliation, handleAssistantProposal, handleAssistantTask, handleAssistantSpecialist } from "./assistant-api";
 import { handlePlatformAssistant } from "./platform-assistant-api";
 import { handleLiveMemory } from "./memory-live-api.ts";
@@ -181,6 +182,12 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/documents/duplicate")return handleDocumentDuplication(request,env);
     if(url.pathname==="/api/canvas/arrangements")return handleCanvasArrangements(request,env);
     if(url.pathname==="/api/context/adaptive/apply")return handleAdaptiveProposalApplication(request,env);
+    if(url.pathname.startsWith("/api/generated-images/")){
+      const encoded=url.pathname.slice("/api/generated-images/".length);let outputId:string;
+      try{outputId=decodeURIComponent(encoded);}catch{return Response.json({error:"invalid_output_id"},{status:400});}
+      if(!outputId||encoded.includes("/")||encodeURIComponent(outputId)!==encoded)return Response.json({error:"not_found"},{status:404});
+      return handleGeneratedImageEdit(request,env,outputId);
+    }
     if(url.pathname.startsWith("/api/artifacts/")){
       const segments=url.pathname.slice("/api/artifacts/".length).split("/").map((segment)=>decodeURIComponent(segment));
       return handleArtifactEdit(request,env,segments[0]??"",segments.slice(1));

@@ -6170,4 +6170,9 @@ Object.assign(messages, {
   "system.auto.1x2k3lt.139": "ホストが非公開アクセスと保存を管理します。この静かなコンポーネントは、メディアの読み込み、デコード、再生を行わずに、符号化サンプルの正確な境界を選択します。"
 });
 
+Object.assign(messages, {
+  "system.auto.pqvhl5.45": "生成画像エディターのアプリケーションインターフェース。",
+  "system.auto.1wr7im1.141": "アプリケーションに接続された生成画像エディターのインターフェース。組み合わせる前に、実際の属性、JavaScriptプロパティ、イベントを確認してください。",
+});
+
 export default messages;
