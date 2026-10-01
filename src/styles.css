@@ -2514,10 +2514,12 @@ html[data-document-focus] .document-artifact-list > button { border-radius: 0; }
 .document-artifact-view .artifact-storyboard img { object-fit: contain; background: var(--fixed-dark,#111613); }
 .document-artifact-view .artifact-reader-video .forma-video-reel-player { object-fit: contain; }
 @media (max-width: 720px) {
-  .document-artifact-reader > .artifact-viewer-header { align-items: start; gap: .45rem; }
+  .document-artifact-reader > .artifact-viewer-header { flex-direction: column; align-items: stretch; gap: .45rem; }
   .document-artifact-reader > .artifact-viewer-header h2 { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
   .artifact-viewer-kicker { gap: .15rem .45rem; }
   .artifact-viewer-review-toggle { padding-inline: .6rem; }
+  .document-artifact-reader > .artifact-viewer-header > .document-artifact-reader-actions { flex-wrap: wrap; }
+  .document-artifact-reader > .artifact-viewer-header > .document-artifact-reader-actions > .button { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
   .document-artifact-reader > footer { align-items: center; flex-direction: row; }
   .document-artifact-reader > footer > span { max-inline-size: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .document-artifact-reader > footer > div { inline-size: auto; flex-wrap: nowrap; justify-content: start; overflow-x: auto; padding-block: .15rem; }
