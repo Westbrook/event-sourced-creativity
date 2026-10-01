@@ -1533,7 +1533,7 @@
       "reason": "Replaces the imported fixture dist worker reference with worker/index.ts before executing it."
     }
   },
-  "classificationInput": "0f5606670627c56710cd7d1063be48700f0fababf4ab2ede39f1bf1b8c6b2c9a",
+  "classificationInput": "929875d334f64f5c0c984ff544bda211420c5c3d16b96af65622cc169558067d",
   "browserConfigs": [
     "playwright.a11y.config.mjs",
     "playwright.activity-accounting-lifetime.config.mjs",

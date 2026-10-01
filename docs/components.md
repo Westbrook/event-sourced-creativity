@@ -7,6 +7,12 @@ The living reference is `/knowledge/design-system`;
 `/knowledge/guidance` publishes privacy, accessibility, and localization rules.
 Every example is fictional and store-independent.
 
+Creator’s document workbench composes the existing shell, ProjectRail and Studio
+navigation around `--forma-pane-inset`. Heading text, first navigation labels,
+and identity marks share that logical leading edge; backgrounds and separators
+keep their own full-width boundaries. This is application layout, with no new
+component API or translated copy. The compact dock keeps its equal-width cells.
+
 Library output thumbnails use one responsive 3:2 frame with equal border insets
 for individual images, prompt fans, video covers, storyboard summaries, and other
 artifact summaries. Loading video placeholders reserve the same frame. Raster
@@ -100,6 +106,12 @@ document-editing handoffs cross to Creator, with an explicit localized visible
 label and accessible name naming **Creator Workspace**.
 
 ## Shared control metrics and wrapping composition
+
+Document context and results headings share the pane inset and a first title
+row at least as tall as `--forma-hit-target`. Titles align at the top of their
+panes even when the results actions wrap; the context score stays centered in
+its own flex row. Keep these metrics in the existing pane composition rather
+than giving each column separate heading offsets.
 
 Comparable supporting controls reuse `--forma-font-size-supporting`,
 `--forma-body-line-height`, `--forma-space-2`, and

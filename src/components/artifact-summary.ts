@@ -8,7 +8,7 @@ import "./icons-media";
 import "./presentation-slide";
 import "./video-cover";
 
-/** One reusable visual summary for every non-image creative result, with focal-aware image previews. */
+/** One reusable visual summary for every non-image creative result. */
 export class FormaArtifactSummary extends FormaPresentationalElement {
   static properties = { artifact: { attribute: false }, compact: { type: Boolean } };
   artifact?: DocumentArtifact; compact = false;
