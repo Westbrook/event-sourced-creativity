@@ -13,6 +13,10 @@ including the previously unassigned Memory/containment and reviewed-download
 specs. Conditional environment inputs are inventoried without evaluating modules
 or enabling their flags. Browser owners must supply the named prerequisites;
 a missing account/archive/backend is an unavailable variant, not a skipped pass.
+Combined runs preserve original project identities and reject collisions. Download
+admission requires the exact project, file and positive test title; Audio/Slides
+also depend on their explicitly supplied detached backend before context startup.
+Those actual-backend journeys are not claimed as executed in this task.
 
 The current Forma Site release uses this repository's graph and the Sites
 source/archive workflow. There are no tracked GitHub/GitLab workflows or configured
@@ -103,7 +107,13 @@ binding followed at 20.1, 15.3 and 14.8 seconds. Their different authority and
 stale-callback failure mechanisms are retained; no arbitrary file split repeats
 fixture initialization.
 
-The unchanged historical assertion failures remain engineering debt. Full source
+The baseline comparison matched 110 failures by file and case name. The only
+unmatched candidate failure was an unchanged test racing native crypto completion;
+the original baseline failed its sibling Video variant instead. Both lifecycle
+variants now use exact SHA-256 bytes through a deterministic port and pass.
+The [110 matched historical assertion failures](validation-baseline-failures.json)
+remain engineering debt. The durable inventory identifies each file/case; it
+does not exclude any from the default graph. Full source
 coverage was measured to expose that debt; it is not the acceptance result for
 a selected infrastructure change and is not reported as green.
 
@@ -120,3 +130,38 @@ Memory synthetic config requires its provider-free network opt-in and an owned
 preview port. Neither config silently adopts an occupied user preview. Production
 SQL packaging continues to use the existing approved migration manifest; test
 optimization does not activate held migrations.
+
+## Final measured pilots
+
+The fixed 25-leaf pilot passed all 12 trials with stable inputs and identical
+outcomes: two workers took 19.15–19.47s cold and 8.73–9.04s warm; four workers
+were slower (19.89–20.21s / 9.42–9.70s). The default stays two. OS child high-water
+RSS was 74.7–86.0 MB; aggregate tree peak remains unmeasured.
+
+Fresh-checkout and warm selected gates each passed the same 502 leaves with no
+skips/cancellations. The warm run reused types/lint and retained setup. Its
+source/runtime phases were 38.8/129.4s, versus 39.1/134.5s fresh plus 46.1s types
+and 4.9s lint. Separate final regression checks qualify the subsequent reporting
+and deterministic hash-port corrections.
+
+Three real Scene stores per mode yielded 108 uncached compiler calls versus
+36 misses/72 hits; compiler time was 1.698s versus 0.611s. Cache size was 2.24 MB
+under the 16 MiB bound. This is a setup pilot with independent stores, not an
+all-consumer performance claim.
+
+## Synthetic browser portability
+
+The complete newly owned Memory/containment batch exposed an external-font
+dependency: a Google Fonts response requested an unapproved `fonts.gstatic.com/l/font`
+URL. The network guard correctly refused it. The synthetic lane now serves pinned,
+unmodified Manrope and DM Mono bytes under their OFL licenses, using recorded
+source commits and SHA-256 checks. Its stylesheet retains the same families and
+weights. Exact local font routes replace that external dependency; unrelated
+requests remain forbidden. Other acceptance lanes keep their own typography rules.
+
+Semantic Memory expiry variants use Playwright's clock to trigger the actual
+browser timer after a still-visible private result. A 20-second synthetic lease (within the production 30-second maximum)
+allows setup without racing its expiration; advancing 20,001ms then must retire
+private content and preserve the unsent draft. This proves browser expiry behavior,
+not real elapsed cadence. Native heartbeat/clock and physical acceptance remain
+separate. Blur/apply variants continue to exercise their explicit boundaries.

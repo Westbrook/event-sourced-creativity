@@ -1,133 +1,119 @@
 # Validation efficiency implementation
 
-Implemented against `main` baseline `eff7c5ee08bc85a6f8107ec30c634c02e60c7dab`.
-The [current guide](validation.md) and [AGENTS rules](../AGENTS.md) define the
-workflow. This receipt records local implementation and verification, not hosted
-activation, human acceptance, or a claim that every existing test is green.
+Implemented against `main` baseline `eff7c5ee08bc85a6f8107ec30c634c02e60c7dab`,
+with published source `d1dddc3a9ce8f820ea81fa6e2c2cb09b346a41bc` reconciled into
+main without replacing the reviewed candidate. This receipt supersedes the
+initial partial implementation record. The [guide](validation.md),
+[qualification record](validation-qualification.md) and [AGENTS rules](../AGENTS.md)
+define the maintained workflow. Publication is established separately by the
+native deployment receipt in the project report.
 
-## Delivered
+## Plan completion
 
-- **Early negative feedback:** one expanded TypeScript program includes production,
-  the queue worker and all 18 TypeScript test files. Types precede lint, source
-  tests, runtime tests, build preparation and artifact tests. Later stages stop on
-  a negative result. Successful types/lint receipts are reused only on matching
-  inputs; failures are never reused as passes. Generated `outputs`, test reports,
-  coverage and work directories are outside lint discovery.
-- **Maintained discovery:** 1,511 test files (572 source, 831 runtime, 38 artifact,
-  70 browser), 19 Playwright configs, 29 package commands, checker entrypoints and
-  129 existing conditional-mode records. Inventory detects omitted/removed files,
-  stale helper classification and importing registering test modules. Separate Worker/temporary Vite fixture builds do not trigger a main build. The Node
-  graph now includes `.test.ts`; separate browser prerequisites stay explicit.
-- **No duplicate registration through four extracted fixture families:** dialog
-  host, native publication, Storyboard source and original Scene admission. Their
-  consumers use helper modules; original named scenarios and assertions remain.
-  Twelve previously guarded imports remain documented exceptions, not automatic
-  permission to add new imports. AST-based import discovery avoids treating
-  source strings used by tests as real imports.
-- **Qualified preparation:** build owns the union of CEM, localization, Memory
-  schema, clean and Vite prerequisites. Input and output hashes qualify reuse.
-  Managed build writers, artifact tests and combined built-browser runs share an
-  exclusive lock. An interrupted process cannot qualify a check even if its child
-  exits zero. POSIX cancellation targets the owned process group.
-- **Reusable infrastructure:** ordinary browser tests get new contexts on a
-  worker-owned Chromium; true zoom retains fresh persistent profiles and native
-  extension zoom. Toolbar browser cases use one identified, parent-owned Vite
-  server and retained dependency cache. Compatible explicit Playwright configs
-  combine into one server batch; conflicting source/built commands fail closed.
-  Installed Chrome was replaced with bundled Chromium in the activity lane.
-- **Bounded parallelism and compilation:** Node defaults to two processes, with
-  an explicit worker option. A run-scoped cross-process D1 compile cache keys exact
-  SQL, schema, function signatures, bindings, limits, compiler and Python/SQLite
-  identity; corrupt records recompile. It never shares mutable databases.
-- **Current process guidance:** README, AGENTS, browser and toolbar release guides
-  put cheap checks first, keep compatible lanes together, preserve user previews,
-  distinguish historical acceptance from local regression and require honest
-  failure/skip reporting. The stale image-cycle CLI now stops before credential or
-  provider work and points to the manifest workflow.
-
-## Verification and observations
-
-Logs and receipts are retained under ignored `outputs/validation/`. Temporary
-build/baseline checkouts were used so the existing preview's `dist` was preserved.
-No retained actual-data fixture was created or altered; no paid evaluation or
-release was run.
-
-| Check | Result and evidence |
+| Package | Implementation and evidence |
 | --- | --- |
-| Expanded production/test/queue typecheck | Pass; `final-types.log`, and the types step of `2026-10-01T00-00-42-090Z-d10c9bb8`. Test-only type errors were repaired without relaxing the tested runtime assertions. |
-| Workflow and D1 infrastructure | 29 checks pass across the final 10 workflow cases and 19 D1/cache cases. Includes negative-stage ordering, discovery/import guards, complete-input keys, exclusive locks, cancelled-zero-exit rejection, static receipt reuse/invalidation, exact cross-process compile reuse and conflicting browser lifecycle rejection. See `runner-final.log`, its TAP receipt, `infrastructure-final.log` and `d1-workers-*.log`. |
-| Production build and warm reuse | Isolated build passes with all five prerequisites. A second invocation has only a `build: reused` receipt, with no CEM/Vite execution. See `final-build-candidate.log`, `final-build-warm.log` and retained build receipts. |
-| Stale artifact rejection | Injecting a synthetic file into isolated `dist` makes `test:node` fail before artifact cases; removing only that probe restores the output. `stale-output-probe.log`. |
-| Shared toolbar server | 98/98 reported tests pass, zero skips, all three engines, exactly one server start. Receipt `toolbar-64bcf5f7-f183-4c47-921e-1fe05a29d846/receipt.json`; browser duration 310.67s. This is an integration result, not a before/after speed claim. |
-| Toolbar units plus previously omitted TS runtime tests | 288 total, 284 pass, four existing failures. The 44 toolbar unit cases pass. `typescript-and-toolbar-units-final.log`. |
-| Ordinary browser reuse and native zoom | Calibration 11/11 before and after; fresh-context and native 200% probes 2/2. `baseline/browser.log`, `browser-after.log`, `browser-isolation.log`. |
-| Combined Playwright configuration | Two intended cases list correctly; one compatible server is selected, conflicting source/built lifecycles rejected by the workflow test. Actual historical journeys remain unverified: their required 4186 port is occupied. A missing synthetic-network opt-in also fails explicitly. The port owner was preserved. |
-| Changed-file lint and whitespace | Pass; `final-changed-lint.log`, `final-runner-lint.log`, `git diff --check`. |
-| Full lint / full graph | 276 existing errors remain; untouched baseline has 279. The fast graph passes types and fails lint, starting no later test/build stage. `full-lint.log`, `baseline/full-lint.log`, `final-fast.log`. A green full graph is not claimed. |
+| Inventory and ownership | Registry contains 1,512 test files: 553 source, 851 runtime, 38 artifact, 70 browser; 21 Playwright configs, 29 package commands, 51 checker/build entrypoints and 208 conditional-mode records. Every suite has a maintained command/resource/owner role. External CI is identified as the separate Still pilot, not misrepresented as this Site's release gate. |
+| Scheduling and duplication | Types → lint → source → runtime → one build → artifact. Negative stages stop dependent work. Four registration-free helper families preserve original scenario declarations (56 + 1 + 6 + 4); guarded historical imports remain explicit. README, AGENTS, browser and toolbar guides agree. The obsolete paid cycle command stops before credentials/provider work. |
+| Shared preparation and browsers | Input/output receipts and exclusive ownership protect a single build. Ordinary tests share a worker browser with fresh contexts; true zoom has an isolated profile. Toolbar uses one identified parent server with retained Vite cache. Compatible configs share one server; mismatches fail. Synthetic Memory/containment has an explicit portable loopback port; reviewed-download requires its authorized backend. |
+| Parallelism and heavy setup | Two Node workers by default; one browser worker for shared-resource lanes. Exact-key immutable D1 compilation and bounded TypeScript fixture output are cached; databases, stores and module evaluation stay fresh. Compiler/SQL/key corruption, cancellation, writer conflicts and state-isolation probes pass. |
+| Value and long-tail review | Cost reporter separates leaf assertions from parent summaries and records first negatives. Costliest families retain distinct authority/lifecycle failures. Brittle cost-prefix assertions now execute the actual expression. Stale shared API/controller/focus/Scene/Storyboard fixtures were repaired; full owned-source lint now passes, with exact vendor integrity checks. Historical and actual-data acceptance stays separate. |
+| Portable gate and rollout | Fresh-checkout and retained-state selected gates verify identical coverage. Repeated cold/warm trials set measured budgets. Direct explicit Node/Playwright commands remain the diagnostic fallback. Exact source/archive preflight preserves the held-migration release policy; native deployment completes release separately. |
 
-Single-sample calibration observations, same selected 11 cases:
+## Verification
 
-| Setup | Playwright duration |
-| --- | ---: |
-| Before: persistent browser per ordinary test, one worker | 17.7s |
-| After: worker browser, fresh context, one worker | 8.5s |
-| After: two workers, fully parallel calibration only | 8.8s |
-| After: four workers, fully parallel calibration only | 5.1s |
+Receipts and logs are retained under ignored `outputs/validation/`; isolated
+checkout receipts are copied there for durable inspection. No private archive was
+created, no paid provider was called, and the existing user preview was preserved.
 
-The D1/query-limit/cache slice has 19 passing cases at each worker count. End-to-end
-single-sample durations were 12.35s (one), 5.50s (two), 4.78s (four), recorded in
-`d1-worker-samples.json`. These are pilots, not p95, flake-rate, peak-memory, or
-whole-suite speed guarantees. The two-process Node default leaves room for other
-active runtimes. Shared-account browser lanes remain at one worker.
+- Expanded production/queue/all 18 TypeScript test files and full owned-source
+  lint pass. Incremental TypeScript measured 68.2s on a cold program and 11.3s
+  on the next coherent checkpoint; these are individual shared-machine samples.
+- Fresh selected graph: 502/502 checks, no skips or cancellations. It includes
+  source, actual SQLite/Worker transport, controller/API/focus, publication,
+  Storyboard, Scene and release-preflight checks. The same 502 leaf identities and
+  outcomes passed warm with types/lint reused. Source/runtime phases were
+  39.1/134.5s fresh and 38.8/129.4s warm; fresh static work was 46.1/4.9s.
+  See `fresh-warm-parity.json`. This comparison precedes the small reporting and
+  hash-port, browser identity and font/clock corrections, which have focused
+  regression and browser qualification runs.
+- Final reporting/lifetime probes pass (21/21); the final workflow suite also
+  passes all 15 cases, including exact project/download admission and pinned font
+  transport boundaries. An intentionally injected compiler error
+  does not announce a false negative when quoted in a passing TAP test. Actual
+  compiler failure still surfaces early and blocks dependent stages.
+- Toolbar: 98/98 across three engines, exactly one server start, 310.67s. Browser
+  context isolation and native 200% zoom: 2/2. Ordinary-browser calibration:
+  11/11 before and after; 17.7s → 8.5s at one worker (single samples).
+- Shared API boundary: 34/34; generated moderation/freshness variants: 164/164
+  with unique case titles. Scenario declaration parity and no newly failing
+  extracted-fixture consumers were checked before adopting shared helpers.
+- Build preparation includes CEM, localization, schema consistency, clean and Vite.
+  Warm reuse and deliberate stale-output rejection were verified. No test runner
+  silently rebuilds an artifact held by a browser or another writer.
 
-## Retained failure coverage
+## Measured cache and concurrency pilots
 
-The four extracted parent files retain identical scenario declarations; the AST
-comparison is in `scenario-parity.json`. Before/after runtime slices show fewer
-reported registrations without new unique failing names:
+The fixed 25-leaf Node/SQLite workload ran twice at each setting, cold and warm.
+All 12 trials passed with identical leaf membership/outcomes and stable input hash
+(`benchmark-20261001T010409716589Z/receipt.json`).
 
-| Slice | Before | After |
-| --- | ---: | ---: |
-| Dialog parent and two direct consumers | 192 records; 55 failures | 122 records; 40 failures |
-| Scene/publication extraction slice | 120 records; 117 failures | 59 records; 25 failures |
-| Remaining fixture consumers plus 18 TS files | 526 records; 15 failures | 520 records; 12 failures |
+| Node workers | Cold wall time | Warm wall time |
+| --- | --- | --- |
+| 1 | 30.31–31.96s | 9.98–10.43s |
+| 2 | 19.15–19.47s | 8.73–9.04s |
+| 4 | 19.89–20.21s | 9.42–9.70s |
 
-These are Node-reported records, not unique leaf counts. The audit's initial
-static estimate of 153 extra dialog registrations was not a measured runtime
-saving; guarded/source-extracted consumers behave differently. Comparisons use
-baseline source with unchanged production code; the last slice was repeated in
-an untouched `HEAD` checkout. Earlier baseline loaders and raw logs are retained.
-No assertion was weakened and no failing suite was excluded.
+Two workers meet the measured review targets of <25s cold and <12s warm without
+increasing the shared-machine default. OS child high-water RSS was 74.7–86.0 MB;
+this is **not** aggregate simultaneous process-tree memory. These samples establish
+neither p95 nor a flake rate or whole-repository speedup.
 
-Existing failures include stale dialog fixture APIs (`store.subscribe`,
-`owner.hasFocus`), Storyboard preparation/quote expectations, and four experience
-host/selector runtime cases. They still fail after inclusion/extraction. Full
-lint debt includes existing production and vendored declarations. These need
-separate domain repairs, not ignored failures or automatic retries.
+A separate real Scene store setup pilot created three independent stores in each
+mode. Uncached compilation took 1.698s over 108 calls; caching took 0.611s with
+36 misses/72 hits, retaining 2.24 MB. Warm store setup fell from 744/702ms to
+194/180ms. Each store and module evaluation remained independent. These single
+paired samples justify caching immutable compiler output, not sharing live stores
+or claiming every consumer has been timed.
 
-## Remaining boundaries
+## Explicit remaining exceptions
 
-[VAL-002](backlog.md) records the observed baseline repairs and continuing value
-review. The inventory does not establish that every assertion is useful or every
-conditional mode executed. In particular:
+The broad source diagnostic reported 10,456 passes and 111 failures out of 10,567
+Node records, no skips/cancellations/timeouts, in 358s; its first negative arrived
+at 7.97s. Comparison with the original baseline matched 110 failing case names.
+The remaining unchanged hash-lifetime test had a native crypto scheduling race
+(the baseline instead failed its Video variant). Its finite hash port now returns
+exact SHA-256 bytes deterministically; both variants pass. Existing native byte
+verification remains exercised separately. No failing suite was excluded.
 
-- Six Playwright specs lack current config membership: audio reviewed download,
-  slides reviewed download, Memory assistant context/resource/scope recall, and
-  project containment. Their prerequisites and owners require qualification before
-  promotion into a default lane. Other standalone browser Node files remain
-  explicitly separate from default Node execution.
-- QA-001 hosted/native-account/archive/hardware evidence remains unresolved. The
-  current task authorized synthetic harness work, not replacement actual-data
-  archives or live qualification. Accepted unchanged QA-002 journeys stay closed.
-- External CI was not available in this repository. The portable local graph is
-  ready for an identified CI owner; no external CI activation is claimed.
-- Whole-suite cold/warm equivalence, RSS limits, repeated flake sampling, and broad
-  semantic/mutation review remain unestablished because the baseline is red and
-  some qualification fixtures require separate authority. Keep reviewing costly
-  suites from retained receipts; do not use this work to delete distinct proof.
-- Build fingerprints are deliberately conservative. They favor safe invalidation
-  over speculative dependency narrowing; passing ordinary tests are not cached.
-  Standalone tools/previews outside the managed lock still require coordination.
+**The default full historical graph remains red.** The 110 matched failures are
+preserved engineering debt under VAL-002, with an [exact case inventory](validation-baseline-failures.json). The baseline also failed one additional
+presentation assertion. This change does not certify all historical product tests,
+claim a green external CI run, or use retries to conceal failures. The remaining
+historical assertions require their domain owners' separate repairs.
 
-Existing run evidence and qualified caches remain available. No cleanup policy
-was introduced for retained failure logs, paid receipts or actual-data archives.
+Actual account/archive/backend variants, GPU, physical-device and assistive-
+technology acceptance remain explicit under QA-001. Synthetic contexts cannot
+satisfy those claims. QA-002 accepted journeys are not reopened merely to collect
+more performance samples. Published SQL retains the existing approved migration
+manifest; held migrations stay excluded.
+
+## Final browser and release gate
+
+The complete synthetic selection is qualified: four unchanged reference-review
+cases passed with pinned fonts, followed by 98/98 affected and remaining cases in
+one owned-server batch (5.9 minutes, one worker, no retries/skips). This includes
+all expiry, blur, apply, resource and containment variants. The first diagnostic
+retains its external-font refusal; an intermediate invalid 60-second lease was
+also rejected by the production 30-second maximum and corrected to 20 seconds.
+Those failed attempts remain in the logs, not counted as passes.
+
+Final isolated production build passed; the subsequent warm receipt contains
+only `build: reused`. The eight selected built-route checks also passed. The
+release retains 41 approved SQL migrations and the existing hosting manifest.
+Archive/source verification and the native deployment result are retained in the
+project report, separately from these local test receipts.
+
+Final release checkout: `/private/tmp/forma-validation-release`. Selected logs
+and JSON receipts are copied under `outputs/validation/release-*`; per-case traces
+remain in the isolated checkout. The source/build environment was preserved for
+inspection rather than torn down.

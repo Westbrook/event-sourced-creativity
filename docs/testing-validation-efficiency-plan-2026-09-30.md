@@ -1,11 +1,13 @@
 # Testing and validation efficiency plan
 
-Current workflow: [validation guide](validation.md). Implementation and measured
-results: [September 30 implementation receipt](validation-implementation-2026-09-30.md).
-The audit below preserves its original baseline and proposals.
+Current workflow: [validation guide](validation.md). All six implementation
+packages and measured results are recorded in the
+[final receipt](validation-implementation-2026-09-30.md) and
+[qualification boundaries](validation-qualification.md). The audit below preserves
+its original baseline and proposals.
 
 Prepared September 30, 2026 against `main` at `eff7c5ee08bc85a6f8107ec30c634c02e60c7dab`.
-**Status: review complete; implementation proposed.** No test runner, application,
+**Status at original review: review complete; implementation proposed.** No test runner, application,
 AGENTS rule, deployment, fixture, or acceptance requirement was changed by this
 review. This plan covers engineering validation in this repository, including
 local checks, browser and Worker environments, evaluations, release verification,
@@ -275,8 +277,9 @@ browser/release guides in the same change so instructions do not conflict.
 | 6 | Portable final gate and rollout — integration/release owner | Local and confirmed CI use the same selection/dependency graph. Fresh-checkout and warm rerun produce the same unique case membership/results. Final report shows timing/cost improvement, skips and remaining exceptions. Preserve a rollback path to prior lane behavior until equivalence is demonstrated. |
 
 These are proposed roles, not assignments or authorization to activate CI, hosted
-services, paid evaluations, or migrations. Planning is complete; implementation
-remains open under VAL-001. QA-001/QA-002 keep their own ownership and acceptance scope.
+services, paid evaluations, or migrations. This is the original planning record; all six implementation packages and their
+remaining evidence boundaries are now recorded in the
+[implementation receipt](validation-implementation-2026-09-30.md) under VAL-001. QA-001/QA-002 keep their own ownership and acceptance scope.
 
 ### Measurement and acceptance
 

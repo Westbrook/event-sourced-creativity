@@ -1,0 +1,684 @@
+{
+  "baselineCommit": "eff7c5ee08bc85a6f8107ec30c634c02e60c7dab",
+  "diagnosticCommit": "36503eb13b0d4e1b0771e19924973abc65395f7d",
+  "scope": "Historical source lane; same failing file and case name in candidate and original-baseline diagnostics. Not a quarantine or full-suite certificate.",
+  "matchedFailureCount": 110,
+  "matchedFailures": [
+    {
+      "file": "tests/assistant-shell.test.mjs",
+      "case": "D428 tight launcher uses existing native inset-focus tokens and the same bounded focus-triggered placement",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/assistant-shell.test.mjs",
+      "case": "E3 Studio utility reserves real space only beside an eligible current floating Assistant and retains the original scroll owner",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/assistant-shell.test.mjs",
+      "case": "free guidance separates exact specialist approval, durable task recovery and legacy financial controls",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/assistant-shell.test.mjs",
+      "case": "the Creator/Canvas host mounts after primary content and never crosses public or platform boundaries",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/command-discovery.test.mjs",
+      "case": "ar command preparation is generic plus exactly seven free typed targets",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/command-discovery.test.mjs",
+      "case": "en command preparation is generic plus exactly seven free typed targets",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/command-discovery.test.mjs",
+      "case": "fr command preparation is generic plus exactly seven free typed targets",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/command-discovery.test.mjs",
+      "case": "ja command preparation is generic plus exactly seven free typed targets",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/content-priority.test.mjs",
+      "case": "Library prioritizes matching results, merges all artifact types by real sequence, and preserves explicit source filters",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/content-priority.test.mjs",
+      "case": "document-only containment preserves neutral writing intent and exact result-directed project navigation",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/content-priority.test.mjs",
+      "case": "independent approval freshness resolves the exact artifact source document, not an identically named block elsewhere",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/content-priority.test.mjs",
+      "case": "project document-card results cover their complete preview without inheriting global minimum media sizes",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/context-creation.test.mjs",
+      "case": "every document lens distinguishes authored context from reusable project context",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/context-creation.test.mjs",
+      "case": "modality-specific context choices keep deliberate adoption, roles, and conversation",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/document-artifact-toolbar-responsive.test.mjs",
+      "case": "E5 source policy: open Slides tools yield track space to the native navigation row",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/document-artifact-toolbar-responsive.test.mjs",
+      "case": "E5 source policy: the actual reading viewport reserves native reader and summary focus paint",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/document-artifacts.test.mjs",
+      "case": "keeps text, structured slides, storyboard, and video rendering behind durable server jobs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/document-artifacts.test.mjs",
+      "case": "only submits original ambient video audio after an explicit user opt-in",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/document-artifacts.test.mjs",
+      "case": "recovers an empty Fal submission body from its durable request header",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/event-concurrency.test.mjs",
+      "case": "hot-path appends and generation receipts use the atomic head allocator",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/event-concurrency.test.mjs",
+      "case": "project navigation remains interactive and commits before competing telemetry or paid work",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/event-concurrency.test.mjs",
+      "case": "the client refreshes and rebases authored appends after stale heads",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/event-concurrency.test.mjs",
+      "case": "the real Output append wrapper cannot reinterpret a failed guard or unproven write as committed",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/event-concurrency.test.mjs",
+      "case": "the real Output append wrapper recovers an exact lost acknowledgment without appending again",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/event-concurrency.test.mjs",
+      "case": "the real append wrapper preserves legacy head allocation and adds Output custody without dropping the expected head",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-bridge.test.mjs",
+      "case": "actual native router reaches the source-bound Audio preparer, never a fallback media route",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-bridge.test.mjs",
+      "case": "actual native state distinguishes usable preparation from unavailable/expired Audio without offering paid actions",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-bridge.test.mjs",
+      "case": "actual preflight command finalization preserves original deadline and transactional custody without allocating work",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-bridge.test.mjs",
+      "case": "actual preflight uses existing manual selector/constraints, prices all three bounded stages and sends nothing",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-bridge.test.mjs",
+      "case": "actual resolver reuses original private intake check, exact current source and immutable operation expiry",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-bridge.test.mjs",
+      "case": "actual router selects Audio preparation while admission and ordinary/native result paths remain fenced",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-bridge.test.mjs",
+      "case": "preflight refuses configured-model/profile/currentness/expired original and preserves author constraints",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-client.test.mjs",
+      "case": "actual host clearing synchronously retires player before detach and clears its private result lease",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-client.test.mjs",
+      "case": "actual host read stops before private input or player import when ownership withdraws across either await",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-intake.test.mjs",
+      "case": "Audio appends after six exact recipes and binds planned instrumental timing into its release",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-intake.test.mjs",
+      "case": "Audio saves exact authored context and planned format, with no generated audio, measured duration, or native grant",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-route.test.mjs",
+      "case": "Actual Audio preview branch renders authored text and planned intent without a player or completed media",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-audio-route.test.mjs",
+      "case": "Actual server resolver selects Audio intake HTML and keeps retained Audio navigation separate",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-consent-focus-clearance.test.mjs",
+      "case": "the persistent live status remains focusable and the hiding rule withdraws on native focus",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-consent-summary.test.mjs",
+      "case": "a future unsupported format cannot fall through to a Slides summary",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-image-slides-preflight.test.mjs",
+      "case": "tests/experience-image-slides-preflight.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-model3d-intake.test.mjs",
+      "case": "view separates checked reference context from adapter-gated generation and renders plain direction text",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-navigation-settlement.test.mjs",
+      "case": "both real navigation handlers use the owned wrapper",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-output-dispatch.test.mjs",
+      "case": "API catch maps nullish and unknown dispatch failures to a private unavailable response",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-output-dispatch.test.mjs",
+      "case": "provider recovery diagnostics expose only fixed status or category labels, never private detail",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-output-dispatch.test.mjs",
+      "case": "unknown failures gain only fixed bounded diagnostic kinds without changing response or log keys",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-preparation-response.test.mjs",
+      "case": "tests/experience-preparation-response.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "actual Audio host reports only fixed stage candidate",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "actual Audio host reports only fixed stage final_projection",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "actual Audio host reports only fixed stage input_validation",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "actual Audio host reports only fixed stage native_job",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "actual Audio host reports only fixed stage private_content",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "actual Audio host reports only fixed stage private_input",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "actual Audio host reports only fixed stage requirements",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "actual Audio host reports only fixed stage retained_read",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "deadline provenance comes only from currently owned host timer",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "successful retained Audio clears old diagnostic and remains playable",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-result-read-diagnostics.test.mjs",
+      "case": "technical details expose fixed codes only; catches never read exception message",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-scene-native-result.test.mjs",
+      "case": "actual Scene host withdrawal during content hashing prevents the private input read, font or renderer import and result publication",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-startup-imports.test.mjs",
+      "case": "setup retains its locale and validation modules without eagerly importing the full artifact graph",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-storyboard-intake.test.mjs",
+      "case": "Storyboard copy exposes planned output and retained native reading without paid activation",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-storyboard-server-route.test.mjs",
+      "case": "Actual server resolver selects Storyboard intake HTML without enabling native routes",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/experience-video-connected-mount.test.mjs",
+      "case": "withdrawn, hidden, foreign or detached nodes cannot mount, and ref removal disposes immediately",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/form-semantics.test.mjs",
+      "case": "shell dialogs isolate localization, consent, sharing, preferences, and command execution",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/generation-accounting-wrapper.test.mjs",
+      "case": "outer worker fetch never schedules retention for accounting diagnostics, including errors and forbidden methods",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/generation-accounting-wrapper.test.mjs",
+      "case": "the new exact exemption preserves existing exemptions and unrelated retention behavior",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/model3d-assets.test.mjs",
+      "case": "tests/model3d-assets.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/model3d-failure-progress-copy.test.mjs",
+      "case": "model3d_local_persistence_failed corrects historical public feed/detail/scoped progress without changing receipt or recovery policy",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/model3d-failure-progress-copy.test.mjs",
+      "case": "model3d_local_persistence_failed preserves queue-recovery presentation priority",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/model3d-failure-progress-copy.test.mjs",
+      "case": "model3d_publication_unconfirmed corrects historical public feed/detail/scoped progress without changing receipt or recovery policy",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/model3d-failure-progress-copy.test.mjs",
+      "case": "model3d_publication_unconfirmed preserves queue-recovery presentation priority",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/model3d-navigation-adapter.test.mjs",
+      "case": "Model3D authored preview describes separate continuation, never automatic generation",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/model3d-navigation-adapter.test.mjs",
+      "case": "existing navigation outputs remain admitted, without adding Video or unknown outputs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-command-fresh-list.test.mjs",
+      "case": "verified freshness queues a new GET after an in-transit empty page and existing driver starts original promptly",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "focused busy authorize stays natively focusable but unavailable",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "focused busy check stays natively focusable but unavailable",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "focused busy exit stays natively focusable but unavailable",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "focused busy prepare stays natively focusable but unavailable",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "focused busy recoverResult stays natively focusable but unavailable",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "focused busy resumeRun stays natively focusable but unavailable",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "focused busy run stays natively focusable but unavailable",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "held Video Stop stays focusable, blocks duplicate activation, and transfers/reveals only command-owned focus",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "passive busy exit click cannot start navigation",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-focus-preservation.test.mjs",
+      "case": "stable status stays outside conditional result/forms and uses global focus-visible styles",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/native-result-followthrough.test.mjs",
+      "case": "tests/native-result-followthrough.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/output-cache-publication-regression.test.mjs",
+      "case": "tests/output-cache-publication-regression.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/output-proof-capacity-diagnostic.test.mjs",
+      "case": "tests/output-proof-capacity-diagnostic.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/output-video-contract.test.mjs",
+      "case": "actual preflight, admission, generic file and native-result boundaries refuse Video before work",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/output-video-contract.test.mjs",
+      "case": "actual shared recipe/schema/compiler keep one four-second video and exact immutable source binding",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/presentation-authoring-contract.test.mjs",
+      "case": "authorization withdrawal closes the native Slides panel before the synchronous cleanup returns",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/presentation-authoring-contract.test.mjs",
+      "case": "clears actor-private presentation receipts immediately when authorization changes",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/presentation-authoring-contract.test.mjs",
+      "case": "native Slides actions close synchronously before the unchanged private-input handoff",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/presentation-composer-preflight.test.mjs",
+      "case": "tests/presentation-composer-preflight.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/presentation-provider.test.mjs",
+      "case": "accepts source-authored roadmap duration precision without a needless paid repair",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/presentation-source-semantics.test.mjs",
+      "case": "tests/presentation-source-semantics.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/presentation-store-contract.test.mjs",
+      "case": "tests/presentation-store-contract.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/presenter-viewer.test.mjs",
+      "case": "source evidence resolves only authorized blocks in the current document and project",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/project-attention-loading.test.mjs",
+      "case": "tests/project-attention-loading.test.mjs",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/prompt-provenance-e2a.test.mjs",
+      "case": "approved research, subject, palette, scopes, exclusions, relationship and planner rationale remain",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/prompt-provenance-e2a.test.mjs",
+      "case": "authored opaque strings, quotations and nested provenance survive byte-for-byte",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/prompt-provenance-e2a.test.mjs",
+      "case": "checked-in candidate is reproduced exactly by the current compiler",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/prompt-provenance-e2a.test.mjs",
+      "case": "later edits or reordered facts reject stale typed bindings; a new capture gets new identity",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/prompt-provenance-e2a.test.mjs",
+      "case": "private payload labels and missing requirement mappings cannot be admitted via caller booleans",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/prompt-provenance-e2a.test.mjs",
+      "case": "reference roles and order preserved in compatibility fixture without changing no-ref study",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/prompt-provenance-e2a.test.mjs",
+      "case": "sealed capture freezes ordered inputs, exact UTF-8 diff and B identities",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/reference-media-surfaces.test.mjs",
+      "case": "reusable-block editing restricts image previews, image URLs, and pixel controls to image sources",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/responsive-product.test.mjs",
+      "case": "D428 Document task-strip peers reuse inset focus without changing native scrolling or pane selection",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/storyboard-safe-continue-ui.test.mjs",
+      "case": "disconnect assertions reject omission of each actual cleanup effect",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/storyboard-safe-continue-ui.test.mjs",
+      "case": "inspection uses authenticated images with only a local unavailable placeholder and clears on authorization change",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    },
+    {
+      "file": "tests/workspace-transitions.test.mjs",
+      "case": "all client-routed cross-workspace navigation revalidates on the server before history changes",
+      "owner": "Domain test maintainer",
+      "disposition": "Repair asserted contract; remains enabled in default graph"
+    }
+  ],
+  "candidateOnlyResolved": {
+    "file": "tests/model3d-reference-preview-lifetime.test.mjs",
+    "case": "model3d preview acquisition/body/hash/decode retain one lifetime and retry focus",
+    "fixCommit": "88cf6a5d",
+    "resolution": "Deterministic exact SHA-256 hash port; both Model3d and Video lifecycle cases pass. Real byte verification retained."
+  },
+  "baselineOnly": [
+    {
+      "file": "tests/model3d-reference-preview-lifetime.test.mjs",
+      "case": "video preview acquisition/body/hash/decode retain one lifetime and retry focus"
+    },
+    {
+      "file": "tests/presentation-authoring-contract.test.mjs",
+      "case": "actual presentation opening survives its healthy current source"
+    }
+  ]
+}

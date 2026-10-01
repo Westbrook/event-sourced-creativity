@@ -37,7 +37,11 @@ and linter still revalidate changed inputs; a warm cache is not a test result.
 `FORMA_SYNTHETIC_PREVIEW_PORT` (for example, 48286). Its network guard and preview
 share that origin and strict port binding fails on collision. Historical configs
 with fixed URLs retain their original port; do not apply the override to those
-configs without port-equivalence evidence. No port owner is killed or adopted.
+configs without port-equivalence evidence. No port owner is killed or adopted. This lane serves hash-pinned local copies of
+the same font families; licenses and upstream commits are in
+`tests/browser/font-fixtures/`. Semantic expiry uses Playwright clock advancement
+after asserting visible private content; it does not substitute for native
+wall-clock cadence evidence.
 
 Run one CPU/memory budget across concurrent Node, browser, Vite and workerd jobs.
 Independent reads can run together. Build consumers, shared profiles, shared
@@ -98,7 +102,10 @@ Standalone preview/checker commands do not participate in this lock. Before a
 rebuild, coordinate any active preview using `dist`, or validate in a separate
 checkout. Source HMR and built fixtures are separate identities. The combined
 browser runner rejects conflicting server commands/environment at one origin and
-never adopts a server merely because its port is open. Existing account previews
+never adopts a server merely because its port is open. Project names remain
+unchanged because exact fixture admission can depend on them; duplicate names
+fail before startup and require separate selections. Only artifact directories
+are namespaced. Existing account previews
 remain externally owned and retain the browser guide's actual-data requirements.
 
 Ordinary shared-fixture tests reuse Chromium within a worker and get a new context
@@ -145,3 +152,20 @@ Performance observations and remaining baseline failures are recorded in the
 [implementation receipt](validation-implementation-2026-09-30.md). The original
 [audit plan](testing-validation-efficiency-plan-2026-09-30.md) remains historical
 context rather than a second current command sequence.
+
+## Diagnostic fallback and rollback
+
+If a managed receipt or scheduler is suspect, retain its logs and use the same
+explicit selection with `node --import tsx --test --test-concurrency=1 <files>`.
+Unset `FORMA_SQLITE_CACHE_DIR` for a no-cache SQL comparison; preserve the existing
+cache for inspection. Browser configuration files also remain directly callable
+with `pnpm exec playwright test --config=<owned config>`, after establishing the
+same fixture/build prerequisites. A direct invocation is diagnostic evidence,
+not permission to bypass a failed release gate or an occupied preview.
+
+`--force` recomputes managed checks/build qualification when investigating stale
+receipts. For a prior-implementation comparison, use an isolated checkout of
+`eff7c5ee08bc85a6f8107ec30c634c02e60c7dab`; retain current environments and source.
+The published predecessor is `d1dddc3a9ce8f820ea81fa6e2c2cb09b346a41bc` (Site 556).
+Its saved archive is a release recovery reference, not an automatic rollback:
+reconcile any later publication before replacing a live version.
