@@ -70,7 +70,7 @@ check against fictional Git/build fixtures, altered Workers, unexpected source,
 unsafe archives, mismatched saved receipts and extra migrations. No production
 fixture or database is required.
 
-## Still0074 source-journal qualification
+## Still 0074 source-journal qualification
 
 The explicit `migrationSourceJournalTransition` plan object permits only the
 pinned `still-action-outcomes-0074` source-journal extension. Copy its exact
@@ -84,7 +84,25 @@ Absent or mismatched qualification remains a release failure.
 The Memory repair generator validates that one extension but still generates
 from its original 72-entry journal prefix. Its historical 31-migration repair
 manifest must remain byte-identical. This qualification does not activate held
-Memory migrations or package0074. Still's ordinary server bootstrap creates
-its four empty additive tables and four indexes; collection requires explicit
-scoped opt-in. Native publication authorizes this bootstrap effect, independently
+Memory migrations or package 0074. Still's ordinary server bootstrap creates
+its four empty additive tables and four indexes; collection initially required explicit scoped opt-in. The 0075 follow-up below
+changes that preference contract to account-wide default-on saving with opt-out. Native publication authorizes this bootstrap effect, independently
 of paid evaluations, actual-data exports or a real-user study.
+
+## Still 0075 durable user settings qualification
+
+The `still-user-settings-0075` transition separately pins the exact 73-to-74-entry
+source journal append. Copy `STILL_USER_SETTINGS_JOURNAL_TRANSITION` from
+`scripts/lib/still-migration-journal.mjs` into the release plan. Qualification
+checks both historical journal prefixes, both Still SQL hashes and every existing
+SQL file; only the source-journal hash changes in the held-migration policy.
+The packaged 41 SQL files and original 31-migration Memory repair manifest remain
+unchanged. Unreviewed active SQL, unrelated policy edits and altered historical
+migrations still fail.
+
+The additive server bootstrap creates the durable `still_user_settings` table.
+It does not populate or overwrite an account choice. Authorized context reads
+record by default when there is no explicit account opt-out. Disabling saving
+persists independently from expiring history and deletes personal diagnostic
+rows across scopes; it does not change creative events or remembered goals.
+See the [goal/settings contract](still-goal-settings-actions.md).

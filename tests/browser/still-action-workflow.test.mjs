@@ -4,6 +4,7 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {createServer} from 'vite';
 import {createSceneCostFixture} from '../helpers/scene-cost-fixture.mjs';
+import {choosePaletteAction, chooseDockAction, toolbarReady} from './helpers/still-action-context.mjs';
 
 // Real browser -> Vite forwarding -> Worker -> disposable SQLite. Every response
 // below is produced by the production API; no action endpoint is intercepted.
@@ -23,10 +24,15 @@ test('creation review retains explicit quality evidence separately from verified
   let browser;
   let context;
   let page;
+  let holdDraftSave = false;
+  let releaseDraftSave;
+  let draftSaveStarted;
+  const heldDraftSave = new Promise(resolve => {draftSaveStarted = resolve;});
   try {
     await mkdir(output, {recursive: true});
-    const enabled = await fixture.request('/api/still/action-context', {method: 'PUT', ...json({scope, enabled: true})});
-    assert.equal(enabled.status, 200, await enabled.clone().text());
+    const defaults = await fixture.request('/api/still/action-context?' + new URLSearchParams(scope));
+    assert.equal(defaults.status, 200, await defaults.clone().text());
+    assert.equal((await defaults.json()).enabled, true, 'A fresh account records suggestion history without an opt-in request');
     const remembered = await fixture.request('/api/still/goal', {method: 'PUT', ...json({scope, text: 'Keep a clear fictional beacon in the quiet harbor.', criteria, remember: true})});
     assert.equal(remembered.status, 200, await remembered.clone().text());
     const {goal} = await remembered.json();
@@ -46,6 +52,12 @@ test('creation review retains explicit quality evidence separately from verified
               const body = Buffer.concat(chunks);
               const request = {url: req.url, method: req.method, ...(body.length ? {body: JSON.parse(body.toString())} : {})};
               requests.push(request);
+              if (holdDraftSave && req.method === 'POST' && req.url === '/api/still/creation/drafts') {
+                holdDraftSave = false;
+                // Hold transport only. The pending save still reaches the real
+                // Worker after the settings overlay preservation assertions.
+                await new Promise(resolve => {releaseDraftSave = resolve; draftSaveStarted();});
+              }
               const headers = {...req.headers};
               if (headers.origin === `http://${req.headers.host}`) headers.origin = 'http://localhost';
               const response = await fixture.request(req.url, {method: req.method, headers, ...(body.length ? {body} : {})});
@@ -127,7 +139,38 @@ test('creation review retains explicit quality evidence separately from verified
     await page.goto(`${base}/still/project/${fixture.projectId}/document/${fixture.documentId}/action/add-context?creation=1`);
     await page.waitForFunction(() => document.querySelector('still-app')?.actionContext.loaded && document.querySelector('still-app').actionContext.value.enabled);
     const input = page.getByRole('textbox', {name: 'Describe a detail worth keeping.', exact: true});
+    holdDraftSave = true;
     await input.fill('Fictional beacon');
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('The real pending draft save did not reach the fixture')), 15000);
+      heldDraftSave.then(() => {clearTimeout(timeout); resolve();});
+    });
+    const draftSnapshot = () => page.evaluate(() => {
+      const app = document.querySelector('still-app');
+      const flow = document.querySelector('still-creation-flow').flow;
+      return structuredClone({mode: app.mode, draft: flow.draft, text: flow.text, pending: flow.hasUnacknowledgedChanges});
+    });
+    const pendingDraft = await draftSnapshot();
+    assert.equal(pendingDraft.pending, true, 'A real autosave remains unacknowledged while its transport is held');
+    assert.equal(pendingDraft.text, 'Fictional beacon');
+    await choosePaletteAction(page, 'User settings');
+    const pendingSettings = page.locator('en-dialog.user-settings[label="User settings"]');
+    await pendingSettings.locator('dialog').waitFor({state: 'visible'});
+    assert.deepEqual(await draftSnapshot(), pendingDraft, 'User settings opens over the unsaved creation draft without changing it');
+    await page.goBack();
+    await pendingSettings.locator('dialog').waitFor({state: 'hidden'});
+    assert.match(new URL(page.url()).pathname, /\/action\/add-context$/);
+    assert.deepEqual(await draftSnapshot(), pendingDraft, 'Browser Back closes only the settings overlay and preserves the pending creative draft');
+    await choosePaletteAction(page, 'User settings');
+    await pendingSettings.locator('dialog').waitFor({state: 'visible'});
+    assert.deepEqual(await draftSnapshot(), pendingDraft);
+    await pendingSettings.getByRole('button', {name: 'Done', exact: true}).click();
+    await pendingSettings.locator('dialog').waitFor({state: 'hidden'});
+    assert.match(new URL(page.url()).pathname, /\/action\/add-context$/);
+    assert.deepEqual(await draftSnapshot(), pendingDraft, 'Closing settings returns the same unsaved content, mode, identity, and revision');
+    receipt.unsavedDraftSettings = {draftId: pendingDraft.draft.id, pendingPreserved: true, contentPreserved: true, browserBackPreserved: true};
+    releaseDraftSave();
+    releaseDraftSave = undefined;
     await waitSaved();
     await page.getByRole('button', {name: 'Treat as a title', exact: true}).click();
     await waitSaved();
@@ -245,8 +288,11 @@ test('creation review retains explicit quality evidence separately from verified
     await page.getByRole('heading', {name: 'Ready to save', exact: true}).waitFor();
     await waitSaved();
     await page.waitForFunction(() => document.querySelector('still-app').actionContext.loaded);
-    await page.getByRole('button', {name: 'Goal & suggestions', exact: true}).click();
-    const settings = page.locator('en-dialog[label="Goal and suggestions"]');
+    assert.equal(await page.getByRole('button', {name: 'Goal & suggestions', exact: true}).count(), 0);
+    await choosePaletteAction(page, 'User settings');
+    const settings = page.locator('en-dialog.user-settings[label="User settings"]');
+    assert.match(new URL(page.url()).pathname, /\/action\/user-settings$/);
+    assert.equal(await settings.getByRole('checkbox', {name: 'Save suggestion history', exact: true}).isChecked(), true);
     await settings.getByText('Optional quality check', {exact: true}).click();
     const delayedAcceptance = settings.getByRole('combobox', {name: 'Your assessment of this version', exact: true});
     assert.equal(await delayedAcceptance.inputValue(), 'revoked', 'The later review opens the latest retained assessment');
@@ -322,18 +368,43 @@ test('creation review retains explicit quality evidence separately from verified
     assert.equal(requests.filter(request => /\/apply$/.test(request.url)).length, 1);
     assert.equal(requests.some(request => request.method === 'POST' && /\/interpret$|\/api\/document-jobs/.test(request.url)), false, 'Explicit finalization also needs no provider attempt');
     receipt.finalization = {request: apply.body, response: committed, observationId: finalization.id, outcomeId: outcome.id};
-    await page.getByRole('button', {name: 'Goal & suggestions', exact: true}).click();
-    await settings.getByRole('checkbox', {name: 'Remember action outcomes for this document', exact: true}).uncheck();
-    await settings.getByText('Suggestion history disabled and saved history erased. Your remembered goal is unchanged.', {exact: true}).waitFor();
+    assert.equal(requests.some(request => request.url === '/api/still/action-context' && request.method === 'PUT'), false, 'The complete workflow recorded without an opt-in step');
+    await choosePaletteAction(page, 'User settings');
+    await settings.getByRole('checkbox', {name: 'Save suggestion history', exact: true}).uncheck();
+    await settings.getByText('Suggestion history is off across your account and saved history was erased. Your remembered goals are unchanged.', {exact: true}).waitFor();
     const disabled = await retained();
     assert.equal(disabled.enabled, false);
     assert.deepEqual(disabled.observations, []);
     assert.equal(disabled.goal.id, goal.id);
     assert.equal(fixture.sqlite.prepare('SELECT count(*) AS count FROM still_action_observations').get().count, 0);
     assert.equal(fixture.sqlite.prepare('SELECT count(*) AS count FROM events').get().count, committedHead, 'Opt-out preserves finalized creative events');
-    await settings.getByRole('button', {name: 'Erase saved suggestion history and goal', exact: true}).click();
-    await settings.getByText('Saved suggestion history and remembered goal erased.', {exact: true}).waitFor();
+    assert.equal(fixture.sqlite.prepare('SELECT count(*) AS count FROM still_action_receipts').get().count, 0, 'Account opt-out also erases decision receipts');
+    const disabledObservationCount = observations.length;
+    await settings.getByRole('button', {name: 'Done', exact: true}).click();
+    await settings.locator('dialog').waitFor({state: 'hidden'});
+    await page.reload();
+    await page.waitForFunction(() => document.querySelector('still-app')?.actionContext.loaded);
+    await toolbarReady(page);
+    await choosePaletteAction(page, 'Your goal');
+    assert.equal(await page.getByRole('textbox', {name: 'Your next goal', exact: true}).inputValue(), goal.text, 'Account opt-out preserves the independent remembered goal on reload');
+    await chooseDockAction(page, 'Back');
+    await toolbarReady(page);
+    await page.getByRole('link', {name: 'Still home', exact: true}).click();
+    await toolbarReady(page);
+    await choosePaletteAction(page, 'User settings');
+    assert.equal(await settings.getByRole('checkbox', {name: 'Save suggestion history', exact: true}).isChecked(), false, 'The account opt-out follows navigation to another scope');
+    await flush();
+    assert.equal(observations.length, disabledObservationCount, 'Reloading, personal actions, and scope navigation create no observation writes after opt-out');
+    await settings.getByRole('button', {name: 'Done', exact: true}).click();
+    await page.goto(`${base}/still/project/${scope.projectId}/document/${scope.documentId}`);
+    await page.waitForFunction(() => document.querySelector('still-app')?.actionContext.loaded);
+    await toolbarReady(page);
+    await choosePaletteAction(page, 'User settings');
+    assert.equal(await settings.getByRole('checkbox', {name: 'Save suggestion history', exact: true}).isChecked(), false);
+    await settings.getByRole('button', {name: 'Erase saved history and goal for this document', exact: true}).click();
+    await settings.getByText('Saved suggestion history and remembered goal erased for this scope. New history is still saved when Save suggestion history is on.', {exact: true}).waitFor();
     const erased = await retained();
+    assert.equal(erased.enabled, false, 'Scope erasure does not reset an account opt-out');
     assert.equal(erased.goal, undefined);
     assert.deepEqual(erased.observations, []);
     assert.equal(fixture.sqlite.prepare("SELECT count(*) AS count FROM private_content WHERE kind='still-goal' AND content<>''").get().count, 0);
@@ -350,6 +421,7 @@ test('creation review retains explicit quality evidence separately from verified
     if (page) await page.screenshot({path: resolve(output, 'failure.png'), fullPage: true}).catch(() => {});
     throw error;
   } finally {
+    releaseDraftSave?.();
     await writeFile(resolve(output, 'receipt.json'), JSON.stringify({...receipt, errors, blockedExternalRequests, requests, observations}, null, 2) + '\n');
     await context?.close();
     await browser?.close();

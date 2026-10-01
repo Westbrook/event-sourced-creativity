@@ -47,7 +47,8 @@ do not turn a passing fictional case into a claim of user benefit.
 
 ## Observation, privacy, and release gates
 
-- [ ] Opt-in remains off by default for each scope. Verify the consent epoch,
+- [ ] Saving defaults on after authorized context loads. Verify the durable
+  account opt-out, current recording epoch,
   owner/scope/permission checks, shorter policy expiry, and the 30-day maximum for
   receipts, observations, goal-derived assessments, caches, and review exports.
   A delayed assessment/correction must not renew an earlier episode's lifetime.
@@ -94,7 +95,7 @@ do not turn a passing fictional case into a claim of user benefit.
   duplicate paid attempts, inaccessible actions, and required-control loss.
 - [ ] Separate a missing telemetry receipt from a failed creative operation.
   Inspect a bounded authorized sample of failures and coverage changes. Report
-  denominators and opt-in/availability bias; never use the selected-action subset
+  denominators and opt-out/availability bias; never use the selected-action subset
   as if it were randomly assigned.
 
 ## Predeclare a bounded outcome study before recruitment
@@ -125,7 +126,7 @@ new revision rather than silently relabeling the original episode.
 - [ ] Identify and rehearse the application/policy rollback in an isolated
   environment. Restore the qualified local/baseline selection behavior; disable
   candidate exposure and diagnostic collection through the release's reviewed
-  mechanism. Existing opt-in controls remain available. Do not invent a feature
+  mechanism. User settings retains the saving opt-out and explicit erasure controls. Do not invent a feature
   switch or claim an operational kill switch without verifying it exists.
 - [ ] Retain additive 0074 tables through application rollback unless a separately
   authorized migration says otherwise. Do not rewrite creative history, drop

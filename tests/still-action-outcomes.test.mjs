@@ -9,11 +9,12 @@ import { CREATION_SCHEMA_STATEMENTS } from '../worker/creation-store.ts';
 import { STILL_ACTION_OUTCOMES_SCHEMA } from '../worker/still-action-outcomes-schema.ts';
 const scope={projectId:'project',documentId:'document'};
 function harness(){
- const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../drizzle/0074_still_action_outcomes.sql',import.meta.url),'utf8'));
+ const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../drizzle/0074_still_action_outcomes.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../drizzle/0075_still_user_settings.sql',import.meta.url),'utf8'));
  db.exec("CREATE TABLE private_content(content_id TEXT PRIMARY KEY,owner_id TEXT,kind TEXT,content TEXT,created_at TEXT,expires_at TEXT,redacted_at TEXT);CREATE TABLE events(event_id TEXT,stream_id TEXT,actor TEXT,type TEXT,recorded_at TEXT,correlation_id TEXT,payload TEXT);CREATE TABLE document_jobs(job_id TEXT,owner_id TEXT,document_id TEXT,status TEXT,correlation_id TEXT,stream_id TEXT,requested_at TEXT,expires_at TEXT,request_json TEXT);");
  for(const sql of CREATION_SCHEMA_STATEMENTS)db.exec(sql);
  db.exec("CREATE TABLE organization_projects(project_id TEXT,owner_user_id TEXT,project_access_id TEXT,organization_id TEXT,status TEXT);CREATE TABLE project_resource_scopes(project_access_id TEXT,resource_kind TEXT,resource_id TEXT,owner_user_id TEXT,organization_id TEXT,project_id TEXT);CREATE TABLE project_event_scopes(project_access_id TEXT,owner_user_id TEXT,project_id TEXT,organization_id TEXT,event_id TEXT,actor_user_id TEXT);CREATE TABLE organizations(organization_id TEXT,status TEXT);CREATE TABLE project_migration_states(project_access_id TEXT,organization_id TEXT,owner_user_id TEXT,status TEXT);CREATE TABLE organization_memberships(organization_id TEXT,user_id TEXT,status TEXT,revoked_at TEXT,accepted_at TEXT);");
- const env={DB:{prepare(sql){let args=[];return{bind(...values){args=values;return this;},async first(){return db.prepare(sql).get(...args)??null;},async all(){return{results:db.prepare(sql).all(...args)};},async run(){return /^\s*(SELECT|WITH)\b/i.test(sql)?{success:true,results:db.prepare(sql).all(...args),meta:{changes:0}}:{success:true,results:[],meta:db.prepare(sql).run(...args)};}};},async batch(statements){db.exec('BEGIN');try{const rows=[];for(const s of statements)rows.push(await s.run());db.exec('COMMIT');return rows;}catch(e){db.exec('ROLLBACK');throw e;}}}};
+ const controls={beforeRun:null,afterRead:null};
+ const env={DB:{prepare(sql){let args=[];return{bind(...values){args=values;return this;},async first(){const value=db.prepare(sql).get(...args)??null;await controls.afterRead?.(sql,args,value);return value;},async all(){return{results:db.prepare(sql).all(...args)};},async run(){await controls.beforeRun?.(sql,args);return /^\s*(SELECT|WITH)\b/i.test(sql)?{success:true,results:db.prepare(sql).all(...args),meta:{changes:0}}:{success:true,results:[],meta:db.prepare(sql).run(...args)};}};},async batch(statements){db.exec('BEGIN');try{const rows=[];for(const s of statements)rows.push(await s.run());db.exec('COMMIT');return rows;}catch(e){db.exec('ROLLBACK');throw e;}}}};
  const user={userId:'owner',streamId:'creative:owner'},projection={projects:[{id:'project'}],documents:[{id:'document',projectId:'project'}],blocks:[]};
  const handle=createStillActionOutcomesHandler(async request=>request.headers.get('test-user')==='denied'?Response.json({error:'denied'},{status:403}):{user:request.headers.get('test-user')==='other'?{userId:'other',streamId:'creative:other'}:user,projection});
  const call=(path,method='GET',body,userId='owner')=>handle(new Request('https://still.test/api/still/'+path,{method,headers:{origin:'https://still.test','test-user':userId},...(body?{body:JSON.stringify(body)}:{})}),env);
@@ -21,10 +22,10 @@ function harness(){
  const opt=async(selectedScope=scope)=>{const response=await call('action-context','PUT',{scope:selectedScope,enabled:true});directDecisionId=(await response.clone().json()).directDecisionId;return response;};
  const receipt=()=>createStillDecisionReceipt(env,user,{position:scope,stateFingerprint:'a'.repeat(64),policy:'test',head:0,response:{source:'jev',model:'test',candidateIds:['compose','add-context'],actions:[{id:'compose'}],nextBest:{choice:'compose'},provider:{usage:{total_tokens:14}}}});
  const observe=body=>call('action-observations','POST',{scope,surface:'document',source:'direct',decisionId:directDecisionId,...body});
- return{db,env,user,call,opt,receipt,observe};
+ return{db,env,user,call,opt,receipt,observe,controls};
 }
-test('optional goals remain private and independent of opt-in; completion, clear and scope isolation work',async()=>{
- const h=harness();const save=await h.call('goal','PUT',{scope,text:'Fictional goal',criteria:['Clear motive'],remember:true});assert.equal(save.status,200);const {goal}=await save.json();
+test('optional goals remain private and independent of account history; completion, clear and scope isolation work',async()=>{
+ const h=harness();await h.call('action-context','PUT',{scope,enabled:false});const save=await h.call('goal','PUT',{scope,text:'Fictional goal',criteria:['Clear motive'],remember:true});assert.equal(save.status,200);const {goal}=await save.json();
  assert.ok(goal.id);assert.equal((await readStillActionContext(h.env,h.user,scope)).enabled,false);
  assert.equal((await readStillActionContext(h.env,h.user,scope)).goal.text,'Fictional goal');
  assert.equal((await readStillActionContext(h.env,{userId:'other'},scope)).goal,undefined);
@@ -35,8 +36,8 @@ test('optional goals remain private and independent of opt-in; completion, clear
  assert.equal((await h.call('goal','PUT',{scope,text:'x',criteria:[],remember:false})).status,400);
  assert.equal((await h.call('goal','PUT',{scope,text:'x',criteria:[],remember:true},'denied')).status,403);
 });
-test('receipts require explicit current consent and strip creative state and provider prose',async()=>{
- const h=harness();assert.equal(await h.receipt(),undefined);await h.opt();const receipt=await h.receipt();assert.ok(receipt.decisionId);
+test('receipts require an authorized current recording window and strip creative state and provider prose',async()=>{
+ const h=harness();assert.equal(await h.receipt(),undefined);assert.equal((await readStillActionContext(h.env,h.user,scope)).enabled,true);const receipt=await h.receipt();assert.ok(receipt.decisionId);
  const body=JSON.parse(h.db.prepare('SELECT body FROM still_action_receipts WHERE decision_id=?').get(receipt.decisionId).body);assert.equal(body.usage.total_tokens,14);assert.deepEqual(body.finalActionIds,['compose']);
  const safe=decisionReceiptBody({stateFingerprint:'a'.repeat(64),policy:'v',head:0,response:{prompt:'PRIVATE',state:{body:'PRIVATE'},model:'model',provider:{usage:{total_tokens:2,body:'PRIVATE'}}}},'id','now','later');assert.ok(!JSON.stringify(safe).includes('PRIVATE'));
  await h.call('action-context','PUT',{scope,enabled:false});assert.equal(await h.receipt(),undefined);assert.equal(h.db.prepare('SELECT count(*) n FROM still_action_receipts').get().n,0);
@@ -69,7 +70,7 @@ test('retention and explicit deletion remove derived evidence without changing c
  const h=harness();await h.opt();await h.receipt();await h.observe({id:'invoke',kind:'invocation',actionId:'compose'});await h.call('goal','PUT',{scope,text:'Erase this',criteria:[],remember:true});
  const old=new Date(Date.now()-1).toISOString();for(const table of ['still_action_preferences','still_action_receipts','still_action_observations','still_action_goals'])h.db.prepare(`UPDATE ${table} SET expires_at=?`).run(old);h.db.prepare('UPDATE private_content SET expires_at=?').run(old);
  await sweepStillActionOutcomes(h.env);assert.equal((await readStillActionContext(h.env,h.user,scope)).observations.length,0);assert.equal(h.db.prepare('SELECT content FROM private_content').get().content,'');
- await h.opt();await h.receipt();await h.call('action-context','DELETE',{scope});assert.equal(h.db.prepare('SELECT count(*) n FROM still_action_preferences').get().n,0);
+ await h.opt();await h.receipt();const erased=await h.call('action-context','DELETE',{scope});assert.equal((await erased.json()).enabled,true);assert.equal(h.db.prepare('SELECT count(*) n FROM still_action_preferences').get().n,1);assert.equal(h.db.prepare('SELECT count(*) n FROM still_action_observations').get().n,0);
  assert.equal((await stillActionPrivacyDefinitions(h.env,'owner')).length,4);
 });
 test('bounds reject passive attention, invalid shapes, unknown actions and excessive feedback expiry',()=>{
@@ -80,7 +81,7 @@ test('bounds reject passive attention, invalid shapes, unknown actions and exces
  assert.equal(cleanActionObservation({...input,kind:'invocation',feedback:'Authored private material'},['compose']),undefined);
 });
 test('migration and bootstrap share identical additive schema',()=>{
- const migrated=new DatabaseSync(':memory:'),bootstrapped=new DatabaseSync(':memory:');migrated.exec(readFileSync(new URL('../drizzle/0074_still_action_outcomes.sql',import.meta.url),'utf8'));for(const sql of STILL_ACTION_OUTCOMES_SCHEMA)bootstrapped.exec(sql);
+ const migrated=new DatabaseSync(':memory:'),bootstrapped=new DatabaseSync(':memory:');migrated.exec(readFileSync(new URL('../drizzle/0074_still_action_outcomes.sql',import.meta.url),'utf8'));migrated.exec(readFileSync(new URL('../drizzle/0075_still_user_settings.sql',import.meta.url),'utf8'));for(const sql of STILL_ACTION_OUTCOMES_SCHEMA)bootstrapped.exec(sql);
  const objects=db=>db.prepare("SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();assert.deepEqual(objects(migrated),objects(bootstrapped));
  bootstrapped.exec("CREATE TABLE events(id TEXT PRIMARY KEY);INSERT INTO events VALUES('creative-head');");for(const sql of STILL_ACTION_OUTCOMES_SCHEMA)bootstrapped.exec(sql);
  for(const table of ['still_action_preferences','still_action_receipts','still_action_observations','still_action_goals'])assert.equal(bootstrapped.prepare(`SELECT count(*) n FROM ${table}`).get().n,0);
@@ -239,4 +240,90 @@ test('root-scoped creation receipts and assessments follow current custody after
  await status(await h.observe(report),409);await status(await h.observe(assessment),409);
  const withheld=await readStillActionContext(h.env,h.user,{});assert.deepEqual(withheld.observations.map(row=>row.id),['root-review']);assert.equal(withheld.coverage.withheld,2);assert.match(withheld.coverage.interpretation,/unknown/);
  assert.equal(h.db.prepare("SELECT count(*) n FROM still_action_observations WHERE observation_id IN('root-finalized','root-assessment')").get().n,2,'Authorization changes do not rewrite historical evidence');
+});
+
+
+test('history defaults on after authorization and account opt-out survives expiry, scope changes and erasure',async()=>{
+ const h=harness(),otherScope={projectId:'project',documentId:'other-document'};
+ const first=await h.call('action-context?'+new URLSearchParams(scope));assert.equal(first.status,200);const initial=await first.json();assert.equal(initial.enabled,true);assert.ok(initial.directDecisionId);
+ assert.equal(h.db.prepare('SELECT count(*) n FROM still_user_settings').get().n,0,'Default does not manufacture an explicit account choice');
+ const firstEpoch=h.db.prepare('SELECT epoch FROM still_action_preferences').get().epoch;
+ assert.ok(Date.parse(initial.expiresAt)<=Date.now()+ACTION_RETENTION_MS);
+ h.db.prepare('UPDATE still_action_preferences SET expires_at=?').run(new Date(Date.now()-1).toISOString());
+ const renewed=await readStillActionContext(h.env,h.user,scope);assert.equal(renewed.enabled,true);assert.notEqual(h.db.prepare('SELECT epoch FROM still_action_preferences').get().epoch,firstEpoch);
+ await h.opt();await h.observe({id:'first-scope',kind:'invocation',actionId:'compose'});
+ await h.opt(otherScope);await h.call('action-observations','POST',{scope:otherScope,id:'second-scope',kind:'invocation',actionId:'compose',source:'direct',surface:'document',decisionId:(await h.call('action-context?'+new URLSearchParams(otherScope)).then(r=>r.json())).directDecisionId});
+ const goals=[];for(const selectedScope of [scope,otherScope])goals.push((await h.call('goal','PUT',{scope:selectedScope,text:'Keep my optional goal',criteria:[],remember:true}).then(r=>r.json())).goal.id);
+ const otherContext=await h.call('action-context?'+new URLSearchParams(scope),'GET',undefined,'other').then(r=>r.json());assert.equal(otherContext.enabled,true);
+ const otherBefore=h.db.prepare("SELECT * FROM still_action_preferences WHERE owner_id='other'").all();
+ const off=await h.call('action-context','PUT',{scope,enabled:false});assert.equal((await off.json()).enabled,false);
+ for(const table of ['still_action_preferences','still_action_receipts','still_action_observations'])assert.equal(h.db.prepare(`SELECT count(*) n FROM ${table} WHERE owner_id='owner'`).get().n,0);
+ assert.deepEqual(h.db.prepare("SELECT goal_id FROM still_action_goals WHERE owner_id='owner'").all().map(row=>row.goal_id).sort(),goals.sort());
+ h.db.prepare('UPDATE still_user_settings SET updated_at=?').run('2000-01-01T00:00:00.000Z');await sweepStillActionOutcomes(h.env);
+ for(const selectedScope of [scope,otherScope,{}])assert.equal((await readStillActionContext(h.env,h.user,selectedScope)).enabled,false);
+ assert.equal((await h.call('action-context','DELETE',{scope}).then(r=>r.json())).enabled,false,'Scope erasure preserves account opt-out');
+ assert.equal(h.db.prepare("SELECT suggestion_history_enabled FROM still_user_settings WHERE owner_id='owner'").get().suggestion_history_enabled,0);
+ assert.deepEqual(h.db.prepare("SELECT * FROM still_action_preferences WHERE owner_id='other'").all(),otherBefore);
+ for(const definition of await stillActionPrivacyDefinitions(h.env,'owner'))await h.env.DB.prepare(definition.set+' WHERE '+definition.where).bind(...definition.bindings).run();
+ assert.equal((await readStillActionContext(h.env,h.user,scope)).enabled,false,'Personal evidence erasure also preserves durable opt-out');
+ assert.equal((await h.call('action-context','PUT',{scope,enabled:true}).then(r=>r.json())).enabled,true);
+ assert.equal((await readStillActionContext(h.env,h.user,otherScope)).enabled,true);
+});
+
+test('scope erasure preserves account choice and other scopes while rejecting the old recording epoch',async()=>{
+ const h=harness(),otherScope={projectId:'project',documentId:'other-document'};await h.opt();
+ const before=await h.call('action-context?'+new URLSearchParams(scope)).then(r=>r.json());
+ await h.observe({id:'old-invocation',kind:'invocation',actionId:'compose'});await h.call('goal','PUT',{scope,text:'Clear me',criteria:[],remember:true});
+ await readStillActionContext(h.env,h.user,otherScope);const otherBefore=h.db.prepare('SELECT * FROM still_action_preferences WHERE scope_key!=?').all(JSON.stringify(['still-action-context-v1','','project','document','']));
+ const erased=await h.call('action-context','DELETE',{scope}).then(r=>r.json());assert.equal(erased.enabled,true);assert.equal(erased.goal,undefined);assert.notEqual(erased.directDecisionId,before.directDecisionId);
+ assert.equal(h.db.prepare('SELECT count(*) n FROM still_action_observations').get().n,0);assert.equal(h.db.prepare('SELECT content FROM private_content').get().content,'');
+ assert.equal((await h.observe({id:'stale-invocation',kind:'invocation',actionId:'compose',decisionId:before.directDecisionId})).status,409);
+ assert.equal((await h.observe({id:'fresh-invocation',kind:'invocation',actionId:'compose',decisionId:erased.directDecisionId})).status,201);
+ assert.deepEqual(h.db.prepare('SELECT * FROM still_action_preferences WHERE scope_key!=?').all(JSON.stringify(['still-action-context-v1','','project','document',''])),otherBefore);
+ assert.equal(h.db.prepare("SELECT suggestion_history_enabled FROM still_user_settings WHERE owner_id='owner'").get().suggestion_history_enabled,1);
+});
+
+test('recording inserts recheck account opt-out and current epoch atomically after earlier reads',async()=>{
+ for(const kind of ['lease','receipt','observation']){
+  const h=harness();if(kind!=='lease')await h.opt();
+  const table=kind==='lease'?'still_action_preferences':kind==='receipt'?'still_action_receipts':'still_action_observations';
+  const before=h.db.prepare(`SELECT count(*) n FROM ${table}`).get().n;
+  h.controls.beforeRun=async sql=>{if(!sql.startsWith(kind==='observation'?'INSERT OR IGNORE INTO '+table:'INSERT INTO '+table))return;h.controls.beforeRun=null;h.db.prepare('INSERT INTO still_user_settings VALUES(?,?,?) ON CONFLICT(owner_id) DO UPDATE SET suggestion_history_enabled=0').run('owner',0,new Date().toISOString());};
+  if(kind==='lease')assert.equal((await readStillActionContext(h.env,h.user,scope)).enabled,false);
+  else if(kind==='receipt')assert.equal(await h.receipt(),undefined);
+  else assert.equal((await h.observe({id:'raced-write',kind:'invocation',actionId:'compose'})).status,409);
+  assert.equal(h.db.prepare(`SELECT count(*) n FROM ${table}`).get().n,before);
+ }
+ for(const kind of ['receipt','observation']){
+  const h=harness();await h.opt();
+  h.controls.beforeRun=async sql=>{if(!sql.startsWith(kind==='observation'?'INSERT OR IGNORE INTO still_action_observations':'INSERT INTO still_action_receipts'))return;h.controls.beforeRun=null;await h.call('action-context','PUT',{scope,enabled:false});await h.opt();};
+  if(kind==='receipt')assert.equal(await h.receipt(),undefined);else assert.equal((await h.observe({id:'old-epoch-write',kind:'invocation',actionId:'compose'})).status,409);
+  assert.equal(h.db.prepare("SELECT count(*) n FROM still_action_observations WHERE observation_id='old-epoch-write'").get().n,0);
+ }
+});
+
+test('unavailable account preference or retained context fails closed without blocking ordinary creative history',async()=>{
+ for(const table of ['still_user_settings','still_action_goals']){
+  const h=harness();await h.opt();h.db.exec('DROP TABLE '+table);
+  const context=await readStillActionContext(h.env,h.user,scope);assert.equal(context.enabled,false);assert.equal(context.coverage.status,'unavailable');assert.deepEqual(context.observations,[]);
+  assert.equal(h.db.prepare('SELECT count(*) n FROM events').get().n,0);
+ }
+});
+
+
+test('retained goal delivery rechecks exact active private goal after concurrent erasure, completion or replacement',async()=>{
+ for(const mutation of ['scope-erase','complete','replace','redact','expire']){
+  const h=harness();await h.opt();
+  const original=await h.call('goal','PUT',{scope,text:'Original goal',criteria:['Original criterion'],remember:true}).then(r=>r.json());
+  h.controls.afterRead=async sql=>{
+   if(!sql.startsWith('SELECT goal.goal_id'))return;h.controls.afterRead=null;
+   if(mutation==='scope-erase')await h.call('action-context','DELETE',{scope});
+   else if(mutation==='complete')await h.call('goal','POST',{scope,id:original.goal.id,status:'completed'});
+   else if(mutation==='replace')await h.call('goal','PUT',{scope,text:'Replacement goal',criteria:[],remember:true});
+   else if(mutation==='redact')h.db.prepare("UPDATE private_content SET content='',redacted_at=? WHERE kind='still-goal'").run(new Date().toISOString());
+   else h.db.prepare("UPDATE private_content SET expires_at=? WHERE kind='still-goal'").run('2000-01-01T00:00:00.000Z');
+  };
+  const delivered=await readStillActionContext(h.env,h.user,scope);assert.equal(delivered.goal,undefined,mutation+' must not deliver the previous goal');
+  if(mutation==='replace')assert.equal((await readStillActionContext(h.env,h.user,scope)).goal.text,'Replacement goal');
+ }
 });

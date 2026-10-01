@@ -1,9 +1,11 @@
 # Still workflow and outcome observation contract
 
-This local implementation extends the opt-in endpoint
+This implementation extends the preference-controlled endpoint
 `POST /api/still/action-observations`. It uses the JSON body and unconstrained
 `kind` column introduced by [migration 0074](../drizzle/0074_still_action_outcomes.sql).
-No new migration or existing database change is required for these kinds. The
+These observation kinds require no new migration. The later
+[goal/settings change](still-goal-settings-actions.md) adds migration0075 for a
+durable account preference, with default-on saving and explicit opt-out. The
 creation feature's existing draft/operation schema supplies retained receipts.
 The [shared contract](../src/still/action-outcomes.ts) and
 [server verification](../worker/still-action-outcomes-evidence.ts) are authoritative.
@@ -29,8 +31,8 @@ including work first created from the root scope. An assessment follows its
 retained draft's applied operation to that new target even when the assessment
 was recorded before the commit and has no operational evidence field. Unavailable canonical targets
 are withheld from reads with `coverage.withheld`; their current outcome remains
-unknown. Historical receipt statuses are not recomputed. Observation opt-in is personal
-and scoped, and every row is bound to its current consent epoch. A parent must
+unknown. Historical receipt statuses are not recomputed. Collection follows a durable personal account preference, while data stays
+scoped and every row is bound to its current recording epoch. A parent must
 be live, in the same actor/scope/consent epoch and decision/action/source chain.
 Missing parents return `409 parent_unavailable`; delivery can retry after the
 parent arrives. Recording order is not substituted for causal order.
@@ -168,7 +170,7 @@ redacted; it does not require rereading erased text.
 
 The server adds `recordedAt` and `expiresAt`. Occurrence timestamps permit at
 most one minute of future clock skew and must be within the 30-day ceiling;
-recording before the active opt-in epoch is rejected. Workflow causal edges
+recording before the active recording epoch is rejected. Workflow causal edges
 cannot reverse known workflow occurrence times. A child can be recorded after
 its parent even when both occurred before either was delivered.
 
@@ -187,7 +189,7 @@ immutable original with `replayed: true` (HTTP 200). A changed identity returns
 409. Concurrent identical submissions converge through insert-and-replay.
 Unknown parents and revision conflicts return 409, and do not create partial
 rows. A duplicate still needs live authorization and the current consent epoch;
-new opt-in does not revive an old chain. Replays retain the historical receipt
+re-enabling saving does not revive an old chain. Replays retain the historical receipt
 snapshot instead of rewriting it when a job's status changes.
 
 A horizon is positive and at most 30 days. `horizonStartedAt` is not later than

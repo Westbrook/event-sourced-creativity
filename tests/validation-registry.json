@@ -1423,6 +1423,7 @@
     "tests/still-palette-keyboard.test.mjs": "source",
     "tests/still-palette.test.mjs": "source",
     "tests/still-pending-results.test.mjs": "runtime",
+    "tests/still-personal-actions.test.mjs": "source",
     "tests/still-presentation.test.mjs": "source",
     "tests/still-quality-review.test.ts": "source",
     "tests/still-refresh-repair.test.mjs": "runtime",
@@ -1550,7 +1551,7 @@
       "reason": "Replaces the imported fixture dist worker reference with worker/index.ts before executing it."
     }
   },
-  "classificationInput": "79c49f4aa94db2459e5fa40b172bcc3592d5de11930d7cdb269df2194311e4d4",
+  "classificationInput": "7574baf702eb467b248b92d2bf02f14c53f563479031330da19fcbaa79428f32",
   "browserConfigs": [
     "playwright.a11y.config.mjs",
     "playwright.activity-accounting-lifetime.config.mjs",
@@ -11767,6 +11768,13 @@
       "lane": "runtime",
       "command": "node scripts/validation.mjs runtime tests/still-pending-results.test.mjs",
       "resource": "isolated Node/SQLite/Worker runtime",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-personal-actions.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "source",
+      "command": "node scripts/validation.mjs source tests/still-personal-actions.test.mjs",
+      "resource": "isolated Node process",
       "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
     },
     "tests/still-presentation.test.mjs": {

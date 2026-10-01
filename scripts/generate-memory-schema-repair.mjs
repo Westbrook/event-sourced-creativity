@@ -8,9 +8,9 @@ const policy=JSON.parse(readFileSync(new URL('build/memory-migration-release.jso
 const baseline=JSON.parse(policy.baselineJournal).entries.length;
 const hash=s=>createHash('sha256').update(s).digest('hex');
 const sourceJournal=readFileSync(new URL('drizzle/meta/_journal.json',root));
-const repair=memoryRepairJournal(sourceJournal,allMigrations.at(-1).sql);
+const repair=memoryRepairJournal(sourceJournal,Object.fromEntries(allMigrations.map(({tag,sql})=>[`drizzle/${tag}.sql`,sql])));
 if(hash(sourceJournal)!==policy.sourceJournalSha256||baseline!==41)throw Error('Unreviewed source journal');
-// Still0074 belongs to its own bootstrap; retain the historical Memory repair.
+// Still0074/0075 belong to their own bootstrap; retain the historical Memory repair.
 const migrations=allMigrations.slice(0,repair.count);
 const db=new DatabaseSync(':memory:');
 try{

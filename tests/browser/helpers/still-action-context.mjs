@@ -28,23 +28,31 @@ export async function actionContextFixture(){
       const reply=data=>{res.setHeader('content-type','application/json');res.end(JSON.stringify(data));};
       scenario.requests.push({path,method,body});
       if(path==='/still/action-context'){
-        const value=scenario.scopes.get(key)??{enabled:false};
-        if(method==='GET'){reply({...value,observations:[]});return;}
+        const value=scenario.scopes.get(key)??{};
+        const context=()=>({...value,enabled:scenario.enabled,...(scenario.enabled?{expiresAt:future(),directDecisionId:'direct-fixture',directContextExpiresAt:future()}:{}),observations:scenario.retained.filter(row=>scopeKey(row.scope)===key)});
+        if(method==='GET'){if(scenario.contextFailures>0){scenario.contextFailures--;res.statusCode=503;reply({error:'fictional_context_temporarily_unavailable'});return;}if(scenario.deferContext){scenario.deferContext=false;await new Promise(resolve=>{scenario.releaseContext=resolve;});}reply(context());return;}
         if(method==='PUT'){
-          const next={...value,enabled:body.enabled,...(body.enabled?{expiresAt:future(),directDecisionId:'direct-fixture',directContextExpiresAt:future()}: {})};
-          scenario.scopes.set(key,next);reply(next);return;
+          scenario.enabled=body.enabled;
+          if(!scenario.enabled)scenario.retained=[];
+          reply(context());return;
         }
-        if(method==='DELETE'){scenario.scopes.set(key,{enabled:false});reply({erased:true});return;}
+        if(method==='DELETE'){scenario.scopes.set(key,{});scenario.retained=scenario.retained.filter(row=>scopeKey(row.scope)!==key);reply({erased:true,enabled:scenario.enabled,...(scenario.enabled?{expiresAt:future(),directDecisionId:'direct-fixture',directContextExpiresAt:future()}:{}),observations:[]});return;}
       }
       if(path==='/still/goal'){
-        const value=scenario.scopes.get(key)??{enabled:false};
+        const value=scenario.scopes.get(key)??{};
         if(method==='PUT'){
           const goal={id:'fictional-goal',scope,text:body.text,criteria:body.criteria,status:'active',createdAt:new Date().toISOString(),expiresAt:future()};
           scenario.scopes.set(key,{...value,goal});reply({goal});return;
         }
-        if(['POST','DELETE'].includes(method)){scenario.scopes.set(key,{...value,goal:undefined});reply({saved:true});return;}
+        if(method==='POST'){const goal=value.goal?{...value.goal,status:body.status}:undefined;scenario.scopes.set(key,{...value,goal});reply({goal});return;}
+        if(method==='DELETE'){scenario.scopes.set(key,{...value,goal:undefined});reply({saved:true});return;}
       }
-      if(path==='/still/action-observations'&&method==='POST'){scenario.observations.push(body);reply({saved:true});return;}
+      if(path==='/still/action-observations'&&method==='POST'){
+        scenario.observations.push(body);
+        if(!scenario.enabled){res.statusCode=403;reply({error:'action_history_disabled'});return;}
+        const observation={...body,recordedAt:new Date().toISOString(),expiresAt:future()};
+        scenario.retained.push(observation);reply({observation});return;
+      }
       if(path==='/still/decision'&&method==='POST'){
         const number=scenario.decisions.length,actions=['rename','add-context','documents'].map(id=>ACTIONS.find(action=>action.id===id));
         const value={source:'jev',head:6,policy:POLICY_VERSION,decisionId:`decision-${number}`,actions,rankedActions:actions,delivery:{stage:'complete',enrichment:'complete'}};
@@ -67,12 +75,12 @@ export async function actionContextFixture(){
   try{await server.listen();}catch(error){await server.close();await rm(cacheDir,{recursive:true,force:true});throw error;}
   return {
     origin:`http://127.0.0.1:${server.httpServer.address().port}`,
-    reset({enabled=false,stream=false,goal}={}){
-      if(current)current.interrupt?.();
-      current={stream,scopes:new Map([[scopeKey(documentScope),{enabled,...(enabled?{expiresAt:future(),directDecisionId:'direct-fixture',directContextExpiresAt:future()}:{}),...(goal?{goal}: {})}]]),requests:[],observations:[],decisions:[],unexpected:[],initialSent:false};
+    reset({enabled=true,stream=false,deferContext=false,contextFailures=0,goal}={}){
+      if(current){current.interrupt?.();current.releaseContext?.();}
+      current={stream,enabled,deferContext,contextFailures,scopes:new Map([[scopeKey(documentScope),{...(goal?{goal}: {})}]]),requests:[],observations:[],retained:[],decisions:[],unexpected:[],initialSent:false};
       return current;
     },
-    async close(){current?.interrupt?.();try{await server.close();}finally{await rm(cacheDir,{recursive:true,force:true});}},
+    async close(){current?.interrupt?.();current?.releaseContext?.();try{await server.close();}finally{await rm(cacheDir,{recursive:true,force:true});}},
   };
 }
 
@@ -108,3 +116,21 @@ export async function mountActionContextFixture(page,origin,options={}){
 }
 
 export const toolbarReady=page=>page.waitForFunction(()=>document.querySelector('.toolbar-motion-root')?.dataset.toolbarPhase==='ready');
+
+/** Exercise the production command palette without depending on toolbar rankings. */
+export async function choosePaletteAction(page, label) {
+  await page.keyboard.press('Control+k');
+  const palette=page.locator('en-dialog.command-palette');
+  await palette.getByRole('combobox',{name:'Find an action',exact:true}).fill(label);
+  await palette.getByRole('option',{name:label,exact:true}).click();
+}
+
+/** Workflow actions use the existing responsive overflow menu at narrow widths. */
+export async function chooseDockAction(page, label) {
+  await toolbarReady(page);
+  const dock=page.locator('.toolbar-motion-live .action-dock');
+  const button=dock.getByRole('button',{name:label,exact:true});
+  if(await button.isVisible())return button.click();
+  await dock.getByRole('button',{name:'More actions',exact:true}).click();
+  await page.getByRole('menuitem',{name:label,exact:true}).click();
+}

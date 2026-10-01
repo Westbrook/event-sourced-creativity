@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {verifyReleaseMigrations} from '../build/release-migrations.ts';
-import {verifyStillJournalTransition} from './lib/still-migration-journal.mjs';
+import {verifyStillJournalTransition,stillJournalTransitionSqlFiles} from './lib/still-migration-journal.mjs';
 
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
@@ -25,12 +25,18 @@ export function verifySource(root,plan){
  if(manifest.project_id!==plan.projectId||baseline.project_id!==plan.projectId)throw Error('Site identity mismatch');
  if(git(root,'diff',plan.baselineCommit,plan.candidateCommit,'--','.openai/hosting.json'))throw Error('Hosting configuration changed; qualify a separate release');
  let migrationSourceQualification;
- if(git(root,'diff',plan.baselineCommit,plan.candidateCommit,'--','build/memory-migration-release.json')||plan.migrationSourceJournalTransition){
+ if(changed.some(file=>file==='build/memory-migration-release.json'||file==='drizzle/meta/_journal.json'||/^drizzle\/[^/]+\.sql$/u.test(file))||plan.migrationSourceJournalTransition){
   const readAt=(commit,file)=>execFileSync('git',['show',`${commit}:${file}`],{cwd:root,encoding:'utf8'});
-  const beforeJournal=readAt(plan.baselineCommit,'drizzle/meta/_journal.json');
+  const beforeJournal=readAt(plan.baselineCommit,'drizzle/meta/_journal.json'),afterJournal=readAt(plan.candidateCommit,'drizzle/meta/_journal.json');
+  const migrationSqlFiles=stillJournalTransitionSqlFiles(plan.migrationSourceJournalTransition);
+  if(hash(beforeJournal)!==plan.migrationSourceJournalTransition.before||hash(afterJournal)!==plan.migrationSourceJournalTransition.after)throw Error('Unreviewed Still source journal transition');
+  const addedSql=Object.fromEntries(migrationSqlFiles.map(file=>[file,readAt(plan.candidateCommit,file)]));
   migrationSourceQualification=verifyStillJournalTransition({transition:plan.migrationSourceJournalTransition,
    beforePolicy:readAt(plan.baselineCommit,'build/memory-migration-release.json'),afterPolicy:readAt(plan.candidateCommit,'build/memory-migration-release.json'),
-   beforeJournal,afterJournal:readAt(plan.candidateCommit,'drizzle/meta/_journal.json'),addedSql:readAt(plan.candidateCommit,'drizzle/0074_still_action_outcomes.sql')});
+   beforeJournal,afterJournal,addedSql});
+  const expectedFiles=JSON.parse(afterJournal).entries.map(entry=>`drizzle/${entry.tag}.sql`).sort();
+  const sourceFiles=git(root,'ls-tree','-r','--name-only',plan.candidateCommit,'--','drizzle/').split('\n').filter(file=>/^drizzle\/[^/]+\.sql$/u.test(file)).sort();
+  if(JSON.stringify(expectedFiles)!==JSON.stringify(sourceFiles))throw Error('Unreviewed Still source migration files');
   const oldFiles=JSON.parse(beforeJournal).entries.map(entry=>`drizzle/${entry.tag}.sql`);
   if(git(root,'diff',plan.baselineCommit,plan.candidateCommit,'--',...oldFiles))throw Error('Historical migration changed during source-journal qualification');
  }

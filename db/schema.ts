@@ -2901,6 +2901,11 @@ export const memoryAuthoredImageReceipts=sqliteTable('memory_authored_image_rece
  contentId:text('content_id').primaryKey().notNull(),eventId:text('event_id').notNull().unique(),ownerId:text('owner_id').notNull(),mediaKey:text('media_key').notNull().unique(),state:text('state').notNull(),createdAt:text('created_at').notNull(),retiredAt:text('retired_at'),
 },()=>[check('memory_authored_image_state',sql.raw("state IN('active','retired')")),check('memory_authored_image_created',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),check('memory_authored_image_retirement',sql.raw("(state='active' AND retired_at IS NULL) OR (state='retired' AND retired_at>=created_at)"))]);
 
+/** Durable account choice; default recording never makes retained diagnostic evidence permanent. */
+export const stillUserSettings=sqliteTable('still_user_settings',{
+ ownerId:text('owner_id').primaryKey().notNull(),suggestionHistoryEnabled:integer('suggestion_history_enabled').notNull(),updatedAt:text('updated_at').notNull(),
+},()=>[check('still_suggestion_history_enabled',sql.raw('suggestion_history_enabled IN (0,1)'))]);
+
 /** Explicit, bounded semantic observations; never authoring events or passive attention. */
 export const stillActionPreferences=sqliteTable('still_action_preferences',{
  ownerId:text('owner_id').notNull(),scopeKey:text('scope_key').notNull(),epoch:text('epoch').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),

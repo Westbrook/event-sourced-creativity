@@ -1,11 +1,11 @@
 import type { ActionObservation, ActionObservationInput, ActionScope, StillGoal, WorkflowObservation, QualityAssessment, OutcomeObservation } from './action-outcomes.ts';
 
 type Transport = <T>(path:string,body?:unknown,method?:string)=>Promise<T>;
-export type ActionContext = {enabled:boolean;expiresAt?:string;goal?:StillGoal;directDecisionId?:string;directContextExpiresAt?:string;observations?:ActionObservation[]};
+export type ActionContext = {enabled:boolean;expiresAt?:string;goal?:StillGoal;directDecisionId?:string;directContextExpiresAt?:string;observations?:ActionObservation[];coverage?:{status?:'complete'|'unavailable'}};
 type Invocation = {id:string;actionId:string;decisionId?:string;source:ActionObservationInput['source'];surface:string;scope:ActionScope;committed:boolean};
 type ExposureTiming = {deliveryKey:string;interactiveLatencyMs:number};
 
-/** Actor-private, opt-in observations. This never reads DOM attention or stores content. */
+/** Actor-private observations controlled by the account history preference. This never reads DOM attention or stores content. */
 export class StillActionContext {
   value:ActionContext={enabled:false};
   loaded=false;
@@ -15,6 +15,7 @@ export class StillActionContext {
   private observationEpoch=0;
   private scope:ActionScope={};
   private epoch=0;
+  private readGeneration=0;
   private pending:Promise<unknown>=Promise.resolve();
   private exposed=new Map<string,string>();
   private exposureParents=new Map<string,{id:string;actions:string[]}>();
@@ -29,39 +30,53 @@ export class StillActionContext {
     const key=JSON.stringify([identity,scope]);if(key===this.identity)return;
     if(identity!==this.actorIdentity){this.actorIdentity=identity;++this.observationEpoch;}
     this.identity=key;this.scope={...scope};++this.epoch;this.value={enabled:false};this.loaded=false;this.error='';this.active=undefined;this.workflows.clear();this.queued.clear();this.exposed.clear();this.exposureParents.clear();this.timedDeliveries.clear();
-    if(!identity)return;
-    const epoch=this.epoch,observationEpoch=this.observationEpoch;
-    const query=new URLSearchParams(Object.entries(scope).filter((entry):entry is [string,string]=>typeof entry[1]==='string'&&!!entry[1]));
-    void this.transport<ActionContext>('/api/still/action-context?'+query).then(value=>{if(epoch===this.epoch&&observationEpoch===this.observationEpoch){this.value=value;this.loaded=true;this.changed();}}).catch(()=>{if(epoch===this.epoch&&observationEpoch===this.observationEpoch){this.loaded=true;this.error='Suggestion history is unavailable.';this.changed();}});
+    if(identity)void this.refresh();
+  }
+  /** Retry an unavailable context without changing account preference or active creative attribution. */
+  async refresh(){
+    if(!this.actorIdentity)return;
+    const epoch=this.epoch,observationEpoch=this.observationEpoch,readGeneration=++this.readGeneration;
+    const current=()=>epoch===this.epoch&&observationEpoch===this.observationEpoch&&readGeneration===this.readGeneration;
+    const query=new URLSearchParams(Object.entries(this.scope).filter((entry):entry is [string,string]=>typeof entry[1]==='string'&&!!entry[1]));
+    try {
+      const value=await this.transport<ActionContext>('/api/still/action-context?'+query);
+      if(current()){this.acceptContext(value);this.loaded=true;this.changed();}
+    } catch {if(current()){this.acceptContext({enabled:false,coverage:{status:'unavailable'}});this.loaded=true;this.changed();}}
   }
   async setEnabled(enabled:boolean){
-    const epoch=this.epoch,scope={...this.scope};
-    if(!enabled){this.value={...this.value,enabled:false};++this.observationEpoch;await this.pending;}
-    if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen suggestion settings.');
-    const value=await this.transport<ActionContext>('/api/still/action-context',{scope,enabled},'PUT');
-    if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen suggestion settings.');
-    this.value={...value,enabled};this.loaded=true;this.error='';this.exposed.clear();this.exposureParents.clear();this.timedDeliveries.clear();this.active=undefined;this.workflows.clear();this.queued.clear();this.changed();
+    const epoch=this.epoch,observationEpoch=++this.observationEpoch,scope={...this.scope};
+    this.value={...this.value,enabled:false};this.changed();await this.pending;
+    if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen User settings.');
+    if(observationEpoch!==this.observationEpoch)throw new Error('Settings changed. Reopen User settings.');
+    const value=await this.transport<ActionContext>('/api/still/action-context',{scope,enabled},'PUT').catch(()=>({enabled:false,coverage:{status:'unavailable'}} as ActionContext));
+    if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen User settings.');
+    if(observationEpoch!==this.observationEpoch)throw new Error('Settings changed. Reopen User settings.');
+    this.acceptContext(value);this.loaded=true;this.exposed.clear();this.exposureParents.clear();this.timedDeliveries.clear();this.active=undefined;this.workflows.clear();this.queued.clear();this.changed();
+    if(value.coverage?.status==='unavailable')throw new Error('The change may have been saved, but the current settings could not be confirmed. Reopen User settings.');
   }
   async erase(){
-    const epoch=this.epoch,scope={...this.scope};
-    this.value={...this.value,enabled:false};++this.observationEpoch;await this.pending;
-    if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen suggestion settings.');
-    await this.transport('/api/still/action-context',{scope},'DELETE');
-    if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen suggestion settings.');
-    this.value={enabled:false};this.loaded=true;this.exposed.clear();this.exposureParents.clear();this.timedDeliveries.clear();this.active=undefined;this.workflows.clear();this.queued.clear();this.error='';this.changed();
+    const epoch=this.epoch,observationEpoch=++this.observationEpoch,scope={...this.scope};
+    this.value={...this.value,enabled:false};this.changed();await this.pending;
+    if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen User settings.');
+    if(observationEpoch!==this.observationEpoch)throw new Error('Settings changed. Reopen User settings.');
+    const value=await this.transport<ActionContext>('/api/still/action-context',{scope},'DELETE').catch(()=>({enabled:false,coverage:{status:'unavailable'}} as ActionContext));
+    if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen User settings.');
+    if(observationEpoch!==this.observationEpoch)throw new Error('Settings changed. Reopen User settings.');
+    this.acceptContext(value);this.loaded=true;this.exposed.clear();this.exposureParents.clear();this.timedDeliveries.clear();this.active=undefined;this.workflows.clear();this.queued.clear();this.changed();
+    if(value.coverage?.status==='unavailable')throw new Error('The change may have been saved, but the current settings could not be confirmed. Reopen User settings.');
   }
   async saveGoal(text:string,criteria:string[]){
     const epoch=this.epoch;
     const value=await this.transport<{goal:StillGoal}>('/api/still/goal',{scope:this.scope,text,criteria,remember:true},'PUT');
     if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen suggestion settings.');
-    this.value={...this.value,goal:value.goal};this.changed();
+    ++this.readGeneration;this.value={...this.value,goal:value.goal};this.changed();
   }
   async finishGoal(status:'completed'|'abandoned'|'clear'){
     const goal=this.value.goal;if(!goal)return;
     const epoch=this.epoch;
     await this.transport('/api/still/goal',{scope:this.scope,id:goal.id,...(status==='clear'?{}:{status})},status==='clear'?'DELETE':'POST');
     if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen suggestion settings.');
-    this.value={...this.value,goal:undefined};this.changed();
+    ++this.readGeneration;this.value={...this.value,goal:undefined};this.changed();
   }
   /** Called only once controls are interactive, never on receipt or inert probes. */
   exposure(decisionId:string|undefined,displayedActionIds:string[],surface:string,source:ActionObservationInput['source'],primaryActionId?:string,timing?:ExposureTiming){
@@ -74,16 +89,16 @@ export class StillActionContext {
     const id=this.observe({kind:'exposure',decisionId,displayedActionIds,surface,source,...(primary?{primaryActionId:primary}:{}),...(interactiveLatencyMs!==undefined?{interactiveLatencyMs}:{})});
     if(id){this.exposed.set(key,id);this.exposureParents.set(`${decisionId}/${source}`,{id,actions:displayedActionIds});if(deliveryKey)this.timedDeliveries.add(deliveryKey);}
   }
-  select(actionId:string,decisionId:string|undefined,surface:string,source:ActionObservationInput['source']){
+  select(actionId:string,decisionId:string|undefined,surface:string,source:ActionObservationInput['source'],options:{preserveInvocation?:boolean}={}){
     if(!this.value.enabled)return;
     const exposure=decisionId?this.exposureParents.get(`${decisionId}/${source}`):undefined;
     if(!exposure?.actions.includes(actionId)){
       source='direct';decisionId=this.value.directDecisionId;
-      if(!decisionId||!this.value.directContextExpiresAt||Date.parse(this.value.directContextExpiresAt)<=Date.now()){this.active=undefined;this.renewDirectContext();return;}
+      if(!decisionId||!this.value.directContextExpiresAt||Date.parse(this.value.directContextExpiresAt)<=Date.now()){if(!options.preserveInvocation)this.active=undefined;this.renewDirectContext();return;}
     }
     const parentId=this.observe({kind:'selection',actionId,decisionId,surface,source,...(exposure?.actions.includes(actionId)?{parentId:exposure.id}:{})});
     const id=this.observe({kind:'invocation',actionId,decisionId,surface,source,parentId});
-    if(id)this.active={id,actionId,decisionId,surface,source,scope:{...this.scope},committed:false};
+    if(id&&!options.preserveInvocation)this.active={id,actionId,decisionId,surface,source,scope:{...this.scope},committed:false};
   }
   commit(receipt:{eventIds?:string[];jobId?:string}):string[]{
     const active=this.active;
@@ -108,7 +123,7 @@ export class StillActionContext {
     if(!decisionId){decisionId=this.value.directDecisionId;source='direct';}
     if(!decisionId){this.renewDirectContext();throw new Error('Action history is refreshing. Try saving feedback again.');}
     const id=this.observe({kind:'feedback',actionId,decisionId,feedback,surface,source,parentId,...(this.scope.documentId?{feedbackScope:'document' as const}:this.scope.projectId?{feedbackScope:'project' as const}:decisionId?{feedbackScope:'decision' as const}:{}),feedbackExpiresAt:expiresAt});
-    if(!id)throw new Error('Suggestion history expired. Enable it again to save feedback.');
+    if(!id)throw new Error('Suggestion history is refreshing. Try saving feedback again.');
     await this.pending;
     if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen suggestion settings.');
     if(this.error)throw new Error(this.error);
@@ -145,7 +160,7 @@ export class StillActionContext {
     if(!link&&!previous)throw new Error('Reopen the current review before saving an assessment.');
     const epoch=this.epoch;
     const id=this.observe({actionId,kind:'assessment',assessment,decisionId:previous?.decisionId??link?.decisionId,source:previous?.source??link!.source,surface:previous?.surface??link!.surface,scope:previous?.scope??link!.scope,parentId:previous?.id??link?.parentId});
-    if(!id)throw new Error('Suggestion history expired. Enable it again to save an assessment.');
+    if(!id)throw new Error('Suggestion history is refreshing. Try saving the assessment again.');
     await this.pending;
     if(epoch!==this.epoch)throw new Error('Workspace changed. Reopen the current review.');
     const saved=this.value.observations?.find(row=>row.id===id);
@@ -153,7 +168,8 @@ export class StillActionContext {
     return saved;
   }
   private observe(input:Omit<ActionObservationInput,'id'|'scope'> & {scope?:ActionScope}):string|undefined{
-    if(!this.loaded||!this.value.enabled||this.value.expiresAt&&Date.parse(this.value.expiresAt)<=Date.now())return;
+    if(!this.loaded||!this.value.enabled)return;
+    if(this.value.expiresAt&&Date.parse(this.value.expiresAt)<=Date.now()){++this.observationEpoch;this.value={...this.value,enabled:false};this.active=undefined;this.workflows.clear();this.queued.clear();this.exposed.clear();this.exposureParents.clear();this.timedDeliveries.clear();this.renewDirectContext();return;}
     const epoch=this.observationEpoch,contextEpoch=this.epoch,id=crypto.randomUUID();
     // Shape explicitly: internal invocation bookkeeping is never API evidence.
     const row:ActionObservationInput={id,scope:{...(input.scope??this.scope)},kind:input.kind,surface:input.surface,source:input.source,
@@ -171,16 +187,18 @@ export class StillActionContext {
       if(epoch!==this.observationEpoch)return;
       let result:{observation?:ActionObservation};
       try{result=await this.transport('/api/still/action-observations',row);}catch(error){const status=(error as {status?:number})?.status;if(epoch!==this.observationEpoch||status!==undefined&&status!==408&&status!==429&&status<500)throw error;result=await this.transport('/api/still/action-observations',row);}
-      if(contextEpoch===this.epoch&&result.observation){this.value={...this.value,observations:[...(this.value.observations??[]),result.observation].slice(-40)};this.changed();}
+      if(epoch===this.observationEpoch&&contextEpoch===this.epoch&&result.observation){this.value={...this.value,observations:[...(this.value.observations??[]),result.observation].slice(-40)};this.changed();}
     }).catch(()=>{if(epoch===this.observationEpoch){for(const [key,link] of this.workflows)if(link.parentId===id)this.workflows.delete(key);this.error='Some suggestion history could not be saved.';this.changed();}});
     return id;
   }
   /** Awaitable for focused deterministic tests and explicit data deletion. */
   flush(){return this.pending;}
+  private acceptContext(value:ActionContext){
+    if(value.coverage?.status==='unavailable'){this.value={enabled:false,coverage:value.coverage};this.error='Suggestion history is unavailable.';}
+    else {this.value=value;this.error='';}
+  }
   private renewDirectContext(){
     if(this.renewing)return;
-    this.renewing=true;const epoch=this.epoch,observationEpoch=this.observationEpoch;
-    const query=new URLSearchParams(Object.entries(this.scope).filter((entry):entry is [string,string]=>typeof entry[1]==='string'&&!!entry[1]));
-    void this.transport<ActionContext>('/api/still/action-context?'+query).then(value=>{if(epoch===this.epoch&&observationEpoch===this.observationEpoch){this.value=value;this.changed();}}).catch(()=>{if(epoch===this.epoch&&observationEpoch===this.observationEpoch){this.error='Action attribution is unavailable; your work is unaffected.';this.changed();}}).finally(()=>{this.renewing=false;});
+    this.renewing=true;void this.refresh().finally(()=>{this.renewing=false;});
   }
 }

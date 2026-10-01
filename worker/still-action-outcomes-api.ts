@@ -4,7 +4,7 @@ import { cleanActionObservation, cleanActionScope, validActionIdentifier, type A
 import { requireConsent, requireUser, type PilotUser } from './pilot-policy.ts';
 import { readProjectRequestContext, type ProjectRequestContext } from './project-request-context.ts';
 import { readStillHistory } from './still-history.ts';
-import { actionPreference, actionRetentionUntil, actionScopeKey, createStillDecisionReceipt, invalidateStillActionDecisionCache, readStillActionContext } from './still-action-outcomes.ts';
+import { actionHistoryEnabledSql, actionPreference, actionRetentionUntil, actionScopeKey, createStillDecisionReceipt, invalidateStillActionDecisionCache, readStillActionContext } from './still-action-outcomes.ts';
 import type { WorkerEnv } from './runtime.ts';
 import type { CreativeProjection } from '../src/model/events.ts';
 
@@ -53,11 +53,10 @@ export function createStillActionOutcomesHandler(authorize:typeof authorizeStill
       if(request.method==='GET')return reply(await contextResponse());
       if(request.method==='DELETE'){await env.DB.batch(purgeScope(env,owner,key,true));await invalidateStillActionDecisionCache(env,owner);return reply(await contextResponse());}
       if(request.method!=='PUT'||typeof body.enabled!=='boolean')return reply({error:'invalid_request'},400);
-      if(!body.enabled)await env.DB.batch(purgeScope(env,owner,key,false));
-      else {
-        const preference=await actionPreference(env,owner,key);
-        if(!preference)await env.DB.batch([...purgeScope(env,owner,key,false),env.DB.prepare('INSERT INTO still_action_preferences(owner_id,scope_key,epoch,created_at,expires_at) VALUES(?,?,?,?,?)').bind(owner,key,crypto.randomUUID(),now,await actionRetentionUntil(env,shared))]);
-      }
+      await env.DB.batch([
+        env.DB.prepare('INSERT INTO still_user_settings(owner_id,suggestion_history_enabled,updated_at) VALUES(?,?,?) ON CONFLICT(owner_id) DO UPDATE SET suggestion_history_enabled=excluded.suggestion_history_enabled,updated_at=excluded.updated_at').bind(owner,body.enabled?1:0,now),
+        ...(!body.enabled?['still_action_observations','still_action_receipts','still_action_preferences'].map(table=>env.DB.prepare(`DELETE FROM ${table} WHERE owner_id=?`).bind(owner)):[]),
+      ]);
       await invalidateStillActionDecisionCache(env,owner);
       return reply(await contextResponse());
     }
@@ -135,7 +134,7 @@ export function createStillActionOutcomesHandler(authorize:typeof authorizeStill
     if(!await mayReadSemanticObservation(env,user,scope,shared,observation,access.projection))return reply({error:'observation_target_unavailable'},409);
     if(observation.expiresAt<=now)return reply({error:'observation_window_expired'},409);
     const result=await env.DB.prepare(`INSERT OR IGNORE INTO still_action_observations(observation_id,owner_id,scope_key,consent_epoch,decision_id,parent_id,kind,created_at,expires_at,body)
-      SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND epoch=? AND expires_at>?) ${semantic.seriesGuard?'AND ('+semantic.seriesGuard.sql+')':''}`).bind(input.id,owner,key,preference.epoch,input.decisionId??null,input.parentId??null,input.kind,now,observation.expiresAt,JSON.stringify(observation),owner,key,preference.epoch,now,...(semantic.seriesGuard?.bindings??[])).run();
+      SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND epoch=? AND expires_at>?) AND ${actionHistoryEnabledSql} ${semantic.seriesGuard?'AND ('+semantic.seriesGuard.sql+')':''}`).bind(input.id,owner,key,preference.epoch,input.decisionId??null,input.parentId??null,input.kind,now,observation.expiresAt,JSON.stringify(observation),owner,key,preference.epoch,now,owner,...(semantic.seriesGuard?.bindings??[])).run();
     if(result.meta.changes)return reply({observation},201);
     const raced=await env.DB.prepare('SELECT body FROM still_action_observations WHERE observation_id=? AND owner_id=? AND scope_key=? AND consent_epoch=? AND expires_at>?').bind(input.id,owner,key,preference.epoch,now).first<{body:string}>();
     if(raced){const prior=JSON.parse(raced.body) as ActionObservation;if(JSON.stringify(cleanActionObservation(prior,ACTIONS.map(action=>action.id),Date.parse(prior.recordedAt)))===JSON.stringify(input)&&await mayReadSemanticObservation(env,user,scope,shared,prior,access.projection))return reply({observation:prior,replayed:true});}

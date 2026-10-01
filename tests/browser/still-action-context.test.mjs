@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {chromium} from '@playwright/test';
-import {actionContextFixture,mountActionContextFixture,toolbarReady} from './helpers/still-action-context.mjs';
+import {actionContextFixture,mountActionContextFixture,toolbarReady,choosePaletteAction,chooseDockAction} from './helpers/still-action-context.mjs';
 
 // The native dialog is in shadow DOM; its authored controls are slotted from this host.
-const dialog=page=>page.locator('en-dialog[label="Goal and suggestions"]');
-const settings=page=>page.getByRole('button',{name:'Goal & suggestions',exact:true});
+const dialog=page=>page.locator('en-dialog.user-settings[label="User settings"]');
+const settings=page=>choosePaletteAction(page,'User settings');
+const goal=page=>choosePaletteAction(page,'Your goal');
 const dock=page=>page.locator('.toolbar-motion-live .action-dock');
 const flush=page=>page.evaluate(()=>window.app.actionContext.flush());
 const waitFor=async predicate=>{const deadline=Date.now()+8000;while(!predicate()){if(Date.now()>deadline)throw new Error('Fixture condition did not settle');await new Promise(resolve=>setTimeout(resolve,20));}};
@@ -32,29 +33,63 @@ test('Still goals and action feedback use scoped, explicit, final interaction ev
     });
   }
   try{
-    await scenario('optional goals remain local until remembered and clear independently',{enabled:false},async(page,data)=>{
-      await toolbarReady(page);await settings(page).click();await dialog(page).getByRole('button',{name:'Set goal',exact:true}).click();
+    await scenario('Your goal is a palette action with independent optional memory',{enabled:false},async(page,data)=>{
+      await toolbarReady(page);
+      assert.equal(await page.getByRole('button',{name:'Goal & suggestions',exact:true}).count(),0,'No additional masthead action button');
+      await goal(page);await page.getByRole('heading',{name:'Your goal',exact:true}).waitFor();
+      assert.match(new URL(page.url()).pathname,/\/action\/intent$/);
       await page.getByRole('textbox',{name:'Your next goal',exact:true}).fill('Clarify the fictional scene before making an image.');
       await page.getByRole('textbox',{name:'Success criteria · optional, one per line',exact:true}).fill('One clear subject\nKeep the quiet tone');
       const remember=page.getByRole('checkbox',{name:'Remember this goal for this document for up to 30 days'});
       assert.equal(await remember.isChecked(),false);
-      await dock(page).getByRole('button',{name:'Suggest actions',exact:true}).click();await toolbarReady(page);
-      await settings(page).click();assert.equal(await dialog(page).getByText('For this session.',{exact:true}).count(),1);
+      await chooseDockAction(page,'Save goal');await toolbarReady(page);
       assert.equal(data.requests.filter(request=>request.path==='/still/goal').length,0);
-      await dialog(page).getByRole('button',{name:'Edit goal',exact:true}).click();await remember.check();
-      await dock(page).getByRole('button',{name:'Suggest actions',exact:true}).click();await toolbarReady(page);
+      await goal(page);assert.equal(await page.getByRole('textbox',{name:'Your next goal',exact:true}).inputValue(),'Clarify the fictional scene before making an image.');
+      await remember.check();await chooseDockAction(page,'Save goal');await toolbarReady(page);
       const saved=data.requests.find(request=>request.path==='/still/goal'&&request.method==='PUT');
       assert.deepEqual(saved.body.scope,{projectId:'p',documentId:'d'});assert.deepEqual(saved.body.criteria,['One clear subject','Keep the quiet tone']);assert.equal(saved.body.remember,true);
-      await settings(page).click();assert.match(await dialog(page).textContent(),/Remembered for this document until/);
-      await dialog(page).getByRole('button',{name:'Clear goal',exact:true}).click();await dialog(page).getByText('Goal cleared.',{exact:true}).waitFor();
+      await page.setViewportSize({width:320,height:800});await goal(page);await toolbarReady(page);
+      const more=dock(page).getByRole('button',{name:'More actions',exact:true});await more.click();
+      for(const label of ['Save goal','Complete goal','Abandon goal','Clear goal','Back']){
+        assert.ok(await dock(page).getByRole('button',{name:label,exact:true}).isVisible()||await page.getByRole('menuitem',{name:label,exact:true}).isVisible(),`${label} stays accessible through the compact toolbar`);
+      }
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false,'Five goal controls do not overflow a 320px viewport');
+      await page.screenshot({path:resolve(directory,'goal-actions-320.png'),fullPage:true});
+      await page.keyboard.press('Escape');await chooseDockAction(page,'Complete goal');await toolbarReady(page);await page.setViewportSize({width:1100,height:800});
+      assert.equal(data.requests.filter(request=>request.path==='/still/goal'&&request.method==='POST').at(-1).body.status,'completed');
+      await goal(page);await page.getByRole('textbox',{name:'Your next goal',exact:true}).fill('A second fictional goal.');await remember.check();
+      await chooseDockAction(page,'Save goal');await toolbarReady(page);
+      await goal(page);await chooseDockAction(page,'Abandon goal');await toolbarReady(page);
+      assert.equal(data.requests.filter(request=>request.path==='/still/goal'&&request.method==='POST').at(-1).body.status,'abandoned');
+      await goal(page);await page.getByRole('textbox',{name:'Your next goal',exact:true}).fill('A third fictional goal.');await remember.check();
+      await chooseDockAction(page,'Save goal');await toolbarReady(page);
+      await goal(page);await chooseDockAction(page,'Clear goal');await toolbarReady(page);
       assert.equal(data.requests.filter(request=>request.path==='/still/goal'&&request.method==='DELETE').length,1);
-      assert.equal(data.observations.length,0,'saving a goal does not opt into action history');
-      await dialog(page).getByRole('button',{name:'Done',exact:true}).click();
+      assert.equal(data.observations.length,0,'Remembering and finishing goals does not enable disabled suggestion history');
     });
-    await scenario('opt in feedback and erase are explicit accessible scoped controls',{enabled:false},async(page,data)=>{
-      await toolbarReady(page);assert.equal(data.observations.length,0);
-      await settings(page).click();const panel=dialog(page),toggle=panel.getByRole('checkbox',{name:'Remember action outcomes for this document'});
-      assert.equal(await toggle.isChecked(),false);await toggle.check();await panel.getByText('Suggestion history enabled for up to 30 days.',{exact:true}).waitFor();
+    await scenario('Your goal waits for remembered context before allowing edits',{deferContext:true,goal:{id:'remembered-fictional-goal',scope:{projectId:'p',documentId:'d'},text:'Keep the fictional observatory quiet.',criteria:['One clear subject'],status:'active',createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30*86400000).toISOString()}},async(page,data)=>{
+      await waitFor(()=>data.releaseContext);await toolbarReady(page);await goal(page);
+      const input=page.getByRole('textbox',{name:'Your next goal',exact:true}),criteria=page.getByRole('textbox',{name:'Success criteria · optional, one per line',exact:true});
+      const remember=page.getByRole('checkbox',{name:'Remember this goal for this document for up to 30 days'});
+      assert.equal(await input.isDisabled(),true,'An unresolved remembered goal cannot be overwritten by early edits');
+      assert.equal(await criteria.isDisabled(),true);assert.equal(await remember.isDisabled(),true);
+      assert.equal(await dock(page).getByRole('button',{name:'Save goal',exact:true}).isDisabled(),true);
+      assert.equal(data.requests.some(request=>request.path==='/still/goal'),false);
+      data.releaseContext();
+      await page.waitForFunction(()=>window.app.actionContext.loaded&&window.app.bodyDraft==='Keep the fictional observatory quiet.');
+      assert.equal(await input.inputValue(),'Keep the fictional observatory quiet.');assert.equal(await criteria.inputValue(),'One clear subject');assert.equal(await remember.isChecked(),true);
+      assert.equal(data.requests.some(request=>request.path==='/still/goal'),false,'Hydration does not write or clear the remembered goal');
+      await input.fill('Keep the fictional observatory quiet and focused.');await chooseDockAction(page,'Save goal');await toolbarReady(page);
+      const update=data.requests.filter(request=>request.path==='/still/goal'&&request.method==='PUT').at(-1);
+      assert.equal(update.body.remember,true);assert.equal(update.body.text,'Keep the fictional observatory quiet and focused.');
+      assert.equal(data.requests.some(request=>request.path==='/still/goal'&&request.method==='DELETE'),false);
+    });
+    await scenario('default suggestion history and scope erasure are accessible palette settings',{},async(page,data)=>{
+      await toolbarReady(page);await waitFor(()=>data.observations.length>0);await flush(page);assert.ok(data.observations.length>0,'History is saved without an opt-in step');
+      assert.equal(data.requests.some(request=>request.path==='/still/action-context'&&request.method==='PUT'),false);
+      await settings(page);const panel=dialog(page),toggle=panel.getByRole('checkbox',{name:'Save suggestion history',exact:true});
+      assert.match(new URL(page.url()).pathname,/\/action\/user-settings$/);
+      assert.equal(await toggle.isChecked(),true);
       await panel.getByRole('button',{name:'Save feedback',exact:true}).click();await panel.getByText('Feedback saved for future suggestions.',{exact:true}).waitFor();
       const feedback=data.observations.find(row=>row.kind==='feedback');assert.ok(feedback);assert.equal(feedback.feedback,'not-useful-now');assert.equal(feedback.feedbackScope,'document');assert.deepEqual(feedback.scope,{projectId:'p',documentId:'d'});
       assert.ok(Date.parse(feedback.feedbackExpiresAt)>Date.now()&&Date.parse(feedback.feedbackExpiresAt)<=Date.now()+86401000);
@@ -62,14 +97,41 @@ test('Still goals and action feedback use scoped, explicit, final interaction ev
         await page.setViewportSize({width,height:800});
         const geometry=await panel.locator('dialog').evaluate(element=>{const rect=element.getBoundingClientRect();return {left:rect.left,right:rect.right,width:innerWidth,overflow:element.scrollWidth>element.clientWidth+1};});
         assert.ok(geometry.left>=-1&&geometry.right<=geometry.width+1,JSON.stringify(geometry));assert.equal(geometry.overflow,false);
-        const erase=panel.getByRole('button',{name:'Erase saved suggestion history and goal',exact:true});await erase.focus();
+        const erase=panel.getByRole('button',{name:'Erase saved history and goal for this document',exact:true});await erase.focus();
         await page.screenshot({path:resolve(directory,`suggestion-settings-${width}.png`),fullPage:true});
       }
-      const erase=panel.getByRole('button',{name:'Erase saved suggestion history and goal',exact:true});await erase.focus();await page.keyboard.press('Enter');
-      await panel.getByText('Saved suggestion history and remembered goal erased.',{exact:true}).waitFor();assert.equal(await toggle.isChecked(),false);
+      await flush(page);const beforeErase=new Set(data.retained.map(row=>row.id));assert.ok(beforeErase.size>0);
+      const erase=panel.getByRole('button',{name:'Erase saved history and goal for this document',exact:true});await erase.focus();await page.keyboard.press('Enter');
+      await panel.getByText('Saved suggestion history and remembered goal erased for this scope. New history is still saved when Save suggestion history is on.',{exact:true}).waitFor();assert.equal(await toggle.isChecked(),true,'Scope erasure leaves the account recording preference enabled');
+      assert.deepEqual(data.retained,[]);
       assert.equal(data.requests.filter(request=>request.path==='/still/action-context'&&request.method==='DELETE').length,1);
-      await page.keyboard.press('Escape');await panel.locator('dialog').waitFor({state:'hidden'});
-      assert.equal(await settings(page).evaluate(element=>{let active=document.activeElement;while(active?.shadowRoot?.activeElement)active=active.shadowRoot.activeElement;return active===element;}),true,'native dialog dismissal restores the opener');
+      await page.keyboard.press('Escape');await panel.locator('dialog').waitFor({state:'hidden'});await toolbarReady(page);
+      assert.equal(new URL(page.url()).pathname,'/still/project/p/document/d','Dialog dismissal restores the original route');
+      await page.setViewportSize({width:1100,height:800});
+      await choosePaletteAction(page,'Rename document');await chooseDockAction(page,'Back');await toolbarReady(page);await flush(page);
+      assert.ok(data.retained.length>0,'New interactions are saved after explicit scope erasure');
+      assert.ok(data.retained.every(row=>!beforeErase.has(row.id)),'Erased observations never return when recording resumes');
+      await settings(page);await toggle.uncheck();
+      await panel.getByText('Suggestion history is off across your account and saved history was erased. Your remembered goals are unchanged.',{exact:true}).waitFor();
+      assert.deepEqual(data.retained,[]);const disabledCount=data.observations.length;
+      await panel.getByRole('button',{name:'Done',exact:true}).click();await toolbarReady(page);
+      await choosePaletteAction(page,'Rename document');await chooseDockAction(page,'Back');await toolbarReady(page);await flush(page);
+      assert.equal(data.observations.length,disabledCount,'Opt-out prevents subsequent observation writes');
+    });
+    await scenario('unavailable settings recover on reopen without changing the saved preference',{contextFailures:2},async(page,data)=>{
+      await toolbarReady(page);await page.waitForFunction(()=>window.app.actionContext.loaded&&window.app.actionContext.error);
+      await settings(page);const panel=dialog(page),toggle=panel.getByRole('checkbox',{name:'Save suggestion history',exact:true});
+      await panel.getByText('Your saved setting is unavailable. It has not been changed.',{exact:true}).waitFor();
+      assert.equal(await toggle.isDisabled(),true);assert.equal(await toggle.evaluate(element=>element.indeterminate),true);
+      assert.equal(data.requests.some(request=>request.path==='/still/action-context'&&request.method==='PUT'),false);
+      await panel.getByRole('button',{name:'Done',exact:true}).click();await toolbarReady(page);await settings(page);
+      await page.waitForFunction(()=>window.app.actionContext.loaded&&!window.app.actionContext.error&&window.app.actionContext.value.enabled);
+      assert.equal(await toggle.isChecked(),true);assert.equal(await toggle.isDisabled(),false);assert.equal(await toggle.evaluate(element=>element.indeterminate),false);
+      assert.equal(data.requests.filter(request=>request.path==='/still/action-context'&&request.method==='GET').length,3,'Reopening performs one fresh read, without a retry loop');
+      assert.equal(data.requests.some(request=>request.path==='/still/action-context'&&request.method==='PUT'),false,'Recovering a failed read never replaces the saved preference');
+      await toggle.uncheck();await panel.getByText('Suggestion history is off across your account and saved history was erased. Your remembered goals are unchanged.',{exact:true}).waitFor();
+      assert.equal(data.requests.filter(request=>request.path==='/still/action-context'&&request.method==='PUT').length,1);
+      assert.equal(data.enabled,false);
     });
     await scenario('partial recommendations never become interactive or receive exposure',{enabled:true,stream:true},async(page,data)=>{
       await waitFor(()=>data.initialSent);await page.waitForFunction(()=>window.app.toolbarDecisionPending);
@@ -104,24 +166,28 @@ test('Still goals and action feedback use scoped, explicit, final interaction ev
       await dock(page).getByRole('button',{name:'More actions',exact:true}).click();
       await dock(page).getByRole('button',{name:/^Find action/}).waitFor();
     });
-    await scenario('navigation discards session goal and loads separate observation scope',{enabled:true},async(page,data)=>{
-      await toolbarReady(page);await settings(page).click();await dialog(page).getByRole('button',{name:'Set goal',exact:true}).click();
-      await page.getByRole('textbox',{name:'Your next goal',exact:true}).fill('Only for the night study.');await dock(page).getByRole('button',{name:'Suggest actions',exact:true}).click();await toolbarReady(page);
+    await scenario('session goals are scoped while suggestion history defaults across documents',{},async(page,data)=>{
+      await toolbarReady(page);await goal(page);
+      await page.getByRole('textbox',{name:'Your next goal',exact:true}).fill('Only for the night study.');await chooseDockAction(page,'Save goal');await toolbarReady(page);
       await page.getByRole('link',{name:'Still home',exact:true}).click();await toolbarReady(page);
       await page.getByRole('link',{name:/Fictional observatory/}).click();await toolbarReady(page);
-      await page.getByRole('link',{name:/Morning study/}).click();await toolbarReady(page);await settings(page).click();
-      const panel=dialog(page);assert.equal(await panel.getByText('Only for the night study.',{exact:true}).count(),0);assert.equal(await panel.getByRole('checkbox',{name:'Remember action outcomes for this document'}).isChecked(),false);
-      assert.ok(data.requests.some(request=>request.path==='/still/action-context'&&request.method==='GET'));
-      assert.ok(data.observations.every(row=>row.scope.documentId==='d'),'opt-in is scoped to the original document');
+      await page.getByRole('link',{name:/Morning study/}).click();await toolbarReady(page);await goal(page);
+      assert.equal(await page.getByRole('textbox',{name:'Your next goal',exact:true}).inputValue(),'','A session goal does not follow navigation to another document');
+      await chooseDockAction(page,'Back');await toolbarReady(page);await settings(page);
+      assert.equal(await dialog(page).getByRole('checkbox',{name:'Save suggestion history',exact:true}).isChecked(),true);
+      await flush(page);assert.ok(data.observations.some(row=>row.scope.documentId==='d2'),'Account defaults apply to another authorized document');
     });
-    await scenario('read only users retain viewing controls without authoring suggestions',{role:'viewer'},async(page,data)=>{
+    await scenario('read only users can discover personal actions without authoring suggestions',{role:'viewer'},async(page,data)=>{
       await toolbarReady(page);await page.getByText('Read only',{exact:true}).waitFor();
       assert.equal(await dock(page).getByRole('button',{name:'Rename document',exact:true}).count(),0);
       assert.equal(await dock(page).getByRole('button',{name:'Add idea',exact:true}).count(),0);
       await dock(page).getByRole('button',{name:'View documents',exact:true}).waitFor();
-      await page.setViewportSize({width:320,height:800});await settings(page).click();await dialog(page).getByRole('button',{name:'Set goal',exact:true}).waitFor();
+      await page.setViewportSize({width:320,height:800});await goal(page);
+      await page.getByRole('textbox',{name:'Your next goal',exact:true}).fill('Review the fictional study.');
+      await chooseDockAction(page,'Save goal');await toolbarReady(page);
+      await settings(page);assert.equal(await dialog(page).getByRole('checkbox',{name:'Save suggestion history',exact:true}).isChecked(),true);
       await page.screenshot({path:resolve(directory,'read-only-settings-320.png'),fullPage:true});
-      assert.equal(data.observations.length,0);
+      await flush(page);assert.equal(data.observations.some(row=>['rename','add-context'].includes(row.actionId)&&['selection','invocation'].includes(row.kind)),false);
     });
     await scenario('startup recovery offers retry and home without suggestion side effects',{failFirstLoad:true},async(page,data)=>{
       await page.getByRole('heading',{name:'Couldn’t load Still',exact:true}).waitFor();await toolbarReady(page);

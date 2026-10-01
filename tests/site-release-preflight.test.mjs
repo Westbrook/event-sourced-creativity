@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {verifySource,verifyArchive} from '../scripts/verify-site-release.mjs';
 import {copyReleaseMigrations} from '../build/release-migrations.ts';
-import {STILL_JOURNAL_TRANSITION,memoryRepairJournal} from '../scripts/lib/still-migration-journal.mjs';
+import {STILL_JOURNAL_TRANSITION,STILL_USER_SETTINGS_JOURNAL_TRANSITION,memoryRepairJournal} from '../scripts/lib/still-migration-journal.mjs';
 const run=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
 const write=(root,file,value)=>{mkdirSync(join(root,file,'..'),{recursive:true});writeFileSync(join(root,file),value);};
 async function fixture(t){
@@ -63,44 +63,76 @@ test('archive rejects an extra candidate migration even when it matches dist',as
  execFileSync('tar',['-cf',archive,'-C',root,'dist'],{env:{...process.env,COPYFILE_DISABLE:'1'}});await assert.rejects(()=>verifyArchive(root,archive,null,plan),/migration_release_unqualified/);
 });
 
-async function journalFixture(t){
+const policyFile='build/memory-migration-release.json',journalFile='drizzle/meta/_journal.json';
+const originalSql='drizzle/0074_still_action_outcomes.sql',settingsSql='drizzle/0075_still_user_settings.sql';
+const journalCases=[
+ {transition:STILL_JOURNAL_TRANSITION,count:73,sqlFile:originalSql},
+ {transition:STILL_USER_SETTINGS_JOURNAL_TRANSITION,count:74,sqlFile:settingsSql},
+];
+async function journalFixture(t,{transition,count,sqlFile}){
  const f=await fixture(t),{root}=f;
- const files=['build/memory-migration-release.json','drizzle/meta/_journal.json','drizzle/0074_still_action_outcomes.sql'];
+ const files=[policyFile,journalFile,originalSql,...(count===74?[settingsSql]:[])];
  const saved=Object.fromEntries(files.map(file=>[file,readFileSync(join(root,file),'utf8')]));
- write(root,files[0],saved[files[0]].replace(STILL_JOURNAL_TRANSITION.after,STILL_JOURNAL_TRANSITION.before));
- const journal=JSON.parse(saved[files[1]]);write(root,files[1],JSON.stringify({...journal,entries:journal.entries.slice(0,72)},null,2)+'\n');
- rmSync(join(root,files[2]));run(root,'add','.');run(root,'commit','-qm','historical journal');
+ const currentJournal=JSON.parse(saved[journalFile]),currentPolicy=JSON.parse(saved[policyFile]);
+ saved[journalFile]=JSON.stringify({...currentJournal,entries:currentJournal.entries.slice(0,count)},null,2)+'\n';
+ saved[policyFile]=saved[policyFile].replace(currentPolicy.sourceJournalSha256,transition.after);
+ write(root,policyFile,saved[policyFile].replace(transition.after,transition.before));
+ write(root,journalFile,JSON.stringify({...currentJournal,entries:currentJournal.entries.slice(0,count-1)},null,2)+'\n');
+ rmSync(join(root,sqlFile));if(count===73)rmSync(join(root,settingsSql));
+ run(root,'add','.');run(root,'commit','-qm','historical journal');
  const baselineCommit=run(root,'rev-parse','HEAD');
  for(const file of files)write(root,file,saved[file]);run(root,'add','.');run(root,'commit','-qm','qualified Still journal');
- return {...f,saved,plan:{...f.plan,baselineCommit,candidateCommit:run(root,'rev-parse','HEAD'),allowedPaths:[...f.plan.allowedPaths,'build/memory-migration-release.json','drizzle/'],migrationSourceJournalTransition:{...STILL_JOURNAL_TRANSITION}}};
+ return {...f,saved,plan:{...f.plan,baselineCommit,candidateCommit:run(root,'rev-parse','HEAD'),allowedPaths:[...f.plan.allowedPaths,policyFile,'drizzle/'],migrationSourceJournalTransition:{...transition}}};
 }
-test('exact Still journal extension retains41 packaged migrations and the historical repair contract',async t=>{
- const {root,plan,archive,saved}=await journalFixture(t),source=verifySource(root,plan);
- assert.equal(source.migrationSourceQualification.packagedMigrationPolicy,'unchanged');
- const evidence=await verifyArchive(root,archive,null,source);assert.equal(evidence.migrations,41);
- assert.deepEqual(memoryRepairJournal(saved['drizzle/meta/_journal.json'],saved['drizzle/0074_still_action_outcomes.sql']),{count:72,sourceJournalSha256:STILL_JOURNAL_TRANSITION.before});
- const manifest=new URL('../worker/memory-schema-repair-manifest.json',import.meta.url),before=readFileSync(manifest,'utf8');
- execFileSync(process.execPath,[new URL('../scripts/generate-memory-schema-repair.mjs',import.meta.url).pathname,'--check'],{stdio:'pipe'});
- assert.equal(readFileSync(manifest,'utf8'),before);
-});
-test('journal qualification rejects absent declarations and unrelated policy or schema changes',async t=>{
- const {root,plan,saved}=await journalFixture(t);
- for(const transition of [undefined,{...STILL_JOURNAL_TRANSITION,before:'0'.repeat(64)},{...STILL_JOURNAL_TRANSITION,after:'0'.repeat(64)},{...STILL_JOURNAL_TRANSITION,sql:'0'.repeat(64)},{...STILL_JOURNAL_TRANSITION,extra:true}]){
-  assert.throws(()=>verifySource(root,{...plan,migrationSourceJournalTransition:transition}),/Unreviewed/);
- }
- const policyFile='build/memory-migration-release.json',journalFile='drizzle/meta/_journal.json',sqlFile='drizzle/0074_still_action_outcomes.sql';
- const mutations=[
-  ...['files','baselineJournal','mode','reason','baselineVersion','extra'].map(key=>[policyFile,()=>JSON.stringify({...JSON.parse(saved[policyFile]),[key]:'changed'},null,2)+'\n']),
-  [journalFile,()=>saved[journalFile].replace('1790823051287','1790823051288')],
-  [journalFile,()=>{const j=JSON.parse(saved[journalFile]);j.entries.push({...j.entries.at(-1),idx:73,tag:'0075_extra'});return JSON.stringify(j,null,2)+'\n';}],
-  [sqlFile,()=>saved[sqlFile]+'\n-- changed'],
- ];
- for(const [file,mutate] of mutations){
-  write(root,file,mutate());run(root,'add','.');run(root,'commit','-qm','negative mutation');
+for(const journalCase of journalCases){
+ const {transition,sqlFile}=journalCase;
+ test(`exact ${transition.kind} journal extension retains41 packaged migrations and the historical repair contract`,async t=>{
+  const {root,plan,archive,saved}=await journalFixture(t,journalCase),source=verifySource(root,plan);
+  assert.deepEqual(source.migrationSourceQualification,{...transition,packagedMigrationPolicy:'unchanged'});
+  const proposal='drizzle/candidates/still_semantic_index.sql';
+  assert.equal(readFileSync(join(root,proposal),'utf8'),readFileSync(new URL('../'+proposal,import.meta.url),'utf8'));
+  const evidence=await verifyArchive(root,archive,null,source);assert.equal(evidence.migrations,41);
+  assert.deepEqual(memoryRepairJournal(saved[journalFile],saved),{count:72,sourceJournalSha256:STILL_JOURNAL_TRANSITION.before});
+  if(transition===STILL_JOURNAL_TRANSITION)assert.deepEqual(memoryRepairJournal(saved[journalFile],saved[sqlFile]),{count:72,sourceJournalSha256:STILL_JOURNAL_TRANSITION.before});
+  const manifest=new URL('../worker/memory-schema-repair-manifest.json',import.meta.url),before=readFileSync(manifest,'utf8'),contract=JSON.parse(before);
+  assert.equal(contract.migrations.length,31);assert.equal(contract.sha256,'fd1752125f0e8818adc70a7805e74413c00d165adc898ccb2b2ad8ab25bd3ef9');
+  execFileSync(process.execPath,[new URL('../scripts/generate-memory-schema-repair.mjs',import.meta.url).pathname,'--check'],{stdio:'pipe'});
+  assert.equal(readFileSync(manifest,'utf8'),before);
+ });
+ test(`${transition.kind} qualification rejects absent declarations and unrelated policy or schema changes`,async t=>{
+  const {root,plan,saved}=await journalFixture(t,journalCase);
+  for(const declaration of [undefined,{...transition,before:'0'.repeat(64)},{...transition,after:'0'.repeat(64)},{...transition,sql:'0'.repeat(64)},{...transition,extra:true},journalCases.find(other=>other!==journalCase).transition]){
+   assert.throws(()=>verifySource(root,{...plan,migrationSourceJournalTransition:declaration}),/Unreviewed/);
+  }
+  const mutations=[
+   ...['files','baselineJournal','mode','reason','baselineVersion','extra'].map(key=>[policyFile,()=>JSON.stringify({...JSON.parse(saved[policyFile]),[key]:'changed'},null,2)+'\n']),
+   [policyFile,()=>saved[policyFile]+'\n'],
+   [journalFile,()=>{const j=JSON.parse(saved[journalFile]);j.entries.at(-1).when++;return JSON.stringify(j,null,2)+'\n';}],
+   [journalFile,()=>{const j=JSON.parse(saved[journalFile]);j.entries[0].when++;return JSON.stringify(j,null,2)+'\n';}],
+   [journalFile,()=>{const j=JSON.parse(saved[journalFile]);j.entries.push({...j.entries.at(-1),idx:j.entries.length,tag:'0076_extra'});return JSON.stringify(j,null,2)+'\n';}],
+   [sqlFile,()=>saved[sqlFile]+'\n-- changed'],
+   ...(transition===STILL_USER_SETTINGS_JOURNAL_TRANSITION?[[originalSql,()=>saved[originalSql]+'\n-- changed historical Still schema']]:[]),
+  ];
+  for(const [file,mutate] of mutations){
+   write(root,file,mutate());run(root,'add','.');run(root,'commit','-qm','negative mutation');
+   assert.throws(()=>verifySource(root,{...plan,candidateCommit:run(root,'rev-parse','HEAD')}),/Unreviewed/);
+   write(root,file,saved[file]);run(root,'add','.');run(root,'commit','-qm','restore fixture');
+  }
+  const extraSql='drizzle/0076_extra.sql';write(root,extraSql,'CREATE TABLE not_approved(x);');run(root,'add','.');run(root,'commit','-qm','unjournaled SQL');
   assert.throws(()=>verifySource(root,{...plan,candidateCommit:run(root,'rev-parse','HEAD')}),/Unreviewed/);
-  write(root,file,saved[file]);run(root,'add','.');run(root,'commit','-qm','restore fixture');
- }
- const oldSql='drizzle/0000_lively_owl.sql';write(root,oldSql,readFileSync(join(root,oldSql),'utf8')+'\n-- historical mutation');run(root,'add','.');run(root,'commit','-qm','historical SQL');
- assert.throws(()=>verifySource(root,{...plan,candidateCommit:run(root,'rev-parse','HEAD')}),/Historical migration/);
- assert.throws(()=>memoryRepairJournal(saved[journalFile],saved[sqlFile]+'changed'),/Unreviewed/);
+  rmSync(join(root,extraSql));run(root,'add','.');run(root,'commit','-qm','restore fixture');
+  const oldSql='drizzle/0000_lively_owl.sql';write(root,oldSql,readFileSync(join(root,oldSql),'utf8')+'\n-- historical mutation');run(root,'add','.');run(root,'commit','-qm','historical SQL');
+  assert.throws(()=>verifySource(root,{...plan,candidateCommit:run(root,'rev-parse','HEAD')}),/Historical migration/);
+  assert.throws(()=>memoryRepairJournal(saved[journalFile],{...saved,[sqlFile]:saved[sqlFile]+'changed'}),/Unreviewed/);
+  if(transition===STILL_USER_SETTINGS_JOURNAL_TRANSITION){
+   assert.throws(()=>memoryRepairJournal(saved[journalFile],saved[settingsSql]),/Unreviewed/);
+   assert.throws(()=>memoryRepairJournal(saved[journalFile],{[settingsSql]:saved[settingsSql]}),/Unreviewed/);
+   assert.throws(()=>memoryRepairJournal(saved[journalFile],{...saved,[originalSql]:saved[originalSql]+'changed'}),/Unreviewed/);
+  }
+ });
+}
+test('source migration changes cannot bypass qualification by leaving the policy unchanged',async t=>{
+ const {root,plan}=await fixture(t);
+ write(root,journalFile,readFileSync(join(root,journalFile),'utf8')+'\n');run(root,'add','.');run(root,'commit','-qm','undeclared journal');
+ assert.throws(()=>verifySource(root,{...plan,candidateCommit:run(root,'rev-parse','HEAD'),allowedPaths:[...plan.allowedPaths,'drizzle/']}),/Unreviewed/);
 });

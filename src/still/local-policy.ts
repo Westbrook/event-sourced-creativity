@@ -1,11 +1,12 @@
 import type { CreativeProjection } from '../model/events.ts';
 import type { Action, Position, RankingRow } from './decisions.ts';
 import { editableIdea } from './composition.ts';
+export const isPersonalAction=(id:string)=>id==='intent'||id==='user-settings';
 export const DOCUMENT_RETURN_REASON='Page navigation: return from the selected idea to review the whole document or choose an output.';
 export function isIdeaPage(pos:Pick<Position,'view'|'blockId'|'palette'>){return pos.view==='document'&&!!pos.blockId&&!pos.palette;}
-/** Document-wide maintenance stays in the palette while one idea is in focus. */
+/** Personal controls stay in the palette; document maintenance also stays there while one idea is focused. */
 export function pageToolbarCandidates<T extends {id:string}>(actions:T[],pos:Pick<Position,'view'|'blockId'|'palette'>):T[]{
-  return isIdeaPage(pos)?actions.filter(a=>a.id!=='rename'):actions;
+  return actions.filter(a=>!isPersonalAction(a.id)&&(!isIdeaPage(pos)||a.id!=='rename'));
 }
 /** Reserve parent navigation without altering Jev scores or claiming a generation intent. */
 export function withDocumentReturn<T extends {id:string}>(actions:T[],eligible:T[],pos:Pick<Position,'view'|'blockId'|'palette'>,limit=4):T[]{
@@ -76,7 +77,7 @@ export function localActionRules(p:CreativeProjection,pos:Position):LocalRule[]{
 }
 export function evaluateLocalActions(candidates:Action[],p:CreativeProjection,pos:Position){
   const rules=localActionRules(p,pos),selected:Action[]=[];
-  const ranked=pageToolbarCandidates([...candidates],pos).filter(a=>a.id!=='intent'&&!formats.includes(a.id)).sort((a,b)=>{
+  const ranked=pageToolbarCandidates([...candidates],pos).filter(a=>!formats.includes(a.id)).sort((a,b)=>{
     const left=rules.findIndex(r=>r.id===a.id),right=rules.findIndex(r=>r.id===b.id);
     return (left<0?Infinity:left)-(right<0?Infinity:right)||a.label.localeCompare(b.label);
   });

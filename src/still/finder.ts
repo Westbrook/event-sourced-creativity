@@ -1,6 +1,6 @@
 import type { Action } from './decisions.ts';
 export const UTILITIES=[{id:'ui:workspaces',label:'Workspaces'},{id:'ui:refresh',label:'Refresh'},{id:'ui:developer',label:'Developer panel'}];
-const terms:Record<string,string[]>={model3d:['3d','mesh','three dimensional'],image:['image','picture','illustration'],short_story:['story','fiction'],scene:['scene'],slides:['slides','presentation'],storyboard:['storyboard'],video:['video','motion','movie'],audio:['audio','sound','music'],'use-in':['add this to','use in','attach to','give to','put this in','connect to'],'split-context':['split','break into','smaller pieces'],'research-context':['research','investigate','learn more'],'find-references':['find reference','reference images','reference files'],'supply-reference':['upload','attach file','supply reference','my file'],compose:['arrange','recompose','combine'],intent:['direction','goal']};
+const terms:Record<string,string[]>={model3d:['3d','mesh','three dimensional'],image:['image','picture','illustration'],short_story:['story','fiction'],scene:['scene'],slides:['slides','presentation'],storyboard:['storyboard'],video:['video','motion','movie'],audio:['audio','sound','music'],'use-in':['add this to','use in','attach to','give to','put this in','connect to'],'split-context':['split','break into','smaller pieces'],'research-context':['research','investigate','learn more'],'find-references':['find reference','reference images','reference files'],'supply-reference':['upload','attach file','supply reference','my file'],compose:['arrange','recompose','combine'],intent:['direction','goal','set next goal'],'user-settings':['settings','preferences','suggestion history','privacy']};
 export function findActions(query:string,candidates:Action[]){
   const q=query.trim().toLowerCase();
   if(!q)return [...candidates,...UTILITIES];
@@ -10,6 +10,7 @@ export function findActions(query:string,candidates:Action[]){
 export function explicitAction(query:string,candidates:Action[]):string{
   const q=query.trim().toLowerCase();if(!q)return '';
   const exact=candidates.find(a=>[a.id,a.label.toLowerCase()].includes(q));if(exact)return exact.id;
+  if(q==='set next goal'&&candidates.some(a=>a.id==='intent'))return 'intent';
   if(/\b(not|never|don't|instead|or|and|without)\b/.test(q))return '';
   if(/^(?:add|attach|give|connect) (?:this|it) to .+$|^use (?:this|it) in .+$/.test(q))return candidates.some(a=>a.id==='use-in')?'use-in':'';
   const command=q.match(/^(?:(?:make|create|generate|render|write) (?:(?:this|it|an?|the) )?(?:as |into )?)?(3d(?: model)?|three dimensional(?: model)?|image|picture|illustration|short story|story|scene|slides|presentation|storyboard|video|audio)$/);

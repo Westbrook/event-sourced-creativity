@@ -9,7 +9,8 @@ export const ACTION_HELP:Record<string,string>={
  'add-context':'Add one idea, detail, constraint, or reference to this document.',
  'reuse':'Copy an existing idea from another document into this document.',
  'clarify':'Add a direction idea describing what matters for this document.',
- 'intent':'Tell Still your next goal to guide its action suggestions.',
+ 'intent':'Set or manage your optional goal and success criteria to guide Still’s action suggestions.',
+ 'user-settings':'Manage your personal suggestion history, feedback and quality assessments.',
  'edit-block':'Change this idea without rewriting the rest of the document.',
  'split-context':'Break this idea into smaller pieces you can edit and reuse separately.',
  'research-context':'Find sourced details that make this idea more precise, then review what to add.',
@@ -67,6 +68,10 @@ export function workflowHelp(mode:string,id:string,label:string,unconfirmedSave=
  }
  const help:Record<string,string>={
   'Suggest actions':'Use this goal to update Still’s suggested actions.',
+  'Save goal':'Use this optional goal and success criteria to guide action suggestions.',
+  'Complete goal':'Mark your current goal complete and stop using it for suggestions.',
+  'Abandon goal':'Mark your current goal abandoned and stop using it for suggestions.',
+  'Clear goal':'Remove your current goal and success criteria.',
   'Open':'Switch to the selected workspace.',
   'Copy idea':'Save an independent copy of this idea in the selected document.',
   'Link idea':'Use this existing idea in the selected destination.',

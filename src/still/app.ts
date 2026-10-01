@@ -15,7 +15,7 @@ import { IdeaEditCanceled } from '../ui/shared-idea-choice.ts';
 import { attachIdeaEvents, ideaDocumentUses } from '../model/project-ideas.ts';
 import './rejection-page.ts';
 import { stillPageTitle } from './page-title.ts';
-import { isIdeaPage, pageToolbarCandidates, withDocumentReturn, DOCUMENT_RETURN_REASON } from './local-policy.ts';
+import { isIdeaPage, isPersonalAction, pageToolbarCandidates, withDocumentReturn, DOCUMENT_RETURN_REASON } from './local-policy.ts';
 import {matchingIdeaAssessment,cachedIdeaAssessment,type IdeaAssessment} from './idea-assessment.ts';
 import type { WorkflowAction, WorkflowToolbar } from './workflow-toolbar.ts';
 import './all-list.ts';
@@ -99,12 +99,16 @@ export class StillApp extends LitElement {
   private actionOperationFiles:FileRetrievalTicket[]=[];
   private actionOperationSnapshot(){const c=this.client;return {jobs:c.jobs,events:c.events,jobsLoaded:c.jobsLoaded,jobsError:c.jobsError};}
   private actionSettingsOpen=false;
+  private actionSettingsPending=false;
+  private actionSettingsRead=0;
   private appliedDecisionId:string|undefined;
   private appliedPaletteDecisionId:string|undefined;
   private appliedDecisionStarted:number|undefined;
   private appliedPaletteDecisionStarted:number|undefined;
   private goalCriteriaDraft='';
   private rememberGoal=false;
+  private goalDraftPending=false;
+  private goalStoredId='';
   private feedbackAction='';
   private feedbackChoice:NonNullable<ActionObservationInput['feedback']>='not-useful-now';
   private feedbackDuration='1';
@@ -154,7 +158,7 @@ export class StillApp extends LitElement {
     if(!ACTIONS.some(action=>action.id===id))return;
     this.observeExposedActions();
     const decisionId=source==='palette'?this.appliedPaletteDecisionId:source==='direct'?undefined:this.appliedDecisionId;
-    this.actionContext.select(id,decisionId,this.mode==='generate'?'formats':this.client.position.view,source);
+    this.actionContext.select(id,decisionId,this.mode==='generate'?'formats':this.client.position.view,source,id==='user-settings'?{preserveInvocation:true}:undefined);
   }
   private toolbarMotion?:ToolbarMotion;
   private toolbarDecisionPending=false;
@@ -438,8 +442,12 @@ export class StillApp extends LitElement {
   private providerConsent = false;
   private disposed = false;
   private readonly popstate = (event:PopStateEvent) => {
-    if(this.loading||this.address()===this.activeAddress)return;
+    if(this.loading)return;
     const index=Number.isSafeInteger(event.state?.stillIndex)?event.state.stillIndex:null;
+    if(this.address()===this.activeAddress){if(index!==null)this.historyIndex=index;return;}
+    if(this.actionSettingsOpen&&!this.actionSettingsBusy&&this.address()===stillURL({...this.currentRoute(),mode:this.mode},this.activeAddress)){
+      this.historyIndex=index??0;this.closeActionSettings();return;
+    }
     if(this.preventsRouteChange()){
       if(index!==null&&index!==this.historyIndex)history.go(this.historyIndex-index);
       else history.pushState({...history.state,stillIndex:this.historyIndex},'',this.activeAddress);
@@ -477,7 +485,7 @@ export class StillApp extends LitElement {
   }
   disconnectedCallback() { this.actionContext.enter('',{});super.disconnectedCallback(); this.toolbarMotion?.dispose();this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort(); window.removeEventListener('scroll', this.updateHeaderScroll); this.onboardingHelp.dispose(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect();cancelAnimationFrame(this.dockFitFrame); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
   private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.richBodyDraft,this.preferenceDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount,g?.settings,...(this.mode==='intent'?[this.goalCriteriaDraft,this.rememberGoal]:[])]);}
-  private preventsRouteChange(unloading=false){return this.busy&&!this.loading||this.composing||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange||!!this.querySelector<StillCreationFlow>('still-creation-flow')?.[unloading?'preventsUnload':'preventsRouteChange'];}
+  private preventsRouteChange(unloading=false){return this.actionSettingsBusy||this.busy&&!this.loading||this.composing||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange||!!this.querySelector<StillCreationFlow>('still-creation-flow')?.[unloading?'preventsUnload':'preventsRouteChange'];}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange(true)) { e.preventDefault(); e.returnValue = ''; } };
   private changed() {
     this.actionContext.enter(this.client.session?.policy.accepted&&!this.client.session.impersonation?`${this.client.epoch}/${this.client.scopeKey}`:'',this.actionContextScope());
@@ -488,6 +496,8 @@ export class StillApp extends LitElement {
     if(document.title!==title)document.title=title;
   }
   protected updated() {
+    if(this.actionSettingsOpen&&this.actionSettingsPending&&this.actionContext.loaded){this.actionSettingsPending=false;this.initializeActionSettings();this.requestUpdate();}
+    if(this.mode==='intent'&&this.goalDraftPending&&this.actionContext.loaded){this.goalDraftPending=false;if(this.draftSignature()===this.draftBaseline)this.begin('intent',false);}
     this.actionContext.enter(this.client.session?.policy.accepted&&!this.client.session.impersonation?`${this.client.epoch}/${this.client.scopeKey}`:'',this.actionContextScope());
     this.actionOperations.reconcile(this.interactionScope(),this.actionOperationSnapshot());
     this.toolbarMotion?.attach();
@@ -628,7 +638,7 @@ export class StillApp extends LitElement {
     this.activeAddress=url;
     this.updatePageTitle();
   }
-  private resetStep(){this.appliedDecisionId=undefined;this.appliedPaletteDecisionId=undefined;this.toolbarContextWaiting=false;this.toolbarDecisionSettled=false;this.toolbarDecisionPending=false;this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.ideaRequestPending=false;this.ideaAssessment=undefined;this.ideaAssessmentTrace=undefined;this.listDisplay.leave();this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationDrafts.clear();this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
+  private resetStep(){this.appliedDecisionId=undefined;this.appliedPaletteDecisionId=undefined;this.toolbarContextWaiting=false;this.toolbarDecisionSettled=false;this.toolbarDecisionPending=false;this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.ideaRequestPending=false;this.ideaAssessment=undefined;this.ideaAssessmentTrace=undefined;this.listDisplay.leave();this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;this.actionSettingsOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationDrafts.clear();this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
     if(this.mode)this.actionContext.cancel();else this.actionContext.finish();
     this.appliedDecisionId=undefined;this.appliedPaletteDecisionId=undefined;
@@ -652,7 +662,7 @@ export class StillApp extends LitElement {
   };
   private turnPage(page:number){if(this.listKind()&&this.listDisplay.all)return;this.toolbarDecisionSettled=false;this.toolbarMotion?.begin('page');this.dockTouched=false;this.page=Math.max(0,page);this.writeRoute();this.changed();this.decide();}
   private turnItem(item:number){this.toolbarDecisionSettled=false;this.toolbarMotion?.begin('item');this.dockTouched=false;this.itemIndex=item;this.writeRoute();this.changed();this.decide();}
-  private candidates() { return eligibleActions(this.client.projection, this.decisionPosition(), this.client.abilities); }
+  private candidates() { return eligibleActions(this.client.projection, this.decisionPosition(), this.client.abilities).filter(action=>!this.client.session?.impersonation||!isPersonalAction(action.id)); }
   private decide(bypass=false) {
     if(this.toolbarDecisionSettled&&!bypass)return;
     this.toolbarMotion?.ensure();
@@ -793,6 +803,7 @@ export class StillApp extends LitElement {
   private visibleToolbarActions(){return [...this.querySelectorAll<HTMLElement>('.action-dock [data-action-id]')].map(e=>e.dataset.actionId!).filter(id=>this.candidates().some(a=>a.id===id));}
   private paletteOptions(){return paletteActions(this.paletteQuery,this.candidates(),this.paletteOrder,this.listOptions()).filter(a=>this.desktop.matches||a.id!=='ui:developer');}
   private openFinder(entry:PaletteFeedback['entry']='direct'){
+    if(this.actionSettingsOpen||this.actionSettingsBusy)return;
     if(!this.paletteOpen)this.attention?.summary.explore('palette');
     const visible=this.visibleToolbarActions();
     this.paletteFeedback={entry,surface:this.mode?'workflow':this.moreOpen?'more':'toolbar',toolbar:this.moreOpen?this.toolbarSeen:visible,more:this.moreOpen?visible:[]};
@@ -835,8 +846,8 @@ export class StillApp extends LitElement {
   private openFoundAction(id=this.paletteChoice,inferred=this.finderInferred){
     if(!id)return;
     if(this.loading||this.startupFailed||!this.client.session?.policy.accepted){this.finderMessage='Open your workspace first.';this.changed();return;}
-    if(this.preventsRouteChange()){this.finderMessage='Finish or close the current step first.';this.changed();return;}
-    this.closeFinder();this.suggestionTargets={};this.useInTarget='';
+    if(this.preventsRouteChange()&&(id!=='user-settings'||this.busy||this.composing||this.actionSettingsBusy)){this.finderMessage='Finish or close the current step first.';this.changed();return;}
+    this.closeFinder();if(id!=='user-settings'){this.suggestionTargets={};this.useInTarget='';}
     if(this.runListAction(id))return;
     if(id==='ui:workspaces'){this.begin('workspaces');return;}
     if(id==='ui:refresh'){void this.run(async()=>{await this.client.load({hydrateContent:false});this.readRoute();this.closeMode();});return;}
@@ -866,8 +877,15 @@ export class StillApp extends LitElement {
     </en-dialog>`;
   }
   private button(label: string, action: (event:MouseEvent) => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${this.dockId(helpId)} data-action-id=${actionId} data-action-source=${source} form=${!this.measuringDock&&actionId==='workflow:save'&&this.isCreationMode()?'still-create-form':nothing} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
-  private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { if(rows===1)return html`<en-text-field label=${label} .value=${live(value)} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.changed();}}></en-text-field>`; return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
+  private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { if(rows===1)return html`<en-text-field label=${label} .value=${live(value)} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted || this.mode==='intent'&&!this.actionContext.loaded} @en-input=${(e: CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.changed();}}></en-text-field>`; return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted || this.mode==='intent'&&!this.actionContext.loaded} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
   private openActionSettings(){
+    if(this.actionSettingsOpen||this.actionSettingsBusy)return;
+    const read=++this.actionSettingsRead,scope=this.interactionScope(),retry=this.actionContext.value.coverage?.status==='unavailable';
+    this.actionSettingsPending=!this.actionContext.loaded;this.initializeActionSettings();
+    this.actionSettingsOpen=true;this.dockTouched=true;this.changed();
+    if(retry)void this.actionContext.refresh().then(()=>{if(!this.actionSettingsOpen||read!==this.actionSettingsRead||scope!==this.interactionScope())return;this.initializeActionSettings();this.changed();});
+  }
+  private initializeActionSettings(){
     this.feedbackSource=this.paletteOpen?'palette':this.moreOpen?'more':'toolbar';
     this.feedbackDecisionId=this.paletteOpen?this.appliedPaletteDecisionId:this.appliedDecisionId;
     this.feedbackActionIds=this.paletteOpen?this.paletteOptions().filter(action=>ACTIONS.some(a=>a.id===action.id)).map(action=>action.id):this.visibleToolbarActions();
@@ -877,11 +895,13 @@ export class StillApp extends LitElement {
     this.qualityAcceptance=this.qualityReview?.assessment?.acceptance??'unknown';
     this.qualityCriteria=goal?.criteria.map((_,index)=>({index,result:this.qualityReview?.assessment?.criteria.find(row=>row.index===index)?.result??'unknown'}))??[];
     this.feedbackAction=this.feedbackActionIds[0]??(this.feedbackReceipt?'receipt:'+this.feedbackReceipt.id:'');this.feedbackChoice='not-useful-now';this.actionSettingsMessage='';
-    this.actionSettingsOpen=true;this.dockTouched=true;this.changed();
   }
   private closeActionSettings(){
     if(this.actionSettingsBusy)return;
-    this.actionSettingsOpen=false;this.changed();
+    this.actionSettingsOpen=false;
+    if(this.routeMode==='user-settings'){this.routeMode=this.mode;this.writeRoute(true);}
+    const address=this.activeAddress;this.changed();
+    void this.updateComplete.then(async()=>{await this.querySelector<HTMLElement & {updateComplete:Promise<unknown>}>('en-dialog.user-settings')?.updateComplete;if(this.actionSettingsOpen||this.paletteOpen||this.disposed||address!==this.activeAddress)return;const target=this.querySelector<HTMLElement>('.toolbar-motion-live [data-action-id="ui:palette"]');if(target)target.focus({preventScroll:true});else this.focusContent();});
     if(this.actionContextNeedsRefresh){this.actionContextNeedsRefresh=false;this.decisionMemory.clear();this.toolbarDecisionSettled=false;this.dockTouched=false;this.decide();}
   }
   private async updateActionSettings(work:()=>Promise<void>,message:string){
@@ -911,26 +931,25 @@ export class StillApp extends LitElement {
     </details>`;
   }
   private async finishGoal(status:'completed'|'abandoned'|'clear'){
-    await this.actionContext.finishGoal(status);this.client.position.intent='';this.client.position.goal=undefined;
+    if(this.goalStoredId&&this.actionContext.value.goal?.id===this.goalStoredId)await this.actionContext.finishGoal(status);this.client.position.intent='';this.client.position.goal=undefined;
+    this.actionContext.finish();this.decisionMemory.clear();this.closeMode();this.notice=status==='completed'?'Goal completed.':status==='abandoned'?'Goal abandoned.':'Goal cleared.';
   }
   private saveActionFeedback(){
     const receipt=this.feedbackReceipt&&this.feedbackAction==='receipt:'+this.feedbackReceipt.id?this.feedbackReceipt:undefined;
     return this.actionContext.feedback(receipt?.actionId??this.feedbackAction,receipt?.decisionId??this.feedbackDecisionId,this.feedbackChoice,receipt?.surface??this.client.position.view,receipt?.source??this.feedbackSource,new Date(Date.now()+Number(this.feedbackDuration)*86400000).toISOString(),receipt?.id);
   }
   private renderActionSettings(){
-    const context=this.actionContext.value,goal=this.client.position.goal??context.goal;
-    const goalText=goal?.text||this.client.position.intent;
+    const context=this.actionContext.value;
     const scope=this.client.position.documentId?'this document':this.client.position.projectId?'this project':'your project list';
-    const disabled=this.actionSettingsBusy||!this.actionContext.loaded;
-    return html`<en-dialog label="Goal and suggestions" .open=${this.actionSettingsOpen} closedby="any" @en-change=${(event:CustomEvent)=>{if(event.target===event.currentTarget&&event.detail.proposed===false)this.closeActionSettings();}}>
+    const unavailable=context.coverage?.status==='unavailable';
+    const disabled=this.actionSettingsBusy||!this.actionContext.loaded||unavailable;
+    return html`<en-dialog class="user-settings" label="User settings" .open=${this.actionSettingsOpen} .dismissible=${!this.actionSettingsBusy} closedby="any" @en-change=${(event:CustomEvent)=>{if(event.target===event.currentTarget&&event.detail.proposed===false){if(this.actionSettingsBusy)event.preventDefault();else this.closeActionSettings();}}}>
       <section class="suggestion-preferences">
-        <h2>Your goal</h2>
-        ${goalText?html`<p>${goalText}</p>${goal?.criteria.length?html`<ul>${goal.criteria.map(criterion=>html`<li>${criterion}</li>`)}</ul>`:nothing}<p>${this.client.position.intent?'For this session.':`Remembered for ${scope} until ${new Date(context.goal!.expiresAt).toLocaleDateString()}.`}</p>`:html`<p>Set an optional goal to guide suggestions for ${scope}.</p>`}
-        <div class="form-actions"><en-button variant="secondary" ?disabled=${disabled||this.preventsRouteChange()} @click=${()=>{this.closeActionSettings();this.begin('intent');}}>${goalText?'Edit goal':'Set goal'}</en-button>
-          ${goalText?html`<en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(()=>this.finishGoal('completed'),'Goal completed.')}>Complete goal</en-button><en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(()=>this.finishGoal('abandoned'),'Goal abandoned.')}>Abandon goal</en-button><en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(()=>this.finishGoal('clear'),'Goal cleared.')}>Clear goal</en-button>`:nothing}</div>
         <h2>Suggestion history</h2>
-        <p>Optionally remember which actions you see, choose, save or cancel in ${scope}, and your feedback, for up to 30 days. This helps suggest useful next steps. Scrolling and attention stay on this device and are not sent.</p>
-        <label class="check"><input type="checkbox" .checked=${context.enabled} ?disabled=${disabled} @change=${(event:Event)=>void this.updateActionSettings(()=>this.actionContext.setEnabled((event.target as HTMLInputElement).checked),(event.target as HTMLInputElement).checked?'Suggestion history enabled for up to 30 days.':'Suggestion history disabled and saved history erased. Your remembered goal is unchanged.')} /> Remember action outcomes for ${scope}</label>
+        <p>Still automatically saves the actions you see, choose, save or cancel, and your feedback, for up to 30 days to help suggest useful next steps. This private history is separate from the creative Event Log. Scrolling and attention stay on this device and are not sent.</p>
+        <p>This setting applies to your account across workspaces. Turning it off erases saved suggestion history and stops new history. Your remembered goals are unchanged.</p>
+        <label class="check"><input type="checkbox" .checked=${context.enabled} .indeterminate=${!this.actionContext.loaded||unavailable} ?disabled=${disabled} @change=${(event:Event)=>void this.updateActionSettings(()=>this.actionContext.setEnabled((event.target as HTMLInputElement).checked),(event.target as HTMLInputElement).checked?'Suggestion history is saved automatically for up to 30 days across your account.':'Suggestion history is off across your account and saved history was erased. Your remembered goals are unchanged.')} /> Save suggestion history</label>
+        ${!this.actionContext.loaded?html`<p role="status">Loading your saved setting…</p>`:unavailable?html`<p role="status">Your saved setting is unavailable. It has not been changed.</p>`:nothing}
         ${context.enabled&&(this.feedbackActionIds.length||this.feedbackReceipt)?html`<h2>Suggestion feedback</h2>
           <en-select class="select-label" label="Action" .value=${this.feedbackAction} ?disabled=${disabled} @en-change=${(event:CustomEvent<{proposed:string}>)=>{this.feedbackAction=event.detail.proposed;this.changed();}}>${this.feedbackActionIds.map(id=>html`<en-select-option value=${id}>${ACTIONS.find(action=>action.id===id)?.label??id}</en-select-option>`)}${this.feedbackReceipt?html`<en-select-option value=${'receipt:'+this.feedbackReceipt.id}>Last confirmed operation: ${ACTIONS.find(action=>action.id===this.feedbackReceipt?.actionId)?.label??this.feedbackReceipt.actionId}</en-select-option>`:nothing}</en-select>
           <en-select class="select-label" label="Your feedback" .value=${this.feedbackChoice} ?disabled=${disabled} @en-change=${(event:CustomEvent<{proposed:NonNullable<ActionObservationInput['feedback']>}>)=>{this.feedbackChoice=event.detail.proposed;this.changed();}}><en-select-option value="not-useful-now">Not useful now</en-select-option><en-select-option value="already-done">Already done</en-select-option><en-select-option value="different-goal">Different goal</en-select-option><en-select-option value="keep-available">Keep available</en-select-option><en-select-option value="helpful">Helped my work</en-select-option><en-select-option value="unhelpful">Did not help my work</en-select-option></en-select>
@@ -939,7 +958,7 @@ export class StillApp extends LitElement {
           <en-button variant="secondary" ?disabled=${disabled||!this.feedbackAction} @click=${()=>void this.updateActionSettings(()=>this.saveActionFeedback(),'Feedback saved for future suggestions.')}>Save feedback</en-button>
         `:nothing}
         ${this.renderQualityReview(disabled)}
-        <div class="form-actions"><en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(async()=>{await this.actionContext.erase();this.client.position.intent='';this.client.position.goal=undefined;},'Saved suggestion history and remembered goal erased.')}>Erase saved suggestion history and goal</en-button></div>
+        <div class="form-actions"><en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(async()=>{await this.actionContext.erase();this.client.position.intent='';this.client.position.goal=undefined;},'Saved suggestion history and remembered goal erased for this scope. New history is still saved when Save suggestion history is on.')}>Erase saved history and goal for ${scope}</en-button></div>
         ${this.actionSettingsMessage||this.actionContext.error?html`<p role="status">${this.actionSettingsMessage||this.actionContext.error}</p>`:nothing}
       </section><en-button slot="footer" variant="secondary" ?disabled=${this.actionSettingsBusy} @click=${()=>this.closeActionSettings()}>Done</en-button>
     </en-dialog>`;
@@ -948,13 +967,14 @@ export class StillApp extends LitElement {
   private begin(mode: string, updateURL=true) {
     if(mode==='surprise')mode='add-context'; // Legacy entry points use the ordinary idea form.
     if(mode==='actions'){this.routeMode='actions';this.openFinder();if(updateURL)this.writeRoute();return;}
+    if(mode==='user-settings'){this.changed();this.routeMode='user-settings';this.openActionSettings();if(updateURL)this.writeRoute();return;}
     this.toolbarDecisionSettled=false;this.toolbarDecisionPending=false;this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.toolbarMotion?.ensure();
     this.moreOpen=false;
     this.developerPending=false;
     this.pendingBlock = null; this.mode = mode;this.routeMode=mode; ++this.decisionTicket; clearTimeout(this.decisionTimer); this.error = ''; this.choice = ''; this.titleDraft = ''; this.bodyDraft = ''; this.kindDraft = 'direction';
     if (mode === 'edit-block') { const block = this.client.projection.libraryBlocks.find(b => b.id === this.client.position.blockId); this.bodyDraft = text(block?.properties.text); this.titleDraft = block?.handle ?? ''; this.kindDraft = block?.type ?? 'message'; this.editBase = { text: text(block?.properties.text) };this.richEditIssue='';this.richBodyDraft=undefined;this.preferenceDraft=Array.isArray(block?.properties.preferred_output_kinds)?block!.properties.preferred_output_kinds as OutputKind[]:[];try{this.richBodyDraft=block&&Object.hasOwn(block.properties,'rich_text_body')?decodeIdeaBody(block.properties.rich_text_body):plainTextIdeaBody(this.bodyDraft);}catch(error){this.richEditIssue=error instanceof Error?error.message:'Open this Idea in a compatible editor.';} }
     if (mode === 'rename') { this.titleDraft = this.client.projection.documentTitle; this.editBase = { title: this.titleDraft }; }
-    if (mode === 'intent') {const saved=this.actionContext.value.goal;this.bodyDraft=this.client.position.intent||saved?.text||'';this.goalCriteriaDraft=(this.client.position.goal?.criteria??saved?.criteria??[]).join('\n');this.rememberGoal=!!saved;}
+    if (mode === 'intent') {this.actionContext.enter(this.client.session?.policy.accepted&&!this.client.session.impersonation?`${this.client.epoch}/${this.client.scopeKey}`:'',this.actionContextScope());this.goalDraftPending=!this.actionContext.loaded;const saved=this.actionContext.value.goal;this.goalStoredId=this.client.position.intent?'':saved?.id??'';this.bodyDraft=this.client.position.intent||saved?.text||'';this.goalCriteriaDraft=(this.client.position.goal?.criteria??saved?.criteria??[]).join('\n');this.rememberGoal=!!this.goalStoredId;}
     if (mode === 'clarify') { this.mode = 'add-context'; this.titleDraft = 'The heart of it'; this.kindDraft = 'direction'; }
     if (mode === 'edit-artifact') { const a = this.client.projection.artifacts.find(x => x.id === this.client.position.outputId); const content = parseDocumentArtifactContent(a?.contentRef ? this.client.content[a.contentRef] : undefined); this.editBase = { revision: a ? documentArtifactRevision(this.client.events, a.id) : 0, ...(a && ['slides','storyboard'].includes(a.kind) ? {item:this.itemIndex} : {}) }; this.bodyDraft = this.editBase.item !== undefined ? (content?.items[this.itemIndex]?.body ?? a?.items[this.itemIndex]?.body ?? '') : content?.content_markdown ?? a?.items.map(i => `## ${i.title}\n\n${i.body}`).join('\n\n') ?? ''; }
     this.draftBaseline=this.draftSignature();if(updateURL)this.writeRoute();this.changed(); this.focusContent();
@@ -1109,7 +1129,7 @@ export class StillApp extends LitElement {
       const text=this.bodyDraft.trim(),criteria=this.goalCriteriaDraft.split('\n').map(line=>line.trim()).filter(Boolean);
       if(text.length>2000||criteria.length>5||criteria.some(criterion=>criterion.length>240))throw new Error('Use a goal of up to 2,000 characters and at most five success criteria of 240 characters each.');
       if(this.rememberGoal&&text){await this.actionContext.saveGoal(text,criteria);c.position.intent='';c.position.goal=undefined;}
-      else {if(this.actionContext.value.goal)await this.actionContext.finishGoal('clear');c.position.intent=text;c.position.goal=cleanExplicitGoal({source:'explicit-user',text,criteria});}
+      else {if(this.goalStoredId&&this.actionContext.value.goal?.id===this.goalStoredId)await this.actionContext.finishGoal('clear');c.position.intent=text;c.position.goal=cleanExplicitGoal({source:'explicit-user',text,criteria});}
       this.actionContext.finish();this.decisionMemory.clear();this.closeMode();this.notice=text?'Goal updated.':'Goal cleared.';return;
     }
     else if (this.mode === 'edit-artifact') { if (this.missingWriting()) throw new Error('Wait for the writing to load.'); await c.editArtifact(c.position.outputId, this.editBase.item !== undefined ? (parseDocumentArtifactContent(c.content[p.artifacts.find(a => a.id === c.position.outputId)?.contentRef ?? ''])?.content_markdown ?? '') : this.bodyDraft, this.editBase.revision ?? 0, this.editBase.item !== undefined ? [{index:this.editBase.item,body:this.bodyDraft}] : undefined); this.closeMode(); }
@@ -1350,9 +1370,9 @@ export class StillApp extends LitElement {
     if (mode === 'workspaces') return html`<section class="form-page"><h1>Workspaces</h1><en-select class="select-label" label="Workspace" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Personal projects</en-select-option>${this.client.session?.projects?.map(p => html`<en-select-option value=${p.projectAccessId}>${p.projectName} · ${p.role}</en-select-option>`)}</en-select></section>`;
     if (mode === 'reuse') return html`<section class="form-page"><h1>Use existing idea</h1>${this.renderWriteRecovery()}<en-select class="select-label" label="Idea" .value=${this.choice} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.choice = e.detail.proposed; this.changed(); }}><en-select-option value="">Choose an idea</en-select-option>${p.libraryBlocks.filter(b => !b.removed && !p.blocks.some(used=>used.id===b.id)).map(b => html`<en-select-option value=${b.id}>${b.handle} · ${b.type}</en-select-option>`)}</en-select><p class="context-preview">${text(p.libraryBlocks.find(b => b.id === this.choice)?.properties.text)}</p></section>`;
     if(mode==='edit-block'){const block=p.libraryBlocks.find(b=>b.id===this.client.position.blockId);return html`<section class="form-page"><span class="eyebrow">${p.projectName}</span><h1>Edit idea</h1>${this.renderWriteRecovery()}${this.richEditIssue?html`<p role="status">${this.richEditIssue}</p><blockquote>${this.bodyDraft}</blockquote>`:this.richBodyDraft&&block?html`<still-idea-body-editor .body=${this.richBodyDraft} .blocks=${p.libraryBlocks} .projectId=${block.projectId} .blockId=${block.id} .disabled=${this.busy||block.locked} @idea-body-change=${(event:CustomEvent<IdeaBodyV1>)=>{this.richBodyDraft=event.detail;this.bodyDraft=ideaBodyText(event.detail);this.changed();}}></still-idea-body-editor>${Object.hasOwn(block.properties,'preferred_output_kinds')?html`<fieldset><legend>Preferred Outputs</legend><p>Keep the visible “Preferred outputs” line consistent with these choices. Other Outputs remain available.</p>${OUTPUT_KINDS.map(kind=>html`<label><input type="checkbox" .checked=${this.preferenceDraft.includes(kind)} @change=${(event:Event)=>{this.preferenceDraft=(event.target as HTMLInputElement).checked?[...new Set([...this.preferenceDraft,kind])]:this.preferenceDraft.filter(value=>value!==kind);this.changed();}}>${OUTPUT_KIND_LABELS[kind]}</label>`)}</fieldset>`:nothing}`:nothing}</section>`;}
-    const titles: Record<string, string> = { 'new-project': 'New project', 'new-document': 'New document', 'add-context': 'Add idea', 'edit-block': 'Edit idea', rename: 'Rename document', intent: 'Set next goal', 'edit-artifact': 'Edit result' };
+    const titles: Record<string, string> = { 'new-project': 'New project', 'new-document': 'New document', 'add-context': 'Add idea', 'edit-block': 'Edit idea', rename: 'Rename document', intent: 'Your goal', 'edit-artifact': 'Edit result' };
     const named = ['new-project', 'new-document', 'add-context', 'rename'].includes(mode);
-    const goalFields=mode==='intent'?html`${this.field('Success criteria · optional, one per line',this.goalCriteriaDraft,value=>{this.goalCriteriaDraft=value;},3)}<label class="check"><input type="checkbox" .checked=${this.rememberGoal} ?disabled=${this.busy||!this.actionContext.loaded} @change=${(event:Event)=>{this.rememberGoal=(event.target as HTMLInputElement).checked;this.changed();}} /> Remember this goal for ${this.client.position.documentId?'this document':this.client.position.projectId?'this project':'the project list'} for up to 30 days</label><p>Leave this unchecked to use the goal only in this session. Goals are optional and are never inferred from clicks.</p>`:nothing;
+    const goalFields=mode==='intent'?html`${this.field('Success criteria · optional, one per line',this.goalCriteriaDraft,value=>{this.goalCriteriaDraft=value;},3)}<label class="check"><input type="checkbox" .checked=${this.rememberGoal} ?disabled=${this.busy||!this.actionContext.loaded||this.actionContext.value.coverage?.status==='unavailable'} @change=${(event:Event)=>{this.rememberGoal=(event.target as HTMLInputElement).checked;this.changed();}} /> Remember this goal for ${this.client.position.documentId?'this document':this.client.position.projectId?'this project':'the project list'} for up to 30 days</label><p>Leave this unchecked to use the goal only in this session. Goals are optional and are never inferred from clicks.</p>${this.goalStoredId&&this.actionContext.value.goal?.id===this.goalStoredId?html`<p>Remembered until ${new Date(this.actionContext.value.goal.expiresAt).toLocaleDateString()}. Complete, abandon or clear the saved goal from the action bar. Save or discard edits first.</p>`:this.client.position.intent?html`<p>This session has an active goal. Complete, abandon or clear it from the action bar. Save or discard edits first.</p>`:nothing}${this.actionContext.error?html`<p role="status">${this.actionContext.error}</p>`:nothing}`:nothing;
     const fields=html`${mode!=='new-project'&&p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${this.renderWriteRecovery()}${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' && mode !== 'new-project' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}${goalFields}`;
     return this.isCreationMode()
       ? html`<form id="still-create-form" class="form-page" @submit=${this.submitCreation} @keydown=${this.creationKeydown}>${fields}</form>`
@@ -1409,7 +1429,13 @@ export class StillApp extends LitElement {
       const back:WorkflowAction={id:'ui:back',label:'Back',run:()=>this.closeMode(),variant:'ghost'};
       if(this.mode==='edit-artifact'&&this.missingWriting())toolbar={actions:[back]};
       else if(this.mode==='workspaces')toolbar={actions:[{id:'workflow:open',label:'Open',variant:'primary',run:()=>void this.run(async()=>{await this.client.switchWorkspace(this.client.session?.projects?.find(p=>p.projectAccessId===this.choice));this.navigate(this.client.position.view,this.client.position);})},back]};
-      else toolbar={actions:[{id:'workflow:save',label:this.client.hasUnconfirmedWrite?'Check save':this.mode==='intent'?'Suggest actions':this.mode==='reuse'?'Use idea':'Save',variant:'primary',disabled:this.mode==='edit-block'&&!!this.richEditIssue||this.mode==='reuse'&&!this.choice&&!this.client.hasUnconfirmedWrite,run:()=>this.client.hasUnconfirmedWrite?void this.run(()=>this.checkSave()):this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},...(this.client.hasUnconfirmedWrite&&this.writeRecovery?.key===this.writeRecoveryKey()?[{id:'workflow:save-draft',label:'Save draft',variant:'secondary' as const,run:()=>void this.run(()=>this.saveUnconfirmedDraft())}]:[]),back]};
+      else if(this.mode==='intent'){
+        const hasGoal=!!(this.client.position.intent||this.client.position.goal?.text||this.actionContext.value.goal?.text),unavailable=this.actionContext.value.coverage?.status==='unavailable';
+        const disabled=!this.actionContext.loaded||unavailable&&this.rememberGoal;
+        const finishDisabled=!this.actionContext.loaded||unavailable&&!this.client.position.intent||this.draftSignature()!==this.draftBaseline;
+        toolbar={actions:[{id:'workflow:save',label:'Save goal',variant:'primary',disabled,run:()=>void this.run(()=>this.save())},...(hasGoal?(['completed','abandoned','clear'] as const).map(status=>({id:`workflow:goal-${status}`,label:status==='completed'?'Complete goal':status==='abandoned'?'Abandon goal':'Clear goal',variant:'secondary' as const,disabled:finishDisabled,run:()=>void this.run(()=>this.finishGoal(status))})):[]),back]};
+      }
+      else toolbar={actions:[{id:'workflow:save',label:this.client.hasUnconfirmedWrite?'Check save':this.mode==='reuse'?'Use idea':'Save',variant:'primary',disabled:this.mode==='edit-block'&&!!this.richEditIssue||this.mode==='reuse'&&!this.choice&&!this.client.hasUnconfirmedWrite,run:()=>this.client.hasUnconfirmedWrite?void this.run(()=>this.checkSave()):this.isCreationMode()?this.requestCreationSubmit():void this.run(()=>this.save())},...(this.client.hasUnconfirmedWrite&&this.writeRecovery?.key===this.writeRecoveryKey()?[{id:'workflow:save-draft',label:'Save draft',variant:'secondary' as const,run:()=>void this.run(()=>this.saveUnconfirmedDraft())}]:[]),back]};
     }
     toolbar={...toolbar,actions:toolbar.actions.map(action=>({...action,run:()=>{this.toolbarMotion?.ensure();action.run();}}))};
     if(!toolbar.actions.length&&!toolbar.status)return nothing;
@@ -1550,7 +1576,7 @@ export class StillApp extends LitElement {
   render() {
     const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
     const failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId && j.jobId !== displayedGeneration);
-    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${!this.loading&&c.session?.policy.accepted&&!c.session.impersonation?html`<en-button class="header-stamp suggestion-settings-button" variant="ghost" size="small" ?disabled=${this.busy||this.composing} @click=${()=>this.openActionSettings()}>Goal & suggestions</en-button>`:nothing}${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main><div class="dock-stack">${this.renderNotifications(failed)}<div class="toolbar-motion-root"><div class="toolbar-motion-live">${this.renderDock()}</div><div class="toolbar-motion-visual" aria-hidden="true" inert></div><span class="toolbar-motion-status" role="status" aria-live="polite"></span></div></div>${this.renderDockProbes()}${this.renderPalette()}${this.renderActionSettings()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-remember-lists=${this.setRememberLists} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-assess-ideas=${this.assessIdeasAgain} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report <en-icon name="arrow-right" aria-hidden="true"></en-icon></a>` : nothing}</div>`;
+    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main><div class="dock-stack">${this.renderNotifications(failed)}<div class="toolbar-motion-root"><div class="toolbar-motion-live">${this.renderDock()}</div><div class="toolbar-motion-visual" aria-hidden="true" inert></div><span class="toolbar-motion-status" role="status" aria-live="polite"></span></div></div>${this.renderDockProbes()}${this.renderPalette()}${this.renderActionSettings()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-remember-lists=${this.setRememberLists} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-assess-ideas=${this.assessIdeasAgain} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report <en-icon name="arrow-right" aria-hidden="true"></en-icon></a>` : nothing}</div>`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

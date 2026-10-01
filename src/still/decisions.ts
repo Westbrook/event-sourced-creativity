@@ -4,7 +4,7 @@ import { decisionEvidenceCoverage, evidenceRows, type EvidenceSource } from './d
 import { cleanExplicitGoal, cleanSurfaceContext, type ExplicitGoal, type SurfaceContext } from './workflow-state.ts';
 import { IDEA_ACTIONS, ideaActionTargets, ideaBenefitQuestions } from './idea-actions.ts';
 import { nextBestQuestion, toolbarDecisionContext } from './next-best.ts';
-import { evaluateLocalActions, localFormatRules, pageToolbarCandidates } from './local-policy.ts';
+import { evaluateLocalActions, isPersonalAction, localFormatRules, pageToolbarCandidates } from './local-policy.ts';
 import type { GenerationDecisionContext } from './generation-decision.ts';
 import type { PaletteFeedback } from './palette-feedback.ts';
 import type { StillActionContext } from './action-outcomes.ts';
@@ -14,7 +14,7 @@ import { isContextCompositionRelation } from '../model/combined-context.ts';
 import { parseDocumentArtifactContent } from '../model/document-artifacts.ts';
 import { foldEvents, type CreativeEvent, type CreativeProjection } from '../model/events.ts';
 
-export const POLICY_VERSION = 'still-25';
+export const POLICY_VERSION = 'still-26';
 export type Position = { projectId: string; documentId: string; blockId: string; outputId: string; view: string; intent: string; recentActions: string[]; itemIndex?: number; actionLimit?:number; palette?:PaletteFeedback; generation?:GenerationDecisionContext; surfaceContext?:SurfaceContext; goal?:ExplicitGoal };
 export type Abilities = { author: boolean; generate: boolean; projectCreate: boolean; formats: string[] };
 export type Action = { id: string; label: string; group: 'navigate' | 'write' | 'context' | 'make' | 'reflect'; description: string };
@@ -55,7 +55,8 @@ export const ACTIONS: readonly Action[] = [
   { id: 'audio', label: 'Make audio', group: 'make', description: 'Generate audio from the active context.' },
   { id: 'model3d', label: 'Make 3D model', group: 'make', description: 'Generate a 3D model from the current context using its adapted prompt.' },
   { id: 'clarify', label: 'Add direction', group: 'context', description: 'Write a focused statement of audience, emotional effect, or essential idea.' },
-  { id: 'intent', label: 'Set next goal', group: 'reflect', description: 'Tell the decision layer what you want next, without automatically changing or generating work.' },
+  { id: 'intent', label: 'Your goal', group: 'reflect', description: 'Set, edit, complete, abandon or clear your optional goal and success criteria. Remembering a goal is an explicit choice for this scope. This does not change or generate creative work.' },
+  { id: 'user-settings', label: 'User settings', group: 'reflect', description: 'Open your personal suggestion-history settings, scoped feedback and quality assessments. History is saved automatically for up to 30 days unless you opt out for your account. Opening settings does not change preferences or creative work.' },
 ] as const;
 
 export function evaluateEligibility(p: CreativeProjection, pos: Position, abilities: Abilities) {
@@ -73,7 +74,7 @@ export function evaluateEligibility(p: CreativeProjection, pos: Position, abilit
       return !abilities.generate ? 'Generation permission required' : !abilities.formats.includes(job.format) ? 'Provider unavailable' : '';
     }
     if (a.id === 'projects') return pos.view === 'projects' ? 'Already viewing projects' : '';
-    if (a.id === 'intent') return '';
+    if (isPersonalAction(a.id)) return '';
     if (a.id === 'new-project') return abilities.projectCreate ? '' : 'Project creation unavailable';
     if(a.id==='ideas')return !pos.projectId?'Select a project':pos.view==='ideas'&&!pos.blockId?'Already viewing ideas':'';
     if(pos.view==='ideas'&&['add-context','edit-block','lock','unlock','use-in'].includes(a.id)){if(!abilities.author)return 'Author permission required';if(a.id==='add-context')return '';if(a.id==='use-in')return block?editableIdea(block)?'':'Select an editable idea':p.libraryBlocks.some(editableIdea)?'':'An editable idea is required';if(!block)return 'Select an idea';if(a.id==='unlock')return block.locked?'':'Already unlocked';return block.locked?'Idea is locked':a.id==='edit-block'&&!editableIdea(block)?'Use the dedicated editor for this idea':'';}
@@ -322,7 +323,7 @@ export function questionsFor(candidates: Action[], position?: Position, artifact
   if(position?.palette||position?.view==='choose-format'||position?.view==='find-action')return all;
   const needed=new Set(['stage','next_best_action',...Object.keys(all).filter(id=>id.startsWith('benefit_')||id.startsWith('target_'))]);
   for(const action of candidates){
-    if(action.id==='intent'||Object.hasOwn(MEDIUM_QUESTIONS,action.id)&&position&&!position.intent.trim())continue;
+    if(isPersonalAction(action.id)||Object.hasOwn(MEDIUM_QUESTIONS,action.id)&&position&&!position.intent.trim())continue;
     needed.add(`use_${action.id}`);needed.add(`requested_${action.id}`);
     const signal=SIGNALS[action.id];for(const id of [...signal?.yes??[],...signal?.no??[]])needed.add(id);
     if(all[`novel_${action.id}`])for(const id of [`novel_${action.id}`,'bold_invitation','fixed_variable'])needed.add(id);
@@ -356,9 +357,9 @@ export function evaluateActions(candidates: Action[], pos: Position, answers: Re
   const inspected = new Map(candidates.map(a=>[a.id,inspectScoreAnswer(answers[`use_${a.id}`])]));
   const scored = (id: string) => { const a=inspected.get(id);return !!a&&a.quality!=='unusable'&&a.confidence!>=.12; };
   const helpfulSupport = (id:string) => {const a=inspected.get(id);return a?.quality!=='valid'||!a.probabilities||a.probabilities['2']+a.probabilities['3']>0;};
-  const recommendable = pageToolbarCandidates(candidates,pos).filter(a => a.id !== 'intent' && (!Object.hasOwn(MEDIUM_QUESTIONS,a.id) || !!pos.intent.trim() && evidence(`requested_${a.id}`) > .5));
+  const recommendable = pageToolbarCandidates(candidates,pos).filter(a => !isPersonalAction(a.id) && (!Object.hasOwn(MEDIUM_QUESTIONS,a.id) || !!pos.intent.trim() && evidence(`requested_${a.id}`) > .5));
   const modelRanked = recommendable.some(a=>scored(a.id));
-  const rows: RankingRow[] = candidates.map(a => ({ id:a.id, questionId:`use_${a.id}`, reason:a.id==='rename'&&!pageToolbarCandidates([a],pos).length ? 'Document maintenance is available in the command palette while an idea is focused' : a.id==='intent' ? 'Available in Palette' : !recommendable.includes(a) ? 'Current explicit format request required' : modelRanked && !scored(a.id) ? !answers[`use_${a.id}`] ? 'No answer' : 'Invalid score or confidence below 0.12' : modelRanked && answers[`use_${a.id}`].score===0 ? 'Zero usefulness' : modelRanked && !helpfulSupport(a.id) ? 'No helpful-now probability in supplied distribution' : '' }));
+  const rows: RankingRow[] = candidates.map(a => ({ id:a.id, questionId:`use_${a.id}`, reason:a.id==='rename'&&!pageToolbarCandidates([a],pos).length ? 'Document maintenance is available in the command palette while an idea is focused' : isPersonalAction(a.id) ? 'Available in Command Palette' : !recommendable.includes(a) ? 'Current explicit format request required' : modelRanked && !scored(a.id) ? !answers[`use_${a.id}`] ? 'No answer' : 'Invalid score or confidence below 0.12' : modelRanked && answers[`use_${a.id}`].score===0 ? 'Zero usefulness' : modelRanked && !helpfulSupport(a.id) ? 'No helpful-now probability in supplied distribution' : '' }));
   const ranked = recommendable.filter(a => !modelRanked || scored(a.id) && answers[`use_${a.id}`].score! > 0 && helpfulSupport(a.id)).map((a, index) => {
     const answer = inspected.get(a.id)!;
     const valid = scored(a.id);

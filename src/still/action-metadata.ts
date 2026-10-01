@@ -2,7 +2,7 @@ import type { Action } from './decisions.ts';
 
 export const ACTION_METADATA_VERSION = 'still-action-metadata-v1';
 export type ActionMetadata = {
-  family: 'navigation' | 'authoring' | 'structure' | 'research' | 'reference' | 'reuse' | 'review' | 'generation' | 'goal';
+  family: 'navigation' | 'authoring' | 'structure' | 'research' | 'reference' | 'reuse' | 'review' | 'generation' | 'goal' | 'settings';
   launch: 'navigation' | 'configuration' | 'mutation';
   cost: 'free' | 'paid-after-submit' | 'quote-before-paid';
   risk: 'read-only' | 'shared-content' | 'charge' | 'download' | 'preference';
@@ -61,6 +61,7 @@ const metadata: Record<string, ActionMetadata> = {
   model3d: generation(),
   'generate-again': { ...generation(), launch: 'mutation', reversal: 'not-guaranteed', needs: ['attempt', 'context'], confirm: 'action-click' },
   export: { family: 'review', launch: 'mutation', cost: 'free', risk: 'download', reversal: 'not-guaranteed', needs: ['result'], confirm: 'action-click', outcome: ['file-delivery', 'user-feedback'] },
+  'user-settings': { family: 'settings', launch: 'configuration', cost: 'free', risk: 'preference', reversal: 'not-guaranteed', needs: [], confirm: 'save', outcome: ['preference-saved', 'user-feedback'] },
   intent: { family: 'goal', launch: 'configuration', cost: 'free', risk: 'preference', reversal: 'counter-change', needs: [], confirm: 'save', outcome: ['preference-saved', 'user-feedback'] },
 };
 

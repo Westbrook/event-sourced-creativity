@@ -9,14 +9,24 @@ import type { WorkerEnv } from './runtime.ts';
 export const actionScopeKey = (position: ActionScope, scope?: ProjectRequestContext) => JSON.stringify([ACTION_CONTEXT_VERSION,scope?.projectAccessId ?? '',position.projectId ?? '',position.documentId ?? '',position.blockId ?? '']);
 const nowIso = () => new Date().toISOString();
 export const emptyActionContext = (): StillActionContext => ({version:ACTION_CONTEXT_VERSION,enabled:false,observations:[],coverage:{status:'complete',limit:40,returned:0,hasMore:false,interpretation:'Semantic reports are evidence of interaction, not proof of quality. Absence is unknown.'}});
+/** Missing account preference means enabled; a persisted opt-out never expires with evidence. */
+export const actionHistoryEnabledSql = 'NOT EXISTS(SELECT 1 FROM still_user_settings WHERE owner_id=? AND suggestion_history_enabled=0)';
+export async function ensureActionPreference(env:WorkerEnv,userId:string,key:string,scope?:ProjectRequestContext) {
+  const current=await actionPreference(env,userId,key);if(current)return current;
+  const now=nowIso(),expiresAt=await actionRetentionUntil(env,scope);
+  await env.DB.prepare(`INSERT INTO still_action_preferences(owner_id,scope_key,epoch,created_at,expires_at)
+    SELECT ?,?,?,?,? WHERE ${actionHistoryEnabledSql}
+    ON CONFLICT(owner_id,scope_key) DO UPDATE SET epoch=excluded.epoch,created_at=excluded.created_at,expires_at=excluded.expires_at WHERE still_action_preferences.expires_at<=?`).bind(userId,key,crypto.randomUUID(),now,expiresAt,userId,now).run();
+  return actionPreference(env,userId,key);
+}
 export async function actionPreference(env:WorkerEnv,userId:string,key:string) {
-  return env.DB.prepare('SELECT epoch,expires_at,created_at FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND expires_at>?').bind(userId,key,nowIso()).first<{epoch:string;expires_at:string;created_at:string}>();
+  return env.DB.prepare(`SELECT epoch,expires_at,created_at FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND expires_at>? AND ${actionHistoryEnabledSql}`).bind(userId,key,nowIso(),userId).first<{epoch:string;expires_at:string;created_at:string}>();
 }
 /** Call only after fresh resource authorization. Authored text stays in private_content. */
 export async function readStillActionContext(env:WorkerEnv,user:PilotUser,position:ActionScope,scope?:ProjectRequestContext,forDecision=false,projection?:CreativeProjection):Promise<StillActionContext> {
   const result=emptyActionContext(),key=actionScopeKey(position,scope),now=nowIso();
   try {
-    const preference=await actionPreference(env,user.userId,key);
+    const preference=await ensureActionPreference(env,user.userId,key,scope);
     result.enabled=!!preference;if(preference)result.expiresAt=preference.expires_at;
     const goal=await env.DB.prepare(`SELECT goal.goal_id,goal.status,goal.created_at,goal.expires_at,content.content FROM still_action_goals goal
       JOIN private_content content ON content.content_id=goal.content_id AND content.owner_id=goal.owner_id AND content.kind='still-goal'
@@ -40,8 +50,16 @@ export async function readStillActionContext(env:WorkerEnv,user:PilotUser,positi
       }
       result.observations.sort((a,b)=>a.recordedAt.localeCompare(b.recordedAt)||a.id.localeCompare(b.id));result.coverage.returned=result.observations.length;
     }
+    // A concurrent opt-out or erasure cannot deliver the previous lease as current.
+    if(preference&&(await actionPreference(env,user.userId,key))?.epoch!==preference.epoch){result.enabled=false;delete result.expiresAt;result.observations=[];result.coverage={...result.coverage,returned:0};}
+    if(result.goal){
+      const currentTime=nowIso(),currentGoal=await env.DB.prepare(`SELECT 1 FROM still_action_goals goal
+        JOIN private_content content ON content.content_id=goal.content_id AND content.owner_id=goal.owner_id AND content.kind='still-goal'
+        WHERE goal.goal_id=? AND goal.owner_id=? AND goal.scope_key=? AND goal.status='active' AND goal.expires_at>? AND content.expires_at>? AND content.redacted_at IS NULL`).bind(result.goal.id,user.userId,key,currentTime,currentTime).first();
+      if(!currentGoal)delete result.goal;
+    }
     return result;
-  } catch { result.coverage.status='unavailable';return result; } // Missing optional schema never prevents ordinary work.
+  } catch { const unavailable=emptyActionContext();unavailable.coverage.status='unavailable';return unavailable; } // Missing optional schema never prevents ordinary work.
 }
 const object=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
 const ids=(value:unknown)=>Array.isArray(value)?[...new Set(value.flatMap(item=>{const id=typeof item==='string'?item:object(item).id;return typeof id==='string'&&/^[a-z0-9_-]{1,80}$/i.test(id)?[id]:[];}))].slice(0,100):[];
@@ -55,7 +73,7 @@ export function decisionReceiptBody(input:{stateFingerprint:string;policy:string
     model:typeof input.model==='string'?input.model.slice(0,100):typeof response.model==='string'?response.model.slice(0,100):null,
     source:response.source==='jev'?'jev':'fallback',assessmentId:typeof response.assessmentId==='string'&&/^[A-Za-z0-9-]{1,80}$/.test(response.assessmentId)?response.assessmentId:null,usageBasis:'original-assessment-not-per-delivery',requestedModel:typeof provider.requestedModel==='string'?provider.requestedModel.slice(0,100):null,resolvedModels:Array.isArray(provider.resolvedModels)?provider.resolvedModels.filter((value):value is string=>typeof value==='string').slice(0,8).map(value=>value.slice(0,100)):[],usage:numeric(input.usage ?? provider.usage),latency:numeric(response.delivery),cache:['hit','shared','miss','bypass'].includes(String(object(response.cache).status))?String(object(response.cache).status):'unavailable'};
 }
-/** Every delivery receives a new immutable receipt, after authorization and live opt-in checks. */
+/** Every delivery receives a new immutable receipt, after authorization and live account preference checks. */
 export async function createStillDecisionReceipt(env:WorkerEnv,user:PilotUser,input:{position:ActionScope;scope?:ProjectRequestContext;stateFingerprint:string;policy:string;head:number;response:unknown;usage?:unknown;model?:string}):Promise<{decisionId:string;expiresAt:string;contextWindowExpiresAt?:string}|undefined> {
   if(!/^[a-f0-9]{64}$/.test(input.stateFingerprint)||!Number.isSafeInteger(input.head)||input.head<0)return;
   try {
@@ -64,7 +82,7 @@ export async function createStillDecisionReceipt(env:WorkerEnv,user:PilotUser,in
     if((count?.count??0)>=5000)return;
     const decisionId=crypto.randomUUID(),createdAt=nowIso(),expiresAt=[preference.expires_at,await actionRetentionUntil(env,input.scope)].sort()[0],body=JSON.stringify(decisionReceiptBody(input,decisionId,createdAt,expiresAt));
     const result=await env.DB.prepare(`INSERT INTO still_action_receipts(decision_id,owner_id,scope_key,consent_epoch,created_at,expires_at,body)
-      SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND epoch=? AND expires_at>?)`).bind(decisionId,user.userId,key,preference.epoch,createdAt,expiresAt,body,user.userId,key,preference.epoch,createdAt).run();
+      SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM still_action_preferences WHERE owner_id=? AND scope_key=? AND epoch=? AND expires_at>?) AND ${actionHistoryEnabledSql}`).bind(decisionId,user.userId,key,preference.epoch,createdAt,expiresAt,body,user.userId,key,preference.epoch,createdAt,user.userId).run();
     if(!result.meta.changes)return;
     return {decisionId,expiresAt,...(object(input.response).source==='context'?{contextWindowExpiresAt:new Date(Math.min(Date.parse(createdAt)+10*60_000,Date.parse(expiresAt))).toISOString()}: {})};
   } catch { return; }

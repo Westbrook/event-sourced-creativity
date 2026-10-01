@@ -17,11 +17,20 @@ See the [original review and plans](still-jev-action-surfaces-review-2026-09-30.
 [Still developer guide](../src/still/README.md), and
 [validation workflow](validation.md) for the surrounding contracts.
 
+## Goal and settings actions
+
+The [goal/settings contract](still-goal-settings-actions.md) moves **Your goal**
+and **User settings** into the Command Palette and removes the persistent header
+button. Suggestion history defaults on with a durable account-wide opt-out;
+observations remain personal, bounded and separate from the creative Event Log.
+Goal memory remains an explicit optional scoped choice. This follow-up supersedes
+the opt-in default described in the historical Production568 receipt.
+
 ## Workflow and outcome continuation
 
 The local continuation builds on `0451de43` and `2168fc05` from current `main`.
 Policy `still-25` separates source-state fixes from empirical quality claims.
-The [workflow/API contract](still-workflow-observations.md) defines opt-in creation
+The [workflow/API contract](still-workflow-observations.md) defines preference-controlled creation
 review observations, exact operation references, and independently versioned
 outcome and quality-assessment series. It uses the existing `0074` tables; this
 slice adds no migration and changes no existing database.
@@ -35,7 +44,7 @@ abandonment, regret, or acceptance.
 
 A job acknowledgment, job completion, browser file handoff, and explicit acceptance
 are separate evidence. Optional quality checks at final review use the remembered
-goal's stated criteria and default to unknown. Goal and suggestions also offers a
+goal's stated criteria and default to unknown. User settings also offers a
 retained review for delayed assessment, correction, or withdrawal. Each correction
 appends a revision against the original target and observation window; it does not
 change creative approval. The settings panel selects the most recent retained
@@ -412,7 +421,7 @@ journeys for review; it does not close the open viewer-experience feedback.
 | Read a document or idea | Open a document and select its idea; View document returns from the focused idea, with project/document navigation and Find action available where eligible. | Readiness, protected content, and retained source access remain authoritative; no edit, rename, lock, composition, reuse, or reference-write authority follows from reading. |
 | Inspect results | View results lists saved outputs; open an authorized artifact or generation to inspect its available content/status and navigate back. Failed attempts can expose Inspect failure and View attempt status where applicable. | Inspection reads saved job evidence. It must not recover a provider operation, request a new result, or imply that inaccessible private inputs are available. |
 | Download permitted work | Download is eligible after selecting an output/artifact. The handler refreshes scope, checks retained content/revision, submits a dedicated export event, rechecks the selected bytes, then retrieves/delivers the file. | Shared read permission permits an export-only event batch, but exact-resource, source-rights, retained-content, current-revision, and applicable independent-approval checks still apply. Personal read-only sessions do not receive the shared export-only exception. A toolbar invitation does not guarantee download eligibility. |
-| Express a personal goal | Set next goal and Goal and suggestions describe the viewer’s desired next step and optional scoped feedback. | These actor-private preferences do not change shared creative records, elevate permission, or waive export review. |
+| Express a personal goal | Your goal and User settings describe the viewer’s desired next step and optional scoped feedback. | These actor-private preferences do not change shared creative records, elevate permission, or waive export review. |
 | Discover permitted actions | More reuses ranked alternatives; Find action exposes the eligible catalog and routes inferred requests to supported views/reviews. | An empty authoring set is a valid outcome. Do not add create/edit/generate controls merely to fill the dock. |
 
 The policy and execution sources are [action eligibility](../src/still/decisions.ts),
