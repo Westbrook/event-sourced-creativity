@@ -723,7 +723,7 @@ these31 journaled migrations.
 
 ### Creator document leading-edge alignment — 2026-10-01
 
-**Implementation complete; publication authorized and in preparation.** Shell and project identity marks,
+**Implemented, integrated on main, and published.** Shell and project identity marks,
 document headings, Studio family labels, pane-switch labels, and context headings
 use the existing bounded pane gutter (16–20px at the default font size). Rails
 retain their own column; compact bottom navigation retains equal-width cells.
@@ -734,7 +734,10 @@ Verification: TypeScript and the 161-element CEM check passed; Playwright measur
 synthetic data. Release preparation updates the stale D428 container-query
 assertion to enforce the actual shared measured posture, its pane visibility,
 and the existing 62rem boundary. Screenshots and geometry receipts are in
-`outputs/creator-alignment/`; hosted activation is recorded separately.
+`outputs/creator-alignment/`. Published as **Sites560** on 2026-10-01;
+[release receipt](evidence/creator-leading-edge-release-2026-10-01.json) records
+45/45 responsive checks, the verified build/archive, unchanged access and runtime
+settings, and the preserved 41-migration package. Main integration: `a0d4d0d6`.
 
 ### Document column heading alignment — 2026-10-01
 

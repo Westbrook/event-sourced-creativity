@@ -1,0 +1,58 @@
+{
+  "scope": "Creator document shared leading-edge alignment",
+  "mainCommit": "a0d4d0d6",
+  "releaseCommit": "6017f681f17092cdd2c9eaa1dfe6a0cdc3f041cb",
+  "baselineCommit": "8c0c19288812e7b2ea335e2f6f58821fa0e5cd05",
+  "version": 560,
+  "deployment": {
+    "id": "appgdep_6abe6f9ab9088191958c71ab751f841f",
+    "project_id": "appgprj_6a7a020e334881919ed8aea0363cb98f",
+    "title": "Forma Creative Studio",
+    "version_id": "appgprj_6a7a020e334881919ed8aea0363cb98f~appgver_346017f25d30819191b0d22b4f0b28fb",
+    "type": "publish",
+    "status": "succeeded",
+    "url": "https://forma-creative-studio.reve-ai-0869.chatgpt.site",
+    "has_mcp": false,
+    "screenshot_asset_pointer": null,
+    "provider_deployment_id": "site---6a7a020e334881919ed8aea0363cb98f",
+    "failure_message": null,
+    "env_set_revision": 16,
+    "updated_at": "2026-10-01T14:35:25.789432+00:00"
+  },
+  "verification": {
+    "responsiveSource": {
+      "passed": 45,
+      "failed": 0,
+      "skipped": 0
+    },
+    "browser": {
+      "cases": 18,
+      "languages": [
+        "English",
+        "Arabic"
+      ],
+      "widthRange": [
+        320,
+        1600
+      ],
+      "nativeKeyboardFocus": true,
+      "pageOverflow": false,
+      "shortLandscape": "Existing project-navigation title clearance retained; other labels align."
+    },
+    "types": "passed",
+    "lint": "passed",
+    "inventory": "passed",
+    "build": "passed",
+    "manifests": "unchanged, 161 elements",
+    "archiveReceipt": "verified",
+    "archiveNormalizedSha256": "f83910f3d43b3ac78b53628f488c4a0cd6492ea900257d306063096fdbab751e",
+    "files": 622,
+    "migrations": 41,
+    "accessPolicyRevision": 7,
+    "environmentRevision": 16
+  },
+  "limits": [
+    "Synthetic browser evidence; no new live-account acceptance or paid provider calls.",
+    "Native deployment success confirms publication; no agent browser smoke test performed."
+  ]
+}
