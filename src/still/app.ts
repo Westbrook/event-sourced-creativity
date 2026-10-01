@@ -75,6 +75,9 @@ import { estimateModel3dCostMicrousd } from '../model/model3d.ts';
 import { parseStillRoute, stillRouteProblem, stillURL, type StillRoute } from './routes.ts';
 import type { StillContextFlow } from './context-flow.ts';
 import type { CreativeProjection } from '../model/events.ts';
+import { cleanExplicitGoal, cleanSurfaceContext } from './workflow-state.ts';
+import { StillActionContext } from './action-context-client.ts';
+import type { ActionObservation, ActionObservationInput } from './action-outcomes.ts';
 
 const REPORT_URL = 'http://127.0.0.1:4187';
 const FORMATS: Record<string, string> = { image: 'Image', short_story: 'Short story', scene: 'Scene', slides: 'Presentation', storyboard: 'Storyboard', video: 'Video', audio: 'Audio', model3d: '3D model' };
@@ -85,6 +88,63 @@ const safeMedia = (url: string | null | undefined) => url?.startsWith('/api/medi
 
 export class StillApp extends LitElement {
   private client = new StillClient();
+  private actionContext=new StillActionContext(async <T>(path:string,body?:unknown,method?:string)=>{
+    const check=this.client.fence();const result=await api<T>(path,body,method,8000);check();return result;
+  },()=>this.changed());
+  private actionSettingsOpen=false;
+  private appliedDecisionId:string|undefined;
+  private appliedPaletteDecisionId:string|undefined;
+  private appliedDecisionStarted:number|undefined;
+  private appliedPaletteDecisionStarted:number|undefined;
+  private goalCriteriaDraft='';
+  private rememberGoal=false;
+  private feedbackAction='';
+  private feedbackChoice:NonNullable<ActionObservationInput['feedback']>='not-useful-now';
+  private feedbackDuration='1';
+  private feedbackSource:ActionObservationInput['source']='toolbar';
+  private feedbackDecisionId:string|undefined;
+  private feedbackActionIds:string[]=[];
+  private feedbackReceipt:ActionObservation|undefined;
+  private actionContextNeedsRefresh=false;
+  private actionSettingsBusy=false;
+  private actionSettingsMessage='';
+  private actionContextScope(){const p=this.client.position;return {...(p.projectId?{projectId:p.projectId}:{}),...(p.documentId&&p.projectId?{documentId:p.documentId}:{})};}
+  private semanticSurface(){
+    const c=this.client,p=c.position,workflow=this.toolbarWorkflow();
+    const surface=this.paletteOpen?'palette':this.mode==='generate'&&!this.generation?'formats':workflow?.recovery||this.error?'recovery':this.mode?'workflow':this.moreOpen?'more':['artifact','generation','rejection'].includes(p.view)?'result':'main';
+    const blocked=!!this.generationGate||!!this.richEditIssue||!!workflow?.blockingReview;
+    return cleanSurfaceContext({version:1,surface,mode:this.mode,
+      step:workflow?.step??(this.busy||workflow?.pending?'pending':workflow?.recovery||c.hasUnconfirmedWrite?'recovery':blocked?'review':this.mode==='generate'?'configure':this.mode?'edit':surface==='result'?'result':'browse'),
+      dirtyDraft:!!this.mode&&this.draftSignature()!==this.draftBaseline||!!workflow?.dirtyDraft,
+      pendingOperation:this.busy||!!workflow?.pending||c.hasUnconfirmedWrite||!!c.pendingGeneration,
+      blockingReview:blocked,interactionLocked:this.composing||this.dockTouched||this.paletteTouched||this.actionSettingsOpen,
+      selectedParameters:{format:this.generation?.format,kind:this.mode==='add-context'?this.kindDraft:undefined,itemCount:this.generation?.itemCount},
+      readiness:{hasContext:c.projection.blocks.some(b=>!b.removed&&Number(b.properties.weight??1)>0),hasSelection:!!(p.blockId||p.outputId)},
+      visibleActionIds:[...this.querySelectorAll<HTMLElement>('.toolbar-motion-live .action-dock [data-action-id]')].map(e=>e.dataset.actionId).filter(id=>ACTIONS.some(a=>a.id===id)),
+      selectedTargetIds:[p.blockId,p.outputId,...(workflow?.selectedTargetIds??[])].filter(Boolean),returnPath:{view:p.view},targetRevision:c.head,
+    });
+  }
+  private observeExposedActions(){
+    if(this.loading||this.busy||this.startupFailed||document.hidden||this.actionSettingsOpen)return;
+    if(this.paletteOpen){
+      const options=[...this.querySelectorAll<HTMLElement>('#palette-options [data-action-id]')].filter(element=>{
+        const bounds=element.getBoundingClientRect(),parent=element.parentElement?.getBoundingClientRect();return bounds.width>0&&bounds.height>0&&!!parent&&bounds.bottom>parent.top&&bounds.top<parent.bottom;
+      }).map(element=>element.dataset.actionId!).filter(id=>ACTIONS.some(a=>a.id===id));
+      const started=this.appliedPaletteDecisionStarted;
+      this.actionContext.exposure(this.appliedPaletteDecisionId,options,'palette','palette',undefined,started===undefined?undefined:{deliveryKey:`palette:${started}`,interactiveLatencyMs:performance.now()-started});return;
+    }
+    const live=this.querySelector<HTMLElement>('.toolbar-motion-live');
+    if(!live||live.inert||this.toolbarDecisionPending||this.querySelector('.toolbar-motion-root')?.hasAttribute('data-motion-active'))return;
+    const primary=live.querySelector<HTMLElement>('.action-dock en-button[variant="primary"][data-action-id]')?.dataset.actionId;
+    const started=this.appliedDecisionStarted;
+    this.actionContext.exposure(this.appliedDecisionId,this.visibleToolbarActions(),this.mode==='generate'?'formats':this.moreOpen?'more':'main',this.moreOpen?'more':'toolbar',primary,started===undefined?undefined:{deliveryKey:`toolbar:${started}`,interactiveLatencyMs:performance.now()-started});
+  }
+  private recordActionSelection(id:string,source:ActionObservationInput['source']='direct'){
+    if(!ACTIONS.some(action=>action.id===id))return;
+    this.observeExposedActions();
+    const decisionId=source==='palette'?this.appliedPaletteDecisionId:source==='direct'?undefined:this.appliedDecisionId;
+    this.actionContext.select(id,decisionId,this.mode==='generate'?'formats':this.client.position.view,source);
+  }
   private toolbarMotion?:ToolbarMotion;
   private toolbarDecisionPending=false;
   private toolbarContextWaiting=false;
@@ -104,8 +164,8 @@ export class StillApp extends LitElement {
   private writeRecovery?:{key:string;correlationId:string};
   private attention?:StillAttentionObserver;
   private decisionMemory=new DecisionMemo<DecisionResponse>({
-    accept:r=>r.source==='jev'&&!r.reason&&r.policy===POLICY_VERSION&&r.head===this.client.head&&r.cache?.stored===true,
-    ttl:r=>r.cache?.remainingMs??0,latency:r=>r.cache?.originalLatencyMs,age:r=>r.cache?.ageMs??0,
+    accept:r=>r.source==='jev'&&!r.reason&&!r.retainedActionContext&&r.policy===POLICY_VERSION&&r.head===this.client.head&&r.cache?.stored===true,
+    ttl:r=>Math.min(r.cache?.remainingMs??0,r.evidenceExpiresAt===undefined?Infinity:Math.max(0,r.evidenceExpiresAt-Date.now())),latency:r=>r.cache?.originalLatencyMs,age:r=>r.cache?.ageMs??0,
   });
   private decisionValidity = "";
   private decisionEvents = this.client.events;
@@ -120,7 +180,7 @@ export class StillApp extends LitElement {
     const ref=this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.contentRef;
     return stableDecisionKey({scope:this.client.scopeKey,epoch:this.client.epoch,head:this.client.head,abilities:this.client.abilities,selectedContent:ref?this.client.content[ref]:undefined,body});
   }
-  private decisionPosition():Position {const generation=['generation','rejection'].includes(this.client.position.view)?generationDecisionContext(this.selectedGeneration()):undefined;return {...this.client.position,...(generation?{generation:{...generation,canStartNew:generation.canStartNew&&!this.client.pendingGeneration&&!this.client.hasUnconfirmedWrite}}:{})};}
+  private decisionPosition():Position {const generation=['generation','rejection'].includes(this.client.position.view)?generationDecisionContext(this.selectedGeneration()):undefined;return {...this.client.position,surfaceContext:this.semanticSurface(),...(generation?{generation:{...generation,canStartNew:generation.canStartNew&&!this.client.pendingGeneration&&!this.client.hasUnconfirmedWrite}}:{})};}
   private decisionBody(extra:Record<string,unknown>={}){return {...this.decisionPosition(),...extra,...(this.developer?{developer:true}:{})};}
   private async requestDecision(body:Record<string,unknown>,bypass=false,timeout?:number,onInitial?:(value:DecisionResponse)=>void,signal?:AbortSignal){
     const result=await this.decisionMemory.run(this.decisionKey(body),()=>fetchDecision({...body,...(bypass?{cacheBypass:true}:{})},onInitial,timeout,signal),bypass);
@@ -279,7 +339,7 @@ export class StillApp extends LitElement {
   };
   private nextBestAssessment(){
     const formats=this.mode==='generate'&&!this.generation;
-    const ids=formats?this.formatSuggestions:this.rankedActions.filter(a=>this.candidates().some(c=>c.id===a.id)).map(a=>a.id);
+    const ids=formats?this.formatSuggestions:this.suggestions.filter(a=>this.candidates().some(c=>c.id===a.id)).map(a=>a.id);
     return assessNextBest(this.nextBest,ids,formats?this.formatEmphasis:this.emphasis,this.nextBestEnabled,this.secondaryOnly());
   }
   private emptyProject(){return this.client.position.view==='documents'&&!!this.client.position.projectId&&!this.client.projection.documents.some(d=>!d.removed);}
@@ -382,7 +442,7 @@ export class StillApp extends LitElement {
   createRenderRoot() { return this; }
   connectedCallback() {
     super.connectedCallback(); this.disposed = false;
-    this.toolbarMotion=new ToolbarMotion(this,{ready:()=>this.toolbarReady(),timeout:()=>this.expireToolbarDecision(),recovery:()=>!!this.error||!!this.contentRead?.error||!!this.client.jobsError||!!this.toolbarWorkflow()?.recovery||this.startupFailed||!!this.routeError,state:()=>this.error?'error':this.moreOpen?'page2':'page1',settled:()=>{this.toolbarDecisionSettled=true;this.scheduleDockFit();}});
+    this.toolbarMotion=new ToolbarMotion(this,{ready:()=>this.toolbarReady(),timeout:()=>this.expireToolbarDecision(),recovery:()=>!!this.error||!!this.contentRead?.error||!!this.client.jobsError||!!this.toolbarWorkflow()?.recovery||this.startupFailed||!!this.routeError,state:()=>this.error?'error':this.moreOpen?'page2':'page1',interactive:()=>this.observeExposedActions(),settled:()=>{this.toolbarDecisionSettled=true;this.scheduleDockFit();this.observeExposedActions();}});
     this.toolbarMotion.begin('initial');
     this.updatePageTitle();
     this.updateHeaderScroll();
@@ -395,6 +455,7 @@ export class StillApp extends LitElement {
     try{this.listDisplay=new ListDisplay(localStorage);}catch{/* Storage may be unavailable in private browsing. */}
     try{this.onboarding=readOnboardingFlag(location.href,localStorage);}catch{this.onboarding=new URL(location.href).searchParams.has('onboarding');}
     this.client.onChange = () => { this.retireChangedDecisions(); if (this.client.recoveredWrite) { this.notice = 'Save confirmed.'; this.client.recoveredWrite = false; } this.changed(); };
+    this.client.onCommitted=receipt=>this.actionContext.commit(receipt);
     this.desktop.addEventListener('change', this.developerViewportChanged);
     window.addEventListener('keydown', this.paletteShortcut);
     window.addEventListener('popstate', this.popstate);
@@ -403,17 +464,22 @@ export class StillApp extends LitElement {
     document.addEventListener('visibilitychange', this.resumeSync);
     void this.run(() => this.loadWorkspace());
   }
-  disconnectedCallback() { super.disconnectedCallback(); this.toolbarMotion?.dispose();this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort(); window.removeEventListener('scroll', this.updateHeaderScroll); this.onboardingHelp.dispose(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect();cancelAnimationFrame(this.dockFitFrame); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
-  private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.richBodyDraft,this.preferenceDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount,g?.settings]);}
+  disconnectedCallback() { this.actionContext.enter('',{});super.disconnectedCallback(); this.toolbarMotion?.dispose();this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort(); window.removeEventListener('scroll', this.updateHeaderScroll); this.onboardingHelp.dispose(); this.attention?.dispose();this.attention=undefined;this.decisionMemory.clear(); this.desktop.removeEventListener('change', this.developerViewportChanged); this.disposed = true; ++this.developerEpoch; this.developerApplied=undefined;this.developerReceived=undefined;this.dockObserver.disconnect();cancelAnimationFrame(this.dockFitFrame); clearTimeout(this.pollTimer); clearTimeout(this.decisionTimer); window.removeEventListener('keydown', this.paletteShortcut);window.removeEventListener('popstate', this.popstate); window.removeEventListener('beforeunload', this.beforeUnload); window.removeEventListener('focus', this.resumeSync); document.removeEventListener('visibilitychange', this.resumeSync); }
+  private draftSignature(){const g=this.generation;return JSON.stringify([this.titleDraft,this.bodyDraft,this.richBodyDraft,this.preferenceDraft,this.kindDraft,g?.prompt,g?.tone,g?.audience,g?.itemCount,g?.settings,...(this.mode==='intent'?[this.goalCriteriaDraft,this.rememberGoal]:[])]);}
   private preventsRouteChange(unloading=false){return this.busy&&!this.loading||this.composing||!!this.generation?.attempted||!!this.mode&&this.draftSignature()!==this.draftBaseline||!!this.querySelector<StillContextFlow>('still-context-flow')?.preventsRouteChange||!!this.querySelector<StillUseInFlow>('still-use-in-flow')?.preventsRouteChange||!!this.querySelector<StillCreationFlow>('still-creation-flow')?.[unloading?'preventsUnload':'preventsRouteChange'];}
   private beforeUnload = (e: BeforeUnloadEvent) => { if (this.preventsRouteChange(true)) { e.preventDefault(); e.returnValue = ''; } };
-  private changed() { this.requestUpdate(); }
+  private changed() {
+    this.actionContext.enter(this.client.session?.policy.accepted&&!this.client.session.impersonation?`${this.client.epoch}/${this.client.scopeKey}`:'',this.actionContextScope());
+    this.requestUpdate();
+  }
   private updatePageTitle() {
     const title=stillPageTitle(location.href,this.client.session?.policy.accepted?this.client.projection:undefined,this.client.jobs,this.routeError);
     if(document.title!==title)document.title=title;
   }
   protected updated() {
+    this.actionContext.enter(this.client.session?.policy.accepted&&!this.client.session.impersonation?`${this.client.epoch}/${this.client.scopeKey}`:'',this.actionContextScope());
     this.toolbarMotion?.attach();
+    this.observeExposedActions();
     if(this.toolbarContextWaiting&&!this.toolbarContextPending()){this.toolbarContextWaiting=false;this.decide();}
     if(!this.loading&&!this.startupFailed&&this.client.session&&!this.client.session.policy.accepted)this.toolbarMotion?.suspend();
     this.updatePageTitle();
@@ -441,6 +507,8 @@ export class StillApp extends LitElement {
   private diagnosticScope(){return `${this.developerEpoch}/${this.interactionScope()}`;}
   private localDiagnostics(reason:string, formats=false){return decisionDiagnostics(this.client.projection,{...this.decisionPosition(),...(formats?{view:'choose-format'}:{})},this.client.abilities,{head:this.client.head,source:'fallback',reason,localEvents:localHistoryEvidence(this.client.events),artifactKind:this.client.projection.artifacts.find(a=>a.id===this.client.position.outputId)?.kind});}
   private recordDecision(result:DecisionResponse,disposition:string,scope:string,started:number,firstResponseMs?:number){
+    if(disposition==='Applied'){this.appliedDecisionId=result.decisionId;this.appliedDecisionStarted=started;}
+    if(disposition==='Palette order applied'||disposition==='Palette suggestion'){this.appliedPaletteDecisionId=result.decisionId;this.appliedPaletteDecisionStarted=started;}
     if(!this.developer||this.disposed||scope!==this.diagnosticScope())return;
     this.developerReceived={firstResponseMs,delivery:result.delivery,originalTiming:result.originalTiming,preparation:result.preparation,cache:result.cache,receivedAt:Date.now(),at:new Date().toLocaleTimeString(),requestElapsedMs:Math.max(0,performance.now()-started),disposition,trace:result.diagnostics,source:result.source,reason:result.reason,recommended:result.paletteActions?.map(a=>a.id)??(result.formats?.length?result.formats:result.actions?.map(a=>a.id)??[])};
     if(disposition==='Applied')this.developerApplied=result.diagnostics;
@@ -464,7 +532,7 @@ export class StillApp extends LitElement {
     if (this.busy || this.composing) return;
     this.toolbarDecisionSettled=false;this.toolbarMotion?.ensure();
     this.busy = true; this.error = ''; this.changed();
-    try { await work(); } catch (error) { if(!(error instanceof IdeaEditCanceled)){this.error = error instanceof Error ? error.message : 'Could not complete this step.';this.errorCode=error instanceof ApiError?String(error.body.error??''):'';} }
+    try { await work(); } catch (error) { if(error instanceof IdeaEditCanceled)this.actionContext.cancel();else{this.actionContext.failed();this.error = error instanceof Error ? error.message : 'Could not complete this step.';this.errorCode=error instanceof ApiError?String(error.body.error??''):'';} }
     finally { this.busy = false; this.loading = false; this.changed(); }
   }
   private async loadWorkspace() {
@@ -499,11 +567,11 @@ export class StillApp extends LitElement {
     const q = new URL(location.href).searchParams, route=parseStillRoute(location.href);
     if(this.developerRequested!==q.has('developer'))++this.developerEpoch;
     this.developerRequested=q.has('developer');if(!this.developer){this.developerApplied=undefined;this.developerReceived=undefined;}
-    if(this.mode==='generate')this.client.position.intent='';
+    if(this.mode)this.actionContext.cancel();else this.actionContext.finish();
     this.resetStep();this.routeError='';this.error='';this.notice='';
     if(!route){this.routeError='Page not found';this.activeAddress=this.address();return;}
     const changedDocument=route.projectId!==this.client.position.projectId||route.documentId!==this.client.position.documentId;
-    this.client.position={...this.client.position,...(changedDocument?{intent:'',recentActions:[]}:{}),projectId:route.projectId,documentId:route.documentId,blockId:route.blockId,outputId:route.outputId,view:route.view,itemIndex:route.itemIndex};this.page=route.page;
+    this.client.position={...this.client.position,...(changedDocument?{intent:'',goal:undefined,recentActions:[]}:{}),projectId:route.projectId,documentId:route.documentId,blockId:route.blockId,outputId:route.outputId,view:route.view,itemIndex:route.itemIndex};this.page=route.page;
     if(!this.client.session?.policy.accepted){this.activeAddress=this.address();return;}
     const p = this.client.projection;
     if(route.legacy&&route.documentId&&!route.projectId){route.projectId=p.documents.find(d=>d.id===route.documentId)?.projectId??'';this.client.position.projectId=route.projectId;}
@@ -548,12 +616,14 @@ export class StillApp extends LitElement {
     this.activeAddress=url;
     this.updatePageTitle();
   }
-  private resetStep(){this.toolbarContextWaiting=false;this.toolbarDecisionSettled=false;this.toolbarDecisionPending=false;this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.ideaRequestPending=false;this.ideaAssessment=undefined;this.ideaAssessmentTrace=undefined;this.listDisplay.leave();this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationDrafts.clear();this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
+  private resetStep(){this.appliedDecisionId=undefined;this.appliedPaletteDecisionId=undefined;this.toolbarContextWaiting=false;this.toolbarDecisionSettled=false;this.toolbarDecisionPending=false;this.decisionMemory.clearPending();this.toolbarDecisionAbort?.abort();this.ideaRequestPending=false;this.ideaAssessment=undefined;this.ideaAssessmentTrace=undefined;this.listDisplay.leave();this.inlineGenerationKey='';this.toolbarSeen=[];this.paletteFeedback=undefined;this.paletteRefreshing=false;this.moreOpen=false;this.paletteOpen=false;++this.paletteTicket;this.dockTouched=false;this.useInTarget='';this.emphasis={};this.formatEmphasis={};this.nextBest=undefined;++this.decisionTicket;clearTimeout(this.decisionTimer);this.mode='';this.routeMode='';this.bodyDraft='';this.titleDraft='';this.pendingBlock=null;this.generation=null;this.generationDrafts.clear();this.generationGate=null;this.formatSuggestions=[];this.formatTouched=false;this.developerPending=false;}
   private navigate(view: string, ids: Partial<StillClient['position']> = {}) {
+    if(this.mode)this.actionContext.cancel();else this.actionContext.finish();
+    this.appliedDecisionId=undefined;this.appliedPaletteDecisionId=undefined;
     if(this.busy)this.toolbarMotion?.ensure();else this.toolbarMotion?.begin('navigate');
     this.resetStep();this.page = 0; this.itemIndex = 0; this.error = '';this.routeError='';this.notice='';
     const changedDocument = ids.documentId !== undefined && ids.documentId !== this.client.position.documentId || ids.projectId !== undefined && ids.projectId !== this.client.position.projectId;
-    this.client.position = { ...this.client.position, ...(changedDocument ? { intent:'', recentActions:[] } : {recentActions:this.client.position.recentActions.filter(a=>!a.startsWith('completed:'))}), blockId: '', outputId: '', ...ids, view };
+    this.client.position = { ...this.client.position, ...(changedDocument ? { intent:'', goal:undefined,recentActions:[] } : {recentActions:this.client.position.recentActions.filter(a=>!a.startsWith('completed:'))}), blockId: '', outputId: '', ...ids, view };
     const p = this.client.position;
     this.writeRoute(); this.changed(); this.focusContent(); this.decide();
     if (p.documentId) void this.client.pollJobs().catch(() => {});
@@ -584,6 +654,7 @@ export class StillApp extends LitElement {
     const signal=this.toolbarDecisionAbort.signal;this.toolbarDecisionPending=true;this.toolbarDecisionSettled=false;
     const ticket = ++this.decisionTicket;
     this.lastGenerationDecision=JSON.stringify(this.decisionPosition().generation);
+    this.appliedDecisionId=undefined;
     const candidates = this.candidates(); this.suggestions = selectActions(candidates, this.decisionPosition(),{},this.client.projection);this.rankedActions=evaluateActions(candidates,this.decisionPosition(),{},this.client.projection).ranked;this.moreOpen=false;this.emphasis=presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets={}; this.nextBest=undefined; this.decisionSource = 'fallback'; this.changed();
     if(this.developer){this.developerScope=this.diagnosticScope();this.developerApplied=this.localDiagnostics('Local policy');this.developerReceived=undefined;this.developerPending=false;}
     if (!this.client.session?.policy.accepted || this.mode){this.toolbarDecisionPending=false;return;}
@@ -604,7 +675,7 @@ export class StillApp extends LitElement {
           if(result.delivery?.enrichment==='interrupted'&&this.ideaAssessment?.phase==='pending')this.ideaAssessment={...this.ideaAssessment,phase:'complete',complete:false,actions:Object.fromEntries(Object.entries(this.ideaAssessment.actions).map(([id,a])=>[id,a.status==='Pending'?{...a,status:'Failed',reason:'Assessment stream interrupted'}:a]))};
           this.changed();
         }
-        const disposition=responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.decisionPosition())||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:false});
+        const disposition=result.evidenceExpiresAt!==undefined&&result.evidenceExpiresAt<=Date.now()?'Ignored: evidence expired':responseDisposition(result,{head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||snapshot!==JSON.stringify(this.decisionPosition())||!!this.mode||this.disposed||scope!==this.interactionScope(),focused:false});
         this.recordDecision(result,disposition,diagnosticScope,started,firstResponseMs);
         if(disposition==='Applied'){this.nextBest=result.nextBest;const allowed=new Map(this.candidates().map(a=>[a.id,a]));this.suggestions=result.actions!.map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a).slice(0,4);this.rankedActions=(result.rankedActions??result.actions??[]).map(a=>allowed.get(a.id)).filter((a):a is Action=>!!a);this.emphasis=result.presentation??presentActions(this.suggestions.map(a=>a.id));this.suggestionTargets=result.targets??{};this.decisionSource=result.source;this.changed();}
         // Help starts only after the final action set has been selected.
@@ -632,7 +703,7 @@ export class StillApp extends LitElement {
         this.developerPending=this.developer;this.changed();
         const result = await this.requestDecision(this.decisionBody({view:'choose-format'}),bypass,0,undefined,signal);
         this.toolbarMotion?.sync();if(ticket!==this.decisionTicket||this.toolbarDecisionSettled)return;
-        const disposition=responseDisposition(result,{formats:true,head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||this.mode!=='generate'||!!this.generation||this.disposed||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position),touched:this.formatTouched});
+        const disposition=result.evidenceExpiresAt!==undefined&&result.evidenceExpiresAt<=Date.now()?'Ignored: evidence expired':responseDisposition(result,{formats:true,head:this.client.head,headChanged:head!==this.client.head,stale:ticket!==this.decisionTicket||this.mode!=='generate'||!!this.generation||this.disposed||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position),touched:this.formatTouched});
         this.recordDecision(result,disposition,diagnosticScope,started);
         if (disposition==='Applied') {
           const allowed = new Set(this.candidates().filter(a=>!!FORMATS[a.id]).map(a=>a.id));
@@ -666,7 +737,7 @@ export class StillApp extends LitElement {
       if (!this.disposed) this.poll();
     }, 2000);
   }
-  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button id=${this.dockId("still-help-"+a.id)} data-action-id=${a.id} data-tier=${e.tier} data-action-source=${!format&&a.id==='context'&&isIdeaPage(this.decisionPosition())?DOCUMENT_RETURN_REASON:this.decisionSource==='jev'&&e.score!==undefined?'Jev ranking':'Local fallback'} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.selectGenerationFormat(a.id):this.choose(a.id)}>${a.label}</en-button>${this.help("still-help-"+a.id,a.label)}`;}
+  private suggestedButton(a:Action,format=false,presentation?:Record<string,Emphasis>){const e=(presentation??(format?this.formatEmphasis:this.emphasis))[a.id]??{variant:'secondary',size:'medium',tier:'peer',reason:'No clear leader'};return html`<en-button id=${this.dockId("still-help-"+a.id)} data-action-id=${a.id} data-tier=${e.tier} data-action-source=${!format&&a.id==='context'&&isIdeaPage(this.decisionPosition())?DOCUMENT_RETURN_REASON:this.decisionSource==='jev'&&e.score!==undefined?'Jev ranking':'Local fallback'} data-emphasis-reason=${e.reason} variant=${e.variant} size=${e.size} .disabled=${this.busy||this.composing} @click=${()=>format?void this.selectGenerationFormat(a.id,'toolbar'):this.choose(a.id,this.moreOpen?'more':'toolbar')}>${a.label}</en-button>${this.help("still-help-"+a.id,a.label)}`;}
   private secondaryOnly(){return ['refresh-generation',...(this.decisionPosition().generation?.mayDuplicateCharge?['generate-again','create',...Object.keys(FORMATS)]:[])];}
   private toolbarPolicy(){const choice=this.nextBestAssessment();return {view:this.client.position.view,emptyProject:this.emptyProject(),more:this.moreOpen,secondaryOnly:this.secondaryOnly(),nextBest:choice.accepted?choice.choice:undefined};}
   private toolbarSuggestions(actions:Action[]){const emphasis=presentToolbar(actions.map(a=>a.id),this.emphasis,this.toolbarPolicy());return actions.map(a=>this.suggestedButton(a,false,emphasis));}
@@ -714,7 +785,7 @@ export class StillApp extends LitElement {
     const visible=this.visibleToolbarActions();
     this.paletteFeedback={entry,surface:this.mode?'workflow':this.moreOpen?'more':'toolbar',toolbar:this.moreOpen?this.toolbarSeen:visible,more:this.moreOpen?visible:[]};
     this.paletteOrder={rankedIds:[...this.suggestions,...this.rankedActions].map(a=>a.id),passedOverIds:[...this.paletteFeedback.toolbar,...this.paletteFeedback.more]};
-    this.paletteTouched=false;
+    this.paletteTouched=false;this.appliedPaletteDecisionId=undefined;
     this.paletteOpen=true;this.paletteQuery='';this.paletteChoice='';this.paletteIndex=0;this.paletteBusy=false;++this.paletteTicket;this.finderInferred=false;this.finderMessage='';
     this.dockTouched=true;this.client.position.recentActions=[...this.client.position.recentActions,'ui:palette'].slice(-12);this.changed();
     void this.updateComplete.then(()=>this.querySelector<HTMLInputElement>('.palette-query')?.focus());
@@ -727,7 +798,7 @@ export class StillApp extends LitElement {
     const started=performance.now();
     try{
       const result=await this.requestDecision(this.decisionBody({palette:this.paletteFeedback}),bypass,1800);
-      const stale=ticket!==this.paletteTicket||!this.paletteOpen||this.paletteTouched||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||result.head!==head||this.disposed;
+      const stale=ticket!==this.paletteTicket||!this.paletteOpen||this.paletteTouched||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||result.head!==head||this.disposed||result.evidenceExpiresAt!==undefined&&result.evidenceExpiresAt<=Date.now();
       const applied=!stale&&result.policy===POLICY_VERSION&&result.source==='jev'&&!!result.paletteActions?.length;
       this.recordDecision(result,stale?'Ignored: palette changed':applied?'Palette order applied':'Kept local palette order',diagnosticScope,started);
       if(applied)this.paletteOrder={rankedIds:result.paletteActions!.map(a=>a.id),passedOverIds:[]};
@@ -744,7 +815,7 @@ export class StillApp extends LitElement {
     this.paletteRefreshing=false;this.paletteBusy=true;if(this.developer)this.developerReceived=undefined;this.changed();
     const started=performance.now();
     try{const result=await this.requestDecision(this.decisionBody({view:'find-action',intent:query,palette:this.paletteFeedback}));
-      const stale=result.policy!==POLICY_VERSION||result.head!==head||ticket!==this.paletteTicket||!this.paletteOpen||query!==this.paletteQuery.trim()||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||this.disposed;
+      const stale=result.policy!==POLICY_VERSION||result.head!==head||ticket!==this.paletteTicket||!this.paletteOpen||query!==this.paletteQuery.trim()||scope!==this.interactionScope()||snapshot!==JSON.stringify(this.client.position)||head!==this.client.head||this.disposed||result.evidenceExpiresAt!==undefined&&result.evidenceExpiresAt<=Date.now();
       this.recordDecision(result,stale?'Ignored: palette changed':'Palette suggestion',diagnosticScope,started);if(stale)return;
       this.paletteChoice=candidates.some(a=>a.id===result.resolvedAction)?result.resolvedAction!:'';this.finderMessage=this.paletteChoice?'':'Choose an action.';
     }catch(error){if(ticket===this.paletteTicket){this.finderMessage='Choose an action.';this.recordDecision({source:'fallback',reason:error instanceof ApiError?`HTTP ${error.status}`:'Network unavailable',head,policy:POLICY_VERSION},'Palette lookup failed',diagnosticScope,started);}}finally{if(ticket===this.paletteTicket){this.paletteBusy=false;this.changed();}}
@@ -760,7 +831,7 @@ export class StillApp extends LitElement {
     const entry=inferred?finderEntry(id):id;
     if(entry==='view-result'){this.navigate('artifact',{outputId:this.client.position.outputId});return;}
     if(entry==='context'&&id!=='context'){this.navigate('document',{blockId:this.client.position.blockId});return;}
-    this.choose(entry);
+    this.choose(entry,'palette');
   }
   private paletteKeys=(event:KeyboardEvent)=>{
     this.paletteTouched=true;
@@ -777,14 +848,67 @@ export class StillApp extends LitElement {
       <input class="palette-query" autofocus type="text" autocomplete="off" spellcheck="false" role="combobox" aria-label="Find an action" aria-autocomplete="list" aria-expanded="true" aria-controls="palette-options" aria-activedescendant=${options[this.paletteIndex]?'palette-option-'+this.paletteIndex:nothing} placeholder="Search actions or describe a next step…" .value=${live(this.paletteQuery)} @keydown=${this.paletteKeys} @input=${(e:Event)=>{this.paletteTouched=true;this.paletteRefreshing=false;this.paletteQuery=(e.target as HTMLInputElement).value;this.paletteIndex=0;this.paletteChoice='';this.finderMessage='';this.paletteBusy=false;++this.paletteTicket;this.changed();}} />
       ${this.finderMessage?html`<p role="status">${this.finderMessage}</p>`:nothing}
       ${chosen?html`<button class="palette-result" @click=${()=>this.openFoundAction()}>Open ${chosen.label}</button>`:nothing}
-      <div id="palette-options" role="listbox" aria-label="Actions" class="palette-options" @pointermove=${()=>{this.paletteTouched=true;}} @pointerdown=${()=>{this.paletteTouched=true;}}>${options.map((a,i)=>html`<button id=${'palette-option-'+i} data-action-id=${a.id} class="palette-result" role="option" aria-selected=${i===this.paletteIndex} tabindex="-1" @click=${()=>this.openFoundAction(a.id,false)}>${a.label}</button>`)}</div>
+      <div id="palette-options" role="listbox" aria-label="Actions" class="palette-options" @scroll=${()=>this.observeExposedActions()} @pointermove=${()=>{this.paletteTouched=true;}} @pointerdown=${()=>{this.paletteTouched=true;}}>${options.map((a,i)=>html`<button id=${'palette-option-'+i} data-action-id=${a.id} class="palette-result" role="option" aria-selected=${i===this.paletteIndex} tabindex="-1" @click=${()=>this.openFoundAction(a.id,false)}>${a.label}</button>`)}</div>
       ${this.paletteQuery.trim()?html`<button class="palette-find" ?disabled=${this.paletteBusy} @click=${()=>void this.findAction()}>${this.paletteBusy?'Finding…':'Find a step with Jev'}</button>`:nothing}
       <span slot="footer" class="palette-hint">↑ ↓ Select · Enter Open · Esc Close</span>
     </en-dialog>`;
   }
   private button(label: string, action: (event:MouseEvent) => void, primary = false, disabled = false, actionId='', variant:Emphasis['variant']=primary?'primary':'ghost',source='') { const helpId="still-help-"+(actionId||label.toLowerCase().replaceAll(" ","-"));return html`<en-button id=${this.dockId(helpId)} data-action-id=${actionId} data-action-source=${source} form=${!this.measuringDock&&actionId==='workflow:save'&&this.isCreationMode()?'still-create-form':nothing} size="medium" variant=${variant} .disabled=${this.busy || this.composing || disabled} @click=${action}>${label}</en-button>${this.help(helpId,label)}`; }
   private field(label: string, value: string, change: (v: string) => void, rows = 3, placeholder = '') { if(rows===1)return html`<en-text-field label=${label} .value=${live(value)} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{value:string;isComposing:boolean}>)=>{change(e.detail.value);this.composing=e.detail.isComposing;if(!this.composing)this.changed();}}></en-text-field>`; return html`<en-textarea label=${label} .value=${live(value)} rows=${rows} placeholder=${placeholder} .disabled=${this.busy || !!this.generation?.attempted} @en-input=${(e: CustomEvent<{ value: string; isComposing: boolean }>) => { change(e.detail.value); this.composing = e.detail.isComposing; if (!this.composing) this.changed(); }}></en-textarea>`; }
-  private closeMode() { this.toolbarMotion?.ensure();if (this.mode === 'generate') this.client.position.intent = ''; this.resetStep();this.error='';this.writeRoute();this.decide();this.focusContent(); }
+  private openActionSettings(){
+    this.feedbackSource=this.paletteOpen?'palette':this.moreOpen?'more':'toolbar';
+    this.feedbackDecisionId=this.paletteOpen?this.appliedPaletteDecisionId:this.appliedDecisionId;
+    this.feedbackActionIds=this.paletteOpen?this.paletteOptions().filter(action=>ACTIONS.some(a=>a.id===action.id)).map(action=>action.id):this.visibleToolbarActions();
+    this.feedbackReceipt=this.actionContext.latestCommit;
+    this.feedbackAction=this.feedbackActionIds[0]??(this.feedbackReceipt?'receipt:'+this.feedbackReceipt.id:'');this.feedbackChoice='not-useful-now';this.actionSettingsMessage='';
+    this.actionSettingsOpen=true;this.dockTouched=true;this.changed();
+  }
+  private closeActionSettings(){
+    if(this.actionSettingsBusy)return;
+    this.actionSettingsOpen=false;this.changed();
+    if(this.actionContextNeedsRefresh){this.actionContextNeedsRefresh=false;this.decisionMemory.clear();this.toolbarDecisionSettled=false;this.dockTouched=false;this.decide();}
+  }
+  private async updateActionSettings(work:()=>Promise<void>,message:string){
+    if(this.actionSettingsBusy)return;
+    this.actionSettingsBusy=true;this.actionSettingsMessage='';this.changed();
+    try{await work();this.actionSettingsMessage=message;this.actionContextNeedsRefresh=true;}
+    catch(error){this.actionSettingsMessage=error instanceof Error?error.message:'Could not save this preference.';}
+    finally{this.actionSettingsBusy=false;this.changed();}
+  }
+  private async finishGoal(status:'completed'|'abandoned'|'clear'){
+    await this.actionContext.finishGoal(status);this.client.position.intent='';this.client.position.goal=undefined;
+  }
+  private saveActionFeedback(){
+    const receipt=this.feedbackReceipt&&this.feedbackAction==='receipt:'+this.feedbackReceipt.id?this.feedbackReceipt:undefined;
+    return this.actionContext.feedback(receipt?.actionId??this.feedbackAction,receipt?.decisionId??this.feedbackDecisionId,this.feedbackChoice,receipt?.surface??this.client.position.view,receipt?.source??this.feedbackSource,new Date(Date.now()+Number(this.feedbackDuration)*86400000).toISOString(),receipt?.id);
+  }
+  private renderActionSettings(){
+    const context=this.actionContext.value,goal=this.client.position.goal??context.goal;
+    const goalText=goal?.text||this.client.position.intent;
+    const scope=this.client.position.documentId?'this document':this.client.position.projectId?'this project':'your project list';
+    const disabled=this.actionSettingsBusy||!this.actionContext.loaded;
+    return html`<en-dialog label="Goal and suggestions" .open=${this.actionSettingsOpen} closedby="any" @en-change=${(event:CustomEvent)=>{if(event.target===event.currentTarget&&event.detail.proposed===false)this.closeActionSettings();}}>
+      <section class="suggestion-preferences">
+        <h2>Your goal</h2>
+        ${goalText?html`<p>${goalText}</p>${goal?.criteria.length?html`<ul>${goal.criteria.map(criterion=>html`<li>${criterion}</li>`)}</ul>`:nothing}<p>${this.client.position.intent?'For this session.':`Remembered for ${scope} until ${new Date(context.goal!.expiresAt).toLocaleDateString()}.`}</p>`:html`<p>Set an optional goal to guide suggestions for ${scope}.</p>`}
+        <div class="form-actions"><en-button variant="secondary" ?disabled=${disabled||this.preventsRouteChange()} @click=${()=>{this.closeActionSettings();this.begin('intent');}}>${goalText?'Edit goal':'Set goal'}</en-button>
+          ${goalText?html`<en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(()=>this.finishGoal('completed'),'Goal completed.')}>Complete goal</en-button><en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(()=>this.finishGoal('abandoned'),'Goal abandoned.')}>Abandon goal</en-button><en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(()=>this.finishGoal('clear'),'Goal cleared.')}>Clear goal</en-button>`:nothing}</div>
+        <h2>Suggestion history</h2>
+        <p>Optionally remember which actions you see, choose, save or cancel in ${scope}, and your feedback, for up to 30 days. This helps suggest useful next steps. Scrolling and attention stay on this device and are not sent.</p>
+        <label class="check"><input type="checkbox" .checked=${context.enabled} ?disabled=${disabled} @change=${(event:Event)=>void this.updateActionSettings(()=>this.actionContext.setEnabled((event.target as HTMLInputElement).checked),(event.target as HTMLInputElement).checked?'Suggestion history enabled for up to 30 days.':'Suggestion history disabled and saved history erased. Your remembered goal is unchanged.')} /> Remember action outcomes for ${scope}</label>
+        ${context.enabled&&(this.feedbackActionIds.length||this.feedbackReceipt)?html`<h2>Suggestion feedback</h2>
+          <en-select class="select-label" label="Action" .value=${this.feedbackAction} ?disabled=${disabled} @en-change=${(event:CustomEvent<{proposed:string}>)=>{this.feedbackAction=event.detail.proposed;this.changed();}}>${this.feedbackActionIds.map(id=>html`<en-select-option value=${id}>${ACTIONS.find(action=>action.id===id)?.label??id}</en-select-option>`)}${this.feedbackReceipt?html`<en-select-option value=${'receipt:'+this.feedbackReceipt.id}>Last confirmed operation: ${ACTIONS.find(action=>action.id===this.feedbackReceipt?.actionId)?.label??this.feedbackReceipt.actionId}</en-select-option>`:nothing}</en-select>
+          <en-select class="select-label" label="Your feedback" .value=${this.feedbackChoice} ?disabled=${disabled} @en-change=${(event:CustomEvent<{proposed:NonNullable<ActionObservationInput['feedback']>}>)=>{this.feedbackChoice=event.detail.proposed;this.changed();}}><en-select-option value="not-useful-now">Not useful now</en-select-option><en-select-option value="already-done">Already done</en-select-option><en-select-option value="different-goal">Different goal</en-select-option><en-select-option value="keep-available">Keep available</en-select-option><en-select-option value="helpful">Helped my work</en-select-option><en-select-option value="unhelpful">Did not help my work</en-select-option></en-select>
+          <en-select class="select-label" label="Use this feedback for" .value=${this.feedbackDuration} ?disabled=${disabled} @en-change=${(event:CustomEvent<{proposed:string}>)=>{this.feedbackDuration=event.detail.proposed;this.changed();}}><en-select-option value="1">One day</en-select-option><en-select-option value="7">Seven days</en-select-option></en-select>
+          <p>Applies to ${scope}. Other actions remain available in Find action.</p>
+          <en-button variant="secondary" ?disabled=${disabled||!this.feedbackAction} @click=${()=>void this.updateActionSettings(()=>this.saveActionFeedback(),'Feedback saved for future suggestions.')}>Save feedback</en-button>
+        `:nothing}
+        <div class="form-actions"><en-button variant="ghost" ?disabled=${disabled} @click=${()=>void this.updateActionSettings(async()=>{await this.actionContext.erase();this.client.position.intent='';this.client.position.goal=undefined;},'Saved suggestion history and remembered goal erased.')}>Erase saved suggestion history and goal</en-button></div>
+        ${this.actionSettingsMessage||this.actionContext.error?html`<p role="status">${this.actionSettingsMessage||this.actionContext.error}</p>`:nothing}
+      </section><en-button slot="footer" variant="secondary" ?disabled=${this.actionSettingsBusy} @click=${()=>this.closeActionSettings()}>Done</en-button>
+    </en-dialog>`;
+  }
+  private closeMode() { this.actionContext.cancel();this.toolbarMotion?.ensure();this.resetStep();this.error='';this.writeRoute();this.decide();this.focusContent(); }
   private begin(mode: string, updateURL=true) {
     if(mode==='surprise')mode='add-context'; // Legacy entry points use the ordinary idea form.
     if(mode==='actions'){this.routeMode='actions';this.openFinder();if(updateURL)this.writeRoute();return;}
@@ -794,15 +918,16 @@ export class StillApp extends LitElement {
     this.pendingBlock = null; this.mode = mode;this.routeMode=mode; ++this.decisionTicket; clearTimeout(this.decisionTimer); this.error = ''; this.choice = ''; this.titleDraft = ''; this.bodyDraft = ''; this.kindDraft = 'direction';
     if (mode === 'edit-block') { const block = this.client.projection.libraryBlocks.find(b => b.id === this.client.position.blockId); this.bodyDraft = text(block?.properties.text); this.titleDraft = block?.handle ?? ''; this.kindDraft = block?.type ?? 'message'; this.editBase = { text: text(block?.properties.text) };this.richEditIssue='';this.richBodyDraft=undefined;this.preferenceDraft=Array.isArray(block?.properties.preferred_output_kinds)?block!.properties.preferred_output_kinds as OutputKind[]:[];try{this.richBodyDraft=block&&Object.hasOwn(block.properties,'rich_text_body')?decodeIdeaBody(block.properties.rich_text_body):plainTextIdeaBody(this.bodyDraft);}catch(error){this.richEditIssue=error instanceof Error?error.message:'Open this Idea in a compatible editor.';} }
     if (mode === 'rename') { this.titleDraft = this.client.projection.documentTitle; this.editBase = { title: this.titleDraft }; }
-    if (mode === 'intent') this.bodyDraft = this.client.position.intent;
+    if (mode === 'intent') {const saved=this.actionContext.value.goal;this.bodyDraft=this.client.position.intent||saved?.text||'';this.goalCriteriaDraft=(this.client.position.goal?.criteria??saved?.criteria??[]).join('\n');this.rememberGoal=!!saved;}
     if (mode === 'clarify') { this.mode = 'add-context'; this.titleDraft = 'The heart of it'; this.kindDraft = 'direction'; }
     if (mode === 'edit-artifact') { const a = this.client.projection.artifacts.find(x => x.id === this.client.position.outputId); const content = parseDocumentArtifactContent(a?.contentRef ? this.client.content[a.contentRef] : undefined); this.editBase = { revision: a ? documentArtifactRevision(this.client.events, a.id) : 0, ...(a && ['slides','storyboard'].includes(a.kind) ? {item:this.itemIndex} : {}) }; this.bodyDraft = this.editBase.item !== undefined ? (content?.items[this.itemIndex]?.body ?? a?.items[this.itemIndex]?.body ?? '') : content?.content_markdown ?? a?.items.map(i => `## ${i.title}\n\n${i.body}`).join('\n\n') ?? ''; }
     this.draftBaseline=this.draftSignature();if(updateURL)this.writeRoute();this.changed(); this.focusContent();
   }
-  private choose(id: string) {
+  private choose(id: string,source:ActionObservationInput['source']='direct') {
     if (this.busy || this.composing) return;
     this.toolbarDecisionSettled=false;
     if(!id.startsWith('ui:')&&!this.candidates().some(a=>a.id===id)){this.error='Action changed. Choose another step.';this.dockTouched=false;this.decide();return;}
+    this.recordActionSelection(id,source);
     if(id==='use-in')this.useInTarget=this.suggestionTargets[id]??'';
     if(id==='ui:developer'){this.closeMode();this.setDeveloper(true);return;}
     this.client.position.recentActions = [...this.client.position.recentActions, id].slice(-12);
@@ -854,9 +979,10 @@ export class StillApp extends LitElement {
       });
     } finally {this.directGeneration=false;this.changed();}
   }
-  private selectGenerationFormat(format:string) {
+  private selectGenerationFormat(format:string,source:ActionObservationInput['source']='direct') {
     if(this.busy||this.composing||this.generation?.attempted)return;
     this.formatTouched=true;
+    this.recordActionSelection(format,source);
     this.chooseFormat(format);
   }
   private chooseFormat(format: string) {
@@ -943,7 +1069,13 @@ export class StillApp extends LitElement {
     } else if (this.mode === 'rename') {
       if (!this.titleDraft.trim()) throw new Error('Enter a name.');
       await c.append([{ type: 'DocumentRenamed', payload: { document_id: p.documentId, old_title: this.editBase.title ?? p.documentTitle, new_title: this.titleDraft.trim() } }]); this.closeMode();
-    } else if (this.mode === 'intent') { c.position.intent = this.bodyDraft.trim(); this.closeMode(); return; }
+    } else if (this.mode === 'intent') {
+      const text=this.bodyDraft.trim(),criteria=this.goalCriteriaDraft.split('\n').map(line=>line.trim()).filter(Boolean);
+      if(text.length>2000||criteria.length>5||criteria.some(criterion=>criterion.length>240))throw new Error('Use a goal of up to 2,000 characters and at most five success criteria of 240 characters each.');
+      if(this.rememberGoal&&text){await this.actionContext.saveGoal(text,criteria);c.position.intent='';c.position.goal=undefined;}
+      else {if(this.actionContext.value.goal)await this.actionContext.finishGoal('clear');c.position.intent=text;c.position.goal=cleanExplicitGoal({source:'explicit-user',text,criteria});}
+      this.actionContext.finish();this.decisionMemory.clear();this.closeMode();this.notice=text?'Goal updated.':'Goal cleared.';return;
+    }
     else if (this.mode === 'edit-artifact') { if (this.missingWriting()) throw new Error('Wait for the writing to load.'); await c.editArtifact(c.position.outputId, this.editBase.item !== undefined ? (parseDocumentArtifactContent(c.content[p.artifacts.find(a => a.id === c.position.outputId)?.contentRef ?? ''])?.content_markdown ?? '') : this.bodyDraft, this.editBase.revision ?? 0, this.editBase.item !== undefined ? [{index:this.editBase.item,body:this.bodyDraft}] : undefined); this.closeMode(); }
     else if (this.mode === 'reuse') { const b=p.libraryBlocks.find(x=>x.id===this.choice);if(!b)throw new Error('Choose an idea.');const events=attachIdeaEvents(b,c.position.documentId,p.libraryBlocks,p.libraryBlockRelations);if(events.length)await c.append(events);this.rememberCompletion(this.mode);this.closeMode(); }
     this.notice = 'Saved.'; this.changed(); this.decide();
@@ -1142,7 +1274,7 @@ export class StillApp extends LitElement {
   }
   private renderMode() {
     const mode = this.mode, p = this.client.projection;
-    if(this.unifiedCreation())return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${mode}`,html`<still-creation-flow data-toolbar-scope=${this.workflowScope()} .client=${this.client} .entryKind=${mode==='new-project'?'project':mode==='new-document'?'document':'idea'} @workflow-toolbar-change=${()=>this.changed()} @creation-back=${()=>this.closeMode()} @creation-open=${(event:CustomEvent<{id:string;kind:string;projectId:string;locations?:{documentId?:string}[]}>)=>{const item=event.detail;void this.run(async()=>{const shared=this.client.session?.projects?.find(project=>project.projectId===item.projectId);if(shared&&this.client.session?.projectContext?.projectId!==item.projectId)await this.client.switchWorkspace(shared);this.navigate(item.kind==='project'?'documents':item.kind==='document'?'document':'ideas',{projectId:item.projectId,documentId:item.kind==='document'?item.id:'',blockId:item.kind==='idea'?item.id:''});});}} @creation-done=${(event:CustomEvent<import('../model/creation.ts').CreationReceipt>)=>{const receipt=event.detail;void this.run(async()=>{await this.client.refresh();this.navigate(receipt.primaryDocumentId?'document':mode==='new-project'?'documents':'ideas',{projectId:receipt.projectId,documentId:receipt.primaryDocumentId??'',blockId:''});this.notice='Saved.';});}}></still-creation-flow>`);
+    if(this.unifiedCreation())return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${mode}`,html`<still-creation-flow data-toolbar-scope=${this.workflowScope()} .client=${this.client} .entryKind=${mode==='new-project'?'project':mode==='new-document'?'document':'idea'} @workflow-toolbar-change=${()=>this.changed()} @creation-back=${()=>this.closeMode()} @creation-open=${(event:CustomEvent<{id:string;kind:string;projectId:string;locations?:{documentId?:string}[]}>)=>{const item=event.detail;void this.run(async()=>{const shared=this.client.session?.projects?.find(project=>project.projectId===item.projectId);if(shared&&this.client.session?.projectContext?.projectId!==item.projectId)await this.client.switchWorkspace(shared);this.navigate(item.kind==='project'?'documents':item.kind==='document'?'document':'ideas',{projectId:item.projectId,documentId:item.kind==='document'?item.id:'',blockId:item.kind==='idea'?item.id:''});});}} @creation-done=${(event:CustomEvent<import('../model/creation.ts').CreationReceipt>)=>{const receipt=event.detail;void this.run(async()=>{await this.client.refresh();if(receipt.status==='committed'){const correlation=`creation:${this.client.session?.user.userId}:${receipt.operationId}`;this.actionContext.commit({eventIds:this.client.events.filter(event=>event.correlationId===correlation).map(event=>event.eventId)});}this.navigate(receipt.primaryDocumentId?'document':mode==='new-project'?'documents':'ideas',{projectId:receipt.projectId,documentId:receipt.primaryDocumentId??'',blockId:''});this.notice='Saved.';});}}></still-creation-flow>`);
     if (mode==='edit-artifact' && this.missingWriting()) return this.renderWritingLoad();
     if(mode==='use-in')return keyed(`${this.interactionScope()}/${this.client.position.blockId}/use-in`,html`<still-use-in-flow data-toolbar-scope=${this.workflowScope()} @workflow-toolbar-change=${()=>this.changed()} .client=${this.client} .suggestedTarget=${this.useInTarget} @context-back=${()=>this.closeMode()} @use-in-done=${(e:CustomEvent<{projectId:string;documentId:string;blockId:string}>)=>{this.navigate('document',{projectId:e.detail.projectId,documentId:e.detail.documentId,blockId:e.detail.blockId});this.notice='Saved.';}}></still-use-in-flow>`);
     if (['split-context','research-context','find-references','supply-reference','compose'].includes(mode)) return keyed(`${this.client.scopeKey}/${p.projectId}/${p.documentId}/${this.client.position.blockId}/${mode}`,html`<still-context-flow data-toolbar-scope=${this.workflowScope()} @workflow-toolbar-change=${()=>this.changed()} .client=${this.client} .action=${mode} .suggestedTarget=${this.suggestionTargets[mode]??''} @context-select=${(e:CustomEvent<string>)=>{this.navigate('document',{blockId:e.detail});this.begin(mode);}} @context-back=${()=>this.closeMode()} @context-done=${()=>{this.rememberCompletion(mode);this.notice='Saved.';this.closeMode();}}></still-context-flow>`);
@@ -1175,7 +1307,8 @@ export class StillApp extends LitElement {
     if(mode==='edit-block'){const block=p.libraryBlocks.find(b=>b.id===this.client.position.blockId);return html`<section class="form-page"><span class="eyebrow">${p.projectName}</span><h1>Edit idea</h1>${this.renderWriteRecovery()}${this.richEditIssue?html`<p role="status">${this.richEditIssue}</p><blockquote>${this.bodyDraft}</blockquote>`:this.richBodyDraft&&block?html`<still-idea-body-editor .body=${this.richBodyDraft} .blocks=${p.libraryBlocks} .projectId=${block.projectId} .blockId=${block.id} .disabled=${this.busy||block.locked} @idea-body-change=${(event:CustomEvent<IdeaBodyV1>)=>{this.richBodyDraft=event.detail;this.bodyDraft=ideaBodyText(event.detail);this.changed();}}></still-idea-body-editor>${Object.hasOwn(block.properties,'preferred_output_kinds')?html`<fieldset><legend>Preferred Outputs</legend><p>Keep the visible “Preferred outputs” line consistent with these choices. Other Outputs remain available.</p>${OUTPUT_KINDS.map(kind=>html`<label><input type="checkbox" .checked=${this.preferenceDraft.includes(kind)} @change=${(event:Event)=>{this.preferenceDraft=(event.target as HTMLInputElement).checked?[...new Set([...this.preferenceDraft,kind])]:this.preferenceDraft.filter(value=>value!==kind);this.changed();}}>${OUTPUT_KIND_LABELS[kind]}</label>`)}</fieldset>`:nothing}`:nothing}</section>`;}
     const titles: Record<string, string> = { 'new-project': 'New project', 'new-document': 'New document', 'add-context': 'Add idea', 'edit-block': 'Edit idea', rename: 'Rename document', intent: 'Set next goal', 'edit-artifact': 'Edit result' };
     const named = ['new-project', 'new-document', 'add-context', 'rename'].includes(mode);
-    const fields=html`${mode!=='new-project'&&p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${this.renderWriteRecovery()}${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' && mode !== 'new-project' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}`;
+    const goalFields=mode==='intent'?html`${this.field('Success criteria · optional, one per line',this.goalCriteriaDraft,value=>{this.goalCriteriaDraft=value;},3)}<label class="check"><input type="checkbox" .checked=${this.rememberGoal} ?disabled=${this.busy||!this.actionContext.loaded} @change=${(event:Event)=>{this.rememberGoal=(event.target as HTMLInputElement).checked;this.changed();}} /> Remember this goal for ${this.client.position.documentId?'this document':this.client.position.projectId?'this project':'the project list'} for up to 30 days</label><p>Leave this unchecked to use the goal only in this session. Goals are optional and are never inferred from clicks.</p>`:nothing;
+    const fields=html`${mode!=='new-project'&&p.projectName ? html`<span class="eyebrow">${p.projectName}</span>` : nothing}<h1>${titles[mode] ?? 'New idea'}</h1>${this.renderWriteRecovery()}${named ? this.field('Name', this.titleDraft, v => { this.titleDraft = v; }, 1) : nothing}${mode === 'add-context' ? html`<en-select class="select-label" label="Type" .value=${this.kindDraft} @en-change=${(e: CustomEvent<{proposed:string;value:string}>) => { this.kindDraft = e.detail.proposed; }}>${blockKinds.map(k => html`<en-select-option value=${k}>${k[0].toUpperCase() + k.slice(1)}</en-select-option>`)}</en-select>` : nothing}${mode !== 'rename' && mode !== 'new-project' ? this.field(mode === 'intent' ? 'Your next goal' : mode === 'edit-artifact' ? 'Writing' : 'Idea', this.bodyDraft, v => { this.bodyDraft = v; }, mode === 'edit-artifact' ? 16 : 6, '') : nothing}${goalFields}`;
     return this.isCreationMode()
       ? html`<form id="still-create-form" class="form-page" @submit=${this.submitCreation} @keydown=${this.creationKeydown}>${fields}</form>`
       : html`<section class="form-page">${fields}</section>`;
@@ -1372,7 +1505,7 @@ export class StillApp extends LitElement {
   render() {
     const c = this.client, displayedGeneration = !this.loading && !this.mode && c.position.view === 'generation' ? c.position.outputId : '';
     const failed = c.jobs.find(j => j.status === 'failed' && !j.dismissedAt && j.documentId === c.position.documentId && j.jobId !== displayedGeneration);
-    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main><div class="dock-stack">${this.renderNotifications(failed)}<div class="toolbar-motion-root"><div class="toolbar-motion-live">${this.renderDock()}</div><div class="toolbar-motion-visual" aria-hidden="true" inert></div><span class="toolbar-motion-status" role="status" aria-live="polite"></span></div></div>${this.renderDockProbes()}${this.renderPalette()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-remember-lists=${this.setRememberLists} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-assess-ideas=${this.assessIdeasAgain} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report <en-icon name="arrow-right" aria-hidden="true"></en-icon></a>` : nothing}</div>`;
+    return html`<div class=${this.developerVisible?'still-layout has-developer':'still-layout'}><div class="still-shell" id="still-onboarding"><header class="masthead"><a class="wordmark header-stamp" href=${this.viewURL('projects',{projectId:'',documentId:''})} aria-label="Still home" @click=${this.home}>still<span aria-hidden="true">.</span></a>${!this.loading&&c.session?.policy.accepted&&!c.session.impersonation?html`<en-button class="header-stamp suggestion-settings-button" variant="ghost" size="small" ?disabled=${this.busy||this.composing} @click=${()=>this.openActionSettings()}>Goal & suggestions</en-button>`:nothing}${c.session?.impersonation || c.session && !c.abilities.author ? html`<span class="session-status header-stamp">${c.session?.impersonation ? 'Preview · read only' : 'Read only'}</span>` : nothing}</header><main id="still-content" aria-busy=${this.loading}>${this.renderCanvas()}</main><div class="dock-stack">${this.renderNotifications(failed)}<div class="toolbar-motion-root"><div class="toolbar-motion-live">${this.renderDock()}</div><div class="toolbar-motion-visual" aria-hidden="true" inert></div><span class="toolbar-motion-status" role="status" aria-live="polite"></span></div></div>${this.renderDockProbes()}${this.renderPalette()}${this.renderActionSettings()}</div>${this.developer ? html`<aside class="developer-panel" ?hidden=${!this.developerVisible} aria-label="Developer panel"><still-developer-console @developer-sharing=${this.setSharing} @developer-visibility=${(e:CustomEvent<{value:boolean}>)=>this.setDeveloper(e.detail.value)} @developer-remember-lists=${this.setRememberLists} @developer-next-best=${this.setNextBest} @developer-flags=${this.setOnboarding} @developer-assess-ideas=${this.assessIdeasAgain} @developer-refresh=${this.refreshDecision} @developer-density=${this.setDensity} @developer-experiment=${this.experiment} @developer-disable=${()=>this.setDeveloper(false)}></still-developer-console></aside>` : nothing}${new URL(location.href).searchParams.has('progress-report') ? html`<a class="progress-return" href=${REPORT_URL}>Progress Report <en-icon name="arrow-right" aria-hidden="true"></en-icon></a>` : nothing}</div>`;
   }
 }
 if (!customElements.get('still-app')) customElements.define('still-app', StillApp);

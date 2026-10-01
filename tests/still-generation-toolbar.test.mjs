@@ -1,3 +1,4 @@
+import {StillActionContext} from '../src/still/action-context-client.ts';
 import {validateGenerationOptions} from '../src/still/generation-settings.ts';
 import {generationOutcome} from '../src/still/generation-outcome.ts';
 import {IdeaEditCanceled} from '../src/ui/shared-idea-choice.ts';
@@ -18,7 +19,7 @@ const code=ts.transpileModule(`class Recovery {${app.members.filter(n=>methods.i
 const html=(parts,...values)=>parts.reduce((s,p,i)=>s+p+(Array.isArray(values[i])?values[i].join(''):values[i]??''),'');
 const Recovery=new Function('validateGenerationOptions','generationOutcome','IdeaEditCanceled','documentJobCanAcknowledgeSafety','generationFormat','generationActive','FORMATS','ApiError','generationReview','canContinueReview','html','nothing',`${code};return Recovery;`)(validateGenerationOptions,generationOutcome,IdeaEditCanceled,documentJobCanAcknowledgeSafety,generationFormat,generationActive,{video:'Video',image:'Image'},ApiError,generationReview,canContinueReview,html,'');
 function fixture(status='failed') {
- const view=new Recovery();
+ const view=new Recovery();view.actionContext=new StillActionContext(async()=>{throw new Error('Disabled observations must never dispatch');});
  const calls=[];
  Object.assign(view,{busy:false,composing:false,decide:()=>{},changed:()=>{},begin:mode=>calls.push(['begin',mode]),startGeneration:format=>{assert.equal(view.generation,null);calls.push(['generate',format]);},client:{scopeKey:'owner',epoch:1,position:{recentActions:[],view:'generation',documentId:'doc',outputId:'job'},abilities:{generate:true,formats:['video']},jobs:[{jobId:'job',documentId:'doc',status,kind:'render_document',result:{artifactKind:'video'}}],refreshGeneration:async()=>calls.push(['poll']),refresh:async()=>calls.push(['refresh'])}});
  return {view,calls};

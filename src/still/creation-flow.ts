@@ -101,11 +101,17 @@ export class StillCreationFlow extends LitElement {
   }
   private command(label:string,run:()=>unknown,primary=false,disabled=false):WorkflowAction{return {id:`creation:${label.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`,label,variant:primary?'primary':'ghost',disabled:!this.flow||this.flow.busy||this.composing||this.helpOpen||disabled,run:()=>{if(this.flow&&!this.flow.busy&&!this.composing&&!this.helpOpen&&!disabled)void this.run(run);}};}
   get toolbar():WorkflowToolbar{
-    const flow=this.flow;if(!flow)return {actions:[],pending:true,status:'Loading draft…'};
-    if(this.leaveChoice)return {actions:[this.command('Keep draft and leave',()=>this.leave(),true),this.command('Stay',()=>{this.leaveChoice=false;this.requestUpdate();}),this.command('Discard draft',async()=>{await flow.discard();if(!flow.error)this.dispatchEvent(new CustomEvent('creation-back',{bubbles:true}));})],status:flow.status,pending:flow.busy,recovery:!!flow.error};
+    const flow=this.flow;if(!flow)return {actions:[],pending:true,status:'Loading draft…',step:'pending'};
+    const semantic:Pick<WorkflowToolbar,'step'|'blockingReview'|'dirtyDraft'|'selectedTargetIds'>={
+      step:flow.busy?'pending':flow.error?'recovery':flow.draft.state==='saved'?'result':this.leaveChoice||flow.plan?'review':'edit',
+      blockingReview:this.leaveChoice||!!flow.plan&&flow.draft.state!=='saved'&&!flow.noChange,
+      dirtyDraft:this.composing||flow.hasUnacknowledgedChanges,
+      selectedTargetIds:[...new Set([...(flow.plan&&flow.currentId?[flow.currentId]:[]),...this.selectedRoots,...flow.draft.referenceSelections.flatMap(selection=>selection.rootIds)])].slice(0,40),
+    };
+    if(this.leaveChoice)return {...semantic,actions:[this.command('Keep draft and leave',()=>this.leave(),true),this.command('Stay',()=>{this.leaveChoice=false;this.requestUpdate();}),this.command('Discard draft',async()=>{await flow.discard();if(!flow.error)this.dispatchEvent(new CustomEvent('creation-back',{bubbles:true}));})],status:flow.status,pending:flow.busy,recovery:!!flow.error};
     const back=this.command('Back',()=>{this.leaveChoice=true;this.requestUpdate();});
-    if(!flow.plan)return {actions:[this.command('Save',()=>this.submit(),true,!flow.canRetry),back],status:flow.status,pending:flow.busy,recovery:!!flow.error};
-    if(flow.noChange||!flow.plan.nodes.some(node=>node.disposition==='retained')&&!flow.plan.uses.some(use=>use.disposition==='retained'))return {actions:[this.command(flow.noChange?.documentId?'Open Document':'Open selected Idea',()=>this.openSelected(),true,!flow.noChange&&!flow.draft.referenceSelections.length),back],status:flow.status,pending:flow.busy,recovery:!!flow.error};
+    if(!flow.plan)return {...semantic,actions:[this.command('Save',()=>this.submit(),true,!flow.canRetry),back],status:flow.status,pending:flow.busy,recovery:!!flow.error};
+    if(flow.noChange||!flow.plan.nodes.some(node=>node.disposition==='retained')&&!flow.plan.uses.some(use=>use.disposition==='retained'))return {...semantic,actions:[this.command(flow.noChange?.documentId?'Open Document':'Open selected Idea',()=>this.openSelected(),true,!flow.noChange&&!flow.draft.referenceSelections.length),back],status:flow.status,pending:flow.busy,recovery:!!flow.error};
     const state=this.reviewCounts(),actions:WorkflowAction[]=[];
     if(flow.currentStage==='final'){
       if(state.unseen===0)actions.push(this.command(state.records===0?'Approve selected use':`Approve selected (${state.records})`,async()=>{const receipt=await flow.commit();if(receipt)this.done(receipt);},true,!flow.eligible));
@@ -118,7 +124,7 @@ export class StillCreationFlow extends LitElement {
       actions.push(this.command('Approve all',()=>flow.approveAll()));
       if(state.unseen)actions.push(this.command(`Review next unseen (${state.unseen})`,()=>this.nextUnseen()));else if(state.incomplete)actions.push(this.command(`Complete missing information (${state.incomplete})`,()=>this.nextIncomplete()));
     }
-    actions.push(back);return {actions,status:flow.status,pending:flow.busy,recovery:!!flow.error};
+    actions.push(back);return {...semantic,actions,status:flow.status,pending:flow.busy,recovery:!!flow.error};
   }
   private async run(work:()=>unknown){const flow=this.flow;if(!flow||flow.busy||this.composing||this.helpOpen)return;flow.busy=true;flow.error='';this.requestUpdate();try{await work();}catch(error){flow.reportFailure(error);}finally{flow.busy=false;this.requestUpdate();if(flow.error&&!flow.plan){await this.updateComplete;this.querySelector<EnRichTextEditor>('#creation-input')?.focus();}}}
   private done(receipt:CreationReceipt){if(receipt.operationId===this.deliveredReceipt)return;this.deliveredReceipt=receipt.operationId;this.dispatchEvent(new CustomEvent<CreationReceipt>('creation-done',{bubbles:true,detail:receipt}));}

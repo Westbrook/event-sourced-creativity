@@ -1,3 +1,4 @@
+import { invalidateStillActionDecisionCache, stillActionPrivacyDefinitions } from './still-action-outcomes.ts';
 import { prepareScopeProfilePersonalErasure } from './memory-scope-profile-store.ts';
 import { prepareResourceMemoryPersonalErasure } from './memory-resource-settings.ts';
 import { reconcileOutputAssetStorage } from "./output-asset-storage-control.ts";
@@ -140,6 +141,8 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     // The early barrier never invokes the ledger/source erasure owner. A later
     // explicitly confirmed request must prove job cleanup complete first.
     const prefix=final?.statements??barrier.statements,terminal=final?.terminalAssertions??[];
+    const stillActionDefinitions=await stillActionPrivacyDefinitions(env,userId);
+    if(!current())return unconfirmed();
     const genericDefinitions=pending?[]:[
       {table:'event_private_payloads',set:"UPDATE event_private_payloads SET private_json='',redacted_at=?",timed:true,
         where:`owner_id=? AND redacted_at IS NULL
@@ -156,6 +159,7 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
       {table:'external_content',set:'DELETE FROM external_content',timed:false,where:'owner_id=?',hold:null,bindings:[userId]},
       ...(platformAssistant?[{table:'platform_assistant_private_content',set:"UPDATE platform_assistant_private_content SET content='',redacted_at=?",
         timed:true,where:'actor_user_id=? AND redacted_at IS NULL',hold:null,bindings:[userId]}]:[]),
+      ...stillActionDefinitions,
     ];
     const generic=genericDefinitions.map(item=>db.prepare(`${item.set} WHERE ${item.where}${item.hold?` AND NOT ${item.hold}`:''}`)
       .bind(...(item.timed?[now]:[]),...item.bindings));
@@ -226,6 +230,7 @@ export async function handleEventPrivacy(request: Request, env: WorkerEnv): Prom
     }
     const heldAuthoredEventBodies=held[0]??0,heldTemporaryContent=held[1]??0;
     const authoredPending=pending||heldAuthoredEventBodies>0||heldTemporaryContent>0;
+    if(!pending){await invalidateStillActionDecisionCache(env,userId);if(!current())return unconfirmed();}
     return Response.json({
       authoredContentErasurePending:authoredPending,memoryJobCleanupPending:pending,continuationRequired:authoredPending,
       heldAuthoredEventBodies:pending?null:heldAuthoredEventBodies,heldTemporaryContent:pending?null:heldTemporaryContent,

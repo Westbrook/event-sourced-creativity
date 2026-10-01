@@ -6,30 +6,8 @@ import type { Emphasis } from './presentation.ts';
 import { questionComposition, type MenuAdjustment } from './assessments.ts';
 import type { CreativeProjection } from '../model/events.ts';
 import { evaluateActions, evaluateEligibility, evaluateFormats, rankAllFormats, POLICY_VERSION, questionsFor, type Abilities, type Answer, type Position, type Question } from './decisions.ts';
-
-export function inspectAnswer(question: Question, answer?: Answer) {
-  const warnings: string[] = [];
-  if (!answer) return { status:'Missing answer', warnings };
-  const number = (value: unknown, max: number) => typeof value==='number' && Number.isFinite(value) && value>=0 && value<=max ? value : undefined;
-  const score = question.type==='score' ? number(answer.score,question.criteria.length-1) : undefined;
-  const confidence = question.type!=='noul' ? number(answer.confidence,1) : undefined;
-  const noul = question.type==='noul' ? number(answer.noul,1) : undefined;
-  const choice = question.type==='choice' && typeof answer.choice==='string' && Object.hasOwn(question.criteria,answer.choice) ? answer.choice : undefined;
-  const valid = answer.type===question.type && (question.type==='score' ? score!==undefined&&confidence!==undefined : question.type==='noul' ? noul!==undefined : choice!==undefined&&confidence!==undefined);
-  const keys = question.type==='score' ? question.criteria.map((_,i)=>String(i)) : question.type==='choice' ? Object.keys(question.criteria) : [];
-  let probabilities: Record<string,number> | undefined;
-  if (keys.length) {
-    const raw = answer.probabilities;
-    if (!raw || typeof raw!=='object' || Array.isArray(raw)) warnings.push('Distribution unavailable');
-    else if (keys.some(key=>number(raw[key],1)===undefined) || Object.keys(raw).some(key=>!keys.includes(key))) warnings.push('Invalid distribution');
-    else {
-      const sum=keys.reduce((n,key)=>n+raw[key],0);
-      if(Math.abs(sum-1)>.02) warnings.push('Distribution does not sum to 1');
-      else probabilities=Object.fromEntries(keys.map(key=>[key,raw[key]]));
-    }
-  }
-  return { status:valid?'Answered':'Invalid answer', score, confidence, noul, choice, probabilities, warnings };
-}
+import { inspectDecisionAnswer as inspectAnswer } from './decision-answer.ts';
+export { inspectAnswer };
 
 export type DecisionExchange = {
   requestId:string;
@@ -39,7 +17,7 @@ export type DecisionExchange = {
 };
 
 export type InspectedQuestion=ReturnType<typeof inspectAnswer>&{id:string;question:Question;asked:boolean};
-export type DecisionPass={id:string;parentId?:string;label:string;status:'answered'|'failed'|'skipped';reason?:string;elapsedMs:number;compositionIds:string[];evidenceIds:string[];exchange?:DecisionExchange;model?:string;questions:InspectedQuestion[]};
+export type DecisionPass={id:string;parentId?:string;label:string;status:'answered'|'failed'|'skipped';reason?:string;elapsedMs:number;compositionIds:string[];evidenceIds:string[];exchange?:DecisionExchange;model?:string;requestedModel?:string;usage?:Record<string,number>;questions:InspectedQuestion[]};
 
 // The opt-in exchange is the serialized, authorized request body only. Never attach
 // provider headers, credentials, arbitrary answer keys, or provider-supplied legends.
@@ -80,7 +58,7 @@ export type DecisionDiagnostics = ReturnType<typeof decisionDiagnostics>;
 export type PreparationTiming={source:string;eventsRead:number;head:number;elapsedMs:number;readPages?:number;readMs?:number;cacheReadMs?:number;cacheWriteMs?:number;focusedReadMs?:number;focusedEventsRead?:number;persisted?:boolean;sessionMs:number;selectedContentMs:number;totalMs:number};
 export type DecisionDelivery={stage:"initial"|"complete";serverMs:number;cacheWriteMs?:number;firstAssessmentMs?:number;enrichmentMs?:number;enrichment?:"pending"|"complete"|"interrupted"};
 export type OriginalTiming={preparation?:PreparationTiming;delivery?:DecisionDelivery};
-export type DecisionResponse = { opportunities?:IdeaAssessment; nextBest?:import('./next-best.ts').NextBestAnswer; delivery?:DecisionDelivery; originalTiming?:OriginalTiming; preparation?:PreparationTiming; cache?:DecisionCacheInfo; source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; paletteActions?:{id:string}[]; formats?:string[]; rankedFormats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics };
+export type DecisionResponse = { decisionId?:string; assessmentId?:string; expiresAt?:string; retainedActionContext?:boolean; opportunities?:IdeaAssessment; nextBest?:import('./next-best.ts').NextBestAnswer; delivery?:DecisionDelivery; originalTiming?:OriginalTiming; preparation?:PreparationTiming; cache?:DecisionCacheInfo; source:string; reason?:string; model?:string; head:number; policy:string; actions?:{id:string}[]; rankedActions?:{id:string}[]; paletteActions?:{id:string}[]; formats?:string[]; rankedFormats?:string[]; presentation?:Record<string,Emphasis>; targets?:Record<string,string>; resolvedAction?:string; diagnostics?:DecisionDiagnostics; provider?:{requestedModel:string;resolvedModels:string[];usage:Record<string,number>;passes:{id:string;status:string;model?:string;usage?:Record<string,number>;elapsedMs:number}[]}; evidenceExpiresAt?:number };
 export type ReceivedDecision = { firstResponseMs?:number; delivery?:DecisionDelivery; originalTiming?:OriginalTiming; preparation?:PreparationTiming; receivedAt?:number; cache?:DecisionCacheInfo; at:string; requestElapsedMs?:number; disposition:string; trace?:DecisionDiagnostics; source:string; reason?:string; recommended:string[] };
 
 export function responseDisposition(result: DecisionResponse, state: { stale:boolean; focused?:boolean; touched?:boolean; head:number; headChanged?:boolean; formats?:boolean }) {

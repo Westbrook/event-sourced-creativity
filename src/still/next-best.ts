@@ -1,9 +1,10 @@
 import { isIdeaPage, DOCUMENT_RETURN_REASON } from './local-policy.ts';
 import type { Action, Question, Position } from './decisions.ts';
 import type { EmphasisEvidence } from './presentation.ts';
+import { inspectDecisionAnswer, type DecisionAnswerQuality } from './decision-answer.ts';
 
 export const NEXT_BEST_POLICY={confidence:.6,probability:.5,gap:.15,scoreConfidence:.55,usefulProbability:.7};
-export type NextBestAnswer={status:string;choice?:string;confidence?:number;probabilities?:Record<string,number>};
+export type NextBestAnswer={status:string;choice?:string;confidence?:number;probabilities?:Record<string,number>;quality?:DecisionAnswerQuality;warnings?:string[];reason?:string};
 export type NextBestAssessment={enabled:boolean;accepted:boolean;reason:string;choice?:string;confidence?:number;probability?:number;runnerUp?:string;gap?:number;usefulProbability?:number;usefulnessConfidence?:number};
 /** Product affordances, not inferred user intent or a ranking of content rows. */
 export function toolbarDecisionContext(position:Pick<Position,'view'|'palette'> & Partial<Pick<Position,'blockId'>>,candidates:Pick<Action,'id'>[]){
@@ -25,8 +26,12 @@ const valid=(n:unknown,max=1):n is number=>typeof n==='number'&&Number.isFinite(
 export function assessNextBest(answer:NextBestAnswer|undefined,ids:string[],evidence:Record<string,EmphasisEvidence>,enabled:boolean,restricted:string[]=[]):NextBestAssessment {
   const result:NextBestAssessment={enabled,accepted:false,reason:'No choice received',choice:answer?.choice,confidence:answer?.confidence};
   if(!answer)return result;
-  const distribution=answer.probabilities,choice=answer.choice;
-  if(answer.status!=='Answered'||!choice||!valid(answer.confidence)||!distribution||!Object.hasOwn(distribution,choice)||Object.values(distribution).some(n=>!valid(n))||Math.abs(Object.values(distribution).reduce((n,p)=>n+p,0)-1)>.02)return {...result,reason:'Invalid choice or distribution'};
+  if(answer.status==='Invalidated')return {...result,reason:answer.reason??'Choice invalidated by final evidence'};
+  // The server checks the exact requested criteria. Recheck its bounded result
+  // here as well; score-only or contradicted evidence cannot become a primary.
+  const checked=inspectDecisionAnswer({type:'choice',instructions:'',criteria:Object.fromEntries(Object.keys(answer.probabilities??{}).map(id=>[id,id]))},{type:'choice',choice:answer.choice,confidence:answer.confidence,probabilities:answer.probabilities});
+  const distribution=checked.probabilities,choice=checked.choice;
+  if(answer.status!=='Answered'||answer.quality!==undefined&&answer.quality!=='valid'||checked.quality!=='valid'||!choice||!distribution)return {...result,reason:`Invalid choice or distribution${checked.warnings.length?`: ${checked.warnings.join('; ')}`:''}`};
   const runner=Object.entries(distribution).filter(([id])=>id!==choice).sort((a,b)=>b[1]-a[1])[0];
   Object.assign(result,{probability:distribution[choice],runnerUp:runner?.[0],gap:distribution[choice]-(runner?.[1]??0)});
   if(!enabled)return {...result,reason:'Choice influence disabled'};
@@ -35,10 +40,11 @@ export function assessNextBest(answer:NextBestAnswer|undefined,ids:string[],evid
   if(restricted.includes(choice))return {...result,reason:'Page policy prevents primary emphasis'};
   const p=NEXT_BEST_POLICY,s=evidence[choice];
   Object.assign(result,{usefulProbability:s?.usefulProbability,usefulnessConfidence:s?.confidence});
-  if(answer.confidence<p.confidence)return {...result,reason:`Choice confidence below ${Math.round(p.confidence*100)}%`};
+  if(s?.primaryEligible===false)return {...result,reason:s.primaryBlockedReason??'Primary emphasis lacks required evidence'};
+  if(checked.confidence!<p.confidence)return {...result,reason:`Choice confidence below ${Math.round(p.confidence*100)}%`};
   if(result.probability!<p.probability)return {...result,reason:`Choice probability below ${Math.round(p.probability*100)}%`};
   if(result.gap!+1e-9<p.gap)return {...result,reason:`Choice lead below ${Math.round(p.gap*100)} percentage points`};
-  if(!s||!valid(s.score,3)||!valid(s.confidence)||!valid(s.usefulProbability))return {...result,reason:'Missing or invalid usefulness evidence'};
+  if(!s||s.quality!==undefined&&s.quality!=='valid'||!valid(s.score,3)||!valid(s.confidence)||!valid(s.usefulProbability))return {...result,reason:'Missing or invalid usefulness evidence'};
   if(s.confidence<p.scoreConfidence)return {...result,reason:`Usefulness confidence below ${Math.round(p.scoreConfidence*100)}%`};
   if(s.usefulProbability<p.usefulProbability)return {...result,reason:`Helpful-or-better probability below ${Math.round(p.usefulProbability*100)}%`};
   // The choice supplies precedence. Its support is P(helpful or better), not a

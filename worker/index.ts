@@ -1,3 +1,5 @@
+import { handleStillActionOutcomes } from './still-action-outcomes-api.ts';
+import { sweepStillActionOutcomes } from './still-action-outcomes.ts';
 import {runCreationMaintenance} from './creation-index-maintenance.ts';
 import {maintainCreationSearchJobs} from './creation-search-api.ts';
 import { handleSourceEligibilityRead, SOURCE_ELIGIBILITY_PATH } from './source-eligibility-read.ts';
@@ -208,6 +210,7 @@ async function routeRequest(request: Request, env: WorkerEnv, context: WorkerExe
     if(url.pathname==="/api/still/panel"||url.pathname.startsWith("/api/still/panel/"))return handleStillPanel(request,env);
     if(url.pathname==="/api/still/onboarding")return handleStillOnboarding(request,env,context);
     if(url.pathname==="/api/still/experiment")return handleStillExperiment(request,env,context);
+    if(["/api/still/action-context","/api/still/action-observations","/api/still/goal"].includes(url.pathname))return handleStillActionOutcomes(request,env);
     if(url.pathname==="/api/still/decision")return handleStillDecision(request,env,context);
     if(url.pathname==="/api/session")return handleSession(request,env,context);
     if(url.pathname==="/api/platform/assistant")return handlePlatformAssistant(request,env);
@@ -431,6 +434,7 @@ export default {
         () => reconcileMemoryImageUsage(env),
         () => reconcileMemoryAuthoredImages(env),
         () => observeScheduledRetention(env,1_000),
+        () => sweepStillActionOutcomes(env),
         () => sweepExpiredMemoryCheckpoints(env,128),
         () => sweepExpiredDocumentProfileSuppressions(env,128),
         () => sweepExpiredDerivationGrants(env,128),

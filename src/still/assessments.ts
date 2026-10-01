@@ -1,7 +1,9 @@
+import { inspectScoreAnswer } from './decision-answer.ts';
 import { ideasInDocument } from '../model/project-ideas.ts';
 import { foldEvents, type CreativeEvent } from '../model/events.ts';
 import type { Action, Answer, Position, Question } from './decisions.ts';
 import { destinationsFor, type Destination } from './use-in.ts';
+import { selectDecisionEvidence } from './decision-retrieval.ts';
 
 export const COMPOSITIONS={
   intent:{label:'Intent',purpose:'Current goals, openness, progress and explicit requests.'},
@@ -17,29 +19,47 @@ export function questionComposition(id:string):keyof typeof COMPOSITIONS{
 }
 export function compositionIndex(questions:Record<string,Question>){return Object.entries(COMPOSITIONS).map(([id,composition])=>({id,...composition,questions:Object.keys(questions).filter(q=>questionComposition(q)===id)}));}
 const safe=(v:unknown,n:number)=>String(v??'').replace(/https?:\/\/\S+/g,'[linked resource]').slice(0,n);
-export function connectionEvidence(events:CreativeEvent[],pos:Position,prepared?:ReturnType<typeof foldEvents>){
-  const p=prepared??foldEvents(events,Infinity,pos.documentId,pos.projectId),source=p.blocks.find(b=>b.id===pos.blockId);
-  if(!source)return {destinations:[] as Destination[],details:[] as unknown[],source:null};
-  const words=new Set(`${pos.intent} ${source.handle} ${source.properties.text??''}`.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)??[]);
+export function connectionEvidence(events:CreativeEvent[],pos:Position,prepared?:ReturnType<typeof foldEvents>,options?:{goal?:string}){
+  const p=prepared??foldEvents(events,Infinity,pos.documentId,pos.projectId),source=(pos.view==='ideas'?p.libraryBlocks:p.blocks).find(b=>b.id===pos.blockId&&!b.removed);
+  if(!source)return {destinations:[] as Destination[],details:[] as unknown[],source:null,coverage:{candidateTotal:0,included:0,omitted:0,limit:6,strategy:'goal-focus-relationships-diversity-v1',omissionReason:'no_selected_idea'}};
   const all=destinationsFor(events,pos);
   const projections=new Map<string,ReturnType<typeof foldEvents>>([[pos.projectId,p]]),indexes=new Map<string,Map<string,typeof p.libraryBlocks[number]>>();
   const project=(id:string)=>{if(!projections.has(id))projections.set(id,foldEvents(events,Infinity,'',id));return projections.get(id)!;};
   const block=(d:Destination)=>{if(!indexes.has(d.projectId))indexes.set(d.projectId,new Map(project(d.projectId).libraryBlocks.map(b=>[b.id,b])));return indexes.get(d.projectId)!.get(d.blockId);};
-  // Retrieve from short indexed fields, then hydrate only the six selected candidates.
-  const ranked=all.map(d=>{const b=block(d),tokens=new Set(`${d.label} ${d.document} ${safe(b?.properties.text,500)}`.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)??[]);return {d,score:[...words].filter(w=>tokens.has(w)).length+(d.blockId?1:0)};}).sort((a,b)=>b.score-a.score||a.d.id.localeCompare(b.d.id)).slice(0,6);
-  const details=(d:Destination)=>{const scope=project(d.projectId),b=block(d),neighbors=ideasInDocument(scope,d.documentId).filter(x=>x.id!==d.blockId);return {...d,label:safe(d.label,120),project:safe(d.project,120),document:safe(d.document,120),text:safe(b?.properties.text,1600),versions:(b?.sourceEvents??scope.documents.find(x=>x.id===d.documentId)?.sourceEvents??[]).slice(-12),provenance:b?{sourceBlock:safe(b.properties.source_block_id??b.properties.copied_from_block_id,180),excerpt:safe(b.properties.source_excerpt,300)}:{},relationships:scope.libraryBlockRelations.filter(r=>!r.removed&&(r.fromBlockId===d.blockId||r.toBlockId===d.blockId)).slice(0,12).map(r=>({from:r.fromBlockId,to:r.toBlockId,kind:r.kind})),neighbors:neighbors.slice(0,4).map(x=>({id:x.id,label:safe(x.handle,120),text:safe(x.properties.text,400),locked:x.locked})),coverage:{neighborTotal:neighbors.length,neighborIncluded:Math.min(4,neighbors.length)}};};
-  return {destinations:ranked.map(x=>x.d),details:ranked.map(x=>details(x.d)),source:{id:source.id,projectId:source.projectId,documentId:source.documentId,handle:safe(source.handle,120),text:safe(source.properties.text,2400),versions:source.sourceEvents.slice(-12),properties:{group:!!source.properties.context_group,sourceBlock:safe(source.properties.source_block_id??source.properties.copied_from_block_id,180)},coverage:{textCharacters:String(source.properties.text??'').length,includedCharacters:Math.min(2400,String(source.properties.text??'').length)},destinationTotal:all.length}};
+  const relatedIds=new Set(p.libraryBlockRelations.filter(r=>!r.removed&&(r.fromBlockId===source.id||r.toBlockId===source.id)).flatMap(r=>[r.fromBlockId,r.toBlockId]));
+  const changes=events.filter(e=>/^(BlockCreated|BlockRenamed|BlockPropertyEdited|BlockWeightSet|BlockRehomed|BlockLocked|BlockUnlocked|BlockRemoved|BlockRestored|BlockDocumentAttached|BlockDocumentDetached|BlockRelationAdded|BlockRelationRemoved|DocumentCreated|DocumentRenamed)$/.test(e.type)).slice(-32);
+  const recentChanges=new Set(changes.map(e=>e.eventId)),changedBlocks=new Set<string>(),changedDocuments=new Set<string>(),relationEnds=new Map<string,string[]>();
+  for(const e of events)if(e.type==='BlockRelationAdded')relationEnds.set(String(e.payload.relation_id),[String(e.payload.from_block_id),String(e.payload.to_block_id)]);
+  for(const e of changes){
+    if(typeof e.payload.block_id==='string')changedBlocks.add(e.payload.block_id);
+    if(e.type.startsWith('Document')&&typeof e.payload.document_id==='string')changedDocuments.add(e.payload.document_id);
+    if(e.type.startsWith('BlockRelation'))for(const id of relationEnds.get(String(e.payload.relation_id))??[])changedBlocks.add(id);
+  }
+  const sourceOrigin=String(source.properties.source_block_id??source.properties.copied_from_block_id??source.id);
+  // Index short fields across the already authorized catalog. Hydrate at most six
+  // destinations; retrieval never creates destinations or grants permission.
+  const retrieval=selectDecisionEvidence(all.map(d=>{
+    const b=block(d),document=project(d.projectId).documents.find(x=>x.id===d.documentId),origin=b?.properties.source_block_id??b?.properties.copied_from_block_id;
+    return {id:d.id,value:d,projectId:d.projectId,documentId:d.documentId,category:d.kind,title:`${safe(d.label,120)} ${safe(d.document,120)}`,text:safe(b?.properties.text,500),related:!!b&&(d.projectId===source.projectId&&relatedIds.has(b.id)||origin===sourceOrigin||b.id===sourceOrigin),changedRecently:changedBlocks.has(d.blockId)||!d.blockId&&changedDocuments.has(d.documentId)||[...(b?.sourceEvents??document?.sourceEvents??[]),...(b?.documentUses?.find(use=>use.documentId===d.documentId)?.sourceEvents??[])].some(id=>recentChanges.has(id))};
+  }),{goal:`${pos.intent} ${options?.goal??''}`,focusText:`${safe(source.handle,120)} ${safe(source.properties.text,1600)}`,projectId:pos.projectId,documentId:pos.documentId},6);
+  const details=(d:Destination,reasons:string[],score:number)=>{
+    const scope=project(d.projectId),documentBlocks=ideasInDocument(scope,d.documentId),b=documentBlocks.find(x=>x.id===d.blockId),neighbors=documentBlocks.filter(x=>x.id!==d.blockId),versions=b?.sourceEvents??scope.documents.find(x=>x.id===d.documentId)?.sourceEvents??[];
+    const relationships=scope.libraryBlockRelations.filter(r=>!r.removed&&(r.fromBlockId===d.blockId||r.toBlockId===d.blockId));
+    const text=safe(b?.properties.text,1600);
+    return {...d,label:safe(d.label,120),project:safe(d.project,120),document:safe(d.document,120),text,versions:versions.slice(-12),provenance:b?{sourceBlock:safe(b.properties.source_block_id??b.properties.copied_from_block_id,180),excerpt:safe(b.properties.source_excerpt,300)}:{},relationships:relationships.slice(0,12).map(r=>({from:r.fromBlockId,to:r.toBlockId,kind:r.kind})),neighbors:neighbors.slice(0,4).map(x=>({id:x.id,label:safe(x.handle,120),text:safe(x.properties.text,400),locked:x.locked})),retrieval:{reasons,score,scoreMeaning:'local evidence ordering, not probability or quality'},coverage:{textCharacters:String(b?.properties.text??'').length,includedCharacters:text.length,versionsTotal:versions.length,versionsIncluded:Math.min(12,versions.length),relationshipTotal:relationships.length,relationshipIncluded:Math.min(12,relationships.length),neighborTotal:neighbors.length,neighborIncluded:Math.min(4,neighbors.length)}};
+  };
+  return {destinations:retrieval.selected.map(x=>x.value),details:retrieval.selected.map(x=>details(x.value,x.reasons,x.score)),coverage:{...retrieval.coverage,indexedTextCharactersPerCandidate:500,focusTextCharacterLimit:1600,recentChangeEventLimit:32},source:{id:source.id,projectId:source.projectId,documentId:source.documentId,handle:safe(source.handle,120),text:safe(source.properties.text,2400),versions:source.sourceEvents.slice(-12),properties:{group:!!source.properties.context_group,sourceBlock:safe(source.properties.source_block_id??source.properties.copied_from_block_id,180)},coverage:{textCharacters:String(source.properties.text??'').length,includedCharacters:safe(source.properties.text,2400).length,versionsTotal:source.sourceEvents.length,versionsIncluded:Math.min(12,source.sourceEvents.length)},destinationTotal:all.length}};
 }
 export function shouldEnrich(pos:Position,answers:Record<string,Answer>,count:number){
-  const a=answers['use_use-in'];
-  return !!pos.blockId&&count>0&&!['choose-format','find-action'].includes(pos.view)&&a?.type==='score'&&Number.isFinite(a.score)&&a.score!>=2&&a.score!<=3&&Number.isFinite(a.confidence)&&a.confidence!>=.5&&a.confidence!<=1;
+  const a=inspectScoreAnswer(answers['use_use-in']);
+  return !!pos.blockId&&count>0&&!['choose-format','find-action'].includes(pos.view)&&a.quality!=='unusable'&&a.score!==undefined&&a.score>=2&&a.confidence!==undefined&&a.confidence>=.5;
 }
 export function enrichmentQuestions(destinations:Destination[],alternatives:Action[]):Record<string,Question>{return {
   ...Object.fromEntries(destinations.flatMap((d,i)=>[[`target_${i}`,{type:'score',instructions:`How useful is reviewing the current idea in destination ${d.id} for the current goal? Use its fuller text, relationships and constraints. A thematic coincidence alone is weak evidence. A review does not authorize a change.`,criteria:['Unrelated','Possible later','Useful connection','Directly supports the current need']}],[`conflict_${i}`,{type:'noul',instructions:`Would adding the current idea to destination ${d.id} duplicate existing meaning or contradict supplied constraints? Unknown is 0.5.`}]])),
   menu_redundant:{type:'noul',instructions:'Does the proposed menu contain at least two actions that address substantially the same immediate need, while an eligible useful alternative would provide a distinct direction? Unknown is 0.5.'},
   ...Object.fromEntries(alternatives.map(a=>[`distinct_${a.id}`,{type:'score',instructions:`Would replacing one redundant menu action with ${a.label} offer a useful, distinct path supported by the fuller evidence? Preserve accepted constraints. Do not reward novelty without purpose.`,criteria:['No useful difference','Possible later','Useful distinct path','Especially useful distinct path']}]))
 } as Record<string,Question>;}
-const good=(a:Answer|undefined,min:number)=>a?.type==='score'&&Number.isFinite(a.score)&&a.score!>=min&&a.score!<=3&&Number.isFinite(a.confidence)&&a.confidence!>=.7&&a.confidence!<=1;
+const good=(answer:Answer|undefined,min:number)=>{const a=inspectScoreAnswer(answer);return a.quality!=='unusable'&&a.score!==undefined&&a.score>=min&&a.confidence!==undefined&&a.confidence>=.7;};
 export type MenuAdjustment={actionId:string;replacedId?:string;reason:string;questions:string[];passId:string;evidence:{passId:string;questionId:string}[]};
 export function refineMenu(selected:Action[],candidates:Action[],first:Record<string,Answer>,second:Record<string,Answer>,destinations:Destination[],passId:string){
   const actions=[...selected],adjustments:MenuAdjustment[]=[];

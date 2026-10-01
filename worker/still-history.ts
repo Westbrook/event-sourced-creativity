@@ -1,5 +1,5 @@
 import {appendOnlyHistory,historyCounts,historyStoreKey,loadHistorySnapshot,saveHistorySnapshot,discardHistorySnapshot,type PreparedHistory} from './still-history-store.ts';
-import { createHistoryCollector, installHistorySummary, historySummary } from '../src/still/history.ts';
+import { createHistoryCollector, installHistorySummary, historySummary, retainedHistoryEvents, historyEvidenceExpiresAt } from '../src/still/history.ts';
 import { readProjectEventPage } from './project-access.ts';
 import type { ProjectRequestContext } from './project-request-context.ts';
 import type { CreativeEvent, CreativeProjection } from '../src/model/events.ts';
@@ -64,13 +64,14 @@ export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotU
     let page=old?await readProjectEventPage(env,shared,0,5000,false,undefined,undefined,undefined,true):probe;
     const proof=page.snapshotWitness,target=page.head,events:CreativeEvent[]=[];
     for(;;){events.push(...page.events.filter(e=>e.sequence<=target));if(!page.hasMore||page.nextAfter>=target)break;if(events.length>150_000)throw new Error('History too large.');page=await readProjectEventPage(env,shared,page.nextAfter,5000,false,undefined,undefined,undefined,true);if(page.snapshotWitness!==proof)throw new Error('History changed. Try again.');}
-    const snapshot:Snapshot={events,head:target,expires:Date.now()+ttl,projections:new Map()};
+    const snapshot:Snapshot={events,head:target,expires:Math.min(Date.now()+ttl,historyEvidenceExpiresAt(events)??Infinity),projections:new Map()};
     witnesses.set(snapshot,proof!);remember(store,scope,snapshot);
     return result(snapshot,{source:'shared',eventsRead:events.length,head:target,elapsedMs:Date.now()-started});
   }
   const version=await sourceVersion(env,user),key=await historyStoreKey(user.userId,user.streamId,scope);
   const cacheStarted=Date.now();
   let prepared=version?(old&&old.expires>Date.now()?old.prepared:undefined)??await loadHistorySnapshot(env,key,user.userId):undefined;
+  if(prepared?.checkpoint.expiresAt!==undefined&&prepared.checkpoint.expiresAt<=Date.now())prepared=undefined;
   const cacheReadMs=Date.now()-cacheStarted;
   let source:HistoryReceipt['source']=prepared===old?.prepared?'snapshot':'persistent-snapshot';
   let counts:Awaited<ReturnType<typeof historyCounts>>=null;
@@ -84,7 +85,7 @@ export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotU
   let eventsRead=0,readPages=0,readMs=0,cacheWriteMs=0,persisted=source==='persistent-snapshot';
   let snapshot:Snapshot;
   if(prepared&&prepared.version===version){
-    snapshot=old?.prepared===prepared?old:{events:prepared.events,head:target,expires:Date.now()+ttl,projections:new Map(),prepared};
+    snapshot=old?.prepared===prepared?old:{events:prepared.events,head:target,expires:Math.min(Date.now()+ttl,prepared?.checkpoint.expiresAt??Infinity),projections:new Map(),prepared};
   }else{
     source=prepared?'incremental':'fresh';
     const events:CreativeEvent[]=prepared?[...prepared.events]:[],collector=createHistoryCollector(version?{}:position,prepared?.checkpoint),replayTypes=new Set<string>(STILL_REPLAY_TYPES);
@@ -109,7 +110,7 @@ export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotU
     const afterProof=version?await sourceVersion(env,user,false):await witness(env,user,target);
     if(afterProof!==before){store.delete(scope);await discardHistorySnapshot(env,key,user.userId);throw new Error('History changed. Try again.');}
     prepared=version&&counts?{version,head:target,privateCount:counts.privateBodies,events,checkpoint:collector.checkpoint()}:undefined;
-    snapshot={events,head:target,expires:Date.now()+ttl,projections:new Map(),prepared};
+    snapshot={events,head:target,expires:Math.min(Date.now()+ttl,prepared?.checkpoint.expiresAt??Infinity),projections:new Map(),prepared};
     weights.set(snapshot,bytes+500_000);
     // The legacy uncertified path remains usable but cannot persist or increment.
     if(!prepared)installHistorySummary(events,collector.finish());
@@ -122,7 +123,7 @@ export async function readStillHistory(request:Request,env:WorkerEnv,user:PilotU
   // one another's summary in the WeakMap used by the decision builder.
   const events=[...snapshot.events];
   const summary=snapshot.prepared?createHistoryCollector({},snapshot.prepared.checkpoint).finish():historySummary(snapshot.events)!;
-  summary.useful=[...new Map([...summary.useful,...focused.filter(e=>!e.type.startsWith('Attention')||e.sequence>summary.forgotten)].map(e=>[e.sequence,e])).values()].sort((a,b)=>a.sequence-b.sequence);
+  summary.useful=[...new Map([...summary.useful,...retainedHistoryEvents(focused).filter(e=>!e.type.startsWith('Attention')||e.sequence>summary.forgotten)].map(e=>[e.sequence,e])).values()].sort((a,b)=>a.sequence-b.sequence);
   installHistorySummary(events,summary);
   return {...result(snapshot,{source,eventsRead,head:target,elapsedMs:Date.now()-started,readPages,readMs,cacheReadMs,cacheWriteMs,focusedReadMs,focusedEventsRead:focused.length,persisted}),events};
 }

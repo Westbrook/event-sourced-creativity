@@ -76,7 +76,21 @@ export class StillContextFlow extends LitElement {
   private done() { this.dispatchEvent(new CustomEvent('context-done',{bubbles:true})); }
   private back() { this.dispatchEvent(new CustomEvent('context-back',{bubbles:true})); }
   private command(label:string,run:()=>void,primary=false,disabled=false):WorkflowAction { return {id:`workflow:${this.phase}:${label.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`,label,run:()=>{if(!this.busy&&!this.composing&&!disabled)run();},variant:primary?'primary':'ghost',disabled:this.busy||this.composing||disabled}; }
-  get toolbar():WorkflowToolbar {return {actions:this.commands(),pending:this.busy||!this.flow&&!['compose','supply-reference'].includes(this.action)&&!['select-idea','rename-idea'].includes(this.phase),recovery:!!this.error,status:this.busy?'Working…':!this.flow&&!['compose','supply-reference'].includes(this.action)&&!['select-idea','rename-idea'].includes(this.phase)?'Loading…':''};}
+  get toolbar():WorkflowToolbar {
+    const loading=!this.flow&&!['compose','supply-reference'].includes(this.action)&&!['select-idea','rename-idea'].includes(this.phase);
+    const recovery=!!this.error||this.uploadUncertain||this.client.hasUnconfirmedWrite||this.flow?.quote?.status==='uncertain';
+    const review=['review','compose-review','intake'].includes(this.phase);
+    const target=this.client.projection.blocks.find(block=>block.id===this.targetId);
+    const queryChanged=!!this.query&&this.query!==String(target?.properties.text??target?.handle??'').slice(0,140);
+    const candidateChanges=!!this.flow?.candidates.some(candidate=>candidate.included||candidate.text!==(candidate.proposal??candidate.research)?.text||candidate.label!==(candidate.proposal??candidate.research)?.label);
+    const dirtyDraft=this.composing||queryChanged||!!this.file||!!this.referenceEvents||this.phase==='rename-idea'&&!!this.nameDraft||this.phase==='source-refine'&&this.sourceDraft!==this.sourceBase||this.action==='compose'&&JSON.stringify([this.members,this.application])!==this.compositionBaseline||this.phase!=='completed'&&candidateChanges;
+    return {
+      actions:this.commands(),pending:this.busy||loading,recovery,status:this.busy?'Working…':loading?'Loading…':'',
+      step:this.busy||loading?'pending':recovery?'recovery':this.phase==='completed'?'result':review?'review':['rename-idea','source-refine','compose'].includes(this.phase)?'edit':['select-idea','candidates'].includes(this.phase)?'browse':'configure',
+      blockingReview:review||!!this.flow?.stale||this.phase==='supply'&&!!this.file&&!this.rights,
+      dirtyDraft,selectedTargetIds:[...new Set([this.targetId,this.selectedIdea,...(this.action==='compose'?this.members:[])].filter(Boolean))].slice(0,40),
+    };
+  }
   private commands():WorkflowAction[] {
     const back=()=>this.command(this.error?'Return to '+(this.client.position.blockId?'idea':'document'):'Back',()=>this.back());
     if(this.phase==='select-idea')return [this.command('Continue',()=>this.dispatchEvent(new CustomEvent('context-select',{bubbles:true,detail:this.selectedIdea})),true,!this.selectedIdea),back()];

@@ -1,3 +1,4 @@
+import { STILL_ACTION_OUTCOMES_SCHEMA } from './still-action-outcomes-schema.ts';
 import { OUTPUT_REQUIREMENTS_SCHEMA, OUTPUT_MODEL3D_SCHEMA_STATE_SQL, upgradeOutputRequirementsSchema } from "./output-requirements-schema.ts";
 import { markOutputSchemaReady } from "./output-schema-state.ts";
 import { PROFILE_EXCLUDED_EVENT_TYPES, PROJECT_BOOTSTRAP_EVENT_TYPES } from "../src/model/event-profiles.ts";
@@ -283,6 +284,7 @@ export function ensureSchema(env: WorkerEnv): Promise<void> {
   const initialized = initializedSchemas.get(env.DB);
   if (initialized) return initialized;
   const initialization = env.DB.batch<{ current: number }>([
+    ...STILL_ACTION_OUTCOMES_SCHEMA.map(sql => env.DB.prepare(sql)),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS events (
       event_id TEXT PRIMARY KEY NOT NULL, stream_id TEXT NOT NULL, sequence INTEGER NOT NULL,
       occurred_at TEXT NOT NULL, recorded_at TEXT NOT NULL, actor TEXT NOT NULL, client_id TEXT NOT NULL,

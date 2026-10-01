@@ -65,6 +65,8 @@ export class StillClient {
   epoch = 0;
   position: Position = { projectId: '', documentId: '', blockId: '', outputId: '', view: 'projects', intent: '', recentActions: [] };
   onChange = () => {};
+  /** Only acknowledged writes/jobs; callers must not infer a commit from a click. */
+  onCommitted: (receipt:{eventIds?:string[];jobId?:string})=>void = () => {};
   private refreshing: Promise<void> | null = null;
   private refreshingEpoch = -1;
   private pendingWrite: WriteJournal | null = null;
@@ -92,7 +94,7 @@ export class StillClient {
     const value = this.position.view==='ideas'?{...folded,documentId:"",documentTitle:"Ideas",blocks:folded.libraryBlocks,blockRelations:folded.libraryBlockRelations}:folded;
     this.projected = { view:this.position.view, events: this.events, length: this.events.length, document, project, value }; return value;
   }
-  private clearSource() { ++this.epoch; this.generationRunAfter.clear(); this.generationActivity.clear(); this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.creation = null; this.projected = null; this.contentWrites.clear(); }
+  private clearSource() { this.position={...this.position,intent:'',goal:undefined,recentActions:[]};++this.epoch; this.generationRunAfter.clear(); this.generationActivity.clear(); this.events = []; this.content = {}; this.head = 0; this.jobs = []; this.creation = null; this.projected = null; this.contentWrites.clear(); }
   private async request<T>(path: string, body?: unknown, method?: string): Promise<T> {
     const check = this.fence();
     try { const result = await api<T>(path, body, method); check(); return result; }
@@ -254,6 +256,7 @@ export class StillClient {
       return false;
     })); check();
     if (!verified.every(Boolean)) return false;
+    this.onCommitted({eventIds:receipts.map(event=>event.eventId)});
     this.retirePendingWrite(); this.recoveredWrite = true; this.onChange(); return true;
   }
   /** Receipt lookup is independent of a form draft and never repeats a write. */
@@ -334,6 +337,7 @@ export class StillClient {
     }
     this.retirePendingWrite();
     this.applyReceipt(result);
+    this.onCommitted({eventIds:result.appended.map(event=>event.eventId)});
     if(replacementId)this.position={...this.position,blockId:replacementId};
   }
   /** Creation requests share the workspace fence; the controller journals only opaque IDs. */
@@ -371,6 +375,7 @@ export class StillClient {
     const unchanged = result.appended?.length === 0 && result.revision === expectedRevision && !!result.content;
     if (!acknowledged && !unchanged) throw new Error('Edit unconfirmed. Check the original before retrying.');
     this.applyReceipt({ ...result, appended: result.appended! });
+    if(acknowledged)this.onCommitted({eventIds:result.appended!.map(event=>event.eventId)});
   }
   model3dAdaptation() { return adaptDocumentToModel3d(documentSnapshot(this.projection, this.position.documentId), { referenceCount: 0 }); }
   prepareGeneration(format: string, previous?: GenerationDraft): GenerationDraft {
@@ -423,6 +428,7 @@ export class StillClient {
         operationJournal.clearGeneration(this.journalScope,draft.documentId);
         this.generationActivity.observe([job],false);
         this.jobs=[job,...this.jobs.filter(j=>j.jobId!==job.jobId)];this.onChange();
+        this.onCommitted({jobId:job.jobId});
         this.dispatchGeneration(job,true);
         if(['completed','partial'].includes(job.status))void this.refresh().catch(()=>{});
         return job;
@@ -467,6 +473,7 @@ export class StillClient {
     operationJournal.clearGeneration(this.journalScope,draft.documentId);
     this.generationActivity.observe([result.job],false);
     this.jobs = [result.job, ...this.jobs.filter(j => j.jobId !== result.job.jobId)]; this.onChange();
+    this.onCommitted({jobId:result.job.jobId});
     this.dispatchGeneration(result.job,true);
     return result.job;
   }

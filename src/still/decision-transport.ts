@@ -1,7 +1,15 @@
 import type { DecisionResponse } from './diagnostics.ts';
 import { ApiError } from './client.ts';
 
-/** Read-only decisions can arrive before optional enrichment. No mutation retry. */
+/** Partial evidence is diagnostic only; callers never receive it as a final decision. */
+export class IncompleteDecisionError extends Error {
+  constructor(readonly initial: DecisionResponse, options?: ErrorOptions) {
+    super('Decision interrupted before its final assessment', options);
+    this.name = 'IncompleteDecisionError';
+  }
+}
+
+/** Read-only decisions can stream diagnostic progress. Only a complete decision resolves. */
 export async function fetchDecision(body:Record<string,unknown>,onInitial?:(value:DecisionResponse)=>void,timeoutMs=30_000,signal?:AbortSignal):Promise<DecisionResponse>{
   const controller=new AbortController(),timer=timeoutMs>0?setTimeout(()=>controller.abort(),timeoutMs):undefined;
   const abort=()=>controller.abort();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
@@ -27,8 +35,7 @@ export async function fetchDecision(body:Record<string,unknown>,onInitial?:(valu
     if(!final)throw new Error('Decision interrupted');
     return final;
   }catch(error){
-    // A valid first ranking stays useful if only the optional tail is interrupted.
-    if(initial)return {...initial,delivery:{...initial.delivery!,stage:'initial',enrichment:'interrupted'}};
+    if(initial)throw new IncompleteDecisionError({...initial,delivery:{...initial.delivery!,stage:'initial',enrichment:'interrupted'}},{cause:error});
     throw error;
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);}
 }

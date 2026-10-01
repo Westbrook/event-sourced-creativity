@@ -28,7 +28,7 @@ async function assertEvidence(f,result,pos){
 test('persistent history survives Worker restarts and changes of selection with exact evidence',async()=>{
  const f=await fixture();
  try{
-  for(let i=0;i<90;i++)await appendAuditEvent(f.env,f.streamId,'user',i%2?'ChatMessageAdded':'AttentionEpisodeObserved',{document_id:i%3?'elsewhere':f.documentId,text:'Evidence '+i});
+  for(let i=0;i<90;i++)await appendAuditEvent(f.env,f.streamId,'user',i%2?'ChatMessageAdded':'AttentionEpisodeObserved',{document_id:i%3?'elsewhere':f.documentId,text:'Evidence '+i,expires_at:'2099-01-01T00:00:00Z'});
   const first=await f.read({});assert.equal(first.receipt.source,'fresh');assert.equal(first.receipt.persisted,true);
   f.cold();const pos=position(f),focused=await f.read(pos);
   assert.equal(focused.receipt.source,'persistent-snapshot');assert.equal(focused.receipt.eventsRead,0);assert.ok(focused.receipt.focusedEventsRead>0);
@@ -58,7 +58,7 @@ test('only appended events are read; edited or removed history forces a rebuild'
 
 test('forgetting attention updates the snapshot and its counts',async()=>{
  const f=await fixture();try{
-  await appendAuditEvent(f.env,f.streamId,'user','AttentionEpisodeObserved',{document_id:f.documentId,text:'Private attention'});
+  await appendAuditEvent(f.env,f.streamId,'user','AttentionEpisodeObserved',{document_id:f.documentId,text:'Private attention',expires_at:'2099-01-01T00:00:00Z'});
   const before=await f.read(position(f));
   await appendAuditEvent(f.env,f.streamId,'user','AttentionSignalsForgotten',{before_sequence:before.head});
   f.cold();const after=await f.read(position(f));assert.equal(after.receipt.source,'incremental');await assertEvidence(f,after,position(f));
@@ -100,5 +100,50 @@ test('a source mutation during focused evidence loading invalidates the snapshot
   };
   await assert.rejects(f.read(position(f)),/History changed/);
   f.cold();assert.equal((await f.read(position(f))).receipt.source,'fresh');
+ }finally{await f.drainBackground();f.close();}
+});
+
+test('clock expiry rebuilds unchanged history and excludes phantom and expired evidence from all snapshots',async()=>{
+ const f=await fixture(),realNow=Date.now;let now=realNow()+20_000_000;Date.now=()=>now;
+ try{
+  const future=new Date(now+1000).toISOString(),longSurface='document'.repeat(40);
+  await appendAuditEvent(f.env,f.streamId,'user','AttentionEpisodeObserved',{document_id:f.documentId,text:'EXPIRING_ATTENTION',expires_at:future});
+  await appendAuditEvent(f.env,f.streamId,'user','AttentionEpisodeObserved',{document_id:f.documentId,text:'PHANTOM_ATTENTION',expires_at:new Date(now+100_000).toISOString(),capture_version:'attention-v2',surface:longSurface,context:longSurface+'-overview',terminal_type:'idle_timeout',terminal_ref:null,active_ms:30_000,idle_ms:30_000,visible_refs:[],friction_score:0,outcome_weight:.08});
+  await appendAuditEvent(f.env,f.streamId,'user','AttentionEpisodeObserved',{document_id:f.documentId,text:'MISSING_EXPIRY'});
+  const pos=position(f),before=await f.read(pos),key=await historyStoreKey(f.owner,f.streamId,'test-scope');
+  const state=result=>buildDecisionState(result.events,pos,abilities,result.head,{},result.projection(pos.documentId,pos.projectId)).state;
+  assert.match(JSON.stringify(state(before)),/EXPIRING_ATTENTION/);assert.doesNotMatch(JSON.stringify(state(before)),/PHANTOM_ATTENTION|MISSING_EXPIRY/);
+  const stored=await loadHistorySnapshot(f.env,key,f.owner);assert.equal(stored.checkpoint.expiresAt,now+1000);
+  assert.equal(f.sqlite.prepare('SELECT expires_at FROM still_history_cache WHERE cache_key=?').get(key).expires_at,now+1000);
+  now+=1000;assert.equal(await loadHistorySnapshot(f.env,key,f.owner),undefined);
+  const after=await f.read(pos);assert.equal(after.head,before.head);assert.equal(after.receipt.source,'fresh');assert.doesNotMatch(JSON.stringify(state(after)),/EXPIRING_ATTENTION|PHANTOM_ATTENTION|MISSING_EXPIRY/);
+  await assertEvidence(f,after,pos);
+  f.cold();const cold=await f.read(pos);assert.equal(cold.receipt.source,'persistent-snapshot');assert.doesNotMatch(JSON.stringify(state(cold)),/EXPIRING_ATTENTION|PHANTOM_ATTENTION|MISSING_EXPIRY/);
+ }finally{Date.now=realNow;await f.drainBackground();f.close();}
+});
+
+test('durable decision reuse ends at evidence expiry even if its creative revision is unchanged',async()=>{
+ const f=await fixture(),realNow=Date.now;let now=realNow()+20_000_000;Date.now=()=>now;
+ const {writeStoredDecision,readStoredDecision}=await import('../worker/still-decision-store.ts');
+ f.sqlite.exec(readFileSync(new URL('../drizzle/0041_still_decision_cache.sql',import.meta.url),'utf8'));
+ try{
+  const value={response:{source:'jev',head:5,policy:'fixture',actions:[]},contentHash:'hash',evidenceExpiresAt:now+1000};
+  await writeStoredDecision(f.env,'retention',f.owner,value);assert.equal((await readStoredDecision(f.env,'retention',f.owner)).expiresAt,now+1000);
+  now+=1000;assert.equal(await readStoredDecision(f.env,'retention',f.owner),undefined);
+  await writeStoredDecision(f.env,'already-expired',f.owner,value);assert.equal(await readStoredDecision(f.env,'already-expired',f.owner),undefined);
+ }finally{Date.now=realNow;await f.drainBackground();f.close();}
+});
+
+test('old active preferences survive bounded evidence windows and persistent replay while revoked preferences stay inactive',async()=>{
+ const f=await fixture();const {activePreferenceEvidence}=await import('../src/still/history.ts');
+ try{
+  const kept=await appendAuditEvent(f.env,f.streamId,`user:${f.owner}`,'PreferenceAuthored',{preference_id:'standing',scope:'document',scope_id:f.documentId,value:'Preserve generous whitespace'});
+  await appendAuditEvent(f.env,f.streamId,`user:${f.owner}`,'PreferenceAuthored',{preference_id:'withdrawn',scope:'account',value:'Never applies now'});
+  for(let i=0;i<90;i++)await appendAuditEvent(f.env,f.streamId,'worker:generator','GenerationFailed',{document_id:f.documentId,text:'Unrelated recent outcome '+i});
+  await f.read({});f.cold();const first=await f.read(position(f));assert.equal(first.receipt.source,'persistent-snapshot');
+  const active=activePreferenceEvidence(first.events,position(f),`user:${f.owner}`);assert.ok(active.active.some(p=>p.id==='standing'&&p.source.eventId===kept.eventId));
+  await appendAuditEvent(f.env,f.streamId,`user:${f.owner}`,'PreferenceRevoked',{preference_id:'withdrawn'});
+  f.cold();const next=await f.read(position(f));assert.equal(next.receipt.source,'incremental');
+  const current=activePreferenceEvidence(next.events,position(f));assert.deepEqual(current.active.map(p=>p.id),['standing']);assert.equal(current.coverage.revoked,1);await assertEvidence(f,next,position(f));
  }finally{await f.drainBackground();f.close();}
 });

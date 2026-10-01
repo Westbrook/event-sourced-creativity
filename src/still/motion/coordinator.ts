@@ -5,7 +5,7 @@ import {startRequestRhythm} from './request-rhythm.js';
 
 type Upgraded=HTMLElement & {updateComplete?:Promise<unknown>;disabled?:boolean};
 type Snapshot=HTMLElement & {ready?:Promise<unknown>};
-type Options={ready:()=>boolean;timeout:()=>void;recovery:()=>boolean;state:()=>string;settled?:()=>void};
+type Options={ready:()=>boolean;timeout:()=>void;recovery:()=>boolean;state:()=>string;interactive?:()=>void;settled?:()=>void};
 
 /** A sidecar around the real Lit dock. It never reparents live controls, owns
  * actions, waits to render page content, or starts/cancels a durable job. */
@@ -83,7 +83,7 @@ export class ToolbarMotion {
  sync(){this.clock?.sync();}
  private announce(message:string){if(this.status&&this.status.textContent!==message)this.status.textContent=message;}
  private hideLive(){this.root!.setAttribute('data-motion-active','');this.root!.setAttribute('data-motion-painting','');this.live!.setAttribute('aria-busy','true');this.live!.inert=true;}
- private reveal(){this.root?.removeAttribute('data-motion-active');this.live?.setAttribute('aria-busy','false');if(this.live)this.live.inert=false;this.restoreFocus();}
+ private reveal(){const wasInert=this.live?.inert===true;this.root?.removeAttribute('data-motion-active');this.live?.setAttribute('aria-busy','false');if(this.live)this.live.inert=false;this.restoreFocus();if(wasInert)this.options.interactive?.();}
  private parkFocus(){
   const focus=document.activeElement as HTMLElement|null;
   if(focus&&this.live?.contains(focus)){this.focusId=focus.dataset.actionId||focus.id;this.focusParked=true;this.root!.tabIndex=-1;this.root!.focus({preventScroll:true});}

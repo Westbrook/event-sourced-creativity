@@ -77,6 +77,11 @@ still-app .quiet-state { min-height: 52vh; display: flex; justify-content: cente
 still-app .quiet-state p { color: var(--en-color-text-muted); }
 still-app .still-mark { width: 30px; height: 30px; border: 1px solid var(--en-color-boundary); border-radius: 50%; box-shadow: 8px 0 0 -1px var(--en-color-canvas), 9px 0 0 0 var(--en-color-line); }
 still-app .check { display:block;margin:16px 0; }
+still-app .suggestion-settings-button { margin-inline-start:auto;pointer-events:auto; }
+still-app .suggestion-preferences { display:grid;gap:var(--en-space-4,16px); }
+still-app .suggestion-preferences h2 { font-size:var(--en-font-body-size,1rem);margin-block-start:var(--en-space-4,16px); }
+still-app .suggestion-preferences p { color:var(--en-color-text-muted); }
+still-app .suggestion-preferences .form-actions, still-app .suggestion-preferences .select-label { margin-block:0; }
 still-app .image-frame { width: fit-content; max-width: 100%; margin-inline: auto; }
 still-app .image-frame.known-size, still-app .image-frame.pending-size { width: min(100%, var(--image-width, 100%)); aspect-ratio: var(--image-ratio); }
 /* A provisional layout only; actual request dimensions always take precedence. */

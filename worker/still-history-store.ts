@@ -5,7 +5,7 @@ import {decisionHash} from './still-decision-store.ts';
 
 export type PreparedHistory={version:string;head:number;privateCount:number;events:CreativeEvent[];checkpoint:HistoryCheckpoint};
 const ttl=24*60*60_000,maxPlain=16_000_000,maxEncoded=1_500_000;
-export const historyStoreKey=(owner:string,stream:string,scope:string)=>decisionHash({schema:2,owner,stream,scope});
+export const historyStoreKey=(owner:string,stream:string,scope:string)=>decisionHash({schema:4,owner,stream,scope});
 async function boundedBytes(stream:ReadableStream<Uint8Array>,limit:number){
  const reader=stream.getReader(),chunks:Uint8Array[]=[];let size=0;
  try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw Error('history_cache_capacity');}chunks.push(value);}}
@@ -24,7 +24,8 @@ export async function loadHistorySnapshot(env:WorkerEnv,key:string,owner:string)
   const c=value.checkpoint;
   if(![c.accessibleEvents,c.creativeEvents,c.forgotten].every(n=>Number.isSafeInteger(n)&&n>=0)||!c.counts||typeof c.counts!=='object'||Array.isArray(c.counts)||!Object.values(c.counts).every(n=>Number.isSafeInteger(n)&&n>=0))return;
   if(![c.recent,c.focused,c.creative,c.milestones,c.attention,c.focusedAttention,value.events].every(list=>Array.isArray(list)&&list.every(e=>e&&Number.isSafeInteger(e.sequence)&&typeof e.type==='string'&&e.payload&&typeof e.payload==='object')))return;
-  if(!Array.isArray(c.attentionSequences)||!c.attentionSequences.every(n=>Number.isSafeInteger(n)&&n>=0))return;
+  if(!Array.isArray(c.attentionRetention)||!c.attentionRetention.every(e=>e&&Number.isSafeInteger(e.sequence)&&e.sequence>=0&&Number.isFinite(e.expiresAt)))return;
+  if(c.expiresAt!==undefined&&(!Number.isFinite(c.expiresAt)||c.expiresAt<=Date.now()))return;
   return value;
  }catch{return;}
 }
@@ -33,10 +34,11 @@ export async function saveHistorySnapshot(env:WorkerEnv,key:string,owner:string,
   const plain=JSON.stringify(value);if(new TextEncoder().encode(plain).length>maxPlain)return false;
   const zipped=await boundedBytes(new Blob([plain]).stream().pipeThrough(new CompressionStream('gzip')),maxEncoded*.75);
   let binary='';for(let at=0;at<zipped.length;at+=8192)binary+=String.fromCharCode(...zipped.subarray(at,at+8192));
-  const body=btoa(binary),now=Date.now();
+  const body=btoa(binary),now=Date.now(),expiresAt=Math.min(now+ttl,value.checkpoint.expiresAt??Infinity);
+  if(!Number.isFinite(expiresAt)||expiresAt<=now)return false;
   await env.DB.batch([
    env.DB.prepare('DELETE FROM still_history_cache WHERE expires_at<=?').bind(now),
-   env.DB.prepare('INSERT OR REPLACE INTO still_history_cache(cache_key,owner_id,created_at,expires_at,body) VALUES(?,?,?,?,?)').bind(key,owner,now,now+ttl,body),
+   env.DB.prepare('INSERT OR REPLACE INTO still_history_cache(cache_key,owner_id,created_at,expires_at,body) VALUES(?,?,?,?,?)').bind(key,owner,now,expiresAt,body),
    env.DB.prepare('DELETE FROM still_history_cache WHERE owner_id=? AND cache_key NOT IN(SELECT cache_key FROM still_history_cache WHERE owner_id=? ORDER BY created_at DESC LIMIT 4)').bind(owner,owner),
   ]);return true;
  }catch{return false;}

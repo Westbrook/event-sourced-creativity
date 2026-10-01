@@ -20,6 +20,7 @@
     "lint": "node scripts/lint.mjs",
     "setup:local-encryption": "node scripts/setup-local-encryption-root.mjs",
     "replay": "node --experimental-strip-types scripts/replay.mjs",
+    "evaluate:still-actions": "node --experimental-strip-types scripts/evaluate-still-actions.mjs",
     "eval:image-adapters": "node --experimental-strip-types scripts/run-image-adapter-eval.mjs",
     "eval:image-adapters:preflight": "node --experimental-strip-types scripts/run-image-adapter-eval.mjs --preflight-only=true",
     "eval:image-adapters:cycle": "node --experimental-strip-types scripts/run-image-adapter-cycle-search.mjs",

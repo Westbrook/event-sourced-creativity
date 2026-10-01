@@ -1,8 +1,8 @@
 import type { Position } from './decisions.ts';
 export type IdeaAssessmentStatus='Pending'|'Answered'|'Missing response'|'Invalid response'|'Failed'|'Unavailable';
 export type IdeaAssessmentCell={status:IdeaAssessmentStatus;probability?:number;reason?:string;assessedAt?:number;cached?:boolean};
-export type IdeaAssessmentBlock={id:string;label:string;truncated:boolean;actions:Record<string,IdeaAssessmentCell>};
-export type IdeaAssessment={scope:{projectId:string;documentId:string;blockId:string;intent:string;head:number};phase:'pending'|'complete';complete:boolean;coverage:{total:number;eligible:number;included:number;omitted:number;assessed:number;cached:number};blocks:IdeaAssessmentBlock[];actions:Record<string,IdeaAssessmentCell & {targetId?:string;assessed:number;eligible:number}>};
+export type IdeaAssessmentBlock={id:string;label:string;truncated:boolean;selectionReasons?:string[];actions:Record<string,IdeaAssessmentCell>};
+export type IdeaAssessment={scope:{projectId:string;documentId:string;blockId:string;intent:string;head:number};phase:'pending'|'complete';complete:boolean;coverage:{total:number;eligible:number;included:number;omitted:number;assessed:number;cached:number;strategy?:string;omissionReason?:string};blocks:IdeaAssessmentBlock[];actions:Record<string,IdeaAssessmentCell & {targetId?:string;assessed:number;eligible:number}>};
 export function matchingIdeaAssessment(report:IdeaAssessment|undefined,position:Pick<Position,'projectId'|'documentId'|'blockId'|'view'|'intent'>,head:number){
  return report&&position.view==='document'&&report.scope.head===head&&report.scope.intent===position.intent&&(['projectId','documentId','blockId'] as const).every(k=>report.scope[k]===position[k])?report:undefined;
 }

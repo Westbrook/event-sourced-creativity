@@ -68,7 +68,7 @@ test('onboarding is opt-in and has immediate factual action help',()=>{
 
 test('prepared aggregates retain full evidence and honor forgotten attention on incremental histories',async()=>{
  const {preparedHistory,retainedHistoryEvents,isCreativeHistoryEvent}=await import('../src/still/history.ts');
- const first=[{eventId:'1',sequence:1,type:'BlockCreated',payload:{}},{eventId:'2',sequence:2,type:'AttentionEpisodeObserved',payload:{}}];
+ const first=[{eventId:'1',sequence:1,type:'BlockCreated',payload:{}},{eventId:'2',sequence:2,type:'AttentionEpisodeObserved',payload:{expires_at:'2099-01-01T00:00:00Z'}}];
  const initial=preparedHistory(first);assert.equal(initial.useful.length,2);
  const next=[...first,{eventId:'3',sequence:3,type:'DocumentRenamed',payload:{}}];
  assert.deepEqual(preparedHistory(next,first).useful,retainedHistoryEvents(next));

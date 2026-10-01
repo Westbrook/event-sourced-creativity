@@ -1,0 +1,5466 @@
+{
+  "schemaVersion": 1,
+  "id": "still-action-quality",
+  "version": "1.0.0",
+  "labelVersion": "fictional-quality-rubric-1",
+  "frozenAt": "2026-09-30T16:00:00.000Z",
+  "provenance": {
+    "kind": "fictional"
+  },
+  "cases": [
+    {
+      "id": "cold-start",
+      "tags": [
+        "cold-start"
+      ],
+      "goal": {
+        "id": "goal-cold-start",
+        "revision": 1,
+        "description": "Start collecting a fictional river-light project.",
+        "criteria": [
+          "A reversible entry makes room for the first idea.",
+          "No output format or paid generation is assumed."
+        ]
+      },
+      "position": {
+        "projectId": "",
+        "documentId": "",
+        "blockId": "",
+        "outputId": "",
+        "view": "projects",
+        "intent": "Start collecting a fictional river-light project.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_new-project": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "new-project",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "new-project": 0.85
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "new-project"
+        ],
+        "neutral": [
+          "intent"
+        ],
+        "unacceptable": [],
+        "primary": {
+          "acceptable": [
+            "new-project"
+          ],
+          "abstention": "unexpected"
+        },
+        "complementaryGroups": [
+          "write"
+        ],
+        "rationale": "Starting a named project is a useful reversible invitation for this explicit collection goal."
+      }
+    },
+    {
+      "id": "empty-document",
+      "tags": [
+        "cold-start",
+        "workflow"
+      ],
+      "goal": {
+        "id": "goal-empty-document",
+        "revision": 1,
+        "description": "Capture the first source idea in this empty document.",
+        "criteria": [
+          "Retain an authored first idea.",
+          "Do not suggest generation without active source context."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "",
+        "outputId": "",
+        "view": "document",
+        "intent": "Capture the first source idea in this empty document.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 1.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0.19999999999999996,
+            "2": 0.8,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "add-context",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "new-project": 0,
+            "new-document": 0,
+            "add-context": 0.85,
+            "rename": 0,
+            "clarify": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "add-context",
+          "documents"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "new-project",
+          "new-document",
+          "rename",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [
+          "create",
+          "image"
+        ],
+        "primary": {
+          "acceptable": [
+            "add-context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [
+          "context",
+          "navigate"
+        ],
+        "rationale": "Add idea answers the current goal; returning to documents preserves navigation."
+      }
+    },
+    {
+      "id": "explore-preserve-options",
+      "tags": [
+        "exploration",
+        "constraints"
+      ],
+      "goal": {
+        "id": "goal-explore-preserve-options",
+        "revision": 1,
+        "description": "Explore the lantern palette without committing to a medium or breaking the coherent reflection.",
+        "criteria": [
+          "Preserve the coherent lantern and reflection relationship.",
+          "Keep exploration available without unnecessary output."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Explore the lantern palette without committing to a medium or breaking the coherent reflection.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_edit-block": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_split-context": {
+          "type": "score",
+          "score": 1,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 1,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_research-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_find-references": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_supply-reference": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_compose": {
+          "type": "score",
+          "score": 2.5,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.5,
+            "3": 0.5
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2.4,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.6000000000000001,
+            "3": 0.3999999999999999
+          }
+        },
+        "use_use-in": {
+          "type": "score",
+          "score": 2.3,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.7000000000000002,
+            "3": 0.2999999999999998
+          }
+        },
+        "use_lock": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_toggle-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 1,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 1,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_image": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_short_story": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_scene": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_slides": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_storyboard": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_video": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_audio": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_model3d": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "preserve_options": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "coherent_small_idea": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "edit-block",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "new-project": 0,
+            "new-document": 0,
+            "add-context": 0,
+            "edit-block": 0.85,
+            "split-context": 0,
+            "research-context": 0,
+            "find-references": 0,
+            "supply-reference": 0,
+            "compose": 0,
+            "context": 0,
+            "use-in": 0,
+            "lock": 0,
+            "toggle-context": 0,
+            "create": 0,
+            "image": 0,
+            "short_story": 0,
+            "scene": 0,
+            "slides": 0,
+            "storyboard": 0,
+            "video": 0,
+            "audio": 0,
+            "model3d": 0,
+            "clarify": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "edit-block",
+          "context",
+          "compose",
+          "use-in",
+          "add-context"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "documents",
+          "new-project",
+          "new-document",
+          "research-context",
+          "find-references",
+          "supply-reference",
+          "rename",
+          "lock",
+          "toggle-context",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [
+          "create",
+          "image",
+          "split-context"
+        ],
+        "primary": {
+          "acceptable": [
+            "edit-block",
+            "compose"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [
+          "write",
+          "navigate",
+          "context"
+        ],
+        "rationale": "Editing and arranging ideas support exploration; generation and fragmentation prematurely narrow the work."
+      }
+    },
+    {
+      "id": "locked-constraint",
+      "tags": [
+        "constraints"
+      ],
+      "goal": {
+        "id": "goal-locked-constraint",
+        "revision": 1,
+        "description": "Review the locked lantern relationship while preserving it unchanged.",
+        "criteria": [
+          "Keep the locked relationship intact.",
+          "Review the assembled document before changing a constraint."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Review the locked lantern relationship while preserving it unchanged.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-5",
+          "streamId": "fictional-personal",
+          "sequence": 5,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-5",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockLocked",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea"
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_unlock": {
+          "type": "score",
+          "score": 0.2,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0.8,
+            "1": 0.2,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_image": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_short_story": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_scene": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_slides": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_storyboard": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_video": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_audio": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_model3d": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "context",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "new-project": 0,
+            "new-document": 0,
+            "add-context": 0,
+            "context": 0.85,
+            "unlock": 0,
+            "create": 0,
+            "image": 0,
+            "short_story": 0,
+            "scene": 0,
+            "slides": 0,
+            "storyboard": 0,
+            "video": 0,
+            "audio": 0,
+            "model3d": 0,
+            "clarify": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "context"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "documents",
+          "new-project",
+          "new-document",
+          "add-context",
+          "rename",
+          "create",
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [
+          "unlock",
+          "edit-block",
+          "split-context"
+        ],
+        "primary": {
+          "acceptable": [
+            "context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [
+          "navigate"
+        ],
+        "rationale": "A locked constraint is not evidence the user wishes to unlock it; this case intentionally probes that local baseline limitation."
+      }
+    },
+    {
+      "id": "uncertain-failure",
+      "tags": [
+        "failure",
+        "constraints"
+      ],
+      "goal": {
+        "id": "goal-uncertain-failure",
+        "revision": 1,
+        "description": "Understand an uncertain submission without risking a second charge.",
+        "criteria": [
+          "Inspect retained failure and source evidence.",
+          "Do not emphasize a new paid attempt or imply refresh reconciles the provider."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "",
+        "outputId": "fictional-job",
+        "view": "generation",
+        "intent": "Understand an uncertain submission without risking a second charge.",
+        "recentActions": [],
+        "generation": {
+          "outcomeKind": "uncertain",
+          "correctiveNextStep": "inspect",
+          "jobId": "fictional-job",
+          "documentId": "fictional-document",
+          "format": "image",
+          "status": "failed",
+          "attempt": 1,
+          "active": false,
+          "failureCode": "provider_submission_uncertain",
+          "failureCategory": "transient",
+          "acceptance": "unknown",
+          "inspectable": true,
+          "rejected": false,
+          "needsAcknowledgement": false,
+          "canStartNew": true,
+          "refreshEffect": "Read saved status.",
+          "newGenerationEffect": "Separate paid request.",
+          "mayDuplicateCharge": true
+        }
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_inspect-rejection": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_refresh-generation": {
+          "type": "score",
+          "score": 2.6,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.3999999999999999,
+            "3": 0.6000000000000001
+          }
+        },
+        "use_generate-again": {
+          "type": "score",
+          "score": 0.2,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0.8,
+            "1": 0.2,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_split-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_research-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_find-references": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_supply-reference": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2.3,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.7000000000000002,
+            "3": 0.2999999999999998
+          }
+        },
+        "use_use-in": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_image": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_short_story": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_scene": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_slides": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_storyboard": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_video": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_audio": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_model3d": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "failure": {
+          "type": "noul",
+          "noul": 1
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "inspect-rejection",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "inspect-rejection": 0.85,
+            "refresh-generation": 0,
+            "generate-again": 0,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "new-project": 0,
+            "new-document": 0,
+            "add-context": 0,
+            "split-context": 0,
+            "research-context": 0,
+            "find-references": 0,
+            "supply-reference": 0,
+            "rename": 0,
+            "context": 0,
+            "use-in": 0,
+            "create": 0,
+            "image": 0,
+            "short_story": 0,
+            "scene": 0,
+            "slides": 0,
+            "storyboard": 0,
+            "video": 0,
+            "audio": 0,
+            "model3d": 0,
+            "clarify": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "inspect-rejection",
+          "refresh-generation",
+          "context"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "documents",
+          "new-project",
+          "new-document",
+          "add-context",
+          "split-context",
+          "research-context",
+          "find-references",
+          "supply-reference",
+          "rename",
+          "use-in",
+          "create",
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [
+          "generate-again"
+        ],
+        "primary": {
+          "acceptable": [
+            "inspect-rejection",
+            "context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [
+          "reflect",
+          "navigate"
+        ],
+        "rationale": "Inspection and source navigation can help while unresolved provider acceptance remains unknown."
+      }
+    },
+    {
+      "id": "permission-revoked",
+      "tags": [
+        "revocation",
+        "constraints"
+      ],
+      "goal": {
+        "id": "goal-permission-revoked",
+        "revision": 1,
+        "description": "Review the accessible document after authoring and generation permissions were revoked.",
+        "criteria": [
+          "Offer only authorized navigation and review.",
+          "Do not infer permission from previous selections."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Review the accessible document after authoring and generation permissions were revoked.",
+        "recentActions": [
+          "edit-block",
+          "create"
+        ]
+      },
+      "abilities": {
+        "author": false,
+        "generate": false,
+        "projectCreate": false,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": [
+          "authoring",
+          "generation"
+        ]
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 1.5,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0.5,
+            "2": 0.5,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 2.1,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.8999999999999999,
+            "3": 0.10000000000000009
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "context",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "context": 0.85
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "context",
+          "documents",
+          "projects"
+        ],
+        "neutral": [
+          "ideas",
+          "intent"
+        ],
+        "unacceptable": [
+          "edit-block",
+          "create",
+          "image",
+          "new-document",
+          "generate-again"
+        ],
+        "primary": {
+          "acceptable": [
+            "context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [
+          "navigate"
+        ],
+        "rationale": "Past clicks cannot restore revoked capabilities; current eligibility constrains every policy."
+      }
+    },
+    {
+      "id": "changed-goal",
+      "tags": [
+        "changed-goal",
+        "exploration"
+      ],
+      "goal": {
+        "id": "goal-changed-goal",
+        "revision": 2,
+        "description": "Now organize reusable ideas; the earlier image plan is abandoned.",
+        "criteria": [
+          "Honor the explicit current goal over earlier format choices.",
+          "Keep independent reuse and source review available."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Now organize reusable ideas; the earlier image plan is abandoned.",
+        "recentActions": [
+          "format-choice:image",
+          "create",
+          "intent"
+        ]
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_edit-block": {
+          "type": "score",
+          "score": 2.2,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.7999999999999998,
+            "3": 0.20000000000000018
+          }
+        },
+        "use_split-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_research-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_find-references": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_supply-reference": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_compose": {
+          "type": "score",
+          "score": 2.6,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.3999999999999999,
+            "3": 0.6000000000000001
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2.4,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.6000000000000001,
+            "3": 0.3999999999999999
+          }
+        },
+        "use_use-in": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_lock": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_toggle-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 0.5,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0.5,
+            "1": 0.5,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_image": {
+          "type": "score",
+          "score": 0.1,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0.9,
+            "1": 0.1,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_short_story": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_scene": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_slides": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_storyboard": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_video": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_audio": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_model3d": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "manage_ideas": {
+          "type": "noul",
+          "noul": 0.98
+        },
+        "preserve_options": {
+          "type": "noul",
+          "noul": 0.95
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "use-in",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "new-project": 0,
+            "new-document": 0,
+            "add-context": 0,
+            "edit-block": 0,
+            "split-context": 0,
+            "research-context": 0,
+            "find-references": 0,
+            "supply-reference": 0,
+            "compose": 0,
+            "context": 0,
+            "use-in": 0.85,
+            "lock": 0,
+            "toggle-context": 0,
+            "create": 0,
+            "image": 0,
+            "short_story": 0,
+            "scene": 0,
+            "slides": 0,
+            "storyboard": 0,
+            "video": 0,
+            "audio": 0,
+            "model3d": 0,
+            "clarify": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "use-in",
+          "context",
+          "compose",
+          "edit-block"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "documents",
+          "new-project",
+          "new-document",
+          "add-context",
+          "split-context",
+          "research-context",
+          "find-references",
+          "supply-reference",
+          "rename",
+          "lock",
+          "toggle-context",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [
+          "image",
+          "create"
+        ],
+        "primary": {
+          "acceptable": [
+            "use-in",
+            "compose"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [
+          "context",
+          "navigate",
+          "write"
+        ],
+        "rationale": "Earlier activity describes history, not a durable medium preference or permission to continue the abandoned goal."
+      }
+    },
+    {
+      "id": "partial-evidence",
+      "tags": [
+        "partial-evidence",
+        "abstention"
+      ],
+      "goal": {
+        "id": "goal-partial-evidence",
+        "revision": 1,
+        "description": "Keep working while the relevant source history is unavailable.",
+        "criteria": [
+          "Keep reversible review and navigation available.",
+          "Do not create a confident primary from missing evidence."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Keep working while the relevant source history is unavailable.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "partial",
+        "omissions": [
+          "Earlier source edits unavailable",
+          "No quality assessment of retained references"
+        ],
+        "revoked": []
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_edit-block": {
+          "type": "score",
+          "score": 1.8,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 0,
+            "1": 0.19999999999999996,
+            "2": 0.8,
+            "3": 0
+          }
+        },
+        "use_split-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_research-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_find-references": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_supply-reference": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_compose": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 1.8,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 0,
+            "1": 0.19999999999999996,
+            "2": 0.8,
+            "3": 0
+          }
+        },
+        "use_use-in": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_lock": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_toggle-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_image": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_short_story": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_scene": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_slides": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_storyboard": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_video": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_audio": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_model3d": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.3,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "context",
+          "edit-block"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "documents",
+          "new-project",
+          "new-document",
+          "add-context",
+          "split-context",
+          "research-context",
+          "find-references",
+          "supply-reference",
+          "compose",
+          "rename",
+          "use-in",
+          "lock",
+          "toggle-context",
+          "create",
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [],
+        "primary": {
+          "acceptable": [],
+          "abstention": "required"
+        },
+        "complementaryGroups": [
+          "navigate",
+          "write"
+        ],
+        "rationale": "Uncertain evidence supports equal emphasis; missing history is not a negative user outcome."
+      }
+    },
+    {
+      "id": "undo-and-review",
+      "tags": [
+        "undo",
+        "workflow"
+      ],
+      "goal": {
+        "id": "goal-undo-and-review",
+        "revision": 1,
+        "description": "Review the original coherent idea after undoing an unwanted text revision.",
+        "criteria": [
+          "Use current restored content.",
+          "Treat undo as evidence of a local correction, not blanket aversion to editing."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Review the original coherent idea after undoing an unwanted text revision.",
+        "recentActions": [
+          "edit-block",
+          "completed:edit-block"
+        ]
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-5",
+          "streamId": "fictional-personal",
+          "sequence": 5,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-5",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockPropertyEdited",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "property_path": "text",
+            "old_value": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+            "new_value": "A fragmented lantern description"
+          }
+        },
+        {
+          "eventId": "fictional-event-6",
+          "streamId": "fictional-personal",
+          "sequence": 6,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-6",
+          "causationId": "fictional-event-5",
+          "compensatesEventId": "fictional-event-5",
+          "schemaVersion": 1,
+          "type": "BlockPropertyEdited",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "property_path": "text",
+            "old_value": "A fragmented lantern description",
+            "new_value": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent."
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_edit-block": {
+          "type": "score",
+          "score": 2.3,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.7000000000000002,
+            "3": 0.2999999999999998
+          }
+        },
+        "use_split-context": {
+          "type": "score",
+          "score": 0.2,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0.8,
+            "1": 0.2,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_research-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_find-references": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_supply-reference": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_compose": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_use-in": {
+          "type": "score",
+          "score": 2.1,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.8999999999999999,
+            "3": 0.10000000000000009
+          }
+        },
+        "use_lock": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_toggle-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 0.2,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0.8,
+            "1": 0.2,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_image": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_short_story": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_scene": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_slides": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_storyboard": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_video": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_audio": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_model3d": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "context",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "new-project": 0,
+            "new-document": 0,
+            "add-context": 0,
+            "edit-block": 0,
+            "split-context": 0,
+            "research-context": 0,
+            "find-references": 0,
+            "supply-reference": 0,
+            "compose": 0,
+            "context": 0.85,
+            "use-in": 0,
+            "lock": 0,
+            "toggle-context": 0,
+            "create": 0,
+            "image": 0,
+            "short_story": 0,
+            "scene": 0,
+            "slides": 0,
+            "storyboard": 0,
+            "video": 0,
+            "audio": 0,
+            "model3d": 0,
+            "clarify": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "context",
+          "edit-block",
+          "use-in"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "documents",
+          "new-project",
+          "new-document",
+          "add-context",
+          "research-context",
+          "find-references",
+          "supply-reference",
+          "compose",
+          "rename",
+          "lock",
+          "toggle-context",
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [
+          "split-context",
+          "create"
+        ],
+        "primary": {
+          "acceptable": [
+            "context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [
+          "navigate",
+          "write"
+        ],
+        "rationale": "The restored source and compensation link justify review; one undone edit does not establish a global preference."
+      }
+    },
+    {
+      "id": "collaborator-change",
+      "tags": [
+        "collaborator",
+        "constraints"
+      ],
+      "goal": {
+        "id": "goal-collaborator-change",
+        "revision": 1,
+        "description": "Review a collaborator’s changed palette before revising shared source text.",
+        "criteria": [
+          "Preserve shared authorship and inspect current state.",
+          "Do not treat a collaborator edit as the current user’s preference."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Review a collaborator’s changed palette before revising shared source text.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-5",
+          "streamId": "fictional-personal",
+          "sequence": 5,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-collaborator",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-5",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockPropertyEdited",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "property_path": "text",
+            "old_value": "Explore cool reflected light while retaining a warm lantern.",
+            "new_value": "A collaborator proposes a silver-blue reflection."
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_edit-block": {
+          "type": "score",
+          "score": 1.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0.19999999999999996,
+            "2": 0.8,
+            "3": 0
+          }
+        },
+        "use_split-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_research-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_find-references": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_supply-reference": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_compose": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_use-in": {
+          "type": "score",
+          "score": 2.3,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.7000000000000002,
+            "3": 0.2999999999999998
+          }
+        },
+        "use_lock": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_toggle-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_image": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_short_story": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_scene": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_slides": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_storyboard": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_video": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_audio": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_model3d": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "context",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "new-project": 0,
+            "new-document": 0,
+            "add-context": 0,
+            "edit-block": 0,
+            "split-context": 0,
+            "research-context": 0,
+            "find-references": 0,
+            "supply-reference": 0,
+            "compose": 0,
+            "context": 0.85,
+            "use-in": 0,
+            "lock": 0,
+            "toggle-context": 0,
+            "create": 0,
+            "image": 0,
+            "short_story": 0,
+            "scene": 0,
+            "slides": 0,
+            "storyboard": 0,
+            "video": 0,
+            "audio": 0,
+            "model3d": 0,
+            "clarify": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "context",
+          "use-in",
+          "edit-block"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "documents",
+          "new-project",
+          "new-document",
+          "add-context",
+          "split-context",
+          "research-context",
+          "find-references",
+          "supply-reference",
+          "compose",
+          "rename",
+          "lock",
+          "toggle-context",
+          "create",
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [],
+        "primary": {
+          "acceptable": [
+            "context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [
+          "navigate",
+          "context"
+        ],
+        "rationale": "Review preserves the user’s opportunity to assess a shared change before editing or committing to output."
+      }
+    },
+    {
+      "id": "nominee-cut",
+      "tags": [
+        "final-evidence",
+        "diversity"
+      ],
+      "goal": {
+        "id": "goal-nominee-cut",
+        "revision": 1,
+        "description": "Review a balanced set of editing, navigation, and reference options.",
+        "criteria": [
+          "Preserve the final menu’s group limits.",
+          "A first-pass nominee cut from the final menu cannot reenter by nomination."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Review a balanced set of editing, navigation, and reference options.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_edit-block": {
+          "type": "score",
+          "score": 2.95,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.04999999999999982,
+            "3": 0.9500000000000002
+          }
+        },
+        "use_split-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_research-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_find-references": {
+          "type": "score",
+          "score": 2.85,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.1499999999999999,
+            "3": 0.8500000000000001
+          }
+        },
+        "use_supply-reference": {
+          "type": "score",
+          "score": 2.7,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.2999999999999998,
+            "3": 0.7000000000000002
+          }
+        },
+        "use_compose": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2.9,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.10000000000000009,
+            "3": 0.8999999999999999
+          }
+        },
+        "use_use-in": {
+          "type": "score",
+          "score": 2.8,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.20000000000000018,
+            "3": 0.7999999999999998
+          }
+        },
+        "use_lock": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_toggle-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_image": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_short_story": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_scene": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_slides": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_storyboard": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_video": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_audio": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_model3d": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "supply-reference",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "new-project": 0,
+            "new-document": 0,
+            "add-context": 0,
+            "edit-block": 0,
+            "split-context": 0,
+            "research-context": 0,
+            "find-references": 0,
+            "supply-reference": 0.85,
+            "compose": 0,
+            "context": 0,
+            "use-in": 0,
+            "lock": 0,
+            "toggle-context": 0,
+            "create": 0,
+            "image": 0,
+            "short_story": 0,
+            "scene": 0,
+            "slides": 0,
+            "storyboard": 0,
+            "video": 0,
+            "audio": 0,
+            "model3d": 0,
+            "clarify": 0
+          }
+        }
+      },
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "edit-block",
+          "context",
+          "find-references",
+          "use-in"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "documents",
+          "new-project",
+          "new-document",
+          "add-context",
+          "split-context",
+          "research-context",
+          "compose",
+          "rename",
+          "lock",
+          "toggle-context",
+          "create",
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [
+          "supply-reference"
+        ],
+        "primary": {
+          "acceptable": [
+            "edit-block",
+            "context"
+          ],
+          "abstention": "allowed"
+        },
+        "complementaryGroups": [
+          "write",
+          "navigate",
+          "context"
+        ],
+        "rationale": "The supplied first-pass nomination is deliberately adversarial: its action was excluded by the final four-action set and must remain excluded."
+      }
+    },
+    {
+      "id": "enrichment-changed",
+      "tags": [
+        "final-evidence",
+        "partial-evidence"
+      ],
+      "goal": {
+        "id": "goal-enrichment-changed",
+        "revision": 1,
+        "description": "Review source ideas after a later assessment changes the evidence for reuse.",
+        "criteria": [
+          "Invalidate the first-pass primary when its evidence changes.",
+          "Allow scored alternatives without making a stale nomination authoritative."
+        ]
+      },
+      "position": {
+        "projectId": "fictional-project",
+        "documentId": "fictional-document",
+        "blockId": "fictional-idea",
+        "outputId": "",
+        "view": "document",
+        "intent": "Review source ideas after a later assessment changes the evidence for reuse.",
+        "recentActions": []
+      },
+      "abilities": {
+        "author": true,
+        "generate": true,
+        "projectCreate": true,
+        "formats": [
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d"
+        ]
+      },
+      "events": [
+        {
+          "eventId": "fictional-event-1",
+          "streamId": "fictional-personal",
+          "sequence": 1,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-1",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "ProjectCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "name": "Fictional lantern study"
+          }
+        },
+        {
+          "eventId": "fictional-event-2",
+          "streamId": "fictional-personal",
+          "sequence": 2,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-2",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "DocumentCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "title": "A lantern over the river"
+          }
+        },
+        {
+          "eventId": "fictional-event-3",
+          "streamId": "fictional-personal",
+          "sequence": 3,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-3",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-idea",
+            "type": "subject",
+            "handle": "Lantern",
+            "properties": {
+              "text": "A floating lantern illuminates one quiet bend of a river. Keep the relationship between reflection and light coherent.",
+              "weight": 1
+            }
+          }
+        },
+        {
+          "eventId": "fictional-event-4",
+          "streamId": "fictional-personal",
+          "sequence": 4,
+          "occurredAt": "2026-09-30T16:00:00.000Z",
+          "recordedAt": "2026-09-30T16:00:00.000Z",
+          "actor": "user:fictional-author",
+          "clientId": "fictional-fixture",
+          "correlationId": "fictional-correlation-4",
+          "causationId": null,
+          "compensatesEventId": null,
+          "schemaVersion": 1,
+          "type": "BlockCreated",
+          "payload": {
+            "project_id": "fictional-project",
+            "document_id": "fictional-document",
+            "block_id": "fictional-second",
+            "type": "condition",
+            "handle": "Palette",
+            "properties": {
+              "text": "Explore cool reflected light while retaining a warm lantern.",
+              "weight": 1
+            }
+          }
+        }
+      ],
+      "evidence": {
+        "coverage": "complete",
+        "omissions": [],
+        "revoked": []
+      },
+      "answers": {
+        "use_projects": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_ideas": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_documents": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-project": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_new-document": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_add-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_edit-block": {
+          "type": "score",
+          "score": 2.5,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.5,
+            "3": 0.5
+          }
+        },
+        "use_split-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_research-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_find-references": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_supply-reference": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_compose": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_rename": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_context": {
+          "type": "score",
+          "score": 2.5,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.5,
+            "3": 0.5
+          }
+        },
+        "use_use-in": {
+          "type": "score",
+          "score": 2.5,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 0,
+            "1": 0,
+            "2": 0.5,
+            "3": 0.5
+          }
+        },
+        "use_lock": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_toggle-context": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_create": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_image": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_short_story": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_scene": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_slides": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_storyboard": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_video": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_audio": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_model3d": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_clarify": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "use_intent": {
+          "type": "score",
+          "score": 0,
+          "confidence": 0.8,
+          "probabilities": {
+            "0": 1,
+            "1": 0,
+            "2": 0,
+            "3": 0
+          }
+        },
+        "next_best_action": {
+          "type": "choice",
+          "choice": "use-in",
+          "confidence": 0.85,
+          "probabilities": {
+            "none": 0.15,
+            "projects": 0,
+            "ideas": 0,
+            "documents": 0,
+            "new-project": 0,
+            "new-document": 0,
+            "add-context": 0,
+            "edit-block": 0,
+            "split-context": 0,
+            "research-context": 0,
+            "find-references": 0,
+            "supply-reference": 0,
+            "compose": 0,
+            "context": 0,
+            "use-in": 0.85,
+            "lock": 0,
+            "toggle-context": 0,
+            "create": 0,
+            "image": 0,
+            "short_story": 0,
+            "scene": 0,
+            "slides": 0,
+            "storyboard": 0,
+            "video": 0,
+            "audio": 0,
+            "model3d": 0,
+            "clarify": 0
+          }
+        }
+      },
+      "finalEvidenceChanged": "Later enrichment changed the evidence used by the first-pass nomination",
+      "labels": {
+        "source": "fictional",
+        "useful": [
+          "context",
+          "edit-block",
+          "use-in"
+        ],
+        "neutral": [
+          "projects",
+          "ideas",
+          "documents",
+          "new-project",
+          "new-document",
+          "add-context",
+          "split-context",
+          "research-context",
+          "find-references",
+          "supply-reference",
+          "compose",
+          "rename",
+          "lock",
+          "toggle-context",
+          "create",
+          "image",
+          "short_story",
+          "scene",
+          "slides",
+          "storyboard",
+          "video",
+          "audio",
+          "model3d",
+          "clarify",
+          "intent"
+        ],
+        "unacceptable": [],
+        "primary": {
+          "acceptable": [],
+          "abstention": "required"
+        },
+        "complementaryGroups": [
+          "navigate",
+          "write",
+          "context"
+        ],
+        "rationale": "The fictional replay supplies the server’s changed-evidence marker; it does not simulate enrichment or an additional model call."
+      }
+    }
+  ],
+  "outcomes": [
+    {
+      "outcomeId": "late-review",
+      "revision": 1,
+      "caseId": "undo-and-review",
+      "actionId": "context",
+      "source": "fictional",
+      "status": "pending",
+      "occurredAt": "2026-09-28T12:00:00.000Z",
+      "recordedAt": "2026-09-28T12:00:00.000Z",
+      "horizonMs": 86400000,
+      "exposure": {
+        "decisionId": "decision-late-review",
+        "impressionId": "impression-late-review",
+        "invocationId": "invocation-late-review",
+        "assignment": "observational",
+        "position": 1,
+        "alternatives": [
+          "context",
+          "edit-block"
+        ]
+      }
+    },
+    {
+      "outcomeId": "late-review",
+      "revision": 2,
+      "caseId": "undo-and-review",
+      "actionId": "context",
+      "source": "fictional",
+      "status": "observed",
+      "occurredAt": "2026-09-28T12:00:00.000Z",
+      "recordedAt": "2026-09-30T15:00:00.000Z",
+      "horizonMs": 86400000,
+      "exposure": {
+        "decisionId": "decision-late-review",
+        "impressionId": "impression-late-review",
+        "invocationId": "invocation-late-review",
+        "assignment": "observational",
+        "position": 1,
+        "alternatives": [
+          "context",
+          "edit-block"
+        ]
+      },
+      "success": true,
+      "quality": 0.9,
+      "regret": false,
+      "elapsedMs": 32000,
+      "costUsd": 0,
+      "feedback": {
+        "id": "fictional-assessment-1",
+        "assessor": "user",
+        "kind": "quality-assessment",
+        "scope": "document"
+      }
+    },
+    {
+      "outcomeId": "no-followup",
+      "revision": 1,
+      "caseId": "partial-evidence",
+      "actionId": "context",
+      "source": "fictional",
+      "status": "censored",
+      "occurredAt": "2026-09-28T12:00:00.000Z",
+      "recordedAt": "2026-09-28T12:00:00.000Z",
+      "horizonMs": 86400000,
+      "exposure": {
+        "decisionId": "decision-no-followup",
+        "impressionId": "impression-no-followup",
+        "invocationId": "invocation-no-followup",
+        "assignment": "observational",
+        "position": 1,
+        "alternatives": [
+          "context",
+          "edit-block"
+        ]
+      }
+    },
+    {
+      "outcomeId": "unfinished",
+      "revision": 1,
+      "caseId": "changed-goal",
+      "actionId": "context",
+      "source": "fictional",
+      "status": "pending",
+      "occurredAt": "2026-09-28T12:00:00.000Z",
+      "recordedAt": "2026-09-28T12:00:00.000Z",
+      "horizonMs": 86400000,
+      "exposure": {
+        "decisionId": "decision-unfinished",
+        "impressionId": "impression-unfinished",
+        "invocationId": "invocation-unfinished",
+        "assignment": "observational",
+        "position": 1,
+        "alternatives": [
+          "context",
+          "edit-block"
+        ]
+      }
+    },
+    {
+      "outcomeId": "withdrawn",
+      "revision": 1,
+      "caseId": "collaborator-change",
+      "actionId": "context",
+      "source": "fictional",
+      "status": "observed",
+      "occurredAt": "2026-09-28T12:00:00.000Z",
+      "recordedAt": "2026-09-28T12:00:00.000Z",
+      "horizonMs": 86400000,
+      "exposure": {
+        "decisionId": "decision-withdrawn",
+        "impressionId": "impression-withdrawn",
+        "invocationId": "invocation-withdrawn",
+        "assignment": "observational",
+        "position": 1,
+        "alternatives": [
+          "context",
+          "edit-block"
+        ]
+      },
+      "success": false
+    },
+    {
+      "outcomeId": "withdrawn",
+      "revision": 2,
+      "caseId": "collaborator-change",
+      "actionId": "context",
+      "source": "fictional",
+      "status": "revoked",
+      "occurredAt": "2026-09-28T12:00:00.000Z",
+      "recordedAt": "2026-09-28T12:00:00.000Z",
+      "horizonMs": 86400000,
+      "exposure": {
+        "decisionId": "decision-withdrawn",
+        "impressionId": "impression-withdrawn",
+        "invocationId": "invocation-withdrawn",
+        "assignment": "observational",
+        "position": 1,
+        "alternatives": [
+          "context",
+          "edit-block"
+        ]
+      }
+    },
+    {
+      "outcomeId": "direct-review",
+      "revision": 1,
+      "caseId": "locked-constraint",
+      "actionId": "context",
+      "source": "fictional",
+      "status": "observed",
+      "occurredAt": "2026-09-28T12:00:00.000Z",
+      "recordedAt": "2026-09-28T12:00:00.000Z",
+      "horizonMs": 86400000,
+      "exposure": {
+        "invocationId": "direct-invocation",
+        "assignment": "direct",
+        "alternatives": []
+      },
+      "success": true,
+      "quality": 0.8
+    }
+  ],
+  "freezeSha256": "d3dbadaf9725fdbfd25f258635630ad380dfc642295da5dc05723bb19b01a987"
+}

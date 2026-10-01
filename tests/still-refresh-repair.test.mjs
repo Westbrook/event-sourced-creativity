@@ -33,7 +33,7 @@ test('history keeps all reducer input types exact and transport memory bounded',
    f.env.DB={...f.env.DB};queries=[];
    const warm=await (await f.request('/api/still/decision',f.json(input))).json();
    assert.equal(warm.cache.status,'hit');assert.equal(warm.preparation.source,'decision-cache');assert.equal(warm.preparation.eventsRead,0);assert.equal(calls,1);
-   assert.ok(!queries.some(sql=>sql.includes('WITH page AS MATERIALIZED')),'Cache checked before history hydration');
+   assert.ok(!queries.some(sql=>sql.includes('WITH page AS MATERIALIZED')),'Certified history reused for authorization without raw history replay');
   }finally{globalThis.fetch=saved;}
   const page=await readStillHistoryPage(f.env,f.streamId,before,before+38000);
   assert.ok(page.length<=1000);assert.ok(JSON.stringify(page).length<2_000_000);assert.equal(page[0].payload.text,'Keep the authored direction');assert.equal(page[0].payload.provider_response,undefined);

@@ -6,6 +6,7 @@ import {matchingIdeaAssessment} from '../src/still/idea-assessment.ts';
 import {IDEA_BENEFITS} from '../src/still/idea-actions.ts';
 import {createSceneCostFixture} from './helpers/scene-cost-fixture.mjs';
 import {fetchDecision} from '../src/still/decision-transport.ts';
+import {DecisionBudget} from '../src/still/decision-budget.ts';
 const abilities={author:true,generate:true,projectCreate:true,formats:['image','short_story']};
 const position=f=>({projectId:f.projectId,documentId:f.documentId,blockId:'',outputId:'',view:'document',intent:'',recentActions:[]});
 const input=f=>({env:f.env,owner:f.owner,scope:'authorized-fixture',projection:structuredClone(f.projection),position:position(f),abilities,head:12,history:[],bypass:false,developer:true});
@@ -56,6 +57,41 @@ test('family example is submitted intact with independent-person and subset reus
  const f=await createSceneCostFixture(1,'visual'),original=globalThis.fetch;f.sqlite.exec(readFileSync(new URL('../drizzle/0041_still_decision_cache.sql',import.meta.url),'utf8'));f.env.JEV_API_KEY='fixture';let sent;
  globalThis.fetch=async(_url,init)=>{sent=JSON.parse(init.body);return Response.json({model:'fixture',answers:answer(sent.questions)});};
  try{const i=input(f);i.position.blockId='scene-reuse-direction';const b=i.projection.blocks.find(b=>b.id===i.position.blockId);b.properties.text=family;b.properties.label='The family';const r=await assessIdeas(prepareIdeaAssessment(i),[]);assert.equal(sent.state.ideas[0].block.text,family);assert.match(IDEA_BENEFITS['split-context'],/four person blocks/);assert.match(IDEA_BENEFITS['split-context'],/parent or links/);assert.equal(ideaAssessmentAnswers(r)['benefit_split-context'].noul,.95);}finally{globalThis.fetch=original;await f.drainBackground();f.close();}
+});
+test('whole-document idea retrieval can select relevant recent work beyond the first eight entries',async()=>{
+ const f=await createSceneCostFixture(1,'visual');
+ try{
+  const i=input(f),base=i.projection.blocks.find(b=>b.id==='scene-reuse-direction');
+  i.position.intent='Clarify the lighthouse keeper identity';
+  i.projection.blocks=Array.from({length:12},(_,n)=>({...structuredClone(base),id:'idea-'+n,handle:'ceramic cup '+n,properties:{...base.properties,label:'ceramic cup',text:'A blue ceramic cup.'}}));
+  const relevant=i.projection.blocks[11];relevant.properties.text='The lighthouse keeper watches for ships.';relevant.properties.label='Lighthouse keeper';
+  i.history=[{type:'BlockPropertyChanged',block:relevant.id}];
+  const plan=prepareIdeaAssessment(i);
+  assert.equal(plan.records[0].id,relevant.id);assert.equal(plan.report.coverage.included,8);assert.equal(plan.report.coverage.omitted,4);
+  assert.match(plan.report.coverage.strategy,/goal-focus/);assert.ok(plan.report.blocks[0].selectionReasons.includes('goal_overlap'));assert.ok(plan.report.blocks[0].selectionReasons.includes('recent_change'));
+ }finally{await f.drainBackground();f.close();}
+});
+test('idea assessment and repair share the original deadline and retain actual numeric usage',async()=>{
+ const f=await createSceneCostFixture(1,'visual'),fetch=globalThis.fetch,now=Date.now;
+ f.sqlite.exec(readFileSync(new URL('../drizzle/0041_still_decision_cache.sql',import.meta.url),'utf8'));f.env.JEV_API_KEY='fixture';let calls=0,clock=now();
+ try{
+  Date.now=()=>clock;const budget=new DecisionBudget(clock,100);
+  globalThis.fetch=async()=>{calls++;clock+=101;return Response.json({model:'resolved-fixture',usage:{input_tokens:10,output_tokens:2,total_tokens:12,unsafe:'discard'},answers:{}});};
+  const passes=[],report=await assessIdeas(prepareIdeaAssessment({...input(f),budget}),passes);
+  assert.equal(calls,1,'Expired repair must not dispatch another request');assert.equal(report.complete,false);assert.equal(passes[1].status,'skipped');assert.equal(passes[1].reason,'latency_budget');
+  assert.deepEqual(passes[0].usage,{input_tokens:10,output_tokens:2,total_tokens:12});assert.equal(passes[0].model,'resolved-fixture');
+  const expired=await assessIdeas(prepareIdeaAssessment({...input(f),bypass:true,budget}),[]);assert.equal(calls,1);assert.equal(expired.complete,false);
+ }finally{Date.now=now;globalThis.fetch=fetch;await f.drainBackground();f.close();}
+});
+test('private goal assessments never repopulate durable per-idea cache after erasure',async()=>{
+ const f=await createSceneCostFixture(1,'visual'),fetch=globalThis.fetch;f.sqlite.exec(readFileSync(new URL('../drizzle/0041_still_decision_cache.sql',import.meta.url),'utf8'));f.env.JEV_API_KEY='fixture';let calls=0;
+ globalThis.fetch=async(_url,init)=>{calls++;f.sqlite.exec('DELETE FROM still_decision_cache');return Response.json({model:'fixture',answers:answer(JSON.parse(init.body).questions)});};
+ try{
+  const make=()=>prepareIdeaAssessment({...input(f),goal:'Clarify the private fictional motive',persist:false});
+  const first=await assessIdeas(make(),[]);assert.equal(first.complete,true);
+  assert.equal(f.sqlite.prepare("SELECT count(*) n FROM still_decision_cache WHERE cache_key LIKE 'idea:%'").get().n,0);
+  await assessIdeas(make(),[]);assert.equal(calls,2,'Private goal evidence is freshly assessed rather than read from durable per-idea cache');
+ }finally{globalThis.fetch=fetch;await f.drainBackground();f.close();}
 });
 test('first toolbar streams before idea assessment; explicit reassessment does not request toolbar scores',async()=>{
  const f=await createSceneCostFixture(1,'visual'),original=globalThis.fetch;f.sqlite.exec(readFileSync(new URL('../drizzle/0041_still_decision_cache.sql',import.meta.url),'utf8'));f.env.JEV_API_KEY='fixture';let release,ready;const gate=new Promise(r=>release=r),initialReady=new Promise(r=>ready=r);let calls=0,ideaCalls=0;

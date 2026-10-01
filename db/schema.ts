@@ -2900,3 +2900,17 @@ export const memoryScopeProfileCheckpoints=sqliteTable('memory_scope_profile_che
 export const memoryAuthoredImageReceipts=sqliteTable('memory_authored_image_receipts',{
  contentId:text('content_id').primaryKey().notNull(),eventId:text('event_id').notNull().unique(),ownerId:text('owner_id').notNull(),mediaKey:text('media_key').notNull().unique(),state:text('state').notNull(),createdAt:text('created_at').notNull(),retiredAt:text('retired_at'),
 },()=>[check('memory_authored_image_state',sql.raw("state IN('active','retired')")),check('memory_authored_image_created',sql.raw("strftime('%Y-%m-%dT%H:%M:%fZ',created_at) IS created_at")),check('memory_authored_image_retirement',sql.raw("(state='active' AND retired_at IS NULL) OR (state='retired' AND retired_at>=created_at)"))]);
+
+/** Explicit, bounded semantic observations; never authoring events or passive attention. */
+export const stillActionPreferences=sqliteTable('still_action_preferences',{
+ ownerId:text('owner_id').notNull(),scopeKey:text('scope_key').notNull(),epoch:text('epoch').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),
+},table=>[primaryKey({columns:[table.ownerId,table.scopeKey]})]);
+export const stillActionReceipts=sqliteTable('still_action_receipts',{
+ decisionId:text('decision_id').primaryKey().notNull(),ownerId:text('owner_id').notNull(),scopeKey:text('scope_key').notNull(),consentEpoch:text('consent_epoch').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),body:text('body').notNull(),
+},table=>[index('idx_still_action_receipts_scope').on(table.ownerId,table.scopeKey,table.createdAt),check('still_action_receipt_body',sql.raw('json_valid(body) AND length(CAST(body AS BLOB))<=32768'))]);
+export const stillActionObservations=sqliteTable('still_action_observations',{
+ observationId:text('observation_id').notNull(),ownerId:text('owner_id').notNull(),scopeKey:text('scope_key').notNull(),consentEpoch:text('consent_epoch').notNull(),decisionId:text('decision_id'),parentId:text('parent_id'),kind:text('kind').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),body:text('body').notNull(),
+},table=>[primaryKey({columns:[table.ownerId,table.observationId]}),index('idx_still_action_observations_scope').on(table.ownerId,table.scopeKey,table.createdAt),check('still_action_observation_body',sql.raw('json_valid(body) AND length(CAST(body AS BLOB))<=16384'))]);
+export const stillActionGoals=sqliteTable('still_action_goals',{
+ goalId:text('goal_id').primaryKey().notNull(),ownerId:text('owner_id').notNull(),scopeKey:text('scope_key').notNull(),contentId:text('content_id').notNull(),status:text('status').notNull(),createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),
+},table=>[uniqueIndex('idx_still_action_goals_active').on(table.ownerId,table.scopeKey).where(sql`status='active'`),index('idx_still_action_goals_expiry').on(table.expiresAt),check('still_action_goal_status',sql.raw("status IN ('active','completed','abandoned')"))]);

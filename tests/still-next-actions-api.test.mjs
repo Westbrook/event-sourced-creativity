@@ -34,11 +34,11 @@ test('batched assessment and optional evidence have paired, sanitized traces; en
   }finally{globalThis.fetch=fetch;Date.now=now;await f.drainBackground();f.close();}
 });
 test('finder accepts only an eligible confident choice and never mutates or starts a second pass',async()=>{
-  const f=await createSceneCostFixture(1,'visual'),fetch=globalThis.fetch,now=Date.now;let clock=now()+600000,calls=0,choice='use-in',confidence=.9;
+  const f=await createSceneCostFixture(1,'visual'),fetch=globalThis.fetch,now=Date.now;let clock=now()+600000,calls=0,choice='use-in',confidence=.9,includeDistribution=true;
   f.env.JEV_API_KEY='fixture-secret-key';Date.now=()=>clock;
-  globalThis.fetch=async(_url,init)=>{calls++;const body=JSON.parse(init.body);assert.equal(body.state.current.view,'find-action');assert.ok(!body.state.connectionCandidates.length);return Response.json({answers:{action:{type:'choice',choice,confidence}}});};
+  globalThis.fetch=async(_url,init)=>{calls++;const body=JSON.parse(init.body);assert.equal(body.state.current.view,'find-action');assert.ok(!body.state.connectionCandidates.length);return Response.json({answers:{action:{type:'choice',choice,confidence,...(includeDistribution?{probabilities:Object.fromEntries(Object.keys(body.questions.action.criteria).map(id=>[id,id===choice?1:0]))}:{})}}});};
   const request=async()=>{clock+=2000;const r=await f.request('/api/still/decision',f.json({projectId:f.projectId,documentId:f.documentId,view:'find-action',intent:'use this in a character',developer:true}));assert.equal(r.status,200);return r.json();};
-  try{const counts=f.counts();assert.equal((await request()).resolvedAction,'use-in');choice='delete-everything';assert.equal((await request()).resolvedAction,undefined);choice='use-in';confidence=.1;assert.equal((await request()).resolvedAction,undefined);assert.equal(calls,3);assert.deepEqual(f.counts(),counts);}
+  try{const counts=f.counts();assert.equal((await request()).resolvedAction,'use-in');choice='delete-everything';assert.equal((await request()).resolvedAction,undefined);choice='use-in';confidence=.1;assert.equal((await request()).resolvedAction,undefined);confidence=.9;includeDistribution=false;assert.equal((await request()).resolvedAction,undefined,'Finder abstains without a complete choice distribution');assert.equal(calls,4);assert.deepEqual(f.counts(),counts);}
   finally{globalThis.fetch=fetch;Date.now=now;await f.drainBackground();f.close();}
 });
 for(const shared of [false,true])test(`use-in persists canonical copies and recovers a lost receipt once (${shared?'shared':'personal'})`,async()=>{

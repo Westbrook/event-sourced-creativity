@@ -131,6 +131,7 @@
     "tests/browser/isolated-e6-noncanvas.spec.mjs": "browser",
     "tests/browser/isolated-presentation-owners.spec.mjs": "browser",
     "tests/browser/n6-source-advisory-review.test.mjs": "browser",
+    "tests/browser/still-action-context.test.mjs": "browser",
     "tests/browser/still-block-navigation.test.mjs": "browser",
     "tests/browser/still-creation-help.test.mjs": "browser",
     "tests/browser/still-document-scroll.test.mjs": "browser",
@@ -1356,6 +1357,10 @@
     "tests/sponsor-image-host-session.test.mjs": "runtime",
     "tests/sqlite-compile-cache.test.mjs": "runtime",
     "tests/stable-localized-template-contract.test.mjs": "runtime",
+    "tests/still-action-context-client.test.ts": "source",
+    "tests/still-action-metadata.test.mjs": "source",
+    "tests/still-action-outcomes-authorization.test.mjs": "runtime",
+    "tests/still-action-outcomes.test.mjs": "runtime",
     "tests/still-api.test.mjs": "source",
     "tests/still-attention.test.mjs": "source",
     "tests/still-audio-waveform.test.mjs": "source",
@@ -1369,9 +1374,15 @@
     "tests/still-creation-help-copy.test.mjs": "source",
     "tests/still-creation-marker-identity.test.mjs": "source",
     "tests/still-creation-replacement.test.mjs": "source",
+    "tests/still-decision-answer.test.mjs": "source",
     "tests/still-decision-cache-api.test.mjs": "runtime",
     "tests/still-decision-cache.test.mjs": "source",
+    "tests/still-decision-coherence.test.mjs": "source",
+    "tests/still-decision-context.test.mjs": "runtime",
+    "tests/still-decision-evidence.test.mjs": "runtime",
     "tests/still-decision-lab.test.mjs": "source",
+    "tests/still-decision-quality.test.mjs": "runtime",
+    "tests/still-decision-retrieval.test.mjs": "source",
     "tests/still-decision-timing.test.mjs": "source",
     "tests/still-density.test.mjs": "source",
     "tests/still-diagnostics-api.test.mjs": "runtime",
@@ -1426,6 +1437,7 @@
     "tests/still-toolbar-rhythm.test.mjs": "source",
     "tests/still-toolbar-transport.test.mjs": "source",
     "tests/still-waveform-cache.test.mjs": "source",
+    "tests/still-workflow-state.test.ts": "source",
     "tests/still.test.mjs": "source",
     "tests/story-revision-review-file.test.mjs": "runtime",
     "tests/storyboard-audience.test.mjs": "source",
@@ -1533,7 +1545,7 @@
       "reason": "Replaces the imported fixture dist worker reference with worker/index.ts before executing it."
     }
   },
-  "classificationInput": "921af27f8ca830d1e27d68d043d37d2f137a67d73e73c0697d270799be016af2",
+  "classificationInput": "06a8894bcf517d7a1990d4cadb80859246dc0b1a8a4e766a5425af6f642c18d0",
   "browserConfigs": [
     "playwright.a11y.config.mjs",
     "playwright.activity-accounting-lifetime.config.mjs",
@@ -1570,6 +1582,7 @@
     "lint": "node scripts/lint.mjs",
     "setup:local-encryption": "node scripts/setup-local-encryption-root.mjs",
     "replay": "node --experimental-strip-types scripts/replay.mjs",
+    "evaluate:still-actions": "node --experimental-strip-types scripts/evaluate-still-actions.mjs",
     "eval:image-adapters": "node --experimental-strip-types scripts/run-image-adapter-eval.mjs",
     "eval:image-adapters:preflight": "node --experimental-strip-types scripts/run-image-adapter-eval.mjs --preflight-only=true",
     "eval:image-adapters:cycle": "node --experimental-strip-types scripts/run-image-adapter-cycle-search.mjs",
@@ -1600,6 +1613,7 @@
     "scripts/evaluate-memory-persistence.mjs",
     "scripts/evaluate-memory-review-jobs.mjs",
     "scripts/evaluate-memory-shadow.mjs",
+    "scripts/evaluate-still-actions.mjs",
     "scripts/experience-review.mjs",
     "scripts/generate-custom-elements-manifest.mjs",
     "scripts/generate-marketing-persona-assets.mjs",
@@ -2690,6 +2704,13 @@
       "owner": "Forma browser maintainer",
       "lane": "browser",
       "command": "node --import tsx --test --test-concurrency=1 tests/browser/n6-source-advisory-review.test.mjs",
+      "resource": "owned fixture server and pinned Playwright browser; fresh scenario state",
+      "prerequisites": "Installed bundled browser; local port/process permission. Suite owns its explicit fixture startup. See tests/browser/README.md."
+    },
+    "tests/browser/still-action-context.test.mjs": {
+      "owner": "Forma browser maintainer",
+      "lane": "browser",
+      "command": "node --import tsx --test --test-concurrency=1 tests/browser/still-action-context.test.mjs",
       "resource": "owned fixture server and pinned Playwright browser; fresh scenario state",
       "prerequisites": "Installed bundled browser; local port/process permission. Suite owns its explicit fixture startup. See tests/browser/README.md."
     },
@@ -11274,6 +11295,34 @@
       "resource": "isolated Node/SQLite/Worker runtime",
       "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
     },
+    "tests/still-action-context-client.test.ts": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "source",
+      "command": "node scripts/validation.mjs source tests/still-action-context-client.test.ts",
+      "resource": "isolated Node process",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-action-metadata.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "source",
+      "command": "node scripts/validation.mjs source tests/still-action-metadata.test.mjs",
+      "resource": "isolated Node process",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-action-outcomes-authorization.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "runtime",
+      "command": "node scripts/validation.mjs runtime tests/still-action-outcomes-authorization.test.mjs",
+      "resource": "isolated Node/SQLite/Worker runtime",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-action-outcomes.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "runtime",
+      "command": "node scripts/validation.mjs runtime tests/still-action-outcomes.test.mjs",
+      "resource": "isolated Node/SQLite/Worker runtime",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
     "tests/still-api.test.mjs": {
       "owner": "Forma domain maintainer: still",
       "lane": "source",
@@ -11365,6 +11414,13 @@
       "resource": "isolated Node process",
       "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
     },
+    "tests/still-decision-answer.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "source",
+      "command": "node scripts/validation.mjs source tests/still-decision-answer.test.mjs",
+      "resource": "isolated Node process",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
     "tests/still-decision-cache-api.test.mjs": {
       "owner": "Forma domain maintainer: still",
       "lane": "runtime",
@@ -11379,10 +11435,45 @@
       "resource": "isolated Node process",
       "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
     },
+    "tests/still-decision-coherence.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "source",
+      "command": "node scripts/validation.mjs source tests/still-decision-coherence.test.mjs",
+      "resource": "isolated Node process",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-decision-context.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "runtime",
+      "command": "node scripts/validation.mjs runtime tests/still-decision-context.test.mjs",
+      "resource": "isolated Node/SQLite/Worker runtime",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-decision-evidence.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "runtime",
+      "command": "node scripts/validation.mjs runtime tests/still-decision-evidence.test.mjs",
+      "resource": "isolated Node/SQLite/Worker runtime",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
     "tests/still-decision-lab.test.mjs": {
       "owner": "Forma domain maintainer: still",
       "lane": "source",
       "command": "node scripts/validation.mjs source tests/still-decision-lab.test.mjs",
+      "resource": "isolated Node process",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-decision-quality.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "runtime",
+      "command": "node scripts/validation.mjs runtime tests/still-decision-quality.test.mjs",
+      "resource": "isolated Node/SQLite/Worker runtime",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-decision-retrieval.test.mjs": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "source",
+      "command": "node scripts/validation.mjs source tests/still-decision-retrieval.test.mjs",
       "resource": "isolated Node process",
       "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
     },
@@ -11761,6 +11852,13 @@
       "owner": "Forma domain maintainer: still",
       "lane": "source",
       "command": "node scripts/validation.mjs source tests/still-waveform-cache.test.mjs",
+      "resource": "isolated Node process",
+      "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
+    },
+    "tests/still-workflow-state.test.ts": {
+      "owner": "Forma domain maintainer: still",
+      "lane": "source",
+      "command": "node scripts/validation.mjs source tests/still-workflow-state.test.ts",
       "resource": "isolated Node process",
       "evidence": "Named positive and negative cases in this suite; TAP leaf outcomes and timings in the run receipt"
     },
@@ -12888,6 +12986,14 @@
       "file": "tests/browser/isolated-presentation-owners.spec.mjs",
       "flags": [
         "FORMA_A11Y_E5_CLIP_COMPARE"
+      ],
+      "owner": "Maintainer of the named test/config/tool",
+      "policy": "Explicit input; unset defaults remain unchanged. A disabled or missing variant is unverified, never a pass."
+    },
+    {
+      "file": "tests/browser/still-action-context.test.mjs",
+      "flags": [
+        "STILL_ACTION_BROWSER_CASES"
       ],
       "owner": "Maintainer of the named test/config/tool",
       "policy": "Explicit input; unset defaults remain unchanged. A disabled or missing variant is unverified, never a pass."

@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ACTIONS,buildDecisionState,questionsFor,comprehensiveQuestionsFor,evaluateActions} from '../src/still/decisions.ts';
-import {fetchDecision} from '../src/still/decision-transport.ts';
+import {fetchDecision,IncompleteDecisionError} from '../src/still/decision-transport.ts';
 import {decisionTiming} from '../src/still/decision-timing.ts';
 import {createSceneCostFixture} from './helpers/scene-cost-fixture.mjs';
 import {appendAuditEvent} from '../worker/runtime.ts';
@@ -40,19 +40,19 @@ test('initial decision reaches client while enrichment is blocked; final trace a
   const pending=fetchDecision(input,r=>{initial=r;delivered();}).then(r=>{finished=true;return r;});
   await ready;assert.equal(finished,false);assert.equal(initial.source,'jev');assert.equal(initial.delivery.stage,'initial');assert.ok(initial.actions.length);assert.equal(initial.diagnostics.passes.length,1);
   release();const final=await pending;assert.equal(final.delivery.stage,'complete');assert.equal(final.diagnostics.passes.length,3);assert.equal(final.opportunities.complete,true);assert.equal(final.cache.stored,true);
-  const hit=await fetchDecision(input);assert.equal(hit.cache.status,'hit');assert.equal(calls,3);
+  const hit=await fetchDecision(input);assert.equal(hit.cache.status,'hit');assert.equal(calls,3);assert.equal(typeof final.assessmentId,'string');assert.equal(hit.assessmentId,final.assessmentId,'Cache delivery retains the original provider assessment identity');
   const timing=decisionTiming({requestElapsedMs:2700,firstResponseMs:600,preparation:final.preparation,delivery:{stage:'complete',serverMs:2600},trace:final.diagnostics});
-  assert.equal(timing.label,'600 ms');assert.ok(timing.steps.some(s=>s.label==='Transport / client'&&s.value==='100 ms'));
+  assert.equal(timing.label,'2.70 s');assert.ok(timing.steps.some(s=>s.label==='First evidence'&&s.value==='600 ms'));assert.match(timing.description,/not yet an interactive decision/);assert.ok(timing.steps.some(s=>s.label==='Transport / client'&&s.value==='100 ms'));
  }finally{release();globalThis.fetch=saved;await f.drainBackground();f.close();}
 });
 
-test('transport preserves first ranking on truncated enrichment; JSON and HTTP failures remain supported',async()=>{
+test('transport rejects truncated enrichment and retains initial evidence only for diagnostics; JSON and HTTP failures remain supported',async()=>{
  const saved=globalThis.fetch;
  try{
   const first={source:'jev',head:1,policy:'test',actions:[{id:'new-project'}],delivery:{stage:'initial',serverMs:10}};
   const bytes=new TextEncoder().encode(JSON.stringify({stage:'initial',value:first})+'\n');
   globalThis.fetch=async()=>new Response(new ReadableStream({start(c){c.enqueue(bytes.slice(0,13));c.enqueue(bytes.slice(13));c.close();}}),{headers:{'content-type':'application/x-ndjson'}});
-  let observed;const result=await fetchDecision({},r=>observed=r);assert.equal(observed.source,'jev');assert.equal(result.delivery.enrichment,'interrupted');assert.equal(result.cache,undefined);
+  let observed;await assert.rejects(fetchDecision({},r=>observed=r),error=>{assert.ok(error instanceof IncompleteDecisionError);assert.equal(error.initial.delivery.enrichment,'interrupted');assert.equal(error.initial.cache,undefined);return true;});assert.equal(observed.source,'jev');
   globalThis.fetch=async()=>Response.json({source:'jev'});assert.equal((await fetchDecision({})).source,'jev');
   globalThis.fetch=async()=>Response.json({error:'consent_required'},{status:428});await assert.rejects(fetchDecision({}),e=>e.status===428);
  }finally{globalThis.fetch=saved;}

@@ -1,7 +1,7 @@
 import type { Answer } from './decisions.ts';
-import { inspectAnswer } from './diagnostics.ts';
+import { inspectScoreAnswer, type DecisionAnswerQuality } from './decision-answer.ts';
 export const PRIMARY_POLICY={score:2.4,confidence:.7,gap:.3,usefulProbability:.8};
-export type EmphasisEvidence={score?:number;confidence?:number;usefulProbability?:number};
+export type EmphasisEvidence={score?:number;confidence?:number;usefulProbability?:number;quality?:DecisionAnswerQuality;primaryEligible?:boolean;primaryBlockedReason?:string};
 export type Emphasis=EmphasisEvidence&{variant:'primary'|'secondary'|'ghost';size:'small'|'medium'|'large';tier:'lead'|'peer'|'alternative';reason:string;gap?:number};
 const valid=(n:number|undefined,max:number):n is number=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=max;
 const meets=(value:number,minimum:number)=>value+1e-9>=minimum;
@@ -9,21 +9,21 @@ const meets=(value:number,minimum:number)=>value+1e-9>=minimum;
 /** Compare only the choices on screen, without changing their order or inventing evidence. */
 export function presentEvidence(ids:string[],evidence:Record<string,EmphasisEvidence>={},policy=PRIMARY_POLICY):Record<string,Emphasis>{
   const choices=[...new Set(ids)], scores=choices.map(id=>({id,...evidence[id]}));
-  const complete=scores.every(a=>valid(a.score,3)&&valid(a.confidence,1));
-  const best=scores.reduce<(typeof scores)[number]|undefined>((leader,a)=>valid(a.score,3)&&(!leader||a.score>leader.score!)?a:leader,undefined);
+  const complete=scores.every(a=>a.quality!=='unusable'&&valid(a.score,3)&&valid(a.confidence,1));
+  const best=scores.reduce<(typeof scores)[number]|undefined>((leader,a)=>a.quality!=='unusable'&&valid(a.score,3)&&(!leader||a.score>leader.score!)?a:leader,undefined);
   const runner=Math.max(0,...scores.filter(a=>a.id!==best?.id).map(a=>valid(a.score,3)?a.score:3));
   const gap=best?best.score!-runner:0,p=policy;
-  const failure=!best||!complete?'Missing or invalid score/confidence':!meets(best.score!,p.score)?`Leading score below ${p.score}/3`:!meets(best.confidence!,p.confidence)?`Leading confidence below ${p.confidence*100}%`:!valid(best.usefulProbability,1)?'Leading distribution unavailable or invalid':!meets(best.usefulProbability,p.usefulProbability)?`Useful probability below ${p.usefulProbability*100}%`:!meets(gap,p.gap)?`Lead below ${p.gap} points`:'';
+  const failure=!best||!complete?'Missing or invalid score/confidence':best.primaryEligible===false?best.primaryBlockedReason??'Primary emphasis lacks required evidence':!meets(best.score!,p.score)?`Leading score below ${p.score}/3`:!meets(best.confidence!,p.confidence)?`Leading confidence below ${p.confidence*100}%`:best.quality==='degraded'||!valid(best.usefulProbability,1)?'Leading distribution unavailable or invalid':!meets(best.usefulProbability,p.usefulProbability)?`Useful probability below ${p.usefulProbability*100}%`:!meets(gap,p.gap)?`Lead below ${p.gap} points`:'';
   return Object.fromEntries(scores.map(a=>{
     const lead=!failure&&a.id===best?.id,alternative=!failure&&!lead&&(a.score!<2||a.confidence!<.55);
-    return [a.id,{score:a.score,confidence:a.confidence,usefulProbability:a.usefulProbability,gap:a.id===best?.id?gap:undefined,variant:lead?'primary':alternative?'ghost':'secondary',size:lead&&choices.length===1?'large':alternative?'small':'medium',tier:lead?'lead':alternative?'alternative':'peer',reason:lead?`Clear leader: score ${a.score!.toFixed(2)}/3, confidence ${Math.round(a.confidence!*100)}%, lead ${gap.toFixed(2)}`:failure?`Equal emphasis: ${failure}`:alternative?'Optional alternative':'Another visible action has stronger evidence'} satisfies Emphasis];
+    return [a.id,{score:a.score,confidence:a.confidence,usefulProbability:a.usefulProbability,quality:a.quality,primaryEligible:a.primaryEligible,primaryBlockedReason:a.primaryBlockedReason,gap:a.id===best?.id?gap:undefined,variant:lead?'primary':alternative?'ghost':'secondary',size:lead&&choices.length===1?'large':alternative?'small':'medium',tier:lead?'lead':alternative?'alternative':'peer',reason:lead?`Clear leader: score ${a.score!.toFixed(2)}/3, confidence ${Math.round(a.confidence!*100)}%, lead ${gap.toFixed(2)}`:failure?`Equal emphasis: ${failure}`:alternative?'Optional alternative':'Another visible action has stronger evidence'} satisfies Emphasis];
   }));
 }
 export function presentActions(ids:string[],answers:Record<string,Answer>={},prefix='use_'):Record<string,Emphasis>{
   const evidence=Object.fromEntries(ids.map(id=>{
-    const a=answers[prefix+id],inspected=a?.type==='score'?inspectAnswer({type:'score',instructions:'',criteria:['0','1','2','3']},a):undefined;
-    const distribution=inspected?.probabilities;
-    return [id,{score:inspected?.score,confidence:inspected?.confidence,usefulProbability:distribution?Math.min(1,distribution['2']+distribution['3']):undefined}];
+    const inspected=inspectScoreAnswer(answers[prefix+id]),usable=inspected.quality!=='unusable';
+    const distribution=inspected.probabilities;
+    return [id,{score:usable?inspected.score:undefined,confidence:usable?inspected.confidence:undefined,quality:inspected.quality,usefulProbability:distribution?Math.min(1,distribution['2']+distribution['3']):undefined}];
   }));
   return presentEvidence(ids,evidence);
 }
@@ -31,13 +31,13 @@ export function presentActions(ids:string[],answers:Record<string,Answer>={},pre
 /** Page hierarchy is separate from model evidence; defaults never invent confidence. */
 export function presentToolbar(ids:string[],evidence:Record<string,EmphasisEvidence>={},options:{view?:string;emptyProject?:boolean;more?:boolean;secondaryOnly?:string[];nextBest?:string}={}):Record<string,Emphasis>{
   const rows=presentEvidence(ids,evidence);
-  const nominee=options.nextBest&&ids.includes(options.nextBest)&&!options.secondaryOnly?.includes(options.nextBest)?options.nextBest:undefined;
+  const nominee=options.nextBest&&ids.includes(options.nextBest)&&!options.secondaryOnly?.includes(options.nextBest)&&rows[options.nextBest]?.primaryEligible!==false?options.nextBest:undefined;
   const emptyProjectLead=options.view==='documents'&&options.emptyProject&&!!rows['new-document'];
   const defaultLead=!options.more&&options.view==='projects'&&!!rows['new-project']&&!Object.values(rows).some(row=>row.variant==='primary');
   return Object.fromEntries(Object.entries(rows).map(([id,row])=>{
-    const restricted=options.secondaryOnly?.includes(id);
+    const restricted=options.secondaryOnly?.includes(id)||row.primaryEligible===false;
     const lead=!restricted&&!options.more&&(emptyProjectLead?id==='new-document':nominee?id===nominee:row.variant==='primary'||defaultLead&&id==='new-project');
-    const reason=emptyProjectLead&&!options.more&&!restricted?(id==='new-document'?'Page default: Start this empty project with a document':'Alternative to starting this empty project'):nominee===id&&!options.more?'Jev next best action: choice supported by usefulness':restricted?(id==='refresh-generation'?'Policy: refresh reads saved status; it does not reconcile provider acceptance':'Policy: another paid request is never emphasized while original acceptance is unknown'):options.more?'More shows alternatives with equal emphasis':nominee?'Alternative to Jev next best action':defaultLead&&id==='new-project'?'Page default: New project opens a reversible form':row.variant==='ghost'?'Secondary action; escape controls use ghost':row.reason;
+    const reason=emptyProjectLead&&!options.more&&!restricted?(id==='new-document'?'Page default: Start this empty project with a document':'Alternative to starting this empty project'):nominee===id&&!options.more?'Jev next best action: choice supported by usefulness':row.primaryEligible===false?row.primaryBlockedReason??'Primary emphasis lacks required evidence':restricted?(id==='refresh-generation'?'Policy: refresh reads saved status; it does not reconcile provider acceptance':'Policy: another paid request is never emphasized while original acceptance is unknown'):options.more?'More shows alternatives with equal emphasis':nominee?'Alternative to Jev next best action':defaultLead&&id==='new-project'?'Page default: New project opens a reversible form':row.variant==='ghost'?'Secondary action; escape controls use ghost':row.reason;
     return [id,{...row,variant:lead?'primary':'secondary',size:'medium',tier:lead?'lead':'peer',reason} satisfies Emphasis];
   }));
 }
