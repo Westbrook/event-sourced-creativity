@@ -15,7 +15,7 @@ function method(name){
  return new Function('ApiError','generationReview','validateGenerationOptions',`${code};return ${name};`)(ApiError,generationReview,validateGenerationOptions);
 }
 function fixture(overrides={}){
- const state={decisionMemory:new DecisionMemo({accept:()=>true}),busy:false,composing:false,directGeneration:false,generation:null,generationDrafts:new Map(),generationGate:null,reviewVersion:0,changed(){},draftSignature(){return 'draft';},updateComplete:Promise.resolve(),querySelector(){return null;},navigate(view,ids){this.navigation={view,ids};},focusContent(){},writeRoute(){this.route=this.generation?.format??'';},
+ const state={actionSelections:[],recordActionSelection(id,source){this.actionSelections.push({id,source});},decisionMemory:new DecisionMemo({accept:()=>true}),busy:false,composing:false,directGeneration:false,generation:null,generationDrafts:new Map(),generationGate:null,reviewVersion:0,changed(){},draftSignature(){return 'draft';},updateComplete:Promise.resolve(),querySelector(){return null;},navigate(view,ids){this.navigation={view,ids};},focusContent(){},writeRoute(){this.route=this.generation?.format??'';},
  client:{position:{recentActions:[]},prepareGeneration(format){return {format,tone:'',audience:'',itemCount:6};},async generate(){return {jobId:'accepted'};},...overrides},
  async run(work){if(this.busy)return;this.busy=true;try{await work();}catch(error){this.error=error;}finally{this.busy=false;}},chooseFormat:method('chooseFormat'),generate:method('generate'),selectGenerationFormat:method('selectGenerationFormat')};
  return state;
@@ -23,13 +23,13 @@ function fixture(overrides={}){
 test('every format opens configuration without estimating, reserving or generating',()=>{
  for(const format of ['image','short_story','scene','slides','storyboard','video','audio','model3d']){
   let submitted=0;const s=fixture({async generate(){submitted++;},async previewScene(){throw Error('Unrequested estimate');}});
-  s.selectGenerationFormat(format);assert.equal(submitted,0);assert.equal(s.route,format);assert.equal(s.generation.format,format);assert.equal(s.navigation,undefined);
+  s.selectGenerationFormat(format);assert.deepEqual(s.actionSelections,[{id:format,source:'direct'}]);assert.equal(submitted,0);assert.equal(s.route,format);assert.equal(s.generation.format,format);assert.equal(s.navigation,undefined);
  }
 });
 test('back to types and reselect preserve settings while attempts remain locked',()=>{
  const s=fixture();s.selectGenerationFormat('slides');s.generation.tone='Warm';s.generation.itemCount=12;
  s.chooseFormat('');assert.equal(s.generation,null);s.selectGenerationFormat('slides');assert.equal(s.generation.itemCount,12);assert.equal(s.generation.tone,'Warm');
- s.generation.attempted=true;s.chooseFormat('video');assert.equal(s.generation.format,'slides');
+ s.generation.attempted=true;s.chooseFormat('video');s.selectGenerationFormat('video');assert.equal(s.generation.format,'slides');assert.equal(s.actionSelections.length,2);
 });
 test('a separate submission generates once and preserves required reviews',async()=>{
  let submitted=0;const s=fixture({async generate(){submitted++;return {jobId:'accepted'};}});
