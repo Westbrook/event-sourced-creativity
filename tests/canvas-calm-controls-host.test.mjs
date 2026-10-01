@@ -2732,3 +2732,277 @@ for (const scenario of [
     f.host.disconnectedCallback();
   }
 });
+
+// Append only to the existing whole Canvas host after its retained E4 cases.
+// Synthetic initialization reuses addFixtureDeck; no real media is generated,
+// loaded, approved or placed. These finite ports are not browser/ACL evidence.
+const canvasTimingCases = [
+  { name: "slides/en", kind: "slides", locale: "en", sceneSeconds: 4, configured: 99, expected: null },
+  { name: "story/fr", kind: "short_story", locale: "fr", sceneSeconds: 4, configured: 99, expected: null },
+  { name: "scene/ar", kind: "scene", locale: "ar", sceneSeconds: 4, configured: 99, expected: null },
+  { name: "storyboard/ja", kind: "storyboard", locale: "ja", sceneSeconds: 4, configured: 99, expected: null },
+  { name: "audio/en", kind: "audio", locale: "en", sceneSeconds: 4, configured: 99, expected: null },
+  { name: "video-scene-metadata/fr", kind: "video", locale: "fr", sceneSeconds: 4.25, configured: 99, expected: 4.25 },
+  { name: "video-configured-fallback/ja", kind: "video", locale: "ja", sceneSeconds: undefined, configured: 8, expected: 8 },
+  { name: "video-unknown/ar", kind: "video", locale: "ar", sceneSeconds: 0, configured: 0, expected: null },
+];
+function canvasTimingLeafText(f, node) {
+  assert.ok(node && node.isConnected && ["small", "span", "h3", "pre"].includes(node.tag));
+  const own = f.renderer.nodes.filter(value => value.owner === f.host), index = own.indexOf(node);
+  assert.ok(index >= 0);
+  // Same token order as this existing renderer's collect(), not a new DOM.
+  const tokens = [...f.renderer.markup.matchAll(/<(\/?)([\w-]+)([^>]*)>/g)].filter(match => !match[1]);
+  assert.equal(tokens.length, own.length); assert.equal(tokens[index][0], node.full);
+  const start = tokens[index].index + tokens[index][0].length;
+  const end = f.renderer.markup.indexOf("</" + node.tag + ">", start); assert.ok(end >= start);
+  return f.renderer.markup.slice(start, end).replace(/<[^>]*>/gu, "")
+    .replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+}
+function canvasTimingState(f, source, authorization) {
+  return {
+    sourceCurrent: f.store.sourceOwnershipActive(source), authorizationCurrent: f.store.authorizationScopeActive(authorization),
+    events: structuredClone(f.store.events.get()), head: f.store.head.get(), content: structuredClone(f.store.content.get()),
+    projection: structuredClone(f.store.projection.get()), canvas: structuredClone(f.store.canvasProjection.get()),
+    session: structuredClone(f.store.session.get()), route: f.store.route.get(),
+    selected: [...f.state.selected], chosen: f.state.chosen, optimistic: structuredClone(f.store.optimisticEvents.get()),
+    jobs: structuredClone(f.store.documentJobs.get()), busy: f.store.busy.get(),
+    requests: structuredClone(f.state.requests), batches: structuredClone(f.state.batches), clipboard: [...f.clipboard],
+  };
+}
+
+for (const scenario of canvasTimingCases) test("later media Canvas quantity timing preserves exact retained work / " + scenario.name, async () => {
+  const f = fixture({ populated: true, artifact: true, locale: scenario.locale });
+  const seeded = addFixtureDeck(f), retainedBytes = f.store.content.get()[seeded.contentRef];
+  const completed = f.state.events.find(event => event.eventId === seeded.sourceEventId);
+  assert.ok(completed && completed.type === "DocumentRenderCompleted");
+  // Only existing synthetic initialization is parameterized, before ownership
+  // and no-effects baselines. The inherited private manuscript stays byte-exact.
+  completed.payload.artifact_kind = scenario.kind;
+  completed.payload.latency_ms = 108_321;
+  completed.payload.settings = { ...completed.payload.settings, video_seconds: scenario.configured,
+    audio_profile: { role: "voice", duration_seconds: 61 }, duration_seconds: 382.25 };
+  if (scenario.sceneSeconds !== undefined) completed.payload.items[0].duration_seconds = scenario.sceneSeconds;
+  f.draw(); await f.select(0, "document"); await f.flush();
+  const source = f.store.captureSourceOwnership(), authorization = f.store.captureAuthorizationScope();
+  const artifact = f.store.projection.get().libraryArtifacts.find(value => value.id === seeded.id);
+  assert.ok(source && authorization && artifact);
+  assert.equal(artifact.id, "artifact-a"); assert.equal(artifact.documentId, "document-0");
+  assert.equal(artifact.sourceEventId, seeded.sourceEventId); assert.equal(artifact.contentRef, seeded.contentRef);
+  assert.equal(artifact.kind, scenario.kind); assert.equal(artifact.itemCount, 1); assert.equal(artifact.items.length, 1);
+  assert.equal(artifact.latency, 108_321); assert.equal(artifact.settings.video_seconds, scenario.configured);
+  assert.equal(artifact.settings.audio_profile.duration_seconds, 61); assert.equal(artifact.settings.duration_seconds, 382.25);
+  assert.equal(artifact.items[0].durationSeconds, scenario.sceneSeconds > 0 ? scenario.sceneSeconds : undefined);
+  assert.equal(artifact.mediaUrl, null, "these metadata fixtures do not supply a playable video or narration");
+  assert.equal(f.store.content.get()[artifact.contentRef], retainedBytes);
+  assert.equal(f.store.ui.instrumentation, false, "reuse the fixture's declared no-analytics mode");
+  const before = canvasTimingState(f, source, authorization);
+  assert.equal(before.sourceCurrent, true); assert.equal(before.authorizationCurrent, true);
+  assert.deepEqual(before.requests, []); assert.deepEqual(before.batches, []); assert.deepEqual(before.jobs, []);
+  const unchanged = () => assert.deepEqual(canvasTimingState(f, source, authorization), before,
+    "reading timing cannot alter retained output bytes, board, authority, selections, requests or jobs");
+
+  const drawerOpener = await f.click("button", node => String(node.attributes.class).includes("canvas-document-outputs-action"));
+  await f.flush();
+  const drawer = f.native("dialog", node => node.attributes.class === "modal canvas-document-outputs-dialog");
+  assert.ok(drawer?.open && drawer.isConnected);
+  const grids = f.renderer.ownNodes(f.host, "div").filter(node => node.classList.contains("canvas-document-artifact-grid")
+    && node.closest("dialog") === drawer); assert.equal(grids.length, 1);
+  const copies = f.renderer.ownNodes(f.host, "div").filter(node => node.classList.contains("canvas-document-output-copy")
+    && node.closest(".canvas-document-artifact-grid") === grids[0]); assert.equal(copies.length, 1);
+  const title = f.renderer.ownNodes(f.host, "h3").filter(node => node.parentElement === copies[0]); assert.equal(title.length, 1);
+  assert.equal(canvasTimingLeafText(f, title[0]), artifact.title);
+  const metadata = f.renderer.ownNodes(f.host, "small").filter(node => node.parentElement === copies[0]); assert.equal(metadata.length, 1);
+  const observed = { grid: canvasTimingLeafText(f, metadata[0]).trim() };
+  unchanged();
+
+  const viewerOpener = await f.click("button", node => node.classList.contains("canvas-document-artifact-preview")
+    && node.closest(".canvas-document-artifact-grid") === grids[0]); await f.flush();
+  const viewer = f.native("dialog", node => node.attributes.class === "modal canvas-artifact-viewer");
+  assert.ok(viewer?.open && viewer.isConnected); assert.equal(viewer.attributes["data-artifact-kind"], scenario.kind);
+  assert.equal(viewer.attributes["data-output-focus"], "false");
+  const body = f.renderer.ownNodes(f.host, "div").filter(node => node.classList.contains("canvas-artifact-viewer-content")
+    && node.closest("dialog") === viewer); assert.equal(body.length, 1);
+  assert.ok(body[0].classList.contains("canvas-artifact-viewer-content--" + scenario.kind));
+  const primary = f.renderer.ownNodes(f.host, "button").filter(node => node.closest("dialog") === viewer
+    && String(node.handlers.click).includes("#openArtifactDelivery")); assert.equal(primary.length, 1);
+  assert.equal(primary[0].disabled, false, "the existing delivery handoff remains available, not invoked");
+  if (scenario.kind === "slides") {
+    const decks = f.renderer.query(f.host, "forma-presentation-deck").filter(owner => owner.parentElement === f.host);
+    assert.equal(decks.length, 1); assert.equal(decks[0].preferenceKey, artifact.id); assert.equal(decks[0].documentId, artifact.documentId);
+    assert.deepEqual(decks[0].items.map(item => [item.title, item.body, item.notes]), [["Exact slide", "Exact body", "Private notes"]]);
+  } else if (["short_story", "scene", "video"].includes(scenario.kind)) {
+    const prose = f.renderer.ownNodes(f.host, "pre").filter(node => node.parentElement === body[0]); assert.equal(prose.length, 1);
+    assert.equal(canvasTimingLeafText(f, prose[0]), JSON.parse(retainedBytes).content_markdown);
+  } else if (scenario.kind === "storyboard") {
+    const boards = f.renderer.ownNodes(f.host, "ol").filter(node => node.classList.contains("canvas-artifact-storyboard")
+      && node.parentElement === body[0]); assert.equal(boards.length, 1);
+    assert.equal(f.renderer.ownNodes(f.host, "li").filter(node => node.parentElement === boards[0]).length, 1);
+  }
+  const footers = f.renderer.ownNodes(f.host, "footer").filter(node => Object.hasOwn(node.attributes, "data-actions-open")
+    && node.closest("dialog") === viewer); assert.equal(footers.length, 1);
+  const quantity = f.renderer.ownNodes(f.host, "span").filter(node => node.parentElement === footers[0]); assert.equal(quantity.length, 1);
+  observed.reader = canvasTimingLeafText(f, quantity[0]).trim();
+  unchanged();
+
+  // Same native More/Done control sequence as the existing E4 cardinality
+  // cases. Finish the real read-only disposition before desired timing fails.
+  const owned = scenario.kind === "slides" ? openOwnedPopover(f, "artifact-viewer-actions-popover") : null;
+  const actionOwner = owned?.menu ?? f.host;
+  const actions = f.renderer.ownNodes(actionOwner, "div").find(node => node.attributes.id === "canvas-artifact-viewer-actions-" + artifact.id);
+  assert.ok(actions?.isConnected);
+  const done = f.renderer.ownNodes(actionOwner, "button").filter(node => node.parentElement === actions
+    && String(node.handlers.click).includes("#closeCanvasArtifact")); assert.equal(done.length, 1); assert.equal(done[0].disabled, false);
+  done[0].focus();
+  let prevented = false, stopped = false;
+  const gesture = { type: "click", target: done[0], currentTarget: done[0],
+    preventDefault() { prevented = true; }, stopPropagation() {}, stopImmediatePropagation() { stopped = true; } };
+  if (actions.handlers.click) runPortHandler(actions.handlers.click, actionOwner, { ...gesture, currentTarget: actions });
+  assert.equal(prevented, false); assert.equal(stopped, false);
+  await done[0].handlers.click.call(f.host, gesture); f.draw(); await f.flush();
+  assert.equal(viewer.open, false); assert.equal(f.native("dialog", node => node.attributes.class === "modal canvas-artifact-viewer"), undefined);
+  assert.ok(viewerOpener.isConnected); assert.equal(documentPort.activeElement, viewerOpener);
+  assert.equal(f.openPopovers.size, 0); unchanged();
+  const currentDrawer = f.native("dialog", node => node.attributes.class === "modal canvas-document-outputs-dialog");
+  assert.equal(currentDrawer, drawer); assert.ok(currentDrawer.open);
+  currentDrawer.handlers.cancel.call(f.host, { preventDefault() {}, stopPropagation() {} }); await f.flush();
+  assert.equal(drawer.open, false); assert.ok(drawerOpener.isConnected); assert.equal(documentPort.activeElement, drawerOpener);
+  unchanged(); assert.equal(f.store.content.get()[artifact.contentRef], retainedBytes);
+
+  const count = "1 " + f.i18n.system(scenario.kind === "slides" ? "slides" : scenario.kind === "storyboard" ? "frames" : "part");
+  const readerCount = scenario.kind === "video" ? "1 " + f.i18n.system("scene") : count;
+  const suffix = scenario.expected === null ? "" : " · " + f.i18n.number(scenario.expected) + "s";
+  assert.deepEqual(observed, { grid: count + suffix, reader: readerCount + suffix },
+    "quantity suffixes reuse only the existing video scene/configuration policy, never processing latency or unrelated audio duration settings");
+});
+
+// Append only after the unchanged current Canvas171 + retained Canvas8 = 179.
+// Reuse its fixture, addFixtureDeck, canvasTimingState and canvasTimingLeafText.
+// These are retained inert metadata premises, not new measured or playable media.
+import { audioDurationMetadata as canvasAudioDurationMetadata } from "../src/model/audio.ts";
+
+const canvasAudioMeasuredMedia = {
+  url: "/api/media/owner%2Ffinished-podcast.mp3", contentHash: "a".repeat(64), durationSeconds: 123.56,
+};
+const canvasAudioMeasuredSettings = {
+  source_media_sha256: canvasAudioMeasuredMedia.contentHash,
+  ...canvasAudioDurationMetadata(canvasAudioMeasuredMedia, 90),
+};
+const canvasAudioBasisCases = [
+  { name: "retained-r2-recorded/ar", locale: "ar", mediaUrl: "/api/media/narration-presentation-fixture.wav",
+    mediaType: "audio/wav", latencyMs: 15_321,
+    settings: { audio_profile: { role: "score", duration_seconds: 61 }, duration_seconds: 382.25 },
+    basis: "recorded", seconds: 382.25 },
+  { name: "same-media-measured/en", locale: "en", mediaUrl: canvasAudioMeasuredMedia.url,
+    mediaType: "audio/mpeg", latencyMs: 56_000, settings: canvasAudioMeasuredSettings,
+    basis: "measured", seconds: 123.56 },
+  { name: "same-media-estimate/en", locale: "en", mediaUrl: canvasAudioMeasuredMedia.url,
+    mediaType: "audio/mpeg", latencyMs: 43_000,
+    settings: { source_media_sha256: canvasAudioMeasuredMedia.contentHash,
+      ...canvasAudioDurationMetadata({ ...canvasAudioMeasuredMedia, durationSeconds: null }, 90) },
+    basis: "estimate", seconds: 90 },
+  { name: "replaced-media-url/en", locale: "en", mediaUrl: "/api/media/owner%2Freplaced.mp3",
+    mediaType: "audio/mpeg", latencyMs: 43_000, settings: canvasAudioMeasuredSettings,
+    basis: null, seconds: null },
+  { name: "replaced-media-hash/en", locale: "en", mediaUrl: canvasAudioMeasuredMedia.url,
+    mediaType: "audio/mpeg", latencyMs: 43_000,
+    settings: { ...canvasAudioMeasuredSettings, source_media_sha256: "b".repeat(64) },
+    basis: null, seconds: null },
+];
+
+for (const scenario of canvasAudioBasisCases) test("Canvas audio timing labels retained basis and rejects stale identity / " + scenario.name, async () => {
+  const f = fixture({ populated: true, artifact: true, locale: scenario.locale });
+  const seeded = addFixtureDeck(f), retainedBytes = f.store.content.get()[seeded.contentRef];
+  const completed = f.state.events.find(event => event.eventId === seeded.sourceEventId);
+  assert.ok(completed && completed.type === "DocumentRenderCompleted");
+  const inheritedCompanions = structuredClone(completed.payload.settings.soundtrack_assets);
+  // Only the existing retained fixture's initialization is parameterized.
+  // Keep its exact hydrated content, IDs, item rows and separate companion.
+  completed.payload.artifact_kind = "audio";
+  completed.payload.media_url = scenario.mediaUrl;
+  completed.payload.media_type = scenario.mediaType;
+  completed.payload.latency_ms = scenario.latencyMs;
+  completed.payload.settings = { ...completed.payload.settings, ...scenario.settings };
+  f.draw(); await f.select(0, "document"); await f.flush();
+  const source = f.store.captureSourceOwnership(), authorization = f.store.captureAuthorizationScope();
+  const artifact = f.store.projection.get().libraryArtifacts.find(value => value.id === seeded.id);
+  assert.ok(source && authorization && artifact);
+  assert.equal(artifact.id, "artifact-a"); assert.equal(artifact.documentId, "document-0");
+  assert.equal(artifact.sourceEventId, seeded.sourceEventId); assert.equal(artifact.contentRef, seeded.contentRef);
+  assert.equal(artifact.kind, "audio"); assert.equal(artifact.itemCount, 1); assert.equal(artifact.items.length, 1);
+  assert.equal(artifact.mediaUrl, scenario.mediaUrl); assert.equal(artifact.mediaType, scenario.mediaType);
+  assert.equal(artifact.latency, scenario.latencyMs);
+  for (const [key, value] of Object.entries(scenario.settings)) assert.deepEqual(artifact.settings[key], value, key);
+  assert.deepEqual(artifact.settings.soundtrack_assets, inheritedCompanions);
+  assert.equal(f.store.content.get()[artifact.contentRef], retainedBytes);
+  assert.equal(f.store.ui.instrumentation, false);
+  const before = canvasTimingState(f, source, authorization);
+  assert.equal(before.sourceCurrent, true); assert.equal(before.authorizationCurrent, true);
+  assert.deepEqual(before.requests, []); assert.deepEqual(before.batches, []); assert.deepEqual(before.jobs, []);
+  const unchanged = () => assert.deepEqual(canvasTimingState(f, source, authorization), before,
+    "reading retained timing preserves content, media identity, source, authority, board, events, requests and jobs");
+
+  const drawerOpener = await f.click("button", node => String(node.attributes.class).includes("canvas-document-outputs-action"));
+  await f.flush();
+  const drawer = f.native("dialog", node => node.attributes.class === "modal canvas-document-outputs-dialog");
+  assert.ok(drawer?.open && drawer.isConnected);
+  const grids = f.renderer.ownNodes(f.host, "div").filter(node => node.classList.contains("canvas-document-artifact-grid")
+    && node.closest("dialog") === drawer); assert.equal(grids.length, 1);
+  const copies = f.renderer.ownNodes(f.host, "div").filter(node => node.classList.contains("canvas-document-output-copy")
+    && node.closest(".canvas-document-artifact-grid") === grids[0]); assert.equal(copies.length, 1);
+  const metadata = f.renderer.ownNodes(f.host, "small").filter(node => node.parentElement === copies[0]); assert.equal(metadata.length, 1);
+  const observed = { grid: canvasTimingLeafText(f, metadata[0]).trim() };
+  unchanged();
+
+  const viewerOpener = await f.click("button", node => node.classList.contains("canvas-document-artifact-preview")
+    && node.closest(".canvas-document-artifact-grid") === grids[0]); await f.flush();
+  const viewer = f.native("dialog", node => node.attributes.class === "modal canvas-artifact-viewer");
+  assert.ok(viewer?.open && viewer.isConnected); assert.equal(viewer.attributes["data-artifact-kind"], "audio");
+  const body = f.renderer.ownNodes(f.host, "div").filter(node => node.classList.contains("canvas-artifact-viewer-content--audio")
+    && node.closest("dialog") === viewer); assert.equal(body.length, 1);
+  const primaryPlayers = f.renderer.ownNodes(f.host, "audio").filter(node => node.closest("dialog") === viewer
+    && node.parentElement?.classList.contains("forma-audio-player") && node.parentElement.parentElement === body[0]);
+  assert.equal(primaryPlayers.length, 1, "one existing native primary player, independent of the inherited companion");
+  assert.equal(primaryPlayers[0].attributes.src, scenario.mediaUrl);
+  const companionPlayers = f.renderer.ownNodes(f.host, "audio").filter(node => node.closest("dialog") === viewer
+    && node.attributes.src === "/api/media/fixture-soundtrack");
+  assert.equal(companionPlayers.length, 1, "the existing separate soundtrack remains separate");
+  for (const player of [...primaryPlayers, ...companionPlayers]) {
+    assert.equal(player.attributes.preload, "none"); assert.ok(Object.hasOwn(player.attributes, "controls"));
+    assert.equal(Object.hasOwn(player.attributes, "autoplay"), false);
+    assert.equal(Object.hasOwn(player.properties, "autoplay"), false);
+  }
+  const delivery = f.renderer.ownNodes(f.host, "button").filter(node => node.closest("dialog") === viewer
+    && String(node.handlers.click).includes("#openArtifactDelivery"));
+  assert.equal(delivery.length, 1); assert.equal(delivery[0].disabled, false, "delivery handoff remains available and uninvoked");
+  const footers = f.renderer.ownNodes(f.host, "footer").filter(node => Object.hasOwn(node.attributes, "data-actions-open")
+    && node.closest("dialog") === viewer); assert.equal(footers.length, 1);
+  const quantity = f.renderer.ownNodes(f.host, "span").filter(node => node.parentElement === footers[0]); assert.equal(quantity.length, 1);
+  observed.reader = canvasTimingLeafText(f, quantity[0]).trim();
+  unchanged();
+
+  const actions = f.renderer.ownNodes(f.host, "div").find(node => node.attributes.id === "canvas-artifact-viewer-actions-" + artifact.id);
+  assert.ok(actions?.isConnected);
+  const done = f.renderer.ownNodes(f.host, "button").filter(node => node.parentElement === actions
+    && String(node.handlers.click).includes("#closeCanvasArtifact")); assert.equal(done.length, 1); assert.equal(done[0].disabled, false);
+  done[0].focus();
+  let prevented = false, stopped = false;
+  const gesture = { type: "click", target: done[0], currentTarget: done[0],
+    preventDefault() { prevented = true; }, stopPropagation() {}, stopImmediatePropagation() { stopped = true; } };
+  if (actions.handlers.click) runPortHandler(actions.handlers.click, f.host, { ...gesture, currentTarget: actions });
+  assert.equal(prevented, false); assert.equal(stopped, false);
+  await done[0].handlers.click.call(f.host, gesture); f.draw(); await f.flush();
+  assert.equal(viewer.open, false); assert.equal(f.native("dialog", node => node.attributes.class === "modal canvas-artifact-viewer"), undefined);
+  assert.ok(viewerOpener.isConnected); assert.equal(documentPort.activeElement, viewerOpener);
+  assert.equal(f.openPopovers.size, 0); unchanged();
+  const currentDrawer = f.native("dialog", node => node.attributes.class === "modal canvas-document-outputs-dialog");
+  assert.equal(currentDrawer, drawer); assert.ok(currentDrawer.open);
+  currentDrawer.handlers.cancel.call(f.host, { preventDefault() {}, stopPropagation() {} }); await f.flush();
+  assert.equal(drawer.open, false); assert.ok(drawerOpener.isConnected); assert.equal(documentPort.activeElement, drawerOpener);
+  unchanged(); assert.equal(f.store.content.get()[artifact.contentRef], retainedBytes);
+
+  const label = scenario.basis === null ? "" : f.i18n.t("audio.duration." + scenario.basis, "", { seconds: f.i18n.number(scenario.seconds) });
+  if (scenario.basis !== null) assert.ok(label && label !== f.i18n.number(scenario.seconds) + "s", "the existing basis label is explicit");
+  const expected = "1 " + f.i18n.system("part") + (label ? " · " + label : "");
+  assert.deepEqual(observed, { grid: expected, reader: expected },
+    "both actual summaries label measured/recorded/estimated metadata and reject stale URL/hash bindings without using processing latency");
+});
