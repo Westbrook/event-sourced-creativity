@@ -110,6 +110,7 @@
     "tests/browser/forma-keyboard.spec.mjs": "browser",
     "tests/browser/forma-library-controls-reach.spec.mjs": "browser",
     "tests/browser/forma-library-import.spec.mjs": "browser",
+    "tests/browser/forma-library-scroll-stability.spec.mjs": "browser",
     "tests/browser/forma-library-search-first.spec.mjs": "browser",
     "tests/browser/forma-memory-assistant-context.spec.mjs": "browser",
     "tests/browser/forma-memory-purposes.spec.mjs": "browser",
@@ -1549,7 +1550,7 @@
       "reason": "Replaces the imported fixture dist worker reference with worker/index.ts before executing it."
     }
   },
-  "classificationInput": "41b25bfd9801987adf173e3c814af07d444eb5b7056c7cc8c28d46fa2f1dd136",
+  "classificationInput": "f48d1934276f7db949a441ddbf1e778b4e5ee8d7d34672aee93adccced2e3d6a",
   "browserConfigs": [
     "playwright.a11y.config.mjs",
     "playwright.activity-accounting-lifetime.config.mjs",
@@ -2502,6 +2503,16 @@
         "playwright.a11y.config.mjs"
       ],
       "command": "FORMA_BROWSER_CONFIGS=a11y pnpm test:browser",
+      "resource": "config-owned browser batch; isolated context; true zoom remains a dedicated profile",
+      "prerequisites": "Config opt-ins and fixture/account/archive requirements in tests/browser/README.md; no automatic account or provider work"
+    },
+    "tests/browser/forma-library-scroll-stability.spec.mjs": {
+      "owner": "Forma browser maintainer",
+      "lane": "browser",
+      "configs": [
+        "playwright.creator-gutters.config.mjs"
+      ],
+      "command": "FORMA_BROWSER_CONFIGS=creator-gutters pnpm test:browser",
       "resource": "config-owned browser batch; isolated context; true zoom remains a dedicated profile",
       "prerequisites": "Config opt-ins and fixture/account/archive requirements in tests/browser/README.md; no automatic account or provider work"
     },

@@ -766,6 +766,23 @@ historical suite, paid provider work or live-account acceptance is claimed.
 Evidence is retained under `outputs/creator-alignment-shared/` and the managed
 validation receipts. Hosted activation and user review remain distinct.
 
+### Library scroll stability — 2026-10-01
+
+**Implementation complete; publication tracked separately.** On wide Creator
+browse pages, Ask Forma now uses a persistent trailing navigation cell. Scrolling
+no longer turns its collision avoidance into a 64px content gutter. The navigation
+stays reachable, the Library heading clears it, and opening/closing guidance
+preserves the content width. Existing compact, short-height and account-banner
+placement policies remain in force.
+
+Qualification uses the production bundle with fictional data: 20 Library
+scroll/focus cases across five widths, English/Arabic and pointer/touch, plus
+72 shared leading-edge measurements. Scoped responsive and assistant tests,
+types, lint, inventory and build receipts are retained under
+`outputs/library-scroll/`. Four existing assistant-shell source assertions also
+fail on the exact published baseline and remain part of VAL-002; they were not
+excluded or weakened. Publication and user acceptance are separate milestones.
+
 ### Shared Creator page gutters — 2026-10-01
 
 **Implementation complete; publication authorized and in preparation.** The
