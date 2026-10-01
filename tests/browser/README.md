@@ -566,3 +566,13 @@ recurring substitute for that lane. Remaining manual integration checks are:
 
 Record engine/OS/AT versions and observations; passing WebKit does not establish
 that these physical/manual checks passed.
+
+## Creator leading gutters
+
+`FORMA_BROWSER_CONFIGS=creator-gutters pnpm test:browser` runs the actual Creator
+shell and Library, Projects, project overview and Document pages against finite
+fictional network responses. It covers nine viewport sizes/postures in English
+and Arabic, page overflow, and native Library Resource Memory keyboard focus
+and disclosure. Set `FORMA_SYNTHETIC_PREVIEW_PORT` to an unused loopback port when
+needed. The config owns its server and uses the repository-pinned Playwright
+Chromium; it never reads a real account or invokes a provider.

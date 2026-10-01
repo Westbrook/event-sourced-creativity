@@ -734,6 +734,27 @@ assertion to enforce the actual shared measured posture, its pane visibility,
 and the existing 62rem boundary. Screenshots and geometry receipts are in
 `outputs/creator-alignment/`; hosted activation is recorded separately.
 
+### Shared Creator page gutters — 2026-10-01
+
+**Implementation complete; publication authorized and in preparation.** The
+original document-only alignment omitted Library and other Creator browse
+pages. Creator page containers now supply the same bounded pane inset to
+Projects, project overview, Library, Activity and Deliver. Shell identity,
+project rail and desktop navigation follow the shared rule; Library Resource
+Memory aligns with the heading and search, including its expanded panel.
+
+Verification: types/full lint, all 45 responsive source tests, and the registered
+`creator-gutters` Playwright lane pass. Its eight tests cover four actual pages
+(Library, Projects, project overview and Document), nine viewports and English/
+Arabic (72 geometry cases), plus native Library disclosure keyboard/focus checks.
+Activity and Deliver inherit the shared container rule but were not separately
+browser-replayed. The first run exposed an incorrect viewport-width expectation
+in the new test: compact Library reserves a trailing navigation rail. The final
+assertion compares both panel edges with search in the content column. No full
+historical suite, paid provider work or live-account acceptance is claimed.
+Evidence is retained under `outputs/creator-alignment-shared/` and the managed
+validation receipts. Hosted activation and user review remain distinct.
+
 ### Document column heading alignment — 2026-10-01
 
 Implemented locally and authorized for publication. Context and results titles
