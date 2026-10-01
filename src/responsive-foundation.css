@@ -208,8 +208,20 @@ forma-project-contents .studio-main > .page-header--document > .page-header-acti
 .context-column > .section-heading,
 .output-column > .section-heading {
   min-inline-size: 0;
+  align-items: flex-start;
   flex-wrap: wrap;
   padding-inline: var(--forma-pane-inset);
+}
+
+/* Both titles occupy the same first row, even when the results actions wrap. */
+:is(.context-column, .output-column) > .section-heading > div:first-child {
+  display: flex;
+  align-items: flex-start;
+  min-block-size: var(--forma-hit-target);
+}
+
+.context-column > .section-heading > .health-pill {
+  align-self: center;
 }
 
 .context-column > .context-next-actions > button,
