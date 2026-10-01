@@ -444,6 +444,8 @@ html[data-document-focus] .studio-subpage-body {
 }
 
 .project-rail .rail-label,
+.project-rail .rail-project-heading,
+.project-rail .rail-project-summary,
 .project-rail .rail-document-handoff {
   padding-inline: var(--rail-content-inset);
 }
@@ -453,11 +455,12 @@ html[data-document-focus] .studio-subpage-body {
   padding: 0 var(--rail-content-inset);
 }
 
-.project-rail :is(.rail-document-links, .rail-library-links) > a {
+.project-rail :is(.rail-document-links, .rail-library-links) > a,
+.project-rail .rail-primary-action {
   padding-inline: calc(var(--rail-content-inset) - 1px);
 }
 
-.project-rail :is(.rail-project-overview > span:first-child, .rail-links a i, .rail-collapse-toggle > span) {
+.project-rail :is(.rail-project-overview > span:first-child, .rail-links a i, .rail-primary-action > i, .rail-collapse-toggle > span) {
   display: inline-flex;
   flex: 0 0 1.25rem;
   inline-size: 1.25rem;
