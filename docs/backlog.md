@@ -712,3 +712,13 @@ schema effects were installed through the fixed atomic D1 repair instead.
 [Sites capability To Do](forma-memory-sites-capability-todo-2026-09-18.md) retain
 separate service-dependent and activation work. No repair is still pending for
 these31 journaled migrations.
+
+### Document column heading alignment — 2026-10-01
+
+Implemented locally and authorized for publication. Context and results titles
+share a control-height first row and top alignment when titles or actions wrap.
+The shared pane gutters retain the related Creator alignment and results inset
+work. Typecheck and scoped lint pass; 14 synthetic renderer cases cover
+320–1600px, short landscape, English/Arabic and narrow-pane switching.
+Evidence: `outputs/workbench-spacing/geometry.json`. User review and hosted
+activation remain distinct from local verification.

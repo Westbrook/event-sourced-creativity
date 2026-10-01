@@ -87,6 +87,12 @@ label and accessible name naming **Creator Workspace**.
 
 ## Shared control metrics and wrapping composition
 
+Document context and results headings share the pane inset and a first title
+row at least as tall as `--forma-hit-target`. Titles align at the top of their
+panes even when the results actions wrap; the context score stays centered in
+its own flex row. Keep these metrics in the existing pane composition rather
+than giving each column separate heading offsets.
+
 Comparable supporting controls reuse `--forma-font-size-supporting`,
 `--forma-body-line-height`, `--forma-space-2`, and
 `--forma-control-min-size`. Their native button/input/select borders and block
